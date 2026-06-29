@@ -20,9 +20,13 @@ def load_fits(path: str) -> AstroImage:
     with fits.open(path) as hdul:
         raw = np.asarray(hdul[0].data)
     if raw.ndim == 3:
-        # FITS color cubes are typically (channels, H, W).
+        # FITS color cubes are typically (channels, H, W); some are already (H, W, 3).
         if raw.shape[0] == 3:
             raw = np.transpose(raw, (1, 2, 0))
+        elif raw.shape[2] != 3:
+            raise ValueError(
+                f"unsupported 3D FITS shape {raw.shape}; expected (3, H, W) or (H, W, 3)"
+            )
         data = _normalize(raw)
         return AstroImage(data, is_linear=True)
     # 2D mono-Bayer -> debayer with instrument pattern.

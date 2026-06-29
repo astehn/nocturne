@@ -21,3 +21,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # colour-demosaicing imports the deprecated scipy.ndimage.filters namespace.
+    "ignore:Please import .* from the .scipy.ndimage. namespace:DeprecationWarning",
+    # colour-science notes matplotlib is absent; we do not use its plotting API.
+    "ignore:.*Matplotlib.* related API features are not available",
+]
