@@ -38,10 +38,10 @@ def test_crop_panel_controls_and_apply(qtbot):
     w.rotate_btn.click()
     assert w.rotate == 90
     w.flip_h_btn.setChecked(True)
-    w.margin_slider.setValue(10)
     w.apply_btn.click()
     assert applied == [True]
     assert w.flip_h_btn.isChecked() is True
+    assert not hasattr(w, "margin_slider")  # margin removed; box covers it
 
 
 def test_background_off_enables_apply_without_graxpert(qtbot):

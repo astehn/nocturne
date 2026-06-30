@@ -128,6 +128,23 @@ def test_step_for_types(qtbot, tmp_path):
     assert isinstance(win._step_for("noise_sharpen"), NoiseSharpenStep)
 
 
+def test_open_bad_file_does_not_crash(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    bad = tmp_path / "bad.fits"
+    bad.write_text("not a fits file")
+    win.open_fits(str(bad))  # must not raise
+    assert win.project is None
+    assert "open" in win._status.text().lower()
+
+
+def test_export_failure_is_surfaced(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    ok = win._guarded(lambda: (_ for _ in ()).throw(OSError("disk full")))
+    assert ok is False
+    assert "disk full" in win._status.text()
+
+
 def test_export_external_panel_split_gated(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

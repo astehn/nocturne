@@ -12,7 +12,9 @@ from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
 from ..history.project import Project
 from ..history.step import Step
-from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
+from ..settings import (
+    graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
+)
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
 from ..steps.crop import CropStep
@@ -160,9 +162,14 @@ class MainWindow(QMainWindow):
             self.open_fits(path)
 
     def open_fits(self, path: str) -> None:
-        base = load_fits(path)
+        try:
+            base = load_fits(path)
+        except Exception as exc:
+            self._status.setText(f"Could not open file: {exc}")
+            return
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
+        self._status.setText("")
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._refresh()
@@ -172,7 +179,7 @@ class MainWindow(QMainWindow):
         if stage_id == "crop":
             return CropStep()
         if stage_id == "background":
-            step = BackgroundStep(GraXpert(self.settings.graxpert_path))
+            step = BackgroundStep(GraXpert(resolve_binary(self.settings.graxpert_path)))
             step._runner = self._bg_runner
             return step
         if stage_id == "color":
@@ -182,7 +189,8 @@ class MainWindow(QMainWindow):
         if stage_id == "saturation":
             return SaturationStep()
         if stage_id == "noise_sharpen":
-            rc = RCAstro(self.settings.rcastro_path) if rcastro_valid(self.settings) else None
+            rc = (RCAstro(resolve_binary(self.settings.rcastro_path))
+                  if rcastro_valid(self.settings) else None)
             step = NoiseSharpenStep(rc)
             step._runner = self._rc_runner
             return step
@@ -253,17 +261,13 @@ class MainWindow(QMainWindow):
             self.image_view.set_crop_overlay(False)
 
     def _on_crop_change(self, aspect_text: str) -> None:
-        self.image_view.set_aspect(_ASPECT_RATIO.get(aspect_text))
+        # Snap the visible box to the chosen ratio (and lock future resizes).
+        self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
             return
         top, bottom, left, right = self.image_view.crop_bounds()
-        margin = self._panel.margin_slider.value() / 100.0
-        if margin > 0:
-            h, w = bottom - top, right - left
-            dh, dw = int(h * margin), int(w * margin)
-            top, bottom, left, right = top + dh, bottom - dh, left + dw, right - dw
         params = CropParams(
             bounds=(top, bottom, left, right),
             rotate=getattr(self._panel, "rotate", 0),
@@ -288,6 +292,16 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     # --- exports ---
+    def _guarded(self, fn) -> bool:
+        """Run a file-writing action; surface failures instead of crashing."""
+        try:
+            fn()
+        except Exception as exc:
+            self._status.setText(f"Export failed: {exc}")
+            return False
+        self._status.setText("")
+        return True
+
     def export_external(self, choice: str) -> None:
         if self.project is None:
             return
@@ -298,17 +312,21 @@ class MainWindow(QMainWindow):
             folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
             if not folder:
                 return
-            rc = RCAstro(self.settings.rcastro_path)
-            starless, stars = rc.remove_stars(img, runner=self._rc_runner)
-            save_tiff(starless, os.path.join(folder, "starless.tif"))
-            save_tiff(stars, os.path.join(folder, "stars.tif"))
+
+            def _do():
+                rc = RCAstro(resolve_binary(self.settings.rcastro_path))
+                starless, stars = rc.remove_stars(img, runner=self._rc_runner)
+                save_tiff(starless, os.path.join(folder, "starless.tif"))
+                save_tiff(stars, os.path.join(folder, "stars.tif"))
+
+            self._guarded(_do)
         else:
             path, _ = QFileDialog.getSaveFileName(self, "Export TIFF", "", "TIFF (*.tiff)")
             if not path:
                 return
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            save_tiff(img, path)
+            self._guarded(lambda: save_tiff(img, path))
 
     def export_final(self, fmt: str) -> None:
         if self.project is None:
@@ -322,15 +340,15 @@ class MainWindow(QMainWindow):
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
-            save_png(img, path)
+            self._guarded(lambda: save_png(img, path))
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
-            save_fits(img, path)
+            self._guarded(lambda: save_fits(img, path))
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            save_tiff(img, path)
+            self._guarded(lambda: save_tiff(img, path))
 
     # --- settings ---
     def _open_settings(self) -> None:

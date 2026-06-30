@@ -53,3 +53,33 @@ def test_crop_overlay_disable_clears_box(qtbot):
     view.set_crop_overlay(True, bounds=(0, 10, 0, 10))
     view.set_crop_overlay(False)
     assert view._body is None
+
+
+def test_crop_overlay_has_eight_handles(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True, bounds=(0, 20, 0, 20))
+    assert len(view._handles) == 8
+
+
+def test_apply_aspect_reshapes_box_to_ratio(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(100, 100))
+    view.set_crop_overlay(True, bounds=(0, 80, 0, 80))  # 80x80 square box
+    view.apply_aspect(2.0)  # width:height = 2:1
+    top, bottom, left, right = view.crop_bounds()
+    w, h = right - left, bottom - top
+    assert abs(w / h - 2.0) < 0.05
+
+
+def test_set_image_refits_when_size_changes(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.scale(4, 4)  # zoom in
+    before = view.transform().m11()
+    view.set_image(_qimage(20, 15))  # different size -> should re-fit
+    after = view.transform().m11()
+    assert after != before

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..settings import Settings
+from ..settings import Settings, resolve_binary
 from ..tools.probe import probe_binary
 
 
@@ -59,7 +59,7 @@ class SettingsDialog(QDialog):
         if not path.strip():
             label.setText("✗ No path set")
             return
-        ok, msg = probe_binary(path.strip(), args, runner=self._probe_runner)
+        ok, msg = probe_binary(resolve_binary(path.strip()), args, runner=self._probe_runner)
         label.setText(("✓ " if ok else "✗ ") + msg)
 
     def _test_graxpert(self) -> None:
