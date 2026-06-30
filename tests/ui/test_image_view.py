@@ -27,3 +27,29 @@ def test_fit_and_actual_size_do_not_raise(qtbot):
     view.set_image(_qimage())
     view.fit()
     view.actual_size()
+
+
+def test_crop_overlay_roundtrips_bounds(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True, bounds=(5, 25, 8, 35))
+    assert view.crop_bounds() == (5, 25, 8, 35)
+
+
+def test_crop_overlay_move_updates_bounds(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True, bounds=(0, 10, 0, 10))
+    view._body.setPos(5, 5)  # move the box by (5,5)
+    assert view.crop_bounds() == (5, 15, 5, 15)
+
+
+def test_crop_overlay_disable_clears_box(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True, bounds=(0, 10, 0, 10))
+    view.set_crop_overlay(False)
+    assert view._body is None
