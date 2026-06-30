@@ -40,6 +40,8 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [ ] GitHub Releases with built artifacts; optional GitHub Actions to build all platforms.
 
 ## Done (recent)
+- Processing log: collapsible bottom panel, append-only, timestamped, with an RMS Δ%
+  change metric per step (proves subtle steps actually ran).
 - Adaptive Stretch (slider) — fixed the black-image problem.
 - Robustness: safe file open, guarded exports, `.app` bundle resolution (errno 13).
 - Crop polish: aspect-snap, 8 handles, dropped redundant margin, re-fit after crop.

@@ -26,7 +26,9 @@ from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
+from ..core.metrics import rms_delta
 from .image_view import ImageView
+from .log_panel import LogPanel, format_log_entry
 from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
@@ -74,7 +76,9 @@ class MainWindow(QMainWindow):
         self._busy_overlay = BusyOverlay()
 
         central = QWidget()
-        root = QHBoxLayout(central)
+        outer = QVBoxLayout(central)
+        root = QHBoxLayout()
+        outer.addLayout(root, 1)
 
         self.stepper = Stepper()
         self.stepper.setMaximumWidth(200)
@@ -106,6 +110,9 @@ class MainWindow(QMainWindow):
         self._right_layout.addWidget(self._status)
         root.addWidget(right)
 
+        self.log_panel = LogPanel()
+        outer.addWidget(self.log_panel)
+
         self.setCentralWidget(central)
         self._build_toolbar()
         self._rebuild_panel()
@@ -119,6 +126,9 @@ class MainWindow(QMainWindow):
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
+        self._log_act = tb.addAction("Log", self._toggle_log)
+        self._log_act.setCheckable(True)
+        self._log_act.setChecked(True)
         tb.addAction("Fit", self.image_view.fit)
         tb.addAction("100%", self.image_view.actual_size)
         spacer = QWidget()
@@ -183,6 +193,10 @@ class MainWindow(QMainWindow):
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._status.setText("")
+        h, w = base.data.shape[:2]
+        self.log_panel.append_entry(
+            format_log_entry(f"Opened {os.path.basename(path)}", "", None, dims=(w, h))
+        )
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._refresh()
@@ -225,6 +239,7 @@ class MainWindow(QMainWindow):
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
             self._status.setText("")
+            self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
             self._refresh()
             return
         step = self._step_for(stage_id)
@@ -237,6 +252,7 @@ class MainWindow(QMainWindow):
 
         def done(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
+            self._log_step(stage_id, option, base, result)
             self._set_busy(False)
             self._refresh()  # stay on this step; user clicks Next to advance
             if stage_id == "crop":
@@ -253,6 +269,15 @@ class MainWindow(QMainWindow):
                 done(work())
             except Exception as exc:  # mirror the async error path
                 err(exc)
+
+    def _log_step(self, stage_id: str, option, base, result) -> None:
+        name = STEP_NAME[stage_id]
+        if stage_id == "crop":
+            h, w = result.data.shape[:2]
+            self.log_panel.append_entry(format_log_entry(name, "", None, dims=(w, h)))
+            return
+        label = f"{option:.2f}" if isinstance(option, float) else option
+        self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -298,19 +323,24 @@ class MainWindow(QMainWindow):
     def _undo(self) -> None:
         if self.project:
             self.project.undo()
+            self.log_panel.append_entry("Undo")
             self._refresh()
 
     def _redo(self) -> None:
         if self.project:
             self.project.redo()
+            self.log_panel.append_entry("Redo")
             self._refresh()
 
     def _toggle_before_after(self) -> None:
         self._before_after = self._ba_act.isChecked()
         self._refresh()
 
+    def _toggle_log(self) -> None:
+        self.log_panel.setVisible(self._log_act.isChecked())
+
     # --- exports ---
-    def _guarded(self, fn) -> bool:
+    def _guarded(self, fn, log_label: str | None = None) -> bool:
         """Run a file-writing action; surface failures instead of crashing."""
         try:
             fn()
@@ -318,6 +348,8 @@ class MainWindow(QMainWindow):
             self._status.setText(f"Export failed: {exc}")
             return False
         self._status.setText("")
+        if log_label:
+            self.log_panel.append_entry(log_label)
         return True
 
     def export_external(self, choice: str) -> None:
@@ -337,14 +369,14 @@ class MainWindow(QMainWindow):
                 save_tiff(starless, os.path.join(folder, "starless.tif"))
                 save_tiff(stars, os.path.join(folder, "stars.tif"))
 
-            self._guarded(_do)
+            self._guarded(_do, "Exported starless.tif + stars.tif")
         else:
             path, _ = QFileDialog.getSaveFileName(self, "Export TIFF", "", "TIFF (*.tiff)")
             if not path:
                 return
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            self._guarded(lambda: save_tiff(img, path))
+            self._guarded(lambda: save_tiff(img, path), f"Exported {os.path.basename(path)}")
 
     def export_final(self, fmt: str) -> None:
         if self.project is None:
@@ -358,15 +390,15 @@ class MainWindow(QMainWindow):
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
-            self._guarded(lambda: save_png(img, path))
+            self._guarded(lambda: save_png(img, path), f"Exported {os.path.basename(path)}")
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
-            self._guarded(lambda: save_fits(img, path))
+            self._guarded(lambda: save_fits(img, path), f"Exported {os.path.basename(path)}")
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            self._guarded(lambda: save_tiff(img, path))
+            self._guarded(lambda: save_tiff(img, path), f"Exported {os.path.basename(path)}")
 
     # --- settings ---
     def _open_settings(self) -> None:

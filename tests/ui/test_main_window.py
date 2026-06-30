@@ -166,6 +166,28 @@ def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
     assert "RC-Astro —" in text
 
 
+def test_log_records_applied_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    log = win.log_panel.text()
+    assert "Stretch" in log and "Δ" in log
+
+
+def test_log_records_open(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert "Opened" in win.log_panel.text()
+
+
+def test_log_toggle_hides_panel(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._log_act.setChecked(False)
+    win._toggle_log()
+    assert win.log_panel.isHidden() is True
+
+
 def test_export_external_panel_split_gated(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
