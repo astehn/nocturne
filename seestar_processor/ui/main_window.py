@@ -8,15 +8,18 @@ from PySide6.QtWidgets import (
 
 from ..core.export import save_jpeg, save_tiff
 from ..history.project import Project
-from ..settings import graxpert_valid, load_settings, save_settings
+from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
 from ..steps.crop import CropStep
+from ..steps.deconvolution import DeconvolutionStep
 from ..steps.final_fixes import FinalFixesStep
 from ..steps.load import load_fits
+from ..steps.noise import NoiseStep
 from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
+from ..tools.rcastro import RCAstro
 from .image_view import ImageView
 from .pipeline import PIPELINE, PROCESSING_ORDER, STEP_NAME, next_enabled, prev_enabled
 from .preview import to_qimage
@@ -40,6 +43,7 @@ class MainWindow(QMainWindow):
         self._stage = 0
         self._before_after = False
         self._bg_runner = run_cli  # injectable for tests / future config
+        self._rc_runner = run_cli  # RC-Astro subprocess runner (injectable)
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -123,6 +127,11 @@ class MainWindow(QMainWindow):
             return CropStep()
         if stage_id == "color":
             return ColorStep()
+        if stage_id in ("deconvolution", "noise"):
+            rc = RCAstro(self.settings.rcastro_path) if rcastro_valid(self.settings) else None
+            step = DeconvolutionStep(rc) if stage_id == "deconvolution" else NoiseStep(rc)
+            step._runner = self._rc_runner
+            return step
         if stage_id == "final_fixes":
             return FinalFixesStep()
         if stage_id == "background":

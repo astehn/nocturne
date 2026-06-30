@@ -23,7 +23,7 @@ def test_clicking_disabled_stage_emits_nothing(qtbot):
     qtbot.addWidget(step)
     received = []
     step.stageSelected.connect(received.append)
-    step._on_click(step.item(_index("deconvolution")))
+    step._on_click(step.item(_index("stars")))
     assert received == []
 
 
@@ -31,7 +31,7 @@ def test_disabled_items_are_not_selectable(qtbot):
     step = Stepper()
     qtbot.addWidget(step)
     from PySide6.QtCore import Qt
-    item = step.item(_index("noise"))
+    item = step.item(_index("stars"))
     assert not (item.flags() & Qt.ItemFlag.ItemIsEnabled)
 
 

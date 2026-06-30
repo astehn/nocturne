@@ -11,28 +11,35 @@ def test_pipeline_order_and_enablement():
     ids = [s.id for s in PIPELINE]
     assert ids == [
         "load", "crop", "background", "color", "deconvolution",
-        "noise", "stretch", "final_fixes", "export",
+        "noise", "stretch", "final_fixes", "stars", "export",
     ]
     enabled = {s.id for s in PIPELINE if s.enabled}
     assert enabled == {
-        "load", "crop", "background", "color", "stretch", "final_fixes", "export",
+        "load", "crop", "background", "color", "deconvolution",
+        "noise", "stretch", "final_fixes", "export",
     }
+    assert not next(s for s in PIPELINE if s.id == "stars").enabled  # placeholder
 
 
 def test_next_enabled_skips_disabled_and_clamps():
     assert next_enabled(_index("load")) == _index("crop")
     assert next_enabled(_index("crop")) == _index("background")
     assert next_enabled(_index("background")) == _index("color")
-    assert next_enabled(_index("color")) == _index("stretch")
+    assert next_enabled(_index("color")) == _index("deconvolution")
+    assert next_enabled(_index("deconvolution")) == _index("noise")
+    assert next_enabled(_index("noise")) == _index("stretch")
     assert next_enabled(_index("stretch")) == _index("final_fixes")
-    assert next_enabled(_index("final_fixes")) == _index("export")
+    assert next_enabled(_index("final_fixes")) == _index("export")  # skips disabled stars
     last = _index("export")
     assert next_enabled(last) == last  # clamp at end
 
 
 def test_prev_enabled_skips_disabled_and_clamps():
+    assert prev_enabled(_index("export")) == _index("final_fixes")  # skips stars
     assert prev_enabled(_index("final_fixes")) == _index("stretch")
-    assert prev_enabled(_index("stretch")) == _index("color")
+    assert prev_enabled(_index("stretch")) == _index("noise")
+    assert prev_enabled(_index("noise")) == _index("deconvolution")
+    assert prev_enabled(_index("deconvolution")) == _index("color")
     assert prev_enabled(_index("color")) == _index("background")
     assert prev_enabled(_index("background")) == _index("crop")
     assert prev_enabled(_index("crop")) == _index("load")
@@ -42,6 +49,9 @@ def test_prev_enabled_skips_disabled_and_clamps():
 def test_step_name_and_order():
     assert STEP_NAME == {
         "crop": "Crop", "background": "Background", "color": "Color",
+        "deconvolution": "Deconvolution", "noise": "Noise",
         "stretch": "Stretch", "final_fixes": "Final Fixes",
     }
-    assert PROCESSING_ORDER == ["crop", "background", "color", "stretch", "final_fixes"]
+    assert PROCESSING_ORDER == [
+        "crop", "background", "color", "deconvolution", "noise", "stretch", "final_fixes",
+    ]
