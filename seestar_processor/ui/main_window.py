@@ -4,10 +4,11 @@ import os
 
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
+from .. import APP_NAME
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
@@ -30,6 +31,7 @@ from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
+from .about import about_html, help_html
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
@@ -62,7 +64,7 @@ class _PrecomputedStep(Step):
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str) -> None:
         super().__init__()
-        self.setWindowTitle("Seestar Processor")
+        self.setWindowTitle(APP_NAME)
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
@@ -120,8 +122,20 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
         self._build_toolbar()
+        self._build_menu()
         self._rebuild_panel()
         self._refresh()
+
+    def _build_menu(self) -> None:
+        help_menu = self.menuBar().addMenu("Help")
+        self._help_act = help_menu.addAction("Help…", self._show_help)
+        self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
+
+    def _show_help(self) -> None:
+        QMessageBox.information(self, f"{APP_NAME} — Help", help_html())
+
+    def _show_about(self) -> None:
+        QMessageBox.about(self, f"About {APP_NAME}", about_html())
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
@@ -144,9 +158,16 @@ class MainWindow(QMainWindow):
         self._update_tools_label()
 
     def _update_tools_label(self) -> None:
-        gx = "✓" if graxpert_valid(self.settings) else "✗"
-        rc = "✓" if rcastro_valid(self.settings) else "—"
-        self._tools_label.setText(f"GraXpert {gx}   ·   RC-Astro {rc}")
+        def chip(name: str, ok: bool) -> str:
+            color = "#3fb950" if ok else "#f85149"  # green / red
+            mark = "✓" if ok else "✗"
+            return f'<span style="color:{color}">{name} {mark}</span>'
+
+        self._tools_label.setText(
+            chip("GraXpert", graxpert_valid(self.settings))
+            + '  <span style="color:#6b6f76">·</span>  '
+            + chip("RC-Astro", rcastro_valid(self.settings))
+        )
 
     # --- navigation ---
     def current_stage_id(self) -> str:

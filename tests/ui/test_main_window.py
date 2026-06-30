@@ -140,6 +140,17 @@ def test_histogram_updates_on_open(qtbot, tmp_path):
     assert win.histogram_view._hist is not None
 
 
+def test_window_title_is_app_name(qtbot, tmp_path):
+    from seestar_processor import APP_NAME
+    win = _window(qtbot, tmp_path)
+    assert win.windowTitle() == APP_NAME
+
+
+def test_help_menu_actions_exist(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._help_act is not None and win._about_act is not None
+
+
 def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     bad = tmp_path / "bad.fits"
@@ -182,8 +193,9 @@ def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
     win.settings = Settings(graxpert_path=str(gx))  # rc-astro left empty
     win._update_tools_label()
     text = win._tools_label.text()
-    assert "GraXpert ✓" in text
-    assert "RC-Astro —" in text
+    assert "GraXpert ✓" in text          # configured → green check
+    assert "RC-Astro ✗" in text          # not set → red cross
+    assert "#3fb950" in text and "#f85149" in text  # green + red colors present
 
 
 def test_log_records_applied_step(qtbot, tmp_path):

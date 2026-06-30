@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPlainTextEdit
 
 
@@ -19,6 +20,8 @@ class LogPanel(QPlainTextEdit):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setMaximumHeight(140)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def append_entry(self, body: str) -> None:
         stamp = datetime.now().strftime("%H:%M:%S")
