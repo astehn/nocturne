@@ -261,17 +261,13 @@ class MainWindow(QMainWindow):
             self.image_view.set_crop_overlay(False)
 
     def _on_crop_change(self, aspect_text: str) -> None:
-        self.image_view.set_aspect(_ASPECT_RATIO.get(aspect_text))
+        # Snap the visible box to the chosen ratio (and lock future resizes).
+        self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
             return
         top, bottom, left, right = self.image_view.crop_bounds()
-        margin = self._panel.margin_slider.value() / 100.0
-        if margin > 0:
-            h, w = bottom - top, right - left
-            dh, dw = int(h * margin), int(w * margin)
-            top, bottom, left, right = top + dh, bottom - dh, left + dw, right - dw
         params = CropParams(
             bounds=(top, bottom, left, right),
             rotate=getattr(self._panel, "rotate", 0),

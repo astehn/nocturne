@@ -90,9 +90,6 @@ def build_panel(
         flip_h.setCheckable(True)
         flip_v = QPushButton("Flip V")
         flip_v.setCheckable(True)
-        margin = QSlider(Qt.Orientation.Horizontal)
-        margin.setRange(0, 20)
-        margin.setValue(0)
         apply_btn = QPushButton("Apply Crop")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -105,14 +102,11 @@ def build_panel(
         flips.addWidget(flip_h)
         flips.addWidget(flip_v)
         lay.addLayout(flips)
-        lay.addWidget(QLabel("Extra margin"))
-        lay.addWidget(margin)
         lay.addWidget(apply_btn)
         w.aspect_box = aspect
         w.rotate_btn = rotate_btn
         w.flip_h_btn = flip_h
         w.flip_v_btn = flip_v
-        w.margin_slider = margin
         w.apply_btn = apply_btn
 
     elif stage.kind == "process":

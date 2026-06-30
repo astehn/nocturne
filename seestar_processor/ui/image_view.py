@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 _ACCENT = QColor("#2dd4bf")
-_CORNERS = ("tl", "tr", "bl", "br")
+_HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
 
 
 class _Handle(QGraphicsRectItem):
@@ -67,9 +67,13 @@ class ImageView(QGraphicsView):
 
     # --- image ---
     def set_image(self, qimage) -> None:
+        prev = self._item.pixmap()
+        prev_size = (prev.width(), prev.height())
         self._item.setPixmap(QPixmap.fromImage(qimage))
         self._scene.setSceneRect(self._item.boundingRect())
-        if not self._has_image:
+        new_size = (qimage.width(), qimage.height())
+        if not self._has_image or new_size != prev_size:
+            # fit on first image and whenever the dimensions change (e.g. crop)
             self._has_image = True
             self.fit()
 
@@ -97,9 +101,9 @@ class ImageView(QGraphicsView):
         if self._body is None:
             self._body = _Body(self)
             self._scene.addItem(self._body)
-            for corner in _CORNERS:
-                h = _Handle(corner, self)
-                self._handles[corner] = h
+            for name in _HANDLES:
+                h = _Handle(name, self)
+                self._handles[name] = h
                 self._scene.addItem(h)
         if bounds is None:
             pm = self._item.pixmap()
@@ -108,6 +112,20 @@ class ImageView(QGraphicsView):
 
     def set_aspect(self, aspect_ratio) -> None:
         self._aspect = aspect_ratio
+
+    def apply_aspect(self, aspect_ratio) -> None:
+        """Lock to a ratio and immediately reshape the current box to it (centered)."""
+        self._aspect = aspect_ratio
+        if self._body is None or aspect_ratio is None:
+            return
+        r = self._scene_rect()
+        cx, cy = r.center().x(), r.center().y()
+        w = r.width()
+        h = w / aspect_ratio
+        self._body.setPos(0, 0)
+        self._body.setRect(QRectF(cx - w / 2, cy - h / 2, w, h))
+        self._position_handles()
+        self._emit_bounds()
 
     def _teardown_overlay(self) -> None:
         if self._body is not None:
@@ -128,23 +146,40 @@ class ImageView(QGraphicsView):
 
     def _position_handles(self) -> None:
         r = self._scene_rect()
-        pts = {"tl": r.topLeft(), "tr": r.topRight(), "bl": r.bottomLeft(), "br": r.bottomRight()}
-        for corner, h in self._handles.items():
-            h.setPos(pts[corner])
+        cx, cy = r.center().x(), r.center().y()
+        pts = {
+            "tl": (r.left(), r.top()), "tr": (r.right(), r.top()),
+            "bl": (r.left(), r.bottom()), "br": (r.right(), r.bottom()),
+            "t": (cx, r.top()), "b": (cx, r.bottom()),
+            "l": (r.left(), cy), "r": (r.right(), cy),
+        }
+        for name, h in self._handles.items():
+            x, y = pts[name]
+            h.setPos(x, y)
 
-    def _resize_to(self, corner: str, scene_pos) -> None:
+    def _resize_to(self, name: str, scene_pos) -> None:
         r = self._scene_rect()
-        # fixed opposite corner
-        opposite = {"tl": r.bottomRight(), "tr": r.bottomLeft(),
-                    "bl": r.topRight(), "br": r.topLeft()}[corner]
-        x0, x1 = sorted((opposite.x(), scene_pos.x()))
-        y0, y1 = sorted((opposite.y(), scene_pos.y()))
+        x0, y0, x1, y1 = r.left(), r.top(), r.right(), r.bottom()
+        if "l" in name:
+            x0 = scene_pos.x()
+        if "r" in name:
+            x1 = scene_pos.x()
+        if "t" in name:
+            y0 = scene_pos.y()
+        if "b" in name:
+            y1 = scene_pos.y()
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
         w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
         if self._aspect:
-            # keep ratio, driven by width
-            h = w / self._aspect
+            if name in ("t", "b"):  # height-driven
+                w = h * self._aspect
+                x1 = x0 + w
+            else:  # width-driven (corners, left/right)
+                h = w / self._aspect
+                y1 = y0 + h
         self._body.setPos(0, 0)
-        self._body.setRect(QRectF(x0, y0, w, h))
+        self._body.setRect(QRectF(x0, y0, max(1.0, x1 - x0), max(1.0, y1 - y0)))
         self._position_handles()
         self._emit_bounds()
 
