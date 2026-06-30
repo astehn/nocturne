@@ -11,7 +11,6 @@ _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
 }
-STRETCH_PRESETS = ["gentle", "balanced", "punchy"]
 EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
 _DESCRIPTIONS = {
@@ -160,18 +159,18 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "stretch":
-        box = QComboBox()
-        box.addItems(STRETCH_PRESETS)
-        box.setCurrentText("balanced")
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(50)
         apply_btn = QPushButton("Apply Stretch")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(box.currentText()))
-        lay.addWidget(QLabel("Aggressiveness"))
-        lay.addWidget(box)
+            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        lay.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
+        lay.addWidget(slider)
         lay.addWidget(apply_btn)
-        w.option_box = box
+        w.stretch_slider = slider
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":

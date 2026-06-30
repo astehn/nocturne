@@ -7,6 +7,11 @@ from seestar_processor.steps.stretch_step import StretchStep
 
 def test_stretch_step_marks_nonlinear():
     step = StretchStep()
-    out = step.apply(AstroImage(np.full((4, 4), 0.05, np.float32)), "Medium")
+    out = step.apply(AstroImage(np.full((4, 4), 0.05, np.float32)), 0.5)
     assert out.is_linear is False
-    assert step.options() == ["Small", "Medium", "Large"]
+
+
+def test_stretch_step_handles_empty_option():
+    step = StretchStep()
+    out = step.apply(AstroImage(np.full((4, 4), 0.05, np.float32)), "")
+    assert out.is_linear is False
