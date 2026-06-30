@@ -4,7 +4,8 @@ import os
 
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget,
+    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from ..core.crop import CropParams, detect_content_bounds
@@ -120,6 +121,17 @@ class MainWindow(QMainWindow):
         self._ba_act.setCheckable(True)
         tb.addAction("Fit", self.image_view.fit)
         tb.addAction("100%", self.image_view.actual_size)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        self._tools_label = QLabel("")
+        tb.addWidget(self._tools_label)
+        self._update_tools_label()
+
+    def _update_tools_label(self) -> None:
+        gx = "✓" if graxpert_valid(self.settings) else "✗"
+        rc = "✓" if rcastro_valid(self.settings) else "—"
+        self._tools_label.setText(f"GraXpert {gx}   ·   RC-Astro {rc}")
 
     # --- navigation ---
     def current_stage_id(self) -> str:
@@ -135,6 +147,7 @@ class MainWindow(QMainWindow):
         if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
         self._stage = index
+        self._status.setText("")  # clear any stale error when changing steps
         self._rebuild_panel()
         self._refresh()
 
@@ -209,6 +222,11 @@ class MainWindow(QMainWindow):
         }
         target = sum(1 for name, _ in self.project.entries() if name in preceding)
         self.project.jump_back(target)
+        if stage_id == "background" and option == "off":
+            # "off" = no background extraction: drop any prior result, record nothing
+            self._status.setText("")
+            self._refresh()
+            return
         step = self._step_for(stage_id)
         base = self.project.current()
         self._status.setText("")
@@ -356,6 +374,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
+            self._update_tools_label()
             self._rebuild_panel()
             self._refresh()
 
