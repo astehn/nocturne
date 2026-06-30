@@ -26,3 +26,13 @@ def test_preserves_is_linear_and_range():
     assert out.is_linear is False
     assert out.data.dtype == np.float32
     assert out.data.min() >= 0.0 and out.data.max() <= 1.0
+
+
+def test_highlights_protected_vs_midtones():
+    bright = np.tile(np.array([0.95, 0.85, 0.75], np.float32), (4, 4, 1))
+    mid = np.tile(np.array([0.45, 0.35, 0.25], np.float32), (4, 4, 1))
+    sb = saturate(AstroImage(bright), 1.0).data[0, 0]
+    sm = saturate(AstroImage(mid), 1.0).data[0, 0]
+    gain_b = (sb.max() - sb.min()) - (0.95 - 0.75)
+    gain_m = (sm.max() - sm.min()) - (0.45 - 0.25)
+    assert gain_b < gain_m  # bright pixels gain less chroma
