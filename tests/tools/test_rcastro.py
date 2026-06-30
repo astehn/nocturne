@@ -67,8 +67,25 @@ def test_remove_stars_returns_starless_and_stars():
     assert starless.data.shape == (8, 8, 3)
     assert stars.data.shape == (8, 8, 3)
     assert starless.is_linear is False and stars.is_linear is False
-    assert np.allclose(starless.data, img.data * 0.6, atol=1e-5)
-    assert np.allclose(stars.data, img.data * 0.4, atol=1e-5)
+    # RC-Astro output is flipped back to top-row-first on read.
+    assert np.allclose(starless.data, (img.data * 0.6)[::-1], atol=1e-5)
+    assert np.allclose(stars.data, (img.data * 0.4)[::-1], atol=1e-5)
+
+
+def test_rcastro_corrects_vertical_flip():
+    # The adapter flips RC-Astro's FITS output vertically (bottom-row-first ->
+    # top-row-first), so the returned array is the disk content reversed.
+    img = AstroImage(np.random.rand(6, 6, 3).astype(np.float32))
+    disk = np.zeros((6, 6, 3), np.float32)
+    disk[0] = 1.0  # bright row at index 0 on disk
+
+    def fake(args):
+        write_temp_fits(AstroImage(disk.copy()), args[args.index("-o") + 1])
+
+    out = RCAstro("/fake").deconvolve(
+        img, sharpen_stars=0.0, sharpen_nonstellar=0.5, runner=fake
+    )
+    assert np.allclose(out.data, disk[::-1], atol=1e-5)
 
 
 def test_remove_stars_omits_unscreen_by_default():
