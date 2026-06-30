@@ -17,6 +17,8 @@ _PROCESS_OPTIONS = {
 }
 EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
+# Target-type stretch presets → default aggressiveness (slider 0–100).
+STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
 _DESCRIPTIONS = {
     "background": "Removes light-pollution gradients so the sky background is even.",
     "noise_sharpen": "Reduces grain and recovers fine detail.",
@@ -176,14 +178,22 @@ def build_panel(
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(50)
+        target = QComboBox()
+        target.addItems(list(STRETCH_TARGET_DEFAULTS))
+        target.currentTextChanged.connect(
+            lambda t: slider.setValue(STRETCH_TARGET_DEFAULTS[t])
+        )
         apply_btn = QPushButton("Apply Stretch")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        lay.addWidget(QLabel("Target"))
+        lay.addWidget(target)
         lay.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
+        w.target_box = target
         w.stretch_slider = slider
         w.apply_btn = apply_btn
 
