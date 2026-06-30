@@ -1,0 +1,37 @@
+from seestar_processor.core.crop import CropParams
+from seestar_processor.core.color import ColorSettings
+from seestar_processor.recipe import (
+    Recipe, serialize_option, deserialize_option, recipe_from_entries,
+    save_recipe, load_recipe,
+)
+
+
+def test_option_roundtrips():
+    assert deserialize_option("stretch", serialize_option("stretch", 0.6)) == 0.6
+    assert deserialize_option("noise_sharpen",
+                              serialize_option("noise_sharpen", "medium")) == "medium"
+    lv = deserialize_option("levels", serialize_option("levels", (0.1, 1.2, 0.9)))
+    assert tuple(lv) == (0.1, 1.2, 0.9)
+    cs = deserialize_option("color", serialize_option("color", ColorSettings(remove_green=True)))
+    assert isinstance(cs, ColorSettings) and cs.remove_green is True
+
+
+def test_crop_serialize_drops_bounds():
+    val = serialize_option("crop", CropParams(bounds=(1, 2, 3, 4), aspect="1:1", rotate=90))
+    assert "bounds" not in val
+    cp = deserialize_option("crop", val)
+    assert cp.bounds is None and cp.aspect == "1:1" and cp.rotate == 90
+
+
+def test_recipe_from_entries_maps_and_skips():
+    entries = [("Crop", CropParams(bounds=(0, 5, 0, 5))), ("Stretch", 0.5),
+               ("Unknown Step", "x")]
+    r = recipe_from_entries(entries)
+    assert [s["stage"] for s in r.steps] == ["crop", "stretch"]
+
+
+def test_save_load_roundtrip(tmp_path):
+    r = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
+    p = tmp_path / "r.json"
+    save_recipe(r, str(p))
+    assert load_recipe(str(p)).steps == r.steps
