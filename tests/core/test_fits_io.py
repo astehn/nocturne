@@ -40,6 +40,24 @@ def test_all_zero_image_does_not_divide_by_zero(tmp_path):
     assert img.data.max() == 0.0
 
 
+def test_metadata_parsed_from_header(tmp_path):
+    from seestar_processor.core.fits_io import format_metadata
+    arr = np.random.randint(0, 4096, size=(3, 16, 16)).astype(np.uint16)
+    hdu = fits.PrimaryHDU(arr)
+    hdu.header["EXPTIME"] = 30.0
+    hdu.header["OBJECT"] = "M31"
+    hdu.header["STACKCNT"] = 120
+    p = tmp_path / "m.fits"
+    hdu.writeto(str(p), overwrite=True)
+    img = load_fits(str(p))
+    assert img.metadata["exposure"] == 30.0
+    assert img.metadata["target"] == "M31"
+    assert img.metadata["frames"] == 120
+    assert img.metadata["width"] == 16 and img.metadata["height"] == 16
+    summary = format_metadata(img.metadata)
+    assert "M31" in summary and "30" in summary
+
+
 def test_unsupported_3d_shape_raises(tmp_path):
     arr = np.zeros((5, 16, 16), dtype=np.uint16)
     p = tmp_path / "bad.fits"
