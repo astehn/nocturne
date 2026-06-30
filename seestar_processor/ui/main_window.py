@@ -19,14 +19,17 @@ from ..settings import (
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
 from ..steps.crop import CropStep
+from ..steps.levels import LevelsStep
 from ..steps.load import load_fits
 from ..steps.noise_sharpen import NoiseSharpenStep
 from ..steps.saturation_step import SaturationStep
+from ..steps.star_reduction import StarReductionStep
 from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
+from .histogram_view import HistogramView
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
@@ -92,6 +95,8 @@ class MainWindow(QMainWindow):
         right = QWidget()
         right.setMinimumWidth(260)
         self._right_layout = QVBoxLayout(right)
+        self.histogram_view = HistogramView()
+        self._right_layout.addWidget(self.histogram_view)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -213,8 +218,14 @@ class MainWindow(QMainWindow):
             return ColorStep()
         if stage_id == "stretch":
             return StretchStep()
+        if stage_id == "levels":
+            return LevelsStep()
         if stage_id == "saturation":
             return SaturationStep()
+        if stage_id == "star_reduction":
+            step = StarReductionStep(RCAstro(resolve_binary(self.settings.rcastro_path)))
+            step._runner = self._rc_runner
+            return step
         if stage_id == "noise_sharpen":
             rc = (RCAstro(resolve_binary(self.settings.rcastro_path))
                   if rcastro_valid(self.settings) else None)
@@ -276,7 +287,12 @@ class MainWindow(QMainWindow):
             h, w = result.data.shape[:2]
             self.log_panel.append_entry(format_log_entry(name, "", None, dims=(w, h)))
             return
-        label = f"{option:.2f}" if isinstance(option, float) else option
+        if stage_id in ("color", "levels"):
+            label = ""  # option is a settings object/tuple, not user-facing text
+        elif isinstance(option, float):
+            label = f"{option:.2f}"
+        else:
+            label = option
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
     def _set_busy(self, busy: bool) -> None:
@@ -417,6 +433,8 @@ class MainWindow(QMainWindow):
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
+        if stage.id == "star_reduction":
+            apply_enabled = loaded and rcastro_valid(self.settings)  # needs StarX
         if stage.id == "export_external":
             apply_enabled = loaded and rcastro_valid(self.settings)  # split option
         new_panel = build_panel(
@@ -446,6 +464,7 @@ class MainWindow(QMainWindow):
                 before, _ = self.project.before_after()
                 img = before
             self.image_view.set_image(to_qimage(img))
+            self.histogram_view.set_image(img)
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))

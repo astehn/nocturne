@@ -54,13 +54,36 @@ def test_background_off_enables_apply_without_graxpert(qtbot):
     assert w.disabled_note.isHidden() is False
 
 
-def test_auto_panel_emits_none(qtbot):
+def test_auto_panel_emits_color_settings_with_green(qtbot):
+    from seestar_processor.core.color import ColorSettings
     got = []
     w = build_panel(_stage("color"), on_apply=got.append)
     qtbot.addWidget(w)
     assert w.panel_kind == "auto"
+    w.remove_green_check.setChecked(True)
     w.apply_btn.click()
-    assert got == [None]
+    assert len(got) == 1 and isinstance(got[0], ColorSettings)
+    assert got[0].remove_green is True
+
+
+def test_levels_panel_emits_tuple(qtbot):
+    got = []
+    w = build_panel(_stage("levels"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "levels"
+    w.black_slider.setValue(20)
+    w.gamma_slider.setValue(150)
+    w.white_slider.setValue(90)
+    w.apply_btn.click()
+    assert got == [(0.20, 1.50, 0.90)]
+
+
+def test_star_reduction_gated_without_rcastro(qtbot):
+    w = build_panel(_stage("star_reduction"), on_apply=lambda o: None, apply_enabled=False)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "process"
+    assert w.apply_btn.isEnabled() is False
+    assert w.disabled_note.isHidden() is False
 
 
 def test_stretch_panel_slider_emits_amount(qtbot):

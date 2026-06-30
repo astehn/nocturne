@@ -23,8 +23,10 @@ _CORE = [
 
 _EXTERNAL_TAIL = [Stage("export_external", "Export", "export_external")]
 _IN_APP_TAIL = [
+    Stage("levels", "Levels", "levels"),
     Stage("saturation", "Saturation", "saturation"),
     Stage("noise_sharpen", "Noise & Sharpen", "process"),
+    Stage("star_reduction", "Star Reduction", "process"),
     Stage("export", "Export", "export"),
 ]
 
@@ -33,11 +35,14 @@ STEP_NAME = {
     "background": "Background",
     "color": "Color",
     "stretch": "Stretch",
+    "levels": "Levels",
     "saturation": "Saturation",
     "noise_sharpen": "Noise & Sharpen",
+    "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "crop", "background", "color", "stretch", "saturation", "noise_sharpen",
+    "crop", "background", "color", "stretch", "levels", "saturation",
+    "noise_sharpen", "star_reduction",
 ]
 
 
