@@ -14,15 +14,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [ ] **T2** Confirm the Stretch aggressiveness slider range feels right on real data.
 
 ## Processing features — quick wins (OSC essentials)
-- [ ] **Green-cast removal (SCNR).** Near-mandatory for one-shot-color data; was in the old
-      Final Fixes and got dropped in the spec refactor. Re-add a "remove green" toggle
-      (clamp green to the red/blue average). Small, high value.
-- [ ] **Histogram display + manual levels/curves.** Astro processing lives by the histogram;
-      answers "is my stretch/color right?" and pairs with the log (visual + numeric feedback).
-      Show a histogram of the current image; add a manual levels/curve control.
-- [ ] **Star reduction** (shrink stars, not just remove). Reuse the StarX split: separate
-      stars, shrink/dim them (e.g. morphological), recombine with the starless image. Beloved
-      finishing move with big aesthetic payoff.
+- [x] **Green-cast removal (SCNR)** — toggle in the Color step.
+- [x] **Histogram display + Levels** — live histogram widget + a Levels step (black/gamma/
+      white). (Full interactive curve editor still deferred.)
+- [x] **Star reduction** — Star Reduction step (StarX split → shrink/dim → recombine).
 
 ## Processing features — second tier
 - [ ] **Multi-session combine** — register + integrate several nights' stacked FITS of the

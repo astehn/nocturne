@@ -2,20 +2,29 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
+    QWidget,
 )
 
+from ..core.color import ColorSettings
 from ..core.crop import ASPECTS
 
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
+    "star_reduction": ["light", "medium", "strong"],
 }
 EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
 _DESCRIPTIONS = {
     "background": "Removes light-pollution gradients so the sky background is even.",
     "noise_sharpen": "Reduces grain and recovers fine detail.",
+    "star_reduction": "Shrinks stars so nebulosity stands out.",
+}
+# Inline "needs <tool>" note text per process stage that can be gated.
+_GATE_NOTE = {
+    "background": "Needs GraXpert — set its path in Settings.",
+    "star_reduction": "Needs RC-Astro — set its path in Settings.",
 }
 
 
@@ -117,7 +126,7 @@ def build_panel(
         box.addItems(_PROCESS_OPTIONS[stage.id])
         apply_btn = QPushButton(f"Apply {stage.label}")
         apply_btn.setObjectName("primary")
-        note = _desc_label("Needs GraXpert — set its path in Settings.")
+        note = _desc_label(_GATE_NOTE.get(stage.id, ""))
         note.setVisible(False)
 
         def _update_enabled(*_):
@@ -125,6 +134,9 @@ def build_panel(
                 off = box.currentText() == "off"
                 apply_btn.setEnabled(apply_enabled or off)
                 note.setVisible(not apply_enabled and not off)
+            elif stage.id in _GATE_NOTE:  # gated process stage (e.g. star_reduction)
+                apply_btn.setEnabled(apply_enabled)
+                note.setVisible(not apply_enabled)
             else:
                 apply_btn.setEnabled(apply_enabled)
 
@@ -142,14 +154,20 @@ def build_panel(
 
     elif stage.kind == "auto":
         lay.addWidget(_desc_label(
-            "Automatic background neutralization and white balance — no settings."
+            "Automatic background neutralization and white balance."
         ))
+        remove_green = QCheckBox("Remove green cast")
+        remove_green.setChecked(True)
         apply_btn = QPushButton("Apply Color")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(None))
+            apply_btn.clicked.connect(lambda: on_apply(
+                ColorSettings(remove_green=remove_green.isChecked())
+            ))
+        lay.addWidget(remove_green)
         lay.addWidget(apply_btn)
+        w.remove_green_check = remove_green
         w.apply_btn = apply_btn
 
     elif stage.kind == "stretch":
@@ -165,6 +183,35 @@ def build_panel(
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
         w.stretch_slider = slider
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "levels":
+        black = QSlider(Qt.Orientation.Horizontal)
+        black.setRange(0, 100)
+        black.setValue(0)
+        gamma = QSlider(Qt.Orientation.Horizontal)
+        gamma.setRange(10, 300)
+        gamma.setValue(100)  # 1.00
+        white = QSlider(Qt.Orientation.Horizontal)
+        white.setRange(0, 100)
+        white.setValue(100)
+        apply_btn = QPushButton("Apply Levels")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(
+                (black.value() / 100.0, gamma.value() / 100.0, white.value() / 100.0)
+            ))
+        lay.addWidget(QLabel("Black point"))
+        lay.addWidget(black)
+        lay.addWidget(QLabel("Midtones (gamma)"))
+        lay.addWidget(gamma)
+        lay.addWidget(QLabel("White point"))
+        lay.addWidget(white)
+        lay.addWidget(apply_btn)
+        w.black_slider = black
+        w.gamma_slider = gamma
+        w.white_slider = white
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":

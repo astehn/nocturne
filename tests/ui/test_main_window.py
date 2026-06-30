@@ -32,8 +32,8 @@ def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
 def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    seq = ["destination", "crop", "background", "color", "stretch",
-           "saturation", "noise_sharpen", "export"]
+    seq = ["destination", "crop", "background", "color", "stretch", "levels",
+           "saturation", "noise_sharpen", "star_reduction", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
@@ -114,10 +114,30 @@ def test_step_for_types(qtbot, tmp_path):
     from seestar_processor.steps.crop import CropStep
     from seestar_processor.steps.saturation_step import SaturationStep
     from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
+    from seestar_processor.steps.levels import LevelsStep
+    from seestar_processor.steps.star_reduction import StarReductionStep
     win = _window(qtbot, tmp_path)
     assert isinstance(win._step_for("crop"), CropStep)
     assert isinstance(win._step_for("saturation"), SaturationStep)
     assert isinstance(win._step_for("noise_sharpen"), NoiseSharpenStep)
+    assert isinstance(win._step_for("levels"), LevelsStep)
+    assert isinstance(win._step_for("star_reduction"), StarReductionStep)
+
+
+def test_apply_levels_stays_on_step_and_logs(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("levels")
+    win.apply_current((0.2, 1.0, 1.0))
+    assert win.current_stage_id() == "levels"
+    assert win.project.entries()[-1][0] == "Levels"
+    assert "Levels" in win.log_panel.text()
+
+
+def test_histogram_updates_on_open(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win.histogram_view._hist is not None
 
 
 def test_open_bad_file_does_not_crash(qtbot, tmp_path):

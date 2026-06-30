@@ -21,7 +21,7 @@ def test_in_app_path_has_cosmetic_then_export():
     ids = [s.id for s in path_stages("in_app")]
     assert ids == [
         "load", "destination", "crop", "background", "color", "stretch",
-        "saturation", "noise_sharpen", "export",
+        "levels", "saturation", "noise_sharpen", "star_reduction", "export",
     ]
 
 
@@ -35,6 +35,9 @@ def test_next_prev_enabled_on_stage_list():
 
 def test_step_name_and_order():
     assert STEP_NAME["noise_sharpen"] == "Noise & Sharpen"
+    assert STEP_NAME["levels"] == "Levels"
+    assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert PROCESSING_ORDER == [
-        "crop", "background", "color", "stretch", "saturation", "noise_sharpen",
+        "crop", "background", "color", "stretch", "levels", "saturation",
+        "noise_sharpen", "star_reduction",
     ]

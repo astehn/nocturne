@@ -37,3 +37,12 @@ def test_preserves_is_linear_and_dtype():
     assert out.is_linear is True
     assert out.data.dtype == np.float32
     assert out.data.max() <= 1.0 and out.data.min() >= 0.0
+
+
+def test_remove_green_clamps_green_excess():
+    data = np.full((8, 8, 3), 0.3, dtype=np.float32)
+    data[..., 1] = 0.8  # green excess
+    out = apply_color(AstroImage(data),
+                      ColorSettings(neutralize_background=False, white_balance=False,
+                                    remove_green=True))
+    assert out.data[..., 1].max() <= 0.3 + 1e-6  # clamped to (r+b)/2 = 0.3
