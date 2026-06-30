@@ -37,28 +37,64 @@ def test_open_fits_loads_and_advances_to_crop(qtbot, tmp_path):
     assert win.current_stage_id() == "crop"
 
 
-def test_next_walks_enabled_stages_and_skips_stars(qtbot, tmp_path):
+def test_next_walks_all_enabled_stages(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))           # at "crop"
     expected = ["background", "color", "deconvolution", "noise",
-                "stretch", "final_fixes", "export"]
+                "stretch", "final_fixes", "stars", "export"]
     for stage_id in expected:
         win.go_next()
         assert win.current_stage_id() == stage_id
-    win.go_next()                                  # clamp at end (stars skipped)
+    win.go_next()                                  # clamp at end
     assert win.current_stage_id() == "export"
 
 
-def test_back_skips_disabled_stages(qtbot, tmp_path):
+def test_back_walks_enabled_stages(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("export")
-    win.go_back()                                  # final_fixes (skips stars)
+    win.go_back()                                  # stars
+    assert win.current_stage_id() == "stars"
+    win.go_back()                                  # final_fixes
     assert win.current_stage_id() == "final_fixes"
     win.go_back()                                  # stretch
     assert win.current_stage_id() == "stretch"
-    win.go_back()                                  # noise
-    assert win.current_stage_id() == "noise"
+
+
+def test_stars_apply_disabled_without_rcastro(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stars")
+    assert win._panel.panel_kind == "stars"
+    assert win._panel.apply_btn.isEnabled() is False  # no RC-Astro configured
+
+
+def test_stars_remove_mode_replaces_image_and_stashes_stars(qtbot, tmp_path):
+    import os
+    from seestar_processor.settings import Settings, save_settings
+    # configure a (fake) RC-Astro path so the stars stage is enabled
+    rc_path = tmp_path / "rc-astro"
+    rc_path.write_text("#!/bin/sh\n")
+    save_settings(Settings(rcastro_path=str(rc_path)), str(tmp_path / "settings.json"))
+
+    win = _window(qtbot, tmp_path)
+
+    def fake_sxt(args):
+        out_path = args[args.index("-o") + 1]                       # starless
+        from seestar_processor.core.image import AstroImage
+        from seestar_processor.tools.base import write_temp_fits
+        cur = win.project.current()
+        write_temp_fits(AstroImage(cur.data * 0.7), out_path)
+        write_temp_fits(AstroImage(cur.data * 0.3),
+                        os.path.join(os.path.dirname(out_path), "starless-sxt.fits"))
+
+    win._rc_runner = fake_sxt
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stars")
+    assert win._panel.apply_btn.isEnabled() is True
+    win._apply_stars("Remove stars (keep editing)", False)
+    assert win._stars_image is not None                            # stars stashed
+    assert win.project.entries()[-1][0] == "Starless"             # starless in history
 
 
 def test_apply_crop_changes_dimensions_and_advances(qtbot, tmp_path):
@@ -107,6 +143,8 @@ def test_panel_matches_current_stage(qtbot, tmp_path):
     assert win._panel.panel_kind == "stretch"
     win.go_next()
     assert win._panel.panel_kind == "final_fixes"
+    win.go_next()
+    assert win._panel.panel_kind == "stars"
 
 
 def test_navigation_never_crashes_after_undo(qtbot, tmp_path):
@@ -120,6 +158,6 @@ def test_navigation_never_crashes_after_undo(qtbot, tmp_path):
     assert [n for n, _ in win.project.entries()] == ["Background", "Stretch"]
     win._undo()
     for sid in ("load", "crop", "background", "color", "deconvolution",
-                "noise", "stretch", "final_fixes", "export"):
+                "noise", "stretch", "final_fixes", "stars", "export"):
         win._go_to_id(sid)
     assert win.project is not None

@@ -35,6 +35,39 @@ class RCAstro:
     def denoise(self, img: AstroImage, strength: float, *, runner=run_cli) -> AstroImage:
         return self._run("nxt", img, ["--denoise", str(strength)], runner)
 
+    def remove_stars(
+        self, img: AstroImage, *, unscreen: bool = False, runner=run_cli
+    ) -> tuple[AstroImage, AstroImage]:
+        """Run StarXTerminator; return (starless, stars_only)."""
+        tmp = tempfile.mkdtemp(prefix="rc_")
+        in_fits = os.path.join(tmp, "in.fits")
+        out_fits = os.path.join(tmp, "starless.fits")
+        try:
+            write_temp_fits(img, in_fits)
+            args = [
+                self.binary_path, "--no-banner", "sxt",
+                in_fits, "-o", out_fits, "--overwrite", "--depth", "32F", "--stars",
+            ]
+            if unscreen:
+                args.append("--unscreen")
+            runner(args)
+            starless = read_fits_array(out_fits)
+            starless.is_linear = img.is_linear
+            stars_path = self._find_other(tmp, {in_fits, out_fits})
+            stars = read_fits_array(stars_path)
+            stars.is_linear = img.is_linear
+            return starless, stars
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def _find_other(tmp: str, exclude: set[str]) -> str:
+        for name in sorted(os.listdir(tmp)):
+            path = os.path.join(tmp, name)
+            if path not in exclude and name.lower().endswith(_IMAGE_EXTS):
+                return path
+        raise FileNotFoundError(f"StarXTerminator produced no stars image in {tmp}")
+
     def _run(self, product: str, img: AstroImage, extra: list[str], runner) -> AstroImage:
         tmp = tempfile.mkdtemp(prefix="rc_")
         in_fits = os.path.join(tmp, "in.fits")

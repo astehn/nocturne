@@ -20,7 +20,7 @@ PIPELINE: list[Stage] = [
     Stage("noise", "Noise", "process", True),
     Stage("stretch", "Stretch", "stretch", True),
     Stage("final_fixes", "Final Fixes", "final_fixes", True),
-    Stage("stars", "Starless / Stars", "placeholder", False),
+    Stage("stars", "Starless / Stars", "stars", True),
     Stage("export", "Export", "export", True),
 ]
 

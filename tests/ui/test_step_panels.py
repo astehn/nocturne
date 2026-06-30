@@ -37,9 +37,21 @@ def test_apply_disabled_when_requested(qtbot):
 
 
 def test_placeholder_panel(qtbot):
-    w = build_panel(_stage("stars"))
+    from seestar_processor.ui.pipeline import Stage
+    w = build_panel(Stage("future", "Future", "placeholder", False))
     qtbot.addWidget(w)
     assert w.panel_kind == "placeholder"
+
+
+def test_stars_panel_emits_mode_and_unscreen(qtbot):
+    got = []
+    w = build_panel(_stage("stars"), on_stars=lambda mode, uns: got.append((mode, uns)))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "stars"
+    w.mode_box.setCurrentText("Remove stars (keep editing)")
+    w.unscreen_check.setChecked(True)
+    w.apply_btn.click()
+    assert got == [("Remove stars (keep editing)", True)]
 
 
 def test_final_fixes_panel_emits_settings(qtbot):

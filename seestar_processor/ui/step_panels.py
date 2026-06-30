@@ -12,12 +12,16 @@ OPTIONS = ["Small", "Medium", "Large"]
 ROTATIONS = ["0°", "90°", "180°", "270°"]
 
 
+STARS_MODES = ["Split & export both", "Remove stars (keep editing)"]
+
+
 def build_panel(
     stage,
     *,
     on_open=None,
     on_apply=None,
     on_export=None,
+    on_stars=None,
     apply_enabled: bool = True,
     option_default: str = "Medium",
 ) -> QWidget:
@@ -135,6 +139,29 @@ def build_panel(
         w.saturation_box = saturation
         w.increase_blue_check = increase_blue
         w.sky_box = sky
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "stars":
+        mode = QComboBox()
+        mode.addItems(STARS_MODES)
+        unscreen = QCheckBox("Unscreen stars")
+        apply_btn = QPushButton("Apply")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+
+        def _emit_stars():
+            if on_stars is not None:
+                on_stars(mode.currentText(), unscreen.isChecked())
+
+        apply_btn.clicked.connect(_emit_stars)
+        lay.addWidget(QLabel("Mode"))
+        lay.addWidget(mode)
+        lay.addWidget(unscreen)
+        lay.addWidget(apply_btn)
+        if not apply_enabled:
+            lay.addWidget(QLabel("Requires RC-Astro (set its path in Settings)."))
+        w.mode_box = mode
+        w.unscreen_check = unscreen
         w.apply_btn = apply_btn
 
     elif stage.kind in ("process", "stretch"):
