@@ -1,7 +1,16 @@
+import os
+
 import numpy as np
 from seestar_processor.core.image import AstroImage
 from seestar_processor.tools.base import write_temp_fits
 from seestar_processor.tools.graxpert import GraXpert
+
+
+def _writes_output(img, factor):
+    def fake_runner(args):
+        out_path = args[args.index("-output") + 1]
+        write_temp_fits(AstroImage(img.data * factor), out_path)
+    return fake_runner
 
 
 def test_background_extraction_invokes_cli_and_reads_output(tmp_path):
@@ -9,16 +18,54 @@ def test_background_extraction_invokes_cli_and_reads_output(tmp_path):
     captured = {}
 
     def fake_runner(args):
-        # GraXpert command shape: -output gives a stem; tool writes <stem>.fits
         captured["args"] = args
-        out_stem = args[args.index("-output") + 1]
-        # Simulate GraXpert producing a darker background-removed file.
-        write_temp_fits(AstroImage(img.data * 0.5), out_stem + ".fits")
+        out_path = args[args.index("-output") + 1]
+        write_temp_fits(AstroImage(img.data * 0.5), out_path)
 
     gx = GraXpert(binary_path="/fake/graxpert")
     result = gx.background_extraction(img, strength=0.5, runner=fake_runner)
 
-    assert "background-extraction" in captured["args"]
     assert captured["args"][0] == "/fake/graxpert"
+    assert "-cli" in captured["args"]                       # mandatory for CLI use
+    assert "background-extraction" in captured["args"]
     assert result.data.shape == (8, 8, 3)
     assert np.allclose(result.data, img.data * 0.5, atol=1e-5)
+
+
+def test_denoise_uses_denoising_command():
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+    captured = {}
+
+    def fake_runner(args):
+        captured["args"] = args
+        out_path = args[args.index("-output") + 1]
+        write_temp_fits(AstroImage(img.data * 0.9), out_path)
+
+    gx = GraXpert(binary_path="/fake/graxpert")
+    result = gx.denoise(img, strength=0.5, runner=fake_runner)
+
+    assert "-cli" in captured["args"]
+    assert "denoising" in captured["args"]
+    assert result.data.shape == (8, 8, 3)
+
+
+def test_finds_output_with_unexpected_name():
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+
+    def fake_runner(args):
+        # GraXpert writes a differently-named file (not the requested -output).
+        out_path = args[args.index("-output") + 1]
+        alt = os.path.join(os.path.dirname(out_path), "in_GraXpert.fits")
+        write_temp_fits(AstroImage(img.data * 0.3), alt)
+
+    gx = GraXpert(binary_path="/fake/graxpert")
+    result = gx.background_extraction(img, strength=0.2, runner=fake_runner)
+    assert result.data.shape == (8, 8, 3)
+    assert np.allclose(result.data, img.data * 0.3, atol=1e-5)
+
+
+def test_preserves_is_linear():
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
+    gx = GraXpert(binary_path="/fake/graxpert")
+    out = gx.background_extraction(img, 0.5, runner=_writes_output(img.copy(), 0.7))
+    assert out.is_linear is True

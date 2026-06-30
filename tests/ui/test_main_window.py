@@ -10,9 +10,10 @@ from seestar_processor.ui.main_window import MainWindow  # noqa: E402
 
 def _fake_bg_runner(args):
     """Stand in for the GraXpert CLI: copy the input FITS to the output path."""
-    in_fits = args[3]
-    out_stem = args[args.index("-output") + 1]
-    shutil.copy(in_fits, out_stem + ".fits")
+    import os
+    in_fits = next(a for a in args if a.endswith(".fits") and os.path.exists(a))
+    out_path = args[args.index("-output") + 1]
+    shutil.copy(in_fits, out_path)
 
 
 def _make_fits(tmp_path):
