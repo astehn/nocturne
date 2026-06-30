@@ -17,7 +17,15 @@ def test_autostretch_brightens_dark_image_without_mutating():
     assert np.allclose(img.data, data)
 
 
-def test_autostretch_color_per_channel_without_mutating():
+def test_linked_autostretch_preserves_color_ratio():
+    data = np.full((8, 8, 3), 0.05, dtype=np.float32)
+    data[..., 1] *= 0.5  # green darker -> a colour cast
+    out = autostretch(AstroImage(data.copy()))
+    # linked stretch keeps green below red (cast preserved, not neutralized)
+    assert out[..., 1].mean() < out[..., 0].mean() - 1e-3
+
+
+def test_autostretch_color_does_not_mutate():
     data = np.full((8, 8, 3), 0.02, dtype=np.float32)
     data[0, 0, :] = 0.9
     img = AstroImage(data.copy())
