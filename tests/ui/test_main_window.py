@@ -42,7 +42,9 @@ def test_next_skips_disabled_stages(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))           # at "crop"
     win.go_next()                                  # background
     assert win.current_stage_id() == "background"
-    win.go_next()                                  # skips color/decon/noise
+    win.go_next()                                  # color
+    assert win.current_stage_id() == "color"
+    win.go_next()                                  # skips decon/noise
     assert win.current_stage_id() == "stretch"
     win.go_next()
     assert win.current_stage_id() == "export"
@@ -54,6 +56,8 @@ def test_back_skips_disabled_stages(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
+    win.go_back()                                  # color
+    assert win.current_stage_id() == "color"
     win.go_back()                                  # background
     assert win.current_stage_id() == "background"
     win.go_back()                                  # crop
@@ -99,6 +103,8 @@ def test_panel_matches_current_stage(qtbot, tmp_path):
     win.go_next()
     assert win._panel.panel_kind == "process"     # background
     win.go_next()
+    assert win._panel.panel_kind == "color"       # color
+    win.go_next()
     assert win._panel.panel_kind == "stretch"
 
 
@@ -107,10 +113,11 @@ def test_navigation_never_crashes_after_undo(qtbot, tmp_path):
     win._bg_runner = _fake_bg_runner               # no real GraXpert binary
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
-    win.apply_current("Small")                     # background -> stretch
+    win.apply_current("Small")                     # background -> color
+    win._go_to_id("stretch")
     win.apply_current("Medium")                    # stretch -> export
     assert [n for n, _ in win.project.entries()] == ["Background", "Stretch"]
     win._undo()
-    for sid in ("load", "crop", "background", "stretch", "export"):
+    for sid in ("load", "crop", "background", "color", "stretch", "export"):
         win._go_to_id(sid)
     assert win.project is not None

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
+from ..core.color import ColorSettings
 from ..core.crop import ASPECTS, TRIMS, CropSettings
 
 OPTIONS = ["Small", "Medium", "Large"]
@@ -72,6 +73,30 @@ def build_panel(
         w.rotate_box = rotate
         w.flip_h_check = flip_h
         w.flip_v_check = flip_v
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "color":
+        neutralize = QCheckBox("Neutralize background")
+        neutralize.setChecked(True)
+        wb = QCheckBox("Auto white balance")
+        wb.setChecked(True)
+        apply_btn = QPushButton("Apply Color")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+
+        def _emit_color():
+            if on_apply is not None:
+                on_apply(ColorSettings(
+                    neutralize_background=neutralize.isChecked(),
+                    white_balance=wb.isChecked(),
+                ))
+
+        apply_btn.clicked.connect(_emit_color)
+        lay.addWidget(neutralize)
+        lay.addWidget(wb)
+        lay.addWidget(apply_btn)
+        w.neutralize_check = neutralize
+        w.wb_check = wb
         w.apply_btn = apply_btn
 
     elif stage.kind in ("process", "stretch"):

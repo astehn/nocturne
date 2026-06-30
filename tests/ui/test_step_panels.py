@@ -37,7 +37,7 @@ def test_apply_disabled_when_requested(qtbot):
 
 
 def test_placeholder_panel(qtbot):
-    w = build_panel(_stage("color"))
+    w = build_panel(_stage("deconvolution"))
     qtbot.addWidget(w)
     assert w.panel_kind == "placeholder"
 

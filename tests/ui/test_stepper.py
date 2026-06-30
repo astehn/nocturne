@@ -23,7 +23,7 @@ def test_clicking_disabled_stage_emits_nothing(qtbot):
     qtbot.addWidget(step)
     received = []
     step.stageSelected.connect(received.append)
-    step._on_click(step.item(_index("color")))
+    step._on_click(step.item(_index("deconvolution")))
     assert received == []
 
 
