@@ -11,6 +11,7 @@ from .image import AstroImage
 class ColorSettings:
     neutralize_background: bool = True
     white_balance: bool = True
+    remove_green: bool = False
 
 
 def apply_color(img: AstroImage, settings: ColorSettings) -> AstroImage:
@@ -34,5 +35,10 @@ def apply_color(img: AstroImage, settings: ColorSettings) -> AstroImage:
         for c in range(3):
             if means[c] > 1e-6:
                 data[..., c] = np.clip(data[..., c] * (gray / means[c]), 0.0, 1.0)
+
+    if settings.remove_green:
+        # SCNR (average neutral): clamp green to the red/blue average.
+        avg_rb = (data[..., 0] + data[..., 2]) / 2.0
+        data[..., 1] = np.minimum(data[..., 1], avg_rb)
 
     return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
