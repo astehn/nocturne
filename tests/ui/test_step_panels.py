@@ -1,90 +1,88 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QPushButton  # noqa: E402
-from seestar_processor.ui.pipeline import PIPELINE  # noqa: E402
+from seestar_processor.ui.pipeline import path_stages  # noqa: E402
 from seestar_processor.ui.step_panels import build_panel  # noqa: E402
 
 
-def _stage(stage_id):
-    return next(s for s in PIPELINE if s.id == stage_id)
+def _stage(stage_id, dest="in_app"):
+    return next(s for s in path_stages(dest) if s.id == stage_id)
 
 
-def test_load_panel_has_open_button(qtbot):
+def test_import_panel_has_open_and_meta(qtbot):
     clicked = []
     w = build_panel(_stage("load"), on_open=lambda: clicked.append(True))
     qtbot.addWidget(w)
-    assert w.panel_kind == "load"
-    btn = w.findChild(QPushButton)
-    btn.click()
-    assert clicked == [True]
+    assert w.panel_kind == "import"
+    assert hasattr(w, "meta_label")
 
 
-def test_process_panel_apply_passes_option(qtbot):
+def test_destination_panel_emits_choice(qtbot):
     got = []
-    w = build_panel(_stage("background"), on_apply=got.append, option_default="Large")
+    w = build_panel(_stage("destination"), on_destination=got.append)
     qtbot.addWidget(w)
-    assert w.panel_kind == "process"
-    assert w.option_box.currentText() == "Large"
-    w.apply_btn.click()
-    assert got == ["Large"]
+    w.external_radio.setChecked(True)
+    assert got[-1] == "external"
 
 
-def test_apply_disabled_when_requested(qtbot):
-    w = build_panel(_stage("background"), on_apply=lambda o: None, apply_enabled=False)
-    qtbot.addWidget(w)
-    assert w.apply_btn.isEnabled() is False
-
-
-def test_placeholder_panel(qtbot):
-    from seestar_processor.ui.pipeline import Stage
-    w = build_panel(Stage("future", "Future", "placeholder", False))
-    qtbot.addWidget(w)
-    assert w.panel_kind == "placeholder"
-
-
-def test_stars_panel_emits_mode_and_unscreen(qtbot):
-    got = []
-    w = build_panel(_stage("stars"), on_stars=lambda mode, uns: got.append((mode, uns)))
-    qtbot.addWidget(w)
-    assert w.panel_kind == "stars"
-    w.mode_box.setCurrentText("Remove stars (keep editing)")
-    w.unscreen_check.setChecked(True)
-    w.apply_btn.click()
-    assert got == [("Remove stars (keep editing)", True)]
-
-
-def test_final_fixes_panel_emits_settings(qtbot):
-    from seestar_processor.core.final_fixes import FinalFixesSettings
-    got = []
-    w = build_panel(_stage("final_fixes"), on_apply=got.append)
-    qtbot.addWidget(w)
-    assert w.panel_kind == "final_fixes"
-    w.remove_green_check.setChecked(True)
-    w.saturation_box.setCurrentText("Strong")
-    w.increase_blue_check.setChecked(True)
-    w.sky_box.setCurrentText("Darker")
-    w.apply_btn.click()
-    assert len(got) == 1
-    s = got[0]
-    assert isinstance(s, FinalFixesSettings)
-    assert s.remove_green and s.saturation == "Strong"
-    assert s.increase_blue and s.sky == "Darker"
-
-
-def test_crop_panel_emits_settings(qtbot):
-    from seestar_processor.core.crop import CropSettings
+def test_crop_panel_emits_margin(qtbot):
     got = []
     w = build_panel(_stage("crop"), on_apply=got.append)
     qtbot.addWidget(w)
-    assert w.panel_kind == "crop"
-    w.aspect_box.setCurrentText("1:1")
-    w.trim_box.setCurrentText("10%")
-    w.rotate_box.setCurrentText("90°")
-    w.flip_h_check.setChecked(True)
+    w.margin_slider.setValue(10)
     w.apply_btn.click()
-    assert len(got) == 1
-    s = got[0]
-    assert isinstance(s, CropSettings)
-    assert s.aspect == "1:1" and s.trim == "10%" and s.rotate == 90
-    assert s.flip_h is True and s.flip_v is False
+    assert got == [0.10]
+
+
+def test_process_panel_background_options(qtbot):
+    got = []
+    w = build_panel(_stage("background"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert [w.option_box.itemText(i) for i in range(w.option_box.count())] == \
+        ["off", "light", "strong"]
+    w.option_box.setCurrentText("strong")
+    w.apply_btn.click()
+    assert got == ["strong"]
+
+
+def test_auto_panel_emits_none(qtbot):
+    got = []
+    w = build_panel(_stage("color"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "auto"
+    w.apply_btn.click()
+    assert got == [None]
+
+
+def test_stretch_panel_presets(qtbot):
+    got = []
+    w = build_panel(_stage("stretch"), on_apply=got.append)
+    qtbot.addWidget(w)
+    w.option_box.setCurrentText("punchy")
+    w.apply_btn.click()
+    assert got == ["punchy"]
+
+
+def test_saturation_panel_emits_amount(qtbot):
+    got = []
+    w = build_panel(_stage("saturation"), on_apply=got.append)
+    qtbot.addWidget(w)
+    w.sat_slider.setValue(50)
+    w.apply_btn.click()
+    assert got == [0.50]
+
+
+def test_export_external_split_disabled_without_rcastro(qtbot):
+    w = build_panel(_stage("export_external", "external"), apply_enabled=False)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "export_external"
+    assert w.fmt_box.model().item(1).isEnabled() is False
+
+
+def test_export_panel_formats(qtbot):
+    got = []
+    w = build_panel(_stage("export"), on_export=got.append)
+    qtbot.addWidget(w)
+    w.fmt_box.setCurrentText("PNG")
+    w.export_btn.click()
+    assert got == ["PNG"]

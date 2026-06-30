@@ -1,55 +1,40 @@
 from seestar_processor.ui.pipeline import (
-    PIPELINE, next_enabled, prev_enabled, STEP_NAME, PROCESSING_ORDER,
+    core_stages, path_stages, next_enabled, prev_enabled, STEP_NAME, PROCESSING_ORDER,
 )
 
 
-def _index(stage_id):
-    return next(i for i, s in enumerate(PIPELINE) if s.id == stage_id)
-
-
-def test_pipeline_order_and_enablement():
-    ids = [s.id for s in PIPELINE]
-    assert ids == [
-        "load", "crop", "background", "color", "deconvolution",
-        "noise", "stretch", "final_fixes", "stars", "export",
+def test_core_stages_shared_prefix():
+    assert [s.id for s in core_stages()] == [
+        "load", "destination", "crop", "background", "color", "stretch",
     ]
-    enabled = {s.id for s in PIPELINE if s.enabled}
-    assert enabled == {s.id for s in PIPELINE}  # every stage is implemented
 
 
-def test_next_enabled_skips_disabled_and_clamps():
-    assert next_enabled(_index("load")) == _index("crop")
-    assert next_enabled(_index("crop")) == _index("background")
-    assert next_enabled(_index("background")) == _index("color")
-    assert next_enabled(_index("color")) == _index("deconvolution")
-    assert next_enabled(_index("deconvolution")) == _index("noise")
-    assert next_enabled(_index("noise")) == _index("stretch")
-    assert next_enabled(_index("stretch")) == _index("final_fixes")
-    assert next_enabled(_index("final_fixes")) == _index("stars")
-    assert next_enabled(_index("stars")) == _index("export")
-    last = _index("export")
-    assert next_enabled(last) == last  # clamp at end
+def test_external_path_stops_after_stretch_with_export():
+    ids = [s.id for s in path_stages("external")]
+    assert ids == [
+        "load", "destination", "crop", "background", "color", "stretch",
+        "export_external",
+    ]
 
 
-def test_prev_enabled_skips_disabled_and_clamps():
-    assert prev_enabled(_index("export")) == _index("stars")
-    assert prev_enabled(_index("stars")) == _index("final_fixes")
-    assert prev_enabled(_index("final_fixes")) == _index("stretch")
-    assert prev_enabled(_index("stretch")) == _index("noise")
-    assert prev_enabled(_index("noise")) == _index("deconvolution")
-    assert prev_enabled(_index("deconvolution")) == _index("color")
-    assert prev_enabled(_index("color")) == _index("background")
-    assert prev_enabled(_index("background")) == _index("crop")
-    assert prev_enabled(_index("crop")) == _index("load")
-    assert prev_enabled(_index("load")) == _index("load")  # clamp at start
+def test_in_app_path_has_cosmetic_then_export():
+    ids = [s.id for s in path_stages("in_app")]
+    assert ids == [
+        "load", "destination", "crop", "background", "color", "stretch",
+        "saturation", "noise_sharpen", "export",
+    ]
+
+
+def test_next_prev_enabled_on_stage_list():
+    stages = path_stages("in_app")
+    assert next_enabled(stages, 0) == 1
+    assert next_enabled(stages, len(stages) - 1) == len(stages) - 1  # clamp
+    assert prev_enabled(stages, 0) == 0  # clamp
+    assert prev_enabled(stages, 3) == 2
 
 
 def test_step_name_and_order():
-    assert STEP_NAME == {
-        "crop": "Crop", "background": "Background", "color": "Color",
-        "deconvolution": "Deconvolution", "noise": "Noise",
-        "stretch": "Stretch", "final_fixes": "Final Fixes",
-    }
+    assert STEP_NAME["noise_sharpen"] == "Noise & Sharpen"
     assert PROCESSING_ORDER == [
-        "crop", "background", "color", "deconvolution", "noise", "stretch", "final_fixes",
+        "crop", "background", "color", "stretch", "saturation", "noise_sharpen",
     ]

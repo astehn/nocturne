@@ -9,10 +9,14 @@ _SIGMA = 2.8
 
 
 def _mtf(m: float, x: np.ndarray) -> np.ndarray:
-    # Midtones transfer function (PixInsight/Siril style).
+    # Midtones transfer function (PixInsight/Siril style). np.where evaluates
+    # both branches, so a near-zero denominator can warn even though the result
+    # is masked/clipped downstream — silence that spurious warning.
     num = (m - 1.0) * x
     den = (2.0 * m - 1.0) * x - m
-    return np.where(x == 0, 0.0, np.where(x == 1, 1.0, num / den))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = num / den
+    return np.where(x == 0, 0.0, np.where(x == 1, 1.0, ratio))
 
 
 def _stretch_channel(c: np.ndarray) -> np.ndarray:

@@ -6,48 +6,28 @@ from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QMainWindow, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..core.export import save_jpeg, save_tiff
+from ..core.export import save_fits, save_jpeg, save_png, save_tiff
+from ..core.fits_io import format_metadata
 from ..history.project import Project
-from ..history.step import Step
 from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
-from ..steps.crop import CropStep
-from ..steps.deconvolution import DeconvolutionStep
-from ..steps.final_fixes import FinalFixesStep
+from ..steps.crop_auto import CropAutoStep
 from ..steps.load import load_fits
-from ..steps.noise import NoiseStep
+from ..steps.noise_sharpen import NoiseSharpenStep
+from ..steps.saturation_step import SaturationStep
 from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from .image_view import ImageView
-from .pipeline import PIPELINE, PROCESSING_ORDER, STEP_NAME, next_enabled, prev_enabled
+from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
 from .stepper import Stepper
 
-
-def _stage_index(stage_id: str) -> int:
-    return next(i for i, s in enumerate(PIPELINE) if s.id == stage_id)
-
-
-class _PrecomputedStep(Step):
-    """Pushes an already-computed image into the history (e.g. the starless result)."""
-
-    def __init__(self, name: str, image) -> None:
-        self.name = name
-        self._image = image
-
-    def options(self) -> list[str]:
-        return []
-
-    def default_option(self) -> str:
-        return ""
-
-    def apply(self, img, option):
-        return self._image
+_STRETCH_LABEL = {"gentle": "Small", "balanced": "Medium", "punchy": "Large"}
 
 
 class MainWindow(QMainWindow):
@@ -58,17 +38,19 @@ class MainWindow(QMainWindow):
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
+        self.destination = "in_app"
+        self._stages = path_stages(self.destination)
         self._stage = 0
         self._before_after = False
-        self._bg_runner = run_cli  # injectable for tests / future config
-        self._rc_runner = run_cli  # RC-Astro subprocess runner (injectable)
-        self._stars_image = None   # stashed stars-only layer for separate export
+        self._bg_runner = run_cli
+        self._rc_runner = run_cli
 
         central = QWidget()
         root = QHBoxLayout(central)
 
         self.stepper = Stepper()
         self.stepper.setMaximumWidth(200)
+        self.stepper.set_stages(self._stages)
         self.stepper.stageSelected.connect(self._go_to)
         root.addWidget(self.stepper)
 
@@ -76,7 +58,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.image_view, 1)
 
         right = QWidget()
-        right.setMinimumWidth(240)
+        right.setMinimumWidth(260)
         self._right_layout = QVBoxLayout(right)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
@@ -105,29 +87,42 @@ class MainWindow(QMainWindow):
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
-        self._export_stars_act = tb.addAction("Export Stars", self._export_stars_layer)
         tb.addAction("Fit", self.image_view.fit)
         tb.addAction("100%", self.image_view.actual_size)
 
     # --- navigation ---
     def current_stage_id(self) -> str:
-        return PIPELINE[self._stage].id
+        return self._stages[self._stage].id
 
     def go_next(self) -> None:
-        self._go_to(next_enabled(self._stage))
+        self._go_to(next_enabled(self._stages, self._stage))
 
     def go_back(self) -> None:
-        self._go_to(prev_enabled(self._stage))
+        self._go_to(prev_enabled(self._stages, self._stage))
 
     def _go_to(self, index: int) -> None:
-        if not PIPELINE[index].enabled:
+        if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
         self._stage = index
         self._rebuild_panel()
         self._refresh()
 
     def _go_to_id(self, stage_id: str) -> None:
-        self._go_to(_stage_index(stage_id))
+        for i, s in enumerate(self._stages):
+            if s.id == stage_id:
+                self._go_to(i)
+                return
+
+    # --- destination branch ---
+    def set_destination(self, dest: str) -> None:
+        if dest == self.destination:
+            return
+        self.destination = dest
+        self._stages = path_stages(dest)
+        self._stage = min(self._stage, len(self._stages) - 1)
+        self.stepper.set_stages(self._stages)
+        self._rebuild_panel()
+        self._refresh()
 
     # --- file / project ---
     def _choose_fits(self) -> None:
@@ -139,40 +134,39 @@ class MainWindow(QMainWindow):
         base = load_fits(path)
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
-        self._go_to(next_enabled(_stage_index("load")))  # advance Load -> Background
+        self._go_to_id("load")  # stay on Import & assess so the user sees metadata
+        self._rebuild_panel()
+        self._refresh()
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
         if stage_id == "crop":
-            return CropStep()
-        if stage_id == "color":
-            return ColorStep()
-        if stage_id in ("deconvolution", "noise"):
-            rc = RCAstro(self.settings.rcastro_path) if rcastro_valid(self.settings) else None
-            step = DeconvolutionStep(rc) if stage_id == "deconvolution" else NoiseStep(rc)
-            step._runner = self._rc_runner
-            return step
-        if stage_id == "final_fixes":
-            return FinalFixesStep()
+            return CropAutoStep()
         if stage_id == "background":
             step = BackgroundStep(GraXpert(self.settings.graxpert_path))
             step._runner = self._bg_runner
             return step
+        if stage_id == "color":
+            return ColorStep()
         if stage_id == "stretch":
             return StretchStep()
+        if stage_id == "saturation":
+            return SaturationStep()
+        if stage_id == "noise_sharpen":
+            rc = RCAstro(self.settings.rcastro_path) if rcastro_valid(self.settings) else None
+            step = NoiseSharpenStep(rc)
+            step._runner = self._rc_runner
+            return step
         raise ValueError(stage_id)
 
-    def apply_current(self, option: str) -> None:
+    def apply_current(self, option) -> None:
         if self.project is None:
             return
-        stage_id = PIPELINE[self._stage].id
+        stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
-        # Truncate history to the entries for processing stages that come BEFORE
-        # this one and are actually applied, so a re-apply replaces (not
-        # duplicates) this stage and drops anything after it. Counting applied
-        # predecessors (not the nominal index) keeps it correct when an earlier
-        # stage was skipped.
+        if stage_id == "stretch":
+            option = _STRETCH_LABEL.get(option, "Medium")
         preceding = {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
@@ -180,7 +174,7 @@ class MainWindow(QMainWindow):
         target = sum(1 for name, _ in self.project.entries() if name in preceding)
         self.project.jump_back(target)
         self.project.run_step(self._step_for(stage_id), option)
-        self._go_to(next_enabled(self._stage))
+        self._go_to(next_enabled(self._stages, self._stage))
 
     # --- history ---
     def _undo(self) -> None:
@@ -197,59 +191,50 @@ class MainWindow(QMainWindow):
         self._before_after = self._ba_act.isChecked()
         self._refresh()
 
-    # --- export ---
-    def _export_current(self, fmt: str) -> None:
-        if not self.project:
-            return
-        path, selected = QFileDialog.getSaveFileName(
-            self, "Export", "", "TIFF (*.tiff);;JPEG (*.jpg)"
-        )
-        if not path:
+    # --- exports ---
+    def export_external(self, choice: str) -> None:
+        if self.project is None:
             return
         img = self.project.current()
-        wants_jpeg = "JPEG" in fmt or path.lower().endswith((".jpg", ".jpeg"))
-        if wants_jpeg:
-            if not path.lower().endswith((".jpg", ".jpeg")):
-                path += ".jpg"
-            save_jpeg(img, path)
+        if choice.startswith("Two"):
+            if not rcastro_valid(self.settings):
+                return
+            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
+            if not folder:
+                return
+            rc = RCAstro(self.settings.rcastro_path)
+            starless, stars = rc.remove_stars(img, runner=self._rc_runner)
+            save_tiff(starless, os.path.join(folder, "starless.tif"))
+            save_tiff(stars, os.path.join(folder, "stars.tif"))
         else:
+            path, _ = QFileDialog.getSaveFileName(self, "Export TIFF", "", "TIFF (*.tiff)")
+            if not path:
+                return
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
             save_tiff(img, path)
 
-    # --- starless / stars ---
-    def _apply_stars(self, mode: str, unscreen: bool) -> None:
-        if self.project is None or not rcastro_valid(self.settings):
-            return
-        rc = RCAstro(self.settings.rcastro_path)
-        starless, stars = rc.remove_stars(
-            self.project.current(), unscreen=unscreen, runner=self._rc_runner
-        )
-        self._stars_image = stars
-        if mode.startswith("Split"):
-            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
-            if folder:
-                save_tiff(starless, os.path.join(folder, "starless.tif"))
-                save_tiff(stars, os.path.join(folder, "stars.tif"))
-        else:  # Remove stars (keep editing)
-            self.project.run_step(_PrecomputedStep("Starless", starless), None)
-        self._rebuild_panel()
-        self._refresh()
-
-    def _export_stars_layer(self) -> None:
-        if self._stars_image is None:
+    def export_final(self, fmt: str) -> None:
+        if self.project is None:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export Stars", "", "TIFF (*.tiff);;JPEG (*.jpg)"
+            self, "Export", "", "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
         )
         if not path:
             return
-        if path.lower().endswith((".jpg", ".jpeg")):
-            save_jpeg(self._stars_image, path)
+        img = self.project.current()
+        if fmt == "PNG":
+            if not path.lower().endswith(".png"):
+                path += ".png"
+            save_png(img, path)
+        elif fmt == "FITS":
+            if not path.lower().endswith((".fits", ".fit")):
+                path += ".fits"
+            save_fits(img, path)
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            save_tiff(self._stars_image, path)
+            save_tiff(img, path)
 
     # --- settings ---
     def _open_settings(self) -> None:
@@ -262,20 +247,24 @@ class MainWindow(QMainWindow):
 
     # --- rendering ---
     def _rebuild_panel(self) -> None:
-        stage = PIPELINE[self._stage]
-        apply_enabled = self.project is not None
+        stage = self._stages[self._stage]
+        loaded = self.project is not None
+        apply_enabled = loaded
         if stage.id == "background":
-            apply_enabled = apply_enabled and graxpert_valid(self.settings)
-        if stage.id == "stars":
-            apply_enabled = apply_enabled and rcastro_valid(self.settings)
+            apply_enabled = loaded and graxpert_valid(self.settings)
+        if stage.id == "export_external":
+            apply_enabled = loaded and rcastro_valid(self.settings)  # split option
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
+            on_destination=self.set_destination,
             on_apply=self.apply_current,
-            on_export=self._export_current,
-            on_stars=self._apply_stars,
+            on_export_external=self.export_external,
+            on_export=self.export_final,
             apply_enabled=apply_enabled,
         )
+        if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
+            new_panel.meta_label.setText(format_metadata(self.project.current().metadata))
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel
@@ -289,11 +278,10 @@ class MainWindow(QMainWindow):
                 before, _ = self.project.before_after()
                 img = before
             self.image_view.set_image(to_qimage(img))
-        self._back_btn.setEnabled(prev_enabled(self._stage) != self._stage)
-        self._next_btn.setEnabled(next_enabled(self._stage) != self._stage)
+        self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
+        self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
-        self._export_stars_act.setEnabled(self._stars_image is not None)
 
     def _done_ids(self) -> set:
         done = set()
@@ -304,6 +292,4 @@ class MainWindow(QMainWindow):
         for sid, name in STEP_NAME.items():
             if name in applied:
                 done.add(sid)
-        if self._stars_image is not None:
-            done.add("stars")
         return done

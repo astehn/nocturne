@@ -14,5 +14,6 @@ class ColorStep(Step):
     def default_option(self) -> str:
         return ""
 
-    def apply(self, img: AstroImage, option: ColorSettings) -> AstroImage:
-        return apply_color(img, option)
+    def apply(self, img: AstroImage, option: ColorSettings | None = None) -> AstroImage:
+        # Color calibration is automatic; the UI passes None.
+        return apply_color(img, option or ColorSettings())

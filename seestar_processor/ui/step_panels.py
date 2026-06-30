@@ -1,173 +1,82 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QButtonGroup, QComboBox, QLabel, QPushButton, QRadioButton, QSlider,
+    QVBoxLayout, QWidget,
 )
 
-from ..core.color import ColorSettings
-from ..core.crop import ASPECTS, TRIMS, CropSettings
-from ..core.final_fixes import SATURATION_LEVELS, SKY_LEVELS, FinalFixesSettings
-
-OPTIONS = ["Small", "Medium", "Large"]
-ROTATIONS = ["0°", "90°", "180°", "270°"]
-
-
-STARS_MODES = ["Split & export both", "Remove stars (keep editing)"]
+_PROCESS_OPTIONS = {
+    "background": ["off", "light", "strong"],
+    "noise_sharpen": ["light", "medium", "strong"],
+}
+STRETCH_PRESETS = ["gentle", "balanced", "punchy"]
+EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
+EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
 
 
 def build_panel(
     stage,
     *,
     on_open=None,
+    on_destination=None,
     on_apply=None,
+    on_export_external=None,
     on_export=None,
-    on_stars=None,
     apply_enabled: bool = True,
-    option_default: str = "Medium",
 ) -> QWidget:
     w = QWidget()
     w.panel_kind = stage.kind
     lay = QVBoxLayout(w)
-
     title = QLabel(stage.label)
     title.setObjectName("stageTitle")
     lay.addWidget(title)
 
-    if stage.kind == "load":
+    if stage.kind == "import":
         btn = QPushButton("Open FITS…")
         if on_open is not None:
             btn.clicked.connect(lambda: on_open())
         lay.addWidget(btn)
-        lay.addWidget(QLabel("Open a stacked Seestar FITS to begin."))
+        meta = QLabel("Open a stacked Seestar FITS to begin.")
+        meta.setWordWrap(True)
+        lay.addWidget(meta)
+        w.meta_label = meta
+
+    elif stage.kind == "destination":
+        external = QRadioButton("Continue in external software")
+        in_app = QRadioButton("Finish here")
+        in_app.setChecked(True)
+        group = QButtonGroup(w)
+        group.addButton(external)
+        group.addButton(in_app)
+        if on_destination is not None:
+            external.toggled.connect(
+                lambda on: on and on_destination("external")
+            )
+            in_app.toggled.connect(lambda on: on and on_destination("in_app"))
+        lay.addWidget(external)
+        lay.addWidget(in_app)
+        w.external_radio = external
+        w.in_app_radio = in_app
 
     elif stage.kind == "crop":
-        aspect = QComboBox()
-        aspect.addItems(ASPECTS)
-        trim = QComboBox()
-        trim.addItems(TRIMS)
-        rotate = QComboBox()
-        rotate.addItems(ROTATIONS)
-        flip_h = QCheckBox("Flip horizontal")
-        flip_v = QCheckBox("Flip vertical")
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, 20)
+        slider.setValue(0)
         apply_btn = QPushButton("Apply Crop")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
-
-        def _emit_crop():
-            if on_apply is not None:
-                on_apply(CropSettings(
-                    aspect=aspect.currentText(),
-                    trim=trim.currentText(),
-                    rotate=int(rotate.currentText().rstrip("°")),
-                    flip_h=flip_h.isChecked(),
-                    flip_v=flip_v.isChecked(),
-                ))
-
-        apply_btn.clicked.connect(_emit_crop)
-        lay.addWidget(QLabel("Aspect ratio"))
-        lay.addWidget(aspect)
-        lay.addWidget(QLabel("Trim edges"))
-        lay.addWidget(trim)
-        lay.addWidget(QLabel("Rotate"))
-        lay.addWidget(rotate)
-        lay.addWidget(flip_h)
-        lay.addWidget(flip_v)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        lay.addWidget(QLabel("Extra margin (auto-detects the border)"))
+        lay.addWidget(slider)
         lay.addWidget(apply_btn)
-        w.aspect_box = aspect
-        w.trim_box = trim
-        w.rotate_box = rotate
-        w.flip_h_check = flip_h
-        w.flip_v_check = flip_v
+        w.margin_slider = slider
         w.apply_btn = apply_btn
 
-    elif stage.kind == "color":
-        neutralize = QCheckBox("Neutralize background")
-        neutralize.setChecked(True)
-        wb = QCheckBox("Auto white balance")
-        wb.setChecked(True)
-        apply_btn = QPushButton("Apply Color")
-        apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
-
-        def _emit_color():
-            if on_apply is not None:
-                on_apply(ColorSettings(
-                    neutralize_background=neutralize.isChecked(),
-                    white_balance=wb.isChecked(),
-                ))
-
-        apply_btn.clicked.connect(_emit_color)
-        lay.addWidget(neutralize)
-        lay.addWidget(wb)
-        lay.addWidget(apply_btn)
-        w.neutralize_check = neutralize
-        w.wb_check = wb
-        w.apply_btn = apply_btn
-
-    elif stage.kind == "final_fixes":
-        remove_green = QCheckBox("Remove green cast")
-        remove_green.setChecked(True)
-        increase_blue = QCheckBox("Increase blues")
-        saturation = QComboBox()
-        saturation.addItems(SATURATION_LEVELS)
-        saturation.setCurrentText("Subtle")
-        sky = QComboBox()
-        sky.addItems(SKY_LEVELS)
-        sky.setCurrentText("Normal")
-        apply_btn = QPushButton("Apply Final Fixes")
-        apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
-
-        def _emit_final():
-            if on_apply is not None:
-                on_apply(FinalFixesSettings(
-                    remove_green=remove_green.isChecked(),
-                    saturation=saturation.currentText(),
-                    increase_blue=increase_blue.isChecked(),
-                    sky=sky.currentText(),
-                ))
-
-        apply_btn.clicked.connect(_emit_final)
-        lay.addWidget(remove_green)
-        lay.addWidget(QLabel("Saturation"))
-        lay.addWidget(saturation)
-        lay.addWidget(increase_blue)
-        lay.addWidget(QLabel("Sky brightness"))
-        lay.addWidget(sky)
-        lay.addWidget(apply_btn)
-        w.remove_green_check = remove_green
-        w.saturation_box = saturation
-        w.increase_blue_check = increase_blue
-        w.sky_box = sky
-        w.apply_btn = apply_btn
-
-    elif stage.kind == "stars":
-        mode = QComboBox()
-        mode.addItems(STARS_MODES)
-        unscreen = QCheckBox("Unscreen stars")
-        apply_btn = QPushButton("Apply")
-        apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
-
-        def _emit_stars():
-            if on_stars is not None:
-                on_stars(mode.currentText(), unscreen.isChecked())
-
-        apply_btn.clicked.connect(_emit_stars)
-        lay.addWidget(QLabel("Mode"))
-        lay.addWidget(mode)
-        lay.addWidget(unscreen)
-        lay.addWidget(apply_btn)
-        if not apply_enabled:
-            lay.addWidget(QLabel("Requires RC-Astro (set its path in Settings)."))
-        w.mode_box = mode
-        w.unscreen_check = unscreen
-        w.apply_btn = apply_btn
-
-    elif stage.kind in ("process", "stretch"):
+    elif stage.kind == "process":
         box = QComboBox()
-        box.addItems(OPTIONS)
-        box.setCurrentText(option_default)
+        box.addItems(_PROCESS_OPTIONS[stage.id])
         apply_btn = QPushButton(f"Apply {stage.label}")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -179,20 +88,79 @@ def build_panel(
         w.option_box = box
         w.apply_btn = apply_btn
 
-    elif stage.kind == "export":
-        fmt = QComboBox()
-        fmt.addItems(["TIFF (16-bit)", "JPEG"])
-        btn = QPushButton("Export…")
-        btn.setObjectName("primary")
-        if on_export is not None:
-            btn.clicked.connect(lambda: on_export(fmt.currentText()))
-        lay.addWidget(QLabel("Format"))
-        lay.addWidget(fmt)
-        lay.addWidget(btn)
-        w.format_box = fmt
+    elif stage.kind == "auto":
+        lay.addWidget(QLabel("Automatic — no settings."))
+        apply_btn = QPushButton("Apply Color")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(None))
+        lay.addWidget(apply_btn)
+        w.apply_btn = apply_btn
 
-    else:  # placeholder
-        lay.addWidget(QLabel("Coming soon — not available in this version."))
+    elif stage.kind == "stretch":
+        box = QComboBox()
+        box.addItems(STRETCH_PRESETS)
+        box.setCurrentText("balanced")
+        apply_btn = QPushButton("Apply Stretch")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(box.currentText()))
+        lay.addWidget(QLabel("Aggressiveness"))
+        lay.addWidget(box)
+        lay.addWidget(apply_btn)
+        w.option_box = box
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "saturation":
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, 100)
+        slider.setValue(40)
+        apply_btn = QPushButton("Apply Saturation")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        lay.addWidget(QLabel("Saturation"))
+        lay.addWidget(slider)
+        lay.addWidget(apply_btn)
+        w.sat_slider = slider
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "export_external":
+        box = QComboBox()
+        box.addItems(EXTERNAL_FORMATS)
+        if not apply_enabled:
+            # split needs StarX; disable the second item via a model flag
+            box.model().item(1).setEnabled(False)
+        export_btn = QPushButton("Export…")
+        export_btn.setObjectName("primary")
+        if on_export_external is not None:
+            export_btn.clicked.connect(lambda: on_export_external(box.currentText()))
+        lay.addWidget(QLabel("Output"))
+        lay.addWidget(box)
+        lay.addWidget(export_btn)
+        if not apply_enabled:
+            lay.addWidget(QLabel("Split needs RC-Astro (set its path in Settings)."))
+        w.fmt_box = box
+        w.export_btn = export_btn
+
+    elif stage.kind == "export":
+        box = QComboBox()
+        box.addItems(EXPORT_FORMATS)
+        export_btn = QPushButton("Export…")
+        export_btn.setObjectName("primary")
+        if on_export is not None:
+            export_btn.clicked.connect(lambda: on_export(box.currentText()))
+        lay.addWidget(QLabel("Format"))
+        lay.addWidget(box)
+        lay.addWidget(export_btn)
+        w.fmt_box = box
+        w.export_btn = export_btn
+
+    else:  # placeholder / unknown
+        lay.addWidget(QLabel("Coming soon."))
 
     lay.addStretch(1)
     return w

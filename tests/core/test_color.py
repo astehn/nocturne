@@ -14,7 +14,8 @@ def test_neutralize_background_equalizes_channel_medians():
 
 
 def test_white_balance_brings_channel_means_together():
-    data = np.random.rand(32, 32, 3).astype(np.float32)
+    rng = np.random.default_rng(0)
+    data = (rng.random((32, 32, 3)) * 0.6).astype(np.float32)  # headroom avoids clip noise
     data[..., 2] *= 0.4  # blue weak
     img = AstroImage(data)
     before = [float(data[..., c].mean()) for c in range(3)]

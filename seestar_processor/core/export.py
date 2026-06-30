@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import tifffile
+from astropy.io import fits
 from PIL import Image
 
 from .image import AstroImage
@@ -24,3 +25,17 @@ def save_jpeg(img: AstroImage, path: str, quality: int = 95) -> None:
     arr = _to_uint(img.data, 8)
     mode = "L" if arr.ndim == 2 else "RGB"
     Image.fromarray(arr, mode=mode).save(path, format="JPEG", quality=quality)
+
+
+def save_png(img: AstroImage, path: str) -> None:
+    arr = _to_uint(img.data, 8)
+    mode = "L" if arr.ndim == 2 else "RGB"
+    Image.fromarray(arr, mode=mode).save(path, format="PNG")
+
+
+def save_fits(img: AstroImage, path: str) -> None:
+    # 32-bit float FITS; color stored channels-first (3, H, W).
+    data = img.data.astype(np.float32)
+    if data.ndim == 3:
+        data = np.transpose(data, (2, 0, 1))
+    fits.PrimaryHDU(data).writeto(path, overwrite=True)

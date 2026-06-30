@@ -5,7 +5,7 @@ from ..history.step import Step
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 
-_STRENGTH = {"Small": 0.2, "Medium": 0.5, "Large": 0.8}
+_STRENGTH = {"light": 0.3, "strong": 0.7}
 
 
 class BackgroundStep(Step):
@@ -16,12 +16,14 @@ class BackgroundStep(Step):
         self._runner = run_cli
 
     def options(self) -> list[str]:
-        return ["Small", "Medium", "Large"]
+        return ["off", "light", "strong"]
 
     def default_option(self) -> str:
-        return "Medium"
+        return "light"
 
     def apply(self, img: AstroImage, option: str) -> AstroImage:
+        if option == "off":
+            return img.copy()
         return self._gx.background_extraction(
             img, _STRENGTH[option], runner=self._runner
         )
