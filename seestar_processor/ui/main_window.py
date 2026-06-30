@@ -144,9 +144,16 @@ class MainWindow(QMainWindow):
         self._update_tools_label()
 
     def _update_tools_label(self) -> None:
-        gx = "✓" if graxpert_valid(self.settings) else "✗"
-        rc = "✓" if rcastro_valid(self.settings) else "—"
-        self._tools_label.setText(f"GraXpert {gx}   ·   RC-Astro {rc}")
+        def chip(name: str, ok: bool) -> str:
+            color = "#3fb950" if ok else "#f85149"  # green / red
+            mark = "✓" if ok else "✗"
+            return f'<span style="color:{color}">{name} {mark}</span>'
+
+        self._tools_label.setText(
+            chip("GraXpert", graxpert_valid(self.settings))
+            + '  <span style="color:#6b6f76">·</span>  '
+            + chip("RC-Astro", rcastro_valid(self.settings))
+        )
 
     # --- navigation ---
     def current_stage_id(self) -> str:
