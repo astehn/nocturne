@@ -22,12 +22,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 ## Processing features — second tier
 - [ ] **Multi-session combine** — register + integrate several nights' stacked FITS of the
       same target. Powerful for serious users; bigger build (alignment/integration).
-- [ ] **Masked / lightness-aware saturation** — protect stars/highlights (current saturation
-      is global).
-- [ ] **Local contrast / structure boost** for nebulae.
-- [ ] **Before/after split slider** (vs the current toggle).
-- [ ] **Per-target-type stretch presets** (galaxy vs nebula vs cluster) — feasible since the
-      instrument profile is fixed.
+- [x] **Masked / lightness-aware saturation** — boost fades toward highlights/stars.
+- [x] **Local contrast / structure boost** — Local Contrast step (CLAHE on luminance).
+- [x] **Before/after split divider** — draggable divider in the preview.
+- [x] **Per-target-type stretch presets** — Auto/Nebula/Galaxy/Cluster dropdown.
 
 ## Feature ideas
 - [ ] **Recipes + batch processing (the founding-vision feature).** Save a sequence of step

@@ -26,6 +26,7 @@ _IN_APP_TAIL = [
     Stage("levels", "Levels", "levels"),
     Stage("saturation", "Saturation", "saturation"),
     Stage("noise_sharpen", "Noise & Sharpen", "process"),
+    Stage("local_contrast", "Local Contrast", "process"),
     Stage("star_reduction", "Star Reduction", "process"),
     Stage("export", "Export", "export"),
 ]
@@ -38,11 +39,12 @@ STEP_NAME = {
     "levels": "Levels",
     "saturation": "Saturation",
     "noise_sharpen": "Noise & Sharpen",
+    "local_contrast": "Local Contrast",
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
     "crop", "background", "color", "stretch", "levels", "saturation",
-    "noise_sharpen", "star_reduction",
+    "noise_sharpen", "local_contrast", "star_reduction",
 ]
 
 

@@ -74,6 +74,25 @@ def test_apply_aspect_reshapes_box_to_ratio(qtbot):
     assert abs(w / h - 2.0) < 0.05
 
 
+def test_compare_mode_sets_and_clears(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_compare(_qimage(40, 30))
+    assert view.compare_active() is True
+    view.set_compare(None)
+    assert view.compare_active() is False
+
+
+def test_compare_divider_clamps_split(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_compare(_qimage(40, 30))
+    view._on_divider(10.0)
+    assert view._split_x == 10.0
+
+
 def test_set_image_refits_when_size_changes(qtbot):
     view = ImageView()
     qtbot.addWidget(view)

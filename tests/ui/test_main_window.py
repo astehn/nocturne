@@ -33,7 +33,7 @@ def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     seq = ["destination", "crop", "background", "color", "stretch", "levels",
-           "saturation", "noise_sharpen", "star_reduction", "export"]
+           "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
@@ -115,12 +115,14 @@ def test_step_for_types(qtbot, tmp_path):
     from seestar_processor.steps.saturation_step import SaturationStep
     from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
     from seestar_processor.steps.levels import LevelsStep
+    from seestar_processor.steps.local_contrast import LocalContrastStep
     from seestar_processor.steps.star_reduction import StarReductionStep
     win = _window(qtbot, tmp_path)
     assert isinstance(win._step_for("crop"), CropStep)
     assert isinstance(win._step_for("saturation"), SaturationStep)
     assert isinstance(win._step_for("noise_sharpen"), NoiseSharpenStep)
     assert isinstance(win._step_for("levels"), LevelsStep)
+    assert isinstance(win._step_for("local_contrast"), LocalContrastStep)
     assert isinstance(win._step_for("star_reduction"), StarReductionStep)
 
 
@@ -138,6 +140,19 @@ def test_histogram_updates_on_open(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win.histogram_view._hist is not None
+
+
+def test_before_after_toggle_enables_compare(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._ba_act.setChecked(True)
+    win._toggle_before_after()
+    assert win.image_view.compare_active() is True
+    win._ba_act.setChecked(False)
+    win._toggle_before_after()
+    assert win.image_view.compare_active() is False
 
 
 def test_window_title_is_app_name(qtbot, tmp_path):

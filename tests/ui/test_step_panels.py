@@ -95,6 +95,15 @@ def test_stretch_panel_slider_emits_amount(qtbot):
     assert got == [0.70]
 
 
+def test_stretch_target_sets_slider(qtbot):
+    w = build_panel(_stage("stretch"), on_apply=lambda v: None)
+    qtbot.addWidget(w)
+    w.target_box.setCurrentText("Nebula")
+    assert w.stretch_slider.value() == 60
+    w.target_box.setCurrentText("Galaxy")
+    assert w.stretch_slider.value() == 40
+
+
 def test_saturation_panel_emits_amount(qtbot):
     got = []
     w = build_panel(_stage("saturation"), on_apply=got.append)

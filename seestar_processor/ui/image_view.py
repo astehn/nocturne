@@ -10,6 +10,32 @@ _ACCENT = QColor("#2dd4bf")
 _HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
 
 
+class _Divider(QGraphicsRectItem):
+    """Vertical Before/After divider; movable horizontally, reports its x."""
+
+    def __init__(self, height: float, on_move) -> None:
+        super().__init__(-1.5, 0, 3, height)
+        self._on_move = on_move
+        self._max_x = 1.0
+        self.setBrush(QBrush(_ACCENT))
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setZValue(6)
+        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+
+    def set_max_x(self, max_x: float) -> None:
+        self._max_x = max_x
+
+    def itemChange(self, change, value):
+        if change == self.GraphicsItemChange.ItemPositionChange:
+            x = min(max(0.0, value.x()), self._max_x)
+            value.setX(x)
+            value.setY(0.0)  # constrain to horizontal movement
+            self._on_move(x)
+            return value
+        return super().itemChange(change, value)
+
+
 class _Handle(QGraphicsRectItem):
     """Constant-screen-size corner handle that resizes the crop box on drag."""
 
@@ -67,6 +93,50 @@ class ImageView(QGraphicsView):
         self._body: _Body | None = None
         self._handles: dict[str, _Handle] = {}
         self._aspect: float | None = None  # width / height
+        self._compare_clip = None
+        self._compare_item = None
+        self._divider = None
+        self._split_x = 0.0
+
+    # --- before/after compare ---
+    def set_compare(self, qimage) -> None:
+        self._teardown_compare()
+        if qimage is None:
+            return
+        pm = QPixmap.fromImage(qimage)
+        self._compare_clip = QGraphicsRectItem()
+        self._compare_clip.setPen(QPen(Qt.PenStyle.NoPen))
+        self._compare_clip.setFlag(
+            QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True
+        )
+        self._compare_clip.setZValue(5)
+        self._scene.addItem(self._compare_clip)
+        self._compare_item = QGraphicsPixmapItem(pm, self._compare_clip)
+        self._split_x = pm.width() / 2.0
+        self._divider = _Divider(pm.height(), self._on_divider)
+        self._divider.set_max_x(pm.width())
+        self._scene.addItem(self._divider)
+        self._divider.setPos(self._split_x, 0)
+        self._apply_split()
+
+    def compare_active(self) -> bool:
+        return self._compare_item is not None
+
+    def _on_divider(self, x: float) -> None:
+        self._split_x = x
+        self._apply_split()
+
+    def _apply_split(self) -> None:
+        if self._compare_item is None:
+            return
+        h = self._compare_item.pixmap().height()
+        self._compare_clip.setRect(0, 0, max(0.0, self._split_x), h)
+
+    def _teardown_compare(self) -> None:
+        for it in (self._divider, self._compare_clip):
+            if it is not None:
+                self._scene.removeItem(it)
+        self._divider = self._compare_clip = self._compare_item = None
 
     # --- image ---
     def set_image(self, qimage) -> None:

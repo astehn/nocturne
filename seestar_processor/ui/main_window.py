@@ -22,6 +22,7 @@ from ..steps.color import ColorStep
 from ..steps.crop import CropStep
 from ..steps.levels import LevelsStep
 from ..steps.load import load_fits
+from ..steps.local_contrast import LocalContrastStep
 from ..steps.noise_sharpen import NoiseSharpenStep
 from ..steps.saturation_step import SaturationStep
 from ..steps.star_reduction import StarReductionStep
@@ -72,7 +73,6 @@ class MainWindow(QMainWindow):
         self.destination = "in_app"
         self._stages = path_stages(self.destination)
         self._stage = 0
-        self._before_after = False
         self._bg_runner = run_cli
         self._rc_runner = run_cli
         self._busy = False
@@ -184,6 +184,9 @@ class MainWindow(QMainWindow):
             return
         self._stage = index
         self._status.setText("")  # clear any stale error when changing steps
+        if self.image_view.compare_active():  # before/after is per-image; reset on nav
+            self._ba_act.setChecked(False)
+            self.image_view.set_compare(None)
         self._rebuild_panel()
         self._refresh()
 
@@ -243,6 +246,8 @@ class MainWindow(QMainWindow):
             return LevelsStep()
         if stage_id == "saturation":
             return SaturationStep()
+        if stage_id == "local_contrast":
+            return LocalContrastStep()
         if stage_id == "star_reduction":
             step = StarReductionStep(RCAstro(resolve_binary(self.settings.rcastro_path)))
             step._runner = self._rc_runner
@@ -370,8 +375,14 @@ class MainWindow(QMainWindow):
             self._refresh()
 
     def _toggle_before_after(self) -> None:
-        self._before_after = self._ba_act.isChecked()
-        self._refresh()
+        if self.project is None:
+            self._ba_act.setChecked(False)
+            return
+        if self._ba_act.isChecked():
+            before, _ = self.project.before_after()
+            self.image_view.set_compare(to_qimage(before))
+        else:
+            self.image_view.set_compare(None)
 
     def _toggle_log(self) -> None:
         self.log_panel.setVisible(self._log_act.isChecked())
@@ -481,9 +492,6 @@ class MainWindow(QMainWindow):
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
             img = self.project.current()
-            if self._before_after:
-                before, _ = self.project.before_after()
-                img = before
             self.image_view.set_image(to_qimage(img))
             self.histogram_view.set_image(img)
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
