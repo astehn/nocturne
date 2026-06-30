@@ -166,6 +166,20 @@ def test_help_menu_actions_exist(qtbot, tmp_path):
     assert win._help_act is not None and win._about_act is not None
 
 
+def test_save_recipe_writes_loadable_file(qtbot, tmp_path, monkeypatch):
+    from seestar_processor.recipe import load_recipe
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = str(tmp_path / "r.json")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_recipe()
+    assert [s["stage"] for s in load_recipe(out).steps] == ["stretch"]
+
+
 def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     bad = tmp_path / "bad.fits"

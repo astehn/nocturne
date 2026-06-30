@@ -17,22 +17,15 @@ from ..history.step import Step
 from ..settings import (
     graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
 )
-from ..steps.background import BackgroundStep
-from ..steps.color import ColorStep
-from ..steps.crop import CropStep
-from ..steps.levels import LevelsStep
+from ..recipe import recipe_from_entries, save_recipe
+from ..steps.factory import make_step
 from ..steps.load import load_fits
-from ..steps.local_contrast import LocalContrastStep
-from ..steps.noise_sharpen import NoiseSharpenStep
-from ..steps.saturation_step import SaturationStep
-from ..steps.star_reduction import StarReductionStep
-from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
-from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
 from .about import about_html, help_html
+from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
@@ -137,10 +130,27 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(self, f"About {APP_NAME}", about_html())
 
+    # --- recipes / batch ---
+    def _save_recipe(self) -> None:
+        if self.project is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save Recipe", "", "Recipe (*.json)")
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        save_recipe(recipe_from_entries(self.project.entries()), path)
+        self._status.setText(f"Saved recipe: {os.path.basename(path)}")
+
+    def _open_batch(self) -> None:
+        BatchDialog(self.settings, self).exec()
+
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         tb.addAction("Open FITS", self._choose_fits)
         tb.addAction("Settings", self._open_settings)
+        self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
+        tb.addAction("Batch…", self._open_batch)
         self._undo_act = tb.addAction("Undo", self._undo)
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
@@ -232,33 +242,8 @@ class MainWindow(QMainWindow):
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
-        if stage_id == "crop":
-            return CropStep()
-        if stage_id == "background":
-            step = BackgroundStep(GraXpert(resolve_binary(self.settings.graxpert_path)))
-            step._runner = self._bg_runner
-            return step
-        if stage_id == "color":
-            return ColorStep()
-        if stage_id == "stretch":
-            return StretchStep()
-        if stage_id == "levels":
-            return LevelsStep()
-        if stage_id == "saturation":
-            return SaturationStep()
-        if stage_id == "local_contrast":
-            return LocalContrastStep()
-        if stage_id == "star_reduction":
-            step = StarReductionStep(RCAstro(resolve_binary(self.settings.rcastro_path)))
-            step._runner = self._rc_runner
-            return step
-        if stage_id == "noise_sharpen":
-            rc = (RCAstro(resolve_binary(self.settings.rcastro_path))
-                  if rcastro_valid(self.settings) else None)
-            step = NoiseSharpenStep(rc)
-            step._runner = self._rc_runner
-            return step
-        raise ValueError(stage_id)
+        return make_step(stage_id, self.settings,
+                         bg_runner=self._bg_runner, rc_runner=self._rc_runner)
 
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
