@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import tifffile
 from PIL import Image
 
 from .image import AstroImage
@@ -14,13 +15,9 @@ def _to_uint(data: np.ndarray, bits: int) -> np.ndarray:
 
 
 def save_tiff(img: AstroImage, path: str) -> None:
-    arr = _to_uint(img.data, 16)
-    if arr.ndim == 2:
-        Image.fromarray(arr, mode="I;16").save(path, format="TIFF")
-    else:
-        # For color images, convert to 8-bit RGB for broader platform support
-        arr_8bit = _to_uint(img.data, 8)
-        Image.fromarray(arr_8bit, mode="RGB").save(path, format="TIFF")
+    # 16-bit TIFF for both mono and color (preserves dynamic range for further
+    # editing). Pillow cannot write 16-bit RGB reliably, so use tifffile.
+    tifffile.imwrite(path, _to_uint(img.data, 16))
 
 
 def save_jpeg(img: AstroImage, path: str, quality: int = 95) -> None:

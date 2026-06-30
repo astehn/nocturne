@@ -9,6 +9,7 @@ dependencies = [
     "scipy>=1.11",
     "scikit-image>=0.22",
     "colour-demosaicing>=0.2.5",
+    "tifffile>=2024.1",
     "Pillow>=10.0",
 ]
 
