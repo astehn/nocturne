@@ -5,7 +5,7 @@ import os
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QListWidget, QMainWindow, QPushButton,
-    QVBoxLayout, QWidget, QComboBox, QMessageBox,
+    QVBoxLayout, QWidget, QComboBox,
 )
 
 from ..core.export import save_jpeg, save_tiff
@@ -102,12 +102,12 @@ class MainWindow(QMainWindow):
     def _undo(self) -> None:
         if self.project:
             self.project.undo()
-            self._render(); self._refresh_enabled()
+            self._render(); self._refresh_steps(); self._refresh_enabled()
 
     def _redo(self) -> None:
         if self.project:
             self.project.redo()
-            self._render(); self._refresh_enabled()
+            self._render(); self._refresh_steps(); self._refresh_enabled()
 
     def _toggle_before_after(self) -> None:
         if not self.project:
@@ -116,21 +116,33 @@ class MainWindow(QMainWindow):
         self._show(before if self._ba_act.isChecked() else after)
 
     def _on_step_clicked(self, item) -> None:
-        if self.project:
-            self.project.jump_back(self.step_list.row(item))
+        if not self.project:
+            return
+        # step_list row 0 == "Load" (base); rows 1..N map to entries(). Guard
+        # against a stale row (jump_back raises IndexError for row > position).
+        row = self.step_list.row(item)
+        if 0 <= row <= len(self.project.entries()):
+            self.project.jump_back(row)
             self._render(); self._refresh_steps(); self._refresh_enabled()
 
     # --- export ---
     def _export(self) -> None:
         if not self.project:
             return
-        path = QFileDialog.getSaveFileName(self, "Export", "", "TIFF (*.tiff);;JPEG (*.jpg)")[0]
+        path, selected = QFileDialog.getSaveFileName(
+            self, "Export", "", "TIFF (*.tiff);;JPEG (*.jpg)"
+        )
         if not path:
             return
         img = self.project.current()
-        if path.lower().endswith((".jpg", ".jpeg")):
+        wants_jpeg = path.lower().endswith((".jpg", ".jpeg")) or "JPEG" in selected
+        if wants_jpeg:
+            if not path.lower().endswith((".jpg", ".jpeg")):
+                path += ".jpg"
             save_jpeg(img, path)
         else:
+            if not path.lower().endswith((".tiff", ".tif")):
+                path += ".tiff"
             save_tiff(img, path)
 
     # --- settings ---

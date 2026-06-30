@@ -27,7 +27,7 @@ def load_fits(path: str) -> AstroImage:
             raise ValueError(
                 f"unsupported 3D FITS shape {raw.shape}; expected (3, H, W) or (H, W, 3)"
             )
-        data = _normalize(raw)
+        data = np.clip(_normalize(raw), 0.0, 1.0)
         return AstroImage(data, is_linear=True)
     # 2D mono-Bayer -> debayer with instrument pattern.
     norm = _normalize(raw)
