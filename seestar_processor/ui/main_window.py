@@ -12,7 +12,7 @@ from ..history.project import Project
 from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
-from ..steps.crop_auto import CropAutoStep
+from ..steps.crop import CropStep
 from ..steps.load import load_fits
 from ..steps.noise_sharpen import NoiseSharpenStep
 from ..steps.saturation_step import SaturationStep
@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
         if stage_id == "crop":
-            return CropAutoStep()
+            return CropStep()
         if stage_id == "background":
             step = BackgroundStep(GraXpert(self.settings.graxpert_path))
             step._runner = self._bg_runner

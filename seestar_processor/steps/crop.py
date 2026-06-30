@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from ..core.crop import auto_crop
+from ..core.crop import CropParams, apply_crop_params
 from ..core.image import AstroImage
 from ..history.step import Step
 
 
-class CropAutoStep(Step):
+class CropStep(Step):
     name = "Crop"
 
     def options(self) -> list[str]:
@@ -15,5 +15,5 @@ class CropAutoStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        margin = float(option) if option else 0.0
-        return auto_crop(img, margin)
+        params = option if isinstance(option, CropParams) else CropParams()
+        return apply_crop_params(img, params)

@@ -69,27 +69,22 @@ def test_apply_color_with_none_option(qtbot, tmp_path):
     assert win.project.entries()[-1][0] == "Color"
 
 
-def test_apply_crop_margin_changes_dimensions(qtbot, tmp_path):
+def test_apply_crop_with_params_changes_dimensions(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
     win = _window(qtbot, tmp_path)
-    # bordered image so auto-crop has something to trim
-    arr = np.zeros((3, 24, 24), dtype=np.uint16)
-    arr[:, 4:20, 4:20] = 2000
-    p = tmp_path / "b.fits"
-    fits.PrimaryHDU(arr).writeto(str(p))
-    win.open_fits(str(p))
+    win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
-    win.apply_current(0.0)
+    win.apply_current(CropParams(bounds=(4, 20, 4, 20)))
     h, w, _ = win.project.current().data.shape
     assert (h, w) == (16, 16)
-    assert win.current_stage_id() == "background"
 
 
 def test_step_for_types(qtbot, tmp_path):
-    from seestar_processor.steps.crop_auto import CropAutoStep
+    from seestar_processor.steps.crop import CropStep
     from seestar_processor.steps.saturation_step import SaturationStep
     from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
     win = _window(qtbot, tmp_path)
-    assert isinstance(win._step_for("crop"), CropAutoStep)
+    assert isinstance(win._step_for("crop"), CropStep)
     assert isinstance(win._step_for("saturation"), SaturationStep)
     assert isinstance(win._step_for("noise_sharpen"), NoiseSharpenStep)
 

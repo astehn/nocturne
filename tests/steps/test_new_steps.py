@@ -4,7 +4,8 @@ from seestar_processor.tools.base import write_temp_fits
 from seestar_processor.tools.graxpert import GraXpert
 from seestar_processor.tools.rcastro import RCAstro
 from seestar_processor.steps.background import BackgroundStep
-from seestar_processor.steps.crop_auto import CropAutoStep
+from seestar_processor.steps.crop import CropStep
+from seestar_processor.core.crop import CropParams
 from seestar_processor.steps.saturation_step import SaturationStep
 from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
 
@@ -29,11 +30,17 @@ def test_background_light_calls_graxpert():
     assert captured["args"][captured["args"].index("-smoothing") + 1] == "0.3"
 
 
-def test_crop_auto_step_removes_border():
+def test_crop_step_applies_params():
     data = np.zeros((40, 50, 3), np.float32)
     data[5:35, 8:45] = 0.4
-    out = CropAutoStep().apply(AstroImage(data), 0.0)
+    out = CropStep().apply(AstroImage(data), CropParams(bounds=(5, 35, 8, 45)))
     assert out.data.shape == (30, 37, 3)
+
+
+def test_crop_step_none_option_is_identity():
+    data = np.random.rand(8, 8, 3).astype(np.float32)
+    out = CropStep().apply(AstroImage(data), None)
+    assert out.data.shape == (8, 8, 3)
 
 
 def test_saturation_step_increases_chroma():
