@@ -142,6 +142,19 @@ def test_histogram_updates_on_open(qtbot, tmp_path):
     assert win.histogram_view._hist is not None
 
 
+def test_before_after_toggle_enables_compare(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._ba_act.setChecked(True)
+    win._toggle_before_after()
+    assert win.image_view.compare_active() is True
+    win._ba_act.setChecked(False)
+    win._toggle_before_after()
+    assert win.image_view.compare_active() is False
+
+
 def test_window_title_is_app_name(qtbot, tmp_path):
     from seestar_processor import APP_NAME
     win = _window(qtbot, tmp_path)
