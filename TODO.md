@@ -7,6 +7,18 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L1** "Tools configured" indicator (GraXpert / RC-Astro) in the toolbar.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
+## Tweaks (small, from real-data use)
+- [ ] **Saturation remap.** Current slider is additive-only: 0 = native saturation (never
+      desaturates) and the top end is too weak — you must crank it to see effect, and low
+      settings still look fully saturated. Remap so low = desaturate (factor < 1), mid =
+      neutral, high = stronger boost; steepen the curve. (`core/saturation.saturate` +
+      panel default/labels.)
+- [ ] **"Remove Green" as its own button.** Right now green removal is a checkbox tied to
+      the "Apply Color" button, so removing green forces the full neutralize+white-balance
+      (which the user may not want). Give it a separate action/button on the Color step that
+      applies SCNR independently. (Likely needs a small `ColorSettings`-only "green" path or
+      a dedicated step.)
+
 ## Soon
 - [ ] **L3** Project save / reopen (currently work is lost on close).
 - [ ] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
