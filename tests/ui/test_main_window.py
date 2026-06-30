@@ -29,17 +29,19 @@ def _window(qtbot, tmp_path):
     return win
 
 
-def test_open_fits_loads_and_advances_to_background(qtbot, tmp_path):
+def test_open_fits_loads_and_advances_to_crop(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win.project is not None
     assert win.project.current().is_linear is True
-    assert win.current_stage_id() == "background"
+    assert win.current_stage_id() == "crop"
 
 
 def test_next_skips_disabled_stages(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))           # at "background"
+    win.open_fits(_make_fits(tmp_path))           # at "crop"
+    win.go_next()                                  # background
+    assert win.current_stage_id() == "background"
     win.go_next()                                  # skips color/decon/noise
     assert win.current_stage_id() == "stretch"
     win.go_next()
@@ -51,17 +53,29 @@ def test_next_skips_disabled_stages(qtbot, tmp_path):
 def test_back_skips_disabled_stages(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.go_next()                                  # stretch
+    win._go_to_id("stretch")
     win.go_back()                                  # background
     assert win.current_stage_id() == "background"
+    win.go_back()                                  # crop
+    assert win.current_stage_id() == "crop"
     win.go_back()                                  # load
     assert win.current_stage_id() == "load"
+
+
+def test_apply_crop_changes_dimensions_and_advances(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropSettings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))           # at crop, image 24x24
+    win.apply_current(CropSettings(aspect="16:9"))
+    h, w, _ = win.project.current().data.shape
+    assert (h, w) != (24, 24)
+    assert win.current_stage_id() == "background"  # advanced past crop
 
 
 def test_apply_stretch_marks_nonlinear_and_advances(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.go_next()                                  # stretch stage
+    win._go_to_id("stretch")
     win.apply_current("Medium")
     assert win.project.current().is_linear is False
     assert win.current_stage_id() == "export"
@@ -70,7 +84,7 @@ def test_apply_stretch_marks_nonlinear_and_advances(qtbot, tmp_path):
 def test_reapply_stretch_does_not_duplicate_history(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.go_next()                                  # stretch
+    win._go_to_id("stretch")
     win.apply_current("Small")
     win._go_to_id("stretch")                       # navigate back to stretch
     win.apply_current("Large")
@@ -81,6 +95,8 @@ def test_reapply_stretch_does_not_duplicate_history(qtbot, tmp_path):
 def test_panel_matches_current_stage(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    assert win._panel.panel_kind == "crop"        # crop
+    win.go_next()
     assert win._panel.panel_kind == "process"     # background
     win.go_next()
     assert win._panel.panel_kind == "stretch"
@@ -90,10 +106,11 @@ def test_navigation_never_crashes_after_undo(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._bg_runner = _fake_bg_runner               # no real GraXpert binary
     win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
     win.apply_current("Small")                     # background -> stretch
     win.apply_current("Medium")                    # stretch -> export
     assert [n for n, _ in win.project.entries()] == ["Background", "Stretch"]
     win._undo()
-    for sid in ("load", "background", "stretch", "export"):
+    for sid in ("load", "crop", "background", "stretch", "export"):
         win._go_to_id(sid)
     assert win.project is not None

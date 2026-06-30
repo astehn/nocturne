@@ -37,6 +37,24 @@ def test_apply_disabled_when_requested(qtbot):
 
 
 def test_placeholder_panel(qtbot):
-    w = build_panel(_stage("crop"))
+    w = build_panel(_stage("color"))
     qtbot.addWidget(w)
     assert w.panel_kind == "placeholder"
+
+
+def test_crop_panel_emits_settings(qtbot):
+    from seestar_processor.core.crop import CropSettings
+    got = []
+    w = build_panel(_stage("crop"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "crop"
+    w.aspect_box.setCurrentText("1:1")
+    w.trim_box.setCurrentText("10%")
+    w.rotate_box.setCurrentText("90°")
+    w.flip_h_check.setChecked(True)
+    w.apply_btn.click()
+    assert len(got) == 1
+    s = got[0]
+    assert isinstance(s, CropSettings)
+    assert s.aspect == "1:1" and s.trim == "10%" and s.rotate == 90
+    assert s.flip_h is True and s.flip_v is False
