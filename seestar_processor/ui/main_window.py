@@ -17,18 +17,9 @@ from ..history.step import Step
 from ..settings import (
     graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
 )
-from ..steps.background import BackgroundStep
-from ..steps.color import ColorStep
-from ..steps.crop import CropStep
-from ..steps.levels import LevelsStep
+from ..steps.factory import make_step
 from ..steps.load import load_fits
-from ..steps.local_contrast import LocalContrastStep
-from ..steps.noise_sharpen import NoiseSharpenStep
-from ..steps.saturation_step import SaturationStep
-from ..steps.star_reduction import StarReductionStep
-from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
-from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
@@ -232,33 +223,8 @@ class MainWindow(QMainWindow):
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
-        if stage_id == "crop":
-            return CropStep()
-        if stage_id == "background":
-            step = BackgroundStep(GraXpert(resolve_binary(self.settings.graxpert_path)))
-            step._runner = self._bg_runner
-            return step
-        if stage_id == "color":
-            return ColorStep()
-        if stage_id == "stretch":
-            return StretchStep()
-        if stage_id == "levels":
-            return LevelsStep()
-        if stage_id == "saturation":
-            return SaturationStep()
-        if stage_id == "local_contrast":
-            return LocalContrastStep()
-        if stage_id == "star_reduction":
-            step = StarReductionStep(RCAstro(resolve_binary(self.settings.rcastro_path)))
-            step._runner = self._rc_runner
-            return step
-        if stage_id == "noise_sharpen":
-            rc = (RCAstro(resolve_binary(self.settings.rcastro_path))
-                  if rcastro_valid(self.settings) else None)
-            step = NoiseSharpenStep(rc)
-            step._runner = self._rc_runner
-            return step
-        raise ValueError(stage_id)
+        return make_step(stage_id, self.settings,
+                         bg_runner=self._bg_runner, rc_runner=self._rc_runner)
 
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
