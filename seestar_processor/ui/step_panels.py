@@ -12,6 +12,7 @@ from ..core.crop import ASPECTS
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
+    "local_contrast": ["light", "medium", "strong"],
     "star_reduction": ["light", "medium", "strong"],
 }
 EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
@@ -19,6 +20,7 @@ EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
 _DESCRIPTIONS = {
     "background": "Removes light-pollution gradients so the sky background is even.",
     "noise_sharpen": "Reduces grain and recovers fine detail.",
+    "local_contrast": "Boosts mid-scale structure (local contrast).",
     "star_reduction": "Shrinks stars so nebulosity stands out.",
 }
 # Inline "needs <tool>" note text per process stage that can be gated.

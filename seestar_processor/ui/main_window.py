@@ -22,6 +22,7 @@ from ..steps.color import ColorStep
 from ..steps.crop import CropStep
 from ..steps.levels import LevelsStep
 from ..steps.load import load_fits
+from ..steps.local_contrast import LocalContrastStep
 from ..steps.noise_sharpen import NoiseSharpenStep
 from ..steps.saturation_step import SaturationStep
 from ..steps.star_reduction import StarReductionStep
@@ -243,6 +244,8 @@ class MainWindow(QMainWindow):
             return LevelsStep()
         if stage_id == "saturation":
             return SaturationStep()
+        if stage_id == "local_contrast":
+            return LocalContrastStep()
         if stage_id == "star_reduction":
             step = StarReductionStep(RCAstro(resolve_binary(self.settings.rcastro_path)))
             step._runner = self._rc_runner
