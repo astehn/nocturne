@@ -35,6 +35,23 @@ def test_before_after(tmp_path):
     assert after.data[0, 0] == 2.0
 
 
+def test_before_after_at_base(tmp_path):
+    p = Project(_base(), str(tmp_path))
+    before, after = p.before_after()
+    assert before.data[0, 0] == 1.0
+    assert after.data[0, 0] == 1.0
+
+
+def test_metadata_preserved(tmp_path):
+    base = AstroImage(np.ones((2, 2), np.float32), is_linear=True, metadata={"gain": 10})
+    p = Project(base, str(tmp_path))
+    p.run_step(_Double(), "x2")
+    p.undo()  # back to the cached base, reloaded from disk
+    img = p.current()
+    assert img.is_linear is True
+    assert img.metadata["gain"] == 10
+
+
 def test_jump_back_truncates_forward(tmp_path):
     p = Project(_base(), str(tmp_path))
     p.run_step(_Double(), "x2")   # -> 2.0
