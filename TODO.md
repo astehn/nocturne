@@ -13,7 +13,33 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       stacks (needs real-data testing).
 - [ ] **T2** Confirm the Stretch aggressiveness slider range feels right on real data.
 
+## Processing features — quick wins (OSC essentials)
+- [ ] **Green-cast removal (SCNR).** Near-mandatory for one-shot-color data; was in the old
+      Final Fixes and got dropped in the spec refactor. Re-add a "remove green" toggle
+      (clamp green to the red/blue average). Small, high value.
+- [ ] **Histogram display + manual levels/curves.** Astro processing lives by the histogram;
+      answers "is my stretch/color right?" and pairs with the log (visual + numeric feedback).
+      Show a histogram of the current image; add a manual levels/curve control.
+- [ ] **Star reduction** (shrink stars, not just remove). Reuse the StarX split: separate
+      stars, shrink/dim them (e.g. morphological), recombine with the starless image. Beloved
+      finishing move with big aesthetic payoff.
+
+## Processing features — second tier
+- [ ] **Multi-session combine** — register + integrate several nights' stacked FITS of the
+      same target. Powerful for serious users; bigger build (alignment/integration).
+- [ ] **Masked / lightness-aware saturation** — protect stars/highlights (current saturation
+      is global).
+- [ ] **Local contrast / structure boost** for nebulae.
+- [ ] **Before/after split slider** (vs the current toggle).
+- [ ] **Per-target-type stretch presets** (galaxy vs nebula vs cluster) — feasible since the
+      instrument profile is fixed.
+
 ## Feature ideas
+- [ ] **Recipes + batch processing (the founding-vision feature).** Save a sequence of step
+      settings as a reusable recipe and apply it unattended to a whole folder of stacked
+      FITS, exporting each. This is what turns the app from a manual editor into "does my
+      repetitive work for me" — the original motivation. (Added per assistant's top
+      recommendation; remove if not wanted.)
 - [ ] **SHO / Hubble-palette editing for the duo-band OSC data.**
       The S30 Pro has a built-in Ha/OIII duo-band filter, so emission-nebula captures hold
       narrowband signal: Ha → red channel, OIII → green+blue. Automate the extraction +
