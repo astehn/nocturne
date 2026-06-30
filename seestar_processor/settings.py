@@ -29,3 +29,7 @@ def save_settings(s: Settings, path: str) -> None:
 
 def graxpert_valid(s: Settings) -> bool:
     return bool(s.graxpert_path) and os.path.isfile(s.graxpert_path)
+
+
+def rcastro_valid(s: Settings) -> bool:
+    return bool(s.rcastro_path) and os.path.isfile(s.rcastro_path)
