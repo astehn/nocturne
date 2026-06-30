@@ -15,6 +15,7 @@ def _make_fits(tmp_path):
 
 def _window(qtbot, tmp_path):
     win = MainWindow(settings_path=str(tmp_path / "settings.json"))
+    win._async_enabled = False  # run step processing synchronously in tests
     qtbot.addWidget(win)
     return win
 
@@ -59,6 +60,44 @@ def test_apply_stretch_maps_preset_and_sets_nonlinear(qtbot, tmp_path):
     win.apply_current("punchy")
     assert win.project.current().is_linear is False
     assert win.project.entries()[-1][0] == "Stretch"
+
+
+def test_apply_does_not_auto_advance(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current("balanced")
+    assert win.current_stage_id() == "stretch"  # stays put for before/after
+
+
+def test_apply_ignored_while_busy(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win._busy = True
+    win.apply_current("punchy")
+    assert win.project.entries() == []  # nothing applied while busy
+
+
+def test_background_off_applies_without_graxpert(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    win.apply_current("off")
+    assert win.project.entries()[-1][0] == "Background"
+
+
+def test_entering_crop_enables_overlay(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    # bordered image so detect_content_bounds is a sub-rectangle
+    arr = np.zeros((3, 30, 30), dtype=np.uint16)
+    arr[:, 5:25, 6:24] = 2000
+    p = tmp_path / "b.fits"
+    fits.PrimaryHDU(arr).writeto(str(p))
+    win.open_fits(str(p))
+    win._go_to_id("crop")
+    assert win.image_view._body is not None  # overlay active
+    assert win.image_view.crop_bounds() == (5, 25, 6, 24)
 
 
 def test_apply_color_with_none_option(qtbot, tmp_path):

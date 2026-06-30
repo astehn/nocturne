@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QMainWindow, QPushButton, QVBoxLayout, QWidget,
+    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..core.export import save_fits, save_jpeg, save_png, save_tiff
+from ..core.crop import CropParams, detect_content_bounds
+from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
 from ..history.project import Project
+from ..history.step import Step
 from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
@@ -26,8 +29,27 @@ from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
 from .stepper import Stepper
+from .worker import BusyOverlay, run_async
 
 _STRETCH_LABEL = {"gentle": "Small", "balanced": "Medium", "punchy": "Large"}
+_ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
+
+
+class _PrecomputedStep(Step):
+    """Records an already-computed image (from async processing) into history."""
+
+    def __init__(self, name: str, image) -> None:
+        self.name = name
+        self._image = image
+
+    def options(self) -> list[str]:
+        return []
+
+    def default_option(self) -> str:
+        return ""
+
+    def apply(self, img, option):
+        return self._image
 
 
 class MainWindow(QMainWindow):
@@ -44,6 +66,10 @@ class MainWindow(QMainWindow):
         self._before_after = False
         self._bg_runner = run_cli
         self._rc_runner = run_cli
+        self._busy = False
+        self._async_enabled = True  # tests set False for deterministic apply
+        self._pool = QThreadPool.globalInstance()
+        self._busy_overlay = BusyOverlay()
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -72,6 +98,10 @@ class MainWindow(QMainWindow):
         nav.addWidget(self._back_btn)
         nav.addWidget(self._next_btn)
         self._right_layout.addLayout(nav)
+        self._status = QLabel("")
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet("color: #ff6b6b;")
+        self._right_layout.addWidget(self._status)
         root.addWidget(right)
 
         self.setCentralWidget(central)
@@ -160,21 +190,90 @@ class MainWindow(QMainWindow):
         raise ValueError(stage_id)
 
     def apply_current(self, option) -> None:
-        if self.project is None:
+        if self.project is None or self._busy:
             return
         stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
         if stage_id == "stretch":
             option = _STRETCH_LABEL.get(option, "Medium")
+        # Truncate history to this stage's applied predecessors (synchronous).
         preceding = {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
         }
         target = sum(1 for name, _ in self.project.entries() if name in preceding)
         self.project.jump_back(target)
-        self.project.run_step(self._step_for(stage_id), option)
-        self._go_to(next_enabled(self._stages, self._stage))
+        step = self._step_for(stage_id)
+        base = self.project.current()
+        self._status.setText("")
+        self._set_busy(True)
+
+        def work():
+            return step.apply(base, option)
+
+        def done(result):
+            self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
+            self._set_busy(False)
+            self._refresh()  # stay on this step; user clicks Next to advance
+            if stage_id == "crop":
+                self._setup_crop_overlay()
+
+        def err(exc):
+            self._set_busy(False)
+            self._status.setText(f"Failed: {exc}")
+
+        if self._async_enabled:
+            run_async(self._pool, work, done, err)
+        else:
+            try:
+                done(work())
+            except Exception as exc:  # mirror the async error path
+                err(exc)
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if busy:
+            self._busy_overlay.show_over(self.image_view)
+        else:
+            self._busy_overlay.hide()
+        self._back_btn.setDisabled(busy)
+        self._next_btn.setDisabled(busy)
+        if hasattr(self._panel, "apply_btn"):
+            self._panel.apply_btn.setDisabled(busy)
+
+    # --- crop overlay ---
+    def _setup_crop_overlay(self) -> None:
+        if self.project is not None and self.current_stage_id() == "crop":
+            bounds = detect_content_bounds(self.project.current())
+            aspect_text = "Original"
+            if hasattr(self._panel, "aspect_box"):
+                aspect_text = self._panel.aspect_box.currentText()
+            self.image_view.set_crop_overlay(
+                True, bounds=bounds, aspect_ratio=_ASPECT_RATIO.get(aspect_text)
+            )
+        else:
+            self.image_view.set_crop_overlay(False)
+
+    def _on_crop_change(self, aspect_text: str) -> None:
+        self.image_view.set_aspect(_ASPECT_RATIO.get(aspect_text))
+
+    def _apply_crop(self) -> None:
+        if self.project is None or self._busy:
+            return
+        top, bottom, left, right = self.image_view.crop_bounds()
+        margin = self._panel.margin_slider.value() / 100.0
+        if margin > 0:
+            h, w = bottom - top, right - left
+            dh, dw = int(h * margin), int(w * margin)
+            top, bottom, left, right = top + dh, bottom - dh, left + dw, right - dw
+        params = CropParams(
+            bounds=(top, bottom, left, right),
+            rotate=getattr(self._panel, "rotate", 0),
+            flip_h=self._panel.flip_h_btn.isChecked(),
+            flip_v=self._panel.flip_v_btn.isChecked(),
+        )
+        self.apply_current(params)
 
     # --- history ---
     def _undo(self) -> None:
@@ -259,6 +358,8 @@ class MainWindow(QMainWindow):
             on_open=self._choose_fits,
             on_destination=self.set_destination,
             on_apply=self.apply_current,
+            on_crop_apply=self._apply_crop,
+            on_crop_change=self._on_crop_change,
             on_export_external=self.export_external,
             on_export=self.export_final,
             apply_enabled=apply_enabled,
@@ -268,6 +369,7 @@ class MainWindow(QMainWindow):
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel
+        self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
 
     def _refresh(self) -> None:
         self.stepper.set_current(self._stage)
