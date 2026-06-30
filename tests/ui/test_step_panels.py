@@ -42,6 +42,24 @@ def test_placeholder_panel(qtbot):
     assert w.panel_kind == "placeholder"
 
 
+def test_final_fixes_panel_emits_settings(qtbot):
+    from seestar_processor.core.final_fixes import FinalFixesSettings
+    got = []
+    w = build_panel(_stage("final_fixes"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "final_fixes"
+    w.remove_green_check.setChecked(True)
+    w.saturation_box.setCurrentText("Strong")
+    w.increase_blue_check.setChecked(True)
+    w.sky_box.setCurrentText("Darker")
+    w.apply_btn.click()
+    assert len(got) == 1
+    s = got[0]
+    assert isinstance(s, FinalFixesSettings)
+    assert s.remove_green and s.saturation == "Strong"
+    assert s.increase_blue and s.sky == "Darker"
+
+
 def test_crop_panel_emits_settings(qtbot):
     from seestar_processor.core.crop import CropSettings
     got = []

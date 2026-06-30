@@ -12,6 +12,7 @@ from ..settings import graxpert_valid, load_settings, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
 from ..steps.crop import CropStep
+from ..steps.final_fixes import FinalFixesStep
 from ..steps.load import load_fits
 from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
@@ -122,6 +123,8 @@ class MainWindow(QMainWindow):
             return CropStep()
         if stage_id == "color":
             return ColorStep()
+        if stage_id == "final_fixes":
+            return FinalFixesStep()
         if stage_id == "background":
             step = BackgroundStep(GraXpert(self.settings.graxpert_path))
             step._runner = self._bg_runner
