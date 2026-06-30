@@ -79,14 +79,6 @@ def test_apply_ignored_while_busy(qtbot, tmp_path):
     assert win.project.entries() == []  # nothing applied while busy
 
 
-def test_background_off_applies_without_graxpert(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("background")
-    win.apply_current("off")
-    assert win.project.entries()[-1][0] == "Background"
-
-
 def test_entering_crop_enables_overlay(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     # bordered image so detect_content_bounds is a sub-rectangle
@@ -143,6 +135,35 @@ def test_export_failure_is_surfaced(qtbot, tmp_path):
     ok = win._guarded(lambda: (_ for _ in ()).throw(OSError("disk full")))
     assert ok is False
     assert "disk full" in win._status.text()
+
+
+def test_background_off_records_no_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    win.apply_current("off")
+    assert "Background" not in [n for n, _ in win.project.entries()]
+    assert win.current_stage_id() == "background"  # stays put
+
+
+def test_status_cleared_on_navigation(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._status.setText("some error")
+    win._go_to_id("destination")
+    assert win._status.text() == ""
+
+
+def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
+    from seestar_processor.settings import Settings
+    gx = tmp_path / "graxpert"
+    gx.write_text("#!/bin/sh\n")
+    win = _window(qtbot, tmp_path)
+    win.settings = Settings(graxpert_path=str(gx))  # rc-astro left empty
+    win._update_tools_label()
+    text = win._tools_label.text()
+    assert "GraXpert ✓" in text
+    assert "RC-Astro —" in text
 
 
 def test_export_external_panel_split_gated(qtbot, tmp_path):
