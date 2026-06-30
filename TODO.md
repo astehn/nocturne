@@ -40,11 +40,9 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **Per-target-type stretch presets** — Auto/Nebula/Galaxy/Cluster dropdown.
 
 ## Feature ideas
-- [ ] **Recipes + batch processing (the founding-vision feature).** Save a sequence of step
-      settings as a reusable recipe and apply it unattended to a whole folder of stacked
-      FITS, exporting each. This is what turns the app from a manual editor into "does my
-      repetitive work for me" — the original motivation. (Added per assistant's top
-      recommendation; remove if not wanted.)
+- [x] **Recipes + batch processing.** Save a session as a `.json` recipe (Save Recipe) and
+      apply it to a folder of stacked FITS via the Batch dialog (auto-crops each image's
+      border, exports TIFF/PNG/FITS). `recipe.py` + `batch.py` + `steps/factory.py`.
 - [ ] **SHO / Hubble-palette editing for the duo-band OSC data.**
       The S30 Pro has a built-in Ha/OIII duo-band filter, so emission-nebula captures hold
       narrowband signal: Ha → red channel, OIII → green+blue. Automate the extraction +
