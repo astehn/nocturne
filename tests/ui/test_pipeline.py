@@ -14,11 +14,7 @@ def test_pipeline_order_and_enablement():
         "noise", "stretch", "final_fixes", "stars", "export",
     ]
     enabled = {s.id for s in PIPELINE if s.enabled}
-    assert enabled == {
-        "load", "crop", "background", "color", "deconvolution",
-        "noise", "stretch", "final_fixes", "export",
-    }
-    assert not next(s for s in PIPELINE if s.id == "stars").enabled  # placeholder
+    assert enabled == {s.id for s in PIPELINE}  # every stage is implemented
 
 
 def test_next_enabled_skips_disabled_and_clamps():
@@ -29,13 +25,15 @@ def test_next_enabled_skips_disabled_and_clamps():
     assert next_enabled(_index("deconvolution")) == _index("noise")
     assert next_enabled(_index("noise")) == _index("stretch")
     assert next_enabled(_index("stretch")) == _index("final_fixes")
-    assert next_enabled(_index("final_fixes")) == _index("export")  # skips disabled stars
+    assert next_enabled(_index("final_fixes")) == _index("stars")
+    assert next_enabled(_index("stars")) == _index("export")
     last = _index("export")
     assert next_enabled(last) == last  # clamp at end
 
 
 def test_prev_enabled_skips_disabled_and_clamps():
-    assert prev_enabled(_index("export")) == _index("final_fixes")  # skips stars
+    assert prev_enabled(_index("export")) == _index("stars")
+    assert prev_enabled(_index("stars")) == _index("final_fixes")
     assert prev_enabled(_index("final_fixes")) == _index("stretch")
     assert prev_enabled(_index("stretch")) == _index("noise")
     assert prev_enabled(_index("noise")) == _index("deconvolution")

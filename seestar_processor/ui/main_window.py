@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from ..core.export import save_jpeg, save_tiff
 from ..history.project import Project
+from ..history.step import Step
 from ..settings import graxpert_valid, load_settings, rcastro_valid, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.color import ColorStep
@@ -32,6 +33,23 @@ def _stage_index(stage_id: str) -> int:
     return next(i for i, s in enumerate(PIPELINE) if s.id == stage_id)
 
 
+class _PrecomputedStep(Step):
+    """Pushes an already-computed image into the history (e.g. the starless result)."""
+
+    def __init__(self, name: str, image) -> None:
+        self.name = name
+        self._image = image
+
+    def options(self) -> list[str]:
+        return []
+
+    def default_option(self) -> str:
+        return ""
+
+    def apply(self, img, option):
+        return self._image
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str) -> None:
         super().__init__()
@@ -44,6 +62,7 @@ class MainWindow(QMainWindow):
         self._before_after = False
         self._bg_runner = run_cli  # injectable for tests / future config
         self._rc_runner = run_cli  # RC-Astro subprocess runner (injectable)
+        self._stars_image = None   # stashed stars-only layer for separate export
 
         central = QWidget()
         root = QHBoxLayout(central)
@@ -86,6 +105,7 @@ class MainWindow(QMainWindow):
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
+        self._export_stars_act = tb.addAction("Export Stars", self._export_stars_layer)
         tb.addAction("Fit", self.image_view.fit)
         tb.addAction("100%", self.image_view.actual_size)
 
@@ -197,6 +217,40 @@ class MainWindow(QMainWindow):
                 path += ".tiff"
             save_tiff(img, path)
 
+    # --- starless / stars ---
+    def _apply_stars(self, mode: str, unscreen: bool) -> None:
+        if self.project is None or not rcastro_valid(self.settings):
+            return
+        rc = RCAstro(self.settings.rcastro_path)
+        starless, stars = rc.remove_stars(
+            self.project.current(), unscreen=unscreen, runner=self._rc_runner
+        )
+        self._stars_image = stars
+        if mode.startswith("Split"):
+            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
+            if folder:
+                save_tiff(starless, os.path.join(folder, "starless.tif"))
+                save_tiff(stars, os.path.join(folder, "stars.tif"))
+        else:  # Remove stars (keep editing)
+            self.project.run_step(_PrecomputedStep("Starless", starless), None)
+        self._rebuild_panel()
+        self._refresh()
+
+    def _export_stars_layer(self) -> None:
+        if self._stars_image is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Stars", "", "TIFF (*.tiff);;JPEG (*.jpg)"
+        )
+        if not path:
+            return
+        if path.lower().endswith((".jpg", ".jpeg")):
+            save_jpeg(self._stars_image, path)
+        else:
+            if not path.lower().endswith((".tiff", ".tif")):
+                path += ".tiff"
+            save_tiff(self._stars_image, path)
+
     # --- settings ---
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
@@ -212,11 +266,14 @@ class MainWindow(QMainWindow):
         apply_enabled = self.project is not None
         if stage.id == "background":
             apply_enabled = apply_enabled and graxpert_valid(self.settings)
+        if stage.id == "stars":
+            apply_enabled = apply_enabled and rcastro_valid(self.settings)
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
             on_apply=self.apply_current,
             on_export=self._export_current,
+            on_stars=self._apply_stars,
             apply_enabled=apply_enabled,
         )
         self._right_layout.replaceWidget(self._panel, new_panel)
@@ -236,6 +293,7 @@ class MainWindow(QMainWindow):
         self._next_btn.setEnabled(next_enabled(self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
+        self._export_stars_act.setEnabled(self._stars_image is not None)
 
     def _done_ids(self) -> set:
         done = set()
@@ -246,4 +304,6 @@ class MainWindow(QMainWindow):
         for sid, name in STEP_NAME.items():
             if name in applied:
                 done.add(sid)
+        if self._stars_image is not None:
+            done.add("stars")
         return done

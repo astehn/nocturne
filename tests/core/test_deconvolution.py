@@ -4,12 +4,13 @@ from seestar_processor.core.deconvolution import sharpen
 
 
 def test_sharpen_changes_image_and_keeps_shape():
-    data = np.random.rand(16, 16, 3).astype(np.float32)
+    rng = np.random.default_rng(1)
+    data = rng.random((16, 16, 3)).astype(np.float32)
     img = AstroImage(data)
     out = sharpen(img, 0.5)
     assert out.data.shape == (16, 16, 3)
     assert out.data.dtype == np.float32
-    assert not np.allclose(out.data, data)
+    assert np.mean(np.abs(out.data - data)) > 1e-3  # meaningfully sharpened
     assert out.data.min() >= 0.0 and out.data.max() <= 1.0
 
 
