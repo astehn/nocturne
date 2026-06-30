@@ -10,6 +10,7 @@ from ..core.export import save_jpeg, save_tiff
 from ..history.project import Project
 from ..settings import graxpert_valid, load_settings, save_settings
 from ..steps.background import BackgroundStep
+from ..steps.crop import CropStep
 from ..steps.load import load_fits
 from ..steps.stretch_step import StretchStep
 from ..tools.base import run_cli
@@ -116,6 +117,8 @@ class MainWindow(QMainWindow):
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
+        if stage_id == "crop":
+            return CropStep()
         if stage_id == "background":
             step = BackgroundStep(GraXpert(self.settings.graxpert_path))
             step._runner = self._bg_runner

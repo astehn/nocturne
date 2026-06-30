@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QLabel, QPushButton, QVBoxLayout, QWidget,
+)
+
+from ..core.crop import ASPECTS, TRIMS, CropSettings
 
 OPTIONS = ["Small", "Medium", "Large"]
+ROTATIONS = ["0°", "90°", "180°", "270°"]
 
 
 def build_panel(
@@ -28,6 +33,46 @@ def build_panel(
             btn.clicked.connect(lambda: on_open())
         lay.addWidget(btn)
         lay.addWidget(QLabel("Open a stacked Seestar FITS to begin."))
+
+    elif stage.kind == "crop":
+        aspect = QComboBox()
+        aspect.addItems(ASPECTS)
+        trim = QComboBox()
+        trim.addItems(TRIMS)
+        rotate = QComboBox()
+        rotate.addItems(ROTATIONS)
+        flip_h = QCheckBox("Flip horizontal")
+        flip_v = QCheckBox("Flip vertical")
+        apply_btn = QPushButton("Apply Crop")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+
+        def _emit_crop():
+            if on_apply is not None:
+                on_apply(CropSettings(
+                    aspect=aspect.currentText(),
+                    trim=trim.currentText(),
+                    rotate=int(rotate.currentText().rstrip("°")),
+                    flip_h=flip_h.isChecked(),
+                    flip_v=flip_v.isChecked(),
+                ))
+
+        apply_btn.clicked.connect(_emit_crop)
+        lay.addWidget(QLabel("Aspect ratio"))
+        lay.addWidget(aspect)
+        lay.addWidget(QLabel("Trim edges"))
+        lay.addWidget(trim)
+        lay.addWidget(QLabel("Rotate"))
+        lay.addWidget(rotate)
+        lay.addWidget(flip_h)
+        lay.addWidget(flip_v)
+        lay.addWidget(apply_btn)
+        w.aspect_box = aspect
+        w.trim_box = trim
+        w.rotate_box = rotate
+        w.flip_h_check = flip_h
+        w.flip_v_check = flip_v
+        w.apply_btn = apply_btn
 
     elif stage.kind in ("process", "stretch"):
         box = QComboBox()
