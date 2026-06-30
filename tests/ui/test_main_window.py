@@ -140,6 +140,17 @@ def test_histogram_updates_on_open(qtbot, tmp_path):
     assert win.histogram_view._hist is not None
 
 
+def test_window_title_is_app_name(qtbot, tmp_path):
+    from seestar_processor import APP_NAME
+    win = _window(qtbot, tmp_path)
+    assert win.windowTitle() == APP_NAME
+
+
+def test_help_menu_actions_exist(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._help_act is not None and win._about_act is not None
+
+
 def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     bad = tmp_path / "bad.fits"

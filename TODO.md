@@ -48,12 +48,17 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       - Own design + build cycle.
 
 ## Packaging / distribution (later, after refinement)
+- App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.
+- [ ] Rename the internal package `seestar_processor` → `nocturne` (touches all imports/tests;
+      do at packaging time to avoid mid-iteration churn). Settings dir `~/.seestar_processor`
+      → `~/.nocturne` too.
+- [ ] **Splash screen** on launch (with a real logo).
+- [ ] App **icon**.
 - [ ] Trim heavy deps before bundling: replace `colour-demosaicing` (rare mono-Bayer path)
       with a small bilinear debayer; replace `scikit-image` (unsharp / TV-denoise fallbacks)
       with small scipy/numpy versions. ~halves bundle size.
 - [ ] Standalone app build (PyInstaller for a quick `.app`, or Briefcase for installers).
 - [ ] macOS code-sign + notarize (Apple Developer ID) so others can open without warnings.
-- [ ] App icon + name polish.
 
 ## GitHub publish (when ready to go public)
 - [ ] README (screenshots, "requires GraXpert (free), RC-Astro optional", install steps).
