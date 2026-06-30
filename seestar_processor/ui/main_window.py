@@ -2,21 +2,28 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QListWidget, QMainWindow, QPushButton,
-    QVBoxLayout, QWidget, QComboBox,
+    QFileDialog, QHBoxLayout, QMainWindow, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..core.export import save_jpeg, save_tiff
 from ..history.project import Project
-from ..settings import load_settings, save_settings, graxpert_valid
+from ..settings import graxpert_valid, load_settings, save_settings
 from ..steps.background import BackgroundStep
 from ..steps.load import load_fits
 from ..steps.stretch_step import StretchStep
+from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
+from .image_view import ImageView
+from .pipeline import PIPELINE, PROCESSING_ORDER, STEP_NAME, next_enabled, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
+from .step_panels import build_panel
+from .stepper import Stepper
+
+
+def _stage_index(stage_id: str) -> int:
+    return next(i for i, s in enumerate(PIPELINE) if s.id == stage_id)
 
 
 class MainWindow(QMainWindow):
@@ -27,37 +34,42 @@ class MainWindow(QMainWindow):
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
-
-        self.stretch_step = StretchStep()
+        self._stage = 0
+        self._before_after = False
+        self._bg_runner = run_cli  # injectable for tests / future config
 
         central = QWidget()
         root = QHBoxLayout(central)
 
-        self.step_list = QListWidget()
-        self.step_list.itemClicked.connect(self._on_step_clicked)
-        root.addWidget(self.step_list, 1)
+        self.stepper = Stepper()
+        self.stepper.setMaximumWidth(200)
+        self.stepper.stageSelected.connect(self._go_to)
+        root.addWidget(self.stepper)
 
-        self.preview_label = QLabel("Open a FITS file to begin")
-        self.preview_label.setMinimumSize(640, 360)
-        root.addWidget(self.preview_label, 4)
+        self.image_view = ImageView()
+        root.addWidget(self.image_view, 1)
 
-        panel = QWidget()
-        pl = QVBoxLayout(panel)
-        self.option_box = QComboBox()
-        pl.addWidget(QLabel("Strength / preset"))
-        pl.addWidget(self.option_box)
-        self.bg_button = QPushButton("Apply Background")
-        self.bg_button.clicked.connect(self._apply_background)
-        self.stretch_button = QPushButton("Apply Stretch")
-        self.stretch_button.clicked.connect(self._apply_stretch)
-        pl.addWidget(self.bg_button)
-        pl.addWidget(self.stretch_button)
-        pl.addStretch(1)
-        root.addWidget(panel, 1)
+        right = QWidget()
+        right.setMinimumWidth(240)
+        self._right_layout = QVBoxLayout(right)
+        self._panel = QWidget()
+        self._right_layout.addWidget(self._panel)
+        self._right_layout.addStretch(1)
+        nav = QHBoxLayout()
+        self._back_btn = QPushButton("← Back")
+        self._next_btn = QPushButton("Next →")
+        self._next_btn.setObjectName("primary")
+        self._back_btn.clicked.connect(self.go_back)
+        self._next_btn.clicked.connect(self.go_next)
+        nav.addWidget(self._back_btn)
+        nav.addWidget(self._next_btn)
+        self._right_layout.addLayout(nav)
+        root.addWidget(right)
 
         self.setCentralWidget(central)
         self._build_toolbar()
-        self._refresh_enabled()
+        self._rebuild_panel()
+        self._refresh()
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
@@ -67,7 +79,28 @@ class MainWindow(QMainWindow):
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
-        tb.addAction("Export", self._export)
+        tb.addAction("Fit", self.image_view.fit)
+        tb.addAction("100%", self.image_view.actual_size)
+
+    # --- navigation ---
+    def current_stage_id(self) -> str:
+        return PIPELINE[self._stage].id
+
+    def go_next(self) -> None:
+        self._go_to(next_enabled(self._stage))
+
+    def go_back(self) -> None:
+        self._go_to(prev_enabled(self._stage))
+
+    def _go_to(self, index: int) -> None:
+        if not PIPELINE[index].enabled:
+            return
+        self._stage = index
+        self._rebuild_panel()
+        self._refresh()
+
+    def _go_to_id(self, stage_id: str) -> None:
+        self._go_to(_stage_index(stage_id))
 
     # --- file / project ---
     def _choose_fits(self) -> None:
@@ -79,54 +112,55 @@ class MainWindow(QMainWindow):
         base = load_fits(path)
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
-        self._render()
-        self._refresh_steps()
-        self._refresh_enabled()
+        self._go_to(next_enabled(_stage_index("load")))  # advance Load -> Background
 
-    # --- steps ---
-    def apply_step(self, step, option: str) -> None:
-        assert self.project is not None
-        self.project.run_step(step, option)
-        self._render()
-        self._refresh_steps()
-        self._refresh_enabled()
+    # --- apply a processing stage ---
+    def _step_for(self, stage_id: str):
+        if stage_id == "background":
+            step = BackgroundStep(GraXpert(self.settings.graxpert_path))
+            step._runner = self._bg_runner
+            return step
+        if stage_id == "stretch":
+            return StretchStep()
+        raise ValueError(stage_id)
 
-    def _apply_background(self) -> None:
-        gx = GraXpert(self.settings.graxpert_path)
-        self.apply_step(BackgroundStep(gx), self.option_box.currentText() or "Medium")
-
-    def _apply_stretch(self) -> None:
-        self.apply_step(self.stretch_step, self.option_box.currentText() or "Medium")
+    def apply_current(self, option: str) -> None:
+        if self.project is None:
+            return
+        stage_id = PIPELINE[self._stage].id
+        if stage_id not in PROCESSING_ORDER:
+            return
+        # Truncate history to the entries for processing stages that come BEFORE
+        # this one and are actually applied, so a re-apply replaces (not
+        # duplicates) this stage and drops anything after it. Counting applied
+        # predecessors (not the nominal index) keeps it correct when an earlier
+        # stage was skipped.
+        preceding = {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
+        }
+        target = sum(1 for name, _ in self.project.entries() if name in preceding)
+        self.project.jump_back(target)
+        self.project.run_step(self._step_for(stage_id), option)
+        self._go_to(next_enabled(self._stage))
 
     # --- history ---
     def _undo(self) -> None:
         if self.project:
             self.project.undo()
-            self._render(); self._refresh_steps(); self._refresh_enabled()
+            self._refresh()
 
     def _redo(self) -> None:
         if self.project:
             self.project.redo()
-            self._render(); self._refresh_steps(); self._refresh_enabled()
+            self._refresh()
 
     def _toggle_before_after(self) -> None:
-        if not self.project:
-            return
-        before, after = self.project.before_after()
-        self._show(before if self._ba_act.isChecked() else after)
-
-    def _on_step_clicked(self, item) -> None:
-        if not self.project:
-            return
-        # step_list row 0 == "Load" (base); rows 1..N map to entries(). Guard
-        # against a stale row (jump_back raises IndexError for row > position).
-        row = self.step_list.row(item)
-        if 0 <= row <= len(self.project.entries()):
-            self.project.jump_back(row)
-            self._render(); self._refresh_steps(); self._refresh_enabled()
+        self._before_after = self._ba_act.isChecked()
+        self._refresh()
 
     # --- export ---
-    def _export(self) -> None:
+    def _export_current(self, fmt: str) -> None:
         if not self.project:
             return
         path, selected = QFileDialog.getSaveFileName(
@@ -135,7 +169,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         img = self.project.current()
-        wants_jpeg = path.lower().endswith((".jpg", ".jpeg")) or "JPEG" in selected
+        wants_jpeg = "JPEG" in fmt or path.lower().endswith((".jpg", ".jpeg"))
         if wants_jpeg:
             if not path.lower().endswith((".jpg", ".jpeg")):
                 path += ".jpg"
@@ -151,29 +185,47 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
-            self._refresh_enabled()
+            self._rebuild_panel()
+            self._refresh()
 
-    # --- rendering / state ---
-    def _render(self) -> None:
-        if self.project:
-            self._show(self.project.current())
-        # populate option box from current default step (stretch presets are fine for both)
-        if self.option_box.count() == 0:
-            self.option_box.addItems(["Small", "Medium", "Large"])
+    # --- rendering ---
+    def _rebuild_panel(self) -> None:
+        stage = PIPELINE[self._stage]
+        apply_enabled = self.project is not None
+        if stage.id == "background":
+            apply_enabled = apply_enabled and graxpert_valid(self.settings)
+        new_panel = build_panel(
+            stage,
+            on_open=self._choose_fits,
+            on_apply=self.apply_current,
+            on_export=self._export_current,
+            apply_enabled=apply_enabled,
+        )
+        self._right_layout.replaceWidget(self._panel, new_panel)
+        self._panel.deleteLater()
+        self._panel = new_panel
 
-    def _show(self, img) -> None:
-        self.preview_label.setPixmap(QPixmap.fromImage(to_qimage(img)))
-
-    def _refresh_steps(self) -> None:
-        self.step_list.clear()
-        self.step_list.addItem("Load")
-        if self.project:
-            for name, opt in self.project.entries():
-                self.step_list.addItem(f"{name} ({opt})")
-
-    def _refresh_enabled(self) -> None:
-        has = self.project is not None
-        self.bg_button.setEnabled(has and graxpert_valid(self.settings))
-        self.stretch_button.setEnabled(has)
+    def _refresh(self) -> None:
+        self.stepper.set_current(self._stage)
+        self.stepper.mark_done(self._done_ids())
+        if self.project is not None:
+            img = self.project.current()
+            if self._before_after:
+                before, _ = self.project.before_after()
+                img = before
+            self.image_view.set_image(to_qimage(img))
+        self._back_btn.setEnabled(prev_enabled(self._stage) != self._stage)
+        self._next_btn.setEnabled(next_enabled(self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
+
+    def _done_ids(self) -> set:
+        done = set()
+        if self.project is None:
+            return done
+        done.add("load")
+        applied = {n for n, _ in self.project.entries()}
+        for sid, name in STEP_NAME.items():
+            if name in applied:
+                done.add(sid)
+        return done

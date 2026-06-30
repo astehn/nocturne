@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 import pytest
 from astropy.io import fits
@@ -6,50 +8,91 @@ pytest.importorskip("PySide6")
 from seestar_processor.ui.main_window import MainWindow  # noqa: E402
 
 
-def test_open_and_stretch_updates_preview(qtbot, tmp_path):
-    # synthetic Seestar-like color FITS
-    arr = (np.random.rand(3, 32, 32) * 1000).astype(np.uint16)
-    fpath = tmp_path / "stack.fits"
-    fits.PrimaryHDU(arr).writeto(str(fpath))
+def _fake_bg_runner(args):
+    """Stand in for the GraXpert CLI: copy the input FITS to the output path."""
+    in_fits = args[3]
+    out_stem = args[args.index("-output") + 1]
+    shutil.copy(in_fits, out_stem + ".fits")
 
+
+def _make_fits(tmp_path):
+    arr = (np.random.rand(3, 24, 24) * 1000).astype(np.uint16)
+    p = tmp_path / "stack.fits"
+    fits.PrimaryHDU(arr).writeto(str(p))
+    return str(p)
+
+
+def _window(qtbot, tmp_path):
     win = MainWindow(settings_path=str(tmp_path / "settings.json"))
     qtbot.addWidget(win)
-    win.open_fits(str(fpath))
-    assert win.project is not None
-    assert win.project.current().is_linear is True
-
-    win.apply_step(win.stretch_step, "Medium")
-    assert win.project.current().is_linear is False
-    assert win.preview_label.pixmap() is not None
-
-
-def _open_with_two_steps(qtbot, tmp_path):
-    arr = (np.random.rand(3, 16, 16) * 1000).astype(np.uint16)
-    fpath = tmp_path / "stack.fits"
-    fits.PrimaryHDU(arr).writeto(str(fpath))
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
-    qtbot.addWidget(win)
-    win.open_fits(str(fpath))
-    win.apply_step(win.stretch_step, "Small")
-    win.apply_step(win.stretch_step, "Medium")
     return win
 
 
-def test_undo_keeps_step_list_in_sync(qtbot, tmp_path):
-    win = _open_with_two_steps(qtbot, tmp_path)
-    # Load + 2 steps -> 3 rows
-    assert win.step_list.count() == 3
-    win._undo()
-    # after undo, list must shrink to Load + 1 entry (no stale rows)
-    assert win.step_list.count() == 1 + len(win.project.entries())
-    assert win.step_list.count() == 2
+def test_open_fits_loads_and_advances_to_background(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win.project is not None
+    assert win.project.current().is_linear is True
+    assert win.current_stage_id() == "background"
 
 
-def test_clicking_step_row_does_not_crash_after_undo(qtbot, tmp_path):
-    win = _open_with_two_steps(qtbot, tmp_path)
+def test_next_skips_disabled_stages(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))           # at "background"
+    win.go_next()                                  # skips color/decon/noise
+    assert win.current_stage_id() == "stretch"
+    win.go_next()
+    assert win.current_stage_id() == "export"
+    win.go_next()                                  # clamp at end
+    assert win.current_stage_id() == "export"
+
+
+def test_back_skips_disabled_stages(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.go_next()                                  # stretch
+    win.go_back()                                  # background
+    assert win.current_stage_id() == "background"
+    win.go_back()                                  # load
+    assert win.current_stage_id() == "load"
+
+
+def test_apply_stretch_marks_nonlinear_and_advances(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.go_next()                                  # stretch stage
+    win.apply_current("Medium")
+    assert win.project.current().is_linear is False
+    assert win.current_stage_id() == "export"
+
+
+def test_reapply_stretch_does_not_duplicate_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.go_next()                                  # stretch
+    win.apply_current("Small")
+    win._go_to_id("stretch")                       # navigate back to stretch
+    win.apply_current("Large")
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Stretch") == 1
+
+
+def test_panel_matches_current_stage(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._panel.panel_kind == "process"     # background
+    win.go_next()
+    assert win._panel.panel_kind == "stretch"
+
+
+def test_navigation_never_crashes_after_undo(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._bg_runner = _fake_bg_runner               # no real GraXpert binary
+    win.open_fits(_make_fits(tmp_path))
+    win.apply_current("Small")                     # background -> stretch
+    win.apply_current("Medium")                    # stretch -> export
+    assert [n for n, _ in win.project.entries()] == ["Background", "Stretch"]
     win._undo()
-    # clicking the last currently-valid row must not raise (regression: stale
-    # row -> jump_back IndexError). Iterate every visible row to be safe.
-    for row in range(win.step_list.count()):
-        win._on_step_clicked(win.step_list.item(row))
+    for sid in ("load", "background", "stretch", "export"):
+        win._go_to_id(sid)
     assert win.project is not None
