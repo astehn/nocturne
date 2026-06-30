@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 
 from ..core.color import ColorSettings
 from ..core.crop import ASPECTS, TRIMS, CropSettings
+from ..core.final_fixes import SATURATION_LEVELS, SKY_LEVELS, FinalFixesSettings
 
 OPTIONS = ["Small", "Medium", "Large"]
 ROTATIONS = ["0°", "90°", "180°", "270°"]
@@ -97,6 +98,43 @@ def build_panel(
         lay.addWidget(apply_btn)
         w.neutralize_check = neutralize
         w.wb_check = wb
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "final_fixes":
+        remove_green = QCheckBox("Remove green cast")
+        remove_green.setChecked(True)
+        increase_blue = QCheckBox("Increase blues")
+        saturation = QComboBox()
+        saturation.addItems(SATURATION_LEVELS)
+        saturation.setCurrentText("Subtle")
+        sky = QComboBox()
+        sky.addItems(SKY_LEVELS)
+        sky.setCurrentText("Normal")
+        apply_btn = QPushButton("Apply Final Fixes")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+
+        def _emit_final():
+            if on_apply is not None:
+                on_apply(FinalFixesSettings(
+                    remove_green=remove_green.isChecked(),
+                    saturation=saturation.currentText(),
+                    increase_blue=increase_blue.isChecked(),
+                    sky=sky.currentText(),
+                ))
+
+        apply_btn.clicked.connect(_emit_final)
+        lay.addWidget(remove_green)
+        lay.addWidget(QLabel("Saturation"))
+        lay.addWidget(saturation)
+        lay.addWidget(increase_blue)
+        lay.addWidget(QLabel("Sky brightness"))
+        lay.addWidget(sky)
+        lay.addWidget(apply_btn)
+        w.remove_green_check = remove_green
+        w.saturation_box = saturation
+        w.increase_blue_check = increase_blue
+        w.sky_box = sky
         w.apply_btn = apply_btn
 
     elif stage.kind in ("process", "stretch"):

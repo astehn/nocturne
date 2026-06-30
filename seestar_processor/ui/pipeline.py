@@ -19,7 +19,7 @@ PIPELINE: list[Stage] = [
     Stage("deconvolution", "Deconvolution", "placeholder", False),
     Stage("noise", "Noise", "placeholder", False),
     Stage("stretch", "Stretch", "stretch", True),
-    Stage("final_fixes", "Final Fixes", "placeholder", False),
+    Stage("final_fixes", "Final Fixes", "final_fixes", True),
     Stage("export", "Export", "export", True),
 ]
 
@@ -28,8 +28,9 @@ STEP_NAME = {
     "background": "Background",
     "color": "Color",
     "stretch": "Stretch",
+    "final_fixes": "Final Fixes",
 }
-PROCESSING_ORDER = ["crop", "background", "color", "stretch"]
+PROCESSING_ORDER = ["crop", "background", "color", "stretch", "final_fixes"]
 
 
 def next_enabled(index: int) -> int:
