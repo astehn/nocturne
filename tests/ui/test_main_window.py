@@ -53,11 +53,11 @@ def test_external_destination_changes_tail(qtbot, tmp_path):
     assert win.current_stage_id() == "crop"
 
 
-def test_apply_stretch_maps_preset_and_sets_nonlinear(qtbot, tmp_path):
+def test_apply_stretch_sets_nonlinear(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
-    win.apply_current("punchy")
+    win.apply_current(0.6)  # slider amount
     assert win.project.current().is_linear is False
     assert win.project.entries()[-1][0] == "Stretch"
 
@@ -66,7 +66,7 @@ def test_apply_does_not_auto_advance(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
-    win.apply_current("balanced")
+    win.apply_current(0.5)
     assert win.current_stage_id() == "stretch"  # stays put for before/after
 
 
@@ -75,7 +75,7 @@ def test_apply_ignored_while_busy(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win._busy = True
-    win.apply_current("punchy")
+    win.apply_current(0.6)
     assert win.project.entries() == []  # nothing applied while busy
 
 

@@ -63,13 +63,13 @@ def test_auto_panel_emits_none(qtbot):
     assert got == [None]
 
 
-def test_stretch_panel_presets(qtbot):
+def test_stretch_panel_slider_emits_amount(qtbot):
     got = []
     w = build_panel(_stage("stretch"), on_apply=got.append)
     qtbot.addWidget(w)
-    w.option_box.setCurrentText("punchy")
+    w.stretch_slider.setValue(70)
     w.apply_btn.click()
-    assert got == ["punchy"]
+    assert got == [0.70]
 
 
 def test_saturation_panel_emits_amount(qtbot):

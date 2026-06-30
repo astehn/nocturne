@@ -19,14 +19,29 @@ def _mtf(m: float, x: np.ndarray) -> np.ndarray:
     return np.where(x == 0, 0.0, np.where(x == 1, 1.0, ratio))
 
 
-def _stretch_params(c: np.ndarray) -> tuple[float, float]:
-    """Derive (shadow clip, midtones m) from one channel's statistics."""
+def _stretch_params(c: np.ndarray, target: float = _TARGET_BG) -> tuple[float, float]:
+    """Derive (shadow clip, midtones m) from one channel's statistics so its
+    median maps to `target`."""
     med = float(np.median(c))
     mad = float(np.median(np.abs(c - med))) or 1e-6
     shadow = max(0.0, med - _SIGMA * mad)
     clipped = np.clip((c - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
     med2 = float(np.median(clipped)) or 1e-6
-    return shadow, _mtf_midtones(med2, _TARGET_BG)
+    return shadow, _mtf_midtones(med2, target)
+
+
+def linked_stretch(data: np.ndarray, target: float) -> np.ndarray:
+    """Adaptive midtones stretch. For color, one transfer is derived from
+    luminance and applied to every channel (preserves colour balance)."""
+    if data.ndim == 2:
+        shadow, m = _stretch_params(data, target)
+        return np.clip(_apply_params(data, shadow, m), 0.0, 1.0)
+    lum = data.mean(axis=2)
+    shadow, m = _stretch_params(lum, target)
+    out = np.empty_like(data, dtype=np.float32)
+    for ch in range(data.shape[2]):
+        out[..., ch] = _apply_params(data[..., ch], shadow, m)
+    return np.clip(out, 0.0, 1.0)
 
 
 def _apply_params(c: np.ndarray, shadow: float, m: float) -> np.ndarray:
@@ -44,16 +59,5 @@ def _mtf_midtones(current_med: float, target: float) -> float:
 
 
 def autostretch(img: AstroImage) -> np.ndarray:
-    data = img.data
-    if data.ndim == 2:
-        shadow, m = _stretch_params(data)
-        return np.clip(_apply_params(data, shadow, m), 0.0, 1.0)
-    # Linked stretch: derive one transfer from luminance and apply to every
-    # channel so colour balance (background neutralization / white balance) is
-    # preserved in the display, instead of being neutralized per channel.
-    lum = data.mean(axis=2)
-    shadow, m = _stretch_params(lum)
-    out = np.empty_like(data, dtype=np.float32)
-    for ch in range(data.shape[2]):
-        out[..., ch] = _apply_params(data[..., ch], shadow, m)
-    return np.clip(out, 0.0, 1.0)
+    # Display-only: lift the background to a fixed target for a clear preview.
+    return linked_stretch(img.data, _TARGET_BG)

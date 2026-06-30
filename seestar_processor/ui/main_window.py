@@ -31,7 +31,6 @@ from .step_panels import build_panel
 from .stepper import Stepper
 from .worker import BusyOverlay, run_async
 
-_STRETCH_LABEL = {"gentle": "Small", "balanced": "Medium", "punchy": "Large"}
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 
 
@@ -195,8 +194,6 @@ class MainWindow(QMainWindow):
         stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
-        if stage_id == "stretch":
-            option = _STRETCH_LABEL.get(option, "Medium")
         # Truncate history to this stage's applied predecessors (synchronous).
         preceding = {
             STEP_NAME[sid]
