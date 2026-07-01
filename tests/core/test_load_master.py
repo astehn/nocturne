@@ -24,6 +24,16 @@ def test_load_master_fits_roundtrip(tmp_path):
     assert img.data.shape == (6, 8, 3)
 
 
+def test_load_master_rejects_mono_fits(tmp_path):
+    # A 2D (mono / raw-CFA) FITS must be rejected, not silently debayered into
+    # fake colour by load_fits.
+    from astropy.io import fits
+    p = tmp_path / "mono.fits"
+    fits.PrimaryHDU(np.zeros((6, 8), np.uint16)).writeto(str(p))
+    with pytest.raises(ValueError):
+        load_master(str(p))
+
+
 def test_load_master_unsupported_extension(tmp_path):
     p = tmp_path / "m.jpg"
     p.write_text("x")

@@ -97,6 +97,12 @@ def load_master(path: str) -> AstroImage:
     the app writes: FITS (via load_fits) and 16-bit TIFF (via tifffile)."""
     ext = os.path.splitext(path)[1].lower()
     if ext in (".fits", ".fit", ".fts"):
+        # A colour master is a 3-channel cube (NAXIS=3). A 2D FITS is a mono or
+        # raw-CFA frame, which load_fits would debayer into fake colour — reject
+        # it instead so the palette tool gives an honest error, not garbage.
+        with fits.open(path) as hdul:
+            if int(hdul[0].header.get("NAXIS", 0)) != 3:
+                raise ValueError("palette needs a colour (RGB) master, not a mono image")
         return load_fits(path)
     if ext in (".tif", ".tiff"):
         arr = np.asarray(tifffile.imread(path)).astype(np.float32)
