@@ -73,12 +73,19 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         )
 
     # Phase B: integrate (streaming — reload + warp per frame, low memory).
-    def frames():
-        for path in used:
-            yield warp_to(load_sub(path, normalize=False).data, transforms[path])
+    # Emit per-frame progress so the (longest) integration step isn't a frozen
+    # bar. sigma-clip walks every frame twice, so label the passes.
+    total = len(used)
+    passes = 2 if opts.method == "sigma_clip" else 1
+    pass_no = {"n": 0}
 
-    if on_progress is not None:
-        on_progress(n, n, "integrating")
+    def frames():
+        pass_no["n"] += 1
+        label = "integrating" if passes == 1 else f"integrating (pass {pass_no['n']}/{passes})"
+        for i, path in enumerate(used, start=1):
+            if on_progress is not None:
+                on_progress(i, total, label)
+            yield warp_to(load_sub(path, normalize=False).data, transforms[path])
 
     if opts.method == "sigma_clip":
         master = sigma_clip_integrate(frames, opts.kappa)

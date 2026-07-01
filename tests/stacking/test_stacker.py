@@ -29,6 +29,31 @@ def test_run_stack_produces_master(tmp_path):
     assert os.path.exists(result.output_path)
 
 
+def test_average_emits_per_frame_integration_progress(tmp_path):
+    paths = _make_subs(tmp_path)
+    calls = []
+    run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")),
+              on_progress=lambda i, n, label: calls.append((i, n, label)))
+    integ = [c for c in calls if c[2] == "integrating"]
+    # one progress tick per used frame, reaching the total
+    assert len(integ) == 4
+    assert [c[0] for c in integ] == [1, 2, 3, 4]
+    assert all(c[1] == 4 for c in integ)
+
+
+def test_sigma_clip_labels_both_integration_passes(tmp_path):
+    paths = _make_subs(tmp_path)
+    calls = []
+    run_stack(StackOptions("sigma_clip", 2.5, paths, str(tmp_path / "m.fits")),
+              on_progress=lambda i, n, label: calls.append((i, n, label)))
+    labels = {c[2] for c in calls}
+    assert "integrating (pass 1/2)" in labels
+    assert "integrating (pass 2/2)" in labels
+    # each pass ticks per frame up to the total
+    p1 = [c[0] for c in calls if c[2] == "integrating (pass 1/2)"]
+    assert p1 == [1, 2, 3, 4]
+
+
 def test_run_stack_reports_unreadable(tmp_path):
     paths = _make_subs(tmp_path)
     bad = tmp_path / "bad.fit"
