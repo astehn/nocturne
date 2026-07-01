@@ -18,6 +18,20 @@ def extract_channels(img: AstroImage) -> tuple:
     return ha, oiii
 
 
+def subtract_background(img: AstroImage, percentile: float = 50.0) -> AstroImage:
+    """Drop each channel's sky pedestal to ~0 by subtracting a per-channel
+    background level (a low/median percentile of its pixels). A raw master's
+    sky-glow is far brighter than the faint Ha/OIII signal; without removing it
+    a palette remap just yields a flat colour wash. Mono images pass through."""
+    if not img.is_color:
+        return img.copy()
+    data = img.data.astype(np.float32).copy()
+    for c in range(3):
+        bg = float(np.percentile(data[..., c], percentile))
+        data[..., c] = np.clip(data[..., c] - bg, 0.0, 1.0)
+    return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
 def _image_like(channels: tuple, like: AstroImage) -> AstroImage:
     rgb = np.clip(np.stack(channels, axis=2), 0.0, 1.0).astype(np.float32)
     return AstroImage(rgb, is_linear=like.is_linear, metadata=dict(like.metadata))

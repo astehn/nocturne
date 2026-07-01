@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 
 from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import load_master
-from ..core.palette import apply_palette
+from ..core.palette import apply_palette, subtract_background
 
 _EXPORTERS = {
     ".tiff": save_tiff, ".tif": save_tiff, ".png": save_png,
@@ -43,6 +43,8 @@ class PaletteDialog(QDialog):
         self.hoo_radio = QRadioButton("HOO — honest duo-band (Ha/OIII)")
         self.sho_radio = QRadioButton("Pseudo-SHO — SHO look from Ha+OIII only (no real SII)")
         self.hoo_radio.setChecked(True)
+        self.bg_check = QCheckBox("Subtract background first (recommended for a raw stack)")
+        self.bg_check.setChecked(True)
         self.open_check = QCheckBox("Open result in the editor")
         self.open_check.setChecked(True)
         self.status = QLabel("")
@@ -59,6 +61,7 @@ class PaletteDialog(QDialog):
         pal_wrap.setLayout(palettes)
         form.addRow("Palette", pal_wrap)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
+        form.addRow("", self.bg_check)
         form.addRow("", self.open_check)
 
         apply_btn = QPushButton("Apply")
@@ -112,7 +115,10 @@ class PaletteDialog(QDialog):
             self.status.setText("Unsupported output format (use .tiff, .fits or .png).")
             return
         try:
-            result = self._palette_runner(self._loader(inp), name)
+            img = self._loader(inp)
+            if self.bg_check.isChecked():
+                img = subtract_background(img)
+            result = self._palette_runner(img, name)
             exporter(result, out)
         except Exception as exc:
             self.status.setText(f"Failed: {exc}")

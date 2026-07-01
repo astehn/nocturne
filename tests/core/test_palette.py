@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from seestar_processor.core.image import AstroImage
 from seestar_processor.core.palette import (
-    PALETTES, extract_channels, hoo, pseudo_sho, apply_palette,
+    PALETTES, extract_channels, hoo, pseudo_sho, apply_palette, subtract_background,
 )
 
 
@@ -38,6 +38,20 @@ def test_pseudo_sho_ha_gold_oiii_teal():
     assert ha_px[0] > ha_px[2] and ha_px[1] > ha_px[2]
     # OIII region -> teal: B above R
     assert oiii_px[2] > oiii_px[0]
+
+
+def test_subtract_background_drops_pedestal_keeps_signal():
+    # A mostly-background field (0.3) with a small bright patch (0.8).
+    data = np.full((1, 10, 3), 0.3, np.float32)
+    data[0, 0] = 0.8                       # one bright pixel per channel
+    out = subtract_background(AstroImage(data), percentile=50.0).data
+    assert np.median(out) < 1e-6           # background pushed to ~0
+    assert np.isclose(out[0, 0, 0], 0.5, atol=1e-6)   # signal preserved (0.8 - 0.3)
+
+
+def test_subtract_background_passes_mono_through():
+    mono = AstroImage(np.full((4, 4), 0.3, np.float32))
+    assert subtract_background(mono).data.shape == (4, 4)
 
 
 def test_apply_palette_dispatch_and_unknown():
