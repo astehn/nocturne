@@ -49,9 +49,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       load it into the editor. `stacking/` package + `ui/stack_dialog.py`.
 - [x] **Narrowband palette (HOO / pseudo-SHO), starless workflow.** Interactive "Palette…"
       on the current image: StarX removes stars (once), the starless nebula is coloured with
-      live sliders (palette, Ha/OIII balance, saturation, SCNR), white stars are screened
-      back, and Apply records a "Palette" history step. Falls back to whole-image without
-      RC-Astro. `core/palette.py` + `ui/palette_dialog.py`.
+      live controls, white stars are screened back, and Apply records a "Palette" history
+      step. Falls back to whole-image without RC-Astro. `core/palette.py` + `ui/palette_dialog.py`.
+      - v3: per-channel Black/Mid/White curves (R/G/B channel tabs) replace the global
+        balance/saturation sliders, so the SHO look is sculpted per channel, not globally
+        re-tinted. Palette radio + SCNR + Reset retained.
 
 ## Packaging / distribution (later, after refinement)
 - App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.
