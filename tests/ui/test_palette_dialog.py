@@ -30,7 +30,7 @@ def test_dialog_runs_starx_and_renders(qtbot):
     assert not dlg.preview.pixmap().isNull()          # preview rendered
 
 
-def test_slider_change_rerenders(qtbot):
+def test_channel_curve_change_rerenders(qtbot):
     dlg = PaletteDialog(Settings(), _color())
     qtbot.addWidget(dlg)
     dlg._async = False
@@ -38,8 +38,39 @@ def test_slider_change_rerenders(qtbot):
     dlg._starx_runner = _fake_starx
     dlg.start()
     before = dlg.preview.pixmap().cacheKey()
-    dlg.sat_slider.setValue(95)                        # should trigger a re-render
+    dlg.white_slider.setValue(40)                     # move active channel's white point
     assert dlg.preview.pixmap().cacheKey() != before
+
+
+def test_channel_tab_stores_and_repopulates(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
+    qtbot.addWidget(dlg)
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
+    dlg.r_radio.setChecked(True)                      # editing R
+    dlg.white_slider.setValue(30)
+    assert dlg._curves["R"].white == 0.30
+    dlg.g_radio.setChecked(True)                      # switch to G
+    assert dlg.white_slider.value() == 100            # G still neutral -> white 1.0
+    dlg.r_radio.setChecked(True)                      # back to R
+    assert dlg.white_slider.value() == 30             # R's stored value restored
+
+
+def test_reset_returns_curves_to_neutral(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
+    qtbot.addWidget(dlg)
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
+    dlg.r_radio.setChecked(True)
+    dlg.black_slider.setValue(40)
+    dlg.reset()
+    assert all(c.black == 0.0 and c.mid == 0.5 and c.white == 1.0
+               for c in dlg._curves.values())
+    assert dlg.black_slider.value() == 0
 
 
 def test_apply_records_result(qtbot):
