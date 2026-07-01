@@ -63,3 +63,52 @@ def test_run_requires_output(qtbot):
     qtbot.addWidget(dlg)
     dlg.run()
     assert "output" in dlg.status.text().lower()
+
+
+def test_dialog_closes_on_success(qtbot):
+    from PySide6.QtWidgets import QDialog
+    from seestar_processor.stacking.stacker import StackResult
+
+    class _Img:
+        pass
+
+    handed = {}
+    dlg = StackDialog(Settings(), on_master=lambda img: handed.setdefault("img", img))
+    qtbot.addWidget(dlg)
+    dlg._on_stacked(StackResult(_Img(), ["a", "b", "c"], [], 3, 30.0, "/x/m.fits"))
+    assert "img" in handed                                   # master handed off first
+    assert dlg.result() == QDialog.DialogCode.Accepted       # then dialog closed
+    assert dlg._stack_btn.isEnabled()                        # busy cleared
+
+
+def test_second_run_ignored_while_busy(qtbot, tmp_path):
+    import threading
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    paths = [str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit")]
+    started, release, calls = threading.Event(), threading.Event(), []
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda p, on_progress=None: [
+        _stats(paths[0], 0.3), _stats(paths[1], 0.6), _stats(paths[2], 0.9),
+    ]
+
+    def slow_stack(opts, on_progress=None):
+        calls.append(1)
+        started.set()
+        release.wait(2.0)
+        from seestar_processor.stacking.stacker import StackResult
+        return StackResult(object(), opts.include, [], len(opts.include), 30.0, opts.output_path)
+
+    dlg._stack_runner = slow_stack
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+    dlg.run()                                                 # dispatches, goes busy
+    qtbot.waitUntil(lambda: started.is_set(), timeout=2000)
+    assert dlg._stack_btn.isEnabled() is False                # button disabled while running
+    dlg.run()                                                 # must be ignored (busy)
+    release.set()
+    qtbot.waitUntil(lambda: dlg._stack_btn.isEnabled(), timeout=2000)
+    assert len(calls) == 1                                    # only one stack ran

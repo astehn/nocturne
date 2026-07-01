@@ -42,6 +42,7 @@ class StackDialog(QDialog):
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
         self._stats = []
+        self._busy = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
@@ -74,13 +75,13 @@ class StackDialog(QDialog):
         form.addRow("Integration", method_wrap)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
 
-        stack_btn = QPushButton("Stack")
-        stack_btn.setObjectName("primary")
-        stack_btn.clicked.connect(self.run)
+        self._stack_btn = QPushButton("Stack")
+        self._stack_btn.setObjectName("primary")
+        self._stack_btn.clicked.connect(self.run)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
-        buttons.addWidget(stack_btn)
+        buttons.addWidget(self._stack_btn)
         buttons.addWidget(close_btn)
 
         root = QVBoxLayout(self)
@@ -104,14 +105,24 @@ class StackDialog(QDialog):
         if path:
             self.output_edit.setText(path)
 
+    # --- busy state ---
+    def _set_busy(self, busy: bool) -> None:
+        """Block the Stack button (and re-entrant runs) while async work runs, so
+        two workers can't stack to the same output path at once."""
+        self._busy = busy
+        self._stack_btn.setEnabled(not busy)
+
     # --- grade ---
     def grade(self) -> None:
+        if self._busy:
+            return
         folder = self.folder_edit.text().strip()
         paths = discover_subs(folder) if folder else []
         if not paths:
             self.status.setText("No .fit subs found in that folder.")
             return
         self.status.setText("Grading frames…")
+        self._set_busy(True)
         runner = self._grade_runner
 
         def work():
@@ -121,6 +132,7 @@ class StackDialog(QDialog):
         run_async(self._pool, work, self._on_graded, self._on_error)
 
     def _on_graded(self, stats) -> None:
+        self._set_busy(False)
         self._stats = stats
         self.table.setRowCount(len(stats))
         for row, s in enumerate(stats):
@@ -145,6 +157,9 @@ class StackDialog(QDialog):
         return [s.path for s in chosen]
 
     def run(self) -> None:
+        if self._busy:
+            self.status.setText("Please wait — still working…")
+            return
         if not self.output_edit.text().strip():
             self.status.setText("Pick an output path.")
             return
@@ -157,6 +172,7 @@ class StackDialog(QDialog):
                             include, self.output_edit.text().strip())
         runner = self._stack_runner
         self.status.setText("Stacking…")
+        self._set_busy(True)
 
         def work():
             return runner(opts, on_progress=lambda i, n, label:
@@ -170,12 +186,15 @@ class StackDialog(QDialog):
         self.status.setText(f"{label}… {i}/{n}")
 
     def _on_stacked(self, result) -> None:
+        self._set_busy(False)
         self.status.setText(
             f"Done — {result.frame_count} frames, "
             f"{len(result.rejected)} rejected → {os.path.basename(result.output_path)}"
         )
         if self._on_master is not None:
             self._on_master(result.image)
+        self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        self._set_busy(False)
         self.status.setText(f"Failed: {exc}")
