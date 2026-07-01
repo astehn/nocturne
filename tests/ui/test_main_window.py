@@ -268,3 +268,18 @@ def test_open_image_loads_astroimage(qtbot, tmp_path):
     assert win.project is not None
     assert win.current_stage_id() == "load"
     assert "stacked master" in win.log_panel.text()
+
+
+def test_open_palette_requires_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)          # no image loaded
+    win._open_palette()
+    assert "open" in win._status.text().lower()
+
+
+def test_record_palette_adds_history_step(qtbot, tmp_path):
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._record_palette(AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False))
+    assert win.project.entries()[-1][0] == "Palette"
