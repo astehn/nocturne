@@ -229,12 +229,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._status.setText(f"Could not open file: {exc}")
             return
+        self.open_image(base, os.path.basename(path))
+
+    def open_image(self, base, label: str) -> None:
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._status.setText("")
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
-            format_log_entry(f"Opened {os.path.basename(path)}", "", None, dims=(w, h))
+            format_log_entry(f"Opened {label}", "", None, dims=(w, h))
         )
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()

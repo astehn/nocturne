@@ -257,3 +257,14 @@ def test_export_external_panel_split_gated(qtbot, tmp_path):
     win._go_to_id("export_external")
     # no RC-Astro configured -> split (item 1) disabled
     assert win._panel.fmt_box.model().item(1).isEnabled() is False
+
+
+def test_open_image_loads_astroimage(qtbot, tmp_path):
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_image(AstroImage(np.zeros((12, 14, 3), np.float32), is_linear=True),
+                   "stacked master")
+    assert win.project is not None
+    assert win.current_stage_id() == "load"
+    assert "stacked master" in win.log_panel.text()
