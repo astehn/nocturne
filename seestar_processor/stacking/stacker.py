@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from ..core.export import save_fits
+from ..core.image import AstroImage
+from .frames import load_sub, luminance
+from .integrate import average_integrate, sigma_clip_integrate
+from .register import RegistrationError, find_transform, warp_to
+
+
+@dataclass
+class StackOptions:
+    method: str          # "average" | "sigma_clip"
+    kappa: float
+    include: list         # paths, ordered best-first; include[0] is the reference
+    output_path: str
+
+
+@dataclass
+class StackResult:
+    image: AstroImage
+    used: list
+    rejected: list        # (path, reason)
+    frame_count: int
+    integration_seconds: float
+    output_path: str
+
+
+def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
+    paths = list(opts.include)
+    if len(paths) < 3:
+        raise ValueError("need at least 3 frames to stack")
+
+    ref_path = paths[0]
+    ref_img = load_sub(ref_path)
+    ref_lum = luminance(ref_img.data)
+    ref_shape = ref_img.data.shape[:2]
+
+    transforms = {ref_path: np.eye(3)}
+    exposures = {ref_path: float(ref_img.metadata.get("exposure", 0.0) or 0.0)}
+    used = [ref_path]
+    rejected: list = []
+    n = len(paths)
+
+    # Phase A: register each remaining sub against the reference.
+    for i, path in enumerate(paths[1:], start=1):
+        try:
+            sub = load_sub(path)
+        except Exception as exc:
+            rejected.append((path, f"unreadable: {exc}"))
+            continue
+        if sub.data.shape[:2] != ref_shape:
+            rejected.append((path, "dimension mismatch"))
+            continue
+        try:
+            matrix = find_transform(luminance(sub.data), ref_lum)
+        except RegistrationError as exc:
+            rejected.append((path, f"registration failed: {exc}"))
+            continue
+        transforms[path] = matrix
+        exposures[path] = float(sub.metadata.get("exposure", 0.0) or 0.0)
+        used.append(path)
+        if on_progress is not None:
+            on_progress(i, n, "registering")
+
+    if len(used) < 3:
+        raise ValueError(
+            "not enough frames could be registered — the reference may be too "
+            "star-sparse to align (need at least 3)"
+        )
+
+    # Phase B: integrate (streaming — reload + warp per frame, low memory).
+    def frames():
+        for path in used:
+            yield warp_to(load_sub(path).data, transforms[path])
+
+    if on_progress is not None:
+        on_progress(n, n, "integrating")
+
+    if opts.method == "sigma_clip":
+        master = sigma_clip_integrate(frames, opts.kappa)
+    else:
+        master = average_integrate(frames())
+
+    integ = sum(exposures[p] for p in used)
+    image = AstroImage(
+        np.clip(master, 0.0, 1.0).astype(np.float32),
+        is_linear=True,
+        metadata={
+            "target": ref_img.metadata.get("target"),
+            "frames": len(used),
+            "exposure": integ,
+            "width": ref_shape[1],
+            "height": ref_shape[0],
+        },
+    )
+    save_fits(image, opts.output_path,
+              header={"NSUBS": len(used), "STACKCNT": len(used), "EXPTIME": integ})
+    return StackResult(image, used, rejected, len(used), integ, opts.output_path)
