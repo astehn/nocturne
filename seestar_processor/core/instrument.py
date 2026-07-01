@@ -21,5 +21,5 @@ SEESTAR_S30_PRO = Instrument(
     height=2160,
     pixel_size_um=2.9,
     focal_length_mm=150.0,
-    bayer_pattern="RGGB",
+    bayer_pattern="GRBG",  # confirmed from real S30 Pro sub headers (BAYERPAT='GRBG')
 )

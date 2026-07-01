@@ -16,6 +16,17 @@ def _normalize(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
+_VALID_CFA = ("RGGB", "BGGR", "GRBG", "GBRG")
+
+
+def _bayer_pattern(header) -> str:
+    """CFA pattern from the file's own BAYERPAT header (authoritative), falling
+    back to the instrument default only when it is missing/invalid. A wrong
+    pattern demosaics one phase off -> green maze + false colour."""
+    pattern = str(header.get("BAYERPAT", "") or "").strip().upper()
+    return pattern if pattern in _VALID_CFA else SEESTAR_S30_PRO.bayer_pattern
+
+
 def _parse_metadata(header, height: int, width: int) -> dict:
     meta: dict = {"width": width, "height": height}
     mapping = {
@@ -66,9 +77,11 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
         h, w = data.shape[:2]
         return AstroImage(data.astype(np.float32), is_linear=True,
                           metadata=_parse_metadata(header, h, w))
-    # 2D mono-Bayer -> debayer with instrument pattern.
+    # 2D mono-Bayer -> debayer. The CFA pattern MUST come from the file's own
+    # header (Seestar subs are 'GRBG', not 'RGGB'); a wrong pattern demosaics one
+    # phase off and produces a green maze + false colour.
     base = _normalize(raw) if normalize else raw.astype(np.float32)
-    rgb = demosaicing_CFA_Bayer_bilinear(base, SEESTAR_S30_PRO.bayer_pattern)
+    rgb = demosaicing_CFA_Bayer_bilinear(base, _bayer_pattern(header))
     if normalize:
         rgb = np.clip(rgb, 0.0, 1.0)
     h, w = rgb.shape[:2]
