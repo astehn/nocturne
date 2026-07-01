@@ -78,26 +78,61 @@ def test_screen_blend_math():
     assert np.isclose(out[1], 0.3)               # screen with 0 base = top
 
 
-def test_render_nebula_saturation_zero_is_grey():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
-    out = render_nebula(_img([(0.9, 0.1, 0.3)]), PaletteParams(saturation=0.0)).data[0, 0]
-    assert np.allclose(out, out[0], atol=1e-6)   # greyscale
+def test_apply_channel_curve_neutral_is_noop():
+    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
+    ch = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]], np.float32)
+    out = apply_channel_curve(ch, ChannelCurve())        # black 0, mid .5, white 1
+    assert np.allclose(out, ch, atol=1e-6)
 
 
-def test_render_nebula_balance_shifts_ha_oiii():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
-    px = [(0.6, 0.6, 0.6)]                        # equal Ha and OIII
-    ha_heavy = render_nebula(_img(px), PaletteParams(palette="HOO", balance=1.0)).data[0, 0]
-    oiii_heavy = render_nebula(_img(px), PaletteParams(palette="HOO", balance=0.0)).data[0, 0]
-    assert ha_heavy[0] > ha_heavy[2]             # balance=1 -> red (Ha) dominant
-    assert oiii_heavy[2] > oiii_heavy[0]         # balance=0 -> blue (OIII) dominant
+def test_apply_channel_curve_white_point_brightens():
+    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
+    ch = np.array([[0.5]], np.float32)
+    out = apply_channel_curve(ch, ChannelCurve(white=0.5))  # pull white down -> brighter
+    assert out[0, 0] > 0.5
+
+
+def test_apply_channel_curve_black_point_darkens():
+    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
+    ch = np.array([[0.3]], np.float32)
+    out = apply_channel_curve(ch, ChannelCurve(black=0.2))  # lift black -> darker lows
+    assert out[0, 0] < 0.3
+
+
+def test_apply_channel_curve_mid_gamma():
+    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
+    ch = np.array([[0.5]], np.float32)
+    assert np.isclose(apply_channel_curve(ch, ChannelCurve(mid=0.5))[0, 0], 0.5, atol=1e-6)
+    assert apply_channel_curve(ch, ChannelCurve(mid=0.8))[0, 0] > 0.5   # brighter mids
+    assert apply_channel_curve(ch, ChannelCurve(mid=0.2))[0, 0] < 0.5   # darker mids
+
+
+def test_render_nebula_neutral_curves_equals_plain_palette():
+    from seestar_processor.core.palette import render_nebula, PaletteParams, hoo
+    img = _img([(0.9, 0.2, 0.4), (0.3, 0.7, 0.6)])
+    # neutral curves + scnr off == plain HOO combination
+    out = render_nebula(img, PaletteParams(palette="HOO", scnr=False)).data
+    plain = hoo(img).data
+    assert np.allclose(out, plain, atol=1e-6)
+
+
+def test_render_nebula_per_channel_independent():
+    from seestar_processor.core.palette import render_nebula, PaletteParams, ChannelCurve
+    img = _img([(0.8, 0.5, 0.5), (0.6, 0.5, 0.5)])
+    base = render_nebula(img, PaletteParams(scnr=False)).data
+    # pull RED white down -> red mean rises; green/blue unchanged
+    tweaked = render_nebula(
+        img, PaletteParams(r=ChannelCurve(white=0.5), scnr=False)).data
+    assert tweaked[..., 0].mean() > base[..., 0].mean()
+    assert np.allclose(tweaked[..., 1], base[..., 1], atol=1e-6)
+    assert np.allclose(tweaked[..., 2], base[..., 2], atol=1e-6)
 
 
 def test_render_nebula_scnr_reduces_green():
     from seestar_processor.core.palette import render_nebula, PaletteParams
-    px = [(0.2, 0.9, 0.2)]
-    with_scnr = render_nebula(_img(px), PaletteParams(scnr=True)).data[0, 0]
-    without = render_nebula(_img(px), PaletteParams(scnr=False)).data[0, 0]
+    img = _img([(0.2, 0.9, 0.2)])
+    with_scnr = render_nebula(img, PaletteParams(scnr=True)).data[0, 0]
+    without = render_nebula(img, PaletteParams(scnr=False)).data[0, 0]
     assert with_scnr[1] <= without[1]
 
 

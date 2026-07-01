@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
-from ..core.palette import PaletteParams, compose, render_nebula
+from ..core.palette import ChannelCurve, PaletteParams, compose, render_nebula
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
 from .preview import to_qimage
@@ -49,17 +49,38 @@ class PaletteDialog(QDialog):
         self.hoo_radio = QRadioButton("HOO")
         self.sho_radio = QRadioButton("Pseudo-SHO (no real SII)")
         self.hoo_radio.setChecked(True)
-        self.balance_slider = self._slider()      # Ha <-> OIII
-        self.sat_slider = self._slider()          # saturation
+
+        # per-channel curve state; sliders edit the active channel
+        self._curves = {"R": ChannelCurve(), "G": ChannelCurve(), "B": ChannelCurve()}
+        self._active_channel = "R"
+        self.r_radio = QRadioButton("R")
+        self.g_radio = QRadioButton("G")
+        self.b_radio = QRadioButton("B")
+        self.r_radio.setChecked(True)
+
+        self.black_slider = self._slider()
+        self.mid_slider = self._slider()
+        self.white_slider = self._slider()
+        # neutral curve = black 0 / mid 0.5 / white 1.0 (the _slider factory defaults
+        # to 50, which is only correct for mid). Signals are connected later, so these
+        # setValue calls do not fire _on_slider.
+        self.black_slider.setValue(0)
+        self.white_slider.setValue(100)
+
         self.scnr_check = QCheckBox("Green suppression (SCNR)")
         self.scnr_check.setChecked(True)
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.clicked.connect(self.reset)
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
         for w in (self.hoo_radio, self.sho_radio):
             w.toggled.connect(self._render_preview)
-        for s in (self.balance_slider, self.sat_slider):
-            s.valueChanged.connect(self._render_preview)
+        self.r_radio.toggled.connect(lambda on: on and self._select_channel("R"))
+        self.g_radio.toggled.connect(lambda on: on and self._select_channel("G"))
+        self.b_radio.toggled.connect(lambda on: on and self._select_channel("B"))
+        for s in (self.black_slider, self.mid_slider, self.white_slider):
+            s.valueChanged.connect(self._on_slider)
         self.scnr_check.toggled.connect(self._render_preview)
 
         controls = QFormLayout()
@@ -69,9 +90,18 @@ class PaletteDialog(QDialog):
         pal_wrap = QWidget()
         pal_wrap.setLayout(pal)
         controls.addRow("Palette", pal_wrap)
-        controls.addRow("Ha ◄─► OIII", self.balance_slider)
-        controls.addRow("Saturation", self.sat_slider)
+        chan = QHBoxLayout()
+        chan.addWidget(self.r_radio)
+        chan.addWidget(self.g_radio)
+        chan.addWidget(self.b_radio)
+        chan_wrap = QWidget()
+        chan_wrap.setLayout(chan)
+        controls.addRow("Channel", chan_wrap)
+        controls.addRow("Black", self.black_slider)
+        controls.addRow("Mid", self.mid_slider)
+        controls.addRow("White", self.white_slider)
         controls.addRow("", self.scnr_check)
+        controls.addRow("", self.reset_btn)
 
         apply_btn = QPushButton("Apply")
         apply_btn.setObjectName("primary")
@@ -142,12 +172,34 @@ class PaletteDialog(QDialog):
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = _downscale(self._stars) if self._stars is not None else None
 
+    # --- channel curve controls ---
+    def _select_channel(self, name: str) -> None:
+        self._active_channel = name
+        c = self._curves[name]
+        for slider, val in ((self.black_slider, c.black),
+                            (self.mid_slider, c.mid), (self.white_slider, c.white)):
+            slider.blockSignals(True)
+            slider.setValue(round(val * 100))
+            slider.blockSignals(False)
+        self._render_preview()
+
+    def _on_slider(self, _value: int) -> None:
+        self._curves[self._active_channel] = ChannelCurve(
+            black=self.black_slider.value() / 100.0,
+            mid=self.mid_slider.value() / 100.0,
+            white=self.white_slider.value() / 100.0,
+        )
+        self._render_preview()
+
+    def reset(self) -> None:
+        self._curves = {"R": ChannelCurve(), "G": ChannelCurve(), "B": ChannelCurve()}
+        self._select_channel(self._active_channel)
+
     # --- params + render ---
     def _params(self) -> PaletteParams:
         return PaletteParams(
             palette="HOO" if self.hoo_radio.isChecked() else "pseudo_SHO",
-            balance=self.balance_slider.value() / 100.0,
-            saturation=self.sat_slider.value() / 100.0,
+            r=self._curves["R"], g=self._curves["G"], b=self._curves["B"],
             scnr=self.scnr_check.isChecked(),
         )
 
