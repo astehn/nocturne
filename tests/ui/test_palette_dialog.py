@@ -7,73 +7,60 @@ from seestar_processor.core.image import AstroImage  # noqa: E402
 from seestar_processor.ui.palette_dialog import PaletteDialog  # noqa: E402
 
 
-def test_palette_dialog_applies_writes_and_hands_off(qtbot, tmp_path):
-    (tmp_path / "in.fits").write_text("placeholder")  # loader is faked below
-    handed, captured = {}, {}
-    dlg = PaletteDialog(Settings(), on_master=lambda img: handed.setdefault("img", img))
+def _color(seed=0):
+    rng = np.random.default_rng(seed)
+    return AstroImage(rng.random((40, 50, 3)).astype(np.float32), is_linear=False)
+
+
+def _fake_starx(img):
+    # synthetic starless + a stars layer, same shape
+    starless = AstroImage(img.data * 0.5, is_linear=img.is_linear)
+    stars = AstroImage(img.data * 0.5, is_linear=img.is_linear)
+    return starless, stars
+
+
+def test_dialog_runs_starx_and_renders(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
     qtbot.addWidget(dlg)
-    dlg._loader = lambda path: AstroImage(
-        np.random.rand(4, 5, 3).astype(np.float32), is_linear=False)
-
-    def fake_runner(img, name):
-        captured["name"] = name
-        return img
-
-    dlg._palette_runner = fake_runner
-    dlg.input_edit.setText(str(tmp_path / "in.fits"))
-    out = tmp_path / "out.tiff"
-    dlg.output_edit.setText(str(out))
-    dlg.hoo_radio.setChecked(True)
-    dlg.open_check.setChecked(True)
-    dlg.run()
-    assert captured["name"] == "HOO"
-    assert out.exists()                 # file written via save_tiff
-    assert "img" in handed              # editor handoff called
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
+    assert dlg._starless is not None and dlg._stars is not None
+    assert not dlg.preview.pixmap().isNull()          # preview rendered
 
 
-def test_pseudo_sho_selected_passes_pseudo_name(qtbot, tmp_path):
-    (tmp_path / "in.fits").write_text("x")
-    captured = {}
-    dlg = PaletteDialog(Settings())
+def test_slider_change_rerenders(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
     qtbot.addWidget(dlg)
-    dlg._loader = lambda path: AstroImage(np.zeros((4, 5, 3), np.float32))
-    dlg._palette_runner = lambda img, name: captured.setdefault("name", name) or img
-    dlg.input_edit.setText(str(tmp_path / "in.fits"))
-    dlg.output_edit.setText(str(tmp_path / "out.tiff"))
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
+    before = dlg.preview.pixmap().cacheKey()
+    dlg.sat_slider.setValue(95)                        # should trigger a re-render
+    assert dlg.preview.pixmap().cacheKey() != before
+
+
+def test_apply_records_result(qtbot):
+    got = {}
+    dlg = PaletteDialog(Settings(), _color(), on_apply=lambda r: got.setdefault("r", r))
+    qtbot.addWidget(dlg)
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
     dlg.sho_radio.setChecked(True)
-    dlg.run()
-    assert captured["name"] == "pseudo_SHO"
+    dlg.apply()
+    assert "r" in got and got["r"].data.shape == (40, 50, 3)
 
 
-def test_background_checkbox_subtracts_pedestal_before_palette(qtbot, tmp_path):
-    (tmp_path / "in.fits").write_text("x")
-    seen = {}
-    bg_master = AstroImage(np.full((6, 6, 3), 0.3, np.float32), is_linear=True)
-
-    def _dialog(out_name):
-        dlg = PaletteDialog(Settings())
-        qtbot.addWidget(dlg)
-        dlg._loader = lambda path: bg_master
-        dlg._palette_runner = lambda img, name: (
-            seen.__setitem__("med", float(np.median(img.data))) or img)
-        dlg.input_edit.setText(str(tmp_path / "in.fits"))
-        dlg.output_edit.setText(str(tmp_path / out_name))
-        return dlg
-
-    on = _dialog("out_on.tiff")
-    on.bg_check.setChecked(True)
-    on.run()
-    assert seen["med"] < 1e-6              # pedestal removed before the palette ran
-
-    seen.clear()
-    off = _dialog("out_off.tiff")
-    off.bg_check.setChecked(False)
-    off.run()
-    assert np.isclose(seen["med"], 0.3, atol=1e-6)   # unchanged when off
-
-
-def test_palette_dialog_requires_paths(qtbot):
-    dlg = PaletteDialog(Settings())
+def test_fallback_without_rcastro(qtbot):
+    # Settings() has no RC-Astro path -> _starx_enabled False -> whole-image path
+    dlg = PaletteDialog(Settings(), _color())
     qtbot.addWidget(dlg)
-    dlg.run()
-    assert "pick" in dlg.status.text().lower()
+    dlg._async = False
+    dlg.start()
+    assert dlg._starx_enabled is False
+    assert dlg._stars is None                          # no star layer to screen back
+    assert not dlg.preview.pixmap().isNull()           # still renders (whole-image)

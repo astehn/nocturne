@@ -47,13 +47,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       Seestar light subs, grade + auto-reject bad frames, register (astroalign, handles
       alt-az field rotation), integrate (average / sigma-clip), save a 32-bit master FITS and
       load it into the editor. `stacking/` package + `ui/stack_dialog.py`.
-- [x] **Narrowband palette (HOO / pseudo-SHO).** Standalone "Palette…" tool: read a stacked
-      duo-band master (FITS/TIFF), extract Ha (=R) and OIII (=G+B), remap to HOO or
-      pseudo-SHO, write a file and optionally load it into the editor. `core/palette.py` +
-      `load_master` + `ui/palette_dialog.py`. Pseudo-SHO honestly labeled (no SII on a
-      duo-band OSC); validated on real Pelican data (HOO = red/teal, pseudo-SHO = gold/teal).
-      - Future ideas (deferred): Natural/bicolor boost preset; starless-in-palette + re-add
-        RGB stars (reuse StarX); per-channel tuning knobs.
+- [x] **Narrowband palette (HOO / pseudo-SHO), starless workflow.** Interactive "Palette…"
+      on the current image: StarX removes stars (once), the starless nebula is coloured with
+      live sliders (palette, Ha/OIII balance, saturation, SCNR), white stars are screened
+      back, and Apply records a "Palette" history step. Falls back to whole-image without
+      RC-Astro. `core/palette.py` + `ui/palette_dialog.py`.
 
 ## Packaging / distribution (later, after refinement)
 - App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.

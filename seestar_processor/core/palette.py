@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from .image import AstroImage
@@ -60,3 +62,62 @@ def apply_palette(img: AstroImage, name: str) -> AstroImage:
     if name not in _PALETTE_FNS:
         raise ValueError(f"unknown palette: {name}")
     return _PALETTE_FNS[name](img)
+
+
+@dataclass
+class PaletteParams:
+    palette: str = "HOO"        # "HOO" | "pseudo_SHO"
+    balance: float = 0.5        # 0 = OIII emphasis .. 0.5 neutral .. 1 = Ha emphasis
+    saturation: float = 0.5     # 0 = greyscale .. 0.5 as-mapped .. 1 = strong
+    scnr: bool = True           # green suppression on the nebula
+
+
+def neutralize_stars(stars: AstroImage) -> AstroImage:
+    """Replace the stars layer's colour with its luminance -> white stars, so
+    they don't clash with the false-colour nebula."""
+    if not stars.is_color:
+        return stars.copy()
+    lum = stars.data.mean(axis=2)
+    rgb = np.clip(np.stack([lum, lum, lum], axis=2), 0.0, 1.0).astype(np.float32)
+    return AstroImage(rgb, is_linear=stars.is_linear, metadata=dict(stars.metadata))
+
+
+def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
+    """Screen blend: 1 - (1-base)*(1-top)."""
+    b = np.clip(base, 0.0, 1.0)
+    t = np.clip(top, 0.0, 1.0)
+    return np.clip(1.0 - (1.0 - b) * (1.0 - t), 0.0, 1.0).astype(np.float32)
+
+
+def _saturate_rgb(rgb: np.ndarray, saturation: float) -> np.ndarray:
+    # k(0)=0 grey, k(0.5)=1 as-mapped, k(1)=2 strong
+    k = float(saturation) * 2.0
+    lum = rgb.mean(axis=2, keepdims=True)
+    return np.clip(lum + k * (rgb - lum), 0.0, 1.0)
+
+
+def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
+    """Colour the starless nebula: extract Ha/OIII, apply Ha/OIII balance, map to
+    the chosen palette, apply saturation, then optional SCNR green suppression."""
+    ha, oiii = extract_channels(starless)
+    b = float(params.balance)
+    ha = np.clip(ha * (2.0 * b), 0.0, 1.0)
+    oiii = np.clip(oiii * (2.0 * (1.0 - b)), 0.0, 1.0)
+    if params.palette == "pseudo_SHO":
+        rgb = np.stack([ha, np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0), oiii], axis=2)
+    else:  # HOO
+        rgb = np.stack([ha, oiii, oiii], axis=2)
+    rgb = _saturate_rgb(rgb.astype(np.float32), params.saturation)
+    if params.scnr:
+        avg_rb = (rgb[..., 0] + rgb[..., 2]) / 2.0
+        rgb[..., 1] = np.minimum(rgb[..., 1], avg_rb)
+    return AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
+                      is_linear=starless.is_linear, metadata=dict(starless.metadata))
+
+
+def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> AstroImage:
+    """render_nebula(starless), then screen neutralize_stars(stars) back on top."""
+    nebula = render_nebula(starless, params)
+    white = neutralize_stars(stars)
+    out = screen(nebula.data, white.data)
+    return AstroImage(out, is_linear=starless.is_linear, metadata=dict(starless.metadata))

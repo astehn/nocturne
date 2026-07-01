@@ -155,9 +155,21 @@ class MainWindow(QMainWindow):
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
 
     def _open_palette(self) -> None:
+        if self.project is None:
+            self._status.setText("Open or stack an image first.")
+            return
+        base = self.project.current()
+        if not base.is_color:
+            self._status.setText("Palette needs a colour image.")
+            return
         from .palette_dialog import PaletteDialog
-        PaletteDialog(self.settings, self,
-                      on_master=lambda img: self.open_image(img, "palette")).exec()
+        PaletteDialog(self.settings, base, self, on_apply=self._record_palette).exec()
+
+    def _record_palette(self, result) -> None:
+        self.project.run_step(_PrecomputedStep("Palette", result), "")
+        self._status.setText("")
+        self.log_panel.append_entry(format_log_entry("Palette", "", None))
+        self._refresh()
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")

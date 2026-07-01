@@ -1,129 +1,174 @@
 from __future__ import annotations
 
-import os
-
+import numpy as np
+from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QRadioButton, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
+    QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
-from ..core.export import save_fits, save_png, save_tiff
-from ..core.fits_io import load_master
-from ..core.palette import apply_palette, subtract_background
+from ..core.image import AstroImage
+from ..core.palette import PaletteParams, compose, render_nebula
+from ..settings import rcastro_valid, resolve_binary
+from ..tools.rcastro import RCAstro
+from .preview import to_qimage
+from .worker import run_async
 
-_EXPORTERS = {
-    ".tiff": save_tiff, ".tif": save_tiff, ".png": save_png,
-    ".fits": save_fits, ".fit": save_fits, ".fts": save_fits,
-}
+_PREVIEW_MAX = 700  # long-side pixels for the interactive preview
 
 
-def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
-    row = QWidget()
-    lay = QHBoxLayout(row)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.addWidget(edit)
-    btn = QPushButton("Browse…")
-    btn.clicked.connect(on_browse)
-    lay.addWidget(btn)
-    return row
+def _downscale(img: AstroImage) -> AstroImage:
+    h, w = img.data.shape[:2]
+    step = max(1, max(h, w) // _PREVIEW_MAX)
+    return AstroImage(np.ascontiguousarray(img.data[::step, ::step]),
+                      is_linear=img.is_linear)
 
 
 class PaletteDialog(QDialog):
-    def __init__(self, settings, parent=None, on_master=None) -> None:
+    def __init__(self, settings, base: AstroImage, parent=None, on_apply=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Narrowband palette")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(720)
         self._settings = settings
-        self._on_master = on_master
-        self._palette_runner = apply_palette   # injectable for tests
-        self._loader = load_master             # injectable for tests
+        self._base = base
+        self._on_apply = on_apply
+        self._pool = QThreadPool.globalInstance()
+        self._async = True
+        self._starx_enabled = rcastro_valid(settings)
+        self._starx_runner = self._default_starx
+        self._starless = None
+        self._stars = None
+        self._prev_starless = None
+        self._prev_stars = None
 
-        self.input_edit = QLineEdit()
-        self.output_edit = QLineEdit()
-        self.hoo_radio = QRadioButton("HOO — honest duo-band (Ha/OIII)")
-        self.sho_radio = QRadioButton("Pseudo-SHO — SHO look from Ha+OIII only (no real SII)")
+        self.preview = QLabel("Removing stars…")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setMinimumSize(480, 360)
+
+        self.hoo_radio = QRadioButton("HOO")
+        self.sho_radio = QRadioButton("Pseudo-SHO (no real SII)")
         self.hoo_radio.setChecked(True)
-        self.bg_check = QCheckBox("Subtract background first (recommended for a raw stack)")
-        self.bg_check.setChecked(True)
-        self.open_check = QCheckBox("Open result in the editor")
-        self.open_check.setChecked(True)
+        self.balance_slider = self._slider()      # Ha <-> OIII
+        self.sat_slider = self._slider()          # saturation
+        self.scnr_check = QCheckBox("Green suppression (SCNR)")
+        self.scnr_check.setChecked(True)
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        self.hoo_radio.toggled.connect(self._suggest_output)
+        for w in (self.hoo_radio, self.sho_radio):
+            w.toggled.connect(self._render_preview)
+        for s in (self.balance_slider, self.sat_slider):
+            s.valueChanged.connect(self._render_preview)
+        self.scnr_check.toggled.connect(self._render_preview)
 
-        form = QFormLayout()
-        form.addRow("Master image", _picker_row(self.input_edit, self._browse_input))
-        palettes = QVBoxLayout()
-        palettes.addWidget(self.hoo_radio)
-        palettes.addWidget(self.sho_radio)
+        controls = QFormLayout()
+        pal = QHBoxLayout()
+        pal.addWidget(self.hoo_radio)
+        pal.addWidget(self.sho_radio)
         pal_wrap = QWidget()
-        pal_wrap.setLayout(palettes)
-        form.addRow("Palette", pal_wrap)
-        form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
-        form.addRow("", self.bg_check)
-        form.addRow("", self.open_check)
+        pal_wrap.setLayout(pal)
+        controls.addRow("Palette", pal_wrap)
+        controls.addRow("Ha ◄─► OIII", self.balance_slider)
+        controls.addRow("Saturation", self.sat_slider)
+        controls.addRow("", self.scnr_check)
 
         apply_btn = QPushButton("Apply")
         apply_btn.setObjectName("primary")
-        apply_btn.clicked.connect(self.run)
+        apply_btn.clicked.connect(self.apply)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(apply_btn)
         buttons.addWidget(close_btn)
 
+        body = QHBoxLayout()
+        body.addWidget(self.preview, 2)
+        side = QVBoxLayout()
+        side.addLayout(controls)
+        side.addStretch(1)
+        side.addWidget(self.status)
+        side.addLayout(buttons)
+        side_wrap = QWidget()
+        side_wrap.setLayout(side)
+        body.addWidget(side_wrap, 1)
+
         root = QVBoxLayout(self)
-        root.addLayout(form)
-        root.addWidget(self.status)
-        root.addLayout(buttons)
+        root.addLayout(body)
 
-    # --- browse ---
-    def _browse_input(self) -> None:
-        path = QFileDialog.getOpenFileName(
-            self, "Master image", "", "Masters (*.fits *.fit *.fts *.tif *.tiff)")[0]
-        if path:
-            self.input_edit.setText(path)
-            self._suggest_output()
+        self.start()
 
-    def _browse_output(self) -> None:
-        path = QFileDialog.getSaveFileName(
-            self, "Output", "", "Image (*.tiff *.fits *.png)")[0]
-        if path:
-            self.output_edit.setText(path)
+    # --- slider factory ---
+    def _slider(self) -> QSlider:
+        s = QSlider(Qt.Orientation.Horizontal)
+        s.setMinimum(0)
+        s.setMaximum(100)
+        s.setValue(50)
+        return s
 
-    def _suggest_output(self) -> None:
-        inp = self.input_edit.text().strip()
-        if not inp:
-            return
-        stem, ext = os.path.splitext(inp)
-        if ext.lower() not in _EXPORTERS:
-            ext = ".tiff"
-        tag = "HOO" if self.hoo_radio.isChecked() else "SHO"
-        self.output_edit.setText(f"{stem}_{tag}{ext}")
+    # --- StarX ---
+    def _default_starx(self, img: AstroImage):
+        rc = RCAstro(resolve_binary(self._settings.rcastro_path))
+        return rc.remove_stars(img)
 
-    # --- run (synchronous — palette math is fast) ---
-    def run(self) -> None:
-        inp = self.input_edit.text().strip()
-        out = self.output_edit.text().strip()
-        if not inp or not out:
-            self.status.setText("Pick an input master and an output path.")
+    def start(self) -> None:
+        if not self._starx_enabled:
+            self._starless = self._base
+            self._stars = None
+            self.status.setText("StarX not configured — palette applied to the whole image.")
+            self._cache_previews()
+            self._render_preview()
             return
-        name = "HOO" if self.hoo_radio.isChecked() else "pseudo_SHO"
-        exporter = _EXPORTERS.get(os.path.splitext(out)[1].lower())
-        if exporter is None:
-            self.status.setText("Unsupported output format (use .tiff, .fits or .png).")
+        self.status.setText("Removing stars…")
+        if self._async:
+            run_async(self._pool, lambda: self._starx_runner(self._base),
+                      self._on_starless, self._on_error)
+        else:
+            try:
+                self._on_starless(self._starx_runner(self._base))
+            except Exception as exc:  # noqa: BLE001
+                self._on_error(exc)
+
+    def _on_starless(self, layers) -> None:
+        self._starless, self._stars = layers
+        self.status.setText("")
+        self._cache_previews()
+        self._render_preview()
+
+    def _on_error(self, exc) -> None:
+        self.status.setText(f"Star removal failed: {exc}")
+
+    def _cache_previews(self) -> None:
+        self._prev_starless = _downscale(self._starless)
+        self._prev_stars = _downscale(self._stars) if self._stars is not None else None
+
+    # --- params + render ---
+    def _params(self) -> PaletteParams:
+        return PaletteParams(
+            palette="HOO" if self.hoo_radio.isChecked() else "pseudo_SHO",
+            balance=self.balance_slider.value() / 100.0,
+            saturation=self.sat_slider.value() / 100.0,
+            scnr=self.scnr_check.isChecked(),
+        )
+
+    def _result(self, starless: AstroImage, stars) -> AstroImage:
+        params = self._params()
+        if stars is not None:
+            return compose(starless, stars, params)
+        return render_nebula(starless, params)
+
+    def _render_preview(self) -> None:
+        if self._prev_starless is None:
             return
-        try:
-            img = self._loader(inp)
-            if self.bg_check.isChecked():
-                img = subtract_background(img)
-            result = self._palette_runner(img, name)
-            exporter(result, out)
-        except Exception as exc:
-            self.status.setText(f"Failed: {exc}")
+        result = self._result(self._prev_starless, self._prev_stars)
+        self.preview.setPixmap(QPixmap.fromImage(to_qimage(result)))
+
+    # --- apply ---
+    def apply(self) -> None:
+        if self._starless is None:
+            self.status.setText("Still working…")
             return
-        self.status.setText(f"Wrote {os.path.basename(out)}.")
-        if self.open_check.isChecked() and self._on_master is not None:
-            self._on_master(result)
+        result = self._result(self._starless, self._stars)
+        if self._on_apply is not None:
+            self._on_apply(result)
         self.accept()
