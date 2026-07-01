@@ -43,6 +43,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **Recipes + batch processing.** Save a session as a `.json` recipe (Save Recipe) and
       apply it to a folder of stacked FITS via the Batch dialog (auto-crops each image's
       border, exports TIFF/PNG/FITS). `recipe.py` + `batch.py` + `steps/factory.py`.
+- [x] **Stacking (preprocessing).** Separate "Stack…" tool: point at a folder of individual
+      Seestar light subs, grade + auto-reject bad frames, register (astroalign, handles
+      alt-az field rotation), integrate (average / sigma-clip), save a 32-bit master FITS and
+      load it into the editor. `stacking/` package + `ui/stack_dialog.py`.
 - [ ] **SHO / Hubble-palette editing for the duo-band OSC data.**
       The S30 Pro has a built-in Ha/OIII duo-band filter, so emission-nebula captures hold
       narrowband signal: Ha → red channel, OIII → green+blue. Automate the extraction +
