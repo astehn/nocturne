@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -65,11 +65,29 @@ def apply_palette(img: AstroImage, name: str) -> AstroImage:
 
 
 @dataclass
+class ChannelCurve:
+    black: float = 0.0    # 0..1 input black point
+    mid: float = 0.5      # 0..1 slider; 0.5 = neutral gamma
+    white: float = 1.0    # 0..1 input white point
+
+
+@dataclass
 class PaletteParams:
-    palette: str = "HOO"        # "HOO" | "pseudo_SHO"
-    balance: float = 0.5        # 0 = OIII emphasis .. 0.5 neutral .. 1 = Ha emphasis
-    saturation: float = 0.5     # 0 = greyscale .. 0.5 as-mapped .. 1 = strong
-    scnr: bool = True           # green suppression on the nebula
+    palette: str = "HOO"                         # "HOO" | "pseudo_SHO"
+    r: ChannelCurve = field(default_factory=ChannelCurve)
+    g: ChannelCurve = field(default_factory=ChannelCurve)
+    b: ChannelCurve = field(default_factory=ChannelCurve)
+    scnr: bool = True                            # green suppression on the nebula
+
+
+def apply_channel_curve(channel: np.ndarray, curve: ChannelCurve) -> np.ndarray:
+    """Levels on a single 2D channel: remap [black, white] -> [0,1] then midtone
+    gamma. Mirrors core/levels.apply_levels. gamma = 10**((mid-0.5)*2)."""
+    black = float(curve.black)
+    white = max(float(curve.white), black + 1e-4)
+    gamma = 10.0 ** ((float(curve.mid) - 0.5) * 2.0)
+    x = np.clip((channel - black) / (white - black), 0.0, 1.0)
+    return np.power(x, 1.0 / gamma).astype(np.float32)
 
 
 def neutralize_stars(stars: AstroImage) -> AstroImage:
@@ -89,29 +107,22 @@ def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
     return np.clip(1.0 - (1.0 - b) * (1.0 - t), 0.0, 1.0).astype(np.float32)
 
 
-def _saturate_rgb(rgb: np.ndarray, saturation: float) -> np.ndarray:
-    # k(0)=0 grey, k(0.5)=1 as-mapped, k(1)=2 strong
-    k = float(saturation) * 2.0
-    lum = rgb.mean(axis=2, keepdims=True)
-    return np.clip(lum + k * (rgb - lum), 0.0, 1.0)
-
-
 def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
-    """Colour the starless nebula: extract Ha/OIII, apply Ha/OIII balance, map to
-    the chosen palette, apply saturation, then optional SCNR green suppression."""
+    """Extract Ha/OIII, combine into the chosen palette, sculpt each channel with
+    its curve, then optional SCNR green suppression."""
     ha, oiii = extract_channels(starless)
-    b = float(params.balance)
-    ha = np.clip(ha * (2.0 * b), 0.0, 1.0)
-    oiii = np.clip(oiii * (2.0 * (1.0 - b)), 0.0, 1.0)
     if params.palette == "pseudo_SHO":
-        rgb = np.stack([ha, np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0), oiii], axis=2)
+        rgb = [ha, np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0), oiii]
     else:  # HOO
-        rgb = np.stack([ha, oiii, oiii], axis=2)
-    rgb = _saturate_rgb(rgb.astype(np.float32), params.saturation)
+        rgb = [ha, oiii, oiii]
+    r = apply_channel_curve(rgb[0], params.r)
+    g = apply_channel_curve(rgb[1], params.g)
+    b = apply_channel_curve(rgb[2], params.b)
+    out = np.stack([r, g, b], axis=2)
     if params.scnr:
-        avg_rb = (rgb[..., 0] + rgb[..., 2]) / 2.0
-        rgb[..., 1] = np.minimum(rgb[..., 1], avg_rb)
-    return AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
+        avg_rb = (out[..., 0] + out[..., 2]) / 2.0
+        out[..., 1] = np.minimum(out[..., 1], avg_rb)
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))
 
 
