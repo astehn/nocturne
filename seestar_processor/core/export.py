@@ -33,9 +33,13 @@ def save_png(img: AstroImage, path: str) -> None:
     Image.fromarray(arr, mode=mode).save(path, format="PNG")
 
 
-def save_fits(img: AstroImage, path: str) -> None:
+def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     # 32-bit float FITS; color stored channels-first (3, H, W).
     data = img.data.astype(np.float32)
     if data.ndim == 3:
         data = np.transpose(data, (2, 0, 1))
-    fits.PrimaryHDU(data).writeto(path, overwrite=True)
+    hdu = fits.PrimaryHDU(data)
+    if header:
+        for key, value in header.items():
+            hdu.header[key] = value
+    hdu.writeto(path, overwrite=True)

@@ -145,12 +145,22 @@ class MainWindow(QMainWindow):
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
 
+    def _open_stack(self) -> None:
+        try:
+            from .stack_dialog import StackDialog
+        except ImportError:
+            self._status.setText("Stacking unavailable — install astroalign and sep.")
+            return
+        StackDialog(self.settings, self,
+                    on_master=lambda img: self.open_image(img, "stacked master")).exec()
+
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         tb.addAction("Open FITS", self._choose_fits)
         tb.addAction("Settings", self._open_settings)
         self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
         tb.addAction("Batch…", self._open_batch)
+        tb.addAction("Stack…", self._open_stack)
         self._undo_act = tb.addAction("Undo", self._undo)
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
@@ -229,12 +239,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._status.setText(f"Could not open file: {exc}")
             return
+        self.open_image(base, os.path.basename(path))
+
+    def open_image(self, base, label: str) -> None:
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._status.setText("")
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
-            format_log_entry(f"Opened {os.path.basename(path)}", "", None, dims=(w, h))
+            format_log_entry(f"Opened {label}", "", None, dims=(w, h))
         )
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
