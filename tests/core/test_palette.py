@@ -60,3 +60,51 @@ def test_apply_palette_dispatch_and_unknown():
     assert set(PALETTES) == {"HOO", "pseudo_SHO"}
     with pytest.raises(ValueError):
         apply_palette(img, "SHO")
+
+
+def test_neutralize_stars_makes_white():
+    from seestar_processor.core.palette import neutralize_stars
+    out = neutralize_stars(_img([(0.8, 0.2, 0.2)])).data[0, 0]
+    assert np.allclose(out, out[0])              # R==G==B (grey/white)
+    assert np.isclose(out[0], 0.4, atol=1e-6)    # = mean(0.8,0.2,0.2)
+
+
+def test_screen_blend_math():
+    from seestar_processor.core.palette import screen
+    a = np.array([0.5, 0.0], np.float32)
+    b = np.array([0.5, 0.3], np.float32)
+    out = screen(a, b)
+    assert np.isclose(out[0], 0.75)              # 1-(1-.5)(1-.5)
+    assert np.isclose(out[1], 0.3)               # screen with 0 base = top
+
+
+def test_render_nebula_saturation_zero_is_grey():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    out = render_nebula(_img([(0.9, 0.1, 0.3)]), PaletteParams(saturation=0.0)).data[0, 0]
+    assert np.allclose(out, out[0], atol=1e-6)   # greyscale
+
+
+def test_render_nebula_balance_shifts_ha_oiii():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    px = [(0.6, 0.6, 0.6)]                        # equal Ha and OIII
+    ha_heavy = render_nebula(_img(px), PaletteParams(palette="HOO", balance=1.0)).data[0, 0]
+    oiii_heavy = render_nebula(_img(px), PaletteParams(palette="HOO", balance=0.0)).data[0, 0]
+    assert ha_heavy[0] > ha_heavy[2]             # balance=1 -> red (Ha) dominant
+    assert oiii_heavy[2] > oiii_heavy[0]         # balance=0 -> blue (OIII) dominant
+
+
+def test_render_nebula_scnr_reduces_green():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    px = [(0.2, 0.9, 0.2)]
+    with_scnr = render_nebula(_img(px), PaletteParams(scnr=True)).data[0, 0]
+    without = render_nebula(_img(px), PaletteParams(scnr=False)).data[0, 0]
+    assert with_scnr[1] <= without[1]
+
+
+def test_compose_screens_stars_back():
+    from seestar_processor.core.palette import compose, PaletteParams
+    starless = _img([(0.3, 0.4, 0.4), (0.3, 0.4, 0.4)])
+    stars = _img([(0.0, 0.0, 0.0), (0.9, 0.9, 0.9)])   # a star only in pixel 1
+    out = compose(starless, stars, PaletteParams()).data
+    assert out.shape == (1, 2, 3)
+    assert out[0, 1].mean() > out[0, 0].mean()          # star pixel is brighter
