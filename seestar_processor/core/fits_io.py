@@ -48,7 +48,7 @@ def format_metadata(meta: dict) -> str:
     return "  •  ".join(parts) if parts else "No metadata"
 
 
-def load_fits(path: str) -> AstroImage:
+def load_fits(path: str, normalize: bool = True) -> AstroImage:
     with fits.open(path) as hdul:
         raw = np.asarray(hdul[0].data)
         header = hdul[0].header
@@ -60,15 +60,17 @@ def load_fits(path: str) -> AstroImage:
             raise ValueError(
                 f"unsupported 3D FITS shape {raw.shape}; expected (3, H, W) or (H, W, 3)"
             )
-        data = np.clip(_normalize(raw), 0.0, 1.0)
+        data = _normalize(raw) if normalize else raw.astype(np.float32)
+        if normalize:
+            data = np.clip(data, 0.0, 1.0)
         h, w = data.shape[:2]
-        return AstroImage(data, is_linear=True, metadata=_parse_metadata(header, h, w))
+        return AstroImage(data.astype(np.float32), is_linear=True,
+                          metadata=_parse_metadata(header, h, w))
     # 2D mono-Bayer -> debayer with instrument pattern.
-    norm = _normalize(raw)
-    rgb = demosaicing_CFA_Bayer_bilinear(norm, SEESTAR_S30_PRO.bayer_pattern)
+    base = _normalize(raw) if normalize else raw.astype(np.float32)
+    rgb = demosaicing_CFA_Bayer_bilinear(base, SEESTAR_S30_PRO.bayer_pattern)
+    if normalize:
+        rgb = np.clip(rgb, 0.0, 1.0)
     h, w = rgb.shape[:2]
-    return AstroImage(
-        np.clip(rgb, 0.0, 1.0).astype(np.float32),
-        is_linear=True,
-        metadata=_parse_metadata(header, h, w),
-    )
+    return AstroImage(rgb.astype(np.float32), is_linear=True,
+                      metadata=_parse_metadata(header, h, w))

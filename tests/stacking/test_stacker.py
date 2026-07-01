@@ -53,3 +53,21 @@ def test_run_stack_starless_reference_raises(tmp_path):
     opts = StackOptions("average", 2.5, [str(starless)] + subs, str(tmp_path / "m.fits"))
     with pytest.raises(ValueError):
         run_stack(opts)
+
+
+def test_run_stack_normalizes_raw_scale_subs(tmp_path):
+    # Subs authored in raw ADU (~800), not 0..1. Master must come back normalized to [0,1]
+    # with the star preserved (not clipped to a flat frame).
+    base = make_star_field(n_stars=40, seed=7) * 800.0
+    paths = []
+    for i in range(4):
+        t = SimilarityTransform(translation=(i * 0.4, -i * 0.4))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"raw{i}.fit"
+        write_color_fits(p, f, exptime=10.0)
+        paths.append(str(p))
+    result = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")))
+    assert result.frame_count == 4
+    m = result.image.data
+    assert 0.9 <= m.max() <= 1.0          # normalized once, to [0,1]
+    assert m.max() > 0.5                   # a bright star survived (not a flat/clipped frame)

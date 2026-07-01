@@ -16,8 +16,8 @@ def discover_subs(folder: str) -> list[str]:
     return sorted(files)
 
 
-def load_sub(path: str) -> AstroImage:
-    return load_fits(path)
+def load_sub(path: str, normalize: bool = True) -> AstroImage:
+    return load_fits(path, normalize=normalize)
 
 
 def luminance(data: np.ndarray) -> np.ndarray:

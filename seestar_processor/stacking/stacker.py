@@ -35,7 +35,7 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         raise ValueError("need at least 3 frames to stack")
 
     ref_path = paths[0]
-    ref_img = load_sub(ref_path)
+    ref_img = load_sub(ref_path, normalize=False)
     ref_lum = luminance(ref_img.data)
     ref_shape = ref_img.data.shape[:2]
 
@@ -48,7 +48,7 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     # Phase A: register each remaining sub against the reference.
     for i, path in enumerate(paths[1:], start=1):
         try:
-            sub = load_sub(path)
+            sub = load_sub(path, normalize=False)
         except Exception as exc:
             rejected.append((path, f"unreadable: {exc}"))
             continue
@@ -75,7 +75,7 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     # Phase B: integrate (streaming — reload + warp per frame, low memory).
     def frames():
         for path in used:
-            yield warp_to(load_sub(path).data, transforms[path])
+            yield warp_to(load_sub(path, normalize=False).data, transforms[path])
 
     if on_progress is not None:
         on_progress(n, n, "integrating")
@@ -86,6 +86,9 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         master = average_integrate(frames())
 
     integ = sum(exposures[p] for p in used)
+    peak = float(master.max())
+    if peak > 0:
+        master = master / peak
     image = AstroImage(
         np.clip(master, 0.0, 1.0).astype(np.float32),
         is_linear=True,

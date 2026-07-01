@@ -33,7 +33,7 @@ def _measure(lum: np.ndarray) -> tuple[int, float, float]:
 
 
 def grade_frame(path: str) -> FrameStats:
-    star_count, fwhm, background = _measure(luminance(load_sub(path).data))
+    star_count, fwhm, background = _measure(luminance(load_sub(path, normalize=False).data))
     score = star_count * (1.0 / (1.0 + fwhm)) * (1.0 / (1.0 + background * 10.0))
     return FrameStats(path, star_count, fwhm, background, float(score), True)
 
