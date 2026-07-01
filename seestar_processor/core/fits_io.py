@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
+import tifffile
 from astropy.io import fits
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
@@ -87,3 +90,26 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
     h, w = rgb.shape[:2]
     return AstroImage(rgb.astype(np.float32), is_linear=True,
                       metadata=_parse_metadata(header, h, w))
+
+
+def load_master(path: str) -> AstroImage:
+    """Load a processed master back to a linear AstroImage. Supports the formats
+    the app writes: FITS (via load_fits) and 16-bit TIFF (via tifffile)."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".fits", ".fit", ".fts"):
+        # A colour master is a 3-channel cube (NAXIS=3). A 2D FITS is a mono or
+        # raw-CFA frame, which load_fits would debayer into fake colour — reject
+        # it instead so the palette tool gives an honest error, not garbage.
+        with fits.open(path) as hdul:
+            if int(hdul[0].header.get("NAXIS", 0)) != 3:
+                raise ValueError("palette needs a colour (RGB) master, not a mono image")
+        return load_fits(path)
+    if ext in (".tif", ".tiff"):
+        arr = np.asarray(tifffile.imread(path)).astype(np.float32)
+        peak = float(arr.max())
+        if peak > 0:
+            arr = arr / peak
+        h, w = arr.shape[:2]
+        return AstroImage(np.clip(arr, 0.0, 1.0), is_linear=True,
+                          metadata={"width": w, "height": h})
+    raise ValueError(f"unsupported input format: {ext}")

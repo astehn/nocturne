@@ -47,17 +47,13 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       Seestar light subs, grade + auto-reject bad frames, register (astroalign, handles
       alt-az field rotation), integrate (average / sigma-clip), save a 32-bit master FITS and
       load it into the editor. `stacking/` package + `ui/stack_dialog.py`.
-- [ ] **SHO / Hubble-palette editing for the duo-band OSC data.**
-      The S30 Pro has a built-in Ha/OIII duo-band filter, so emission-nebula captures hold
-      narrowband signal: Ha → red channel, OIII → green+blue. Automate the extraction +
-      palette remap that's manual/fiddly in PixInsight:
-      - Extract Ha (= R) and OIII (= G+B blend).
-      - Palette presets: Natural (RGB), HOO (bicolor), SHO-style (Foraxx/dynamic, Ha+OIII).
-      - Ideally process the *starless* nebula in-palette and re-add RGB stars (reuse StarX).
-      - Caveat: true SHO needs mono + SII; from OSC duo-band this is a convincing
-        *pseudo*-SHO (Ha+OIII only) — label it honestly. Only meaningful for duo-band
-        emission-nebula shots (detect via FITS `FILTER` header or a user toggle).
-      - Own design + build cycle.
+- [x] **Narrowband palette (HOO / pseudo-SHO).** Standalone "Palette…" tool: read a stacked
+      duo-band master (FITS/TIFF), extract Ha (=R) and OIII (=G+B), remap to HOO or
+      pseudo-SHO, write a file and optionally load it into the editor. `core/palette.py` +
+      `load_master` + `ui/palette_dialog.py`. Pseudo-SHO honestly labeled (no SII on a
+      duo-band OSC); validated on real Pelican data (HOO = red/teal, pseudo-SHO = gold/teal).
+      - Future ideas (deferred): Natural/bicolor boost preset; starless-in-palette + re-add
+        RGB stars (reuse StarX); per-channel tuning knobs.
 
 ## Packaging / distribution (later, after refinement)
 - App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.
