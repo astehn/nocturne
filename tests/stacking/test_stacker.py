@@ -29,6 +29,35 @@ def test_run_stack_produces_master(tmp_path):
     assert os.path.exists(result.output_path)
 
 
+def _rotated_subs(tmp_path, n=5, seed=3):
+    # Subs with real rotation between them, so the covered region is a rotated
+    # envelope smaller than a single frame (the alt-az case).
+    base = make_star_field(shape=(120, 120), n_stars=60, seed=seed)
+    paths = []
+    for i in range(n):
+        t = SimilarityTransform(rotation=np.deg2rad(i * 1.5), translation=(i, -i))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"r{i}.fit"
+        write_color_fits(p, f, exptime=10.0)
+        paths.append(str(p))
+    return paths
+
+
+def test_autocrop_trims_low_coverage_edges(tmp_path):
+    paths = _rotated_subs(tmp_path)
+    full = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "f.fits")),
+                     autocrop=False)
+    cropped = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "c.fits")),
+                        autocrop=True)
+    fh, fw = full.image.data.shape[:2]
+    ch, cw = cropped.image.data.shape[:2]
+    assert ch <= fh and cw <= fw
+    assert ch < fh or cw < fw            # rotation -> something was trimmed
+    # metadata reflects the cropped dimensions
+    assert cropped.image.metadata["width"] == cw
+    assert cropped.image.metadata["height"] == ch
+
+
 def test_average_emits_per_frame_integration_progress(tmp_path):
     paths = _make_subs(tmp_path)
     calls = []
