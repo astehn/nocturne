@@ -11,6 +11,8 @@ dependencies = [
     "colour-demosaicing>=0.2.5",
     "tifffile>=2024.1",
     "Pillow>=10.0",
+    "astroalign>=2.5",
+    "sep>=1.2",
 ]
 
 [project.optional-dependencies]
