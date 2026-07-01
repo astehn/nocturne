@@ -145,12 +145,22 @@ class MainWindow(QMainWindow):
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
 
+    def _open_stack(self) -> None:
+        try:
+            from .stack_dialog import StackDialog
+        except ImportError:
+            self._status.setText("Stacking unavailable — install astroalign and sep.")
+            return
+        StackDialog(self.settings, self,
+                    on_master=lambda img: self.open_image(img, "stacked master")).exec()
+
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         tb.addAction("Open FITS", self._choose_fits)
         tb.addAction("Settings", self._open_settings)
         self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
         tb.addAction("Batch…", self._open_batch)
+        tb.addAction("Stack…", self._open_stack)
         self._undo_act = tb.addAction("Undo", self._undo)
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
