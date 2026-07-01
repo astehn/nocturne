@@ -154,6 +154,11 @@ class MainWindow(QMainWindow):
         StackDialog(self.settings, self,
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
 
+    def _open_palette(self) -> None:
+        from .palette_dialog import PaletteDialog
+        PaletteDialog(self.settings, self,
+                      on_master=lambda img: self.open_image(img, "palette")).exec()
+
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         tb.addAction("Open FITS", self._choose_fits)
@@ -161,6 +166,7 @@ class MainWindow(QMainWindow):
         self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
         tb.addAction("Batch…", self._open_batch)
         tb.addAction("Stack…", self._open_stack)
+        tb.addAction("Palette…", self._open_palette)
         self._undo_act = tb.addAction("Undo", self._undo)
         self._redo_act = tb.addAction("Redo", self._redo)
         self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
