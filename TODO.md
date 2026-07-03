@@ -78,6 +78,14 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [ ] LICENSE (MIT or GPL).
 - [ ] GitHub Releases with built artifacts; optional GitHub Actions to build all platforms.
 
+## Visual polish — later tiers (Tier 1 shipped)
+- [ ] **Tier 2 — canvas & panels (hero shot):** radial-gradient canvas backdrop; framed image
+      with soft shadow; floating zoom pill (– 100% +); empty-state screen (logo + "Open or Stack
+      to begin"); card-style right panel with per-step description strips; histogram styling
+      (filled RGB + faint grid).
+- [ ] **Tier 3 — branding & finish:** app icon + "Nocturne" wordmark; splash screen (with
+      packaging); labelled before/after divider handle; spinner busy-overlay.
+
 ## Done (recent)
 - Processing log: collapsible bottom panel, append-only, timestamped, with an RMS Δ%
   change metric per step (proves subtle steps actually ran).

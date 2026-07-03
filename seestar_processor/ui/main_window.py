@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget,
@@ -25,6 +25,7 @@ from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
 from .about import about_html, help_html
+from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
@@ -32,6 +33,7 @@ from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, pr
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
+from .icons import load_icon
 from .stepper import Stepper
 from .worker import BusyOverlay, run_async
 
@@ -182,22 +184,30 @@ class MainWindow(QMainWindow):
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
-        tb.addAction("Open FITS", self._choose_fits)
-        tb.addAction("Settings", self._open_settings)
-        self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
-        tb.addAction("Batch…", self._open_batch)
-        tb.addAction("Stack…", self._open_stack)
-        tb.addAction("Ha/OIII…", self._open_haoiii)
-        tb.addAction("Palette…", self._open_palette)
-        self._undo_act = tb.addAction("Undo", self._undo)
-        self._redo_act = tb.addAction("Redo", self._redo)
-        self._ba_act = tb.addAction("Before/After", self._toggle_before_after)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        # File
+        tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
+        tb.addAction(load_icon("settings"), "Settings", self._open_settings)
+        tb.addSeparator()
+        # Tools (primary features tinted with the accent)
+        self._save_recipe_act = tb.addAction(load_icon("save-recipe"), "Save Recipe", self._save_recipe)
+        tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
+        tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
+        tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
+        tb.addAction(load_icon("palette", ACCENT), "Palette…", self._open_palette)
+        tb.addSeparator()
+        # Edit / compare
+        self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
+        self._redo_act = tb.addAction(load_icon("redo"), "Redo", self._redo)
+        self._ba_act = tb.addAction(load_icon("before-after"), "Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
-        self._log_act = tb.addAction("Log", self._toggle_log)
+        self._log_act = tb.addAction(load_icon("log"), "Log", self._toggle_log)
         self._log_act.setCheckable(True)
         self._log_act.setChecked(True)
-        tb.addAction("Fit", self.image_view.fit)
-        tb.addAction("100%", self.image_view.actual_size)
+        tb.addSeparator()
+        # View
+        tb.addAction(load_icon("fit"), "Fit", self.image_view.fit)
+        tb.addAction(load_icon("actual-size"), "100%", self.image_view.actual_size)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)

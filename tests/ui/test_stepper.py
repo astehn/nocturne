@@ -33,10 +33,29 @@ def test_disabled_stage_does_not_emit(qtbot):
     assert received == []
 
 
-def test_mark_done_prefixes_check(qtbot):
+def test_step_state_pure():
+    from seestar_processor.ui.stepper import step_state
+    # locked wins regardless
+    assert step_state(2, 2, {2}, enabled=False) == "locked"
+    # current wins over done
+    assert step_state(1, 1, {1}, enabled=True) == "current"
+    assert step_state(0, 3, {0, 1}, enabled=True) == "done"
+    assert step_state(4, 3, {0, 1}, enabled=True) == "upcoming"
+
+
+def test_mark_done_sets_done_state(qtbot):
     step = Stepper()
     qtbot.addWidget(step)
     step.set_stages(path_stages("in_app"))
+    step.set_current(0)                     # "load" is current
     step.mark_done({"crop"})
     crop_row = next(i for i, s in enumerate(path_stages("in_app")) if s.id == "crop")
-    assert step.item(crop_row).text().startswith("✓")
+    assert step.state_at(crop_row) == "done"
+
+
+def test_current_state(qtbot):
+    step = Stepper()
+    qtbot.addWidget(step)
+    step.set_stages(path_stages("in_app"))
+    step.set_current(2)
+    assert step.state_at(2) == "current"

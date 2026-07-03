@@ -283,3 +283,12 @@ def test_record_palette_adds_history_step(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._record_palette(AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False))
     assert win.project.entries()[-1][0] == "Palette"
+
+
+def test_toolbar_actions_have_icons(qtbot, tmp_path):
+    from PySide6.QtWidgets import QToolBar
+    win = _window(qtbot, tmp_path)
+    main = next(b for b in win.findChildren(QToolBar) if b.windowTitle() == "Main")
+    labelled = [a for a in main.actions() if a.text()]
+    assert labelled, "toolbar has labelled actions"
+    assert all(not a.icon().isNull() for a in labelled), "every labelled action has an icon"
