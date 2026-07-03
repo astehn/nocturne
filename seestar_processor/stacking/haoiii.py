@@ -92,19 +92,35 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     if len(paths) < 3:
         raise ValueError("need at least 3 frames to extract")
 
-    ref_path = paths[0]
-    ref_cfa, ref_pat, ref_exp = load_cfa(ref_path)
-    ref_ha, _ = extract_cfa_planes(ref_cfa, ref_pat)
-    ref_shape = ref_cfa.shape
+    rejected: list = []
+    n = len(paths)
+
+    # Choose the reference: the best-graded sub that is actually a raw CFA frame.
+    # The output master is written back into the graded folder, so a stray
+    # debayered FITS (e.g. a prior run's RGB master) can grade highest — reject
+    # such frames and promote the next best rather than aborting the whole run.
+    ref_path = ref_ha = ref_shape = None
+    ref_exp = 0.0
+    remaining = list(paths)
+    while remaining:
+        candidate = remaining.pop(0)
+        try:
+            cfa, pat, exp = load_cfa(candidate)
+        except Exception as exc:  # noqa: BLE001
+            rejected.append((candidate, f"unreadable or not raw CFA: {exc}"))
+            continue
+        ref_path, ref_ha = candidate, extract_cfa_planes(cfa, pat)[0]
+        ref_shape, ref_exp = cfa.shape, exp
+        break
+    if ref_path is None:
+        raise ValueError("no raw (un-debayered) CFA subs found to use as a reference")
 
     transforms = {ref_path: np.eye(3)}
     exposures = {ref_path: ref_exp}
     used = [ref_path]
-    rejected: list = []
-    n = len(paths)
 
     # Phase A: register each remaining sub on its Ha plane.
-    for i, path in enumerate(paths[1:], start=1):
+    for i, path in enumerate(remaining, start=1):
         try:
             cfa, pat, exp = load_cfa(path)
         except Exception as exc:  # noqa: BLE001

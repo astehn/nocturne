@@ -94,6 +94,21 @@ def test_run_haoiii_extract_rejects_non_cfa(tmp_path):
     assert result.frame_count == 4
 
 
+def test_run_haoiii_extract_rejects_non_cfa_reference(tmp_path):
+    # A debayered FITS graded FIRST (best) must be rejected and the next raw sub
+    # promoted to reference — not abort the run. The tool writes its master back
+    # into the graded folder, so a prior RGB master can grade highest.
+    from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path)
+    bad = tmp_path / "prior_master.fits"
+    fits.PrimaryHDU(np.zeros((3, 120, 120), np.float32)).writeto(str(bad))
+    result = run_haoiii_extract(
+        HaOIIIOptions("average", 2.5, [str(bad)] + paths, str(tmp_path / "m.fits")))
+    assert any(str(bad) == p for p, _ in result.rejected)
+    assert result.frame_count == 4
+    assert result.image.data.ndim == 3
+
+
 def test_run_haoiii_extract_too_few(tmp_path):
     from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
     paths = _cfa_subs(tmp_path, n=2)
