@@ -154,6 +154,15 @@ class MainWindow(QMainWindow):
         StackDialog(self.settings, self,
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
 
+    def _open_haoiii(self) -> None:
+        try:
+            from .haoiii_dialog import HaOIIIDialog
+        except ImportError:
+            self._status.setText("Ha/OIII extract unavailable — install astroalign and sep.")
+            return
+        HaOIIIDialog(self.settings, self,
+                     on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
+
     def _open_palette(self) -> None:
         if self.project is None:
             self._status.setText("Open or stack an image first.")
@@ -178,6 +187,7 @@ class MainWindow(QMainWindow):
         self._save_recipe_act = tb.addAction("Save Recipe", self._save_recipe)
         tb.addAction("Batch…", self._open_batch)
         tb.addAction("Stack…", self._open_stack)
+        tb.addAction("Ha/OIII…", self._open_haoiii)
         tb.addAction("Palette…", self._open_palette)
         self._undo_act = tb.addAction("Undo", self._undo)
         self._redo_act = tb.addAction("Redo", self._redo)
