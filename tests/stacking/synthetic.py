@@ -20,3 +20,21 @@ def write_color_fits(path, lum2d, exptime=10.0):
     hdu = fits.PrimaryHDU(cube)
     hdu.header["EXPTIME"] = exptime
     hdu.writeto(str(path), overwrite=True)
+
+
+def write_cfa_fits(path, base, exptime=10.0):
+    """Write a 2D GRBG mono CFA FITS from a full-res `base` (H, W) star field.
+    GRBG tile: G R / B R? no -> G R (row0), B G (row1). Strong signal on the RED
+    sites so extracted Ha carries the stars; weaker green/blue."""
+    import numpy as np
+    from astropy.io import fits
+    h, w = base.shape
+    cfa = np.zeros((h, w), np.float32)
+    cfa[0::2, 1::2] = base[0::2, 1::2]          # R (Ha)
+    cfa[0::2, 0::2] = base[0::2, 0::2] * 0.3    # G
+    cfa[1::2, 1::2] = base[1::2, 1::2] * 0.3    # G
+    cfa[1::2, 0::2] = base[1::2, 0::2] * 0.2    # B
+    hdu = fits.PrimaryHDU((cfa * 1000).astype(np.uint16))
+    hdu.header["BAYERPAT"] = "GRBG"
+    hdu.header["EXPTIME"] = exptime
+    hdu.writeto(str(path), overwrite=True)

@@ -54,6 +54,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       - v3: per-channel Black/Mid/White curves (R/G/B channel tabs) replace the global
         balance/saturation sliders, so the SHO look is sculpted per channel, not globally
         re-tinted. Palette radio + SCNR + Reset retained.
+- [x] **Ha/OIII duo-band extraction (lights-only).** Separate "Ha/OIII…" tool: grade raw subs,
+      split each CFA sub into Ha (red sites) and OIII (green+blue) planes, register once on Ha
+      and reuse the transform for OIII, stack each channel separately, MAD-renorm OIII to Ha,
+      and produce a combined RGB master (Ha→R, OIII→G+B) for the editor/Palette.
+      `stacking/haoiii.py` + `ui/haoiii_dialog.py`. Inspired by Siril's ExtractHaOIII, no calibration.
 
 ## Packaging / distribution (later, after refinement)
 - App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.
