@@ -20,6 +20,20 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       a dedicated step.)
 
 ## Soon
+- [ ] **Export options at the final Save step + remove the Destination step.** In the final
+      "Save"/Export step, let the user choose to save either (a) the whole image, or (b) a
+      **separated pair** — a starless (background/nebula) image + a stars-only image — so they
+      can keep editing the two layers in other software. The star-split capability already
+      exists (StarX via `tools/rcastro.remove_stars` → starless + stars; the "Two TIFFs:
+      starless + stars" option currently lives only in the *external* destination panel,
+      `EXTERNAL_FORMATS` in `step_panels.py` + `main_window.export_external`). Move that option
+      into the normal in-app Export step (`export` kind), gated on RC-Astro like today. Once
+      export covers the split, the **Destination step becomes redundant → remove it**: drop the
+      `destination` stage, the `external`/`in_app` branch (`path_stages`, `set_destination`,
+      `_EXTERNAL_TAIL`/`_IN_APP_TAIL`, `export_external`) and always run the single in-app flow.
+      Simpler mental model for the user (one linear path; the "how do I want to finish?" choice
+      moves to the moment of saving). Own design + build cycle (touches pipeline, step_panels,
+      main_window, and their tests).
 - [ ] **L3** Project save / reopen (currently work is lost on close).
 - [ ] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
       stacks (needs real-data testing).
