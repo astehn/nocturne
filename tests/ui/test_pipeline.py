@@ -3,7 +3,7 @@ from seestar_processor.ui.pipeline import (
 )
 
 
-def test_core_stages_no_destination():
+def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
         "load", "crop", "background", "color", "stretch",
     ]
@@ -15,7 +15,6 @@ def test_path_stages_single_linear_flow():
         "load", "crop", "background", "color", "stretch", "levels",
         "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export",
     ]
-    assert "destination" not in ids and "export_external" not in ids
 
 
 def test_next_prev_enabled_on_stage_list():

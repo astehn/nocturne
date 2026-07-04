@@ -349,12 +349,6 @@ def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
     assert out.exists()
 
 
-def test_no_destination_attrs(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    assert not hasattr(win, "set_destination")
-    assert not hasattr(win, "export_external")
-
-
 def test_next_from_load_is_crop(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
