@@ -87,6 +87,9 @@ QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radiu
 QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
+QLabel#aboutWordmark {{ font-size: 34px; font-weight: 700; color: #ffffff; padding: 10px; }}
+QLabel#aboutBody {{ font-size: 13px; color: {TEXT}; padding: 4px 12px; }}
+QScrollArea {{ border: none; background: {BG_1}; }}
 """
 
 
