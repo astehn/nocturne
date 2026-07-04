@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (
-    QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView,
+from PySide6.QtGui import (
+    QBrush, QColor, QPainter, QPen, QPixmap, QRadialGradient,
 )
+from PySide6.QtWidgets import (
+    QGraphicsDropShadowEffect, QGraphicsPixmapItem, QGraphicsRectItem,
+    QGraphicsScene, QGraphicsView,
+)
+
+from .theme import BG_0, BG_1
+from .zoom_pill import ZoomPill
 
 _ACCENT = QColor("#2dd4bf")
 _HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
@@ -83,6 +89,11 @@ class ImageView(QGraphicsView):
         self.setScene(self._scene)
         self._item = QGraphicsPixmapItem()
         self._scene.addItem(self._item)
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 0)
+        shadow.setColor(QColor(0, 0, 0, 130))
+        self._item.setGraphicsEffect(shadow)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -97,6 +108,19 @@ class ImageView(QGraphicsView):
         self._compare_item = None
         self._divider = None
         self._split_x = 0.0
+        self._zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
+        self._zoom_pill.raise_()
+        self._position_zoom_pill()
+
+    def _position_zoom_pill(self) -> None:
+        pill = self._zoom_pill
+        pill.adjustSize()
+        m = 12
+        pill.move(self.width() - pill.width() - m, self.height() - pill.height() - m)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_zoom_pill()
 
     # --- before/after compare ---
     def set_compare(self, qimage) -> None:
@@ -157,15 +181,36 @@ class ImageView(QGraphicsView):
     def actual_size(self) -> None:
         self.resetTransform()
 
+    def drawBackground(self, painter, rect) -> None:
+        vp = self.viewport().rect()
+        grad = QRadialGradient(vp.center(), max(vp.width(), vp.height()) * 0.7)
+        grad.setColorAt(0.0, QColor(BG_1))
+        grad.setColorAt(1.0, QColor(BG_0))
+        painter.save()
+        painter.resetTransform()
+        painter.fillRect(vp, QBrush(grad))
+        painter.restore()
+
+    def zoom_in(self) -> None:
+        if not self._item.pixmap().isNull():
+            self.scale(1.25, 1.25)
+
+    def zoom_out(self) -> None:
+        if not self._item.pixmap().isNull():
+            self.scale(0.8, 0.8)
+
     def wheelEvent(self, event) -> None:
-        if self._item.pixmap().isNull():
-            return
-        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
-        self.scale(factor, factor)
+        if event.angleDelta().y() > 0:
+            self.zoom_in()
+        else:
+            self.zoom_out()
 
     # --- crop overlay ---
     def set_crop_overlay(self, enabled: bool, bounds=None, aspect_ratio=None) -> None:
         self._aspect = aspect_ratio
+        # Hide the floating zoom pill while cropping so it can't sit over a
+        # bottom-right crop handle and swallow its drags.
+        self._zoom_pill.setVisible(not enabled)
         if not enabled:
             self._teardown_overlay()
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)

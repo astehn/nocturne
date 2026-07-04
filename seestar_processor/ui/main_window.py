@@ -5,7 +5,7 @@ import os
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME
@@ -35,6 +35,7 @@ from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
 from .icons import load_icon
 from .stepper import Stepper
+from .welcome import WelcomeScreen
 from .worker import BusyOverlay, run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
@@ -87,9 +88,14 @@ class MainWindow(QMainWindow):
         root.addWidget(self.stepper)
 
         self.image_view = ImageView()
-        root.addWidget(self.image_view, 1)
+        self._center_stack = QStackedWidget()
+        self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
+        self._center_stack.addWidget(self._welcome)   # page 0
+        self._center_stack.addWidget(self.image_view)  # page 1
+        root.addWidget(self._center_stack, 1)
 
         right = QWidget()
+        self._right_panel = right
         right.setMinimumWidth(260)
         self._right_layout = QVBoxLayout(right)
         self.histogram_view = HistogramView()
@@ -118,6 +124,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self._build_toolbar()
         self._build_menu()
+        self._show_chrome(False)  # full-bleed welcome until an image is loaded
+
+    def _show_chrome(self, visible: bool) -> None:
+        """Show/hide the stepper + right panel so the welcome screen is a clean
+        full-bleed empty state (no redundant Import panel/stepper before load)."""
+        self.stepper.setVisible(visible)
+        self._right_panel.setVisible(visible)
         self._rebuild_panel()
         self._refresh()
 
@@ -282,6 +295,8 @@ class MainWindow(QMainWindow):
     def open_image(self, base, label: str) -> None:
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
+        self._center_stack.setCurrentWidget(self.image_view)
+        self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._status.setText("")
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(

@@ -292,3 +292,22 @@ def test_toolbar_actions_have_icons(qtbot, tmp_path):
     labelled = [a for a in main.actions() if a.text()]
     assert labelled, "toolbar has labelled actions"
     assert all(not a.icon().isNull() for a in labelled), "every labelled action has an icon"
+
+
+def test_chrome_hidden_until_image_loaded(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win.stepper.isHidden() is True          # full-bleed welcome
+    assert win._right_panel.isHidden() is True
+    win.open_fits(_make_fits(tmp_path))
+    assert win.stepper.isHidden() is False         # chrome revealed on load
+    assert win._right_panel.isHidden() is False
+
+
+def test_center_stack_switches_on_open(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    # welcome page shown before any image is loaded
+    assert win._center_stack.currentIndex() == 0
+    win.open_fits(_make_fits(tmp_path))
+    # image page shown after loading
+    assert win._center_stack.currentIndex() == 1
+    assert win._center_stack.currentWidget() is win.image_view
