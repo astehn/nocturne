@@ -111,6 +111,12 @@ def test_stretch_target_sets_slider(qtbot):
     assert w.stretch_slider.value() == 40
 
 
+def test_saturation_panel_default_is_native(qtbot):
+    w = build_panel(_stage("saturation"))
+    qtbot.addWidget(w)
+    assert w.sat_slider.value() == 50
+
+
 def test_saturation_panel_emits_amount(qtbot):
     got = []
     w = build_panel(_stage("saturation"), on_apply=got.append)
