@@ -36,11 +36,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       neutral, high = stronger boost; steepen the curve. (`core/saturation.saturate` +
       panel default/labels.) Shipped: centre-neutral slider (0=grey, 50=native, 100=strong,
       boost tapered toward highlights); default 50; S_MAX=2.5 (tunable).
-- [ ] **"Remove Green" as its own button.** Right now green removal is a checkbox tied to
-      the "Apply Color" button, so removing green forces the full neutralize+white-balance
-      (which the user may not want). Give it a separate action/button on the Color step that
-      applies SCNR independently. (Likely needs a small `ColorSettings`-only "green" path or
-      a dedicated step.)
+- [x] **"Remove Green" as its own button.** DONE (merged 004181e). The checkbox is gone;
+      Apply Color = neutralize+white-balance only. Green removal is a dedicated "Remove Green"
+      button applying SCNR as its own undoable step (`RemoveGreenStep`, positioned after Color
+      in `PROCESSING_ORDER`), recipe-able. Whole-branch review clean; 316 tests.
 
 ## Soon
 - [ ] **Refresh the in-app Help content — DO LAST (after feature-complete).** `help_html()`
