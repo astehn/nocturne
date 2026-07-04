@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from ..core.color import ColorSettings
 from ..core.crop import ASPECTS
+from .reset_slider import ResetSlider
 
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
@@ -159,9 +160,7 @@ def build_panel(
 
     elif stage.kind == "stretch":
         lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(0, 100)
-        slider.setValue(50)
+        slider = ResetSlider(50)
         target = QComboBox()
         target.addItems(list(STRETCH_TARGET_DEFAULTS))
         target.currentTextChanged.connect(
@@ -183,15 +182,9 @@ def build_panel(
 
     elif stage.kind == "levels":
         lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))
-        black = QSlider(Qt.Orientation.Horizontal)
-        black.setRange(0, 100)
-        black.setValue(0)
-        gamma = QSlider(Qt.Orientation.Horizontal)
-        gamma.setRange(10, 300)
-        gamma.setValue(100)  # 1.00
-        white = QSlider(Qt.Orientation.Horizontal)
-        white.setRange(0, 100)
-        white.setValue(100)
+        black = ResetSlider(0)
+        gamma = ResetSlider(100, minimum=10, maximum=300)  # 1.00
+        white = ResetSlider(100)
         apply_btn = QPushButton("Apply Levels")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -214,9 +207,7 @@ def build_panel(
     elif stage.kind == "saturation":
         lay.addWidget(_desc_label(
             "Drag left to mute colour, right to boost. Centre = no change."))
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setRange(0, 100)
-        slider.setValue(50)
+        slider = ResetSlider(50)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         slider.setTickInterval(50)
         apply_btn = QPushButton("Apply Saturation")

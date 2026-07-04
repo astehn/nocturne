@@ -155,3 +155,24 @@ def test_export_panel_formats(qtbot):
     w.fmt_box.setCurrentText("PNG")
     w.export_btn.click()
     assert got == ["PNG"]
+
+
+def test_sliders_are_reset_sliders_with_defaults(qtbot):
+    from seestar_processor.ui.reset_slider import ResetSlider
+    st = build_panel(_stage("stretch")); qtbot.addWidget(st)
+    assert isinstance(st.stretch_slider, ResetSlider) and st.stretch_slider._default == 50
+    lv = build_panel(_stage("levels")); qtbot.addWidget(lv)
+    assert isinstance(lv.black_slider, ResetSlider) and lv.black_slider._default == 0
+    assert isinstance(lv.gamma_slider, ResetSlider) and lv.gamma_slider._default == 100
+    assert lv.gamma_slider.value() == 100           # 10-300 range, not clamped
+    assert isinstance(lv.white_slider, ResetSlider) and lv.white_slider._default == 100
+    sa = build_panel(_stage("saturation")); qtbot.addWidget(sa)
+    assert isinstance(sa.sat_slider, ResetSlider) and sa.sat_slider._default == 50
+
+
+def test_stretch_slider_double_click_resets(qtbot):
+    from PySide6.QtCore import Qt
+    st = build_panel(_stage("stretch")); qtbot.addWidget(st)
+    st.stretch_slider.setValue(20)
+    qtbot.mouseDClick(st.stretch_slider, Qt.MouseButton.LeftButton)
+    assert st.stretch_slider.value() == 50
