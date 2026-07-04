@@ -8,6 +8,27 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
+- [ ] **NEXT (2026-07-05): Palette result gets discarded by later processing steps.** After
+      Apply-ing the narrowband Palette (a stretched, starless-recombined "Palette" history step),
+      continuing the pipeline (crop / background / **color**) reverts the image to the pre-palette
+      look ("default red palette"). User reports it happens on the **Color step even without
+      pressing Apply** (i.e. navigating to it) — so it's not only apply-time truncation.
+      Likely causes to investigate:
+        • "Palette" is NOT in `PROCESSING_ORDER`/`STEP_NAME` nor `GEOMETRY_NAMES`, so a processing
+          step's prefix-safe `_leading_kept` truncation drops the Palette entry when you apply a
+          later step (palette isn't preserved like geometry/remove_green).
+        • Navigating to Color may `_refresh`/re-render from a history position/state that predates
+          the Palette, or the Color panel re-derives from a non-palette base → the "even without
+          apply" symptom.
+        • Deeper: Palette is a *finishing* op on STRETCHED data; running LINEAR steps
+          (background/color) after it is semantically wrong — the workflow ordering itself needs a
+          decision (palette should be terminal, or later steps must preserve it).
+      User's proposed option: **Apply should NOT load back into the main app** — instead save the
+      composited image to the working dir and have the user reopen it (makes Palette a terminal
+      export, sidestepping the history-composition problem). Weigh that vs. making "Palette" a
+      preserved terminal history step. Start with systematic-debugging to confirm the exact
+      revert mechanism (reproduce: load master → Palette → Apply → go to Color → observe revert),
+      THEN design. `ui/main_window.py` `_record_palette` + history model + `ui/pipeline.py`.
 - [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop
       crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
       flip each their own history step).
