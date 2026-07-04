@@ -8,6 +8,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
+- [ ] **Crop preview framing stretch (deferred).** When cropping a raw/linear image the
+      preview can be too dark to frame, even though it already auto-stretches. Add an optional
+      stronger "framing stretch" toggle in the crop view (display-only, doesn't touch data).
+      Deferred until real-data samples confirm whether the existing display auto-stretch is
+      failing (bug) or just too gentle (needs a stronger toggle).
 - [ ] **Reset sliders to default.** After dragging sliders around it's hard to know what the
       default was. Preferred: **double-click a slider to reset it** (Lightroom / PixInsight
       convention) — no extra UI clutter, works per-slider. Implement a small `ResetSlider(QSlider)`
