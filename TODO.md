@@ -12,17 +12,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
       flip each their own history step).
 - [x] **Recipes capture rotate/flip.** DONE. Rotate/Flip H/Flip V now map to first-class recipe steps (`rotate`/`flip_h`/`flip_v`) replayed through the same `CropStep` engine (`recipe.py` `_NAME_TO_STAGE` + `deserialize_option`; `factory.make_step`; `batch.py` unchanged). Replay proven byte-identical to live; whole-branch review clean; 327 tests.
-- [ ] **"Reset image" button — start the whole process over.** Common workflow: you edit all
-      the way to the end, don't like the result, and currently have to re-open the same file to
-      start fresh. Add a toolbar/panel button that restarts editing on the *already-loaded* image
-      (no file re-pick) after a confirmation dialog ("Discard all edits and start over?"). Cheapest
-      hook: `open_image` already builds `Project(base, cache_dir)` from the loaded base but doesn't
-      keep `base`/label — stash them (`self._source_base`, `self._source_label`) there, then a
-      `_reset_image()` re-calls `open_image(self._source_base, self._source_label)` (fresh Project,
-      clears all history, back to Import stage). Guard on `project is not None`; wire a QMessageBox
-      confirm. (Alternative: `project.jump_back(0)` + refresh — lighter but leaves redo history;
-      the re-open approach is the cleaner "start over".) Small own cycle; touches `main_window`
-      (+ a toolbar action) and tests.
+- [x] **"Reset image" button — start the whole process over.** DONE. Toolbar Reset action (disabled until loaded) → confirm dialog (default No) → `open_image(_source_base, _source_label)` (fresh Project, history cleared, back on Import; no disk re-read, base stays pristine). New `reset.svg` icon. Whole-branch review clean; 330 tests.
 - [ ] **Crop preview framing stretch (deferred).** When cropping a raw/linear image the
       preview can be too dark to frame, even though it already auto-stretches. Add an optional
       stronger "framing stretch" toggle in the crop view (display-only, doesn't touch data).
