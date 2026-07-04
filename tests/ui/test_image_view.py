@@ -102,3 +102,24 @@ def test_set_image_refits_when_size_changes(qtbot):
     view.set_image(_qimage(20, 15))  # different size -> should re-fit
     after = view.transform().m11()
     assert after != before
+
+
+def test_zoom_in_out_change_scale(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(300, 200)
+    view.set_image(_qimage())
+    before = view.transform().m11()
+    view.zoom_in()
+    assert view.transform().m11() > before
+    mid = view.transform().m11()
+    view.zoom_out()
+    assert view.transform().m11() < mid
+
+
+def test_zoom_noop_without_image(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    # no image -> zoom does nothing, no crash
+    view.zoom_in()
+    view.zoom_out()
