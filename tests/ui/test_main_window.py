@@ -259,9 +259,12 @@ def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
     win.settings = Settings(graxpert_path=str(gx))  # rc-astro left empty
     win._update_tools_label()
     text = win._tools_label.text()
-    assert "GraXpert ✓" in text          # configured → green check
-    assert "RC-Astro ✗" in text          # not set → red cross
-    assert "#3fb950" in text and "#f85149" in text  # green + red colors present
+    assert "GraXpert" in text and "RC-Astro" in text     # names present
+    # Only the mark is coloured, not the label text.
+    assert 'color:#3fb950">✓</span>' in text             # works → green check
+    assert 'color:#f85149">✗</span>' in text             # not set → red cross
+    assert '#3fb950">GraXpert' not in text               # label itself is not coloured
+    assert '#f85149">RC-Astro' not in text
 
 
 def test_log_records_applied_step(qtbot, tmp_path):

@@ -236,7 +236,8 @@ class MainWindow(QMainWindow):
         def chip(name: str, ok: bool) -> str:
             color = "#3fb950" if ok else "#f85149"  # green / red
             mark = "✓" if ok else "✗"
-            return f'<span style="color:{color}">{name} {mark}</span>'
+            # Label in the normal interface colour; only the mark is coloured.
+            return f'{name} <span style="color:{color}">{mark}</span>'
 
         self._tools_label.setText(
             chip("GraXpert", graxpert_valid(self.settings))
