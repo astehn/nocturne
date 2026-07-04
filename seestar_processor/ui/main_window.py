@@ -95,6 +95,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._center_stack, 1)
 
         right = QWidget()
+        self._right_panel = right
         right.setMinimumWidth(260)
         self._right_layout = QVBoxLayout(right)
         self.histogram_view = HistogramView()
@@ -123,6 +124,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self._build_toolbar()
         self._build_menu()
+        self._show_chrome(False)  # full-bleed welcome until an image is loaded
+
+    def _show_chrome(self, visible: bool) -> None:
+        """Show/hide the stepper + right panel so the welcome screen is a clean
+        full-bleed empty state (no redundant Import panel/stepper before load)."""
+        self.stepper.setVisible(visible)
+        self._right_panel.setVisible(visible)
         self._rebuild_panel()
         self._refresh()
 
@@ -288,6 +296,7 @@ class MainWindow(QMainWindow):
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
+        self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._status.setText("")
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
