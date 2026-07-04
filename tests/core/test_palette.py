@@ -143,14 +143,27 @@ def _bicolour_starless():
     return AstroImage(d, is_linear=True)
 
 
-def test_render_nebula_is_not_monochrome():
+def _faint_oiii_starless():
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    d = np.zeros((20, 20, 3), dtype=np.float32)
+    d[:, :10, 0] = 0.6                       # left: strong Ha (red)
+    d[:, 10:, 1] = 0.08; d[:, 10:, 2] = 0.08 # right: FAINT OIII (≪ Ha)
+    d += 0.02
+    return AstroImage(d, is_linear=True)
+
+
+def test_render_nebula_lifts_faint_oiii_into_colour():
+    # Without renorm_oiii + independent stretch_channel, the faint OIII (~0.08)
+    # stays near-black and the right half is red-monochrome; the pipeline must
+    # lift it into visible teal.
     from seestar_processor.core.palette import render_nebula, PaletteParams
-    out = render_nebula(_bicolour_starless(), PaletteParams(scnr=False, hue_deg=0.0)).data
-    left, right = out[:, :10], out[:, 10:]
-    assert left[..., 0].mean() > left[..., 2].mean()      # left leans red
-    assert right[..., 2].mean() > right[..., 0].mean()    # right leans blue/teal
-    spread = (out.max(axis=2) - out.min(axis=2)).mean()
-    assert spread > 0.05                                  # real chroma, not grey
+    out = render_nebula(_faint_oiii_starless(),
+                        PaletteParams(palette="HOO", scnr=False, hue_deg=0.0,
+                                      saturation=0.5)).data
+    right = out[:, 10:]
+    assert right[..., 2].mean() > 0.3                    # faint OIII lifted off the floor
+    assert right[..., 2].mean() > right[..., 0].mean()   # teal, not red
 
 
 def test_render_nebula_output_is_stretched():
@@ -184,6 +197,8 @@ def test_compose_screens_stars_back():
     stars = AstroImage(np.zeros((20, 20, 3), np.float32), is_linear=True)
     stars.data[5, 5] = 0.9                                   # one bright star
     params = PaletteParams()
-    out = compose(starless, stars, params).data
+    result = compose(starless, stars, params)
+    out = result.data
     nebula = render_nebula(starless, params).data
     assert out[5, 5].mean() >= nebula[5, 5].mean()          # star brightened the pixel
+    assert result.is_linear is False                        # compose output is always stretched

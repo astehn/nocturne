@@ -175,4 +175,4 @@ def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> A
     nebula = render_nebula(starless, params)
     white = neutralize_stars(stars)
     out = screen(nebula.data, white.data)
-    return AstroImage(out, is_linear=starless.is_linear, metadata=dict(starless.metadata))
+    return AstroImage(out, is_linear=False, metadata=dict(starless.metadata))
