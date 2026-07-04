@@ -134,6 +134,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       screen, filled histogram, card panels.
 - [ ] **Tier 3 — branding & finish:** app icon + "Nocturne" wordmark; splash screen (with
       packaging); labelled before/after divider handle; spinner busy-overlay.
+- [ ] **Toolbar tool-status chip — color only the checkmark, not the label.** Currently the
+      whole "GraXpert ✓" / "RC-Astro ✓" is green (red on failure), which is louder than needed.
+      Make the tool *name* the normal interface text colour and colour only the ✓/✗ mark
+      (green = works, red = doesn't). One spot: `main_window.py:_update_tools_label` `chip()` —
+      split the span so `name` uses the default text colour and just `mark` carries the
+      green/red colour. Cosmetic; low urgency.
 
 ## Done (recent)
 - Processing log: collapsible bottom panel, append-only, timestamped, with an RMS Δ%
