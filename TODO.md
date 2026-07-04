@@ -17,11 +17,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       black 0 / gamma 100 / white 100, palette curves black 0 / mid 50 / white 100). Alternative
       / complement: a small "Reset" button per step that restores that step's controls. Do the
       double-click first (cheapest, most standard); add per-step Reset only if still wanted.
-- [ ] **Saturation remap.** Current slider is additive-only: 0 = native saturation (never
+- [x] **Saturation remap.** Current slider is additive-only: 0 = native saturation (never
       desaturates) and the top end is too weak — you must crank it to see effect, and low
       settings still look fully saturated. Remap so low = desaturate (factor < 1), mid =
       neutral, high = stronger boost; steepen the curve. (`core/saturation.saturate` +
-      panel default/labels.)
+      panel default/labels.) Shipped: centre-neutral slider (0=grey, 50=native, 100=strong,
+      boost tapered toward highlights); default 50; S_MAX=2.5 (tunable).
 - [ ] **"Remove Green" as its own button.** Right now green removal is a checkbox tied to
       the "Apply Color" button, so removing green forces the full neutralize+white-balance
       (which the user may not want). Give it a separate action/button on the Color step that
