@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .image import AstroImage
-from .autostretch import autostretch, linked_stretch
+from .autostretch import linked_stretch
 from .saturation import saturate
 from .stretch import amount_to_target
 
@@ -132,12 +132,20 @@ class PaletteParams:
     scnr: bool = True              # green suppression
 
 
+_STAR_GAMMA = 0.5  # controlled reveal for the screened-back star layer
+
+
 def neutralize_stars(stars: AstroImage) -> AstroImage:
-    """White (colour-neutral) star layer, auto-stretched so stars stay visible
-    over the stretched nebula."""
+    """White (colour-neutral) star layer, gently stretched with a FIXED gamma so
+    stars stay visible over the stretched nebula without bloating.
+
+    Do NOT use the adaptive autostretch here: the StarX 'stars_only' layer is
+    sparse (mostly black), so its median and MAD collapse to ~0 and the adaptive
+    midtones solve degenerates into an extreme threshold curve that blows every
+    star and its faint wings to white — bloated blobs that swamp the image."""
     if not stars.is_color:
         return stars.copy()
-    lum = autostretch(AstroImage(stars.data.mean(axis=2)))
+    lum = np.power(np.clip(stars.data.mean(axis=2), 0.0, 1.0), _STAR_GAMMA)
     rgb = np.clip(np.stack([lum, lum, lum], axis=2), 0.0, 1.0).astype(np.float32)
     return AstroImage(rgb, is_linear=False, metadata=dict(stars.metadata))
 
