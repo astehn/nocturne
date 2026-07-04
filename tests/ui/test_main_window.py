@@ -404,3 +404,21 @@ def test_next_from_load_is_crop(qtbot, tmp_path):
     win._go_to_id("load")
     win.go_next()
     assert win.current_stage_id() == "crop"
+
+
+def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))  # -> 16x16
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                       # Crop, Stretch
+    win._go_to_id("crop")
+    win._flip_h()                                # geometry after processing
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                        # re-apply Stretch
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Stretch") == 1           # NOT double-applied
+    assert "Flip H" in names and "Crop" in names # geometry preserved
+    assert win.project.current().data.shape[:2] == (16, 16)

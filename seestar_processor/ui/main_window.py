@@ -304,6 +304,19 @@ class MainWindow(QMainWindow):
         return make_step(stage_id, self.settings,
                          bg_runner=self._bg_runner, rc_runner=self._rc_runner)
 
+    @staticmethod
+    def _leading_kept(entries, keep_names) -> int:
+        """Length of the leading contiguous run of entries whose name is in
+        keep_names. Prefix-safe: jump_back keeps a prefix, so we must count a
+        prefix, not a total (geometry ops can append after processing ops)."""
+        n = 0
+        for name, _ in entries:
+            if name in keep_names:
+                n += 1
+            else:
+                break
+        return n
+
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
             return
@@ -315,7 +328,7 @@ class MainWindow(QMainWindow):
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
         }
-        target = sum(1 for name, _ in self.project.entries() if name in preceding)
+        target = self._leading_kept(self.project.entries(), preceding)
         self.project.jump_back(target)
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
@@ -351,10 +364,6 @@ class MainWindow(QMainWindow):
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
-        if stage_id == "crop":
-            h, w = result.data.shape[:2]
-            self.log_panel.append_entry(format_log_entry(name, "", None, dims=(w, h)))
-            return
         if stage_id in ("color", "levels"):
             label = ""  # option is a settings object/tuple, not user-facing text
         elif isinstance(option, float):
@@ -394,6 +403,7 @@ class MainWindow(QMainWindow):
     def _apply_geometry(self, name: str, params) -> None:
         if self.project is None or self._busy:
             return
+        self.project.jump_back(self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES)))
         result = self._step_for("crop").apply(self.project.current(), params)
         self.project.run_step(_PrecomputedStep(name, result), "")
         self.log_panel.append_entry(format_log_entry(name, "", None))
