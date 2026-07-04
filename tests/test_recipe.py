@@ -42,3 +42,18 @@ def test_save_load_roundtrip(tmp_path):
     p = tmp_path / "r.json"
     save_recipe(r, str(p))
     assert load_recipe(str(p)).steps == r.steps
+
+
+def test_rotate_flip_entries_map_and_replay_params():
+    from seestar_processor.recipe import recipe_from_entries
+    rec = recipe_from_entries([("Rotate", ""), ("Flip H", ""), ("Flip V", "")])
+    assert [s["stage"] for s in rec.steps] == ["rotate", "flip_h", "flip_v"]
+    assert deserialize_option("rotate", "").rotate == 90
+    assert deserialize_option("flip_h", "").flip_h is True
+    assert deserialize_option("flip_v", "").flip_v is True
+
+
+def test_mixed_geometry_recipe_keeps_order():
+    from seestar_processor.recipe import recipe_from_entries
+    rec = recipe_from_entries([("Rotate", ""), ("Crop", ""), ("Stretch", 0.5)])
+    assert [s["stage"] for s in rec.steps] == ["rotate", "crop", "stretch"]
