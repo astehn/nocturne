@@ -62,16 +62,24 @@ def test_background_off_enables_apply_without_graxpert(qtbot):
     assert w.disabled_note.isHidden() is False
 
 
-def test_auto_panel_emits_color_settings_with_green(qtbot):
+def test_auto_panel_apply_color_has_no_green(qtbot):
     from seestar_processor.core.color import ColorSettings
     got = []
     w = build_panel(_stage("color"), on_apply=got.append)
     qtbot.addWidget(w)
     assert w.panel_kind == "auto"
-    w.remove_green_check.setChecked(True)
+    assert not hasattr(w, "remove_green_check")
     w.apply_btn.click()
     assert len(got) == 1 and isinstance(got[0], ColorSettings)
-    assert got[0].remove_green is True
+    assert got[0].remove_green is False
+
+
+def test_auto_panel_remove_green_button_invokes_callback(qtbot):
+    calls = []
+    w = build_panel(_stage("color"), on_remove_green=lambda: calls.append(True))
+    qtbot.addWidget(w)
+    w.remove_green_btn.click()
+    assert calls == [True]
 
 
 def test_levels_panel_emits_tuple(qtbot):

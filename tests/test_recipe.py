@@ -30,6 +30,13 @@ def test_recipe_from_entries_maps_and_skips():
     assert [s["stage"] for s in r.steps] == ["crop", "stretch"]
 
 
+def test_remove_green_entry_maps_and_serializes():
+    from seestar_processor.recipe import recipe_from_entries
+    rec = recipe_from_entries([("Color", None), ("Remove Green", "")])
+    stages = [s["stage"] for s in rec.steps]
+    assert "remove_green" in stages
+
+
 def test_save_load_roundtrip(tmp_path):
     r = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
     p = tmp_path / "r.json"

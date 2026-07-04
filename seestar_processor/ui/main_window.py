@@ -420,6 +420,21 @@ class MainWindow(QMainWindow):
     def _flip_v(self) -> None:
         self._apply_geometry("Flip V", CropParams(flip_v=True))
 
+    def _remove_green(self) -> None:
+        if self.project is None or self._busy:
+            return
+        idx = PROCESSING_ORDER.index("remove_green")
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
+        }
+        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        base = self.project.current()
+        result = self._step_for("remove_green").apply(base, None)
+        self.project.run_step(_PrecomputedStep("Remove Green", result), "")
+        self.log_panel.append_entry(format_log_entry("Remove Green", "", rms_delta(base, result)))
+        self._status.setText("")
+        self._refresh()
+
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
             return
@@ -536,6 +551,7 @@ class MainWindow(QMainWindow):
             on_flip_h=self._flip_h,
             on_flip_v=self._flip_v,
             on_export=self.export_final,
+            on_remove_green=self._remove_green,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
         )

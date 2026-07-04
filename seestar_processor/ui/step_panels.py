@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
+    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
     QWidget,
 )
 
@@ -49,6 +49,7 @@ def build_panel(
     on_flip_h=None,
     on_flip_v=None,
     on_export=None,
+    on_remove_green=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
 ) -> QWidget:
@@ -142,19 +143,19 @@ def build_panel(
         lay.addWidget(_desc_label(
             "Automatic background neutralization and white balance."
         ))
-        remove_green = QCheckBox("Remove green cast")
-        remove_green.setChecked(True)
         apply_btn = QPushButton("Apply Color")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(
-                ColorSettings(remove_green=remove_green.isChecked())
-            ))
-        lay.addWidget(remove_green)
+            apply_btn.clicked.connect(lambda: on_apply(ColorSettings()))
+        remove_green_btn = QPushButton("Remove Green")
+        remove_green_btn.setEnabled(apply_enabled)
+        if on_remove_green is not None:
+            remove_green_btn.clicked.connect(lambda: on_remove_green())
         lay.addWidget(apply_btn)
-        w.remove_green_check = remove_green
+        lay.addWidget(remove_green_btn)
         w.apply_btn = apply_btn
+        w.remove_green_btn = remove_green_btn
 
     elif stage.kind == "stretch":
         lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))

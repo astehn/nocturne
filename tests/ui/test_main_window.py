@@ -406,6 +406,34 @@ def test_next_from_load_is_crop(qtbot, tmp_path):
     assert win.current_stage_id() == "crop"
 
 
+def test_remove_green_records_undoable_entry_and_reduces_green(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    before = win.project.current()
+    green_before = float(before.data[..., 1].mean()) if before.data.ndim == 3 else 0.0
+    win._remove_green()
+    names = [n for n, _ in win.project.entries()]
+    assert names[-1] == "Remove Green"
+    after = win.project.current()
+    if after.data.ndim == 3:
+        assert float(after.data[..., 1].mean()) <= green_before + 1e-6
+    win.project.undo()
+    assert "Remove Green" not in [n for n, _ in win.project.entries()]
+
+
+def test_remove_green_preserved_after_later_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win._remove_green()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    names = [n for n, _ in win.project.entries()]
+    assert "Remove Green" in names and "Stretch" in names
+    assert names.index("Remove Green") < names.index("Stretch")
+
+
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
     from seestar_processor.core.crop import CropParams
     win = _window(qtbot, tmp_path)
