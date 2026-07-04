@@ -232,3 +232,22 @@ def test_render_nebula_sliders_have_effect():
     lo = render_nebula(img, PaletteParams(ha_stretch=0.0, oiii_stretch=0.0)).data
     hi = render_nebula(img, PaletteParams(ha_stretch=1.0, oiii_stretch=1.0)).data
     assert float(np.median(hi)) - float(np.median(lo)) > 0.1   # stretch sliders do something
+
+
+def _single_star_layer():
+    # StarX 'stars_only' output is sparse (mostly black). A single gaussian star,
+    # peak-normalized linear. An adaptive autostretch degenerates on this sparse
+    # input and bloats the star's faint wings to white (footprint 9px -> ~149px);
+    # a controlled stretch keeps the star tight.
+    H, W = 80, 80
+    yy, xx = np.mgrid[0:H, 0:W]
+    star = np.exp(-(((xx - 40) ** 2 + (yy - 40) ** 2) / (2 * 1.4 ** 2))).astype(np.float32)
+    return AstroImage(np.stack([star, star, star], axis=2), is_linear=True)
+
+
+def test_neutralize_stars_does_not_bloat():
+    from seestar_processor.core.palette import neutralize_stars
+    out = neutralize_stars(_single_star_layer()).data
+    footprint = int((out.mean(axis=2) > 0.5).sum())
+    assert footprint < 40        # star stays tight (autostretch bloated it to ~149px)
+    assert out.max() > 0.5       # but the star is still clearly visible
