@@ -11,17 +11,15 @@ class Stage:
     enabled: bool = True
 
 
-# Shared core (linear), run for both destinations.
+# Shared core (linear).
 _CORE = [
     Stage("load", "Import", "import"),
-    Stage("destination", "Destination", "destination"),
     Stage("crop", "Crop", "crop"),
     Stage("background", "Background", "process"),
     Stage("color", "Color", "auto"),
     Stage("stretch", "Stretch", "stretch"),
 ]
 
-_EXTERNAL_TAIL = [Stage("export_external", "Export", "export_external")]
 _IN_APP_TAIL = [
     Stage("levels", "Levels", "levels"),
     Stage("saturation", "Saturation", "saturation"),
@@ -52,9 +50,8 @@ def core_stages() -> list[Stage]:
     return list(_CORE)
 
 
-def path_stages(destination: str) -> list[Stage]:
-    tail = _EXTERNAL_TAIL if destination == "external" else _IN_APP_TAIL
-    return list(_CORE) + list(tail)
+def path_stages() -> list[Stage]:
+    return list(_CORE) + list(_IN_APP_TAIL)
 
 
 def next_enabled(stages: list[Stage], index: int) -> int:

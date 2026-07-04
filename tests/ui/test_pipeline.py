@@ -3,31 +3,22 @@ from seestar_processor.ui.pipeline import (
 )
 
 
-def test_core_stages_shared_prefix():
+def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
-        "load", "destination", "crop", "background", "color", "stretch",
+        "load", "crop", "background", "color", "stretch",
     ]
 
 
-def test_external_path_stops_after_stretch_with_export():
-    ids = [s.id for s in path_stages("external")]
+def test_path_stages_single_linear_flow():
+    ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "destination", "crop", "background", "color", "stretch",
-        "export_external",
-    ]
-
-
-def test_in_app_path_has_cosmetic_then_export():
-    ids = [s.id for s in path_stages("in_app")]
-    assert ids == [
-        "load", "destination", "crop", "background", "color", "stretch",
-        "levels", "saturation", "noise_sharpen", "local_contrast",
-        "star_reduction", "export",
+        "load", "crop", "background", "color", "stretch", "levels",
+        "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export",
     ]
 
 
 def test_next_prev_enabled_on_stage_list():
-    stages = path_stages("in_app")
+    stages = path_stages()
     assert next_enabled(stages, 0) == 1
     assert next_enabled(stages, len(stages) - 1) == len(stages) - 1  # clamp
     assert prev_enabled(stages, 0) == 0  # clamp

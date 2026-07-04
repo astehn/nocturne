@@ -7,22 +7,22 @@ from seestar_processor.ui.step_panels import build_panel  # noqa: E402
 
 
 def test_panel_is_a_card(qtbot):
-    stage = next(s for s in path_stages("in_app") if s.id == "stretch")
+    stage = next(s for s in path_stages() if s.id == "stretch")
     panel = build_panel(stage)
     qtbot.addWidget(panel)
     assert panel.objectName() == "stepCard"
 
 
 def test_panel_has_description_strip(qtbot):
-    stage = next(s for s in path_stages("in_app") if s.id == "stretch")
+    stage = next(s for s in path_stages() if s.id == "stretch")
     panel = build_panel(stage)
     qtbot.addWidget(panel)
     descs = [c for c in panel.findChildren(QLabel) if c.objectName() == "stepDesc"]
     assert descs, "panel has a stepDesc label"
 
 
-def _stage(stage_id, dest="in_app"):
-    return next(s for s in path_stages(dest) if s.id == stage_id)
+def _stage(stage_id):
+    return next(s for s in path_stages() if s.id == stage_id)
 
 
 def test_import_panel_has_open_and_meta(qtbot):
@@ -31,15 +31,6 @@ def test_import_panel_has_open_and_meta(qtbot):
     qtbot.addWidget(w)
     assert w.panel_kind == "import"
     assert hasattr(w, "meta_label")
-
-
-def test_destination_buttons_emit_choice(qtbot):
-    got = []
-    w = build_panel(_stage("destination"), on_destination=got.append)
-    qtbot.addWidget(w)
-    w.external_btn.click()
-    w.in_app_btn.click()
-    assert got == ["external", "in_app"]
 
 
 def test_crop_panel_controls_and_apply(qtbot):
@@ -129,10 +120,17 @@ def test_saturation_panel_emits_amount(qtbot):
     assert got == [0.50]
 
 
-def test_export_external_split_disabled_without_rcastro(qtbot):
-    w = build_panel(_stage("export_external", "external"), apply_enabled=False)
+def test_export_panel_split_disabled_without_rcastro(qtbot):
+    w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)
-    assert w.fmt_box.model().item(1).isEnabled() is False
+    assert w.fmt_box.count() == 4
+    assert w.fmt_box.model().item(3).isEnabled() is False  # split needs RC-Astro
+
+
+def test_export_panel_split_enabled_with_rcastro(qtbot):
+    w = build_panel(_stage("export"), split_enabled=True)
+    qtbot.addWidget(w)
+    assert w.fmt_box.model().item(3).isEnabled() is True
 
 
 def test_export_panel_formats(qtbot):

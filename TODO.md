@@ -27,7 +27,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       stable, reusing the plain-English framing from `docs/TESTERS_GUIDE.md`. (`ui/about.py`;
       keep it a pure function so it stays testable.) NB: the **About** page can be refreshed
       independently and sooner (it's version/identity text, not a feature walkthrough).
-- [ ] **Export options at the final Save step + remove the Destination step.** In the final
+- [x] **Export options at the final Save step + remove the Destination step.** In the final
       "Save"/Export step, let the user choose to save either (a) the whole image, or (b) a
       **separated pair** — a starless (background/nebula) image + a stars-only image — so they
       can keep editing the two layers in other software. The star-split capability already
@@ -40,7 +40,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       `_EXTERNAL_TAIL`/`_IN_APP_TAIL`, `export_external`) and always run the single in-app flow.
       Simpler mental model for the user (one linear path; the "how do I want to finish?" choice
       moves to the moment of saving). Own design + build cycle (touches pipeline, step_panels,
-      main_window, and their tests).
+      main_window, and their tests). Shipped: single Export step with a 'Starless + Stars (two TIFFs)' 4th format (RC-Astro-gated); Destination step + external branch removed; one linear flow.
 - [ ] **L3** Project save / reopen (currently work is lost on close).
 - [ ] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
       stacks (needs real-data testing).
