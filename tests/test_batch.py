@@ -64,12 +64,21 @@ def test_apply_recipe_replays_rotate_and_flip():
     r = Recipe(steps=[{"stage": "rotate", "option": ""}])
     out = apply_recipe(AstroImage(data), r, Settings())
     assert out.data.shape[:2] == (30, 20)    # 90° rotate swapped H and W
+    # Direction: after a 90° clockwise rotate the original left column lands in the top row.
+    assert float(out.data[0, :, :].mean()) > float(out.data[-1, :, :].mean())
 
     r2 = Recipe(steps=[{"stage": "flip_h", "option": ""}])
     out2 = apply_recipe(AstroImage(data), r2, Settings())
     assert out2.data.shape[:2] == (20, 30)   # flip keeps shape
     # column 0 became the last column after horizontal flip
     assert float(out2.data[:, -1, :].mean()) > float(out2.data[:, 0, :].mean())
+
+    # Two Rotate entries compound to 180°: shape restored, bright column mirrored to the far side.
+    r180 = Recipe(steps=[{"stage": "rotate", "option": ""},
+                         {"stage": "rotate", "option": ""}])
+    out180 = apply_recipe(AstroImage(data), r180, Settings())
+    assert out180.data.shape[:2] == (20, 30)
+    assert float(out180.data[:, -1, :].mean()) > float(out180.data[:, 0, :].mean())
 
 
 def test_run_batch_progress_callback(tmp_path):
