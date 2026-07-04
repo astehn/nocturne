@@ -21,15 +21,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       stronger "framing stretch" toggle in the crop view (display-only, doesn't touch data).
       Deferred until real-data samples confirm whether the existing display auto-stretch is
       failing (bug) or just too gentle (needs a stronger toggle).
-- [ ] **Reset sliders to default.** After dragging sliders around it's hard to know what the
-      default was. Preferred: **double-click a slider to reset it** (Lightroom / PixInsight
-      convention) — no extra UI clutter, works per-slider. Implement a small `ResetSlider(QSlider)`
-      that stores its `default` value and resets on `mouseDoubleClickEvent`, plus a tooltip
-      ("double-click to reset"); swap the ad-hoc `QSlider` creations in `ui/step_panels.py` and
-      `ui/palette_dialog.py` for it (each passes its default: stretch 50, saturation 40, levels
-      black 0 / gamma 100 / white 100, palette curves black 0 / mid 50 / white 100). Alternative
-      / complement: a small "Reset" button per step that restores that step's controls. Do the
-      double-click first (cheapest, most standard); add per-step Reset only if still wanted.
+- [x] **Reset sliders to default.** DONE — double-click any slider resets to its default (`ResetSlider`, tooltip 'Double-click to reset'); applied across stretch/levels/saturation/palette. Whole-branch review clean; 324 tests.
 - [x] **Saturation remap.** Current slider is additive-only: 0 = native saturation (never
       desaturates) and the top end is too weak — you must crank it to see effect, and low
       settings still look fully saturated. Remap so low = desaturate (factor < 1), mid =
