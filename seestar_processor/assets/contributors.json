@@ -1,0 +1,24 @@
+{
+  "creator": {
+    "name": "Andreas Stehn",
+    "role": "Creator, chief orchestrator & ideas department — not a developer, and proud of it"
+  },
+  "ai": "Code wrangled in collaboration with Claude (Anthropic)",
+  "built_with": [
+    { "name": "PySide6 / Qt", "what": "the whole interface" },
+    { "name": "NumPy", "what": "the numeric backbone" },
+    { "name": "astropy", "what": "reading & writing FITS" },
+    { "name": "SciPy", "what": "filters & maths" },
+    { "name": "scikit-image", "what": "image operations" },
+    { "name": "astroalign", "what": "lining up the stars" },
+    { "name": "SEP", "what": "finding & grading stars" },
+    { "name": "colour-demosaicing", "what": "turning Bayer data into colour" },
+    { "name": "tifffile", "what": "16-bit TIFFs" },
+    { "name": "Pillow", "what": "image loading & saving" }
+  ],
+  "works_with": [
+    { "name": "GraXpert", "what": "background extraction (free)" },
+    { "name": "RC-Astro", "what": "BlurX / NoiseX / StarX (optional)" }
+  ],
+  "photon_donors": []
+}
