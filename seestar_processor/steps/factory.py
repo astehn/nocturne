@@ -10,6 +10,7 @@ from .crop import CropStep
 from .levels import LevelsStep
 from .local_contrast import LocalContrastStep
 from .noise_sharpen import NoiseSharpenStep
+from .remove_green_step import RemoveGreenStep
 from .saturation_step import SaturationStep
 from .star_reduction import StarReductionStep
 from .stretch_step import StretchStep
@@ -26,6 +27,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         return step
     if stage_id == "color":
         return ColorStep()
+    if stage_id == "remove_green":
+        return RemoveGreenStep()
     if stage_id == "stretch":
         return StretchStep()
     if stage_id == "levels":

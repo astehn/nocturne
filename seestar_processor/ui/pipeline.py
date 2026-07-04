@@ -32,6 +32,7 @@ _IN_APP_TAIL = [
 STEP_NAME = {
     "background": "Background",
     "color": "Color",
+    "remove_green": "Remove Green",
     "stretch": "Stretch",
     "levels": "Levels",
     "saturation": "Saturation",
@@ -40,7 +41,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "stretch", "levels", "saturation",
+    "background", "color", "remove_green", "stretch", "levels", "saturation",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")

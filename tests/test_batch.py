@@ -44,6 +44,19 @@ def test_run_batch_writes_outputs_and_reports_failure(tmp_path):
     assert any(not x["ok"] for x in results)
 
 
+def test_batch_replays_remove_green():
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    from seestar_processor.recipe import Recipe
+    from seestar_processor.settings import Settings
+    from seestar_processor.batch import apply_recipe
+    data = np.full((4, 4, 3), 0.3, dtype=np.float32)
+    data[..., 1] = 0.9
+    rec = Recipe(steps=[{"stage": "remove_green", "option": ""}])
+    out = apply_recipe(AstroImage(data), rec, Settings())
+    assert out.data[..., 1].max() <= 0.3 + 1e-6
+
+
 def test_run_batch_progress_callback(tmp_path):
     a = tmp_path / "a.fits"
     _fits(a)

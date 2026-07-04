@@ -31,7 +31,7 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "stretch", "levels", "saturation",
+        "background", "color", "remove_green", "stretch", "levels", "saturation",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
 
@@ -39,3 +39,10 @@ def test_step_name_and_order():
 def test_geometry_names():
     from seestar_processor.ui.pipeline import GEOMETRY_NAMES
     assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V")
+
+
+def test_remove_green_positioned_after_color():
+    from seestar_processor.ui.pipeline import PROCESSING_ORDER, STEP_NAME
+    assert STEP_NAME["remove_green"] == "Remove Green"
+    i = PROCESSING_ORDER.index("remove_green")
+    assert PROCESSING_ORDER[i - 1] == "color"
