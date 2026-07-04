@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
-    QRadioButton, QSlider, QVBoxLayout, QWidget,
+    QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..core.image import AstroImage
