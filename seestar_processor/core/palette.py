@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -9,7 +9,7 @@ from .autostretch import autostretch, linked_stretch
 from .saturation import saturate
 from .stretch import amount_to_target
 
-PALETTES = ("HOO", "pseudo_SHO")
+PALETTES = ("Foraxx", "HOO", "pseudo_SHO")
 
 
 def extract_channels(img: AstroImage) -> tuple:
@@ -104,7 +104,12 @@ def rotate_hue(rgb: np.ndarray, degrees: float) -> np.ndarray:
     return np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32)
 
 
-_PALETTE_FNS = {"HOO": hoo, "pseudo_SHO": pseudo_sho}
+def _foraxx_image(img: AstroImage) -> AstroImage:
+    ha, oiii = extract_channels(img)
+    return _image_like(foraxx(ha, oiii), img)
+
+
+_PALETTE_FNS = {"Foraxx": _foraxx_image, "HOO": hoo, "pseudo_SHO": pseudo_sho}
 
 
 def apply_palette(img: AstroImage, name: str) -> AstroImage:
@@ -114,39 +119,23 @@ def apply_palette(img: AstroImage, name: str) -> AstroImage:
 
 
 @dataclass
-class ChannelCurve:
-    black: float = 0.0    # 0..1 input black point
-    mid: float = 0.5      # 0..1 slider; 0.5 = neutral gamma
-    white: float = 1.0    # 0..1 input white point
-
-
-@dataclass
 class PaletteParams:
-    palette: str = "HOO"                         # "HOO" | "pseudo_SHO"
-    r: ChannelCurve = field(default_factory=ChannelCurve)
-    g: ChannelCurve = field(default_factory=ChannelCurve)
-    b: ChannelCurve = field(default_factory=ChannelCurve)
-    scnr: bool = True                            # green suppression on the nebula
-
-
-def apply_channel_curve(channel: np.ndarray, curve: ChannelCurve) -> np.ndarray:
-    """Levels on a single 2D channel: remap [black, white] -> [0,1] then midtone
-    gamma. Mirrors core/levels.apply_levels. gamma = 10**((mid-0.5)*2)."""
-    black = float(curve.black)
-    white = max(float(curve.white), black + 1e-4)
-    gamma = 10.0 ** ((float(curve.mid) - 0.5) * 2.0)
-    x = np.clip((channel - black) / (white - black), 0.0, 1.0)
-    return np.power(x, 1.0 / gamma).astype(np.float32)
+    palette: str = "Foraxx"        # "Foraxx" | "HOO" | "pseudo_SHO"
+    ha_stretch: float = 0.6        # [0,1] Ha channel stretch aggressiveness
+    oiii_stretch: float = 0.7      # [0,1] OIII channel stretch (a touch stronger)
+    hue_deg: float = 0.0           # global hue rotation, degrees
+    saturation: float = 0.65       # saturate() amount; 0.5 = neutral
+    scnr: bool = True              # green suppression
 
 
 def neutralize_stars(stars: AstroImage) -> AstroImage:
-    """Replace the stars layer's colour with its luminance -> white stars, so
-    they don't clash with the false-colour nebula."""
+    """White (colour-neutral) star layer, auto-stretched so stars stay visible
+    over the stretched nebula."""
     if not stars.is_color:
         return stars.copy()
-    lum = stars.data.mean(axis=2)
+    lum = autostretch(AstroImage(stars.data.mean(axis=2)))
     rgb = np.clip(np.stack([lum, lum, lum], axis=2), 0.0, 1.0).astype(np.float32)
-    return AstroImage(rgb, is_linear=stars.is_linear, metadata=dict(stars.metadata))
+    return AstroImage(rgb, is_linear=False, metadata=dict(stars.metadata))
 
 
 def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
@@ -157,22 +146,28 @@ def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
 
 
 def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
-    """Extract Ha/OIII, combine into the chosen palette, sculpt each channel with
-    its curve, then optional SCNR green suppression."""
+    """Full narrowband combine: extract Ha/OIII, background-subtract, normalize,
+    stretch each channel independently, blend, SCNR, hue + saturation."""
     ha, oiii = extract_channels(starless)
-    if params.palette == "pseudo_SHO":
-        rgb = [ha, np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0), oiii]
-    else:  # HOO
-        rgb = [ha, oiii, oiii]
-    r = apply_channel_curve(rgb[0], params.r)
-    g = apply_channel_curve(rgb[1], params.g)
-    b = apply_channel_curve(rgb[2], params.b)
-    out = np.stack([r, g, b], axis=2)
+    ha = subtract_bg_2d(ha)
+    oiii = subtract_bg_2d(oiii)
+    oiii = renorm_oiii(ha, oiii)
+    ha = stretch_channel(ha, params.ha_stretch)
+    oiii = stretch_channel(oiii, params.oiii_stretch)
+    if params.palette == "HOO":
+        r, g, b = ha, oiii, oiii
+    elif params.palette == "pseudo_SHO":
+        r, g, b = ha, np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0), oiii
+    else:  # Foraxx
+        r, g, b = foraxx(ha, oiii)
+    out = np.stack([r, g, b], axis=2).astype(np.float32)
     if params.scnr:
-        avg_rb = (out[..., 0] + out[..., 2]) / 2.0
-        out[..., 1] = np.minimum(out[..., 1], avg_rb)
+        cap = np.maximum(out[..., 0], out[..., 2])          # max-mask SCNR
+        out[..., 1] = np.minimum(out[..., 1], cap)
+    out = rotate_hue(out, params.hue_deg)
+    out = saturate(AstroImage(out, is_linear=False), params.saturation).data
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
-                      is_linear=starless.is_linear, metadata=dict(starless.metadata))
+                      is_linear=False, metadata=dict(starless.metadata))
 
 
 def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> AstroImage:

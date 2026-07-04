@@ -36,7 +36,7 @@ def test_dialog_runs_starx_and_renders(qtbot):
     assert not dlg.preview.pixmap().isNull()          # preview rendered
 
 
-def test_channel_curve_change_rerenders(qtbot):
+def test_slider_change_rerenders(qtbot):
     dlg = PaletteDialog(Settings(), _color())
     qtbot.addWidget(dlg)
     dlg._async = False
@@ -44,39 +44,8 @@ def test_channel_curve_change_rerenders(qtbot):
     dlg._starx_runner = _fake_starx
     dlg.start()
     before = dlg.preview.pixmap().cacheKey()
-    dlg.white_slider.setValue(40)                     # move active channel's white point
+    dlg.oiii_slider.setValue(90)
     assert dlg.preview.pixmap().cacheKey() != before
-
-
-def test_channel_tab_stores_and_repopulates(qtbot):
-    dlg = PaletteDialog(Settings(), _color())
-    qtbot.addWidget(dlg)
-    dlg._async = False
-    dlg._starx_enabled = True
-    dlg._starx_runner = _fake_starx
-    dlg.start()
-    dlg.r_radio.setChecked(True)                      # editing R
-    dlg.white_slider.setValue(30)
-    assert dlg._curves["R"].white == 0.30
-    dlg.g_radio.setChecked(True)                      # switch to G
-    assert dlg.white_slider.value() == 100            # G still neutral -> white 1.0
-    dlg.r_radio.setChecked(True)                      # back to R
-    assert dlg.white_slider.value() == 30             # R's stored value restored
-
-
-def test_reset_returns_curves_to_neutral(qtbot):
-    dlg = PaletteDialog(Settings(), _color())
-    qtbot.addWidget(dlg)
-    dlg._async = False
-    dlg._starx_enabled = True
-    dlg._starx_runner = _fake_starx
-    dlg.start()
-    dlg.r_radio.setChecked(True)
-    dlg.black_slider.setValue(40)
-    dlg.reset()
-    assert all(c.black == 0.0 and c.mid == 0.5 and c.white == 1.0
-               for c in dlg._curves.values())
-    assert dlg.black_slider.value() == 0
 
 
 def test_apply_records_result(qtbot):
@@ -103,18 +72,34 @@ def test_fallback_without_rcastro(qtbot):
     assert not dlg.preview.pixmap().isNull()           # still renders (whole-image)
 
 
-def test_palette_sliders_are_reset_sliders(qtbot):
+def test_new_controls_present_and_no_old_curves(qtbot):
     from seestar_processor.ui.reset_slider import ResetSlider
     dlg = _make_dialog(qtbot)
-    assert isinstance(dlg.black_slider, ResetSlider) and dlg.black_slider._default == 0
-    assert isinstance(dlg.mid_slider, ResetSlider) and dlg.mid_slider._default == 50
-    assert isinstance(dlg.white_slider, ResetSlider) and dlg.white_slider._default == 100
-    assert dlg.black_slider.value() == 0 and dlg.white_slider.value() == 100
+    assert isinstance(dlg.ha_slider, ResetSlider) and dlg.ha_slider._default == 60
+    assert isinstance(dlg.oiii_slider, ResetSlider) and dlg.oiii_slider._default == 70
+    assert isinstance(dlg.hue_slider, ResetSlider) and dlg.hue_slider._default == 50
+    assert isinstance(dlg.sat_slider, ResetSlider) and dlg.sat_slider._default == 65
+    assert dlg.foraxx_radio.isChecked()                       # Foraxx default
+    assert not hasattr(dlg, "black_slider") and not hasattr(dlg, "r_radio")
 
 
-def test_palette_slider_double_click_resets(qtbot):
-    from PySide6.QtCore import Qt
+def test_params_reflect_sliders(qtbot):
     dlg = _make_dialog(qtbot)
-    dlg.white_slider.setValue(40)
-    qtbot.mouseDClick(dlg.white_slider, Qt.MouseButton.LeftButton)
-    assert dlg.white_slider.value() == 100
+    dlg.oiii_slider.setValue(80)
+    dlg.hue_slider.setValue(50)
+    p = dlg._params()
+    assert p.palette == "Foraxx"
+    assert p.oiii_stretch == 0.80 and p.hue_deg == 0.0
+
+
+def test_reset_returns_sliders_to_defaults(qtbot):
+    dlg = _make_dialog(qtbot)
+    dlg.ha_slider.setValue(20)
+    dlg.reset()
+    assert dlg.ha_slider.value() == 60 and dlg.oiii_slider.value() == 70
+
+
+def test_linear_hint_shown_for_stretched_input(qtbot):
+    # _color() builds an is_linear=False image -> hint should be visible
+    dlg = _make_dialog(qtbot)
+    assert "linear" in dlg.hint.text().lower()

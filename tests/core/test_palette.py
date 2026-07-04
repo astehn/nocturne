@@ -57,7 +57,8 @@ def test_subtract_background_passes_mono_through():
 def test_apply_palette_dispatch_and_unknown():
     img = _img([(0.5, 0.5, 0.5)])
     assert apply_palette(img, "HOO").data.shape == img.data.shape
-    assert set(PALETTES) == {"HOO", "pseudo_SHO"}
+    assert set(PALETTES) == {"Foraxx", "HOO", "pseudo_SHO"}
+    assert apply_palette(img, "Foraxx").data.shape == img.data.shape
     with pytest.raises(ValueError):
         apply_palette(img, "SHO")
 
@@ -66,7 +67,6 @@ def test_neutralize_stars_makes_white():
     from seestar_processor.core.palette import neutralize_stars
     out = neutralize_stars(_img([(0.8, 0.2, 0.2)])).data[0, 0]
     assert np.allclose(out, out[0])              # R==G==B (grey/white)
-    assert np.isclose(out[0], 0.4, atol=1e-6)    # = mean(0.8,0.2,0.2)
 
 
 def test_screen_blend_math():
@@ -76,73 +76,6 @@ def test_screen_blend_math():
     out = screen(a, b)
     assert np.isclose(out[0], 0.75)              # 1-(1-.5)(1-.5)
     assert np.isclose(out[1], 0.3)               # screen with 0 base = top
-
-
-def test_apply_channel_curve_neutral_is_noop():
-    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
-    ch = np.array([[0.0, 0.25, 0.5, 0.75, 1.0]], np.float32)
-    out = apply_channel_curve(ch, ChannelCurve())        # black 0, mid .5, white 1
-    assert np.allclose(out, ch, atol=1e-6)
-
-
-def test_apply_channel_curve_white_point_brightens():
-    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
-    ch = np.array([[0.5]], np.float32)
-    out = apply_channel_curve(ch, ChannelCurve(white=0.5))  # pull white down -> brighter
-    assert out[0, 0] > 0.5
-
-
-def test_apply_channel_curve_black_point_darkens():
-    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
-    ch = np.array([[0.3]], np.float32)
-    out = apply_channel_curve(ch, ChannelCurve(black=0.2))  # lift black -> darker lows
-    assert out[0, 0] < 0.3
-
-
-def test_apply_channel_curve_mid_gamma():
-    from seestar_processor.core.palette import apply_channel_curve, ChannelCurve
-    ch = np.array([[0.5]], np.float32)
-    assert np.isclose(apply_channel_curve(ch, ChannelCurve(mid=0.5))[0, 0], 0.5, atol=1e-6)
-    assert apply_channel_curve(ch, ChannelCurve(mid=0.8))[0, 0] > 0.5   # brighter mids
-    assert apply_channel_curve(ch, ChannelCurve(mid=0.2))[0, 0] < 0.5   # darker mids
-
-
-def test_render_nebula_neutral_curves_equals_plain_palette():
-    from seestar_processor.core.palette import render_nebula, PaletteParams, hoo
-    img = _img([(0.9, 0.2, 0.4), (0.3, 0.7, 0.6)])
-    # neutral curves + scnr off == plain HOO combination
-    out = render_nebula(img, PaletteParams(palette="HOO", scnr=False)).data
-    plain = hoo(img).data
-    assert np.allclose(out, plain, atol=1e-6)
-
-
-def test_render_nebula_per_channel_independent():
-    from seestar_processor.core.palette import render_nebula, PaletteParams, ChannelCurve
-    img = _img([(0.8, 0.5, 0.5), (0.6, 0.5, 0.5)])
-    base = render_nebula(img, PaletteParams(scnr=False)).data
-    # pull RED white down -> red mean rises; green/blue unchanged
-    tweaked = render_nebula(
-        img, PaletteParams(r=ChannelCurve(white=0.5), scnr=False)).data
-    assert tweaked[..., 0].mean() > base[..., 0].mean()
-    assert np.allclose(tweaked[..., 1], base[..., 1], atol=1e-6)
-    assert np.allclose(tweaked[..., 2], base[..., 2], atol=1e-6)
-
-
-def test_render_nebula_scnr_reduces_green():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
-    img = _img([(0.2, 0.9, 0.2)])
-    with_scnr = render_nebula(img, PaletteParams(scnr=True)).data[0, 0]
-    without = render_nebula(img, PaletteParams(scnr=False)).data[0, 0]
-    assert with_scnr[1] <= without[1]
-
-
-def test_compose_screens_stars_back():
-    from seestar_processor.core.palette import compose, PaletteParams
-    starless = _img([(0.3, 0.4, 0.4), (0.3, 0.4, 0.4)])
-    stars = _img([(0.0, 0.0, 0.0), (0.9, 0.9, 0.9)])   # a star only in pixel 1
-    out = compose(starless, stars, PaletteParams()).data
-    assert out.shape == (1, 2, 3)
-    assert out[0, 1].mean() > out[0, 0].mean()          # star pixel is brighter
 
 
 def test_subtract_bg_2d_drops_pedestal():
@@ -189,3 +122,68 @@ def test_rotate_hue_shifts_red_toward_green():
     assert np.allclose(same, red, atol=1e-6)             # 0 deg = identity
     rotated = rotate_hue(red, 120.0)                     # +120 deg -> green
     assert rotated[0, 0, 1] > rotated[0, 0, 0] and rotated[0, 0, 1] > rotated[0, 0, 2]
+
+
+def test_palette_params_defaults():
+    from seestar_processor.core.palette import PaletteParams
+    p = PaletteParams()
+    assert p.palette == "Foraxx"
+    assert p.ha_stretch == 0.6 and p.oiii_stretch == 0.7
+    assert p.hue_deg == 0.0 and p.saturation == 0.65 and p.scnr is True
+
+
+def _bicolour_starless():
+    # left half Ha-strong (red), right half OIII-strong (green+blue)
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    d = np.zeros((20, 20, 3), dtype=np.float32)
+    d[:, :10, 0] = 0.6                       # Ha (red) left
+    d[:, 10:, 1] = 0.6; d[:, 10:, 2] = 0.6   # OIII (g+b) right
+    d += 0.02                                # faint pedestal
+    return AstroImage(d, is_linear=True)
+
+
+def test_render_nebula_is_not_monochrome():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    out = render_nebula(_bicolour_starless(), PaletteParams(scnr=False, hue_deg=0.0)).data
+    left, right = out[:, :10], out[:, 10:]
+    assert left[..., 0].mean() > left[..., 2].mean()      # left leans red
+    assert right[..., 2].mean() > right[..., 0].mean()    # right leans blue/teal
+    spread = (out.max(axis=2) - out.min(axis=2)).mean()
+    assert spread > 0.05                                  # real chroma, not grey
+
+
+def test_render_nebula_output_is_stretched():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    out = render_nebula(_bicolour_starless(), PaletteParams())
+    assert out.is_linear is False
+
+
+def test_render_nebula_hoo_greenblue_equal():
+    import numpy as np
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    out = render_nebula(_bicolour_starless(),
+                        PaletteParams(palette="HOO", scnr=False, hue_deg=0.0,
+                                      saturation=0.5)).data
+    assert np.allclose(out[..., 1], out[..., 2], atol=1e-5)   # HOO: G == B
+
+
+def test_render_nebula_scnr_reduces_green():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    common = dict(palette="HOO", hue_deg=0.0, saturation=0.5)
+    on = render_nebula(_bicolour_starless(), PaletteParams(scnr=True, **common)).data
+    off = render_nebula(_bicolour_starless(), PaletteParams(scnr=False, **common)).data
+    assert on[..., 1].sum() <= off[..., 1].sum() + 1e-6      # green not increased
+
+
+def test_compose_screens_stars_back():
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    from seestar_processor.core.palette import compose, render_nebula, PaletteParams
+    starless = _bicolour_starless()
+    stars = AstroImage(np.zeros((20, 20, 3), np.float32), is_linear=True)
+    stars.data[5, 5] = 0.9                                   # one bright star
+    params = PaletteParams()
+    out = compose(starless, stars, params).data
+    nebula = render_nebula(starless, params).data
+    assert out[5, 5].mean() >= nebula[5, 5].mean()          # star brightened the pixel

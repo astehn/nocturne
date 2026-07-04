@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
-from ..core.palette import ChannelCurve, PaletteParams, compose, render_nebula
+from ..core.palette import PaletteParams, compose, render_nebula
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
 from .preview import to_qimage
@@ -47,57 +47,48 @@ class PaletteDialog(QDialog):
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(480, 360)
 
+        self.foraxx_radio = QRadioButton("Foraxx (dynamic)")
         self.hoo_radio = QRadioButton("HOO")
         self.sho_radio = QRadioButton("Pseudo-SHO (no real SII)")
-        self.hoo_radio.setChecked(True)
+        self.foraxx_radio.setChecked(True)
 
-        # per-channel curve state; sliders edit the active channel
-        self._curves = {"R": ChannelCurve(), "G": ChannelCurve(), "B": ChannelCurve()}
-        self._active_channel = "R"
-        self.r_radio = QRadioButton("R")
-        self.g_radio = QRadioButton("G")
-        self.b_radio = QRadioButton("B")
-        self.r_radio.setChecked(True)
-
-        self.black_slider = self._slider(0)
-        self.mid_slider = self._slider(50)
-        self.white_slider = self._slider(100)
+        self.ha_slider = ResetSlider(60)
+        self.oiii_slider = ResetSlider(70)
+        self.hue_slider = ResetSlider(50)
+        self.sat_slider = ResetSlider(65)
 
         self.scnr_check = QCheckBox("Green suppression (SCNR)")
         self.scnr_check.setChecked(True)
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.clicked.connect(self.reset)
+        self.hint = QLabel(
+            "" if self._base.is_linear else
+            "Palette works best on the linear master — run it before the Stretch step.")
+        self.hint.setWordWrap(True)
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        for w in (self.hoo_radio, self.sho_radio):
-            w.toggled.connect(self._render_preview)
-        self.r_radio.toggled.connect(lambda on: on and self._select_channel("R"))
-        self.g_radio.toggled.connect(lambda on: on and self._select_channel("G"))
-        self.b_radio.toggled.connect(lambda on: on and self._select_channel("B"))
-        for s in (self.black_slider, self.mid_slider, self.white_slider):
-            s.valueChanged.connect(self._on_slider)
+        for r in (self.foraxx_radio, self.hoo_radio, self.sho_radio):
+            r.toggled.connect(self._render_preview)
+        for s in (self.ha_slider, self.oiii_slider, self.hue_slider, self.sat_slider):
+            s.valueChanged.connect(lambda _v: self._render_preview())
         self.scnr_check.toggled.connect(self._render_preview)
 
         controls = QFormLayout()
         pal = QHBoxLayout()
+        pal.addWidget(self.foraxx_radio)
         pal.addWidget(self.hoo_radio)
         pal.addWidget(self.sho_radio)
         pal_wrap = QWidget()
         pal_wrap.setLayout(pal)
         controls.addRow("Palette", pal_wrap)
-        chan = QHBoxLayout()
-        chan.addWidget(self.r_radio)
-        chan.addWidget(self.g_radio)
-        chan.addWidget(self.b_radio)
-        chan_wrap = QWidget()
-        chan_wrap.setLayout(chan)
-        controls.addRow("Channel", chan_wrap)
-        controls.addRow("Black", self.black_slider)
-        controls.addRow("Mid", self.mid_slider)
-        controls.addRow("White", self.white_slider)
+        controls.addRow("Ha stretch", self.ha_slider)
+        controls.addRow("OIII stretch", self.oiii_slider)
+        controls.addRow("Hue", self.hue_slider)
+        controls.addRow("Saturation", self.sat_slider)
         controls.addRow("", self.scnr_check)
         controls.addRow("", self.reset_btn)
+        controls.addRow("", self.hint)
 
         apply_btn = QPushButton("Apply")
         apply_btn.setObjectName("primary")
@@ -123,10 +114,6 @@ class PaletteDialog(QDialog):
         root.addLayout(body)
 
         self.start()
-
-    # --- slider factory ---
-    def _slider(self, default: int) -> ResetSlider:
-        return ResetSlider(default)
 
     # --- StarX ---
     def _default_starx(self, img: AstroImage):
@@ -164,34 +151,28 @@ class PaletteDialog(QDialog):
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = _downscale(self._stars) if self._stars is not None else None
 
-    # --- channel curve controls ---
-    def _select_channel(self, name: str) -> None:
-        self._active_channel = name
-        c = self._curves[name]
-        for slider, val in ((self.black_slider, c.black),
-                            (self.mid_slider, c.mid), (self.white_slider, c.white)):
-            slider.blockSignals(True)
-            slider.setValue(round(val * 100))
-            slider.blockSignals(False)
-        self._render_preview()
-
-    def _on_slider(self, _value: int) -> None:
-        self._curves[self._active_channel] = ChannelCurve(
-            black=self.black_slider.value() / 100.0,
-            mid=self.mid_slider.value() / 100.0,
-            white=self.white_slider.value() / 100.0,
-        )
-        self._render_preview()
-
     def reset(self) -> None:
-        self._curves = {"R": ChannelCurve(), "G": ChannelCurve(), "B": ChannelCurve()}
-        self._select_channel(self._active_channel)
+        self.foraxx_radio.setChecked(True)
+        self.ha_slider.setValue(60)
+        self.oiii_slider.setValue(70)
+        self.hue_slider.setValue(50)
+        self.sat_slider.setValue(65)
+        self.scnr_check.setChecked(True)
+        self._render_preview()
 
-    # --- params + render ---
     def _params(self) -> PaletteParams:
+        if self.hoo_radio.isChecked():
+            palette = "HOO"
+        elif self.sho_radio.isChecked():
+            palette = "pseudo_SHO"
+        else:
+            palette = "Foraxx"
         return PaletteParams(
-            palette="HOO" if self.hoo_radio.isChecked() else "pseudo_SHO",
-            r=self._curves["R"], g=self._curves["G"], b=self._curves["B"],
+            palette=palette,
+            ha_stretch=self.ha_slider.value() / 100.0,
+            oiii_stretch=self.oiii_slider.value() / 100.0,
+            hue_deg=(self.hue_slider.value() - 50) / 50.0 * 30.0,
+            saturation=self.sat_slider.value() / 100.0,
             scnr=self.scnr_check.isChecked(),
         )
 
