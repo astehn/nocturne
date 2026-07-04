@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .image import AstroImage
+from .autostretch import autostretch, linked_stretch
+from .saturation import saturate
+from .stretch import amount_to_target
 
 PALETTES = ("HOO", "pseudo_SHO")
 
@@ -53,6 +56,52 @@ def pseudo_sho(img: AstroImage) -> AstroImage:
     g = np.clip(0.5 * ha + 0.5 * oiii, 0.0, 1.0)
     b = oiii
     return _image_like((r, g, b), img)
+
+
+def subtract_bg_2d(channel: np.ndarray, percentile: float = 50.0) -> np.ndarray:
+    """Drop a 2D channel's sky pedestal to ~0 (subtract a low/median percentile)."""
+    bg = float(np.percentile(channel, percentile))
+    return np.clip(channel.astype(np.float32) - bg, 0.0, 1.0)
+
+
+def _mad(x: np.ndarray) -> float:
+    return float(np.median(np.abs(x - np.median(x))))
+
+
+def renorm_oiii(ha: np.ndarray, oiii: np.ndarray) -> np.ndarray:
+    """Match OIII to Ha (median + MAD) so the faint channel isn't steamrolled
+    (Siril ExtractHaOIII normalization)."""
+    mad_o = _mad(oiii)
+    a = (_mad(ha) / mad_o) if mad_o > 1e-9 else 1.0
+    out = a * (oiii - np.median(oiii)) + np.median(ha)
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def stretch_channel(channel: np.ndarray, amount: float) -> np.ndarray:
+    """Independent nonlinear stretch of one 2D channel. `amount` in [0, 1]."""
+    return linked_stretch(channel.astype(np.float32),
+                          amount_to_target(amount)).astype(np.float32)
+
+
+def foraxx(ha: np.ndarray, oiii: np.ndarray):
+    """Foraxx dynamic HOO blend: Ha+OIII overlap -> gold, OIII-only -> teal,
+    Ha-only -> red. Returns (r, g, b) 2D float32."""
+    p = np.clip(ha * oiii, 0.0, 1.0)
+    w = np.power(p, 1.0 - p).astype(np.float32)
+    r = ha.astype(np.float32)
+    g = (w * ha + (1.0 - w) * oiii).astype(np.float32)
+    b = oiii.astype(np.float32)
+    return r, g, b
+
+
+def rotate_hue(rgb: np.ndarray, degrees: float) -> np.ndarray:
+    """Rotate overall hue by `degrees` (via HSV). 0 = identity."""
+    if abs(degrees) < 1e-6:
+        return np.clip(rgb, 0.0, 1.0).astype(np.float32)
+    from skimage.color import hsv2rgb, rgb2hsv
+    hsv = rgb2hsv(np.clip(rgb, 0.0, 1.0))
+    hsv[..., 0] = np.mod(hsv[..., 0] + degrees / 360.0, 1.0)
+    return np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32)
 
 
 _PALETTE_FNS = {"HOO": hoo, "pseudo_SHO": pseudo_sho}

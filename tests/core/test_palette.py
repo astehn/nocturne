@@ -143,3 +143,49 @@ def test_compose_screens_stars_back():
     out = compose(starless, stars, PaletteParams()).data
     assert out.shape == (1, 2, 3)
     assert out[0, 1].mean() > out[0, 0].mean()          # star pixel is brighter
+
+
+def test_subtract_bg_2d_drops_pedestal():
+    from seestar_processor.core.palette import subtract_bg_2d
+    ch = np.full((8, 8), 0.5, dtype=np.float32)
+    ch[0, 0] = 0.9
+    out = subtract_bg_2d(ch)                 # median 0.5 subtracted
+    assert out.min() == 0.0
+    assert out[0, 0] == pytest.approx(0.4, abs=1e-6)
+
+
+def test_renorm_oiii_matches_median_and_mad():
+    from seestar_processor.core.palette import renorm_oiii, _mad
+    rng = np.random.default_rng(0)
+    ha = rng.random((32, 32)).astype(np.float32)
+    oiii = (rng.random((32, 32)) * 0.1 + 0.02).astype(np.float32)   # much fainter
+    out = renorm_oiii(ha, oiii)
+    assert np.median(out) == pytest.approx(np.median(ha), abs=0.05)
+    assert _mad(out) == pytest.approx(_mad(ha), abs=0.05)
+
+
+def test_stretch_channel_lifts_faint_channel():
+    from seestar_processor.core.palette import stretch_channel
+    faint = np.full((16, 16), 0.05, dtype=np.float32)
+    faint[0, 0] = 0.2
+    out = stretch_channel(faint, 0.7)
+    assert float(np.median(out)) > 0.05        # background lifted well above input
+
+
+def test_foraxx_hues_by_region():
+    from seestar_processor.core.palette import foraxx
+    ha = np.array([[0.9, 0.1, 0.9]], dtype=np.float32)   # Ha-only, OIII-only, gold
+    oiii = np.array([[0.1, 0.9, 0.4]], dtype=np.float32)
+    r, g, b = foraxx(ha, oiii)
+    assert r[0, 0] > g[0, 0] and r[0, 0] > b[0, 0]       # Ha-only -> red
+    assert b[0, 1] > r[0, 1]                             # OIII-only -> blue/teal
+    assert r[0, 2] > g[0, 2] > b[0, 2]                   # gold: R>G>B
+
+
+def test_rotate_hue_shifts_red_toward_green():
+    from seestar_processor.core.palette import rotate_hue
+    red = np.zeros((1, 1, 3), dtype=np.float32); red[0, 0, 0] = 1.0
+    same = rotate_hue(red, 0.0)
+    assert np.allclose(same, red, atol=1e-6)             # 0 deg = identity
+    rotated = rotate_hue(red, 120.0)                     # +120 deg -> green
+    assert rotated[0, 0, 1] > rotated[0, 0, 0] and rotated[0, 0, 1] > rotated[0, 0, 2]
