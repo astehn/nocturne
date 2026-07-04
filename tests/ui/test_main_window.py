@@ -88,14 +88,63 @@ def test_apply_color_with_none_option(qtbot, tmp_path):
     assert win.project.entries()[-1][0] == "Color"
 
 
-def test_apply_crop_with_params_changes_dimensions(qtbot, tmp_path):
+def test_apply_geometry_crop_changes_dimensions(qtbot, tmp_path):
     from seestar_processor.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
-    win.apply_current(CropParams(bounds=(4, 20, 4, 20)))
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))
     h, w, _ = win.project.current().data.shape
     assert (h, w) == (16, 16)
+
+
+def test_rotate_adds_step_and_swaps_dims(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))          # _make_fits is 24x24; use a non-square below
+    win._go_to_id("crop")
+    from seestar_processor.core.crop import CropParams
+    win._apply_geometry("Crop", CropParams(bounds=(0, 24, 4, 20)))  # 24x16
+    before = win.project.current().data.shape[:2]
+    win._rotate()
+    after = win.project.current().data.shape[:2]
+    assert after == (before[1], before[0])       # 90° swaps H/W
+    assert win.project.entries()[-1][0] == "Rotate"
+
+
+def test_flip_after_crop_does_not_recrop(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))  # -> 16x16
+    dims_after_crop = win.project.current().data.shape[:2]
+    win._flip_h()
+    assert win.project.current().data.shape[:2] == dims_after_crop  # flip didn't re-crop
+    assert win.project.entries()[-1][0] == "Flip H"
+
+
+def test_processing_preserves_geometry(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))  # -> 16x16
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    names = [n for n, _ in win.project.entries()]
+    assert "Crop" in names and "Stretch" in names
+    assert win.project.current().data.shape[:2] == (16, 16)         # crop preserved
+
+
+def test_undo_reverses_one_geometry_op(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))
+    win._rotate()
+    win.project.undo()
+    assert win.project.entries()[-1][0] == "Crop"                   # rotate undone, crop remains
 
 
 def test_step_for_types(qtbot, tmp_path):
@@ -355,3 +404,21 @@ def test_next_from_load_is_crop(qtbot, tmp_path):
     win._go_to_id("load")
     win.go_next()
     assert win.current_stage_id() == "crop"
+
+
+def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
+    from seestar_processor.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))  # -> 16x16
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                       # Crop, Stretch
+    win._go_to_id("crop")
+    win._flip_h()                                # geometry after processing
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                        # re-apply Stretch
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Stretch") == 1           # NOT double-applied
+    assert "Flip H" in names and "Crop" in names # geometry preserved
+    assert win.project.current().data.shape[:2] == (16, 16)

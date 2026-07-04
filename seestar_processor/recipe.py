@@ -8,6 +8,7 @@ from .core.crop import CropParams
 from .ui.pipeline import STEP_NAME
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
+_NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
 
 
 @dataclass

@@ -45,6 +45,9 @@ def build_panel(
     on_apply=None,
     on_crop_apply=None,
     on_crop_change=None,
+    on_rotate=None,
+    on_flip_h=None,
+    on_flip_v=None,
     on_export=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
@@ -67,23 +70,21 @@ def build_panel(
         w.meta_label = meta
 
     elif stage.kind == "crop":
-        lay.addWidget(_desc_label("Drag the box on the image to set the crop area."))
+        lay.addWidget(_desc_label(
+            "Drag the box then Apply Crop. Rotate/Flip apply instantly."))
         aspect = QComboBox()
         aspect.addItems(ASPECTS)
         if on_crop_change is not None:
             aspect.currentTextChanged.connect(lambda t: on_crop_change(t))
         rotate_btn = QPushButton("Rotate 90°")
-        w.rotate = 0
-
-        def _cycle_rotate():
-            w.rotate = (w.rotate + 90) % 360
-            rotate_btn.setText(f"Rotate 90°  (now {w.rotate}°)")
-
-        rotate_btn.clicked.connect(_cycle_rotate)
+        if on_rotate is not None:
+            rotate_btn.clicked.connect(lambda: on_rotate())
         flip_h = QPushButton("Flip H")
-        flip_h.setCheckable(True)
+        if on_flip_h is not None:
+            flip_h.clicked.connect(lambda: on_flip_h())
         flip_v = QPushButton("Flip V")
-        flip_v.setCheckable(True)
+        if on_flip_v is not None:
+            flip_v.clicked.connect(lambda: on_flip_v())
         apply_btn = QPushButton("Apply Crop")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)

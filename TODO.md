@@ -8,6 +8,14 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
+- [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop
+      crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
+      flip each their own history step).
+- [ ] **Recipes don't capture rotate/flip.** Since rotate/flip became separate history ops
+      (not bundled in crop), `recipe_from_entries` silently drops them — a saved recipe with a
+      rotation re-applies unrotated. Extend `recipe.py` (map "Rotate"/"Flip H"/"Flip V") +
+      `batch.py`/`make_step` to serialize & replay geometry ops. Own small cycle. (Regression
+      from the crop-decouple change; low urgency pre-release, but real.)
 - [ ] **Crop preview framing stretch (deferred).** When cropping a raw/linear image the
       preview can be too dark to frame, even though it already auto-stretches. Add an optional
       stronger "framing stretch" toggle in the crop view (display-only, doesn't touch data).
