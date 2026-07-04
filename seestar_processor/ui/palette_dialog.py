@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
-    QRadioButton, QSlider, QVBoxLayout, QWidget,
+    QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..core.image import AstroImage
@@ -13,6 +13,7 @@ from ..core.palette import ChannelCurve, PaletteParams, compose, render_nebula
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
 from .preview import to_qimage
+from .reset_slider import ResetSlider
 from .worker import run_async
 
 _PREVIEW_MAX = 700  # long-side pixels for the interactive preview
@@ -58,14 +59,9 @@ class PaletteDialog(QDialog):
         self.b_radio = QRadioButton("B")
         self.r_radio.setChecked(True)
 
-        self.black_slider = self._slider()
-        self.mid_slider = self._slider()
-        self.white_slider = self._slider()
-        # neutral curve = black 0 / mid 0.5 / white 1.0 (the _slider factory defaults
-        # to 50, which is only correct for mid). Signals are connected later, so these
-        # setValue calls do not fire _on_slider.
-        self.black_slider.setValue(0)
-        self.white_slider.setValue(100)
+        self.black_slider = self._slider(0)
+        self.mid_slider = self._slider(50)
+        self.white_slider = self._slider(100)
 
         self.scnr_check = QCheckBox("Green suppression (SCNR)")
         self.scnr_check.setChecked(True)
@@ -129,12 +125,8 @@ class PaletteDialog(QDialog):
         self.start()
 
     # --- slider factory ---
-    def _slider(self) -> QSlider:
-        s = QSlider(Qt.Orientation.Horizontal)
-        s.setMinimum(0)
-        s.setMaximum(100)
-        s.setValue(50)
-        return s
+    def _slider(self, default: int) -> ResetSlider:
+        return ResetSlider(default)
 
     # --- StarX ---
     def _default_starx(self, img: AstroImage):

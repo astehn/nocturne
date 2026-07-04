@@ -12,6 +12,12 @@ def _color(seed=0):
     return AstroImage(rng.random((40, 50, 3)).astype(np.float32), is_linear=False)
 
 
+def _make_dialog(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
+    qtbot.addWidget(dlg)
+    return dlg
+
+
 def _fake_starx(img):
     # synthetic starless + a stars layer, same shape
     starless = AstroImage(img.data * 0.5, is_linear=img.is_linear)
@@ -95,3 +101,20 @@ def test_fallback_without_rcastro(qtbot):
     assert dlg._starx_enabled is False
     assert dlg._stars is None                          # no star layer to screen back
     assert not dlg.preview.pixmap().isNull()           # still renders (whole-image)
+
+
+def test_palette_sliders_are_reset_sliders(qtbot):
+    from seestar_processor.ui.reset_slider import ResetSlider
+    dlg = _make_dialog(qtbot)
+    assert isinstance(dlg.black_slider, ResetSlider) and dlg.black_slider._default == 0
+    assert isinstance(dlg.mid_slider, ResetSlider) and dlg.mid_slider._default == 50
+    assert isinstance(dlg.white_slider, ResetSlider) and dlg.white_slider._default == 100
+    assert dlg.black_slider.value() == 0 and dlg.white_slider.value() == 100
+
+
+def test_palette_slider_double_click_resets(qtbot):
+    from PySide6.QtCore import Qt
+    dlg = _make_dialog(qtbot)
+    dlg.white_slider.setValue(40)
+    qtbot.mouseDClick(dlg.white_slider, Qt.MouseButton.LeftButton)
+    assert dlg.white_slider.value() == 100
