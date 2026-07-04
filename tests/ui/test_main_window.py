@@ -32,25 +32,13 @@ def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
 def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    seq = ["destination", "crop", "background", "color", "stretch", "levels",
+    seq = ["crop", "background", "color", "stretch", "levels",
            "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
     win.go_next()  # clamp
     assert win.current_stage_id() == "export"
-
-
-def test_external_destination_changes_tail(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("destination")
-    win.set_destination("external")
-    ids = [s.id for s in win._stages]
-    assert ids[-1] == "export_external"
-    assert "saturation" not in ids
-    win.go_next()
-    assert win.current_stage_id() == "crop"
 
 
 def test_apply_stretch_sets_nonlinear(qtbot, tmp_path):
@@ -210,7 +198,7 @@ def test_status_cleared_on_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._status.setText("some error")
-    win._go_to_id("destination")
+    win._go_to_id("crop")
     assert win._status.text() == ""
 
 
@@ -247,16 +235,6 @@ def test_log_toggle_hides_panel(qtbot, tmp_path):
     win._log_act.setChecked(False)
     win._toggle_log()
     assert win.log_panel.isHidden() is True
-
-
-def test_export_external_panel_split_gated(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("destination")
-    win.set_destination("external")
-    win._go_to_id("export_external")
-    # no RC-Astro configured -> split (item 1) disabled
-    assert win._panel.fmt_box.model().item(1).isEnabled() is False
 
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
@@ -328,3 +306,58 @@ def test_show_about_opens_dialog(qtbot, tmp_path):
     qtbot.addWidget(dlg)
     assert isinstance(dlg, AboutDialog)
     assert "Photon Donors" in dlg.body.text()
+
+
+def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
+    import numpy as np
+    from PySide6.QtWidgets import QFileDialog
+    from seestar_processor.settings import Settings
+    from seestar_processor.core.image import AstroImage
+    import seestar_processor.ui.main_window as mw
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    # RC-Astro "configured" so the split path is allowed
+    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    win.settings = Settings(rcastro_path=str(rc_bin))
+
+    out = tmp_path / "splitout"; out.mkdir()
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
+                        staticmethod(lambda *a, **k: str(out)))
+
+    class _FakeRC:
+        def __init__(self, *a, **k):
+            pass
+        def remove_stars(self, img, runner=None):
+            base = AstroImage(np.zeros((8, 8, 3), np.float32))
+            return base, base
+
+    monkeypatch.setattr(mw, "RCAstro", _FakeRC)
+    win.export_final("Starless + Stars (two TIFFs)")
+    assert (out / "starless.tif").exists()
+    assert (out / "stars.tif").exists()
+
+
+def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    win.export_final("PNG")
+    assert out.exists()
+
+
+def test_no_destination_attrs(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert not hasattr(win, "set_destination")
+    assert not hasattr(win, "export_external")
+
+
+def test_next_from_load_is_crop(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("load")
+    win.go_next()
+    assert win.current_stage_id() == "crop"

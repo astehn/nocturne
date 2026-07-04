@@ -67,8 +67,7 @@ class MainWindow(QMainWindow):
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
-        self.destination = "in_app"
-        self._stages = path_stages(self.destination)
+        self._stages = path_stages()
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -272,17 +271,6 @@ class MainWindow(QMainWindow):
                 self._go_to(i)
                 return
 
-    # --- destination branch ---
-    def set_destination(self, dest: str) -> None:
-        if dest == self.destination:
-            return
-        self.destination = dest
-        self._stages = path_stages(dest)
-        self._stage = min(self._stage, len(self._stages) - 1)
-        self.stepper.set_stages(self._stages)
-        self._rebuild_panel()
-        self._refresh()
-
     # --- file / project ---
     def _choose_fits(self) -> None:
         path = QFileDialog.getOpenFileName(self, "Open FITS", "", "FITS (*.fit *.fits)")[0]
@@ -456,12 +444,13 @@ class MainWindow(QMainWindow):
             self.log_panel.append_entry(log_label)
         return True
 
-    def export_external(self, choice: str) -> None:
+    def export_final(self, fmt: str) -> None:
         if self.project is None:
             return
         img = self.project.current()
-        if choice.startswith("Two"):
+        if fmt == "Starless + Stars (two TIFFs)":
             if not rcastro_valid(self.settings):
+                self._status.setText("Starless + stars split needs RC-Astro (see Settings).")
                 return
             folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
             if not folder:
@@ -474,23 +463,12 @@ class MainWindow(QMainWindow):
                 save_tiff(stars, os.path.join(folder, "stars.tif"))
 
             self._guarded(_do, "Exported starless.tif + stars.tif")
-        else:
-            path, _ = QFileDialog.getSaveFileName(self, "Export TIFF", "", "TIFF (*.tiff)")
-            if not path:
-                return
-            if not path.lower().endswith((".tiff", ".tif")):
-                path += ".tiff"
-            self._guarded(lambda: save_tiff(img, path), f"Exported {os.path.basename(path)}")
-
-    def export_final(self, fmt: str) -> None:
-        if self.project is None:
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "", "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
         )
         if not path:
             return
-        img = self.project.current()
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
@@ -523,18 +501,16 @@ class MainWindow(QMainWindow):
             apply_enabled = loaded and graxpert_valid(self.settings)
         if stage.id == "star_reduction":
             apply_enabled = loaded and rcastro_valid(self.settings)  # needs StarX
-        if stage.id == "export_external":
-            apply_enabled = loaded and rcastro_valid(self.settings)  # split option
+        split_enabled = loaded and rcastro_valid(self.settings)
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
-            on_destination=self.set_destination,
             on_apply=self.apply_current,
             on_crop_apply=self._apply_crop,
             on_crop_change=self._on_crop_change,
-            on_export_external=self.export_external,
             on_export=self.export_final,
             apply_enabled=apply_enabled,
+            split_enabled=split_enabled,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(format_metadata(self.project.current().metadata))

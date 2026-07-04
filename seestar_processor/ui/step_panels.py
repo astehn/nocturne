@@ -15,8 +15,7 @@ _PROCESS_OPTIONS = {
     "local_contrast": ["light", "medium", "strong"],
     "star_reduction": ["light", "medium", "strong"],
 }
-EXTERNAL_FORMATS = ["Single 16-bit TIFF", "Two TIFFs: starless + stars"]
-EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS"]
+EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
 # Target-type stretch presets → default aggressiveness (slider 0–100).
 STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
 _DESCRIPTIONS = {
@@ -43,13 +42,12 @@ def build_panel(
     stage,
     *,
     on_open=None,
-    on_destination=None,
     on_apply=None,
     on_crop_apply=None,
     on_crop_change=None,
-    on_export_external=None,
     on_export=None,
     apply_enabled: bool = True,
+    split_enabled: bool = False,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -67,25 +65,6 @@ def build_panel(
         meta = _desc_label("Open a stacked Seestar FITS to begin.")
         lay.addWidget(meta)
         w.meta_label = meta
-
-    elif stage.kind == "destination":
-        ext = QPushButton("Continue in external software")
-        ext.setMinimumHeight(40)
-        fin = QPushButton("Finish here")
-        fin.setMinimumHeight(40)
-        fin.setObjectName("primary")
-        if on_destination is not None:
-            ext.clicked.connect(lambda: on_destination("external"))
-            fin.clicked.connect(lambda: on_destination("in_app"))
-        lay.addWidget(ext)
-        lay.addWidget(_desc_label(
-            "Runs the core steps, exports a 16-bit TIFF for Photoshop/PixInsight, then stops."
-        ))
-        lay.addSpacing(10)
-        lay.addWidget(fin)
-        lay.addWidget(_desc_label("Takes the image all the way to a share-ready file in the app."))
-        w.external_btn = ext
-        w.in_app_btn = fin
 
     elif stage.kind == "crop":
         lay.addWidget(_desc_label("Drag the box on the image to set the crop area."))
@@ -246,26 +225,11 @@ def build_panel(
         w.sat_slider = slider
         w.apply_btn = apply_btn
 
-    elif stage.kind == "export_external":
-        box = QComboBox()
-        box.addItems(EXTERNAL_FORMATS)
-        if not apply_enabled:
-            box.model().item(1).setEnabled(False)  # split needs StarX
-        export_btn = QPushButton("Export…")
-        export_btn.setObjectName("primary")
-        if on_export_external is not None:
-            export_btn.clicked.connect(lambda: on_export_external(box.currentText()))
-        lay.addWidget(QLabel("Output"))
-        lay.addWidget(box)
-        lay.addWidget(export_btn)
-        if not apply_enabled:
-            lay.addWidget(_desc_label("Split needs RC-Astro (set its path in Settings)."))
-        w.fmt_box = box
-        w.export_btn = export_btn
-
     elif stage.kind == "export":
         box = QComboBox()
         box.addItems(EXPORT_FORMATS)
+        if not split_enabled:
+            box.model().item(3).setEnabled(False)  # starless+stars split needs StarX
         export_btn = QPushButton("Export…")
         export_btn.setObjectName("primary")
         if on_export is not None:
@@ -273,6 +237,9 @@ def build_panel(
         lay.addWidget(QLabel("Format"))
         lay.addWidget(box)
         lay.addWidget(export_btn)
+        if not split_enabled:
+            lay.addWidget(_desc_label(
+                "Starless + stars split needs RC-Astro (set its path in Settings)."))
         w.fmt_box = box
         w.export_btn = export_btn
 
