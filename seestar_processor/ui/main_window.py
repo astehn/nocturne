@@ -30,7 +30,7 @@ from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
-from .pipeline import PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
+from .pipeline import GEOMETRY_NAMES, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         if stage_id not in PROCESSING_ORDER:
             return
         # Truncate history to this stage's applied predecessors (synchronous).
-        preceding = {
+        preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
         }
@@ -336,8 +336,6 @@ class MainWindow(QMainWindow):
             self._log_step(stage_id, option, base, result)
             self._set_busy(False)
             self._refresh()  # stay on this step; user clicks Next to advance
-            if stage_id == "crop":
-                self._setup_crop_overlay()
 
         def err(exc):
             self._set_busy(False)
@@ -393,17 +391,33 @@ class MainWindow(QMainWindow):
         # Snap the visible box to the chosen ratio (and lock future resizes).
         self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
 
+    def _apply_geometry(self, name: str, params) -> None:
+        if self.project is None or self._busy:
+            return
+        result = self._step_for("crop").apply(self.project.current(), params)
+        self.project.run_step(_PrecomputedStep(name, result), "")
+        self.log_panel.append_entry(format_log_entry(name, "", None))
+        self._status.setText("")
+        self._refresh()
+        self._setup_crop_overlay()
+
+    def _rotate(self) -> None:
+        self._apply_geometry("Rotate", CropParams(rotate=90))
+
+    def _flip_h(self) -> None:
+        self._apply_geometry("Flip H", CropParams(flip_h=True))
+
+    def _flip_v(self) -> None:
+        self._apply_geometry("Flip V", CropParams(flip_v=True))
+
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
             return
         top, bottom, left, right = self.image_view.crop_bounds()
-        params = CropParams(
-            bounds=(top, bottom, left, right),
-            rotate=getattr(self._panel, "rotate", 0),
-            flip_h=self._panel.flip_h_btn.isChecked(),
-            flip_v=self._panel.flip_v_btn.isChecked(),
-        )
-        self.apply_current(params)
+        h, w = self.project.current().data.shape[:2]
+        if (top, bottom, left, right) == (0, h, 0, w):
+            return  # box is the full frame -> no real crop
+        self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)))
 
     # --- history ---
     def _undo(self) -> None:
@@ -508,6 +522,9 @@ class MainWindow(QMainWindow):
             on_apply=self.apply_current,
             on_crop_apply=self._apply_crop,
             on_crop_change=self._on_crop_change,
+            on_rotate=self._rotate,
+            on_flip_h=self._flip_h,
+            on_flip_v=self._flip_v,
             on_export=self.export_final,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
@@ -540,4 +557,6 @@ class MainWindow(QMainWindow):
         for sid, name in STEP_NAME.items():
             if name in applied:
                 done.add(sid)
+        if any(g in applied for g in GEOMETRY_NAMES):
+            done.add("crop")
         return done

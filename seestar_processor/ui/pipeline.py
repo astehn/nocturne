@@ -30,7 +30,6 @@ _IN_APP_TAIL = [
 ]
 
 STEP_NAME = {
-    "crop": "Crop",
     "background": "Background",
     "color": "Color",
     "stretch": "Stretch",
@@ -41,9 +40,10 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "crop", "background", "color", "stretch", "levels", "saturation",
+    "background", "color", "stretch", "levels", "saturation",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
+GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
 
 
 def core_stages() -> list[Stage]:

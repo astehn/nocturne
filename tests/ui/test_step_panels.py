@@ -33,22 +33,23 @@ def test_import_panel_has_open_and_meta(qtbot):
     assert hasattr(w, "meta_label")
 
 
-def test_crop_panel_controls_and_apply(qtbot):
-    applied = []
-    changed = []
-    w = build_panel(_stage("crop"), on_crop_apply=lambda: applied.append(True),
-                    on_crop_change=changed.append)
+def test_crop_panel_immediate_buttons(qtbot):
+    got = []
+    w = build_panel(
+        _stage("crop"),
+        on_rotate=lambda: got.append("rotate"),
+        on_flip_h=lambda: got.append("flip_h"),
+        on_flip_v=lambda: got.append("flip_v"),
+        on_crop_apply=lambda: got.append("crop"),
+    )
     qtbot.addWidget(w)
-    assert w.panel_kind == "crop"
-    w.aspect_box.setCurrentText("1:1")
-    assert changed[-1] == "1:1"
+    assert w.flip_h_btn.isCheckable() is False   # momentary, not sticky
+    assert w.flip_v_btn.isCheckable() is False
     w.rotate_btn.click()
-    assert w.rotate == 90
-    w.flip_h_btn.setChecked(True)
+    w.flip_h_btn.click()
+    w.flip_v_btn.click()
     w.apply_btn.click()
-    assert applied == [True]
-    assert w.flip_h_btn.isChecked() is True
-    assert not hasattr(w, "margin_slider")  # margin removed; box covers it
+    assert got == ["rotate", "flip_h", "flip_v", "crop"]
 
 
 def test_background_off_enables_apply_without_graxpert(qtbot):

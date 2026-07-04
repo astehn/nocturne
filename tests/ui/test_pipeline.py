@@ -29,7 +29,13 @@ def test_step_name_and_order():
     assert STEP_NAME["noise_sharpen"] == "Noise & Sharpen"
     assert STEP_NAME["levels"] == "Levels"
     assert STEP_NAME["star_reduction"] == "Star Reduction"
+    assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "crop", "background", "color", "stretch", "levels", "saturation",
+        "background", "color", "stretch", "levels", "saturation",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
+
+
+def test_geometry_names():
+    from seestar_processor.ui.pipeline import GEOMETRY_NAMES
+    assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V")
