@@ -91,6 +91,16 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       - v3: per-channel Black/Mid/White curves (R/G/B channel tabs) replace the global
         balance/saturation sliders, so the SHO look is sculpted per channel, not globally
         re-tinted. Palette radio + SCNR + Reset retained.
+      - v4 (real colour, fixes red-monochrome): proper narrowband combine — per-channel
+        background-subtract, normalize OIII to Ha (median+MAD), **stretch Ha & OIII
+        independently** (the actual monochrome fix), blend (**Foraxx dynamic** default / HOO /
+        pseudo-SHO), max-mask SCNR, hue rotation, saturation; white stars screened back
+        (now stretched too). Output is `is_linear=False`. Curves/R-G-B tabs removed →
+        controls: Palette + Ha stretch + OIII stretch + Hue + Saturation + SCNR + Reset.
+        Runs on the **linear master** (hint shown if not). Whole-branch review caught a
+        compose `is_linear` mislabel + a vacuous guard (both fixed/verified); 333 tests.
+        NB for the user: from a bright northern-summer LP sky OIII is faint, so teal starts
+        subtle — darker skies + more OIII time raise the ceiling.
 - [x] **Ha/OIII duo-band extraction (lights-only).** Separate "Ha/OIII…" tool: grade raw subs,
       split each CFA sub into Ha (red sites) and OIII (green+blue) planes, register once on Ha
       and reuse the transform for OIII, stack each channel separately, MAD-renorm OIII to Ha,
