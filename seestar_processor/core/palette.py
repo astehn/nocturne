@@ -58,8 +58,12 @@ def pseudo_sho(img: AstroImage) -> AstroImage:
     return _image_like((r, g, b), img)
 
 
-def subtract_bg_2d(channel: np.ndarray, percentile: float = 50.0) -> np.ndarray:
-    """Drop a 2D channel's sky pedestal to ~0 (subtract a low/median percentile)."""
+def subtract_bg_2d(channel: np.ndarray, percentile: float = 10.0) -> np.ndarray:
+    """Drop a 2D channel's sky pedestal to ~0 by subtracting a LOW percentile
+    (the background level). Must be low, not the median: subtracting the median
+    zeros the whole lower half of the frame, collapsing the channel's median and
+    MAD to ~0, which makes the downstream autostretch degenerate into an extreme
+    threshold curve that blows every non-zero pixel to pure white."""
     bg = float(np.percentile(channel, percentile))
     return np.clip(channel.astype(np.float32) - bg, 0.0, 1.0)
 
