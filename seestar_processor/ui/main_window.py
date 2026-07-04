@@ -215,6 +215,8 @@ class MainWindow(QMainWindow):
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
         self._redo_act = tb.addAction(load_icon("redo"), "Redo", self._redo)
+        self._reset_act = tb.addAction(load_icon("reset"), "Reset", self._reset_image)
+        self._reset_act.setEnabled(False)  # enabled by _refresh once an image is loaded
         self._ba_act = tb.addAction(load_icon("before-after"), "Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
         self._log_act = tb.addAction(load_icon("log"), "Log", self._toggle_log)
@@ -287,6 +289,8 @@ class MainWindow(QMainWindow):
         self.open_image(base, os.path.basename(path))
 
     def open_image(self, base, label: str) -> None:
+        self._source_base = base
+        self._source_label = label
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
@@ -446,6 +450,19 @@ class MainWindow(QMainWindow):
         self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)))
 
     # --- history ---
+    def _reset_image(self) -> None:
+        if self.project is None:
+            return
+        resp = QMessageBox.question(
+            self, f"{APP_NAME} — Reset",
+            "Discard all edits and start over from the loaded image?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        self.open_image(self._source_base, self._source_label)
+
     def _undo(self) -> None:
         if self.project:
             self.project.undo()
@@ -574,6 +591,7 @@ class MainWindow(QMainWindow):
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
+        self._reset_act.setEnabled(self.project is not None)
 
     def _done_ids(self) -> set:
         done = set()

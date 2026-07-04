@@ -437,6 +437,43 @@ def test_remove_green_preserved_after_later_step(qtbot, tmp_path):
     assert names.index("Remove Green") < names.index("Stretch")
 
 
+def test_reset_action_disabled_until_loaded(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._reset_act.isEnabled() is False
+    win.open_fits(_make_fits(tmp_path))
+    assert win._reset_act.isEnabled() is True
+    assert win._source_base is not None and win._source_label
+
+
+def test_reset_confirmed_clears_history(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current().data.copy()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win.project.entries()                      # has edits
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._reset_image()
+    assert win.project.entries() == []                # history cleared
+    assert win._stages[win._stage].id == "load"       # back on Import
+    assert np.array_equal(win.project.current().data, base)
+
+
+def test_reset_declined_keeps_edits(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.No)
+    win._reset_image()
+    assert any(n == "Stretch" for n, _ in win.project.entries())   # edit survived
+
+
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
     from seestar_processor.core.crop import CropParams
     win = _window(qtbot, tmp_path)
