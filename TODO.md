@@ -50,6 +50,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       Simpler mental model for the user (one linear path; the "how do I want to finish?" choice
       moves to the moment of saving). Own design + build cycle (touches pipeline, step_panels,
       main_window, and their tests). Shipped: single Export step with a 'Starless + Stars (two TIFFs)' 4th format (RC-Astro-gated); Destination step + external branch removed; one linear flow.
+- [ ] **(note) Export is post-stretch (non-linear).** The starless/stars (and whole-image)
+      export saves stretched data. Fine for most users, but a pro continuing in PixInsight/Siril
+      would often want *linear* starless data. Future option: offer a "linear" export that saves
+      the pre-stretch state (would need history to expose the last linear step, or re-run the
+      pipeline to the stretch boundary). Low priority — noted so it isn't forgotten.
 - [ ] **L3** Project save / reopen (currently work is lost on close).
 - [ ] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
       stacks (needs real-data testing).
