@@ -49,6 +49,14 @@ def test_saturation_step_increases_chroma():
     assert out.data[0, 0].max() - out.data[0, 0].min() > 0.4
 
 
+def test_saturation_step_falsy_option_is_native_noop():
+    # A falsy option must mean "no change" (native), not greyscale.
+    data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
+    for falsy in (None, "", 0):
+        out = SaturationStep().apply(AstroImage(data), falsy)
+        assert np.allclose(out.data, data, atol=1e-6)
+
+
 def test_noise_sharpen_fallback_changes_image():
     rng = np.random.default_rng(0)
     img = AstroImage(np.clip(0.5 + rng.normal(0, 0.1, (24, 24, 3)), 0, 1).astype(np.float32))

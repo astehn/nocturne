@@ -15,4 +15,6 @@ class SaturationStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        return saturate(img, float(option) if option else 0.0)
+        # 0.5 is native (no-op) under the re-centred saturation model; a falsy
+        # option means "no change", NOT greyscale (which is 0.0).
+        return saturate(img, float(option) if option else 0.5)
