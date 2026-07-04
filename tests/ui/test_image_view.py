@@ -123,3 +123,14 @@ def test_zoom_noop_without_image(qtbot):
     # no image -> zoom does nothing, no crash
     view.zoom_in()
     view.zoom_out()
+
+
+def test_zoom_pill_hidden_during_crop(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True)
+    # isHidden() tracks the explicit hide flag (isVisible needs a shown parent)
+    assert view._zoom_pill.isHidden() is True    # hidden so it can't block a crop handle
+    view.set_crop_overlay(False)
+    assert view._zoom_pill.isHidden() is False    # restored when cropping ends

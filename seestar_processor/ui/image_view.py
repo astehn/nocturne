@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPen, QPixmap, QRadialGradient,
 )
@@ -208,6 +208,9 @@ class ImageView(QGraphicsView):
     # --- crop overlay ---
     def set_crop_overlay(self, enabled: bool, bounds=None, aspect_ratio=None) -> None:
         self._aspect = aspect_ratio
+        # Hide the floating zoom pill while cropping so it can't sit over a
+        # bottom-right crop handle and swallow its drags.
+        self._zoom_pill.setVisible(not enabled)
         if not enabled:
             self._teardown_overlay()
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
