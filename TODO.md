@@ -29,6 +29,16 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       preserved terminal history step. Start with systematic-debugging to confirm the exact
       revert mechanism (reproduce: load master → Palette → Apply → go to Color → observe revert),
       THEN design. `ui/main_window.py` `_record_palette` + history model + `ui/pipeline.py`.
+- [ ] **NEXT (2026-07-05): Palette Apply drops the stars (starless output).** The live preview
+      shows stars screened back, but pressing **Apply** yields a starless image — stars not
+      re-screened. Preview and Apply use DIFFERENT inputs: preview `_result(self._prev_starless,
+      self._prev_stars)` (downscaled) vs Apply `_result(self._starless, self._stars)` (full-res).
+      Trace: is `self._stars` None at apply-time (→ `_result` falls to `render_nebula`, no stars)?
+      Does `compose` actually run? Or are stars present-but-too-dim (gamma-0.5 star layer screened
+      over the now-bright stretched nebula washes out)? Reproduce: load master → Palette (StarX on)
+      → confirm preview has stars → Apply → inspect result for stars. Files: `ui/palette_dialog.py`
+      `apply`/`_result`/`_cache_previews`, `core/palette.compose`/`screen`/`neutralize_stars`.
+      Related to the palette-workflow rework above — likely tackle together.
 - [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop
       crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
       flip each their own history step).
