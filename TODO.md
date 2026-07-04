@@ -79,10 +79,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [ ] GitHub Releases with built artifacts; optional GitHub Actions to build all platforms.
 
 ## Visual polish — later tiers (Tier 1 shipped)
-- [ ] **Tier 2 — canvas & panels (hero shot):** radial-gradient canvas backdrop; framed image
+- [x] **Tier 2 — canvas & panels (hero shot):** radial-gradient canvas backdrop; framed image
       with soft shadow; floating zoom pill (– 100% +); empty-state screen (logo + "Open or Stack
       to begin"); card-style right panel with per-step description strips; histogram styling
-      (filled RGB + faint grid).
+      (filled RGB + faint grid). Shipped: gradient canvas, image shadow, zoom pill, welcome
+      screen, filled histogram, card panels.
 - [ ] **Tier 3 — branding & finish:** app icon + "Nocturne" wordmark; splash screen (with
       packaging); labelled before/after divider handle; spinner busy-overlay.
 

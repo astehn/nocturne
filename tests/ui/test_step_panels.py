@@ -1,8 +1,24 @@
 import pytest
 
 pytest.importorskip("PySide6")
+from PySide6.QtWidgets import QLabel  # noqa: E402
 from seestar_processor.ui.pipeline import path_stages  # noqa: E402
 from seestar_processor.ui.step_panels import build_panel  # noqa: E402
+
+
+def test_panel_is_a_card(qtbot):
+    stage = next(s for s in path_stages("in_app") if s.id == "stretch")
+    panel = build_panel(stage)
+    qtbot.addWidget(panel)
+    assert panel.objectName() == "stepCard"
+
+
+def test_panel_has_description_strip(qtbot):
+    stage = next(s for s in path_stages("in_app") if s.id == "stretch")
+    panel = build_panel(stage)
+    qtbot.addWidget(panel)
+    descs = [c for c in panel.findChildren(QLabel) if c.objectName() == "stepDesc"]
+    assert descs, "panel has a stepDesc label"
 
 
 def _stage(stage_id, dest="in_app"):

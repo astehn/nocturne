@@ -76,6 +76,17 @@ QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+
+QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
+QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
+QWidget#welcome {{ background: transparent; }}
+QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
+QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
+QLabel#welcomeHint {{ font-size: 13px; color: {TEXT_FAINT}; }}
+QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 14px; }}
+QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};
+    font-size: 15px; padding: 0; }}
+QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 """
 
 

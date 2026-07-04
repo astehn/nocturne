@@ -34,6 +34,7 @@ _GATE_NOTE = {
 
 def _desc_label(text: str) -> QLabel:
     label = QLabel(text)
+    label.setObjectName("stepDesc")
     label.setWordWrap(True)
     return label
 
@@ -51,6 +52,7 @@ def build_panel(
     apply_enabled: bool = True,
 ) -> QWidget:
     w = QWidget()
+    w.setObjectName("stepCard")
     w.panel_kind = stage.kind
     lay = QVBoxLayout(w)
     title = QLabel(stage.label)
@@ -175,6 +177,7 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "stretch":
+        lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(50)
@@ -198,6 +201,7 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "levels":
+        lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))
         black = QSlider(Qt.Orientation.Horizontal)
         black.setRange(0, 100)
         black.setValue(0)
@@ -227,6 +231,7 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":
+        lay.addWidget(_desc_label("Boost colour intensity."))
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 100)
         slider.setValue(40)
