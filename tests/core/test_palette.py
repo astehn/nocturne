@@ -202,3 +202,33 @@ def test_compose_screens_stars_back():
     nebula = render_nebula(starless, params).data
     assert out[5, 5].mean() >= nebula[5, 5].mean()          # star brightened the pixel
     assert result.is_linear is False                        # compose output is always stretched
+
+
+def _faint_broad_linear():
+    # A realistic linear master: faint sky background, a broad faint signal, and
+    # a bright star (peak-normalized). Reproduces the "everything blows out to
+    # white" bug when the background is subtracted at the median (p50).
+    rng = np.random.default_rng(1)
+    d = np.full((40, 40, 3), 0.02, dtype=np.float32)
+    d[10:30, 10:30, 0] += 0.05                      # broad Ha patch
+    d += rng.normal(0, 0.003, d.shape).astype(np.float32)
+    d[5, 5, :] = 1.0                                # a bright star
+    d = np.clip(d, 0.0, None)
+    d /= d.max()
+    return AstroImage(d.astype(np.float32), is_linear=True)
+
+
+def test_render_nebula_does_not_blow_out_to_white():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    img = _faint_broad_linear()
+    out = render_nebula(img, PaletteParams(ha_stretch=0.0, oiii_stretch=0.0)).data
+    white_fraction = float((out.mean(axis=2) >= 0.99).mean())
+    assert white_fraction < 0.05        # p50 median-subtract blew ~15-45% to white
+
+
+def test_render_nebula_sliders_have_effect():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    img = _faint_broad_linear()
+    lo = render_nebula(img, PaletteParams(ha_stretch=0.0, oiii_stretch=0.0)).data
+    hi = render_nebula(img, PaletteParams(ha_stretch=1.0, oiii_stretch=1.0)).data
+    assert float(np.median(hi)) - float(np.median(lo)) > 0.1   # stretch sliders do something
