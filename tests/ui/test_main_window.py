@@ -311,3 +311,20 @@ def test_center_stack_switches_on_open(qtbot, tmp_path):
     # image page shown after loading
     assert win._center_stack.currentIndex() == 1
     assert win._center_stack.currentWidget() is win.image_view
+
+
+def test_toolbar_has_about_button(qtbot, tmp_path):
+    from PySide6.QtWidgets import QToolBar
+    win = _window(qtbot, tmp_path)
+    main = next(b for b in win.findChildren(QToolBar) if b.windowTitle() == "Main")
+    about = [a for a in main.actions() if a.text() == "About"]
+    assert about and not about[0].icon().isNull()
+
+
+def test_show_about_opens_dialog(qtbot, tmp_path):
+    from seestar_processor.ui.about_dialog import AboutDialog
+    win = _window(qtbot, tmp_path)
+    dlg = win._make_about_dialog()
+    qtbot.addWidget(dlg)
+    assert isinstance(dlg, AboutDialog)
+    assert "Photon Donors" in dlg.body.text()

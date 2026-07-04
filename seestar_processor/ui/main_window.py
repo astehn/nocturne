@@ -24,7 +24,8 @@ from ..tools.base import run_cli
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
-from .about import about_html, help_html
+from .about import help_html
+from .about_dialog import AboutDialog
 from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
@@ -142,8 +143,11 @@ class MainWindow(QMainWindow):
     def _show_help(self) -> None:
         QMessageBox.information(self, f"{APP_NAME} — Help", help_html())
 
+    def _make_about_dialog(self) -> AboutDialog:
+        return AboutDialog(self)
+
     def _show_about(self) -> None:
-        QMessageBox.about(self, f"About {APP_NAME}", about_html())
+        self._make_about_dialog().exec()
 
     # --- recipes / batch ---
     def _save_recipe(self) -> None:
@@ -224,6 +228,7 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
+        self._about_btn_act = tb.addAction(load_icon("about"), "About", self._show_about)
         self._tools_label = QLabel("")
         tb.addWidget(self._tools_label)
         self._update_tools_label()
