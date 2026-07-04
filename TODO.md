@@ -20,6 +20,13 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       a dedicated step.)
 
 ## Soon
+- [ ] **Refresh the in-app Help + About content.** Help and About already exist (Help menu →
+      `about.py` `help_html()`/`about_html()`), but the text is stale — it predates Stack,
+      Ha/OIII Extract, Palette, Recipes/Batch, and Local Contrast, and still describes the
+      Destination step (slated for removal). Rewrite `help_html()` to cover the current tools
+      (the three folder/file tools + the guided editor + recipes/batch), reusing the plain-
+      English framing from `docs/TESTERS_GUIDE.md`. Low-risk, self-contained, and directly
+      helps testers. (`ui/about.py`; keep it a pure function so it stays testable.)
 - [ ] **Export options at the final Save step + remove the Destination step.** In the final
       "Save"/Export step, let the user choose to save either (a) the whole image, or (b) a
       **separated pair** — a starless (background/nebula) image + a stars-only image — so they
