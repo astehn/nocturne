@@ -78,3 +78,13 @@ def test_noise_sharpen_uses_rcastro_when_present():
     step.apply(img, "strong")
     products = [a[a.index("--no-banner") + 1] for a in calls]
     assert products == ["nxt", "bxt"]  # denoise then sharpen
+
+
+def test_remove_green_step_clamps_green():
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    from seestar_processor.steps.remove_green_step import RemoveGreenStep
+    data = np.full((4, 4, 3), 0.3, dtype=np.float32)
+    data[..., 1] = 0.9
+    out = RemoveGreenStep().apply(AstroImage(data))
+    assert out.data[..., 1].max() <= 0.3 + 1e-6
