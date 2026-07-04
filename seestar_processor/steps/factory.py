@@ -21,6 +21,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
     settings. Shared by the live app (MainWindow._step_for) and batch."""
     if stage_id == "crop":
         return CropStep()
+    if stage_id in ("rotate", "flip_h", "flip_v"):
+        return CropStep()  # geometry ops replay through the same engine
     if stage_id == "background":
         step = BackgroundStep(GraXpert(resolve_binary(settings.graxpert_path)))
         step._runner = bg_runner

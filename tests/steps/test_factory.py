@@ -18,3 +18,6 @@ def test_make_step_types():
     assert isinstance(make_step("local_contrast", s), LocalContrastStep)
     assert isinstance(make_step("star_reduction", s), StarReductionStep)
     assert isinstance(make_step("remove_green", s), RemoveGreenStep)
+    assert isinstance(make_step("rotate", s), CropStep)
+    assert isinstance(make_step("flip_h", s), CropStep)
+    assert isinstance(make_step("flip_v", s), CropStep)

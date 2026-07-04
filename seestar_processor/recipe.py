@@ -9,6 +9,9 @@ from .ui.pipeline import STEP_NAME
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
 _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
+_NAME_TO_STAGE["Rotate"] = "rotate"
+_NAME_TO_STAGE["Flip H"] = "flip_h"
+_NAME_TO_STAGE["Flip V"] = "flip_v"
 
 
 @dataclass
@@ -40,6 +43,12 @@ def deserialize_option(stage_id, value):
         return ColorSettings(**value)
     if stage_id == "levels":
         return tuple(value)
+    if stage_id == "rotate":
+        return CropParams(rotate=90)
+    if stage_id == "flip_h":
+        return CropParams(flip_h=True)
+    if stage_id == "flip_v":
+        return CropParams(flip_v=True)
     return value
 
 

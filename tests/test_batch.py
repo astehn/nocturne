@@ -57,6 +57,21 @@ def test_batch_replays_remove_green():
     assert out.data[..., 1].max() <= 0.3 + 1e-6
 
 
+def test_apply_recipe_replays_rotate_and_flip():
+    # Non-square so a 90° rotation is observable as an H/W swap.
+    data = np.zeros((20, 30, 3), np.float32)
+    data[:, 0, :] = 0.9                      # bright left column (col 0)
+    r = Recipe(steps=[{"stage": "rotate", "option": ""}])
+    out = apply_recipe(AstroImage(data), r, Settings())
+    assert out.data.shape[:2] == (30, 20)    # 90° rotate swapped H and W
+
+    r2 = Recipe(steps=[{"stage": "flip_h", "option": ""}])
+    out2 = apply_recipe(AstroImage(data), r2, Settings())
+    assert out2.data.shape[:2] == (20, 30)   # flip keeps shape
+    # column 0 became the last column after horizontal flip
+    assert float(out2.data[:, -1, :].mean()) > float(out2.data[:, 0, :].mean())
+
+
 def test_run_batch_progress_callback(tmp_path):
     a = tmp_path / "a.fits"
     _fits(a)
