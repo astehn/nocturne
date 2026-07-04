@@ -9,10 +9,33 @@ def test_saturation_increases_chroma():
     assert (out.data[0, 0].max() - out.data[0, 0].min()) > (0.6 - 0.2)
 
 
-def test_zero_amount_is_noop():
+def test_half_amount_is_noop():
     data = np.random.rand(8, 8, 3).astype(np.float32)
-    out = saturate(AstroImage(data), 0.0)
-    assert np.allclose(out.data, data)
+    out = saturate(AstroImage(data), 0.5)
+    assert np.allclose(out.data, data, atol=1e-6)
+
+
+def test_zero_amount_is_greyscale():
+    data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
+    out = saturate(AstroImage(data), 0.0).data[0, 0]
+    assert out.max() - out.min() < 1e-6           # R=G=B -> grey
+
+
+def test_partial_desaturation():
+    data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
+    native = 0.6 - 0.2
+    out = saturate(AstroImage(data), 0.25).data[0, 0]
+    chroma = out.max() - out.min()
+    assert 0.0 < chroma < native                  # muted but not grey
+
+
+def test_monotonic_chroma_across_slider():
+    data = np.tile(np.array([0.5, 0.35, 0.2], np.float32), (4, 4, 1))  # dark coloured pixel
+    def chroma(a):
+        px = saturate(AstroImage(data), a).data[0, 0]
+        return float(px.max() - px.min())
+    vals = [chroma(a) for a in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert vals == sorted(vals) and vals[0] < vals[-1]
 
 
 def test_mono_noop():

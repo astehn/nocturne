@@ -210,16 +210,19 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":
-        lay.addWidget(_desc_label("Boost colour intensity."))
+        lay.addWidget(_desc_label(
+            "Drag left to mute colour, right to boost. Centre = no change."))
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(0, 100)
-        slider.setValue(40)
+        slider.setValue(50)
+        slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        slider.setTickInterval(50)
         apply_btn = QPushButton("Apply Saturation")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
-        lay.addWidget(QLabel("Saturation"))
+        lay.addWidget(QLabel("Saturation (mute ← native → boost)"))
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
         w.sat_slider = slider
