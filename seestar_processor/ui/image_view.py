@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .theme import BG_0, BG_1
+from .zoom_pill import ZoomPill
 
 _ACCENT = QColor("#2dd4bf")
 _HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
@@ -107,6 +108,19 @@ class ImageView(QGraphicsView):
         self._compare_item = None
         self._divider = None
         self._split_x = 0.0
+        self._zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
+        self._zoom_pill.raise_()
+        self._position_zoom_pill()
+
+    def _position_zoom_pill(self) -> None:
+        pill = self._zoom_pill
+        pill.adjustSize()
+        m = 12
+        pill.move(self.width() - pill.width() - m, self.height() - pill.height() - m)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_zoom_pill()
 
     # --- before/after compare ---
     def set_compare(self, qimage) -> None:
