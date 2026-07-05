@@ -251,3 +251,57 @@ def test_neutralize_stars_does_not_bloat():
     footprint = int((out.mean(axis=2) > 0.5).sum())
     assert footprint < 40        # star stays tight (autostretch bloated it to ~149px)
     assert out.max() > 0.5       # but the star is still clearly visible
+
+
+def _faint_star_field():
+    # realistic sparse star field: power-law brightness (many faint, few bright), linear
+    from scipy.ndimage import gaussian_filter
+    rng = np.random.default_rng(7)
+    H, W = 200, 200
+    s = np.zeros((H, W), np.float32)
+    for (cy, cx), a in zip(rng.integers(3, H - 3, (500, 2)), (rng.random(500) ** 3)):
+        s[cy, cx] += a
+    s = gaussian_filter(s, 0.8, mode="constant")
+    s = np.clip(s, 0.0, None)
+    s /= s.max()
+    return AstroImage(np.stack([s, s, s], axis=2).astype(np.float32), is_linear=True)
+
+
+def test_neutralize_stars_lifts_faint_stars():
+    from seestar_processor.core.palette import neutralize_stars
+    out = neutralize_stars(_faint_star_field()).data
+    lum = out.mean(axis=2)
+    star_px = lum[lum > 0.1]
+    assert float(np.median(star_px)) > 0.25    # gamma=0.5 gave ~0.20; MTF lift clears 0.25
+    assert np.allclose(out[..., 0], out[..., 1]) and np.allclose(out[..., 1], out[..., 2])  # white
+
+
+def test_palette_params_star_and_denoise_defaults():
+    from seestar_processor.core.palette import PaletteParams
+    p = PaletteParams()
+    assert p.denoise == 0.02 and p.star_brightness == 0.08
+
+
+def _noisy_dualband_starless():
+    rng = np.random.default_rng(2)
+    H, W = 160, 160
+    yy, xx = np.mgrid[0:H, 0:W]
+    sig = np.exp(-(((xx - 80) / 90) ** 2 + ((yy - 80) / 90) ** 2))
+    d = np.zeros((H, W, 3), np.float32)
+    d[..., 0] = 0.02 + 0.08 * sig                 # Ha
+    d[..., 1] = 0.02 + 0.015 * sig                # OIII (weak)
+    d[..., 2] = 0.02 + 0.015 * sig
+    d += rng.normal(0, 0.006, (H, W, 3)).astype(np.float32)
+    return AstroImage(np.clip(d, 0.0, 1.0), is_linear=True)
+
+
+def test_render_nebula_denoise_reduces_noise_preserves_signal():
+    from seestar_processor.core.palette import render_nebula, PaletteParams
+    img = _noisy_dualband_starless()
+    off = render_nebula(img, PaletteParams(denoise=0.0)).data
+    on = render_nebula(img, PaletteParams(denoise=0.02)).data
+    # background corner (signal-free) is cleaner with denoise
+    assert on[:30, :30].std() < off[:30, :30].std() * 0.8
+    # central nebula signal survives (not flattened to background)
+    assert on[70:90, 70:90].mean() > on[:30, :30].mean() + 0.1
+    assert render_nebula(img, PaletteParams()).is_linear is False
