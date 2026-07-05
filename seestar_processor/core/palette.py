@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .image import AstroImage
-from .autostretch import linked_stretch
+from .autostretch import _mtf, linked_stretch
 from .saturation import saturate
 from .stretch import amount_to_target
 
@@ -130,22 +130,22 @@ class PaletteParams:
     hue_deg: float = 0.0           # global hue rotation, degrees
     saturation: float = 0.65       # saturate() amount; 0.5 = neutral
     scnr: bool = True              # green suppression
+    denoise: float = 0.02          # TV-chambolle weight for the faint channels (0 = off)
+    star_brightness: float = 0.08  # MTF midtones for the white-star lift (lower = brighter stars)
 
 
-_STAR_GAMMA = 0.5  # controlled reveal for the screened-back star layer
-
-
-def neutralize_stars(stars: AstroImage) -> AstroImage:
-    """White (colour-neutral) star layer, gently stretched with a FIXED gamma so
-    stars stay visible over the stretched nebula without bloating.
+def neutralize_stars(stars: AstroImage, midtones: float = 0.08) -> AstroImage:
+    """White (colour-neutral) star layer, lifted with a FIXED-midtones MTF so the
+    faint majority stay visible over the stretched nebula without bloating.
 
     Do NOT use the adaptive autostretch here: the StarX 'stars_only' layer is
-    sparse (mostly black), so its median and MAD collapse to ~0 and the adaptive
-    midtones solve degenerates into an extreme threshold curve that blows every
-    star and its faint wings to white — bloated blobs that swamp the image."""
+    sparse (mostly black), so its median/MAD collapse to ~0 and the adaptive
+    midtones solve degenerates into an extreme threshold that blows stars to
+    white blobs. A fixed midtones (default 0.08) lifts faint stars while a smooth
+    curve keeps them tight."""
     if not stars.is_color:
         return stars.copy()
-    lum = np.power(np.clip(stars.data.mean(axis=2), 0.0, 1.0), _STAR_GAMMA)
+    lum = _mtf(midtones, np.clip(stars.data.mean(axis=2), 0.0, 1.0))
     rgb = np.clip(np.stack([lum, lum, lum], axis=2), 0.0, 1.0).astype(np.float32)
     return AstroImage(rgb, is_linear=False, metadata=dict(stars.metadata))
 
@@ -164,6 +164,10 @@ def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
     ha = subtract_bg_2d(ha)
     oiii = subtract_bg_2d(oiii)
     oiii = renorm_oiii(ha, oiii)
+    if params.denoise > 0:
+        from skimage.restoration import denoise_tv_chambolle
+        ha = denoise_tv_chambolle(ha, weight=params.denoise).astype(np.float32)
+        oiii = denoise_tv_chambolle(oiii, weight=params.denoise).astype(np.float32)
     ha = stretch_channel(ha, params.ha_stretch)
     oiii = stretch_channel(oiii, params.oiii_stretch)
     if params.palette == "HOO":
@@ -185,6 +189,6 @@ def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
 def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> AstroImage:
     """render_nebula(starless), then screen neutralize_stars(stars) back on top."""
     nebula = render_nebula(starless, params)
-    white = neutralize_stars(stars)
+    white = neutralize_stars(stars, params.star_brightness)
     out = screen(nebula.data, white.data)
     return AstroImage(out, is_linear=False, metadata=dict(starless.metadata))
