@@ -61,3 +61,23 @@ def test_jump_back_truncates_forward(tmp_path):
     assert p.can_redo() is False
     p.run_step(_Double(), "x1")   # new branch -> 2.0
     assert p.entries() == [("double", "x2"), ("double", "x1")]
+
+
+def test_state_at_is_non_destructive(tmp_path):
+    import numpy as np
+    from seestar_processor.core.image import AstroImage
+    from seestar_processor.history.project import Project
+    from seestar_processor.history.step import Step
+
+    class _Const(Step):
+        name = "X"
+        def options(self): return []
+        def default_option(self): return ""
+        def apply(self, img, option): return AstroImage(img.data + 1, is_linear=img.is_linear)
+
+    p = Project(AstroImage(np.zeros((4, 4), np.float32)), str(tmp_path))
+    p.run_step(_Const(), "")                         # position 1, records ["X"]
+    s0 = p.state_at(0)                               # read index 0
+    assert float(s0.data.mean()) == 0.0
+    assert len(p.entries()) == 1                     # unchanged — no truncation
+    assert p.can_undo() is True

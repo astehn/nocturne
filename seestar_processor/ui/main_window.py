@@ -187,8 +187,12 @@ class MainWindow(QMainWindow):
         rc = RCAstro(resolve_binary(self.settings.rcastro_path))
         return rc.remove_stars(img, runner=self._rc_runner)
 
+    @staticmethod
+    def _base_sig(base):
+        return (base.data.shape, float(base.data.mean()), float(base.data.std()))
+
     def _colourise_starx(self, base):
-        sig = (base.data.shape, float(base.data.mean()), float(base.data.std()))
+        sig = self._base_sig(base)
         if self._colourise_layers is not None and self._colourise_layers[0] == sig:
             return self._colourise_layers[1], self._colourise_layers[2]
         if rcastro_valid(self.settings):
@@ -201,12 +205,10 @@ class MainWindow(QMainWindow):
     def _colourise(self) -> None:
         if self.project is None or self._busy:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._stretch_preceding()))
-        base = self.project.current()
+        idx = self._leading_kept(self.project.entries(), self._stretch_preceding())
+        base = self.project.state_at(idx)          # non-destructive
         if not base.is_color:
             self._status.setText("Colourise needs a colour image.")
-            self._refresh()
             return
         self._status.setText("")
         self._set_busy(True)
@@ -218,6 +220,7 @@ class MainWindow(QMainWindow):
             return compose(starless, stars, PaletteParams())
 
         def done(result):
+            self.project.jump_back(idx)             # truncate only on success
             self.project.run_step(_PrecomputedStep("Colourise", result), "")
             self.log_panel.append_entry(
                 format_log_entry("Colourise", "", rms_delta(base, result)))
@@ -237,16 +240,18 @@ class MainWindow(QMainWindow):
                 err(exc)
 
     def _open_advanced_palette(self) -> None:
-        if self.project is None:
-            self._status.setText("Open or stack an image first.")
+        if self.project is None or self._busy:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._stretch_preceding()))
-        base = self.project.current()
+        idx = self._leading_kept(self.project.entries(), self._stretch_preceding())
+        base = self.project.state_at(idx)          # non-destructive
         if not base.is_color:
             self._status.setText("Palette needs a colour image.")
             return
-        starless, stars = self._colourise_starx(base)    # reuse cache
+        sig = self._base_sig(base)
+        if self._colourise_layers is not None and self._colourise_layers[0] == sig:
+            starless, stars = self._colourise_layers[1], self._colourise_layers[2]
+        else:
+            starless, stars = None, None           # cold: dialog runs StarX async itself
         from .palette_dialog import PaletteDialog
         PaletteDialog(self.settings, base, self, on_apply=self._record_colourise,
                       starless=starless, stars=stars).exec()

@@ -65,6 +65,8 @@ structurally and keeps the manual sliders as an "Advanced…" option.
   StarX run) and default `PaletteParams()`; its Apply records at the stretch position as
   `"Colourise"` via the same path. This also resolves bug 2 (Apply screens stars) by routing
   through the fixed `compose`; if any drop remains, root-cause via systematic-debugging.
+  Re-doing the reveal (Colourise or Apply Stretch) truncates any downstream steps, since they build
+  on the reveal — consistent with Apply Stretch.
 
 ### `ui/step_panels.py` (stretch branch) + `ui/pipeline.py`
 - Stretch panel gains a **"Colourise"** primary button → `on_colourise()`, and a small

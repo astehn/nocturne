@@ -41,6 +41,10 @@ class Project:
     def current(self) -> AstroImage:
         return self._load(self._position)
 
+    def state_at(self, index: int) -> AstroImage:
+        """Non-destructive read of the cached state at `index` (no truncation)."""
+        return self._load(index)
+
     def run_step(self, step: Step, option: str) -> AstroImage:
         # Truncate any forward (redo) history.
         del self._paths[self._position + 1:]
