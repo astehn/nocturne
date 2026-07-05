@@ -345,6 +345,15 @@ def test_colourise_caches_star_removal(qtbot, tmp_path, monkeypatch):
     assert [n for n, _ in win.project.entries()][-1] == "Colourise"
 
 
+def test_open_image_invalidates_colourise_cache(qtbot, tmp_path):
+    from seestar_processor.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_image(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), "a")
+    win._colourise_layers = ("stale-sig", object(), object())
+    win.open_image(AstroImage(np.ones((8, 8, 3), np.float32), is_linear=True), "b")
+    assert win._colourise_layers is None         # loading a new image clears the cache
+
+
 def test_open_advanced_palette_requires_image(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._open_advanced_palette()                       # no project -> guarded, no crash

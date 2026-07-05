@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
     def open_image(self, base, label: str) -> None:
         self._source_base = base
         self._source_label = label
+        self._colourise_layers = None  # invalidate cached star layers for the new image
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
