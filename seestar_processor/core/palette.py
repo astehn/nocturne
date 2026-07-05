@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .image import AstroImage
-from .autostretch import _TARGET_BG, _apply_params, _stretch_params, linked_stretch
+from .autostretch import linked_stretch
 from .saturation import saturate
 from .stretch import amount_to_target
 
@@ -130,28 +130,7 @@ class PaletteParams:
     hue_deg: float = 0.0           # global hue rotation, degrees
     saturation: float = 0.65       # saturate() amount; 0.5 = neutral
     scnr: bool = True              # green suppression
-
-
-def restore_stars(stars: AstroImage, reference: AstroImage) -> AstroImage:
-    """The StarX 'stars_only' layer at its SOURCE brightness and colour, so
-    screening it back reproduces the stars exactly as they appear in the input —
-    same count, same brightness, same colour. Star dimming/reduction is the
-    separate Star Reduction step, not here.
-
-    The stars-only layer is linear/faint (StarX ran on the linear master), while
-    the colourised nebula is display-stretched. We stretch the stars with the
-    SAME display transform the app uses to show the image, derived from the
-    `reference` (starless) luminance — which has a real distribution, so it is
-    non-degenerate on the sparse star layer — and apply it per channel to keep
-    the stars' colour. Result matches a stretch-then-StarX-then-screen workflow."""
-    if not stars.is_color:
-        return stars.copy()
-    ref_lum = reference.data.mean(axis=2) if reference.is_color else reference.data
-    shadow, m = _stretch_params(ref_lum, _TARGET_BG)
-    rgb = np.stack(
-        [_apply_params(stars.data[..., c], shadow, m) for c in range(3)], axis=2)
-    return AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
-                      is_linear=False, metadata=dict(stars.metadata))
+    star_brightness: float = 1.0   # screened stars as-is at 1.0; >1 brighter, <1 dimmer
 
 
 def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
@@ -187,8 +166,12 @@ def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
 
 
 def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> AstroImage:
-    """render_nebula(starless), then screen the source-brightness stars on top."""
+    """render_nebula(starless), then screen the (already display-stretched) stars
+    on top. `stars` come from StarX on the stretched image, so they are screened
+    as-is; `params.star_brightness` optionally pushes them brighter/dimmer."""
     nebula = render_nebula(starless, params)
-    stars_src = restore_stars(stars, starless)
-    out = screen(nebula.data, stars_src.data)
+    s = np.clip(stars.data, 0.0, 1.0)
+    if params.star_brightness != 1.0:
+        s = np.power(s, 1.0 / params.star_brightness)   # gamma: higher param = brighter
+    out = screen(nebula.data, s.astype(np.float32))
     return AstroImage(out, is_linear=False, metadata=dict(starless.metadata))
