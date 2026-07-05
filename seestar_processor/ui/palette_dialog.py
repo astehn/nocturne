@@ -27,7 +27,8 @@ def _downscale(img: AstroImage) -> AstroImage:
 
 
 class PaletteDialog(QDialog):
-    def __init__(self, settings, base: AstroImage, parent=None, on_apply=None) -> None:
+    def __init__(self, settings, base: AstroImage, parent=None, on_apply=None,
+                 starless=None, stars=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Narrowband palette")
         self.setMinimumWidth(720)
@@ -38,8 +39,9 @@ class PaletteDialog(QDialog):
         self._async = True
         self._starx_enabled = rcastro_valid(settings)
         self._starx_runner = self._default_starx
-        self._starless = None
-        self._stars = None
+        self._starless = starless
+        self._stars = stars
+        self._seeded = starless is not None
         self._prev_starless = None
         self._prev_stars = None
 
@@ -121,6 +123,10 @@ class PaletteDialog(QDialog):
         return rc.remove_stars(img)
 
     def start(self) -> None:
+        if self._seeded:                          # seeded with pre-computed layers
+            self._cache_previews()
+            self._render_preview()
+            return
         if not self._starx_enabled:
             self._starless = self._base
             self._stars = None

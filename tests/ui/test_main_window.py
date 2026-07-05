@@ -4,6 +4,7 @@ from astropy.io import fits
 
 pytest.importorskip("PySide6")
 from seestar_processor.ui.main_window import MainWindow  # noqa: E402
+from seestar_processor.core.image import AstroImage  # noqa: E402
 
 
 def _make_fits(tmp_path):
@@ -300,19 +301,70 @@ def test_open_image_loads_astroimage(qtbot, tmp_path):
     assert "stacked master" in win.log_panel.text()
 
 
-def test_open_palette_requires_image(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)          # no image loaded
-    win._open_palette()
-    assert "open" in win._status.text().lower()
+def test_colourise_records_and_is_stretched(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path); win._async_enabled = False
+    win.open_fits(_make_fits(tmp_path))
+    win._colourise()                                   # no RC-Astro -> whole-image colour
+    names = [n for n, _ in win.project.entries()]
+    assert names[-1] == "Colourise"
+    assert win.project.current().is_linear is False
 
 
-def test_record_palette_adds_history_step(qtbot, tmp_path):
-    import numpy as np
+def test_colourise_preserved_after_later_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path); win._async_enabled = False
+    win.open_fits(_make_fits(tmp_path))
+    win._colourise()
+    win._go_to_id("saturation")
+    win.apply_current(0.6)
+    names = [n for n, _ in win.project.entries()]
+    assert "Colourise" in names and "Saturation" in names
+    assert names.index("Colourise") < names.index("Saturation")
+
+
+def test_colourise_marks_stretch_done(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path); win._async_enabled = False
+    win.open_fits(_make_fits(tmp_path))
+    win._colourise()
+    assert "stretch" in win._done_ids()
+
+
+def test_colourise_caches_star_removal(qtbot, tmp_path, monkeypatch):
+    import seestar_processor.ui.main_window as mw
+    win = _window(qtbot, tmp_path); win._async_enabled = False
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
+    calls = []
+    def fake_remove(img):
+        calls.append(1)
+        half = AstroImage(img.data * 0.5, is_linear=True)
+        return half, half
+    win._remove_stars = fake_remove
+    win._colourise()
+    win._colourise()                                   # same base -> cache hit
+    assert calls == [1]                                # StarX ran once
+    assert [n for n, _ in win.project.entries()][-1] == "Colourise"
+
+
+def test_open_image_invalidates_colourise_cache(qtbot, tmp_path):
     from seestar_processor.core.image import AstroImage
     win = _window(qtbot, tmp_path)
+    win.open_image(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), "a")
+    win._colourise_layers = ("stale-sig", object(), object())
+    win.open_image(AstroImage(np.ones((8, 8, 3), np.float32), is_linear=True), "b")
+    assert win._colourise_layers is None         # loading a new image clears the cache
+
+
+def test_open_advanced_palette_requires_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._open_advanced_palette()                       # no project -> guarded, no crash
+    assert win._status.text() == ""                    # new behavior: silently returns
+
+
+def test_record_colourise_adds_history_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path); win._async_enabled = False
     win.open_fits(_make_fits(tmp_path))
-    win._record_palette(AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False))
-    assert win.project.entries()[-1][0] == "Palette"
+    win._record_colourise(AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False))
+    assert [n for n, _ in win.project.entries()][-1] == "Colourise"
 
 
 def test_toolbar_actions_have_icons(qtbot, tmp_path):
@@ -472,6 +524,49 @@ def test_reset_declined_keeps_edits(qtbot, tmp_path, monkeypatch):
                         lambda *a, **k: QMessageBox.StandardButton.No)
     win._reset_image()
     assert any(n == "Stretch" for n, _ in win.project.entries())   # edit survived
+
+
+def test_advanced_open_then_cancel_preserves_history(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._colourise()
+    before = [n for n, _ in win.project.entries()]
+
+    class _FakeDialog:                              # Cancel: opens, never calls on_apply
+        def __init__(self, *a, **k):
+            pass
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("seestar_processor.ui.palette_dialog.PaletteDialog", _FakeDialog)
+    win._open_advanced_palette()
+    assert [n for n, _ in win.project.entries()] == before   # nothing lost on cancel
+
+
+def test_advanced_apply_records_colourise(qtbot, tmp_path, monkeypatch):
+    from seestar_processor.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    result = AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False)
+
+    class _FakeDialog:                              # Apply: invokes the on_apply callback
+        def __init__(self, *a, **k):
+            self._cb = k.get("on_apply")
+        def exec(self):
+            self._cb(result)
+            return 1
+
+    monkeypatch.setattr("seestar_processor.ui.palette_dialog.PaletteDialog", _FakeDialog)
+    win._open_advanced_palette()
+    assert [n for n, _ in win.project.entries()][-1] == "Colourise"
+
+
+def test_open_advanced_palette_guarded_when_busy(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._busy = True
+    win._open_advanced_palette()                    # guarded: no crash, no history change
+    assert win.project.entries() == []
 
 
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):

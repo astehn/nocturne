@@ -51,6 +51,8 @@ def build_panel(
     on_flip_v=None,
     on_export=None,
     on_remove_green=None,
+    on_colourise=None,
+    on_palette_advanced=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
 ) -> QWidget:
@@ -144,6 +146,8 @@ def build_panel(
         lay.addWidget(_desc_label(
             "Automatic background neutralization and white balance."
         ))
+        lay.addWidget(_desc_label(
+            "Dualband / narrowband image? Skip this — colour is applied later by Colourise."))
         apply_btn = QPushButton("Apply Color")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -171,14 +175,29 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        colourise_btn = QPushButton("Colourise (dualband → colour)")
+        colourise_btn.setObjectName("primary")
+        colourise_btn.setEnabled(apply_enabled)
+        if on_colourise is not None:
+            colourise_btn.clicked.connect(lambda: on_colourise())
+        advanced_btn = QPushButton("Advanced…")
+        advanced_btn.setEnabled(apply_enabled)
+        if on_palette_advanced is not None:
+            advanced_btn.clicked.connect(lambda: on_palette_advanced())
         lay.addWidget(QLabel("Target"))
         lay.addWidget(target)
         lay.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
+        lay.addWidget(_desc_label(
+            "Dualband (Ha/OIII) image? Press Colourise for one-press colour."))
+        lay.addWidget(colourise_btn)
+        lay.addWidget(advanced_btn)
         w.target_box = target
         w.stretch_slider = slider
         w.apply_btn = apply_btn
+        w.colourise_btn = colourise_btn
+        w.advanced_btn = advanced_btn
 
     elif stage.kind == "levels":
         lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))

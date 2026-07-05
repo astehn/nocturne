@@ -12,6 +12,7 @@ from .. import APP_NAME
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
+from ..core.palette import PaletteParams, compose, render_nebula
 from ..history.project import Project
 from ..history.step import Step
 from ..settings import (
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        self._colourise_layers = None
         self._pool = QThreadPool.globalInstance()
         self._busy_overlay = BusyOverlay()
 
@@ -181,21 +183,85 @@ class MainWindow(QMainWindow):
         HaOIIIDialog(self.settings, self,
                      on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
 
-    def _open_palette(self) -> None:
-        if self.project is None:
-            self._status.setText("Open or stack an image first.")
+    def _remove_stars(self, img):
+        rc = RCAstro(resolve_binary(self.settings.rcastro_path))
+        return rc.remove_stars(img, runner=self._rc_runner)
+
+    @staticmethod
+    def _base_sig(base):
+        return (base.data.shape, float(base.data.mean()), float(base.data.std()))
+
+    def _colourise_starx(self, base):
+        sig = self._base_sig(base)
+        if self._colourise_layers is not None and self._colourise_layers[0] == sig:
+            return self._colourise_layers[1], self._colourise_layers[2]
+        if rcastro_valid(self.settings):
+            starless, stars = self._remove_stars(base)
+        else:
+            starless, stars = base, None
+        self._colourise_layers = (sig, starless, stars)
+        return starless, stars
+
+    def _colourise(self) -> None:
+        if self.project is None or self._busy:
             return
-        base = self.project.current()
+        idx = self._leading_kept(self.project.entries(), self._stretch_preceding())
+        base = self.project.state_at(idx)          # non-destructive
+        if not base.is_color:
+            self._status.setText("Colourise needs a colour image.")
+            return
+        self._status.setText("")
+        self._set_busy(True)
+
+        def work():
+            starless, stars = self._colourise_starx(base)
+            if stars is None:
+                return render_nebula(starless, PaletteParams())
+            return compose(starless, stars, PaletteParams())
+
+        def done(result):
+            self.project.jump_back(idx)             # truncate only on success
+            self.project.run_step(_PrecomputedStep("Colourise", result), "")
+            self.log_panel.append_entry(
+                format_log_entry("Colourise", "", rms_delta(base, result)))
+            self._set_busy(False)
+            self._refresh()
+
+        def err(exc):
+            self._set_busy(False)
+            self._status.setText(f"Colourise failed: {exc}")
+
+        if self._async_enabled:
+            run_async(self._pool, work, done, err)
+        else:
+            try:
+                done(work())
+            except Exception as exc:  # mirror the async error path
+                err(exc)
+
+    def _open_advanced_palette(self) -> None:
+        if self.project is None or self._busy:
+            return
+        idx = self._leading_kept(self.project.entries(), self._stretch_preceding())
+        base = self.project.state_at(idx)          # non-destructive
         if not base.is_color:
             self._status.setText("Palette needs a colour image.")
             return
+        sig = self._base_sig(base)
+        if self._colourise_layers is not None and self._colourise_layers[0] == sig:
+            starless, stars = self._colourise_layers[1], self._colourise_layers[2]
+        else:
+            starless, stars = None, None           # cold: dialog runs StarX async itself
         from .palette_dialog import PaletteDialog
-        PaletteDialog(self.settings, base, self, on_apply=self._record_palette).exec()
+        PaletteDialog(self.settings, base, self, on_apply=self._record_colourise,
+                      starless=starless, stars=stars).exec()
 
-    def _record_palette(self, result) -> None:
-        self.project.run_step(_PrecomputedStep("Palette", result), "")
+    def _record_colourise(self, result) -> None:
+        self.project.jump_back(
+            self._leading_kept(self.project.entries(), self._stretch_preceding()))
+        self.project.run_step(_PrecomputedStep("Colourise", result), "")
         self._status.setText("")
-        self.log_panel.append_entry(format_log_entry("Palette", "", None))
+        self.log_panel.append_entry(format_log_entry("Colourise", "", None))
         self._refresh()
 
     def _build_toolbar(self) -> None:
@@ -210,7 +276,6 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
         tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
-        tb.addAction(load_icon("palette", ACCENT), "Palette…", self._open_palette)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -291,6 +356,7 @@ class MainWindow(QMainWindow):
     def open_image(self, base, label: str) -> None:
         self._source_base = base
         self._source_label = label
+        self._colourise_layers = None  # invalidate cached star layers for the new image
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
@@ -322,6 +388,14 @@ class MainWindow(QMainWindow):
                 break
         return n
 
+    def _stretch_preceding(self) -> set:
+        """Names of the steps that precede the reveal (stretch) position — the
+        predecessors a Colourise or Apply-Stretch preserves."""
+        return set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
+        }
+
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
             return
@@ -333,6 +407,8 @@ class MainWindow(QMainWindow):
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
         }
+        if STEP_NAME["stretch"] in preceding:
+            preceding.add("Colourise")   # Colourise occupies the stretch position
         target = self._leading_kept(self.project.entries(), preceding)
         self.project.jump_back(target)
         if stage_id == "background" and option == "off":
@@ -570,6 +646,8 @@ class MainWindow(QMainWindow):
             on_flip_v=self._flip_v,
             on_export=self.export_final,
             on_remove_green=self._remove_green,
+            on_colourise=self._colourise,
+            on_palette_advanced=self._open_advanced_palette,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
         )
@@ -604,4 +682,6 @@ class MainWindow(QMainWindow):
                 done.add(sid)
         if any(g in applied for g in GEOMETRY_NAMES):
             done.add("crop")
+        if "Colourise" in applied:
+            done.add("stretch")
         return done

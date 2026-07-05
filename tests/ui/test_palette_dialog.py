@@ -103,3 +103,15 @@ def test_linear_hint_shown_for_stretched_input(qtbot):
     # _color() builds an is_linear=False image -> hint should be visible
     dlg = _make_dialog(qtbot)
     assert "linear" in dlg.hint.text().lower()
+
+
+def test_palette_dialog_seeded_skips_starx(qtbot):
+    calls = []
+    dlg = PaletteDialog(Settings(), _color(), starless=_color(1), stars=_color(2))
+    qtbot.addWidget(dlg)
+    dlg._starx_runner = lambda img: (calls.append(1), (img, img))[1]
+    dlg._async = False
+    dlg.start()                                   # seeded -> must NOT run StarX
+    assert calls == []
+    assert dlg._starless is not None
+    assert not dlg.preview.pixmap().isNull()      # rendered from seeded layers
