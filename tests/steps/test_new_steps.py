@@ -77,7 +77,7 @@ def test_noise_sharpen_uses_rcastro_when_present():
     step._runner = fake
     step.apply(img, "strong")
     products = [a[a.index("--no-banner") + 1] for a in calls]
-    assert products == ["nxt", "bxt"]  # denoise then sharpen
+    assert products == ["nxt"]  # denoise only (sharpening moved to Deconvolution)
 
 
 def test_remove_green_step_clamps_green():
