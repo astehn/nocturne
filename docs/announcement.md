@@ -29,12 +29,18 @@ What it does today:
 - 💾 Export 16-bit TIFF / PNG / FITS (incl. starless + stars).
 
 It's a personal project (I'm the "orchestrator," built with a lot of AI help — I'm not really a
-developer 😅), and it's **not released yet** — I'm at the stage where I need **real Seestar data to
-test and tune it** across different targets, skies and integration times.
+developer 😅), and it's **not released yet**. Here's my problem: **I only got my Seestar a few weeks
+ago**, and between learning the ropes and a run of cloudy nights, I've captured just a handful of
+targets. To test and tune the app properly I need **variety** — different objects, different skies,
+different integration times — and I simply don't have that yet.
 
-**If you'd be willing to share a stacked dualband/LP FITS master** (and raw subs if you save them),
-I'd be hugely grateful — drop a comment or DM me. Contributors get credited in the app's "About"
-page (as **Photon Donors** ⭐). Any target, any sky quality — the messier the better for testing!
+So I'm asking for help: **if you'd be willing to share a stacked dualband/LP FITS master** (and raw
+subs if you save them), I'd be hugely grateful.
+- 📤 **Upload directly here (no account needed):** [UPLOAD LINK]
+- …or drop a comment / DM me.
+
+Contributors get credited in the app's "About" page (as **Photon Donors** ⭐). Any target, any sky
+quality — honestly, the messier the better for stress-testing!
 
 Thanks 🙌 clear skies.
 
@@ -43,15 +49,32 @@ Thanks 🙌 clear skies.
 ## Short version (2–3 lines)
 
 Building **Nocturne**, a free guided processing app for the ZWO Seestar S30 Pro — one-press dualband
-→ colour, built-in stacking, and GraXpert/RC-Astro integration. It's not released yet and I need
-**real data to test it**: if you can share a stacked dualband/LP **FITS master** (raw subs a bonus),
-comment or DM 🙏. Contributors credited as ⭐ Photon Donors. Any target, any sky — clear skies!
+→ colour, built-in stacking, and GraXpert/RC-Astro integration. I only got my Seestar a few weeks
+ago (and the skies have not cooperated 🌧️), so I'm short on data to test it. If you can share a
+stacked dualband/LP **FITS master** (raw subs a bonus), upload here (no account needed): **[UPLOAD
+LINK]** — or comment/DM 🙏. Contributors credited as ⭐ Photon Donors. Clear skies!
 
 ---
 
 ## Notes before posting
 
+- Replace **[UPLOAD LINK]** before posting (see "Upload folder" below).
 - Some groups restrict self-promotion — lead with the **data request**, not the tool, and avoid
   posting download/links unless the group allows it.
 - Reassure on privacy: you're using their data only to test/tune, and crediting them (Photon Donors).
 - Tailor tone per community (Reddit r/AskAstrophotography is more technical/no-hype than FB groups).
+
+## Upload folder (recommended: Dropbox File Request)
+
+For collecting files from lots of strangers, a **Dropbox "File Request"** is the cleanest option:
+- Recipients **don't need a Dropbox account** and just drag files in.
+- They **can't see each other's uploads** (privacy), and everything lands in one folder you control.
+- You can set it up in Dropbox → **File requests → Create a request** → title it e.g. "Nocturne test
+  data (Seestar dualband FITS)", pick a destination folder, and share the link.
+
+Alternatives: a **Google Drive** folder set to "anyone with the link can upload" (but requires a
+Google account and uploaders may see the folder), or a **Google Form** with a file-upload field
+(good if you also want to capture target name / integration time / filter alongside each file).
+
+Tip: ask contributors to include the **target, total integration time, and filter (LP/dualband vs
+broadband)** in the filename or a comment — it makes the data far more useful for tuning.
