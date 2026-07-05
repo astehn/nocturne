@@ -42,6 +42,9 @@ subs if you save them), I'd be hugely grateful.
 Contributors get credited in the app's "About" page (as **Photon Donors** ⭐). Any target, any sky
 quality — honestly, the messier the better for stress-testing!
 
+🔒 **Your data will only ever be used to test and improve Nocturne — nothing else.** It won't be
+shared, sold, re-published, or used for anything beyond development testing.
+
 Thanks 🙌 clear skies.
 
 ---
@@ -52,7 +55,8 @@ Building **Nocturne**, a free guided processing app for the ZWO Seestar S30 Pro 
 → colour, built-in stacking, and GraXpert/RC-Astro integration. I only got my Seestar a few weeks
 ago (and the skies have not cooperated 🌧️), so I'm short on data to test it. If you can share a
 stacked dualband/LP **FITS master** (raw subs a bonus), upload here (no account needed): **[UPLOAD
-LINK]** — or comment/DM 🙏. Contributors credited as ⭐ Photon Donors. Clear skies!
+LINK]** — or comment/DM 🙏. Your data is used **only** to test/improve Nocturne — never shared or
+published. Contributors credited as ⭐ Photon Donors. Clear skies!
 
 ---
 
