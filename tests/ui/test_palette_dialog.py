@@ -115,3 +115,24 @@ def test_palette_dialog_seeded_skips_starx(qtbot):
     assert calls == []
     assert dlg._starless is not None
     assert not dlg.preview.pixmap().isNull()      # rendered from seeded layers
+
+
+def test_star_brightness_slider_present_and_in_params(qtbot):
+    from seestar_processor.ui.reset_slider import ResetSlider
+    dlg = _make_dialog(qtbot)
+    assert isinstance(dlg.star_slider, ResetSlider) and dlg.star_slider._default == 50
+    assert dlg._params().star_brightness == pytest.approx(1.0)   # default 50 -> 1.0
+    dlg.star_slider.setValue(100)
+    assert dlg._params().star_brightness > 1.0                    # right = brighter
+
+
+def test_star_slider_change_rerenders(qtbot):
+    dlg = PaletteDialog(Settings(), _color())
+    qtbot.addWidget(dlg)
+    dlg._async = False
+    dlg._starx_enabled = True
+    dlg._starx_runner = _fake_starx
+    dlg.start()
+    before = dlg.preview.pixmap().cacheKey()
+    dlg.star_slider.setValue(90)
+    assert dlg.preview.pixmap().cacheKey() != before

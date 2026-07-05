@@ -58,6 +58,7 @@ class PaletteDialog(QDialog):
         self.oiii_slider = ResetSlider(70)
         self.hue_slider = ResetSlider(50)
         self.sat_slider = ResetSlider(65)
+        self.star_slider = ResetSlider(50)          # 50 -> star_brightness 1.0 (as-is)
 
         self.scnr_check = QCheckBox("Green suppression (SCNR)")
         self.scnr_check.setChecked(True)
@@ -72,7 +73,8 @@ class PaletteDialog(QDialog):
 
         for r in (self.foraxx_radio, self.hoo_radio, self.sho_radio):
             r.toggled.connect(self._render_preview)
-        for s in (self.ha_slider, self.oiii_slider, self.hue_slider, self.sat_slider):
+        for s in (self.ha_slider, self.oiii_slider, self.hue_slider,
+                  self.sat_slider, self.star_slider):
             s.valueChanged.connect(lambda _v: self._render_preview())
         self.scnr_check.toggled.connect(self._render_preview)
 
@@ -88,6 +90,7 @@ class PaletteDialog(QDialog):
         controls.addRow("OIII stretch", self.oiii_slider)
         controls.addRow("Hue", self.hue_slider)
         controls.addRow("Saturation", self.sat_slider)
+        controls.addRow("Star brightness", self.star_slider)
         controls.addRow("", self.scnr_check)
         controls.addRow("", self.reset_btn)
         controls.addRow("", self.hint)
@@ -163,6 +166,7 @@ class PaletteDialog(QDialog):
         self.oiii_slider.setValue(70)
         self.hue_slider.setValue(50)
         self.sat_slider.setValue(65)
+        self.star_slider.setValue(50)
         self.scnr_check.setChecked(True)
         self._render_preview()
 
@@ -180,6 +184,7 @@ class PaletteDialog(QDialog):
             hue_deg=(self.hue_slider.value() - 50) / 50.0 * 30.0,
             saturation=self.sat_slider.value() / 100.0,
             scnr=self.scnr_check.isChecked(),
+            star_brightness=max(0.4, self.star_slider.value() / 50.0),
         )
 
     def _result(self, starless: AstroImage, stars) -> AstroImage:
