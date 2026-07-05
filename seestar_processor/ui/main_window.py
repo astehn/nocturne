@@ -12,6 +12,8 @@ from .. import APP_NAME
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
+from ..core.autostretch import autostretch
+from ..core.image import AstroImage
 from ..core.palette import PaletteParams, compose, render_nebula
 from ..history.project import Project
 from ..history.step import Step
@@ -196,7 +198,9 @@ class MainWindow(QMainWindow):
         if self._colourise_layers is not None and self._colourise_layers[0] == sig:
             return self._colourise_layers[1], self._colourise_layers[2]
         if rcastro_valid(self.settings):
-            starless, stars = self._remove_stars(base)
+            starless, _ = self._remove_stars(base)                        # linear -> colour starless
+            stretched = AstroImage(autostretch(base), is_linear=False)    # display stretch
+            _, stars = self._remove_stars(stretched)                      # bright, complete stars
         else:
             starless, stars = base, None
         self._colourise_layers = (sig, starless, stars)

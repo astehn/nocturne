@@ -341,7 +341,7 @@ def test_colourise_caches_star_removal(qtbot, tmp_path, monkeypatch):
     win._remove_stars = fake_remove
     win._colourise()
     win._colourise()                                   # same base -> cache hit
-    assert calls == [1]                                # StarX ran once
+    assert len(calls) == 2                             # two passes on first call, zero on cache hit
     assert [n for n, _ in win.project.entries()][-1] == "Colourise"
 
 
@@ -567,6 +567,24 @@ def test_open_advanced_palette_guarded_when_busy(qtbot, tmp_path):
     win._busy = True
     win._open_advanced_palette()                    # guarded: no crash, no history change
     assert win.project.entries() == []
+
+
+def test_colourise_starx_extracts_stars_from_stretched(qtbot, tmp_path, monkeypatch):
+    import seestar_processor.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
+    seen_linear = []
+    def fake_remove(img):
+        seen_linear.append(img.is_linear)
+        half = AstroImage(img.data * 0.5, is_linear=img.is_linear)
+        return half, half
+    win._remove_stars = fake_remove
+    base = win.project.current()
+    starless, stars = win._colourise_starx(base)
+    # StarX was run on BOTH a linear image (for the starless) and a stretched one (for stars)
+    assert True in seen_linear and False in seen_linear
+    assert stars is not None
 
 
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
