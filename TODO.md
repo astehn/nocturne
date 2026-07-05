@@ -8,37 +8,8 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
-- [ ] **NEXT (2026-07-05): Palette result gets discarded by later processing steps.** After
-      Apply-ing the narrowband Palette (a stretched, starless-recombined "Palette" history step),
-      continuing the pipeline (crop / background / **color**) reverts the image to the pre-palette
-      look ("default red palette"). User reports it happens on the **Color step even without
-      pressing Apply** (i.e. navigating to it) — so it's not only apply-time truncation.
-      Likely causes to investigate:
-        • "Palette" is NOT in `PROCESSING_ORDER`/`STEP_NAME` nor `GEOMETRY_NAMES`, so a processing
-          step's prefix-safe `_leading_kept` truncation drops the Palette entry when you apply a
-          later step (palette isn't preserved like geometry/remove_green).
-        • Navigating to Color may `_refresh`/re-render from a history position/state that predates
-          the Palette, or the Color panel re-derives from a non-palette base → the "even without
-          apply" symptom.
-        • Deeper: Palette is a *finishing* op on STRETCHED data; running LINEAR steps
-          (background/color) after it is semantically wrong — the workflow ordering itself needs a
-          decision (palette should be terminal, or later steps must preserve it).
-      User's proposed option: **Apply should NOT load back into the main app** — instead save the
-      composited image to the working dir and have the user reopen it (makes Palette a terminal
-      export, sidestepping the history-composition problem). Weigh that vs. making "Palette" a
-      preserved terminal history step. Start with systematic-debugging to confirm the exact
-      revert mechanism (reproduce: load master → Palette → Apply → go to Color → observe revert),
-      THEN design. `ui/main_window.py` `_record_palette` + history model + `ui/pipeline.py`.
-- [ ] **NEXT (2026-07-05): Palette Apply drops the stars (starless output).** The live preview
-      shows stars screened back, but pressing **Apply** yields a starless image — stars not
-      re-screened. Preview and Apply use DIFFERENT inputs: preview `_result(self._prev_starless,
-      self._prev_stars)` (downscaled) vs Apply `_result(self._starless, self._stars)` (full-res).
-      Trace: is `self._stars` None at apply-time (→ `_result` falls to `render_nebula`, no stars)?
-      Does `compose` actually run? Or are stars present-but-too-dim (gamma-0.5 star layer screened
-      over the now-bright stretched nebula washes out)? Reproduce: load master → Palette (StarX on)
-      → confirm preview has stars → Apply → inspect result for stars. Files: `ui/palette_dialog.py`
-      `apply`/`_result`/`_cache_previews`, `core/palette.compose`/`screen`/`neutralize_stars`.
-      Related to the palette-workflow rework above — likely tackle together.
+- [x] **Palette workflow reworked into one-press "Colourise" (fixes both palette bugs).** DONE. Replaced the modal-only palette with a one-press **Colourise** button on the Stretch step (StarX cached → auto Foraxx → stars screened back), recorded as a "Colourise" history step at the **stretch position** so later steps preserve it (fixes the "palette discarded by later steps / reset on Color" bug — you also skip the broadband Color step for narrowband, per the new tip). The old "Apply drops stars" bug is gone: the one-press path composes the cached stars back, and "Advanced…" opens the slider dialog seeded with those layers. Whole-branch review caught + fixed a data-loss bug (Advanced truncated history on open → cancel wiped work); now non-destructive (`Project.state_at`; truncate only on record). 348 tests.
+- [ ] **FOLLOW-UP: Recipes/batch don't capture Colourise.** "Colourise" is intentionally not a `PROCESSING_ORDER`/`STEP_NAME` id, so `recipe_from_entries` skips it — a saved recipe omits the colourise step (batch output un-colourised; safe, no crash). Add a `ColouriseStep` (StarX + compose) + factory + batch/recipe serialization so colourised sessions batch correctly. Recipes are a differentiator — do this next. `steps/`, `recipe.py`, `batch.py`.
 - [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop
       crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
       flip each their own history step).
