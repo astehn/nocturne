@@ -5,6 +5,7 @@ from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
 from .background import BackgroundStep
+from .deconvolution_step import DeconvolutionStep
 from .color import ColorStep
 from .crop import CropStep
 from .levels import LevelsStep
@@ -39,6 +40,11 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         return SaturationStep()
     if stage_id == "local_contrast":
         return LocalContrastStep()
+    if stage_id == "deconvolution":
+        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
+        step = DeconvolutionStep(rc)
+        step._runner = rc_runner
+        return step
     if stage_id == "noise_sharpen":
         rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
         step = NoiseSharpenStep(rc)

@@ -77,7 +77,7 @@ def test_noise_sharpen_uses_rcastro_when_present():
     step._runner = fake
     step.apply(img, "strong")
     products = [a[a.index("--no-banner") + 1] for a in calls]
-    assert products == ["nxt", "bxt"]  # denoise then sharpen
+    assert products == ["nxt"]  # denoise only (sharpening moved to Deconvolution)
 
 
 def test_remove_green_step_clamps_green():
@@ -88,3 +88,27 @@ def test_remove_green_step_clamps_green():
     data[..., 1] = 0.9
     out = RemoveGreenStep().apply(AstroImage(data))
     assert out.data[..., 1].max() <= 0.3 + 1e-6
+
+
+def test_deconvolution_free_fallback_sharpens():
+    from seestar_processor.steps.deconvolution_step import DeconvolutionStep
+    img = AstroImage(np.random.rand(20, 20, 3).astype(np.float32), is_linear=True)
+    out = DeconvolutionStep().apply(img, "medium")        # no RC-Astro -> free unsharp
+    assert out.data.shape == img.data.shape
+    assert not np.allclose(out.data, img.data)            # sharpening changed the image
+
+
+def test_deconvolution_uses_bxt_and_sharpens_stars():
+    from seestar_processor.steps.deconvolution_step import DeconvolutionStep
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
+    calls = []
+    def fake(args):
+        calls.append(args)
+        write_temp_fits(img, args[args.index("-o") + 1])
+    step = DeconvolutionStep(rcastro=RCAstro("/fake/rc-astro"))
+    step._runner = fake
+    step.apply(img, "medium")
+    products = [a[a.index("--no-banner") + 1] for a in calls]
+    assert products == ["bxt"]                            # BXT deconvolution
+    bxt = calls[0]
+    assert float(bxt[bxt.index("--sharpen-stars") + 1]) > 0   # tightens stars on linear

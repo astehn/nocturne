@@ -196,3 +196,15 @@ def test_color_panel_has_narrowband_tip(qtbot):
     qtbot.addWidget(w)
     texts = [c.text().lower() for c in w.findChildren(QLabel)]
     assert any("skip" in t and ("narrowband" in t or "dualband" in t) for t in texts)
+
+
+def test_deconvolution_panel_emits_strength(qtbot):
+    got = []
+    w = build_panel(_stage("deconvolution"), on_apply=got.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "process"
+    assert [w.option_box.itemText(i) for i in range(w.option_box.count())] == \
+        ["light", "medium", "strong"]
+    w.option_box.setCurrentText("strong")
+    w.apply_btn.click()
+    assert got == ["strong"]
