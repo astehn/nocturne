@@ -641,6 +641,8 @@ class MainWindow(QMainWindow):
             on_flip_v=self._flip_v,
             on_export=self.export_final,
             on_remove_green=self._remove_green,
+            on_colourise=self._colourise,
+            on_palette_advanced=self._open_advanced_palette,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
         )

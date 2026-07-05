@@ -176,3 +176,23 @@ def test_stretch_slider_double_click_resets(qtbot):
     st.stretch_slider.setValue(20)
     qtbot.mouseDClick(st.stretch_slider, Qt.MouseButton.LeftButton)
     assert st.stretch_slider.value() == 50
+
+
+def test_stretch_panel_has_colourise_and_advanced(qtbot):
+    cols, advs = [], []
+    w = build_panel(_stage("stretch"),
+                    on_colourise=lambda: cols.append(1),
+                    on_palette_advanced=lambda: advs.append(1))
+    qtbot.addWidget(w)
+    assert hasattr(w, "colourise_btn") and hasattr(w, "advanced_btn")
+    w.colourise_btn.click(); w.advanced_btn.click()
+    assert cols == [1] and advs == [1]
+    w.apply_btn.click()          # Apply Stretch still works (no crash)
+
+
+def test_color_panel_has_narrowband_tip(qtbot):
+    from PySide6.QtWidgets import QLabel
+    w = build_panel(_stage("color"))
+    qtbot.addWidget(w)
+    texts = [c.text().lower() for c in w.findChildren(QLabel)]
+    assert any("skip" in t and ("narrowband" in t or "dualband" in t) for t in texts)
