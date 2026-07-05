@@ -603,3 +603,16 @@ def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
     assert names.count("Stretch") == 1           # NOT double-applied
     assert "Flip H" in names and "Crop" in names # geometry preserved
     assert win.project.current().data.shape[:2] == (16, 16)
+
+
+def test_deconvolution_applied_and_preserved_after_stretch(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)                 # _async_enabled False
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("deconvolution")
+    win.apply_current("medium")                    # free unsharp fallback (no RC-Astro in tests)
+    assert win.project.entries()[-1][0] == "Deconvolution"
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    names = [n for n, _ in win.project.entries()]
+    assert "Deconvolution" in names and "Stretch" in names
+    assert names.index("Deconvolution") < names.index("Stretch")   # preserved before the reveal
