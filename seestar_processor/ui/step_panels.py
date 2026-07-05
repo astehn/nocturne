@@ -12,6 +12,7 @@ from .reset_slider import ResetSlider
 
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
+    "deconvolution": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
     "local_contrast": ["light", "medium", "strong"],
     "star_reduction": ["light", "medium", "strong"],
@@ -21,7 +22,9 @@ EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"
 STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
 _DESCRIPTIONS = {
     "background": "Removes light-pollution gradients so the sky background is even.",
-    "noise_sharpen": "Reduces grain and recovers fine detail.",
+    "deconvolution": "Sharpens stars and recovers fine detail (deconvolution) on the "
+                     "linear image, before stretch. Best with RC-Astro; free fallback otherwise.",
+    "noise_sharpen": "Reduces grain (noise reduction).",
     "local_contrast": "Boosts mid-scale structure (local contrast).",
     "star_reduction": "Shrinks stars so nebulosity stands out.",
 }

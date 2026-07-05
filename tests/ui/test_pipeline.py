@@ -5,14 +5,14 @@ from seestar_processor.ui.pipeline import (
 
 def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
-        "load", "crop", "background", "color", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "stretch",
     ]
 
 
 def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "crop", "background", "color", "stretch", "levels",
+        "load", "crop", "background", "color", "deconvolution", "stretch", "levels",
         "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export",
     ]
 
@@ -26,13 +26,13 @@ def test_next_prev_enabled_on_stage_list():
 
 
 def test_step_name_and_order():
-    assert STEP_NAME["noise_sharpen"] == "Noise & Sharpen"
+    assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
     assert STEP_NAME["levels"] == "Levels"
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "remove_green", "stretch", "levels", "saturation",
-        "noise_sharpen", "local_contrast", "star_reduction",
+        "background", "color", "remove_green", "deconvolution", "stretch", "levels",
+        "saturation", "noise_sharpen", "local_contrast", "star_reduction",
     ]
 
 
@@ -46,3 +46,15 @@ def test_remove_green_positioned_after_color():
     assert STEP_NAME["remove_green"] == "Remove Green"
     i = PROCESSING_ORDER.index("remove_green")
     assert PROCESSING_ORDER[i - 1] == "color"
+
+
+def test_deconvolution_stage_and_order():
+    from seestar_processor.ui.pipeline import (
+        PROCESSING_ORDER, STEP_NAME, path_stages)
+    assert STEP_NAME["deconvolution"] == "Deconvolution"
+    assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
+    i = PROCESSING_ORDER.index("deconvolution")
+    assert PROCESSING_ORDER[i - 1] == "remove_green"
+    assert PROCESSING_ORDER[i + 1] == "stretch"
+    ids = [s.id for s in path_stages()]
+    assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")

@@ -33,7 +33,7 @@ def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
 def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    seq = ["crop", "background", "color", "stretch", "levels",
+    seq = ["crop", "background", "color", "deconvolution", "stretch", "levels",
            "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export"]
     for sid in seq:
         win.go_next()
