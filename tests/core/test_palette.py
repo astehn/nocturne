@@ -276,32 +276,25 @@ def test_neutralize_stars_lifts_faint_stars():
     assert np.allclose(out[..., 0], out[..., 1]) and np.allclose(out[..., 1], out[..., 2])  # white
 
 
-def test_palette_params_star_and_denoise_defaults():
+def test_palette_params_star_default():
     from seestar_processor.core.palette import PaletteParams
     p = PaletteParams()
-    assert p.denoise == 0.02 and p.star_brightness == 0.08
+    assert p.star_brightness == 0.08
+    assert not hasattr(p, "denoise")   # no in-channel denoise (it blotched real noisy data)
 
 
-def _noisy_dualband_starless():
-    rng = np.random.default_rng(2)
-    H, W = 160, 160
-    yy, xx = np.mgrid[0:H, 0:W]
-    sig = np.exp(-(((xx - 80) / 90) ** 2 + ((yy - 80) / 90) ** 2))
-    d = np.zeros((H, W, 3), np.float32)
-    d[..., 0] = 0.02 + 0.08 * sig                 # Ha
-    d[..., 1] = 0.02 + 0.015 * sig                # OIII (weak)
-    d[..., 2] = 0.02 + 0.015 * sig
-    d += rng.normal(0, 0.006, (H, W, 3)).astype(np.float32)
-    return AstroImage(np.clip(d, 0.0, 1.0), is_linear=True)
-
-
-def test_render_nebula_denoise_reduces_noise_preserves_signal():
+def test_render_nebula_does_not_spatially_blur():
+    # Colourise is per-pixel (stretch/blend/hue/sat); it must NOT spatially smooth
+    # the channels. Denoising the faint channel before the big stretch turned fine
+    # grain into amplified low-frequency colour blotches — guard against re-adding it.
     from seestar_processor.core.palette import render_nebula, PaletteParams
-    img = _noisy_dualband_starless()
-    off = render_nebula(img, PaletteParams(denoise=0.0)).data
-    on = render_nebula(img, PaletteParams(denoise=0.02)).data
-    # background corner (signal-free) is cleaner with denoise
-    assert on[:30, :30].std() < off[:30, :30].std() * 0.8
-    # central nebula signal survives (not flattened to background)
-    assert on[70:90, 70:90].mean() > on[:30, :30].mean() + 0.1
-    assert render_nebula(img, PaletteParams()).is_linear is False
+    rng = np.random.default_rng(2)
+    H, W = 80, 80
+    d = np.full((H, W, 3), 0.05, np.float32)
+    d[::2, ::2, :] = 0.5                            # sharp high-frequency checker in Ha+OIII
+    d += rng.normal(0, 0.002, (H, W, 3)).astype(np.float32)
+    img = AstroImage(np.clip(d, 0.0, 1.0), is_linear=True)
+    out = render_nebula(img, PaletteParams()).data.mean(axis=2)
+    # adjacent-pixel contrast must survive (a blur would collapse it toward 0)
+    horiz_contrast = float(np.abs(out[:, ::2] - out[:, 1::2]).mean())
+    assert horiz_contrast > 0.15

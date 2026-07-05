@@ -130,7 +130,6 @@ class PaletteParams:
     hue_deg: float = 0.0           # global hue rotation, degrees
     saturation: float = 0.65       # saturate() amount; 0.5 = neutral
     scnr: bool = True              # green suppression
-    denoise: float = 0.02          # TV-chambolle weight for the faint channels (0 = off)
     star_brightness: float = 0.08  # MTF midtones for the white-star lift (lower = brighter stars)
 
 
@@ -164,10 +163,6 @@ def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
     ha = subtract_bg_2d(ha)
     oiii = subtract_bg_2d(oiii)
     oiii = renorm_oiii(ha, oiii)
-    if params.denoise > 0:
-        from skimage.restoration import denoise_tv_chambolle
-        ha = denoise_tv_chambolle(ha, weight=params.denoise).astype(np.float32)
-        oiii = denoise_tv_chambolle(oiii, weight=params.denoise).astype(np.float32)
     ha = stretch_channel(ha, params.ha_stretch)
     oiii = stretch_channel(oiii, params.oiii_stretch)
     if params.palette == "HOO":
