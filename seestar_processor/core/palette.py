@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .image import AstroImage
-from .autostretch import _mtf, linked_stretch
+from .autostretch import _TARGET_BG, _apply_params, _stretch_params, linked_stretch
 from .saturation import saturate
 from .stretch import amount_to_target
 
@@ -130,23 +130,28 @@ class PaletteParams:
     hue_deg: float = 0.0           # global hue rotation, degrees
     saturation: float = 0.65       # saturate() amount; 0.5 = neutral
     scnr: bool = True              # green suppression
-    star_brightness: float = 0.08  # MTF midtones for the white-star lift (lower = brighter stars)
 
 
-def neutralize_stars(stars: AstroImage, midtones: float = 0.08) -> AstroImage:
-    """White (colour-neutral) star layer, lifted with a FIXED-midtones MTF so the
-    faint majority stay visible over the stretched nebula without bloating.
+def restore_stars(stars: AstroImage, reference: AstroImage) -> AstroImage:
+    """The StarX 'stars_only' layer at its SOURCE brightness and colour, so
+    screening it back reproduces the stars exactly as they appear in the input —
+    same count, same brightness, same colour. Star dimming/reduction is the
+    separate Star Reduction step, not here.
 
-    Do NOT use the adaptive autostretch here: the StarX 'stars_only' layer is
-    sparse (mostly black), so its median/MAD collapse to ~0 and the adaptive
-    midtones solve degenerates into an extreme threshold that blows stars to
-    white blobs. A fixed midtones (default 0.08) lifts faint stars while a smooth
-    curve keeps them tight."""
+    The stars-only layer is linear/faint (StarX ran on the linear master), while
+    the colourised nebula is display-stretched. We stretch the stars with the
+    SAME display transform the app uses to show the image, derived from the
+    `reference` (starless) luminance — which has a real distribution, so it is
+    non-degenerate on the sparse star layer — and apply it per channel to keep
+    the stars' colour. Result matches a stretch-then-StarX-then-screen workflow."""
     if not stars.is_color:
         return stars.copy()
-    lum = _mtf(midtones, np.clip(stars.data.mean(axis=2), 0.0, 1.0))
-    rgb = np.clip(np.stack([lum, lum, lum], axis=2), 0.0, 1.0).astype(np.float32)
-    return AstroImage(rgb, is_linear=False, metadata=dict(stars.metadata))
+    ref_lum = reference.data.mean(axis=2) if reference.is_color else reference.data
+    shadow, m = _stretch_params(ref_lum, _TARGET_BG)
+    rgb = np.stack(
+        [_apply_params(stars.data[..., c], shadow, m) for c in range(3)], axis=2)
+    return AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
+                      is_linear=False, metadata=dict(stars.metadata))
 
 
 def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
@@ -182,8 +187,8 @@ def render_nebula(starless: AstroImage, params: PaletteParams) -> AstroImage:
 
 
 def compose(starless: AstroImage, stars: AstroImage, params: PaletteParams) -> AstroImage:
-    """render_nebula(starless), then screen neutralize_stars(stars) back on top."""
+    """render_nebula(starless), then screen the source-brightness stars on top."""
     nebula = render_nebula(starless, params)
-    white = neutralize_stars(stars, params.star_brightness)
-    out = screen(nebula.data, white.data)
+    stars_src = restore_stars(stars, starless)
+    out = screen(nebula.data, stars_src.data)
     return AstroImage(out, is_linear=False, metadata=dict(starless.metadata))
