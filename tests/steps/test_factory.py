@@ -21,3 +21,5 @@ def test_make_step_types():
     assert isinstance(make_step("rotate", s), CropStep)
     assert isinstance(make_step("flip_h", s), CropStep)
     assert isinstance(make_step("flip_v", s), CropStep)
+    from seestar_processor.steps.deconvolution_step import DeconvolutionStep
+    assert isinstance(make_step("deconvolution", s), DeconvolutionStep)
