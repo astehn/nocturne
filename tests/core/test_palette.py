@@ -63,10 +63,25 @@ def test_apply_palette_dispatch_and_unknown():
         apply_palette(img, "SHO")
 
 
-def test_neutralize_stars_makes_white():
-    from seestar_processor.core.palette import neutralize_stars
-    out = neutralize_stars(_img([(0.8, 0.2, 0.2)])).data[0, 0]
-    assert np.allclose(out, out[0])              # R==G==B (grey/white)
+def _ref_and_star(H=80, W=80):
+    # a realistic starless reference (faint background) + a single gaussian star
+    rng = np.random.default_rng(0)
+    ref = AstroImage(
+        np.clip(0.02 + rng.normal(0, 0.003, (H, W, 3)).astype(np.float32), 0.0, 1.0),
+        is_linear=True)
+    yy, xx = np.mgrid[0:H, 0:W]
+    star2d = np.exp(-(((xx - W // 2) ** 2 + (yy - H // 2) ** 2) / (2 * 1.4 ** 2))).astype(np.float32)
+    return ref, star2d
+
+
+def test_restore_stars_keeps_colour_and_brightens_to_source():
+    from seestar_processor.core.palette import restore_stars
+    ref, _ = _ref_and_star()
+    stars = AstroImage(np.zeros((80, 80, 3), np.float32), is_linear=True)
+    stars.data[40, 40] = [0.5, 0.1, 0.1]         # a faint RED star (linear)
+    px = restore_stars(stars, ref).data[40, 40]
+    assert px[0] > 0.5                            # brightened to source brightness (was 0.5 linear)
+    assert px[0] > px[1] and px[0] > px[2]        # colour PRESERVED (still red, not neutralised to white)
 
 
 def test_screen_blend_math():
@@ -234,53 +249,31 @@ def test_render_nebula_sliders_have_effect():
     assert float(np.median(hi)) - float(np.median(lo)) > 0.1   # stretch sliders do something
 
 
-def _single_star_layer():
-    # StarX 'stars_only' output is sparse (mostly black). A single gaussian star,
-    # peak-normalized linear. An adaptive autostretch degenerates on this sparse
-    # input and bloats the star's faint wings to white (footprint 9px -> ~149px);
-    # a controlled stretch keeps the star tight.
-    H, W = 80, 80
-    yy, xx = np.mgrid[0:H, 0:W]
-    star = np.exp(-(((xx - 40) ** 2 + (yy - 40) ** 2) / (2 * 1.4 ** 2))).astype(np.float32)
-    return AstroImage(np.stack([star, star, star], axis=2), is_linear=True)
-
-
-def test_neutralize_stars_does_not_bloat():
-    from seestar_processor.core.palette import neutralize_stars
-    out = neutralize_stars(_single_star_layer()).data
+def test_restore_stars_stays_point_source_not_degenerate_blob():
+    # The reference-derived stretch is non-degenerate on the sparse star layer, so
+    # a star reveals as a bright point with a natural halo — NOT a frame-filling
+    # blob (the old adaptive-autostretch-on-the-sparse-layer failure).
+    from seestar_processor.core.palette import restore_stars
+    ref, star2d = _ref_and_star(80, 80)          # 6400 px total
+    stars = AstroImage(np.stack([star2d, star2d, star2d], axis=2), is_linear=True)
+    out = restore_stars(stars, ref).data
+    assert out.max() > 0.6                        # star clearly bright
     footprint = int((out.mean(axis=2) > 0.5).sum())
-    assert footprint < 40        # star stays tight (autostretch bloated it to ~149px)
-    assert out.max() > 0.5       # but the star is still clearly visible
+    assert footprint < 300                        # tight star + halo, not a degenerate blob (would be ~thousands)
 
 
-def _faint_star_field():
-    # realistic sparse star field: power-law brightness (many faint, few bright), linear
-    from scipy.ndimage import gaussian_filter
-    rng = np.random.default_rng(7)
-    H, W = 200, 200
-    s = np.zeros((H, W), np.float32)
-    for (cy, cx), a in zip(rng.integers(3, H - 3, (500, 2)), (rng.random(500) ** 3)):
-        s[cy, cx] += a
-    s = gaussian_filter(s, 0.8, mode="constant")
-    s = np.clip(s, 0.0, None)
-    s /= s.max()
-    return AstroImage(np.stack([s, s, s], axis=2).astype(np.float32), is_linear=True)
+def test_restore_stars_mono_passthrough():
+    from seestar_processor.core.palette import restore_stars
+    mono = AstroImage(np.full((4, 4), 0.3, np.float32), is_linear=True)
+    ref = AstroImage(np.full((4, 4, 3), 0.02, np.float32), is_linear=True)
+    assert restore_stars(mono, ref).data.ndim == 2   # mono returned unchanged
 
 
-def test_neutralize_stars_lifts_faint_stars():
-    from seestar_processor.core.palette import neutralize_stars
-    out = neutralize_stars(_faint_star_field()).data
-    lum = out.mean(axis=2)
-    star_px = lum[lum > 0.1]
-    assert float(np.median(star_px)) > 0.25    # gamma=0.5 gave ~0.20; MTF lift clears 0.25
-    assert np.allclose(out[..., 0], out[..., 1]) and np.allclose(out[..., 1], out[..., 2])  # white
-
-
-def test_palette_params_star_default():
+def test_palette_params_no_star_or_denoise_fields():
     from seestar_processor.core.palette import PaletteParams
     p = PaletteParams()
-    assert p.star_brightness == 0.08
-    assert not hasattr(p, "denoise")   # no in-channel denoise (it blotched real noisy data)
+    assert not hasattr(p, "star_brightness")   # stars restored at source brightness, no tuning param
+    assert not hasattr(p, "denoise")           # no in-channel denoise (it blotched real noisy data)
 
 
 def test_render_nebula_does_not_spatially_blur():
