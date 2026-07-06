@@ -21,7 +21,7 @@ from ..history.step import Step
 from ..settings import (
     graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
 )
-from ..recipe import recipe_from_entries, save_recipe
+from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
 from ..steps.load import load_fits
 from ..tools.base import run_cli
@@ -219,6 +219,17 @@ class MainWindow(QMainWindow):
     def _save_recipe(self) -> None:
         if self.project is None:
             return
+        uncaptured = uncaptured_step_names(self.project.entries())
+        if uncaptured:
+            resp = QMessageBox.warning(
+                self, f"{APP_NAME} — Save Recipe",
+                "This recipe can't include: " + ", ".join(uncaptured) + ".\n"
+                "Those steps will be left out. Save the rest anyway?",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if resp != QMessageBox.StandardButton.Save:
+                return
         path, _ = QFileDialog.getSaveFileName(self, "Save Recipe", "", "Recipe (*.json)")
         if not path:
             return

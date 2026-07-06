@@ -57,3 +57,10 @@ def test_mixed_geometry_recipe_keeps_order():
     from seestar_processor.recipe import recipe_from_entries
     rec = recipe_from_entries([("Rotate", ""), ("Crop", ""), ("Stretch", 0.5)])
     assert [s["stage"] for s in rec.steps] == ["rotate", "crop", "stretch"]
+
+
+def test_uncaptured_step_names():
+    from seestar_processor.recipe import uncaptured_step_names
+    entries = [("Stretch", 0.5), ("Colourise", ""), ("Boost Red", ""), ("Colourise", "")]
+    assert uncaptured_step_names(entries) == ["Colourise", "Boost Red"]
+    assert uncaptured_step_names([("Stretch", 0.5), ("Levels", (0, 1, 1))]) == []
