@@ -41,7 +41,7 @@ def test_all_zero_image_does_not_divide_by_zero(tmp_path):
 
 
 def test_metadata_parsed_from_header(tmp_path):
-    from seestar_processor.core.fits_io import format_metadata
+    from seestar_processor.core.fits_io import import_summary
     arr = np.random.randint(0, 4096, size=(3, 16, 16)).astype(np.uint16)
     hdu = fits.PrimaryHDU(arr)
     hdu.header["EXPTIME"] = 30.0
@@ -54,7 +54,7 @@ def test_metadata_parsed_from_header(tmp_path):
     assert img.metadata["target"] == "M31"
     assert img.metadata["frames"] == 120
     assert img.metadata["width"] == 16 and img.metadata["height"] == 16
-    summary = format_metadata(img.metadata)
+    summary = import_summary(img.metadata)
     assert "M31" in summary and "30" in summary
 
 
@@ -64,3 +64,36 @@ def test_unsupported_3d_shape_raises(tmp_path):
     _write(str(p), arr)
     with pytest.raises(ValueError):
         load_fits(str(p))
+
+
+def test_format_integration():
+    from seestar_processor.core.fits_io import format_integration
+    assert format_integration(2900) == "48m 20s"
+    assert format_integration(8100) == "2h 15m"
+    assert format_integration(20) == "20s"
+
+
+def test_parse_metadata_temp_and_date(tmp_path):
+    from astropy.io import fits
+    import numpy as np
+    arr = np.random.randint(0, 4096, size=(3, 8, 8)).astype(np.uint16)
+    hdu = fits.PrimaryHDU(arr)
+    hdu.header["CCD-TEMP"] = 26.0
+    hdu.header["DATE-OBS"] = "2026-06-18T21:34:00"
+    p = tmp_path / "t.fits"
+    hdu.writeto(str(p), overwrite=True)
+    img = load_fits(str(p))
+    assert img.metadata["temp"] == 26.0
+    assert str(img.metadata["date"]).startswith("2026-06-18")
+
+
+def test_import_summary_full_and_sparse():
+    from seestar_processor.core.fits_io import import_summary
+    full = import_summary({"exposure": 20, "frames": 145, "target": "IC 5070",
+                           "width": 2160, "height": 3840})
+    for token in ("IC 5070", "48m 20s", "145 × 20s", "2160 × 3840",
+                  "Sony IMX585", "4.0″"):
+        assert token in full, token
+    sparse = import_summary({"width": 10, "height": 10})
+    assert "Sony IMX585" in sparse and "10 × 10" in sparse
+    assert "Total integration" not in sparse
