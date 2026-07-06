@@ -224,7 +224,6 @@ class MainWindow(QMainWindow):
             self._status.setText("Colourise needs a colour image.")
             return
         self._status.setText("")
-        self._set_busy(True)
 
         def work():
             starless, stars = self._colourise_starx(base)
@@ -232,25 +231,14 @@ class MainWindow(QMainWindow):
                 return render_nebula(starless, PaletteParams())
             return compose(starless, stars, PaletteParams())
 
-        def done(result):
+        def on_result(result):
             self.project.jump_back(idx)             # truncate only on success
             self.project.run_step(_PrecomputedStep("Colourise", result), "")
             self.log_panel.append_entry(
                 format_log_entry("Colourise", "", rms_delta(base, result)))
-            self._set_busy(False)
             self._refresh()
 
-        def err(exc):
-            self._set_busy(False)
-            self._status.setText(f"Colourise failed: {exc}")
-
-        if self._async_enabled:
-            run_async(self._pool, work, done, err)
-        else:
-            try:
-                done(work())
-            except Exception as exc:  # mirror the async error path
-                err(exc)
+        self._run_busy(work, on_result, "Colourising…", "Colourise failed")
 
     def _open_advanced_palette(self) -> None:
         if self.project is None or self._busy:
@@ -433,28 +421,14 @@ class MainWindow(QMainWindow):
         step = self._step_for(stage_id)
         base = self.project.current()
         self._status.setText("")
-        self._set_busy(True)
 
-        def work():
-            return step.apply(base, option)
-
-        def done(result):
+        def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._log_step(stage_id, option, base, result)
-            self._set_busy(False)
             self._refresh()  # stay on this step; user clicks Next to advance
 
-        def err(exc):
-            self._set_busy(False)
-            self._status.setText(f"Failed: {exc}")
-
-        if self._async_enabled:
-            run_async(self._pool, work, done, err)
-        else:
-            try:
-                done(work())
-            except Exception as exc:  # mirror the async error path
-                err(exc)
+        self._run_busy(lambda: step.apply(base, option), on_result,
+                       f"Applying {STEP_NAME[stage_id]}…", "Failed")
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
@@ -466,7 +440,35 @@ class MainWindow(QMainWindow):
             label = option
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
-    def _set_busy(self, busy: bool) -> None:
+    def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
+        """Run `work` off the UI thread with busy indication; `on_result(result)`
+        on success, `f"{err_prefix}: {exc}"` in the status label on failure.
+        Busy is always cleared in a finally (even if `on_result` raises)."""
+        self._set_busy(True, label)
+
+        def done(result):
+            try:
+                on_result(result)
+            finally:
+                self._set_busy(False)
+
+        def err(exc):
+            try:
+                self._status.setText(f"{err_prefix}: {exc}")
+            finally:
+                self._set_busy(False)
+
+        if self._async_enabled:
+            run_async(self._pool, work, done, err)
+        else:
+            try:
+                result = work()
+            except Exception as exc:  # mirror the async error path
+                err(exc)
+            else:
+                done(result)          # an on_result throw propagates after the finally
+
+    def _set_busy(self, busy: bool, label: str = "Working…") -> None:
         self._busy = busy
         if busy:
             self._busy_overlay.show_over(self.image_view)

@@ -642,3 +642,27 @@ def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
     win.apply_current(0.6)                             # earlier processing step
     names = [n for n, _ in win.project.entries()]
     assert "Boost Blue" not in names                  # trailing enhancement truncated
+
+
+def test_run_busy_clears_busy_when_on_result_raises(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
+    win.open_fits(_make_fits(tmp_path))
+
+    def boom(_result):
+        raise RuntimeError("kaboom")
+
+    with pytest.raises(RuntimeError):
+        win._run_busy(lambda: 1, boom, "Working…", "Failed")
+    assert win._busy is False  # finally cleared it despite the throw
+
+
+def test_run_busy_reports_error_prefix(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    def work():
+        raise ValueError("disk full")
+
+    win._run_busy(work, lambda r: None, "Working…", "Export failed")
+    assert win._busy is False
+    assert "Export failed: disk full" in win._status.text()
