@@ -168,11 +168,27 @@ def test_step_for_types(qtbot, tmp_path):
 def test_apply_levels_stays_on_step_and_logs(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)          # Levels operates on the stretched image
     win._go_to_id("levels")
     win.apply_current((0.2, 1.0, 1.0))
     assert win.current_stage_id() == "levels"
     assert win.project.entries()[-1][0] == "Levels"
     assert "Levels" in win.log_panel.text()
+
+
+def test_levels_refused_on_linear_image(qtbot, tmp_path):
+    # Applying Levels before Stretch would clip the tiny linear values (~0.003)
+    # to black; the step must refuse with a hint instead of blacking out.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("levels")
+    assert win.project.current().is_linear          # not stretched yet
+    names_before = [n for n, _ in win.project.entries()]
+    win.apply_current((0.01, 1.0, 1.0))             # a tiny black-point nudge
+    assert [n for n, _ in win.project.entries()] == names_before   # nothing applied
+    assert win.project.current().is_linear          # image untouched, not blacked out
+    assert "Stretch" in win._status.text()
 
 
 def test_histogram_updates_on_open(qtbot, tmp_path):
