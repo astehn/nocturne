@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="t">
+  <title id="t">Nocturne</title>
+  <defs>
+    <radialGradient id="sky" cx="46%" cy="40%" r="72%">
+      <stop offset="0%" stop-color="#3f79d8"/>
+      <stop offset="52%" stop-color="#1c4a99"/>
+      <stop offset="100%" stop-color="#0a1f47"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#7cc4ff"/>
+      <stop offset="50%" stop-color="#2f7fe0"/>
+      <stop offset="100%" stop-color="#123f86"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="38%" cy="34%" r="72%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#cfe0f5"/>
+    </radialGradient>
+    <mask id="crescent">
+      <rect width="1024" height="1024" fill="#000"/>
+      <circle cx="690" cy="330" r="118" fill="#fff"/>
+      <circle cx="735" cy="298" r="112" fill="#000"/>
+    </mask>
+    <symbol id="s" viewBox="-10 -10 20 20">
+      <path d="M0-10 2.6-2.6 10 0 2.6 2.6 0 10-2.6 2.6-10 0-2.6-2.6Z" fill="#eaf3ff"/>
+    </symbol>
+  </defs>
+
+  <!-- Badge -->
+  <circle cx="512" cy="512" r="486" fill="#060d1e"/>
+  <circle cx="512" cy="512" r="466" fill="none" stroke="url(#ring)" stroke-width="30"/>
+  <circle cx="512" cy="512" r="440" fill="url(#sky)"/>
+
+  <g clip-path="none">
+    <!-- Aperture opening: a bold hexagon outline that keeps the 'camera' identity -->
+    <path d="M512 210 774 361 774 663 512 814 250 663 250 361Z"
+          fill="none" stroke="#0b1c3d" stroke-width="26" stroke-linejoin="round" opacity=".55"/>
+
+    <!-- Crescent moon -->
+    <circle cx="690" cy="330" r="132" fill="#bcd3f2" opacity=".18"/>
+    <rect width="1024" height="1024" fill="url(#moon)" mask="url(#crescent)"/>
+
+    <!-- Stars -->
+    <use href="#s" x="330" y="360" width="120" height="120"/>
+    <use href="#s" x="560" y="590" width="78" height="78"/>
+    <g fill="#dcecff">
+      <circle cx="392" cy="600" r="9"/>
+      <circle cx="628" cy="270" r="8"/>
+      <circle cx="300" cy="470" r="7"/>
+      <circle cx="470" cy="700" r="8"/>
+      <circle cx="700" cy="640" r="7"/>
+    </g>
+  </g>
+
+  <!-- crisp inner edge -->
+  <circle cx="512" cy="512" r="440" fill="none" stroke="#060d1e" stroke-width="10"/>
+</svg>
