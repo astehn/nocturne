@@ -50,6 +50,14 @@ PROCESSING_ORDER = [
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
 
+# Finishing steps that operate in display space and require a stretched image.
+# These are the in-app tail stages minus "export" (exporting a linear file is
+# legitimate, so Export never forces a stretch).
+POST_STRETCH_IDS = frozenset({
+    "levels", "saturation", "noise_sharpen",
+    "local_contrast", "star_reduction", "enhancements",
+})
+
 
 def core_stages() -> list[Stage]:
     return list(_CORE)
