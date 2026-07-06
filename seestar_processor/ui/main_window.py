@@ -5,7 +5,7 @@ import os
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME
@@ -28,8 +28,9 @@ from ..tools.base import run_cli
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
-from .about import help_html
+from . import help_content
 from .about_dialog import AboutDialog
+from .help_dialog import HelpDialog
 from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
@@ -128,6 +129,25 @@ class MainWindow(QMainWindow):
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
+        # Bottom-anchored explainer: describes the current step. Owned by the
+        # column (not the panel builders) so it stays put as panels gain toggles.
+        self._current_topic_id = None
+        self._explainer = QLabel("")
+        self._explainer.setObjectName("stepExplainer")
+        self._explainer.setWordWrap(True)
+        self._explainer.setTextFormat(Qt.TextFormat.RichText)
+        self._explainer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._explainer_scroll = QScrollArea()
+        self._explainer_scroll.setWidgetResizable(True)
+        self._explainer_scroll.setWidget(self._explainer)
+        self._explainer_scroll.setMaximumHeight(240)   # never crowd the nav row
+        self._right_layout.addWidget(self._explainer_scroll)
+        self._full_help_link = QLabel('<a href="#">Full help →</a>')
+        self._full_help_link.setObjectName("fullHelpLink")
+        self._full_help_link.setOpenExternalLinks(False)
+        self._full_help_link.linkActivated.connect(
+            lambda _: self._open_help(self._current_topic_id))
+        self._right_layout.addWidget(self._full_help_link)
         nav = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
         self._next_btn = QPushButton("Next →")
@@ -168,7 +188,26 @@ class MainWindow(QMainWindow):
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
 
     def _show_help(self) -> None:
-        QMessageBox.information(self, f"{APP_NAME} — Help", help_html())
+        self._open_help("getting-started")
+
+    def _open_help(self, topic_id: str | None = None) -> HelpDialog:
+        dlg = HelpDialog(self)
+        if topic_id:
+            dlg.show_topic(topic_id)
+        dlg.show()
+        return dlg
+
+    def _update_explainer(self) -> None:
+        tid = help_content.stage_topic_id(self.current_stage_id()) if self.project else None
+        t = help_content.topic(tid) if tid else None
+        self._current_topic_id = tid
+        if t is None:
+            self._explainer_scroll.setVisible(False)
+            self._full_help_link.setVisible(False)
+            return
+        self._explainer.setText(f"<b>{t.summary}</b>{t.body}")
+        self._explainer_scroll.setVisible(True)
+        self._full_help_link.setVisible(True)
 
     def _make_about_dialog(self) -> AboutDialog:
         return AboutDialog(self)
@@ -743,6 +782,7 @@ class MainWindow(QMainWindow):
         self._panel.deleteLater()
         self._panel = new_panel
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
+        self._update_explainer()
 
     def _refresh(self) -> None:
         self.stepper.set_current(self._stage)
