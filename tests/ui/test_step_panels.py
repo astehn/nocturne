@@ -208,3 +208,14 @@ def test_deconvolution_panel_emits_strength(qtbot):
     w.option_box.setCurrentText("strong")
     w.apply_btn.click()
     assert got == ["strong"]
+
+
+def test_enhance_panel_buttons_invoke_callback(qtbot):
+    ops = []
+    w = build_panel(_stage("enhancements"), on_enhance=ops.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "enhance"
+    w.boost_red_btn.click()
+    w.darken_sky_btn.click()
+    w.lighten_sky_btn.click()
+    assert ops == ["Boost Red", "Darken Sky", "Lighten Sky"]

@@ -13,7 +13,8 @@ def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
         "load", "crop", "background", "color", "deconvolution", "stretch", "levels",
-        "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export",
+        "saturation", "noise_sharpen", "local_contrast", "star_reduction", "enhancements",
+        "export",
     ]
 
 
@@ -58,3 +59,11 @@ def test_deconvolution_stage_and_order():
     assert PROCESSING_ORDER[i + 1] == "stretch"
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")
+
+
+def test_enhancements_stage_and_names():
+    from seestar_processor.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, path_stages
+    assert ENHANCE_NAMES == ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
+    ids = [s.id for s in path_stages()]
+    assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
+    assert "enhancements" not in PROCESSING_ORDER   # append-only, not a truncating position

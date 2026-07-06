@@ -34,7 +34,8 @@ def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     seq = ["crop", "background", "color", "deconvolution", "stretch", "levels",
-           "saturation", "noise_sharpen", "local_contrast", "star_reduction", "export"]
+           "saturation", "noise_sharpen", "local_contrast", "star_reduction",
+           "enhancements", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
@@ -616,3 +617,28 @@ def test_deconvolution_applied_and_preserved_after_stretch(qtbot, tmp_path):
     names = [n for n, _ in win.project.entries()]
     assert "Deconvolution" in names and "Stretch" in names
     assert names.index("Deconvolution") < names.index("Stretch")   # preserved before the reveal
+
+
+def test_enhance_appends_undoable_steps(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)                    # _async_enabled False
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.current().data.copy()
+    win._enhance("Boost Red")
+    assert win.project.entries()[-1][0] == "Boost Red"
+    assert not np.allclose(win.project.current().data, before)   # image changed
+    win._enhance("Darken Sky")                        # taps stack
+    names = [n for n, _ in win.project.entries()]
+    assert names[-2:] == ["Boost Red", "Darken Sky"]
+    win.project.undo()                                # Undo peels one off
+    assert win.project.entries()[-1][0] == "Boost Red"
+    assert "enhancements" in win._done_ids()
+
+
+def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._enhance("Boost Blue")
+    win._go_to_id("saturation")
+    win.apply_current(0.6)                             # earlier processing step
+    names = [n for n, _ in win.project.entries()]
+    assert "Boost Blue" not in names                  # trailing enhancement truncated

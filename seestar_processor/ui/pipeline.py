@@ -27,6 +27,7 @@ _IN_APP_TAIL = [
     Stage("noise_sharpen", "Noise Reduction", "process"),
     Stage("local_contrast", "Local Contrast", "process"),
     Stage("star_reduction", "Star Reduction", "process"),
+    Stage("enhancements", "Enhancements", "enhance"),
     Stage("export", "Export", "export"),
 ]
 
@@ -47,6 +48,7 @@ PROCESSING_ORDER = [
     "saturation", "noise_sharpen", "local_contrast", "star_reduction",
 ]
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
+ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
 
 
 def core_stages() -> list[Stage]:

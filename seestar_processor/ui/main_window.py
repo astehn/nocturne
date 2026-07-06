@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME
 from ..core.crop import CropParams, detect_content_bounds
+from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff
 from ..core.fits_io import format_metadata
 from ..core.autostretch import autostretch
@@ -33,7 +34,7 @@ from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
-from .pipeline import GEOMETRY_NAMES, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
+from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -43,6 +44,14 @@ from .welcome import WelcomeScreen
 from .worker import BusyOverlay, run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
+
+_ENHANCE_FN = {
+    "Boost Red": lambda i: boost_hue(i, 0.0),
+    "Boost Cyan": lambda i: boost_hue(i, 0.5),
+    "Boost Blue": lambda i: boost_hue(i, 0.667),
+    "Darken Sky": darken_sky,
+    "Lighten Sky": lighten_sky,
+}
 
 
 class _PrecomputedStep(Step):
@@ -485,6 +494,15 @@ class MainWindow(QMainWindow):
         # Snap the visible box to the chosen ratio (and lock future resizes).
         self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
 
+    def _enhance(self, op: str) -> None:
+        if self.project is None or self._busy:
+            return
+        result = _ENHANCE_FN[op](self.project.current())
+        self.project.run_step(_PrecomputedStep(op, result), "")
+        self.log_panel.append_entry(format_log_entry(op, "", None))
+        self._status.setText("")
+        self._refresh()
+
     def _apply_geometry(self, name: str, params) -> None:
         if self.project is None or self._busy:
             return
@@ -652,6 +670,7 @@ class MainWindow(QMainWindow):
             on_remove_green=self._remove_green,
             on_colourise=self._colourise,
             on_palette_advanced=self._open_advanced_palette,
+            on_enhance=self._enhance,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
         )
@@ -688,4 +707,6 @@ class MainWindow(QMainWindow):
             done.add("crop")
         if "Colourise" in applied:
             done.add("stretch")
+        if any(e in applied for e in ENHANCE_NAMES):
+            done.add("enhancements")
         return done

@@ -56,6 +56,7 @@ def build_panel(
     on_remove_green=None,
     on_colourise=None,
     on_palette_advanced=None,
+    on_enhance=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
 ) -> QWidget:
@@ -144,6 +145,23 @@ def build_panel(
         w.option_box = box
         w.apply_btn = apply_btn
         w.disabled_note = note
+
+    elif stage.kind == "enhance":
+        lay.addWidget(_desc_label(
+            "Final targeted tweaks — tap to stack, Undo to peel back."))
+        _specs = [
+            ("boost_red_btn", "Boost Red (Ha)", "Boost Red"),
+            ("boost_cyan_btn", "Boost Cyan (OIII)", "Boost Cyan"),
+            ("boost_blue_btn", "Boost Blue", "Boost Blue"),
+            ("darken_sky_btn", "Darken Sky", "Darken Sky"),
+            ("lighten_sky_btn", "Lighten Sky", "Lighten Sky"),
+        ]
+        for attr, label, op in _specs:
+            btn = QPushButton(label)
+            if on_enhance is not None:
+                btn.clicked.connect(lambda _=False, o=op: on_enhance(o))
+            lay.addWidget(btn)
+            setattr(w, attr, btn)
 
     elif stage.kind == "auto":
         lay.addWidget(_desc_label(
