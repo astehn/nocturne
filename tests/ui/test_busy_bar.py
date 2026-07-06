@@ -29,7 +29,7 @@ def test_busy_bar_follows_target_resize(qtbot):
     bar = BusyBar()
     bar.show_over(parent)
     parent.resize(400, 120)
-    assert bar.width() == 400
+    qtbot.waitUntil(lambda: bar.width() == 400, timeout=1000)
 
 
 def test_busy_bar_is_mouse_transparent(qtbot):

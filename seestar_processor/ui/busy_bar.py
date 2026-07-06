@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QWidget
 
 from .theme import ACCENT
 
@@ -29,9 +29,12 @@ class BusyBar(QWidget):
         self.hide()
 
     def _advance(self) -> None:
-        # Ensure geometry still matches target (in case resize event was missed)
-        if self._target is not None and self.width() != self._target.width():
-            self._reposition()
+        # Fallback for environments where Resize events aren't delivered:
+        # check parent width directly without the width() override hack
+        if self._target is not None:
+            target_w = self._target.width()
+            if super().width() != target_w:
+                self._reposition()
         self._phase = (self._phase + 0.03) % 1.0
         self.update()
 
@@ -50,7 +53,6 @@ class BusyBar(QWidget):
         self._timer.start()
         self.raise_()
         self.show()
-        self.repaint()
 
     def hide_bar(self) -> None:
         self._timer.stop()
@@ -59,26 +61,12 @@ class BusyBar(QWidget):
             self._target = None
         self.hide()
 
-    def width(self) -> int:
-        """Return width, syncing with target if present."""
-        if self._target is not None:
-            target_width = self._target.width()
-            if super().width() != target_width:
-                self.setGeometry(0, 0, target_width, BUSY_BAR_HEIGHT)
-            return target_width
-        return super().width()
-
     def eventFilter(self, obj, event) -> bool:
         if obj is self._target and event.type() == QEvent.Type.Resize:
             self._reposition()
         return False
 
     def paintEvent(self, event) -> None:
-        # Ensure geometry matches target before painting
-        if self._target is not None:
-            if self.width() != self._target.width():
-                self._reposition()
-
         painter = QPainter(self)
         w = self.width()
         h = self.height()
