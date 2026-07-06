@@ -112,13 +112,20 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       renamed; `pyproject` name → `nocturne`; settings dir → `~/.nocturne` with one-time
       auto-migration of a legacy `~/.seestar_processor/settings.json`
       (`settings.resolve_settings_path`).
-- [ ] **Splash screen** on launch (with a real logo).
-- [ ] App **icon**.
+- [x] ~~**Splash screen** on launch~~ — tried it, but the app starts in <1s so it was just a
+      sub-second flash. Removed by decision; window appears immediately.
+- [x] App **icon**. DONE — simplified dock-legible icon (`nocturne/assets/nocturne_icon.svg`),
+      `.icns` via `packaging/make_icons.py`; window icon wired in `__main__`.
 - [ ] Trim heavy deps before bundling: replace `colour-demosaicing` (rare mono-Bayer path)
       with a small bilinear debayer; replace `scikit-image` (unsharp / TV-denoise fallbacks)
-      with small scipy/numpy versions. ~halves bundle size.
-- [ ] Standalone app build (PyInstaller for a quick `.app`, or Briefcase for installers).
+      with small scipy/numpy versions. ~halves the ~314MB bundle. (optional)
+- [x] Standalone **macOS** app build. DONE — `packaging/nocturne.spec` + `nocturne_app.py`
+      launcher → `dist/Nocturne.app` (verified running on a second Mac). Build note: matplotlib
+      is a build-only dep (astropy hook imports wcsaxes); excluded from the bundle.
 - [ ] macOS code-sign + notarize (Apple Developer ID) so others can open without warnings.
+- [ ] **Windows** build — can't cross-compile from macOS (PyInstaller bundles the host).
+      Path: GitHub Actions `windows-latest` runner + a `.ico` + cross-platform spec. Coupled to
+      the GitHub-publish step. Deferred by decision (no Windows tester yet).
 
 ## GitHub publish (when ready to go public)
 - [ ] README (screenshots, "requires GraXpert (free), RC-Astro optional", install steps).

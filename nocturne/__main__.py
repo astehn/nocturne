@@ -1,9 +1,8 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME
 from .settings import resolve_settings_path
@@ -22,19 +21,9 @@ def main() -> None:
         app.setWindowIcon(QIcon(str(icon_path)))
 
     apply_dark_theme(app)
-
-    splash = None
-    splash_path = _ASSETS / "splash.png"
-    if splash_path.exists():
-        splash = QSplashScreen(QPixmap(str(splash_path)), Qt.WindowType.WindowStaysOnTopHint)
-        splash.show()
-        app.processEvents()
-
     win = MainWindow(settings_path=resolve_settings_path())
     win.resize(1280, 760)
     win.show()
-    if splash is not None:
-        splash.finish(win)
     sys.exit(app.exec())
 
 
