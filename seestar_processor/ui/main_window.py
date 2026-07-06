@@ -12,7 +12,7 @@ from .. import APP_NAME
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff
-from ..core.fits_io import format_metadata
+from ..core.fits_io import import_summary
 from ..core.autostretch import autostretch
 from ..core.image import AstroImage
 from ..core.palette import PaletteParams, compose, render_nebula
@@ -777,7 +777,7 @@ class MainWindow(QMainWindow):
             split_enabled=split_enabled,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
-            new_panel.meta_label.setText(format_metadata(self.project.current().metadata))
+            new_panel.meta_label.setText(import_summary(self.project.current().metadata))
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel

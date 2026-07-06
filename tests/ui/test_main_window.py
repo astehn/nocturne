@@ -27,7 +27,8 @@ def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
     assert win.project is not None
     assert win.current_stage_id() == "load"
     assert win._panel.panel_kind == "import"
-    assert "24x24" in win._panel.meta_label.text()
+    assert "24 × 24" in win._panel.meta_label.text()
+    assert "Sony IMX585" in win._panel.meta_label.text()
 
 
 def test_default_in_app_path_navigation(qtbot, tmp_path):
