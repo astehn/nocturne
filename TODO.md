@@ -128,7 +128,8 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       the GitHub-publish step. Deferred by decision (no Windows tester yet).
 
 ## GitHub publish (when ready to go public)
-- [ ] README (screenshots, "requires GraXpert (free), RC-Astro optional", install steps).
+- [x] README drafted (`README.md` + `docs/img/` hero - [ ] README (screenshots, "requires GraXpert (free), RC-Astro optional", install steps). icon; features, requirements, install/build,
+      quick-start, credits). TODO: add UI screenshots; finalise LICENSE reference.
 - [ ] LICENSE (MIT or GPL).
 - [ ] GitHub Releases with built artifacts; optional GitHub Actions to build all platforms.
 
