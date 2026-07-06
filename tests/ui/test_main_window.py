@@ -798,3 +798,21 @@ def test_auto_stretch_is_undoable(qtbot, tmp_path):
     assert not win.project.current().is_linear
     win._undo()
     assert win.project.current().is_linear
+
+
+def test_explainer_shows_current_step_help(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    from seestar_processor.ui import help_content as hc
+    assert hc.TOPICS["background"].summary in win._explainer.text()
+
+
+def test_open_help_shows_requested_topic(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    dlg = win._open_help("stretch")
+    qtbot.addWidget(dlg)
+    from seestar_processor.ui import help_content as hc
+    assert hc.TOPICS["stretch"].title in dlg.viewer.toPlainText()
+    dlg.close()

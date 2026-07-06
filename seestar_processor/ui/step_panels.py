@@ -20,14 +20,6 @@ _PROCESS_OPTIONS = {
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
 # Target-type stretch presets → default aggressiveness (slider 0–100).
 STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
-_DESCRIPTIONS = {
-    "background": "Removes light-pollution gradients so the sky background is even.",
-    "deconvolution": "Sharpens stars and recovers fine detail (deconvolution) on the "
-                     "linear image, before stretch. Best with RC-Astro; free fallback otherwise.",
-    "noise_sharpen": "Reduces grain (noise reduction).",
-    "local_contrast": "Boosts mid-scale structure (local contrast).",
-    "star_reduction": "Shrinks stars so nebulosity stands out.",
-}
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
     "background": "Needs GraXpert — set its path in Settings.",
@@ -113,9 +105,6 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "process":
-        desc = _DESCRIPTIONS.get(stage.id)
-        if desc:
-            lay.addWidget(_desc_label(desc))
         box = QComboBox()
         box.addItems(_PROCESS_OPTIONS[stage.id])
         apply_btn = QPushButton(f"Apply {stage.label}")
