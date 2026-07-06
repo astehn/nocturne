@@ -1,9 +1,9 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.settings import Settings  # noqa: E402
-from seestar_processor.stacking.grade import FrameStats  # noqa: E402
-from seestar_processor.ui.stack_dialog import StackDialog  # noqa: E402
+from nocturne.settings import Settings  # noqa: E402
+from nocturne.stacking.grade import FrameStats  # noqa: E402
+from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
 
 
 def _stats(path, score, included=True):
@@ -43,7 +43,7 @@ def test_stack_calls_handoff_best_first(qtbot, tmp_path):
         captured["opts"] = opts
         if on_progress:
             on_progress(1, 1, "integrating")
-        from seestar_processor.stacking.stacker import StackResult
+        from nocturne.stacking.stacker import StackResult
         return StackResult(_Img(), opts.include, [], len(opts.include), 30.0, opts.output_path)
 
     dlg._stack_runner = fake_stack
@@ -67,7 +67,7 @@ def test_run_requires_output(qtbot):
 
 def test_dialog_closes_on_success(qtbot):
     from PySide6.QtWidgets import QDialog
-    from seestar_processor.stacking.stacker import StackResult
+    from nocturne.stacking.stacker import StackResult
 
     class _Img:
         pass
@@ -97,7 +97,7 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
         calls.append(1)
         started.set()
         release.wait(2.0)
-        from seestar_processor.stacking.stacker import StackResult
+        from nocturne.stacking.stacker import StackResult
         return StackResult(object(), opts.include, [], len(opts.include), 30.0, opts.output_path)
 
     dlg._stack_runner = slow_stack

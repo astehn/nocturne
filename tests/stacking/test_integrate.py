@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from seestar_processor.stacking.integrate import average_integrate, sigma_clip_integrate
+from nocturne.stacking.integrate import average_integrate, sigma_clip_integrate
 
 
 def test_average_equals_numpy_mean():

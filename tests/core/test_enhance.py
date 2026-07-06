@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.enhance import boost_hue, darken_sky, lighten_sky
+from nocturne.core.image import AstroImage
+from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky
 
 
 def _rgb(pixels):

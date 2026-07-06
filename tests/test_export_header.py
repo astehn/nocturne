@@ -1,7 +1,7 @@
 import numpy as np
 from astropy.io import fits
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.export import save_fits
+from nocturne.core.image import AstroImage
+from nocturne.core.export import save_fits
 
 
 def test_save_fits_writes_header_keys(tmp_path):

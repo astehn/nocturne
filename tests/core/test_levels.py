@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.levels import apply_levels
+from nocturne.core.image import AstroImage
+from nocturne.core.levels import apply_levels
 
 
 def test_identity():

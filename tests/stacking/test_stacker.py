@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pytest
 from skimage.transform import SimilarityTransform, warp
-from seestar_processor.stacking.stacker import StackOptions, run_stack
+from nocturne.stacking.stacker import StackOptions, run_stack
 from tests.stacking.synthetic import make_star_field, write_color_fits
 
 

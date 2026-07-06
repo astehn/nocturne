@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.export import save_tiff, save_fits
-from seestar_processor.core.fits_io import load_master
+from nocturne.core.image import AstroImage
+from nocturne.core.export import save_tiff, save_fits
+from nocturne.core.fits_io import load_master
 
 
 def _color():

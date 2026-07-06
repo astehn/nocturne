@@ -1,9 +1,9 @@
 import os
 
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.tools.base import write_temp_fits
-from seestar_processor.tools.graxpert import GraXpert
+from nocturne.core.image import AstroImage
+from nocturne.tools.base import write_temp_fits
+from nocturne.tools.graxpert import GraXpert
 
 
 def _writes_output(img, factor):

@@ -1,8 +1,8 @@
 import numpy as np
 import tifffile
 from PIL import Image
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.export import save_tiff, save_jpeg, save_png, save_fits
+from nocturne.core.image import AstroImage
+from nocturne.core.export import save_tiff, save_jpeg, save_png, save_fits
 
 
 def test_save_tiff_is_16bit_color(tmp_path):

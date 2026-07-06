@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.stretch import apply_stretch, amount_to_target
+from nocturne.core.image import AstroImage
+from nocturne.core.stretch import apply_stretch, amount_to_target
 
 
 def _faint():

@@ -1,6 +1,6 @@
 import numpy as np
 from astropy.io import fits
-from seestar_processor.core.fits_io import load_fits
+from nocturne.core.fits_io import load_fits
 
 
 def _write_color(path, peak):

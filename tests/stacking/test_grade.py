@@ -1,4 +1,4 @@
-from seestar_processor.stacking.grade import grade_frame, grade_frames
+from nocturne.stacking.grade import grade_frame, grade_frames
 from tests.stacking.synthetic import make_star_field, write_color_fits
 
 

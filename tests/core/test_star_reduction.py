@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.star_reduction import reduce_stars
+from nocturne.core.image import AstroImage
+from nocturne.core.star_reduction import reduce_stars
 
 
 def _stars():

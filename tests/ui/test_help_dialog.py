@@ -1,8 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.help_dialog import HelpDialog  # noqa: E402
-from seestar_processor.ui import help_content as hc  # noqa: E402
+from nocturne.ui.help_dialog import HelpDialog  # noqa: E402
+from nocturne.ui import help_content as hc  # noqa: E402
 
 
 def test_help_dialog_lists_sections_and_topics(qtbot):

@@ -1,4 +1,4 @@
-from seestar_processor.tools.probe import probe_binary
+from nocturne.tools.probe import probe_binary
 
 
 def test_probe_success():

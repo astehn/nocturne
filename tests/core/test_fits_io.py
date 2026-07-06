@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from astropy.io import fits
-from seestar_processor.core.fits_io import load_fits
+from nocturne.core.fits_io import load_fits
 
 
 def _write(path, arr):
@@ -41,7 +41,7 @@ def test_all_zero_image_does_not_divide_by_zero(tmp_path):
 
 
 def test_metadata_parsed_from_header(tmp_path):
-    from seestar_processor.core.fits_io import import_summary
+    from nocturne.core.fits_io import import_summary
     arr = np.random.randint(0, 4096, size=(3, 16, 16)).astype(np.uint16)
     hdu = fits.PrimaryHDU(arr)
     hdu.header["EXPTIME"] = 30.0
@@ -67,7 +67,7 @@ def test_unsupported_3d_shape_raises(tmp_path):
 
 
 def test_format_integration():
-    from seestar_processor.core.fits_io import format_integration
+    from nocturne.core.fits_io import format_integration
     assert format_integration(2900) == "48m 20s"
     assert format_integration(8100) == "2h 15m"
     assert format_integration(20) == "20s"
@@ -88,7 +88,7 @@ def test_parse_metadata_temp_and_date(tmp_path):
 
 
 def test_import_summary_full_and_sparse():
-    from seestar_processor.core.fits_io import import_summary
+    from nocturne.core.fits_io import import_summary
     full = import_summary({"exposure": 20, "frames": 145, "target": "IC 5070",
                            "width": 2160, "height": 3840})
     for token in ("IC 5070", "48m 20s", "145 × 20s", "2160 × 3840",

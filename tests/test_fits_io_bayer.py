@@ -1,6 +1,6 @@
 import numpy as np
 from astropy.io import fits
-from seestar_processor.core.fits_io import _bayer_pattern, load_fits
+from nocturne.core.fits_io import _bayer_pattern, load_fits
 
 
 def test_bayer_pattern_reads_header():

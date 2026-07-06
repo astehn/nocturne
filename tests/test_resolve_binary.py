@@ -1,7 +1,7 @@
 import os
 import stat
 
-from seestar_processor.settings import Settings, resolve_binary, graxpert_valid
+from nocturne.settings import Settings, resolve_binary, graxpert_valid
 
 
 def _make_app(tmp_path, app_name="GraXpert", exe_name="GraXpert"):

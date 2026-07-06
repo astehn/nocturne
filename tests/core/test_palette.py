@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.palette import (
+from nocturne.core.image import AstroImage
+from nocturne.core.palette import (
     PALETTES, extract_channels, hoo, pseudo_sho, apply_palette, subtract_background,
 )
 
@@ -66,7 +66,7 @@ def test_apply_palette_dispatch_and_unknown():
 
 
 def test_screen_blend_math():
-    from seestar_processor.core.palette import screen
+    from nocturne.core.palette import screen
     a = np.array([0.5, 0.0], np.float32)
     b = np.array([0.5, 0.3], np.float32)
     out = screen(a, b)
@@ -75,7 +75,7 @@ def test_screen_blend_math():
 
 
 def test_subtract_bg_2d_drops_pedestal():
-    from seestar_processor.core.palette import subtract_bg_2d
+    from nocturne.core.palette import subtract_bg_2d
     ch = np.full((8, 8), 0.5, dtype=np.float32)
     ch[0, 0] = 0.9
     out = subtract_bg_2d(ch)                 # median 0.5 subtracted
@@ -84,7 +84,7 @@ def test_subtract_bg_2d_drops_pedestal():
 
 
 def test_renorm_oiii_matches_median_and_mad():
-    from seestar_processor.core.palette import renorm_oiii, _mad
+    from nocturne.core.palette import renorm_oiii, _mad
     rng = np.random.default_rng(0)
     ha = rng.random((32, 32)).astype(np.float32)
     oiii = (rng.random((32, 32)) * 0.1 + 0.02).astype(np.float32)   # much fainter
@@ -94,7 +94,7 @@ def test_renorm_oiii_matches_median_and_mad():
 
 
 def test_stretch_channel_lifts_faint_channel():
-    from seestar_processor.core.palette import stretch_channel
+    from nocturne.core.palette import stretch_channel
     faint = np.full((16, 16), 0.05, dtype=np.float32)
     faint[0, 0] = 0.2
     out = stretch_channel(faint, 0.7)
@@ -102,7 +102,7 @@ def test_stretch_channel_lifts_faint_channel():
 
 
 def test_foraxx_hues_by_region():
-    from seestar_processor.core.palette import foraxx
+    from nocturne.core.palette import foraxx
     ha = np.array([[0.9, 0.1, 0.9]], dtype=np.float32)   # Ha-only, OIII-only, gold
     oiii = np.array([[0.1, 0.9, 0.4]], dtype=np.float32)
     r, g, b = foraxx(ha, oiii)
@@ -112,7 +112,7 @@ def test_foraxx_hues_by_region():
 
 
 def test_rotate_hue_shifts_red_toward_green():
-    from seestar_processor.core.palette import rotate_hue
+    from nocturne.core.palette import rotate_hue
     red = np.zeros((1, 1, 3), dtype=np.float32); red[0, 0, 0] = 1.0
     same = rotate_hue(red, 0.0)
     assert np.allclose(same, red, atol=1e-6)             # 0 deg = identity
@@ -121,7 +121,7 @@ def test_rotate_hue_shifts_red_toward_green():
 
 
 def test_palette_params_defaults():
-    from seestar_processor.core.palette import PaletteParams
+    from nocturne.core.palette import PaletteParams
     p = PaletteParams()
     assert p.palette == "Foraxx"
     assert p.ha_stretch == 0.6 and p.oiii_stretch == 0.7
@@ -131,7 +131,7 @@ def test_palette_params_defaults():
 def _bicolour_starless():
     # left half Ha-strong (red), right half OIII-strong (green+blue)
     import numpy as np
-    from seestar_processor.core.image import AstroImage
+    from nocturne.core.image import AstroImage
     d = np.zeros((20, 20, 3), dtype=np.float32)
     d[:, :10, 0] = 0.6                       # Ha (red) left
     d[:, 10:, 1] = 0.6; d[:, 10:, 2] = 0.6   # OIII (g+b) right
@@ -141,7 +141,7 @@ def _bicolour_starless():
 
 def _faint_oiii_starless():
     import numpy as np
-    from seestar_processor.core.image import AstroImage
+    from nocturne.core.image import AstroImage
     d = np.zeros((20, 20, 3), dtype=np.float32)
     d[:, :10, 0] = 0.6                       # left: strong Ha (red)
     d[:, 10:, 1] = 0.08; d[:, 10:, 2] = 0.08 # right: FAINT OIII (≪ Ha)
@@ -153,7 +153,7 @@ def test_render_nebula_lifts_faint_oiii_into_colour():
     # Without renorm_oiii + independent stretch_channel, the faint OIII (~0.08)
     # stays near-black and the right half is red-monochrome; the pipeline must
     # lift it into visible teal.
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     out = render_nebula(_faint_oiii_starless(),
                         PaletteParams(palette="HOO", scnr=False, hue_deg=0.0,
                                       saturation=0.5)).data
@@ -163,14 +163,14 @@ def test_render_nebula_lifts_faint_oiii_into_colour():
 
 
 def test_render_nebula_output_is_stretched():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     out = render_nebula(_bicolour_starless(), PaletteParams())
     assert out.is_linear is False
 
 
 def test_render_nebula_hoo_greenblue_equal():
     import numpy as np
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     out = render_nebula(_bicolour_starless(),
                         PaletteParams(palette="HOO", scnr=False, hue_deg=0.0,
                                       saturation=0.5)).data
@@ -178,7 +178,7 @@ def test_render_nebula_hoo_greenblue_equal():
 
 
 def test_render_nebula_scnr_reduces_green():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     common = dict(palette="HOO", hue_deg=0.0, saturation=0.5)
     on = render_nebula(_bicolour_starless(), PaletteParams(scnr=True, **common)).data
     off = render_nebula(_bicolour_starless(), PaletteParams(scnr=False, **common)).data
@@ -186,7 +186,7 @@ def test_render_nebula_scnr_reduces_green():
 
 
 def test_compose_screens_pre_stretched_stars_as_is():
-    from seestar_processor.core.palette import compose, render_nebula, PaletteParams
+    from nocturne.core.palette import compose, render_nebula, PaletteParams
     starless = _bicolour_starless()
     stars = AstroImage(np.zeros((20, 20, 3), np.float32), is_linear=False)
     stars.data[5, 5] = 0.9                         # an already-bright star (from StarX-on-stretched)
@@ -198,7 +198,7 @@ def test_compose_screens_pre_stretched_stars_as_is():
 
 
 def test_compose_star_brightness_controls_stars():
-    from seestar_processor.core.palette import compose, PaletteParams
+    from nocturne.core.palette import compose, PaletteParams
     starless = _bicolour_starless()
     stars = AstroImage(np.zeros((20, 20, 3), np.float32), is_linear=False)
     stars.data[5, 5] = 0.3                          # a mid-brightness star
@@ -223,7 +223,7 @@ def _faint_broad_linear():
 
 
 def test_render_nebula_does_not_blow_out_to_white():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     img = _faint_broad_linear()
     out = render_nebula(img, PaletteParams(ha_stretch=0.0, oiii_stretch=0.0)).data
     white_fraction = float((out.mean(axis=2) >= 0.99).mean())
@@ -231,7 +231,7 @@ def test_render_nebula_does_not_blow_out_to_white():
 
 
 def test_render_nebula_sliders_have_effect():
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     img = _faint_broad_linear()
     lo = render_nebula(img, PaletteParams(ha_stretch=0.0, oiii_stretch=0.0)).data
     hi = render_nebula(img, PaletteParams(ha_stretch=1.0, oiii_stretch=1.0)).data
@@ -239,7 +239,7 @@ def test_render_nebula_sliders_have_effect():
 
 
 def test_palette_params_star_brightness_default():
-    from seestar_processor.core.palette import PaletteParams
+    from nocturne.core.palette import PaletteParams
     p = PaletteParams()
     assert p.star_brightness == 1.0
     assert not hasattr(p, "denoise")
@@ -249,7 +249,7 @@ def test_render_nebula_does_not_spatially_blur():
     # Colourise is per-pixel (stretch/blend/hue/sat); it must NOT spatially smooth
     # the channels. Denoising the faint channel before the big stretch turned fine
     # grain into amplified low-frequency colour blotches — guard against re-adding it.
-    from seestar_processor.core.palette import render_nebula, PaletteParams
+    from nocturne.core.palette import render_nebula, PaletteParams
     rng = np.random.default_rng(2)
     H, W = 80, 80
     d = np.full((H, W, 3), 0.05, np.float32)

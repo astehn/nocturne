@@ -1,7 +1,7 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.about_dialog import AboutDialog  # noqa: E402
+from nocturne.ui.about_dialog import AboutDialog  # noqa: E402
 
 
 def test_about_dialog_shows_wordmark_and_body(qtbot):

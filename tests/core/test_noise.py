@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.noise import reduce_noise
+from nocturne.core.image import AstroImage
+from nocturne.core.noise import reduce_noise
 
 
 def _noisy(h=32, w=32, ch=3, seed=0):

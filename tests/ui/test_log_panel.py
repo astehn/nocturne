@@ -1,7 +1,7 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.log_panel import format_log_entry, LogPanel  # noqa: E402
+from nocturne.ui.log_panel import format_log_entry, LogPanel  # noqa: E402
 
 
 def test_format_with_delta():

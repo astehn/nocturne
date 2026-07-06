@@ -1,8 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.settings import Settings  # noqa: E402
-from seestar_processor.ui.settings_dialog import SettingsDialog  # noqa: E402
+from nocturne.settings import Settings  # noqa: E402
+from nocturne.ui.settings_dialog import SettingsDialog  # noqa: E402
 
 
 def test_graxpert_test_button_shows_version(qtbot):

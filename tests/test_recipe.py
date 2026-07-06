@@ -1,6 +1,6 @@
-from seestar_processor.core.crop import CropParams
-from seestar_processor.core.color import ColorSettings
-from seestar_processor.recipe import (
+from nocturne.core.crop import CropParams
+from nocturne.core.color import ColorSettings
+from nocturne.recipe import (
     Recipe, serialize_option, deserialize_option, recipe_from_entries,
     save_recipe, load_recipe,
 )
@@ -31,7 +31,7 @@ def test_recipe_from_entries_maps_and_skips():
 
 
 def test_remove_green_entry_maps_and_serializes():
-    from seestar_processor.recipe import recipe_from_entries
+    from nocturne.recipe import recipe_from_entries
     rec = recipe_from_entries([("Color", None), ("Remove Green", "")])
     stages = [s["stage"] for s in rec.steps]
     assert "remove_green" in stages
@@ -45,7 +45,7 @@ def test_save_load_roundtrip(tmp_path):
 
 
 def test_rotate_flip_entries_map_and_replay_params():
-    from seestar_processor.recipe import recipe_from_entries
+    from nocturne.recipe import recipe_from_entries
     rec = recipe_from_entries([("Rotate", ""), ("Flip H", ""), ("Flip V", "")])
     assert [s["stage"] for s in rec.steps] == ["rotate", "flip_h", "flip_v"]
     assert deserialize_option("rotate", "").rotate == 90
@@ -54,13 +54,13 @@ def test_rotate_flip_entries_map_and_replay_params():
 
 
 def test_mixed_geometry_recipe_keeps_order():
-    from seestar_processor.recipe import recipe_from_entries
+    from nocturne.recipe import recipe_from_entries
     rec = recipe_from_entries([("Rotate", ""), ("Crop", ""), ("Stretch", 0.5)])
     assert [s["stage"] for s in rec.steps] == ["rotate", "crop", "stretch"]
 
 
 def test_uncaptured_step_names():
-    from seestar_processor.recipe import uncaptured_step_names
+    from nocturne.recipe import uncaptured_step_names
     entries = [("Stretch", 0.5), ("Colourise", ""), ("Boost Red", ""), ("Colourise", "")]
     assert uncaptured_step_names(entries) == ["Colourise", "Boost Red"]
     assert uncaptured_step_names([("Stretch", 0.5), ("Levels", (0, 1, 1))]) == []

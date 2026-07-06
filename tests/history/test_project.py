@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.history.project import Project
+from nocturne.core.image import AstroImage
+from nocturne.history.project import Project
 from tests.history.test_step import _Double
 
 
@@ -65,9 +65,9 @@ def test_jump_back_truncates_forward(tmp_path):
 
 def test_state_at_is_non_destructive(tmp_path):
     import numpy as np
-    from seestar_processor.core.image import AstroImage
-    from seestar_processor.history.project import Project
-    from seestar_processor.history.step import Step
+    from nocturne.core.image import AstroImage
+    from nocturne.history.project import Project
+    from nocturne.history.step import Step
 
     class _Const(Step):
         name = "X"

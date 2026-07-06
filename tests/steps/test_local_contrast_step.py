@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.steps.local_contrast import LocalContrastStep
+from nocturne.core.image import AstroImage
+from nocturne.steps.local_contrast import LocalContrastStep
 
 
 def test_local_contrast_step():

@@ -1,13 +1,13 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.tools.base import write_temp_fits
-from seestar_processor.tools.graxpert import GraXpert
-from seestar_processor.tools.rcastro import RCAstro
-from seestar_processor.steps.background import BackgroundStep
-from seestar_processor.steps.crop import CropStep
-from seestar_processor.core.crop import CropParams
-from seestar_processor.steps.saturation_step import SaturationStep
-from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
+from nocturne.core.image import AstroImage
+from nocturne.tools.base import write_temp_fits
+from nocturne.tools.graxpert import GraXpert
+from nocturne.tools.rcastro import RCAstro
+from nocturne.steps.background import BackgroundStep
+from nocturne.steps.crop import CropStep
+from nocturne.core.crop import CropParams
+from nocturne.steps.saturation_step import SaturationStep
+from nocturne.steps.noise_sharpen import NoiseSharpenStep
 
 
 def test_background_off_is_noop():
@@ -82,8 +82,8 @@ def test_noise_sharpen_uses_rcastro_when_present():
 
 def test_remove_green_step_clamps_green():
     import numpy as np
-    from seestar_processor.core.image import AstroImage
-    from seestar_processor.steps.remove_green_step import RemoveGreenStep
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.remove_green_step import RemoveGreenStep
     data = np.full((4, 4, 3), 0.3, dtype=np.float32)
     data[..., 1] = 0.9
     out = RemoveGreenStep().apply(AstroImage(data))
@@ -91,7 +91,7 @@ def test_remove_green_step_clamps_green():
 
 
 def test_deconvolution_free_fallback_sharpens():
-    from seestar_processor.steps.deconvolution_step import DeconvolutionStep
+    from nocturne.steps.deconvolution_step import DeconvolutionStep
     img = AstroImage(np.random.rand(20, 20, 3).astype(np.float32), is_linear=True)
     out = DeconvolutionStep().apply(img, "medium")        # no RC-Astro -> free unsharp
     assert out.data.shape == img.data.shape
@@ -99,7 +99,7 @@ def test_deconvolution_free_fallback_sharpens():
 
 
 def test_deconvolution_uses_bxt_and_sharpens_stars():
-    from seestar_processor.steps.deconvolution_step import DeconvolutionStep
+    from nocturne.steps.deconvolution_step import DeconvolutionStep
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
     calls = []
     def fake(args):

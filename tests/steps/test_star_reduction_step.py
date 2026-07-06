@@ -1,10 +1,10 @@
 import os
 
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.tools.base import write_temp_fits
-from seestar_processor.tools.rcastro import RCAstro
-from seestar_processor.steps.star_reduction import StarReductionStep
+from nocturne.core.image import AstroImage
+from nocturne.tools.base import write_temp_fits
+from nocturne.tools.rcastro import RCAstro
+from nocturne.steps.star_reduction import StarReductionStep
 
 
 def test_uses_starx_and_recombines():

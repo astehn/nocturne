@@ -1,4 +1,4 @@
-from seestar_processor.ui import theme
+from nocturne.ui import theme
 
 
 def test_tokens_defined():

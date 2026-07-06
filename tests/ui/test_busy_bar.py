@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QWidget  # noqa: E402
-from seestar_processor.ui.busy_bar import BusyBar, BUSY_BAR_HEIGHT  # noqa: E402
+from nocturne.ui.busy_bar import BusyBar, BUSY_BAR_HEIGHT  # noqa: E402
 
 
 def test_busy_bar_show_over_and_hide(qtbot):

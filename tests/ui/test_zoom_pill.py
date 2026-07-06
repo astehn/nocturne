@@ -1,7 +1,7 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.zoom_pill import ZoomPill  # noqa: E402
+from nocturne.ui.zoom_pill import ZoomPill  # noqa: E402
 
 
 def test_buttons_invoke_callbacks(qtbot):
