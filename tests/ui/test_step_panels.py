@@ -219,3 +219,13 @@ def test_enhance_panel_buttons_invoke_callback(qtbot):
     w.darken_sky_btn.click()
     w.lighten_sky_btn.click()
     assert ops == ["Boost Red", "Darken Sky", "Lighten Sky"]
+
+
+def test_import_panel_meta_label_is_rich_text(qtbot):
+    from PySide6.QtCore import Qt
+    from seestar_processor.ui.step_panels import build_panel
+    from seestar_processor.ui.pipeline import path_stages
+    stage = next(s for s in path_stages() if s.kind == "import")
+    w = build_panel(stage)
+    qtbot.addWidget(w)
+    assert w.meta_label.textFormat() == Qt.TextFormat.RichText

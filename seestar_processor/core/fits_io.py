@@ -38,6 +38,8 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "target": ("OBJECT",),
         "frames": ("STACKCNT", "NFRAMES", "NCOMBINE"),
         "bitpix": ("BITPIX",),
+        "temp": ("CCD-TEMP", "CCD_TEMP"),
+        "date": ("DATE-OBS", "DATE"),
     }
     for key, candidates in mapping.items():
         for card in candidates:
@@ -47,19 +49,66 @@ def _parse_metadata(header, height: int, width: int) -> dict:
     return meta
 
 
-def format_metadata(meta: dict) -> str:
-    parts = []
+def format_integration(seconds: float) -> str:
+    """Human total integration: 2900 -> '48m 20s', 8100 -> '2h 15m', 20 -> '20s'."""
+    s = int(round(seconds))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m"
+    if m:
+        return f"{m}m {sec:02d}s"
+    return f"{sec}s"
+
+
+def _summary_section(title: str, pairs: list[tuple[str, str]]) -> str:
+    rows = "".join(
+        f"<tr><td style='color:#8a9099'>{k}</td><td>&nbsp;&nbsp;{v}</td></tr>"
+        for k, v in pairs
+    )
+    return f"<b>{title}</b><table cellspacing='0'>{rows}</table>"
+
+
+def import_summary(meta: dict, instrument=SEESTAR_S30_PRO) -> str:
+    """Grouped rich-HTML readout: 'Your stack' (header, present fields only) +
+    'Camera & scope' (from the instrument profile)."""
+    stack: list[tuple[str, str]] = []
     if meta.get("target"):
-        parts.append(str(meta["target"]))
-    if meta.get("exposure") is not None:
-        parts.append(f"{meta['exposure']:g}s")
-    if meta.get("frames") is not None:
-        parts.append(f"{meta['frames']} frames")
+        stack.append(("Target", str(meta["target"])))
+    exp, frames = meta.get("exposure"), meta.get("frames")
+    if exp is not None and frames is not None:
+        try:
+            total = format_integration(float(exp) * float(frames))
+            stack.append(("Total integration", f"{total} ({frames} × {float(exp):g}s)"))
+        except (TypeError, ValueError):
+            pass
+    if frames is not None:
+        stack.append(("Frames", f"{frames}"))
     if meta.get("gain") is not None:
-        parts.append(f"gain {meta['gain']:g}")
+        try:
+            stack.append(("Gain", f"{float(meta['gain']):g}"))
+        except (TypeError, ValueError):
+            pass
+    if meta.get("temp") is not None:
+        try:
+            stack.append(("Sensor temp", f"{float(meta['temp']):g} °C"))
+        except (TypeError, ValueError):
+            pass
+    if meta.get("date"):
+        stack.append(("Captured", str(meta["date"]).split("T")[0]))
     if meta.get("width") and meta.get("height"):
-        parts.append(f"{meta['width']}x{meta['height']}")
-    return "  •  ".join(parts) if parts else "No metadata"
+        stack.append(("Dimensions", f"{meta['width']} × {meta['height']}"))
+
+    scope = [
+        ("Sensor", f"{instrument.sensor} (colour)"),
+        ("Pixel size", f"{instrument.pixel_size_um:g} µm"),
+        ("Focal length", f"{instrument.focal_length_mm:g} mm · f/{instrument.f_ratio:g}"),
+        ("Image scale", f"~{instrument.pixel_scale_arcsec:.1f}″ / pixel"),
+    ]
+
+    html = _summary_section("Your stack", stack) if stack else ""
+    html += _summary_section("Camera &amp; scope", scope)
+    return html
 
 
 def load_fits(path: str, normalize: bool = True) -> AstroImage:
