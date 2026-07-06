@@ -817,3 +817,41 @@ def test_open_help_shows_requested_topic(qtbot, tmp_path):
     from seestar_processor.ui import help_content as hc
     assert hc.TOPICS["stretch"].title in dlg.viewer.toPlainText()
     dlg.close()
+
+
+def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from seestar_processor.history.project import Project
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    # apply a real Stretch, then an append-only Enhancement (uncaptured)
+    win._go_to_id("stretch"); win.apply_current(0.5)
+    win._go_to_id("enhancements"); win._enhance("Boost Red")
+    calls = {"dialog": 0}
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: (calls.__setitem__("dialog", calls["dialog"] + 1)
+                                                      or QMessageBox.StandardButton.Cancel)))
+    saved = {"n": 0}
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (saved.__setitem__("n", saved["n"] + 1), ("", ""))[1]))
+    win._save_recipe()
+    assert calls["dialog"] == 1            # warned about the uncaptured step
+    assert saved["n"] == 0                  # cancel -> never reached the file dialog
+
+
+def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from seestar_processor.recipe import load_recipe
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch"); win.apply_current(0.5)
+    win._go_to_id("enhancements"); win._enhance("Boost Red")
+    out = str(tmp_path / "r.json")
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_recipe()
+    # Saved the captured subset (Stretch), dropped the uncaptured Boost Red.
+    stages = [s["stage"] for s in load_recipe(out).steps]
+    assert "stretch" in stages

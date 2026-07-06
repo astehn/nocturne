@@ -62,6 +62,17 @@ def recipe_from_entries(entries) -> Recipe:
     return Recipe(steps=steps)
 
 
+def uncaptured_step_names(entries) -> list[str]:
+    """Distinct applied-step names a recipe can't serialize yet (e.g. Colourise
+    and the Enhancements taps), in first-seen order. Empty when everything the
+    user applied is representable in a recipe."""
+    seen: list[str] = []
+    for name, _ in entries:
+        if _NAME_TO_STAGE.get(name) is None and name not in seen:
+            seen.append(name)
+    return seen
+
+
 def save_recipe(recipe: Recipe, path: str) -> None:
     with open(path, "w") as f:
         json.dump({"version": 1, "steps": recipe.steps}, f, indent=2)
