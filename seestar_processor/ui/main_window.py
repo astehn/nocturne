@@ -418,6 +418,13 @@ class MainWindow(QMainWindow):
         stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
+        if stage_id == "levels" and self.project.current().is_linear:
+            # Levels remaps [black, white] in display space; on a still-linear
+            # image (values ~0.003) any black point clips the whole frame to
+            # black. Require a stretch first instead of producing a black image.
+            self._status.setText(
+                "Apply Stretch (or Colourise) first — Levels works on the stretched image.")
+            return
         # Truncate history to this stage's applied predecessors (synchronous).
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
