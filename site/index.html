@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nocturne — guided astrophotography processing</title>
+  <meta name="description" content="A free, native desktop app that turns a stacked ZWO Seestar S30 Pro image into a finished picture — one guided step at a time.">
+  <link rel="canonical" href="https://nocturne.stehn.com/">
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Nocturne — guided astrophotography processing">
+  <meta property="og:description" content="Turn a stacked ZWO Seestar S30 Pro image into a finished picture, one guided step at a time. Free and native.">
+  <meta property="og:url" content="https://nocturne.stehn.com/">
+  <meta property="og:image" content="https://nocturne.stehn.com/img/hero.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Nocturne — guided astrophotography processing">
+  <meta name="twitter:description" content="Turn a stacked ZWO Seestar S30 Pro image into a finished picture, one guided step at a time.">
+  <meta name="twitter:image" content="https://nocturne.stehn.com/img/hero.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="stars" aria-hidden="true"></div>
+
+  <header class="nav">
+    <a class="brand" href="#top">
+      <img src="img/icon.png" alt="" width="28" height="28">
+      <span>Nocturne</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+
+    <!-- HERO -->
+    <section id="hero" class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">For the ZWO Seestar S30&nbsp;Pro</p>
+        <h1 class="wordmark">Nocturne</h1>
+        <p class="tagline">Guided astrophotography processing for smart-telescope stacks. Turn a stacked FITS into a finished picture — one step at a time.</p>
+        <div class="cta">
+          <!-- DOWNLOAD URL -->
+          <a class="btn btn-primary" href="https://nocturne.stehn.com/download/Nocturne.zip">
+            Download for macOS
+            <span class="btn-sub">free · beta</span>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/" rel="noopener">View on GitHub</a>
+        </div>
+        <p class="hero-note">Not affiliated with ZWO, GraXpert, or RC-Astro — just a fan with a Seestar and too many clear-sky ambitions.</p>
+      </div>
+    </section>
+
+    <!-- FEATURES -->
+    <section id="features" class="section">
+      <div class="wrap">
+        <h2>Everything from stack to finished image</h2>
+        <p class="lead">A guided, non-destructive flow with a live preview and full undo at every step — driving the same professional tools under the hood.</p>
+        <div class="grid">
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="19" cy="17" r="2"/></svg></span>
+            <h3>Guided, non-destructive flow</h3>
+            <p>Crop → Background → Colour → Stretch → Levels → Star Reduction → Export. Simple Light/Medium/Strong choices, live before/after, and undo anywhere. Nothing is destructive until you export.</p>
+          </article>
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16"/></svg></span>
+            <h3>One-press Colourise</h3>
+            <p>Turn a raw dualband (Ha/OIII) master into a finished colour image in a single press — stars removed, nebula colour-mapped, stars screened back. Advanced sliders if you want them.</p>
+          </article>
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l8 4-8 4-8-4 8-4z"/><path d="M4 11l8 4 8-4M4 15l8 4 8-4"/></svg></span>
+            <h3>Built-in stacking</h3>
+            <p>Point it at a folder of subs; it grades and rejects bad frames, registers (handling alt-az field rotation), and integrates a clean master.</p>
+          </article>
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8" cy="12" r="4"/><circle cx="16" cy="12" r="4"/></svg></span>
+            <h3>Ha / OIII extraction</h3>
+            <p>Split a dualband master into separate Ha and OIII channels for external palette work — or just let Colourise do it for you.</p>
+          </article>
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7a8 3 0 1 0 16 0 8 3 0 1 0-16 0"/><path d="M4 7v10a8 3 0 0 0 16 0V7"/></svg></span>
+            <h3>Recipes &amp; batch</h3>
+            <p>Save your sequence of steps and replay it on another image — or a whole folder at once.</p>
+          </article>
+          <article class="card">
+            <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/><circle cx="12" cy="12" r="3"/></svg></span>
+            <h3>Targeted enhancements</h3>
+            <p>Tap-to-stack colour boosts (Ha / OIII / blue) and sky darken/lighten — each nudge individually undoable.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREENSHOTS -->
+    <section id="screenshots" class="section alt">
+      <div class="wrap">
+        <h2>See it in action</h2>
+        <div class="shot placeholder">
+          <p>Screenshots coming soon — the guided flow, a colourised nebula, and the finished result.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how" class="section">
+      <div class="wrap">
+        <h2>Beginner-friendly by design</h2>
+        <p class="lead">Nocturne explains the concepts as you go, so you learn while you process.</p>
+        <div class="beats">
+          <div class="beat">
+            <h3>Linear → stretched</h3>
+            <p>Raw data is nearly black until it's stretched. Nocturne previews it stretched and commits the real stretch when you're ready.</p>
+          </div>
+          <div class="beat">
+            <h3>Dualband → colour</h3>
+            <p>Your Seestar's LP filter captures Ha + OIII. One press maps that narrowband data into a natural two-gas colour image.</p>
+          </div>
+          <div class="beat">
+            <h3>Never destructive</h3>
+            <p>Every step is cached. Undo, redo, compare before/after, or jump back to any step — nothing is lost until you export.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REQUIREMENTS -->
+    <section id="requirements" class="section alt">
+      <div class="wrap">
+        <h2>What you need</h2>
+        <div class="reqs">
+          <div class="req">
+            <h3>GraXpert <span class="tag free">free · required</span></h3>
+            <p>Powers background extraction. Free to download — just point Nocturne at it in Settings.</p>
+          </div>
+          <div class="req">
+            <h3>RC-Astro <span class="tag optional">optional</span></h3>
+            <p>BlurX / NoiseX / StarX for pro-grade deconvolution, denoise and star handling. Every step has a free fallback, so Nocturne works fully without it — it's simply better with it.</p>
+          </div>
+        </div>
+        <p class="fine">Nocturne drives these as separate installs and does not bundle them. Not affiliated with ZWO, GraXpert, or RC-Astro.</p>
+      </div>
+    </section>
+
+    <!-- DOWNLOAD -->
+    <section id="download" class="section download">
+      <div class="wrap center">
+        <h2>Get Nocturne</h2>
+        <!-- DOWNLOAD URL -->
+        <a class="btn btn-primary big" href="https://nocturne.stehn.com/download/Nocturne.zip">Download for macOS</a>
+        <p class="fine">macOS · ~314&nbsp;MB · free · beta</p>
+        <p class="fine install">It isn't notarized yet, so on first launch macOS may block it. Right-click the app → <strong>Open</strong> → <strong>Open</strong>, or allow it under <strong>System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security</strong>.</p>
+      </div>
+    </section>
+
+    <!-- CONTRIBUTE -->
+    <section id="contribute" class="section alt">
+      <div class="wrap">
+        <h2>Lend your light ⭐</h2>
+        <p class="lead">Nocturne is early, and more test data makes it better. If you'd share a stacked dualband/LP FITS master, you'll be credited in-app as a <strong>Photon Donor</strong>.</p>
+        <p class="fine">Donated data is used <strong>only</strong> to test and improve Nocturne — never shared, sold, or republished.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="wrap">
+      <p>Created &amp; directed by <strong>Andreas Stehn</strong>. Built with PySide6/Qt, NumPy, astropy, SciPy, scikit-image, astroalign, SEP, tifffile &amp; Pillow. Works alongside GraXpert and RC-Astro.</p>
+      <p class="fine">Released under the <a href="https://www.gnu.org/licenses/gpl-3.0.html" rel="noopener">GNU General Public License v3.0 (GPLv3)</a>. © <span id="year"></span> · Not affiliated with ZWO, GraXpert, or RC-Astro.</p>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
