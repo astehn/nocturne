@@ -130,7 +130,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 ## GitHub publish (when ready to go public)
 - [x] README drafted (`README.md` + `docs/img/` hero - [ ] README (screenshots, "requires GraXpert (free), RC-Astro optional", install steps). icon; features, requirements, install/build,
       quick-start, credits). TODO: add UI screenshots; finalise LICENSE reference.
-- [ ] LICENSE (MIT or GPL).
+- [x] LICENSE — GPLv3 (`LICENSE`); referenced in README + pyproject classifier.
 - [ ] GitHub Releases with built artifacts; optional GitHub Actions to build all platforms.
 
 ## Visual polish — later tiers (Tier 1 shipped)

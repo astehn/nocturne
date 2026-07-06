@@ -100,4 +100,4 @@ Test data from the community is hugely appreciated and credited in-app as **Phot
 
 ## License
 
-_To be finalised (MIT or GPL) — see `LICENSE`._
+Nocturne is released under the **GNU General Public License v3.0** — see [LICENSE](LICENSE). You're free to use, study, change, and share it; any distributed modifications must remain open-source under the GPL.
