@@ -630,18 +630,6 @@ class MainWindow(QMainWindow):
         self.log_panel.setVisible(self._log_act.isChecked())
 
     # --- exports ---
-    def _guarded(self, fn, log_label: str | None = None) -> bool:
-        """Run a file-writing action; surface failures instead of crashing."""
-        try:
-            fn()
-        except Exception as exc:
-            self._status.setText(f"Export failed: {exc}")
-            return False
-        self._status.setText("")
-        if log_label:
-            self.log_panel.append_entry(log_label)
-        return True
-
     def export_final(self, fmt: str) -> None:
         if self.project is None:
             return
@@ -654,13 +642,15 @@ class MainWindow(QMainWindow):
             if not folder:
                 return
 
-            def _do():
+            def _split():
                 rc = RCAstro(resolve_binary(self.settings.rcastro_path))
                 starless, stars = rc.remove_stars(img, runner=self._rc_runner)
                 save_tiff(starless, os.path.join(folder, "starless.tif"))
                 save_tiff(stars, os.path.join(folder, "stars.tif"))
 
-            self._guarded(_do, "Exported starless.tif + stars.tif")
+            self._run_busy(_split,
+                           lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
+                           "Exporting…", "Export failed")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "", "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
@@ -670,15 +660,18 @@ class MainWindow(QMainWindow):
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
-            self._guarded(lambda: save_png(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_png, os.path.basename(path)
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
-            self._guarded(lambda: save_fits(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_fits, os.path.basename(path)
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            self._guarded(lambda: save_tiff(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_tiff, os.path.basename(path)
+        self._run_busy(lambda: save(img, path),
+                       lambda _: self.log_panel.append_entry(f"Exported {name}"),
+                       "Exporting…", "Export failed")
 
     # --- settings ---
     def _open_settings(self) -> None:

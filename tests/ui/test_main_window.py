@@ -228,12 +228,33 @@ def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     assert "open" in win._status.text().lower()
 
 
-def test_export_failure_is_surfaced(qtbot, tmp_path):
+def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    ok = win._guarded(lambda: (_ for _ in ()).throw(OSError("disk full")))
-    assert ok is False
-    assert "disk full" in win._status.text()
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    calls = []
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix: calls.append(label))
+    win.export_final("PNG")
+    assert calls == ["Exporting…"]     # export now goes through the busy helper
+
+
+def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    import seestar_processor.ui.main_window as mw
+    win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
+    win.open_fits(_make_fits(tmp_path))
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    monkeypatch.setattr(mw, "save_png",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    win.export_final("PNG")
+    assert "Export failed: disk full" in win._status.text()
+    assert win._busy is False
 
 
 def test_background_off_records_no_history(qtbot, tmp_path):
