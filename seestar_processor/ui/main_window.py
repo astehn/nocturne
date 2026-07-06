@@ -631,7 +631,7 @@ class MainWindow(QMainWindow):
 
     # --- exports ---
     def export_final(self, fmt: str) -> None:
-        if self.project is None:
+        if self.project is None or self._busy:
             return
         img = self.project.current()
         self._status.setText("")   # clear any stale error before exporting (parity with apply_current)
