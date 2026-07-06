@@ -45,3 +45,9 @@ def test_lighten_sky_raises_background_keeps_bright():
 def test_boost_hue_mono_passthrough():
     mono = AstroImage(np.full((4, 4), 0.3, np.float32), is_linear=False)
     assert boost_hue(mono, 0.0).data.ndim == 2
+
+
+def test_sky_ops_handle_mono():
+    mono = AstroImage(np.full((4, 4), 0.1, np.float32), is_linear=False)
+    assert darken_sky(mono).data.ndim == 2 and darken_sky(mono).data.max() < 0.1
+    assert lighten_sky(mono).data.ndim == 2 and lighten_sky(mono).data.max() > 0.1
