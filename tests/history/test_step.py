@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
-from seestar_processor.history.step import Step
+from nocturne.core.image import AstroImage
+from nocturne.history.step import Step
 
 
 class _Double(Step):

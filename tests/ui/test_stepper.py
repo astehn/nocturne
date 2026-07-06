@@ -1,8 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.pipeline import Stage, path_stages  # noqa: E402
-from seestar_processor.ui.stepper import Stepper  # noqa: E402
+from nocturne.ui.pipeline import Stage, path_stages  # noqa: E402
+from nocturne.ui.stepper import Stepper  # noqa: E402
 
 
 def test_set_stages_populates_rows(qtbot):
@@ -34,7 +34,7 @@ def test_disabled_stage_does_not_emit(qtbot):
 
 
 def test_step_state_pure():
-    from seestar_processor.ui.stepper import step_state
+    from nocturne.ui.stepper import step_state
     # locked wins regardless
     assert step_state(2, 2, {2}, enabled=False) == "locked"
     # current wins over done

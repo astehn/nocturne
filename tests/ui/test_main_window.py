@@ -3,8 +3,8 @@ import pytest
 from astropy.io import fits
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.main_window import MainWindow  # noqa: E402
-from seestar_processor.core.image import AstroImage  # noqa: E402
+from nocturne.ui.main_window import MainWindow  # noqa: E402
+from nocturne.core.image import AstroImage  # noqa: E402
 
 
 def _make_fits(tmp_path):
@@ -92,7 +92,7 @@ def test_apply_color_with_none_option(qtbot, tmp_path):
 
 
 def test_apply_geometry_crop_changes_dimensions(qtbot, tmp_path):
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
@@ -105,7 +105,7 @@ def test_rotate_adds_step_and_swaps_dims(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))          # _make_fits is 24x24; use a non-square below
     win._go_to_id("crop")
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win._apply_geometry("Crop", CropParams(bounds=(0, 24, 4, 20)))  # 24x16
     before = win.project.current().data.shape[:2]
     win._rotate()
@@ -115,7 +115,7 @@ def test_rotate_adds_step_and_swaps_dims(qtbot, tmp_path):
 
 
 def test_flip_after_crop_does_not_recrop(qtbot, tmp_path):
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
@@ -127,7 +127,7 @@ def test_flip_after_crop_does_not_recrop(qtbot, tmp_path):
 
 
 def test_processing_preserves_geometry(qtbot, tmp_path):
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
@@ -140,7 +140,7 @@ def test_processing_preserves_geometry(qtbot, tmp_path):
 
 
 def test_undo_reverses_one_geometry_op(qtbot, tmp_path):
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
@@ -151,12 +151,12 @@ def test_undo_reverses_one_geometry_op(qtbot, tmp_path):
 
 
 def test_step_for_types(qtbot, tmp_path):
-    from seestar_processor.steps.crop import CropStep
-    from seestar_processor.steps.saturation_step import SaturationStep
-    from seestar_processor.steps.noise_sharpen import NoiseSharpenStep
-    from seestar_processor.steps.levels import LevelsStep
-    from seestar_processor.steps.local_contrast import LocalContrastStep
-    from seestar_processor.steps.star_reduction import StarReductionStep
+    from nocturne.steps.crop import CropStep
+    from nocturne.steps.saturation_step import SaturationStep
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+    from nocturne.steps.levels import LevelsStep
+    from nocturne.steps.local_contrast import LocalContrastStep
+    from nocturne.steps.star_reduction import StarReductionStep
     win = _window(qtbot, tmp_path)
     assert isinstance(win._step_for("crop"), CropStep)
     assert isinstance(win._step_for("saturation"), SaturationStep)
@@ -215,7 +215,7 @@ def test_before_after_toggle_enables_compare(qtbot, tmp_path):
 
 
 def test_window_title_is_app_name(qtbot, tmp_path):
-    from seestar_processor import APP_NAME
+    from nocturne import APP_NAME
     win = _window(qtbot, tmp_path)
     assert win.windowTitle() == APP_NAME
 
@@ -226,7 +226,7 @@ def test_help_menu_actions_exist(qtbot, tmp_path):
 
 
 def test_save_recipe_writes_loadable_file(qtbot, tmp_path, monkeypatch):
-    from seestar_processor.recipe import load_recipe
+    from nocturne.recipe import load_recipe
     from PySide6.QtWidgets import QFileDialog
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -264,7 +264,7 @@ def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
 
 def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
-    import seestar_processor.ui.main_window as mw
+    import nocturne.ui.main_window as mw
     win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
     win.open_fits(_make_fits(tmp_path))
     out = tmp_path / "pic.png"
@@ -295,7 +295,7 @@ def test_status_cleared_on_navigation(qtbot, tmp_path):
 
 
 def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
-    from seestar_processor.settings import Settings
+    from nocturne.settings import Settings
     gx = tmp_path / "graxpert"
     gx.write_text("#!/bin/sh\n")
     win = _window(qtbot, tmp_path)
@@ -334,7 +334,7 @@ def test_log_toggle_hides_panel(qtbot, tmp_path):
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
     import numpy as np
-    from seestar_processor.core.image import AstroImage
+    from nocturne.core.image import AstroImage
     win = _window(qtbot, tmp_path)
     win.open_image(AstroImage(np.zeros((12, 14, 3), np.float32), is_linear=True),
                    "stacked master")
@@ -371,7 +371,7 @@ def test_colourise_marks_stretch_done(qtbot, tmp_path):
 
 
 def test_colourise_caches_star_removal(qtbot, tmp_path, monkeypatch):
-    import seestar_processor.ui.main_window as mw
+    import nocturne.ui.main_window as mw
     win = _window(qtbot, tmp_path); win._async_enabled = False
     win.open_fits(_make_fits(tmp_path))
     monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
@@ -388,7 +388,7 @@ def test_colourise_caches_star_removal(qtbot, tmp_path, monkeypatch):
 
 
 def test_open_image_invalidates_colourise_cache(qtbot, tmp_path):
-    from seestar_processor.core.image import AstroImage
+    from nocturne.core.image import AstroImage
     win = _window(qtbot, tmp_path)
     win.open_image(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), "a")
     win._colourise_layers = ("stale-sig", object(), object())
@@ -446,7 +446,7 @@ def test_toolbar_has_about_button(qtbot, tmp_path):
 
 
 def test_show_about_opens_dialog(qtbot, tmp_path):
-    from seestar_processor.ui.about_dialog import AboutDialog
+    from nocturne.ui.about_dialog import AboutDialog
     win = _window(qtbot, tmp_path)
     dlg = win._make_about_dialog()
     qtbot.addWidget(dlg)
@@ -457,9 +457,9 @@ def test_show_about_opens_dialog(qtbot, tmp_path):
 def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     import numpy as np
     from PySide6.QtWidgets import QFileDialog
-    from seestar_processor.settings import Settings
-    from seestar_processor.core.image import AstroImage
-    import seestar_processor.ui.main_window as mw
+    from nocturne.settings import Settings
+    from nocturne.core.image import AstroImage
+    import nocturne.ui.main_window as mw
 
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -593,13 +593,13 @@ def test_advanced_open_then_cancel_preserves_history(qtbot, tmp_path, monkeypatc
         def exec(self):
             return 0
 
-    monkeypatch.setattr("seestar_processor.ui.palette_dialog.PaletteDialog", _FakeDialog)
+    monkeypatch.setattr("nocturne.ui.palette_dialog.PaletteDialog", _FakeDialog)
     win._open_advanced_palette()
     assert [n for n, _ in win.project.entries()] == before   # nothing lost on cancel
 
 
 def test_advanced_apply_records_colourise(qtbot, tmp_path, monkeypatch):
-    from seestar_processor.core.image import AstroImage
+    from nocturne.core.image import AstroImage
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     result = AstroImage(np.zeros((12, 12, 3), np.float32), is_linear=False)
@@ -611,7 +611,7 @@ def test_advanced_apply_records_colourise(qtbot, tmp_path, monkeypatch):
             self._cb(result)
             return 1
 
-    monkeypatch.setattr("seestar_processor.ui.palette_dialog.PaletteDialog", _FakeDialog)
+    monkeypatch.setattr("nocturne.ui.palette_dialog.PaletteDialog", _FakeDialog)
     win._open_advanced_palette()
     assert [n for n, _ in win.project.entries()][-1] == "Colourise"
 
@@ -625,7 +625,7 @@ def test_open_advanced_palette_guarded_when_busy(qtbot, tmp_path):
 
 
 def test_colourise_starx_extracts_stars_from_stretched(qtbot, tmp_path, monkeypatch):
-    import seestar_processor.ui.main_window as mw
+    import nocturne.ui.main_window as mw
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
@@ -643,7 +643,7 @@ def test_colourise_starx_extracts_stars_from_stretched(qtbot, tmp_path, monkeypa
 
 
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
-    from seestar_processor.core.crop import CropParams
+    from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
@@ -805,7 +805,7 @@ def test_explainer_shows_current_step_help(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
-    from seestar_processor.ui import help_content as hc
+    from nocturne.ui import help_content as hc
     assert hc.TOPICS["background"].summary in win._explainer.text()
 
 
@@ -814,14 +814,14 @@ def test_open_help_shows_requested_topic(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     dlg = win._open_help("stretch")
     qtbot.addWidget(dlg)
-    from seestar_processor.ui import help_content as hc
+    from nocturne.ui import help_content as hc
     assert hc.TOPICS["stretch"].title in dlg.viewer.toPlainText()
     dlg.close()
 
 
 def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog, QMessageBox
-    from seestar_processor.history.project import Project
+    from nocturne.history.project import Project
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     # apply a real Stretch, then an append-only Enhancement (uncaptured)
@@ -841,7 +841,7 @@ def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatc
 
 def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog, QMessageBox
-    from seestar_processor.recipe import load_recipe
+    from nocturne.recipe import load_recipe
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch"); win.apply_current(0.5)

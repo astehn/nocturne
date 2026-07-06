@@ -1,9 +1,9 @@
 import numpy as np
 from astropy.io import fits
-from seestar_processor.core.image import AstroImage
-from seestar_processor.recipe import Recipe
-from seestar_processor.settings import Settings
-from seestar_processor.batch import apply_recipe, run_batch
+from nocturne.core.image import AstroImage
+from nocturne.recipe import Recipe
+from nocturne.settings import Settings
+from nocturne.batch import apply_recipe, run_batch
 
 
 def _fits(path, h=24, w=24):
@@ -46,10 +46,10 @@ def test_run_batch_writes_outputs_and_reports_failure(tmp_path):
 
 def test_batch_replays_remove_green():
     import numpy as np
-    from seestar_processor.core.image import AstroImage
-    from seestar_processor.recipe import Recipe
-    from seestar_processor.settings import Settings
-    from seestar_processor.batch import apply_recipe
+    from nocturne.core.image import AstroImage
+    from nocturne.recipe import Recipe
+    from nocturne.settings import Settings
+    from nocturne.batch import apply_recipe
     data = np.full((4, 4, 3), 0.3, dtype=np.float32)
     data[..., 1] = 0.9
     rec = Recipe(steps=[{"stage": "remove_green", "option": ""}])

@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.crop import detect_content_bounds, auto_crop
+from nocturne.core.image import AstroImage
+from nocturne.core.crop import detect_content_bounds, auto_crop
 
 
 def _bordered():

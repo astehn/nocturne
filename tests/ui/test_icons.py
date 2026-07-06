@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.icons import ICON_NAMES, load_icon, _ICON_DIR  # noqa: E402
+from nocturne.ui.icons import ICON_NAMES, load_icon, _ICON_DIR  # noqa: E402
 
 
 def test_all_named_svgs_exist_and_are_valid_xml():

@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 
-from seestar_processor.ui.reset_slider import ResetSlider
+from nocturne.ui.reset_slider import ResetSlider
 
 
 def test_resets_to_default_on_double_click(qtbot):

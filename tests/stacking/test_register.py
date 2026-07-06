@@ -1,6 +1,6 @@
 import numpy as np
 from skimage.transform import SimilarityTransform, warp
-from seestar_processor.stacking.register import find_transform, warp_to
+from nocturne.stacking.register import find_transform, warp_to
 from tests.stacking.synthetic import make_star_field
 
 

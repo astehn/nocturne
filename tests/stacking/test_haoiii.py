@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from astropy.io import fits
-from seestar_processor.stacking.haoiii import (
+from nocturne.stacking.haoiii import (
     load_cfa, extract_cfa_planes, renorm_oiii, _site_offsets,
 )
 from tests.stacking.synthetic import make_star_field, write_cfa_fits
@@ -69,7 +69,7 @@ def _cfa_subs(tmp_path, n=4, seed=2):
 
 
 def test_run_haoiii_extract_produces_combined_master(tmp_path):
-    from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
     import os
     paths = _cfa_subs(tmp_path)
     out = tmp_path / "HaOIII_master.fits"
@@ -84,7 +84,7 @@ def test_run_haoiii_extract_produces_combined_master(tmp_path):
 
 
 def test_run_haoiii_extract_rejects_non_cfa(tmp_path):
-    from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
     paths = _cfa_subs(tmp_path)
     bad = tmp_path / "color.fits"
     fits.PrimaryHDU(np.zeros((3, 120, 120), np.float32)).writeto(str(bad))
@@ -98,7 +98,7 @@ def test_run_haoiii_extract_rejects_non_cfa_reference(tmp_path):
     # A debayered FITS graded FIRST (best) must be rejected and the next raw sub
     # promoted to reference — not abort the run. The tool writes its master back
     # into the graded folder, so a prior RGB master can grade highest.
-    from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
     paths = _cfa_subs(tmp_path)
     bad = tmp_path / "prior_master.fits"
     fits.PrimaryHDU(np.zeros((3, 120, 120), np.float32)).writeto(str(bad))
@@ -110,7 +110,7 @@ def test_run_haoiii_extract_rejects_non_cfa_reference(tmp_path):
 
 
 def test_run_haoiii_extract_too_few(tmp_path):
-    from seestar_processor.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
     paths = _cfa_subs(tmp_path, n=2)
     with pytest.raises(ValueError):
         run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, str(tmp_path / "m.fits")))

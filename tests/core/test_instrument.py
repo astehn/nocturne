@@ -1,4 +1,4 @@
-from seestar_processor.core.instrument import SEESTAR_S30_PRO
+from nocturne.core.instrument import SEESTAR_S30_PRO
 
 
 def test_seestar_s30_pro_profile():

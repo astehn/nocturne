@@ -1,5 +1,5 @@
 import numpy as np
-from seestar_processor.stacking.frames import discover_subs, load_sub, luminance
+from nocturne.stacking.frames import discover_subs, load_sub, luminance
 from tests.stacking.synthetic import make_star_field, write_color_fits
 
 

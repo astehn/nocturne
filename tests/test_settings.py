@@ -1,4 +1,4 @@
-from seestar_processor.settings import (
+from nocturne.settings import (
     Settings, load_settings, save_settings, graxpert_valid,
 )
 

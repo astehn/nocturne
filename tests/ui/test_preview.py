@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
+from nocturne.core.image import AstroImage
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.preview import to_qimage  # noqa: E402
+from nocturne.ui.preview import to_qimage  # noqa: E402
 
 
 def test_to_qimage_dimensions(qapp):

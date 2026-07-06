@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.steps.levels import LevelsStep
+from nocturne.core.image import AstroImage
+from nocturne.steps.levels import LevelsStep
 
 
 def test_levels_step_applies_tuple():

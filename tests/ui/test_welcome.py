@@ -1,7 +1,7 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui.welcome import WelcomeScreen  # noqa: E402
+from nocturne.ui.welcome import WelcomeScreen  # noqa: E402
 
 
 def test_welcome_buttons_invoke_callbacks(qtbot):

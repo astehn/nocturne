@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.settings import Settings  # noqa: E402
-from seestar_processor.core.image import AstroImage  # noqa: E402
-from seestar_processor.ui.palette_dialog import PaletteDialog  # noqa: E402
+from nocturne.settings import Settings  # noqa: E402
+from nocturne.core.image import AstroImage  # noqa: E402
+from nocturne.ui.palette_dialog import PaletteDialog  # noqa: E402
 
 
 def _color(seed=0):
@@ -73,7 +73,7 @@ def test_fallback_without_rcastro(qtbot):
 
 
 def test_new_controls_present_and_no_old_curves(qtbot):
-    from seestar_processor.ui.reset_slider import ResetSlider
+    from nocturne.ui.reset_slider import ResetSlider
     dlg = _make_dialog(qtbot)
     assert isinstance(dlg.ha_slider, ResetSlider) and dlg.ha_slider._default == 60
     assert isinstance(dlg.oiii_slider, ResetSlider) and dlg.oiii_slider._default == 70
@@ -118,7 +118,7 @@ def test_palette_dialog_seeded_skips_starx(qtbot):
 
 
 def test_star_brightness_slider_present_and_in_params(qtbot):
-    from seestar_processor.ui.reset_slider import ResetSlider
+    from nocturne.ui.reset_slider import ResetSlider
     dlg = _make_dialog(qtbot)
     assert isinstance(dlg.star_slider, ResetSlider) and dlg.star_slider._default == 50
     assert dlg._params().star_brightness == pytest.approx(1.0)   # default 50 -> 1.0

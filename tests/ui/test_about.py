@@ -1,6 +1,6 @@
 import json
 
-from seestar_processor.ui.about import load_contributors, about_html
+from nocturne.ui.about import load_contributors, about_html
 
 
 def test_load_contributors_ships_valid_data():

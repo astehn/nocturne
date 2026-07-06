@@ -1,4 +1,4 @@
-# Seestar Processor — Backlog
+# Nocturne — Backlog
 
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
@@ -33,13 +33,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       in `PROCESSING_ORDER`), recipe-able. Whole-branch review clean; 316 tests.
 
 ## Soon
-- [ ] **Refresh the in-app Help content — DO LAST (after feature-complete).** `help_html()`
-      is stale (predates Stack, Ha/OIII, Palette, Recipes/Batch, Local Contrast; still lists
-      the Destination step slated for removal). Deliberately deferred to near the end: writing
-      it now means re-updating it on every feature/flow change. Rewrite once the pipeline is
-      stable, reusing the plain-English framing from `docs/TESTERS_GUIDE.md`. (`ui/about.py`;
-      keep it a pure function so it stays testable.) NB: the **About** page can be refreshed
-      independently and sooner (it's version/identity text, not a feature walkthrough).
+- [x] **Comprehensive in-app Help.** DONE. Replaced the stale `help_html()` blob with a
+      single content module (`ui/help_content.py`, 21 concept-teaching topics) feeding both a
+      bottom-anchored per-step explainer and a browsable Help window (`ui/help_dialog.py`,
+      sidebar TOC + content pane). 393 tests.
 - [x] **Export options at the final Save step + remove the Destination step.** In the final
       "Save"/Export step, let the user choose to save either (a) the whole image, or (b) a
       **separated pair** — a starless (background/nebula) image + a stars-only image — so they
@@ -111,9 +108,10 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Packaging / distribution (later, after refinement)
 - App name chosen: **Nocturne** (display name set; About/Help added). Not affiliated w/ ZWO.
-- [ ] Rename the internal package `seestar_processor` → `nocturne` (touches all imports/tests;
-      do at packaging time to avoid mid-iteration churn). Settings dir `~/.seestar_processor`
-      → `~/.nocturne` too.
+- [x] Rename the internal package `seestar_processor` → `nocturne`. DONE — all imports/tests
+      renamed; `pyproject` name → `nocturne`; settings dir → `~/.nocturne` with one-time
+      auto-migration of a legacy `~/.seestar_processor/settings.json`
+      (`settings.resolve_settings_path`).
 - [ ] **Splash screen** on launch (with a real logo).
 - [ ] App **icon**.
 - [ ] Trim heavy deps before bundling: replace `colour-demosaicing` (rare mono-Bayer path)

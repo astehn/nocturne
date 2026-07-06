@@ -1,5 +1,5 @@
 import numpy as np
-from seestar_processor.stacking.coverage import (
+from nocturne.stacking.coverage import (
     coverage_map, full_coverage_bounds, _largest_true_rectangle,
 )
 

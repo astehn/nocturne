@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QThreadPool  # noqa: E402
-from seestar_processor.ui.worker import run_async  # noqa: E402
+from nocturne.ui.worker import run_async  # noqa: E402
 
 
 def test_run_async_delivers_result(qtbot):

@@ -1,4 +1,4 @@
-from seestar_processor.ui.pipeline import (
+from nocturne.ui.pipeline import (
     core_stages, path_stages, next_enabled, prev_enabled, STEP_NAME, PROCESSING_ORDER,
 )
 
@@ -38,19 +38,19 @@ def test_step_name_and_order():
 
 
 def test_geometry_names():
-    from seestar_processor.ui.pipeline import GEOMETRY_NAMES
+    from nocturne.ui.pipeline import GEOMETRY_NAMES
     assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V")
 
 
 def test_remove_green_positioned_after_color():
-    from seestar_processor.ui.pipeline import PROCESSING_ORDER, STEP_NAME
+    from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     assert STEP_NAME["remove_green"] == "Remove Green"
     i = PROCESSING_ORDER.index("remove_green")
     assert PROCESSING_ORDER[i - 1] == "color"
 
 
 def test_deconvolution_stage_and_order():
-    from seestar_processor.ui.pipeline import (
+    from nocturne.ui.pipeline import (
         PROCESSING_ORDER, STEP_NAME, path_stages)
     assert STEP_NAME["deconvolution"] == "Deconvolution"
     assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
@@ -62,7 +62,7 @@ def test_deconvolution_stage_and_order():
 
 
 def test_enhancements_stage_and_names():
-    from seestar_processor.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, path_stages
+    from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, path_stages
     assert ENHANCE_NAMES == ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
     ids = [s.id for s in path_stages()]
     assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
@@ -70,7 +70,7 @@ def test_enhancements_stage_and_names():
 
 
 def test_post_stretch_ids_are_the_finishing_steps_minus_export():
-    from seestar_processor.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
+    from nocturne.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
     assert POST_STRETCH_IDS == frozenset({
         "levels", "saturation", "noise_sharpen",
         "local_contrast", "star_reduction", "enhancements",

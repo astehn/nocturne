@@ -2,8 +2,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QLabel  # noqa: E402
-from seestar_processor.ui.pipeline import path_stages  # noqa: E402
-from seestar_processor.ui.step_panels import build_panel  # noqa: E402
+from nocturne.ui.pipeline import path_stages  # noqa: E402
+from nocturne.ui.step_panels import build_panel  # noqa: E402
 
 
 def test_panel_is_a_card(qtbot):
@@ -63,7 +63,7 @@ def test_background_off_enables_apply_without_graxpert(qtbot):
 
 
 def test_auto_panel_apply_color_has_no_green(qtbot):
-    from seestar_processor.core.color import ColorSettings
+    from nocturne.core.color import ColorSettings
     got = []
     w = build_panel(_stage("color"), on_apply=got.append)
     qtbot.addWidget(w)
@@ -158,7 +158,7 @@ def test_export_panel_formats(qtbot):
 
 
 def test_sliders_are_reset_sliders_with_defaults(qtbot):
-    from seestar_processor.ui.reset_slider import ResetSlider
+    from nocturne.ui.reset_slider import ResetSlider
     st = build_panel(_stage("stretch")); qtbot.addWidget(st)
     assert isinstance(st.stretch_slider, ResetSlider) and st.stretch_slider._default == 50
     lv = build_panel(_stage("levels")); qtbot.addWidget(lv)
@@ -223,8 +223,8 @@ def test_enhance_panel_buttons_invoke_callback(qtbot):
 
 def test_import_panel_meta_label_is_rich_text(qtbot):
     from PySide6.QtCore import Qt
-    from seestar_processor.ui.step_panels import build_panel
-    from seestar_processor.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    from nocturne.ui.pipeline import path_stages
     stage = next(s for s in path_stages() if s.kind == "import")
     w = build_panel(stage)
     qtbot.addWidget(w)

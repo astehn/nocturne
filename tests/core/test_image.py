@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
+from nocturne.core.image import AstroImage
 
 
 def test_coerces_to_float32_and_detects_color():

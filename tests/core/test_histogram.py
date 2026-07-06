@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.histogram import histogram
+from nocturne.core.image import AstroImage
+from nocturne.core.histogram import histogram
 
 
 def test_color_histogram_channels_and_counts():

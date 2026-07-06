@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.steps.stretch_step import StretchStep
+from nocturne.core.image import AstroImage
+from nocturne.steps.stretch_step import StretchStep
 
 # BackgroundStep is covered by tests/steps/test_new_steps.py (off/light/strong).
 

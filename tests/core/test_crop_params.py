@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.crop import CropParams, apply_crop_params
+from nocturne.core.image import AstroImage
+from nocturne.core.crop import CropParams, apply_crop_params
 
 
 def test_bounds_crop():

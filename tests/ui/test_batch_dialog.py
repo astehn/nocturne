@@ -1,8 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.settings import Settings  # noqa: E402
-from seestar_processor.ui.batch_dialog import BatchDialog  # noqa: E402
+from nocturne.settings import Settings  # noqa: E402
+from nocturne.ui.batch_dialog import BatchDialog  # noqa: E402
 
 
 def test_batch_dialog_runs_with_fake_runner(qtbot, tmp_path):

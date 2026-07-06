@@ -1,7 +1,7 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.tools.base import write_temp_fits
-from seestar_processor.tools.rcastro import RCAstro
+from nocturne.core.image import AstroImage
+from nocturne.tools.base import write_temp_fits
+from nocturne.tools.rcastro import RCAstro
 
 
 def _capture_and_write(img, factor, captured):

@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.deconvolution import sharpen
+from nocturne.core.image import AstroImage
+from nocturne.core.deconvolution import sharpen
 
 
 def test_sharpen_changes_image_and_keeps_shape():

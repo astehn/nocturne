@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.saturation import saturate
+from nocturne.core.image import AstroImage
+from nocturne.core.saturation import saturate
 
 
 def test_saturation_increases_chroma():

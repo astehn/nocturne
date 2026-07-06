@@ -1,8 +1,8 @@
 import sys
 import numpy as np
 import pytest
-from seestar_processor.core.image import AstroImage
-from seestar_processor.tools.base import (
+from nocturne.core.image import AstroImage
+from nocturne.tools.base import (
     write_temp_fits, read_fits_array, run_cli, ToolError,
 )
 

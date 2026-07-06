@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.local_contrast import enhance
+from nocturne.core.image import AstroImage
+from nocturne.core.local_contrast import enhance
 
 
 def _img():

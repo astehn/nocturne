@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.autostretch import autostretch
+from nocturne.core.image import AstroImage
+from nocturne.core.autostretch import autostretch
 
 
 def test_autostretch_brightens_dark_image_without_mutating():

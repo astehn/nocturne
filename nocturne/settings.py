@@ -2,7 +2,25 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import asdict, dataclass
+
+
+def resolve_settings_path(home: str | None = None) -> str:
+    """Path to settings.json under ~/.nocturne, creating the directory. On first
+    run, migrate a pre-rename ~/.seestar_processor/settings.json if present so the
+    user keeps their configured tool paths."""
+    home = home if home is not None else os.path.expanduser("~")
+    config_dir = os.path.join(home, ".nocturne")
+    os.makedirs(config_dir, exist_ok=True)
+    new_settings = os.path.join(config_dir, "settings.json")
+    legacy = os.path.join(home, ".seestar_processor", "settings.json")
+    if not os.path.exists(new_settings) and os.path.exists(legacy):
+        try:
+            shutil.copyfile(legacy, new_settings)
+        except OSError:
+            pass  # best-effort; a failed migration just starts fresh
+    return new_settings
 
 
 @dataclass

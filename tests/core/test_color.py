@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.color import ColorSettings, apply_color
+from nocturne.core.image import AstroImage
+from nocturne.core.color import ColorSettings, apply_color
 
 
 def test_neutralize_background_equalizes_channel_medians():
@@ -49,7 +49,7 @@ def test_remove_green_clamps_green_excess():
 
 
 def test_remove_green_function_clamps_green():
-    from seestar_processor.core.color import remove_green
+    from nocturne.core.color import remove_green
     data = np.full((8, 8, 3), 0.3, dtype=np.float32)
     data[..., 1] = 0.8  # green excess
     out = remove_green(AstroImage(data))
@@ -58,7 +58,7 @@ def test_remove_green_function_clamps_green():
 
 
 def test_remove_green_leaves_non_green_pixel_untouched():
-    from seestar_processor.core.color import remove_green
+    from nocturne.core.color import remove_green
     data = np.zeros((2, 2, 3), dtype=np.float32)
     data[..., 0] = 0.5; data[..., 1] = 0.2; data[..., 2] = 0.5   # green already below avg
     out = remove_green(AstroImage(data))
@@ -66,13 +66,13 @@ def test_remove_green_leaves_non_green_pixel_untouched():
 
 
 def test_remove_green_mono_is_noop():
-    from seestar_processor.core.color import remove_green
+    from nocturne.core.color import remove_green
     img = AstroImage(np.full((4, 4), 0.5, dtype=np.float32))
     out = remove_green(img)
     assert out.data.ndim == 2 and np.allclose(out.data, 0.5)
 
 
 def test_remove_green_preserves_is_linear():
-    from seestar_processor.core.color import remove_green
+    from nocturne.core.color import remove_green
     img = AstroImage(np.full((4, 4, 3), 0.4, dtype=np.float32), is_linear=False)
     assert remove_green(img).is_linear is False

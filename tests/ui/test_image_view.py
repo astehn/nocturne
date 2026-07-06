@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtGui import QImage  # noqa: E402
-from seestar_processor.ui.image_view import ImageView  # noqa: E402
+from nocturne.ui.image_view import ImageView  # noqa: E402
 
 
 def _qimage(w=20, h=10):

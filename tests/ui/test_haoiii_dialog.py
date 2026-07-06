@@ -1,9 +1,9 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.settings import Settings  # noqa: E402
-from seestar_processor.stacking.grade import FrameStats  # noqa: E402
-from seestar_processor.ui.haoiii_dialog import HaOIIIDialog  # noqa: E402
+from nocturne.settings import Settings  # noqa: E402
+from nocturne.stacking.grade import FrameStats  # noqa: E402
+from nocturne.ui.haoiii_dialog import HaOIIIDialog  # noqa: E402
 
 
 def _stats(path, score, included=True):
@@ -41,7 +41,7 @@ def test_extract_hands_off_master(qtbot, tmp_path):
         captured["opts"] = opts
         if on_progress:
             on_progress(1, 1, "stacking Ha")
-        from seestar_processor.stacking.haoiii import HaOIIIResult
+        from nocturne.stacking.haoiii import HaOIIIResult
         return HaOIIIResult(_Img(), opts.include, [], len(opts.include), 30.0, opts.output_path)
 
     dlg._extract_runner = fake_extract

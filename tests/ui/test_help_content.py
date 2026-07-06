@@ -1,8 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.ui import help_content as hc  # noqa: E402
-from seestar_processor.ui.pipeline import path_stages  # noqa: E402
+from nocturne.ui import help_content as hc  # noqa: E402
+from nocturne.ui.pipeline import path_stages  # noqa: E402
 
 
 def test_every_stage_has_a_topic():

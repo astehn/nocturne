@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from seestar_processor.core.image import AstroImage  # noqa: E402
-from seestar_processor.ui.histogram_view import HistogramView, _polygon_points  # noqa: E402
+from nocturne.core.image import AstroImage  # noqa: E402
+from nocturne.ui.histogram_view import HistogramView, _polygon_points  # noqa: E402
 
 
 def test_polygon_points_span_and_bounds():

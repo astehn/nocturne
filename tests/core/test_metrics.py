@@ -1,6 +1,6 @@
 import numpy as np
-from seestar_processor.core.image import AstroImage
-from seestar_processor.core.metrics import rms_delta
+from nocturne.core.image import AstroImage
+from nocturne.core.metrics import rms_delta
 
 
 def test_identical_is_zero():
