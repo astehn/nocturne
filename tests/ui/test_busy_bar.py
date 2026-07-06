@@ -26,9 +26,12 @@ def test_busy_bar_follows_target_resize(qtbot):
     parent = QWidget()
     parent.resize(200, 100)
     qtbot.addWidget(parent)
+    parent.show()                 # hidden widgets don't get Resize events delivered
     bar = BusyBar()
     bar.show_over(parent)
+    qtbot.waitUntil(lambda: bar.width() == 200, timeout=1000)
     parent.resize(400, 120)
+    # the bar tracks the target via its eventFilter on the target's Resize event
     qtbot.waitUntil(lambda: bar.width() == 400, timeout=1000)
 
 

@@ -29,12 +29,6 @@ class BusyBar(QWidget):
         self.hide()
 
     def _advance(self) -> None:
-        # Fallback for environments where Resize events aren't delivered:
-        # check parent width directly without the width() override hack
-        if self._target is not None:
-            target_w = self._target.width()
-            if super().width() != target_w:
-                self._reposition()
         self._phase = (self._phase + 0.03) % 1.0
         self.update()
 
