@@ -475,6 +475,19 @@ def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
     assert out.exists()
 
 
+def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._status.setText("Export failed: disk full")   # stale error from a prior attempt
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    win.export_final("PNG")
+    assert out.exists()
+    assert win._status.text() == ""   # stale error cleared on the successful export
+
+
 def test_next_from_load_is_crop(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

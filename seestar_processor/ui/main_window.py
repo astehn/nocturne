@@ -634,6 +634,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         img = self.project.current()
+        self._status.setText("")   # clear any stale error before exporting (parity with apply_current)
         if fmt == "Starless + Stars (two TIFFs)":
             if not rcastro_valid(self.settings):
                 self._status.setText("Starless + stars split needs RC-Astro (see Settings).")
