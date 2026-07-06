@@ -228,12 +228,33 @@ def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     assert "open" in win._status.text().lower()
 
 
-def test_export_failure_is_surfaced(qtbot, tmp_path):
+def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    ok = win._guarded(lambda: (_ for _ in ()).throw(OSError("disk full")))
-    assert ok is False
-    assert "disk full" in win._status.text()
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    calls = []
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix: calls.append(label))
+    win.export_final("PNG")
+    assert calls == ["Exporting…"]     # export now goes through the busy helper
+
+
+def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    import seestar_processor.ui.main_window as mw
+    win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
+    win.open_fits(_make_fits(tmp_path))
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    monkeypatch.setattr(mw, "save_png",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    win.export_final("PNG")
+    assert "Export failed: disk full" in win._status.text()
+    assert win._busy is False
 
 
 def test_background_off_records_no_history(qtbot, tmp_path):
@@ -454,6 +475,19 @@ def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
     assert out.exists()
 
 
+def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._status.setText("Export failed: disk full")   # stale error from a prior attempt
+    out = tmp_path / "pic.png"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    win.export_final("PNG")
+    assert out.exists()
+    assert win._status.text() == ""   # stale error cleared on the successful export
+
+
 def test_next_from_load_is_crop(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -642,3 +676,59 @@ def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
     win.apply_current(0.6)                             # earlier processing step
     names = [n for n, _ in win.project.entries()]
     assert "Boost Blue" not in names                  # trailing enhancement truncated
+
+
+def test_run_busy_clears_busy_when_on_result_raises(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
+    win.open_fits(_make_fits(tmp_path))
+
+    def boom(_result):
+        raise RuntimeError("kaboom")
+
+    with pytest.raises(RuntimeError):
+        win._run_busy(lambda: 1, boom, "Working…", "Failed")
+    assert win._busy is False  # finally cleared it despite the throw
+
+
+def test_run_busy_reports_error_prefix(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    def work():
+        raise ValueError("disk full")
+
+    win._run_busy(work, lambda r: None, "Working…", "Export failed")
+    assert win._busy is False
+    assert "Export failed: disk full" in win._status.text()
+
+
+def test_set_busy_gates_immediately_but_delays_visuals(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_busy(True, "Applying Stretch…")
+    assert win._busy is True
+    assert win._back_btn.isEnabled() is False          # gate is immediate
+    assert win._busy_shown is False                    # visuals delayed by the timer
+    assert win._busy_timer.isActive() is True
+    win._set_busy(False)
+    assert win._busy is False
+    assert win._busy_timer.isActive() is False
+    assert win._back_btn.isEnabled() is True
+
+
+def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._busy_label_text = "Colourising…"
+    win._show_busy_visuals()
+    assert win._busy_shown is True
+    assert win._busy_bar.isHidden() is False
+    assert "Colourising…" in win._busy_label.text()
+    assert win._cursor_active is True
+    win._hide_busy_visuals()
+    assert win._busy_shown is False
+    assert win._busy_bar.isHidden() is True
+    assert win._busy_label.text() == ""
+    assert win._cursor_active is False
+    assert QApplication.overrideCursor() is None       # balanced, no leftover override

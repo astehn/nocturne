@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME
@@ -41,9 +41,11 @@ from .step_panels import build_panel
 from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
-from .worker import BusyOverlay, run_async
+from .busy_bar import BusyBar
+from .worker import run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
+BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
 
 _ENHANCE_FN = {
     "Boost Red": lambda i: boost_hue(i, 0.0),
@@ -87,7 +89,17 @@ class MainWindow(QMainWindow):
         self._async_enabled = True  # tests set False for deterministic apply
         self._colourise_layers = None
         self._pool = QThreadPool.globalInstance()
-        self._busy_overlay = BusyOverlay()
+        self._busy_bar = BusyBar()
+        self._busy_shown = False        # whether the delayed visuals are currently up
+        self._cursor_active = False     # whether an override cursor is currently set
+        self._busy_label_text = ""      # base label text (ellipsis animation appends)
+        self._ellipsis_n = 0
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.timeout.connect(self._show_busy_visuals)
+        self._ellipsis_timer = QTimer(self)
+        self._ellipsis_timer.setInterval(BUSY_DELAY_MS)
+        self._ellipsis_timer.timeout.connect(self._tick_ellipsis)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -129,6 +141,9 @@ class MainWindow(QMainWindow):
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color: #ff6b6b;")
         self._right_layout.addWidget(self._status)
+        self._busy_label = QLabel("")
+        self._busy_label.setStyleSheet("color: #9aa0a6;")   # neutral grey, not error-red
+        self._right_layout.addWidget(self._busy_label)
         root.addWidget(right)
 
         self.log_panel = LogPanel()
@@ -224,7 +239,6 @@ class MainWindow(QMainWindow):
             self._status.setText("Colourise needs a colour image.")
             return
         self._status.setText("")
-        self._set_busy(True)
 
         def work():
             starless, stars = self._colourise_starx(base)
@@ -232,25 +246,14 @@ class MainWindow(QMainWindow):
                 return render_nebula(starless, PaletteParams())
             return compose(starless, stars, PaletteParams())
 
-        def done(result):
+        def on_result(result):
             self.project.jump_back(idx)             # truncate only on success
             self.project.run_step(_PrecomputedStep("Colourise", result), "")
             self.log_panel.append_entry(
                 format_log_entry("Colourise", "", rms_delta(base, result)))
-            self._set_busy(False)
             self._refresh()
 
-        def err(exc):
-            self._set_busy(False)
-            self._status.setText(f"Colourise failed: {exc}")
-
-        if self._async_enabled:
-            run_async(self._pool, work, done, err)
-        else:
-            try:
-                done(work())
-            except Exception as exc:  # mirror the async error path
-                err(exc)
+        self._run_busy(work, on_result, "Colourising…", "Colourise failed")
 
     def _open_advanced_palette(self) -> None:
         if self.project is None or self._busy:
@@ -433,28 +436,14 @@ class MainWindow(QMainWindow):
         step = self._step_for(stage_id)
         base = self.project.current()
         self._status.setText("")
-        self._set_busy(True)
 
-        def work():
-            return step.apply(base, option)
-
-        def done(result):
+        def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._log_step(stage_id, option, base, result)
-            self._set_busy(False)
             self._refresh()  # stay on this step; user clicks Next to advance
 
-        def err(exc):
-            self._set_busy(False)
-            self._status.setText(f"Failed: {exc}")
-
-        if self._async_enabled:
-            run_async(self._pool, work, done, err)
-        else:
-            try:
-                done(work())
-            except Exception as exc:  # mirror the async error path
-                err(exc)
+        self._run_busy(lambda: step.apply(base, option), on_result,
+                       f"Applying {STEP_NAME[stage_id]}…", "Failed")
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
@@ -466,16 +455,70 @@ class MainWindow(QMainWindow):
             label = option
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
-    def _set_busy(self, busy: bool) -> None:
+    def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
+        """Run `work` off the UI thread with busy indication; `on_result(result)`
+        on success, `f"{err_prefix}: {exc}"` in the status label on failure.
+        Busy is always cleared in a finally (even if `on_result` raises)."""
+        self._set_busy(True, label)
+
+        def done(result):
+            try:
+                on_result(result)
+            finally:
+                self._set_busy(False)
+
+        def err(exc):
+            try:
+                self._status.setText(f"{err_prefix}: {exc}")
+            finally:
+                self._set_busy(False)
+
+        if self._async_enabled:
+            run_async(self._pool, work, done, err)
+        else:
+            try:
+                result = work()
+            except Exception as exc:  # mirror the async error path
+                err(exc)
+            else:
+                done(result)          # an on_result throw propagates after the finally
+
+    def _set_busy(self, busy: bool, label: str = "Working…") -> None:
         self._busy = busy
         if busy:
-            self._busy_overlay.show_over(self.image_view)
+            self._busy_label_text = label
+            self._busy_timer.start(BUSY_DELAY_MS)   # visuals only if op outlasts it
         else:
-            self._busy_overlay.hide()
-        self._back_btn.setDisabled(busy)
+            self._busy_timer.stop()
+            self._hide_busy_visuals()               # no-op if visuals never showed
+        self._back_btn.setDisabled(busy)            # gating stays immediate
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setDisabled(busy)
+
+    def _show_busy_visuals(self) -> None:
+        self._busy_bar.show_over(self.image_view)
+        self._ellipsis_n = 0
+        self._busy_label.setText(self._busy_label_text)
+        self._ellipsis_timer.start()
+        if not self._cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+            self._cursor_active = True
+        self._busy_shown = True
+
+    def _hide_busy_visuals(self) -> None:
+        self._ellipsis_timer.stop()
+        if self._busy_shown:
+            self._busy_bar.hide_bar()
+            self._busy_label.setText("")
+        if self._cursor_active:
+            QApplication.restoreOverrideCursor()
+            self._cursor_active = False
+        self._busy_shown = False
+
+    def _tick_ellipsis(self) -> None:
+        self._ellipsis_n = (self._ellipsis_n + 1) % 4
+        self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
 
     # --- crop overlay ---
     def _setup_crop_overlay(self) -> None:
@@ -587,22 +630,11 @@ class MainWindow(QMainWindow):
         self.log_panel.setVisible(self._log_act.isChecked())
 
     # --- exports ---
-    def _guarded(self, fn, log_label: str | None = None) -> bool:
-        """Run a file-writing action; surface failures instead of crashing."""
-        try:
-            fn()
-        except Exception as exc:
-            self._status.setText(f"Export failed: {exc}")
-            return False
-        self._status.setText("")
-        if log_label:
-            self.log_panel.append_entry(log_label)
-        return True
-
     def export_final(self, fmt: str) -> None:
-        if self.project is None:
+        if self.project is None or self._busy:
             return
         img = self.project.current()
+        self._status.setText("")   # clear any stale error before exporting (parity with apply_current)
         if fmt == "Starless + Stars (two TIFFs)":
             if not rcastro_valid(self.settings):
                 self._status.setText("Starless + stars split needs RC-Astro (see Settings).")
@@ -611,13 +643,15 @@ class MainWindow(QMainWindow):
             if not folder:
                 return
 
-            def _do():
+            def _split():
                 rc = RCAstro(resolve_binary(self.settings.rcastro_path))
                 starless, stars = rc.remove_stars(img, runner=self._rc_runner)
                 save_tiff(starless, os.path.join(folder, "starless.tif"))
                 save_tiff(stars, os.path.join(folder, "stars.tif"))
 
-            self._guarded(_do, "Exported starless.tif + stars.tif")
+            self._run_busy(_split,
+                           lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
+                           "Exporting…", "Export failed")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export", "", "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
@@ -627,15 +661,18 @@ class MainWindow(QMainWindow):
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
-            self._guarded(lambda: save_png(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_png, os.path.basename(path)
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
-            self._guarded(lambda: save_fits(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_fits, os.path.basename(path)
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            self._guarded(lambda: save_tiff(img, path), f"Exported {os.path.basename(path)}")
+            save, name = save_tiff, os.path.basename(path)
+        self._run_busy(lambda: save(img, path),
+                       lambda _: self.log_panel.append_entry(f"Exported {name}"),
+                       "Exporting…", "Export failed")
 
     # --- settings ---
     def _open_settings(self) -> None:

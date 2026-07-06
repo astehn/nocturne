@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QRunnable, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 
 class WorkerSignals(QObject):
@@ -46,24 +44,3 @@ def run_async(pool, fn, on_done, on_error=None) -> None:
     pool.start(worker)
 
 
-class BusyOverlay(QWidget):
-    """Translucent 'Working…' overlay that blocks input over its parent."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        lay = QVBoxLayout(self)
-        label = QLabel("Working…")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: 600;")
-        lay.addWidget(label)
-        self.hide()
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 140))
-
-    def show_over(self, widget: QWidget) -> None:
-        self.setParent(widget)
-        self.setGeometry(widget.rect())
-        self.raise_()
-        self.show()
