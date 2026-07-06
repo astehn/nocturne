@@ -67,3 +67,15 @@ def test_enhancements_stage_and_names():
     ids = [s.id for s in path_stages()]
     assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
     assert "enhancements" not in PROCESSING_ORDER   # append-only, not a truncating position
+
+
+def test_post_stretch_ids_are_the_finishing_steps_minus_export():
+    from seestar_processor.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
+    assert POST_STRETCH_IDS == frozenset({
+        "levels", "saturation", "noise_sharpen",
+        "local_contrast", "star_reduction", "enhancements",
+    })
+    assert "export" not in POST_STRETCH_IDS
+    assert "stretch" not in POST_STRETCH_IDS
+    pre = PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
+    assert POST_STRETCH_IDS.isdisjoint(pre)
