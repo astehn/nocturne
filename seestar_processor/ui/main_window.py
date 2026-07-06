@@ -34,7 +34,7 @@ from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
-from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
+from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from .preview import to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -338,9 +338,28 @@ class MainWindow(QMainWindow):
     def go_back(self) -> None:
         self._go_to(prev_enabled(self._stages, self._stage))
 
+    def _ensure_stretched(self) -> None:
+        """Commit a default Stretch (amount 0.5) at the stretch position so the
+        post-stretch finishing steps have real stretched data. The caller invokes
+        this only when the current image is still linear."""
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
+        }
+        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        base = self.project.current()
+        result = self._step_for("stretch").apply(base, "")   # "" -> default amount 0.5
+        self.project.run_step(_PrecomputedStep("Stretch", result), "")
+        self.log_panel.append_entry(
+            format_log_entry("Stretch", "auto", rms_delta(base, result)))
+
     def _go_to(self, index: int) -> None:
         if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
+        if (self.project is not None
+                and self._stages[index].id in POST_STRETCH_IDS
+                and self.project.current().is_linear):
+            self._ensure_stretched()
         self._stage = index
         self._status.setText("")  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav

@@ -178,12 +178,15 @@ def test_apply_levels_stays_on_step_and_logs(qtbot, tmp_path):
 
 
 def test_levels_refused_on_linear_image(qtbot, tmp_path):
-    # Applying Levels before Stretch would clip the tiny linear values (~0.003)
-    # to black; the step must refuse with a hint instead of blacking out.
+    # Belt-and-suspenders: navigation auto-stretches, but undoing that leaves us
+    # on Levels with a linear image. Applying Levels then would clip the tiny
+    # linear values (~0.003) to black; the guard must refuse with a hint instead.
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("levels")
-    assert win.project.current().is_linear          # not stretched yet
+    win._go_to_id("levels")                         # auto-stretches, lands on Levels
+    win._undo()                                     # undo the auto-stretch -> linear again
+    assert win.current_stage_id() == "levels"
+    assert win.project.current().is_linear
     names_before = [n for n, _ in win.project.entries()]
     win.apply_current((0.01, 1.0, 1.0))             # a tiny black-point nudge
     assert [n for n, _ in win.project.entries()] == names_before   # nothing applied
@@ -748,3 +751,50 @@ def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
     assert win._busy_label.text() == ""
     assert win._cursor_active is False
     assert QApplication.overrideCursor() is None       # balanced, no leftover override
+
+
+def test_navigating_to_levels_auto_stretches(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win.project.current().is_linear
+    win._go_to_id("levels")
+    names = [n for n, _ in win.project.entries()]
+    assert "Stretch" in names
+    assert not win.project.current().is_linear
+    assert "Stretch (auto)" in win.log_panel.text()
+    win.apply_current((0.2, 1.0, 1.0))
+    assert win.project.entries()[-1][0] == "Levels"
+
+
+def test_navigating_to_pre_stretch_step_does_not_auto_stretch(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    assert "Stretch" not in [n for n, _ in win.project.entries()]
+
+
+def test_navigating_to_export_does_not_auto_stretch(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("export")
+    assert "Stretch" not in [n for n, _ in win.project.entries()]
+    assert win.project.current().is_linear
+
+
+def test_already_stretched_is_not_double_stretched(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("saturation")
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Stretch") == 1
+
+
+def test_auto_stretch_is_undoable(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("levels")
+    assert not win.project.current().is_linear
+    win._undo()
+    assert win.project.current().is_linear
