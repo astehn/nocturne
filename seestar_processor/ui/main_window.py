@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME
@@ -41,9 +41,11 @@ from .step_panels import build_panel
 from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
-from .worker import BusyOverlay, run_async
+from .busy_bar import BusyBar
+from .worker import run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
+BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
 
 _ENHANCE_FN = {
     "Boost Red": lambda i: boost_hue(i, 0.0),
@@ -87,7 +89,17 @@ class MainWindow(QMainWindow):
         self._async_enabled = True  # tests set False for deterministic apply
         self._colourise_layers = None
         self._pool = QThreadPool.globalInstance()
-        self._busy_overlay = BusyOverlay()
+        self._busy_bar = BusyBar()
+        self._busy_shown = False        # whether the delayed visuals are currently up
+        self._cursor_active = False     # whether an override cursor is currently set
+        self._busy_label_text = ""      # base label text (ellipsis animation appends)
+        self._ellipsis_n = 0
+        self._busy_timer = QTimer(self)
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.timeout.connect(self._show_busy_visuals)
+        self._ellipsis_timer = QTimer(self)
+        self._ellipsis_timer.setInterval(BUSY_DELAY_MS)
+        self._ellipsis_timer.timeout.connect(self._tick_ellipsis)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -129,6 +141,9 @@ class MainWindow(QMainWindow):
         self._status.setWordWrap(True)
         self._status.setStyleSheet("color: #ff6b6b;")
         self._right_layout.addWidget(self._status)
+        self._busy_label = QLabel("")
+        self._busy_label.setStyleSheet("color: #9aa0a6;")   # neutral grey, not error-red
+        self._right_layout.addWidget(self._busy_label)
         root.addWidget(right)
 
         self.log_panel = LogPanel()
@@ -471,13 +486,39 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool, label: str = "Working…") -> None:
         self._busy = busy
         if busy:
-            self._busy_overlay.show_over(self.image_view)
+            self._busy_label_text = label
+            self._busy_timer.start(BUSY_DELAY_MS)   # visuals only if op outlasts it
         else:
-            self._busy_overlay.hide()
-        self._back_btn.setDisabled(busy)
+            self._busy_timer.stop()
+            self._hide_busy_visuals()               # no-op if visuals never showed
+        self._back_btn.setDisabled(busy)            # gating stays immediate
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setDisabled(busy)
+
+    def _show_busy_visuals(self) -> None:
+        self._busy_bar.show_over(self.image_view)
+        self._ellipsis_n = 0
+        self._busy_label.setText(self._busy_label_text)
+        self._ellipsis_timer.start()
+        if not self._cursor_active:
+            QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+            self._cursor_active = True
+        self._busy_shown = True
+
+    def _hide_busy_visuals(self) -> None:
+        self._ellipsis_timer.stop()
+        if self._busy_shown:
+            self._busy_bar.hide_bar()
+            self._busy_label.setText("")
+        if self._cursor_active:
+            QApplication.restoreOverrideCursor()
+            self._cursor_active = False
+        self._busy_shown = False
+
+    def _tick_ellipsis(self) -> None:
+        self._ellipsis_n = (self._ellipsis_n + 1) % 4
+        self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
 
     # --- crop overlay ---
     def _setup_crop_overlay(self) -> None:

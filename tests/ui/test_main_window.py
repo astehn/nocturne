@@ -666,3 +666,35 @@ def test_run_busy_reports_error_prefix(qtbot, tmp_path):
     win._run_busy(work, lambda r: None, "Working…", "Export failed")
     assert win._busy is False
     assert "Export failed: disk full" in win._status.text()
+
+
+def test_set_busy_gates_immediately_but_delays_visuals(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_busy(True, "Applying Stretch…")
+    assert win._busy is True
+    assert win._back_btn.isEnabled() is False          # gate is immediate
+    assert win._busy_shown is False                    # visuals delayed by the timer
+    assert win._busy_timer.isActive() is True
+    win._set_busy(False)
+    assert win._busy is False
+    assert win._busy_timer.isActive() is False
+    assert win._back_btn.isEnabled() is True
+
+
+def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._busy_label_text = "Colourising…"
+    win._show_busy_visuals()
+    assert win._busy_shown is True
+    assert win._busy_bar.isHidden() is False
+    assert "Colourising…" in win._busy_label.text()
+    assert win._cursor_active is True
+    win._hide_busy_visuals()
+    assert win._busy_shown is False
+    assert win._busy_bar.isHidden() is True
+    assert win._busy_label.text() == ""
+    assert win._cursor_active is False
+    assert QApplication.overrideCursor() is None       # balanced, no leftover override
