@@ -151,19 +151,17 @@ h3 { font-size: 1.15rem; }
 .beat p { color: var(--muted); margin: 0; }
 
 /* --- Screenshots --- */
+.shots-main { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+.shots-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+figure.shot { margin: 0; }
 .shot {
   border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
   background: var(--surface);
 }
 .shot img { display: block; width: 100%; height: auto; }
-.shot.placeholder {
-  min-height: 320px; display: grid; place-items: center; text-align: center;
-  color: var(--muted); padding: 40px;
-  background:
-    radial-gradient(900px 400px at 50% -10%, rgba(63,121,216,.16), transparent),
-    var(--surface);
-  border-style: dashed;
-}
+.shot figcaption { padding: 12px 16px; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--border); }
+.shot.small figcaption { text-align: center; font-size: .85rem; }
+@media (max-width: 760px) { .shots-main, .shots-row { grid-template-columns: 1fr; } }
 
 /* --- Requirements --- */
 .reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }

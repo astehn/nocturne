@@ -137,6 +137,8 @@ Releases later, change both to the release asset URL.
 
 ## Screenshots
 
-`#screenshots` shows a placeholder until you add real images. Drop e.g.
-`img/screenshot-flow.png` into `site/img/`, then replace the `.shot.placeholder` block in
-`index.html` with `<div class="shot"><img src="img/screenshot-flow.png" alt="Nocturne — the guided flow"></div>`.
+The `#screenshots` gallery uses `img/shot-flow.jpg`, `img/shot-result.jpg`,
+`img/shot-stacking.jpg`, `img/shot-haoiii.jpg`, `img/shot-batch.jpg`. Any web format works
+(JPG/PNG); keep them reasonably sized — the two large full-app shots were downscaled to
+1600 px wide (~120 KB each) so the page stays fast. To swap one, replace the file (same
+name) or update the `<img src>` in the `#screenshots` section of `index.html`.
