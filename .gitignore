@@ -9,3 +9,4 @@ dist/
 scratch/
 *.log
 .playwright-mcp/
+site/config.php

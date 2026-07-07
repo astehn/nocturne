@@ -159,8 +159,26 @@
     <section id="contribute" class="section alt">
       <div class="wrap">
         <h2>Lend your light ⭐</h2>
-        <p class="lead">Nocturne is early, and more test data makes it better. If you'd share a stacked dualband/LP FITS master, you'll be credited in-app as a <strong>Photon Donor</strong>.</p>
-        <p class="fine">Donated data is used <strong>only</strong> to test and improve Nocturne — never shared, sold, or republished.</p>
+        <p class="lead">Nocturne is early, and more test data makes it better. Share a stacked dualband/LP <strong>FITS master</strong> and you'll be credited in-app as a <strong>Photon Donor</strong>.</p>
+        <form id="contribute-form" action="upload.php" method="post" enctype="multipart/form-data" class="contribute-form">
+          <input type="file" name="stack" accept=".fit,.fits,.fts" required>
+          <div class="field-row">
+            <input type="text" name="name" placeholder="Your name (for the credit — optional)" maxlength="120">
+            <input type="email" name="email" placeholder="Email (optional, private)" maxlength="190">
+          </div>
+          <div class="field-row">
+            <input type="text" name="target" placeholder="Target (e.g. NGC 7000)" maxlength="190">
+            <input type="text" name="integration" placeholder="Total integration (e.g. 48 min)" maxlength="80">
+          </div>
+          <textarea name="notes" placeholder="Notes (optional)" maxlength="2000" rows="2"></textarea>
+          <label class="consent"><input type="checkbox" name="consent" required> I'm happy for this to be used to test &amp; improve Nocturne.</label>
+          <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <input type="hidden" name="ajax" value="0">
+          <button type="submit" class="btn btn-primary">Upload my stack</button>
+          <div class="progress" hidden><div class="progress-bar"></div></div>
+          <p class="form-status" role="status" aria-live="polite"></p>
+        </form>
+        <p class="fine">Max 512&nbsp;MB · a stacked FITS master (.fit / .fits). Donated data is used <strong>only</strong> to test and improve Nocturne — never shared, sold, or republished.</p>
       </div>
     </section>
 
@@ -174,5 +192,6 @@
   </footer>
 
   <script src="main.js"></script>
+  <script src="contribute.js"></script>
 </body>
 </html>

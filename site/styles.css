@@ -183,8 +183,25 @@ h3 { font-size: 1.15rem; }
 .footer { border-top: 1px solid var(--border); padding: 40px 0; color: var(--muted); }
 .footer p { margin: 0 0 8px; font-size: .9rem; }
 
+/* --- Contribute form --- */
+.contribute-form { max-width: 620px; margin: 26px 0; display: grid; gap: 12px; }
+.contribute-form input[type=text], .contribute-form input[type=email], .contribute-form textarea, .contribute-form input[type=file] {
+  width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit;
+}
+.contribute-form input:focus, .contribute-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.consent { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); font-size: .92rem; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; }
+.progress { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+.progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+.form-status { color: var(--muted); font-size: .92rem; min-height: 1.2em; margin: 0; }
+.form-status.error { color: #ff6b6b; }
+.form-status.ok { color: var(--accent); }
+
 /* --- Responsive --- */
 @media (max-width: 640px) {
+  .field-row { grid-template-columns: 1fr; }
   .nav { flex-direction: column; gap: 10px; }
   .nav-links { gap: 16px; flex-wrap: wrap; justify-content: center; }
 }
