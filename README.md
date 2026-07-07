@@ -55,7 +55,7 @@ Grab the latest `Nocturne.app` from [Releases](../../releases), drag it to Appli
 ### Run from source
 
 ```bash
-git clone <repo-url> nocturne
+git clone https://github.com/astehn/nocturne.git
 cd nocturne
 python3.11 -m venv .venv           # Python 3.11+
 source .venv/bin/activate
