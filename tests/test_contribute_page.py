@@ -13,7 +13,7 @@ def test_upload_form_present():
 
 
 def test_backend_and_admin_files_exist():
-    for f in ("upload.php", "config.example.php", "contribute.js",
+    for f in ("upload.php", "config.example.php", "contribute.js", "get.php",
               "db/schema.sql", "admin/admin.php", "admin/download.php"):
         assert (SITE / f).exists(), f
 
