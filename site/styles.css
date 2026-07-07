@@ -191,9 +191,9 @@ figure.shot { margin: 0; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .consent { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); font-size: .92rem; }
 .hp { position: absolute; left: -9999px; width: 1px; height: 1px; }
-.progress { height: 8px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
-.progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
-.form-status { color: var(--muted); font-size: .92rem; min-height: 1.2em; margin: 0; }
+.progress { height: 12px; background: var(--surface-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+.progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .15s linear; }
+.form-status { color: var(--text); font-size: .95rem; min-height: 1.3em; margin: 0; font-variant-numeric: tabular-nums; }
 .form-status.error { color: #ff6b6b; }
 .form-status.ok { color: var(--accent); }
 
