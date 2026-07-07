@@ -10,3 +10,6 @@ scratch/
 *.log
 .playwright-mcp/
 site/config.php
+/site/
+/tests/test_site_links.py
+/tests/test_contribute_page.py
