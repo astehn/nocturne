@@ -14,7 +14,7 @@ def test_local_assets_exist():
 
 
 def test_required_content_present():
-    assert "https://nocturne.stehn.com/download/Nocturne.zip" in HTML
+    assert 'href="get.php"' in HTML   # download button routes via the counter
     assert "GPLv3" in HTML or "GNU General Public License" in HTML
     assert "not affiliated" in HTML.lower()
     assert "graxpert" in HTML.lower() and "rc-astro" in HTML.lower()
