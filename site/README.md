@@ -19,37 +19,49 @@ sudo mkdir -p /var/www/nocturne/download
 sudo cp Nocturne.zip /var/www/nocturne/download/Nocturne.zip   # zip of dist/Nocturne.app
 ```
 
-### Sample nginx server block
+### Apache virtual host
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name nocturne.stehn.com;
+Enable the modules used below (once): `sudo a2enmod deflate expires headers`.
 
-    # ssl_certificate / ssl_certificate_key managed by certbot
-    root /var/www/nocturne;
-    index index.html;
+Create `/etc/apache2/sites-available/nocturne.conf`:
 
-    gzip on;
-    gzip_types text/css application/javascript image/svg+xml;
+```apache
+<VirtualHost *:80>
+    ServerName nocturne.stehn.com
+    DocumentRoot /var/www/nocturne
 
-    location / { try_files $uri $uri/ =404; }
+    <Directory /var/www/nocturne>
+        Require all granted
+        Options -Indexes
+        AllowOverride None
+    </Directory>
+
+    # gzip
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript image/svg+xml
 
     # long cache for static assets
-    location ~* \.(css|js|png|svg|zip)$ {
-        expires 30d;
-        add_header Cache-Control "public";
-    }
-}
-
-server {
-    listen 80;
-    server_name nocturne.stehn.com;
-    return 301 https://$host$request_uri;
-}
+    <FilesMatch "\.(css|js|png|svg|zip)$">
+        Header set Cache-Control "public, max-age=2592000"
+    </FilesMatch>
+</VirtualHost>
 ```
 
-Get TLS with your existing certbot: `sudo certbot --nginx -d nocturne.stehn.com`.
+Enable it and reload:
+
+```bash
+sudo a2ensite nocturne.conf
+sudo systemctl reload apache2
+```
+
+Then get TLS with certbot's **Apache** plugin — it edits Apache (not nginx) and
+automatically creates the HTTPS (`*:443`) vhost **and** the HTTP→HTTPS redirect for you, so
+the `*:80` vhost above is all you need to write by hand:
+
+```bash
+sudo certbot --apache -d nocturne.stehn.com
+```
+
+(Certbot also installs a renewal timer; `sudo certbot renew --dry-run` verifies it.)
 
 ## Changing the download URL
 
