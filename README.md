@@ -20,8 +20,14 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 
 ## Screenshots
 
-<!-- Add UI screenshots here, e.g. the guided flow and a colourised result. -->
-> _Screenshots coming — drop images into `docs/img/` and reference them here._
+<p align="center">
+  <img src="site/img/shot-flow.jpg" alt="Nocturne — the guided flow with live stack and sensor metadata" width="90%"><br>
+  <em>The guided flow — every step explained, with live stack &amp; sensor details.</em>
+</p>
+<p align="center">
+  <img src="site/img/shot-result.jpg" alt="A colourised nebula at the Enhancements step" width="90%"><br>
+  <em>Finishing a colourised nebula with targeted enhancements.</em>
+</p>
 
 ## Features
 
