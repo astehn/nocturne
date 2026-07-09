@@ -70,7 +70,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 ## Processing features — second tier
 - [ ] **Multi-session combine** — register + integrate several nights' stacked FITS of the
       same target. Powerful for serious users; bigger build (alignment/integration).
-- [x] **Masked / lightness-aware saturation** — boost fades toward highlights/stars.
+- [ ] **(idea, parked) Port Colourise/Foraxx to a Siril `sirilpy` plugin.** Cross-platform
+      (Win/Mac/Linux), no code-signing/notarization, taps Siril's user base. Low-friction
+      because `core/palette.py` is pure numpy and sirilpy is get-numpy → set-numpy (Siril
+      1.4+ Python API). Trade-off: gives up the guided UX (that stays the app). Only if the
+      packaging/reach situation ever warrants it.
 - [x] **Local contrast / structure boost** — Local Contrast step (CLAHE on luminance).
 - [x] **Before/after split divider** — draggable divider in the preview.
 - [x] **Per-target-type stretch presets** — Auto/Nebula/Galaxy/Cluster dropdown.
