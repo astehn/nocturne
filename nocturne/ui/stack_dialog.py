@@ -8,8 +8,8 @@ import numpy as np
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
+    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMessageBox, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -44,7 +44,8 @@ class StackDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
-        self.setMinimumWidth(560)
+        self.setMinimumSize(800, 500)
+        self.resize(1100, 700)
         self._settings = settings
         self._on_master = on_master
         self._grade_runner = grade_frames  # injectable for tests
@@ -61,6 +62,11 @@ class StackDialog(QDialog):
         self.output_edit.textEdited.connect(self._mark_output_edited)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg", "Verdict"])
+        hdr = self.table.horizontalHeader()
+        for col in (0, 2, 3, 4):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        for col in (1, 5):                    # File and Verdict share the slack
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
         self.avg_radio = QRadioButton("Average")
         self.sigma_radio = QRadioButton("Sigma-clipped")
         self.sigma_radio.setChecked(True)
@@ -118,13 +124,17 @@ class StackDialog(QDialog):
         buttons.addWidget(self._stack_btn)
         buttons.addWidget(close_btn)
 
-        table_row = QHBoxLayout()
-        table_row.addWidget(self.table, 1)
-        table_row.addWidget(self.preview)
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.table)
+        self.splitter.addWidget(self.preview)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)   # preview absorbs extra width
+        self.splitter.setSizes([600, 500])
+        self.splitter.setChildrenCollapsible(False)
 
         root = QVBoxLayout(self)
         root.addLayout(form)
-        root.addLayout(table_row)
+        root.addWidget(self.splitter, 1)
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
@@ -181,6 +191,12 @@ class StackDialog(QDialog):
         self._stats = stats
         self._user_touched = set()
         self._updating_table = True
+
+        def _cell(text: str) -> QTableWidgetItem:
+            it = QTableWidgetItem(text)
+            it.setToolTip(text)
+            return it
+
         try:
             self.table.setRowCount(len(stats))
             for row, s in enumerate(stats):
@@ -188,11 +204,11 @@ class StackDialog(QDialog):
                 check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
                 self.table.setItem(row, 0, check)
-                self.table.setItem(row, 1, QTableWidgetItem(os.path.basename(s.path)))
-                self.table.setItem(row, 2, QTableWidgetItem(str(s.star_count)))
-                self.table.setItem(row, 3, QTableWidgetItem(f"{s.fwhm:.1f}"))
-                self.table.setItem(row, 4, QTableWidgetItem(f"{s.background:.3f}"))
-                self.table.setItem(row, 5, QTableWidgetItem(self._verdict_text(s)))
+                self.table.setItem(row, 1, _cell(os.path.basename(s.path)))
+                self.table.setItem(row, 2, _cell(str(s.star_count)))
+                self.table.setItem(row, 3, _cell(f"{s.fwhm:.1f}"))
+                self.table.setItem(row, 4, _cell(f"{s.background:.3f}"))
+                self.table.setItem(row, 5, _cell(self._verdict_text(s)))
                 self._tint_row(row, s)
         finally:
             self._updating_table = False
@@ -238,7 +254,9 @@ class StackDialog(QDialog):
                 else:
                     s.included = (self.table.item(row, 0).checkState()
                                   == Qt.CheckState.Checked)
-                self.table.item(row, 5).setText(self._verdict_text(s))
+                item5 = self.table.item(row, 5)
+                item5.setText(self._verdict_text(s))
+                item5.setToolTip(item5.text())
                 self._tint_row(row, s)
         finally:
             self._updating_table = False

@@ -378,3 +378,35 @@ def test_stack_report_names_unregistered_frames(qtbot):
     assert "3 frames" in text
     assert "d.fit" in text and "couldn't be aligned" in text
     assert "e.fit" in text
+
+
+def test_splitter_holds_table_and_preview(qtbot):
+    from PySide6.QtWidgets import QSplitter
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert isinstance(dlg.splitter, QSplitter)
+    assert dlg.splitter.count() == 2
+    assert dlg.splitter.widget(0) is dlg.table
+    assert dlg.splitter.widget(1) is dlg.preview
+
+
+def test_dialog_opens_roomy_and_resizable(qtbot):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert (dlg.width(), dlg.height()) == (1100, 700)
+    assert (dlg.minimumWidth(), dlg.minimumHeight()) == (800, 500)
+
+
+def test_cells_carry_tooltips(qtbot, tmp_path):
+    for i in range(3):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(3)
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    item = dlg.table.item(0, 5)
+    assert item.toolTip() == item.text() != ""
