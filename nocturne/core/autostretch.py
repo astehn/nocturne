@@ -44,6 +44,20 @@ def linked_stretch(data: np.ndarray, target: float) -> np.ndarray:
     return np.clip(out, 0.0, 1.0)
 
 
+def unlinked_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
+    """Per-channel display stretch: each channel independently stretched so its
+    own median hits `target`. Neutralizes a uniform sky-colour cast (twilight,
+    moon, light pollution) — the Siril-style preview stretch. Display-only;
+    the editor keeps the colour-faithful linked_stretch."""
+    if data.ndim == 2:
+        return linked_stretch(data, target)
+    out = np.empty_like(data, dtype=np.float32)
+    for ch in range(data.shape[2]):
+        shadow, m = _stretch_params(data[..., ch], target)
+        out[..., ch] = _apply_params(data[..., ch], shadow, m)
+    return np.clip(out, 0.0, 1.0)
+
+
 def _apply_params(c: np.ndarray, shadow: float, m: float) -> np.ndarray:
     clipped = np.clip((c - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
     return _mtf(m, clipped).astype(np.float32)
