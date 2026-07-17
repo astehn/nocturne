@@ -125,3 +125,31 @@ def test_judge_skips_error_frames_and_leaves_them_excluded():
     assert broken.reason == REASON_MEASURE
     # its zero FWHM/bg must not have polluted the gates:
     assert all(s.included for s in stats[:-1])
+
+
+def test_grade_frame_captures_exposure_and_target(tmp_path):
+    p = tmp_path / "s.fit"
+    write_color_fits(p, make_star_field(n_stars=25, seed=3))  # exptime=10.0
+    stats = grade_frame(str(p))
+    assert stats.exposure == pytest.approx(10.0)
+    assert stats.error is False
+
+
+def test_grade_frame_unreadable_returns_error_verdict(tmp_path):
+    p = tmp_path / "garbage.fit"
+    p.write_bytes(b"this is not a FITS file")
+    stats = grade_frame(str(p))
+    assert stats.error is True
+    assert stats.included is False
+    assert stats.reason == REASON_MEASURE
+    assert stats.reason_code == "measure_failed"
+
+
+def test_grade_frames_strictness_kwarg(tmp_path):
+    paths = []
+    for i in range(6):
+        p = tmp_path / f"g{i}.fit"
+        write_color_fits(p, make_star_field(n_stars=30, seed=i, bg=0.02))
+        paths.append(str(p))
+    graded = grade_frames(paths, strictness="relaxed")
+    assert all(s.included for s in graded)

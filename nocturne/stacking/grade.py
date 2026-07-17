@@ -47,13 +47,17 @@ def _measure(lum: np.ndarray) -> tuple[int, float, float]:
 
 
 def grade_frame(path: str) -> FrameStats:
-    star_count, fwhm, background = _measure(luminance(load_sub(path, normalize=False).data))
+    try:
+        img = load_sub(path, normalize=False)
+        star_count, fwhm, background = _measure(luminance(img.data))
+    except Exception:
+        return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
+                          reason_code="measure_failed", reason=REASON_MEASURE,
+                          error=True)
     score = star_count * (1.0 / (1.0 + fwhm)) * (1.0 / (1.0 + background * 10.0))
-    return FrameStats(path, star_count, fwhm, background, float(score), True)
-
-
-def _mad(values: list[float], med: float) -> float:
-    return float(np.median([abs(v - med) for v in values]))
+    return FrameStats(path, star_count, fwhm, background, float(score), True,
+                      exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
+                      target=str(img.metadata.get("target") or ""))
 
 
 def upper_gate(values: list[float], k: float) -> float:
@@ -97,7 +101,8 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
             s.warning = WARN_SKY
 
 
-def grade_frames(paths: list[str], on_progress=None) -> list[FrameStats]:
+def grade_frames(paths: list[str], on_progress=None,
+                 strictness: str = "normal") -> list[FrameStats]:
     stats: list[FrameStats] = []
     n = len(paths)
     for i, path in enumerate(paths):
@@ -105,19 +110,9 @@ def grade_frames(paths: list[str], on_progress=None) -> list[FrameStats]:
         if on_progress is not None:
             on_progress(i + 1, n, os.path.basename(path))
 
-    counts = [s.star_count for s in stats]
-    fwhms = [s.fwhm for s in stats]
-    bgs = [s.background for s in stats]
-    mc, mf, mb = np.median(counts), np.median(fwhms), np.median(bgs)
-    dc, df, db = _mad(counts, mc), _mad(fwhms, mf), _mad(bgs, mb)
     best = max((s.score for s in stats), default=1.0) or 1.0
-
     for s in stats:
         s.score = s.score / best
-        low_stars = dc > 0 and s.star_count < mc - 3 * dc
-        bad_fwhm = df > 0 and s.fwhm > mf + 3 * df
-        bad_bg = db > 0 and s.background > mb + 3 * db
-        s.included = not (low_stars or bad_fwhm or bad_bg)
-
+    judge(stats, strictness)
     stats.sort(key=lambda s: s.score)  # worst -> best
     return stats
