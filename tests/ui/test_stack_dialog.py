@@ -283,8 +283,7 @@ def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
     dlg.table.setCurrentCell(0, 1)
-    qtbot.waitUntil(lambda: dlg.preview.pixmap() is not None
-                    and not dlg.preview.pixmap().isNull(), timeout=2000)
+    qtbot.waitUntil(lambda: dlg.preview.has_image(), timeout=2000)
     assert loads == [str(tmp_path / "f0.fit")]
     dlg.table.setCurrentCell(1, 1)
     qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
@@ -331,6 +330,39 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     # preview must resync to the new row 1's file, not keep showing the old one
     qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
     assert loads[-1] == str(other_dir / "g1.fit")
+
+
+def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
+    import numpy as np
+    paths = []
+    for i in range(6):
+        p = tmp_path / f"f{i}.fit"
+        p.write_text("x")
+        paths.append(str(p))
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda ps, on_progress=None, strictness="normal": [
+        _stats2(p, 0.5) for p in paths
+    ]
+    loads = []
+
+    def fake_loader(path):
+        loads.append(path)
+        return np.zeros((8, 8, 3), dtype=np.float32)
+
+    dlg._preview_loader = fake_loader
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    for row in range(5):                       # visit rows 0..4 -> 5 loads
+        dlg.table.setCurrentCell(row, 1)
+        qtbot.waitUntil(lambda r=row: len(loads) == r + 1, timeout=2000)
+    assert len(dlg._preview_cache) == 4        # LRU capped
+    dlg.table.setCurrentCell(0, 1)             # row 0 was evicted -> reloads
+    qtbot.waitUntil(lambda: len(loads) == 6, timeout=2000)
+    dlg.table.setCurrentCell(4, 1)             # row 4 still cached -> no load
+    qtbot.wait(100)
+    assert len(loads) == 6
 
 
 def test_stack_report_names_unregistered_frames(qtbot):

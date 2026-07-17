@@ -1,26 +1,28 @@
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 
 import numpy as np
 
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
-from ..core.autostretch import autostretch
-from ..core.image import AstroImage
+from ..core.autostretch import unlinked_stretch
 from ..stacking.frames import discover_subs, load_sub
 from ..stacking.grade import grade_frames, judge
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
+from .frame_preview import FramePreview
 from .worker import run_async
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
+PREVIEW_CACHE_LIMIT = 4   # full-res QImages (~24 MB each) — small LRU
 
 
 class _Signals(QObject):
@@ -76,12 +78,10 @@ class StackDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        self.preview = QLabel("Select a frame\nto preview it")
-        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview.setFixedSize(300, 220)
-        self.preview.setObjectName("framePreview")
+        self.preview = FramePreview()
+        self.preview.setMinimumSize(300, 220)
 
-        self._preview_cache: dict[str, QPixmap] = {}
+        self._preview_cache: OrderedDict[str, QImage] = OrderedDict()
         self._preview_wanted = ""            # stale-result guard
         self._preview_loader = self._load_preview_array   # injectable for tests
         self.table.currentCellChanged.connect(
@@ -209,8 +209,7 @@ class StackDialog(QDialog):
             self._show_preview(row)
         else:
             self._preview_wanted = ""
-            self.preview.setPixmap(QPixmap())
-            self.preview.setText("Select a frame\nto preview it")
+            self.preview.clear()
 
     def _on_item_changed(self, item) -> None:
         if self._updating_table or item.column() != 0:
@@ -296,13 +295,10 @@ class StackDialog(QDialog):
     # --- preview ---
     @staticmethod
     def _load_preview_array(path: str) -> np.ndarray:
-        """Small autostretched RGB array for a sub (debayer + display stretch)."""
-        img = load_sub(path)                       # normalized + debayered
-        data = img.data
-        step = max(1, data.shape[1] // 512)        # downsample for speed
-        small = data[::step, ::step]
-        return autostretch(AstroImage(small, is_linear=img.is_linear,
-                                      metadata=dict(img.metadata)))
+        """Full-res, cast-neutral RGB array for a sub. Unlinked stretch so the
+        sky lands neutral grey whatever the LP/twilight cast; full resolution
+        so 1:1 zoom shows real star shapes."""
+        return unlinked_stretch(load_sub(path).data)
 
     def _show_preview(self, row: int) -> None:
         if not self._stats or not (0 <= row < len(self._stats)):
@@ -311,7 +307,8 @@ class StackDialog(QDialog):
         self._preview_wanted = path
         cached = self._preview_cache.get(path)
         if cached is not None:
-            self.preview.setPixmap(cached)
+            self._preview_cache.move_to_end(path)
+            self.preview.show_image(cached)
             return
         loader = self._preview_loader
 
@@ -329,18 +326,16 @@ class StackDialog(QDialog):
         arr8 = np.ascontiguousarray(arr8)
         h, w = arr8.shape[:2]
         image = QImage(arr8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-        pix = QPixmap.fromImage(image).scaled(
-            self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation)
-        if len(self._preview_cache) > 32:
-            self._preview_cache.clear()            # simple bound; tiny pixmaps
-        self._preview_cache[path] = pix
+        self._preview_cache[path] = image
+        self._preview_cache.move_to_end(path)
+        while len(self._preview_cache) > PREVIEW_CACHE_LIMIT:
+            self._preview_cache.popitem(last=False)
         if path == self._preview_wanted:
-            self.preview.setPixmap(pix)
+            self.preview.show_image(image)
 
     def _on_preview_error(self, path, exc) -> None:
         if path == self._preview_wanted:
-            self.preview.setText("Preview failed:\ncould not read frame")
+            self.preview.show_message("Preview failed:\ncould not read frame")
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
