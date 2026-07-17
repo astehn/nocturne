@@ -65,7 +65,7 @@ def test_noise_sharpen_fallback_changes_image():
     assert not np.allclose(out.data, img.data)
 
 
-def test_noise_sharpen_uses_rcastro_when_present():
+def test_noise_sharpen_rcastro_strength_per_preset():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
     calls = []
 
@@ -73,11 +73,23 @@ def test_noise_sharpen_uses_rcastro_when_present():
         calls.append(args)
         write_temp_fits(img, args[args.index("-o") + 1])
 
-    step = NoiseSharpenStep(rcastro=RCAstro("/fake/rc-astro"))
-    step._runner = fake
-    step.apply(img, "strong")
-    products = [a[a.index("--no-banner") + 1] for a in calls]
-    assert products == ["nxt"]  # denoise only (sharpening moved to Deconvolution)
+    def denoise_strength(option):
+        calls.clear()
+        step = NoiseSharpenStep(rcastro=RCAstro("/fake/rc-astro"))
+        step._runner = fake
+        step.apply(img, option)
+        args = calls[0]
+        assert args[args.index("--no-banner") + 1] == "nxt"   # denoise product
+        return float(args[args.index("--denoise") + 1])
+
+    assert denoise_strength("light") == 0.75
+    assert denoise_strength("medium") == 0.90
+    assert denoise_strength("strong") == 0.95
+
+
+def test_noise_sharpen_fallback_strength_unchanged():
+    from nocturne.steps import noise_sharpen as ns
+    assert ns._TV_LEVELS == {"light": 0.4, "medium": 0.7, "strong": 0.9}
 
 
 def test_remove_green_step_clamps_green():

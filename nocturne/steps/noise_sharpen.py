@@ -6,7 +6,8 @@ from ..history.step import Step
 from ..tools.base import run_cli
 from ..tools.rcastro import RCAstro
 
-_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}   # denoise strengths
+_NXT_LEVELS = {"light": 0.75, "medium": 0.90, "strong": 0.95}  # RC-Astro NoiseXTerminator --denoise
+_TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallback (unchanged)
 
 
 class NoiseSharpenStep(Step):
@@ -26,7 +27,6 @@ class NoiseSharpenStep(Step):
         return "medium"
 
     def apply(self, img: AstroImage, option: str) -> AstroImage:
-        dn = _LEVELS[option]
         if self._rc is not None:
-            return self._rc.denoise(img, dn, runner=self._runner)
-        return reduce_noise(img, dn)
+            return self._rc.denoise(img, _NXT_LEVELS[option], runner=self._runner)
+        return reduce_noise(img, _TV_LEVELS[option])
