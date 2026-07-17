@@ -161,6 +161,13 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       green/red colour. Cosmetic; low urgency.
 
 ## Done (recent)
+- Stacking frame selection redesigned (2026-07-17, spec `docs/superpowers/specs/2026-07-17-stacking-grading-design.md`):
+  Siril-style iterative k-sigma judge replaces 3×raw-MAD gates (NGC 7000: 182/186 kept vs 126 before;
+  Siril 177). Plain-language verdict column + row tinting, strictness knob (Relaxed/Normal/Strict)
+  with instant re-judge preserving manual overrides, autostretched per-frame preview pane, human
+  status line ("Keeping 182 of 187 frames — 61 of 62 minutes of light"), descriptive master filename
+  (`NGC7000_182x20s_61min.fits`), unaligned frames named in the completion report, previous masters
+  in the folder auto-excluded ("Already-stacked image — excluded"). Bright sky warns but never rejects.
 - Processing log: collapsible bottom panel, append-only, timestamped, with an RMS Δ%
   change metric per step (proves subtle steps actually ran).
 - Adaptive Stretch (slider) — fixed the black-image problem.
