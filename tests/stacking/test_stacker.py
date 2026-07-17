@@ -125,3 +125,27 @@ def test_run_stack_normalizes_raw_scale_subs(tmp_path):
     m = result.image.data
     assert 0.9 <= m.max() <= 1.0          # normalized once, to [0,1]
     assert m.max() > 0.5                   # a bright star survived (not a flat/clipped frame)
+
+
+from nocturne.stacking.stacker import master_filename
+
+
+def test_master_filename_full_info():
+    assert master_filename("NGC 7000", 177, 20.0, 3540.0) == "NGC7000_177x20s_59min.fits"
+
+
+def test_master_filename_sanitizes_target():
+    assert master_filename("M 31 / Andromeda", 50, 10.0, 500.0) == \
+        "M31Andromeda_50x10s_8min.fits"
+
+
+def test_master_filename_no_target():
+    assert master_filename("", 177, 20.0, 3540.0) == "master_177x20s_59min.fits"
+
+
+def test_master_filename_no_exposure():
+    assert master_filename("NGC 7000", 177, 0.0, 0.0) == "NGC7000_177frames.fits"
+
+
+def test_master_filename_fractional_exposure():
+    assert master_filename("Moon", 100, 0.5, 50.0) == "Moon_100x0.5s_1min.fits"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,6 +11,21 @@ from .coverage import coverage_map, full_coverage_bounds
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
 from .register import RegistrationError, find_transform, warp_to
+
+
+def master_filename(target: str, count: int, exposure_s: float, total_s: float) -> str:
+    """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits.
+    Degrades gracefully as header info is missing; worst case master.fits."""
+    obj = re.sub(r"[^A-Za-z0-9-]+", "", target or "") or "master"
+    if exposure_s > 0:
+        frames = f"{count}x{exposure_s:g}s"
+    elif count > 0:
+        frames = f"{count}frames"
+    else:
+        return f"{obj}.fits"
+    minutes = f"{max(1, round(total_s / 60))}min" if total_s > 0 else ""
+    parts = [obj, frames] + ([minutes] if minutes else [])
+    return "_".join(parts) + ".fits"
 
 
 @dataclass
