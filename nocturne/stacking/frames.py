@@ -5,7 +5,7 @@ import os
 
 import numpy as np
 
-from ..core.fits_io import is_stacked_master, load_fits
+from ..core.fits_io import load_fits
 from ..core.image import AstroImage
 
 

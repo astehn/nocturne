@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import numpy as np
 import sep
 
-from .frames import is_stacked_master, load_sub, luminance
+from ..core.fits_io import is_stacked_master
+from .frames import load_sub, luminance
 
 
 STRICTNESS_K = {"relaxed": 4.0, "normal": 3.0, "strict": 2.0}
@@ -28,7 +29,7 @@ class FrameStats:
     included: bool
     exposure: float = 0.0
     target: str = ""
-    reason_code: str = ""   # "clouds" | "soft_stars" | "measure_failed" | ""
+    reason_code: str = ""   # "clouds" | "soft_stars" | "measure_failed" | "not_raw" | ""
     reason: str = ""        # human-readable, non-empty iff rejected
     warning: str = ""       # human-readable, kept-with-warning (bright sky)
     error: bool = False     # measurement failed; excluded from statistics
@@ -88,8 +89,10 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     if len(usable) < 5:
         return  # too few frames to grade reliably — keep everything
 
-    star_floor = 0.5 * float(np.median([s.star_count for s in usable]))
-    fwhm_gate = upper_gate([s.fwhm for s in usable], k)
+    star_median = float(np.median([s.star_count for s in usable]))
+    star_floor = 0.5 * star_median
+    starred = [s.fwhm for s in usable if s.star_count > 0]
+    fwhm_gate = upper_gate(starred, k) if starred else None
     bg_gate = upper_gate([s.background for s in usable], k)
 
     for s in usable:
@@ -97,8 +100,8 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
             s.included = False
             s.reason_code = "clouds"
             s.reason = (f"{REASON_CLOUDS} "
-                        f"({s.star_count} stars vs session median {star_floor / 0.5:.0f})")
-        elif s.fwhm > fwhm_gate:
+                        f"({s.star_count} stars vs session median {star_median:.0f})")
+        elif fwhm_gate is not None and s.fwhm > fwhm_gate:
             s.included = False
             s.reason_code = "soft_stars"
             s.reason = f"{REASON_SOFT} (FWHM {s.fwhm:.1f} vs limit {fwhm_gate:.1f})"

@@ -1,6 +1,9 @@
 import pytest
 
-from nocturne.stacking.grade import grade_frame, grade_frames
+from nocturne.stacking.grade import (
+    REASON_CLOUDS, REASON_MEASURE, REASON_SOFT, WARN_SKY,
+    FrameStats, grade_frame, grade_frames, judge, upper_gate,
+)
 from tests.stacking.synthetic import make_star_field, write_cfa_fits, write_color_fits
 
 
@@ -31,12 +34,6 @@ def test_grade_frames_flags_cloudy_outlier(tmp_path):
     assert by_path[str(cloudy)].included is False
     # sorted worst -> best: the cloudy frame is first
     assert graded[0].path == str(cloudy)
-
-
-from nocturne.stacking.grade import (
-    REASON_CLOUDS, REASON_MEASURE, REASON_SOFT, WARN_SKY,
-    FrameStats, judge, upper_gate,
-)
 
 
 def _fs(path="f.fit", stars=800, fwhm=2.5, bg=1200.0, included=True):
@@ -109,6 +106,28 @@ def test_judge_strictness_relaxed_keeps_more_than_strict():
     judge(stats, strictness="relaxed")
     relaxed_included = stats[-1].included
     assert (not strict_included) or relaxed_included  # relaxed never harsher
+
+
+def test_judge_zero_star_frames_dont_poison_fwhm_gate():
+    # Zero-star frames carry a sentinel fwhm=0.0 (not a measurement). Mixed into
+    # the FWHM gate's median/SD, they widen the gate enough to let a genuinely
+    # soft (tracking-error) frame slip through. The FWHM gate must be computed
+    # only from frames that actually have stars.
+    stats = [_fs(path=f"f{i}.fit", stars=800, fwhm=2.4 + 0.1 * i / 29)
+             for i in range(30)]
+    stats += [_fs(path=f"cloud{i}.fit", stars=0, fwhm=0.0) for i in range(3)]
+    stats.append(_fs(path="soft.fit", stars=800, fwhm=3.5))
+    judge(stats, strictness="normal")
+    by_path = {s.path: s for s in stats}
+
+    soft = by_path["soft.fit"]
+    assert soft.included is False
+    assert soft.reason_code == "soft_stars"
+
+    for i in range(3):
+        cloud = by_path[f"cloud{i}.fit"]
+        assert cloud.included is False
+        assert cloud.reason_code == "clouds"
 
 
 def test_judge_under_five_frames_keeps_all():

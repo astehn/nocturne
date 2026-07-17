@@ -3,7 +3,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
-from nocturne.stacking.grade import FrameStats  # noqa: E402
+from nocturne.stacking.grade import FrameStats, judge  # noqa: E402
 from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
 
 
@@ -122,19 +122,24 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
 
 
 def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
-    for name in ("a.fit", "b.fit", "c.fit"):
+    # _on_graded re-judges on arrival (I2), so the verdicts must come from
+    # real FrameStats measurements that judge() actually gates on, not from
+    # manually pre-set reason/warning strings.
+    names = ["a.fit", "b.fit", "c.fit"] + [f"f{i}.fit" for i in range(7)]
+    for name in names:
         (tmp_path / name).write_text("x")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
-        _stats2(str(tmp_path / "a.fit"), 0.2, included=False,
-                reason="Stars softer than the rest of the session (FWHM 3.5 vs limit 3.0)"),
-        _stats2(str(tmp_path / "b.fit"), 0.8, warning="Brighter sky (twilight, moon or light pollution) — kept"),
-        _stats2(str(tmp_path / "c.fit"), 0.9),
-    ]
+    stats = [
+        FrameStats(str(tmp_path / "a.fit"), 800, 10.0, 0.02, 0.2, True, exposure=20.0),
+        FrameStats(str(tmp_path / "b.fit"), 800, 2.4, 5.0, 0.8, True, exposure=20.0),
+        FrameStats(str(tmp_path / "c.fit"), 800, 2.4, 0.02, 0.9, True, exposure=20.0),
+    ] + [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.9, True, exposure=20.0)
+         for i in range(7)]
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
     assert dlg.table.columnCount() == 6
     assert "softer" in dlg.table.item(0, 5).text()
     assert "Brighter sky" in dlg.table.item(1, 5).text()
@@ -142,19 +147,22 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
 
 
 def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
-    for i in range(4):
+    # _on_graded re-judges on arrival (I2), so the rejected frame must be
+    # rejected by real gating (low star count -> clouds), not by a manually
+    # pre-set included/reason pair.
+    for i in range(5):
         (tmp_path / f"f{i}.fit").write_text("x")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5 + 0.1 * i) for i in range(4)]
-    stats[0].included = False
-    stats[0].reason = "Very few stars — likely clouds or trailing"
+    stats = [FrameStats(str(tmp_path / "f0.fit"), 10, 2.4, 0.02, 0.5, True, exposure=20.0)]
+    stats += [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.5, True, exposure=20.0)
+              for i in range(1, 5)]
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 4, timeout=2000)
-    # 3 of 4 kept x 20s = 1 of 1 minute
-    assert "Keeping 3 of 4 frames" in dlg.status.text()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 5, timeout=2000)
+    # 4 of 5 kept x 20s = 1 of 2 minutes
+    assert "Keeping 4 of 5 frames" in dlg.status.text()
     assert "minute" in dlg.status.text()
 
 
@@ -178,6 +186,29 @@ def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
     dlg.strictness_box.setCurrentText("Strict")
     assert calls == ["normal"]          # measurement NOT re-run
     assert dlg.table.rowCount() == 6    # table re-judged in place
+
+
+def test_on_graded_rejudges_with_current_strictness(qtbot, tmp_path):
+    # Strictness captured at dispatch time must not win if the user changes
+    # the knob before the async measurement returns. _on_graded must re-judge
+    # with whatever the knob reads right now, before painting the table.
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    # A flat fwhm=2.4 base collapses to SD=0 once the single outlier is
+    # iteratively clipped from upper_gate's stats, so it rejects the edge
+    # frame at *every* strictness. Give the base a modest spread (as in the
+    # Task-1 regression) so relaxed vs. strict actually diverge.
+    stats = [FrameStats(f"f{i}.fit", 800, 2.4 + 0.3 * i / 29, 1200.0, 0.5, True)
+             for i in range(30)]
+    stats.append(FrameStats("edge.fit", 800, 2.9, 1200.0, 0.5, True))
+    judge(stats, "relaxed")
+    assert stats[-1].included is True   # relaxed keeps the edge frame
+
+    dlg.strictness_box.setCurrentText("Strict")   # knob flipped mid-flight
+    dlg._on_graded(stats)
+
+    edge_row = len(stats) - 1
+    assert dlg.table.item(edge_row, 0).checkState() == Qt.CheckState.Unchecked
 
 
 def test_manual_override_survives_rejudge(qtbot, tmp_path):

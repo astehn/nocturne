@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pytest
 from skimage.transform import SimilarityTransform, warp
-from nocturne.stacking.stacker import StackOptions, run_stack
+from nocturne.stacking.stacker import StackOptions, master_filename, run_stack
 from tests.stacking.synthetic import make_star_field, write_color_fits
 
 
@@ -125,9 +125,6 @@ def test_run_stack_normalizes_raw_scale_subs(tmp_path):
     m = result.image.data
     assert 0.9 <= m.max() <= 1.0          # normalized once, to [0,1]
     assert m.max() > 0.5                   # a bright star survived (not a flat/clipped frame)
-
-
-from nocturne.stacking.stacker import master_filename
 
 
 def test_master_filename_full_info():

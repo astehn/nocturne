@@ -174,6 +174,9 @@ class StackDialog(QDialog):
         run_async(self._pool, work, self._on_graded, self._on_error)
 
     def _on_graded(self, stats) -> None:
+        # Strictness may have changed while the async measure was running —
+        # re-judge against the knob's current value before painting anything.
+        judge(stats, self.strictness_box.currentText().lower())
         self._set_busy(False)
         self._stats = stats
         self._user_touched = set()
@@ -264,6 +267,7 @@ class StackDialog(QDialog):
         return "OK"
 
     def _tint_row(self, row: int, s) -> None:
+        default = QColor(theme.TEXT)
         colour = None
         if s.reason:
             colour = QColor(theme.TEXT_FAINT)   # rejected: dimmed
@@ -272,7 +276,7 @@ class StackDialog(QDialog):
         for col in range(1, self.table.columnCount()):
             item = self.table.item(row, col)
             if item is not None:
-                item.setForeground(colour) if colour else item.setForeground(QColor(theme.TEXT))
+                item.setForeground(colour if colour is not None else default)
 
     def _selection_summary(self) -> str:
         total = len(self._stats)
@@ -284,7 +288,8 @@ class StackDialog(QDialog):
             unit = "minute" if round(all_s / 60) == 1 else "minutes"
             text += (f" — {max(1, round(kept_s / 60))} of "
                      f"{max(1, round(all_s / 60))} {unit} of light")
-        if 0 < total < 5:
+        usable = sum(1 for s in self._stats if not s.error)
+        if 0 < usable < 5:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
 
@@ -313,7 +318,8 @@ class StackDialog(QDialog):
         def work():
             return path, loader(path)
 
-        run_async(self._pool, work, self._on_preview, self._on_preview_error)
+        run_async(self._pool, work, self._on_preview,
+                  lambda exc: self._on_preview_error(path, exc))
 
     def _on_preview(self, result) -> None:
         path, arr = result
@@ -332,8 +338,9 @@ class StackDialog(QDialog):
         if path == self._preview_wanted:
             self.preview.setPixmap(pix)
 
-    def _on_preview_error(self, exc) -> None:
-        self.preview.setText("Preview failed:\ncould not read frame")
+    def _on_preview_error(self, path, exc) -> None:
+        if path == self._preview_wanted:
+            self.preview.setText("Preview failed:\ncould not read frame")
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
@@ -379,13 +386,13 @@ class StackDialog(QDialog):
         text = (f"Done — stacked {result.frame_count} frames"
                 + (f" ({mins:.0f} minutes of light)" if mins >= 1 else "")
                 + f" → {os.path.basename(result.output_path)}")
-        aligned = [(p, r) for p, r in result.rejected
-                   if r.startswith("registration failed")]
+        unaligned = [(p, r) for p, r in result.rejected
+                     if r.startswith("registration failed")]
         other = [(p, r) for p, r in result.rejected
                  if not r.startswith("registration failed")]
-        if aligned:
-            names = ", ".join(os.path.basename(p) for p, _ in aligned)
-            text += f"\n{len(aligned)} frame(s) couldn't be aligned and were skipped: {names}"
+        if unaligned:
+            names = ", ".join(os.path.basename(p) for p, _ in unaligned)
+            text += f"\n{len(unaligned)} frame(s) couldn't be aligned and were skipped: {names}"
         if other:
             names = ", ".join(os.path.basename(p) for p, _ in other)
             text += f"\n{len(other)} frame(s) skipped: {names}"
