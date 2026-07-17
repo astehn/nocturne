@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
+
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
-from ..stacking.frames import discover_subs
+from ..core.autostretch import autostretch
+from ..core.image import AstroImage
+from ..stacking.frames import discover_subs, load_sub
 from ..stacking.grade import grade_frames, judge
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
@@ -72,6 +76,17 @@ class StackDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
+        self.preview = QLabel("Select a frame\nto preview it")
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview.setFixedSize(300, 220)
+        self.preview.setObjectName("framePreview")
+
+        self._preview_cache: dict[str, QPixmap] = {}
+        self._preview_wanted = ""            # stale-result guard
+        self._preview_loader = self._load_preview_array   # injectable for tests
+        self.table.currentCellChanged.connect(
+            lambda row, _c, _pr, _pc: self._show_preview(row))
+
         form = QFormLayout()
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
 
@@ -103,9 +118,13 @@ class StackDialog(QDialog):
         buttons.addWidget(self._stack_btn)
         buttons.addWidget(close_btn)
 
+        table_row = QHBoxLayout()
+        table_row.addWidget(self.table, 1)
+        table_row.addWidget(self.preview)
+
         root = QVBoxLayout(self)
         root.addLayout(form)
-        root.addWidget(self.table)
+        root.addLayout(table_row)
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
@@ -255,6 +274,53 @@ class StackDialog(QDialog):
         if 0 < total < 5:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
+
+    # --- preview ---
+    @staticmethod
+    def _load_preview_array(path: str) -> np.ndarray:
+        """Small autostretched RGB array for a sub (debayer + display stretch)."""
+        img = load_sub(path)                       # normalized + debayered
+        data = img.data
+        step = max(1, data.shape[1] // 512)        # downsample for speed
+        small = data[::step, ::step]
+        return autostretch(AstroImage(small, is_linear=img.is_linear,
+                                      metadata=dict(img.metadata)))
+
+    def _show_preview(self, row: int) -> None:
+        if not self._stats or not (0 <= row < len(self._stats)):
+            return
+        path = self._stats[row].path
+        self._preview_wanted = path
+        cached = self._preview_cache.get(path)
+        if cached is not None:
+            self.preview.setPixmap(cached)
+            return
+        loader = self._preview_loader
+
+        def work():
+            return path, loader(path)
+
+        run_async(self._pool, work, self._on_preview, self._on_preview_error)
+
+    def _on_preview(self, result) -> None:
+        path, arr = result
+        arr8 = (np.clip(arr, 0.0, 1.0) * 255).astype(np.uint8)
+        if arr8.ndim == 2:
+            arr8 = np.stack([arr8] * 3, axis=2)
+        arr8 = np.ascontiguousarray(arr8)
+        h, w = arr8.shape[:2]
+        image = QImage(arr8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        pix = QPixmap.fromImage(image).scaled(
+            self.preview.size(), Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
+        if len(self._preview_cache) > 32:
+            self._preview_cache.clear()            # simple bound; tiny pixmaps
+        self._preview_cache[path] = pix
+        if path == self._preview_wanted:
+            self.preview.setPixmap(pix)
+
+    def _on_preview_error(self, exc) -> None:
+        self.preview.setText("Preview failed:\ncould not read frame")
 
     # --- run ---
     def _included_paths_best_first(self) -> list:

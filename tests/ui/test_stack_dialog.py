@@ -230,3 +230,33 @@ def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
     assert dlg.output_edit.text() == "keep-me.fits"
+
+
+def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
+    import numpy as np
+    for i in range(2):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(2)
+    ]
+    loads = []
+
+    def fake_loader(path):
+        loads.append(path)
+        return np.zeros((40, 60, 3), dtype=np.float32)
+
+    dlg._preview_loader = fake_loader
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    dlg.table.setCurrentCell(0, 1)
+    qtbot.waitUntil(lambda: dlg.preview.pixmap() is not None
+                    and not dlg.preview.pixmap().isNull(), timeout=2000)
+    assert loads == [str(tmp_path / "f0.fit")]
+    dlg.table.setCurrentCell(1, 1)
+    qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
+    dlg.table.setCurrentCell(0, 1)      # cached — no third load
+    qtbot.wait(100)
+    assert len(loads) == 2
