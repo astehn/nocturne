@@ -101,8 +101,20 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **Star reduction** — Star Reduction step (StarX split → shrink/dim → recombine).
 
 ## Processing features — second tier
-- [ ] **Multi-session combine** — register + integrate several nights' stacked FITS of the
-      same target. Powerful for serious users; bigger build (alignment/integration).
+- [ ] **(idea, researched 2026-07-17) Bundle our own AI denoising?** Goal: reduce the
+      "install GraXpert first" onboarding hurdle. Research findings: SCUNet (Apache-2,
+      weights ~72MB, redistributable) is trained on natural images only — community tests
+      show this class erases faint stars on astro data → DO NOT bundle. AstroNoiseNet (MIT,
+      astro-native, by GraXpert's own author Steffen Hirtle) ships NO pretrained weights and
+      is the dormant prototype of GraXpert's AI denoise. GraXpert's production ONNX weights:
+      no published license, credentialed S3 — even Siril shells out to the binary rather than
+      bundle (the sanctioned pattern = our current CLI approach). NEXT ACTIONS if pursued:
+      (1) email Hirtle asking whether GraXpert models may be run in-process via onnxruntime
+      (~10-40MB dep; removes install hurdle, no quality risk); (2) track Seti Astro Cosmic
+      Clarity (active, astro-trained, weight license unstated — ask first); (3) long-term
+      differentiator: train AstroNoiseNet ourselves on tester-contributed Seestar data
+      (months-scale). Runtime if ever bundling: onnxruntime + download-weights-on-first-use,
+      never full PyTorch (~doubles the 314MB bundle).
 - [ ] **(idea, parked) Port Colourise/Foraxx to a Siril `sirilpy` plugin.** Cross-platform
       (Win/Mac/Linux), no code-signing/notarization, taps Siril's user base. Low-friction
       because `core/palette.py` is pure numpy and sirilpy is get-numpy → set-numpy (Siril
