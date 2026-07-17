@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..stacking.frames import discover_subs
-from ..stacking.grade import grade_frames
+from ..stacking.grade import grade_frames, judge
 from ..stacking.stacker import StackOptions, run_stack
 from . import theme
 from .worker import run_async
@@ -59,12 +59,27 @@ class StackDialog(QDialog):
         self.kappa_box = QComboBox()
         self.kappa_box.addItems(list(KAPPA.keys()))
         self.kappa_box.setCurrentText("Medium")
+        self.strictness_box = QComboBox()
+        self.strictness_box.addItems(["Relaxed", "Normal", "Strict"])
+        self.strictness_box.setCurrentText("Normal")
+        self.strictness_box.currentTextChanged.connect(self._rejudge)
+        self._user_touched: set[int] = set()
+        self._updating_table = False
+        self.table.itemChanged.connect(self._on_item_changed)
         self.progress = QProgressBar()
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
         form = QFormLayout()
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
+
+        strict_row = QHBoxLayout()
+        strict_row.addWidget(self.strictness_box)
+        strict_row.addWidget(QLabel("How picky the automatic frame selection is"))
+        strict_row.addStretch(1)
+        strict_wrap = QWidget()
+        strict_wrap.setLayout(strict_row)
+        form.addRow("Strictness", strict_wrap)
 
         method_row = QHBoxLayout()
         method_row.addWidget(self.avg_radio)
@@ -126,28 +141,67 @@ class StackDialog(QDialog):
         self.status.setText("Grading frames…")
         self._set_busy(True)
         runner = self._grade_runner
+        strictness = self.strictness_box.currentText().lower()
 
         def work():
             return runner(paths, on_progress=lambda i, n, name:
-                          self._signals.progress.emit(i, n, "grading"))
+                          self._signals.progress.emit(i, n, "grading"),
+                          strictness=strictness)
 
         run_async(self._pool, work, self._on_graded, self._on_error)
 
     def _on_graded(self, stats) -> None:
         self._set_busy(False)
         self._stats = stats
-        self.table.setRowCount(len(stats))
-        for row, s in enumerate(stats):
-            check = QTableWidgetItem()
-            check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
-            self.table.setItem(row, 0, check)
-            self.table.setItem(row, 1, QTableWidgetItem(os.path.basename(s.path)))
-            self.table.setItem(row, 2, QTableWidgetItem(str(s.star_count)))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{s.fwhm:.1f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"{s.background:.3f}"))
-            self.table.setItem(row, 5, QTableWidgetItem(self._verdict_text(s)))
-            self._tint_row(row, s)
+        self._user_touched = set()
+        self._updating_table = True
+        try:
+            self.table.setRowCount(len(stats))
+            for row, s in enumerate(stats):
+                check = QTableWidgetItem()
+                check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
+                self.table.setItem(row, 0, check)
+                self.table.setItem(row, 1, QTableWidgetItem(os.path.basename(s.path)))
+                self.table.setItem(row, 2, QTableWidgetItem(str(s.star_count)))
+                self.table.setItem(row, 3, QTableWidgetItem(f"{s.fwhm:.1f}"))
+                self.table.setItem(row, 4, QTableWidgetItem(f"{s.background:.3f}"))
+                self.table.setItem(row, 5, QTableWidgetItem(self._verdict_text(s)))
+                self._tint_row(row, s)
+        finally:
+            self._updating_table = False
+        self.status.setText(self._selection_summary())
+
+    def _on_item_changed(self, item) -> None:
+        if self._updating_table or item.column() != 0:
+            return
+        self._user_touched.add(item.row())
+        if self._stats:
+            self.status.setText(self._sync_included_and_summarize())
+
+    def _sync_included_and_summarize(self) -> str:
+        for row in range(self.table.rowCount()):
+            checked = self.table.item(row, 0).checkState() == Qt.CheckState.Checked
+            self._stats[row].included = checked
+        return self._selection_summary()
+
+    def _rejudge(self, _text=None) -> None:
+        if not self._stats:
+            return
+        judge(self._stats, self.strictness_box.currentText().lower())
+        self._updating_table = True
+        try:
+            for row, s in enumerate(self._stats):
+                if row not in self._user_touched:
+                    self.table.item(row, 0).setCheckState(
+                        Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
+                else:
+                    s.included = (self.table.item(row, 0).checkState()
+                                  == Qt.CheckState.Checked)
+                self.table.item(row, 5).setText(self._verdict_text(s))
+                self._tint_row(row, s)
+        finally:
+            self._updating_table = False
         self.status.setText(self._selection_summary())
 
     @staticmethod

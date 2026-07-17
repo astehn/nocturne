@@ -1,6 +1,7 @@
 import pytest
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats  # noqa: E402
 from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
@@ -21,7 +22,7 @@ def test_grading_fills_table(qtbot, tmp_path):
     (tmp_path / "b.fit").write_text("x")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    dlg._grade_runner = lambda paths, on_progress=None: [
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
         _stats(str(tmp_path / "a.fit"), 0.4, included=False),
         _stats(str(tmp_path / "b.fit"), 0.9, included=True),
     ]
@@ -38,7 +39,7 @@ def test_stack_calls_handoff_best_first(qtbot, tmp_path):
     got = {}
     dlg = StackDialog(Settings(), on_master=lambda img: got.setdefault("img", img))
     qtbot.addWidget(dlg)
-    dlg._grade_runner = lambda paths, on_progress=None: [
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
         _stats(low, 0.4), _stats(mid, 0.6), _stats(high, 0.9),
     ]
 
@@ -95,7 +96,7 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
     started, release, calls = threading.Event(), threading.Event(), []
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    dlg._grade_runner = lambda p, on_progress=None: [
+    dlg._grade_runner = lambda p, on_progress=None, strictness="normal": [
         _stats(paths[0], 0.3), _stats(paths[1], 0.6), _stats(paths[2], 0.9),
     ]
 
@@ -155,3 +156,44 @@ def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
     # 3 of 4 kept x 20s = 1 of 1 minute
     assert "Keeping 3 of 4 frames" in dlg.status.text()
     assert "minute" in dlg.status.text()
+
+
+def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
+    for i in range(6):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    calls = []
+
+    def runner(paths, on_progress=None, strictness="normal"):
+        calls.append(strictness)
+        return [_stats2(str(tmp_path / f"f{i}.fit"), 0.5, exposure=20.0)
+                for i in range(6)]
+
+    dlg._grade_runner = runner
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    assert calls == ["normal"]
+    dlg.strictness_box.setCurrentText("Strict")
+    assert calls == ["normal"]          # measurement NOT re-run
+    assert dlg.table.rowCount() == 6    # table re-judged in place
+
+
+def test_manual_override_survives_rejudge(qtbot, tmp_path):
+    for i in range(6):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(6)
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    # user manually unchecks row 2
+    dlg.table.item(2, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert 2 in dlg._user_touched
+    dlg.strictness_box.setCurrentText("Relaxed")
+    # re-judge would keep everything, but the user's choice wins:
+    assert dlg.table.item(2, 0).checkState() == Qt.CheckState.Unchecked
