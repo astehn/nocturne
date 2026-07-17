@@ -153,3 +153,15 @@ def test_grade_frames_strictness_kwarg(tmp_path):
         paths.append(str(p))
     graded = grade_frames(paths, strictness="relaxed")
     assert all(s.included for s in graded)
+
+
+def test_grade_frame_bad_exptime_header_degrades_not_crashes(tmp_path):
+    from astropy.io import fits as pyfits
+    p = tmp_path / "badexp.fit"
+    write_color_fits(p, make_star_field(n_stars=25, seed=3))
+    with pyfits.open(str(p), mode="update") as hdul:
+        hdul[0].header["EXPTIME"] = "bogus"
+    stats = grade_frame(str(p))
+    assert stats.error is True
+    assert stats.included is False
+    assert stats.reason_code == "measure_failed"

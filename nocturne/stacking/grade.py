@@ -50,14 +50,14 @@ def grade_frame(path: str) -> FrameStats:
     try:
         img = load_sub(path, normalize=False)
         star_count, fwhm, background = _measure(luminance(img.data))
+        score = star_count * (1.0 / (1.0 + fwhm)) * (1.0 / (1.0 + background * 10.0))
+        return FrameStats(path, star_count, fwhm, background, float(score), True,
+                          exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
+                          target=str(img.metadata.get("target") or ""))
     except Exception:
         return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
                           reason_code="measure_failed", reason=REASON_MEASURE,
                           error=True)
-    score = star_count * (1.0 / (1.0 + fwhm)) * (1.0 / (1.0 + background * 10.0))
-    return FrameStats(path, star_count, fwhm, background, float(score), True,
-                      exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
-                      target=str(img.metadata.get("target") or ""))
 
 
 def upper_gate(values: list[float], k: float) -> float:
