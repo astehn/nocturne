@@ -300,3 +300,18 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     # preview must resync to the new row 1's file, not keep showing the old one
     qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
     assert loads[-1] == str(other_dir / "g1.fit")
+
+
+def test_stack_report_names_unregistered_frames(qtbot):
+    from nocturne.stacking.stacker import StackResult
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    result = StackResult(
+        image=None, used=["/x/a.fit", "/x/b.fit", "/x/c.fit"],
+        rejected=[("/x/d.fit", "registration failed: no match"),
+                  ("/x/e.fit", "unreadable: bad header")],
+        frame_count=3, integration_seconds=60.0, output_path="/x/out.fits")
+    text = dlg._stack_report(result)
+    assert "3 frames" in text
+    assert "d.fit" in text and "couldn't be aligned" in text
+    assert "e.fit" in text

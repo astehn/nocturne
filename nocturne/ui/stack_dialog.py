@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
+    QMessageBox, QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -373,12 +373,30 @@ class StackDialog(QDialog):
         self.progress.setValue(i)
         self.status.setText(f"{label}… {i}/{n}")
 
+    @staticmethod
+    def _stack_report(result) -> str:
+        mins = result.integration_seconds / 60
+        text = (f"Done — stacked {result.frame_count} frames"
+                + (f" ({mins:.0f} minutes of light)" if mins >= 1 else "")
+                + f" → {os.path.basename(result.output_path)}")
+        aligned = [(p, r) for p, r in result.rejected
+                   if r.startswith("registration failed")]
+        other = [(p, r) for p, r in result.rejected
+                 if not r.startswith("registration failed")]
+        if aligned:
+            names = ", ".join(os.path.basename(p) for p, _ in aligned)
+            text += f"\n{len(aligned)} frame(s) couldn't be aligned and were skipped: {names}"
+        if other:
+            names = ", ".join(os.path.basename(p) for p, _ in other)
+            text += f"\n{len(other)} frame(s) skipped: {names}"
+        return text
+
     def _on_stacked(self, result) -> None:
         self._set_busy(False)
-        self.status.setText(
-            f"Done — {result.frame_count} frames, "
-            f"{len(result.rejected)} rejected → {os.path.basename(result.output_path)}"
-        )
+        report = self._stack_report(result)
+        self.status.setText(report)
+        if result.rejected:
+            QMessageBox.information(self, "Stack finished", report)
         if self._on_master is not None:
             self._on_master(result.image)
         self.accept()  # hand off done — close the dialog (master is now in the editor)
