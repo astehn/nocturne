@@ -197,3 +197,36 @@ def test_manual_override_survives_rejudge(qtbot, tmp_path):
     dlg.strictness_box.setCurrentText("Relaxed")
     # re-judge would keep everything, but the user's choice wins:
     assert dlg.table.item(2, 0).checkState() == Qt.CheckState.Unchecked
+
+
+def test_output_filename_derived_from_selection(qtbot, tmp_path):
+    for i in range(3):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5, exposure=20.0)
+             for i in range(3)]
+    for s in stats:
+        s.target = "NGC 7000"
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.output_edit.setText("")          # nothing user-chosen
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    assert dlg.output_edit.text() == str(tmp_path / "NGC7000_3x20s_1min.fits")
+
+
+def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
+    for i in range(3):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(3)
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.output_edit.setText("keep-me.fits")
+    dlg.output_edit.textEdited.emit("keep-me.fits")   # simulate manual typing
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    assert dlg.output_edit.text() == "keep-me.fits"

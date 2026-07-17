@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 
 from ..stacking.frames import discover_subs
 from ..stacking.grade import grade_frames, judge
-from ..stacking.stacker import StackOptions, run_stack
+from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
 from .worker import run_async
 
@@ -45,12 +45,14 @@ class StackDialog(QDialog):
         self._stack_runner = run_stack      # injectable for tests
         self._stats = []
         self._busy = False
+        self._output_user_edited = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
 
         self.folder_edit = QLineEdit()
         self.output_edit = QLineEdit()
+        self.output_edit.textEdited.connect(self._mark_output_edited)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg", "Verdict"])
         self.avg_radio = QRadioButton("Average")
@@ -108,19 +110,21 @@ class StackDialog(QDialog):
         root.addWidget(self.status)
         root.addLayout(buttons)
 
+    def _mark_output_edited(self, _text: str) -> None:
+        self._output_user_edited = True
+
     # --- browse ---
     def _browse_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Folder of subs")
         if path:
             self.folder_edit.setText(path)
-            if not self.output_edit.text().strip():
-                self.output_edit.setText(os.path.join(path, "master.fits"))
             self.grade()
 
     def _browse_output(self) -> None:
         path = QFileDialog.getSaveFileName(self, "Master FITS", "", "FITS (*.fits)")[0]
         if path:
             self.output_edit.setText(path)
+            self._output_user_edited = True
 
     # --- busy state ---
     def _set_busy(self, busy: bool) -> None:
@@ -171,6 +175,7 @@ class StackDialog(QDialog):
         finally:
             self._updating_table = False
         self.status.setText(self._selection_summary())
+        self._auto_output_path()
 
     def _on_item_changed(self, item) -> None:
         if self._updating_table or item.column() != 0:
@@ -178,6 +183,7 @@ class StackDialog(QDialog):
         self._user_touched.add(item.row())
         if self._stats:
             self.status.setText(self._sync_included_and_summarize())
+            self._auto_output_path()
 
     def _sync_included_and_summarize(self) -> str:
         for row in range(self.table.rowCount()):
@@ -203,6 +209,19 @@ class StackDialog(QDialog):
         finally:
             self._updating_table = False
         self.status.setText(self._selection_summary())
+        self._auto_output_path()
+
+    def _auto_output_path(self) -> None:
+        if self._output_user_edited or not self._stats:
+            return
+        folder = self.folder_edit.text().strip()
+        kept = [s for s in self._stats if s.included]
+        exposures = [s.exposure for s in kept if s.exposure > 0]
+        exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
+        target = next((s.target for s in kept if s.target), "")
+        name = master_filename(target, len(kept), exposure,
+                               sum(s.exposure for s in kept))
+        self.output_edit.setText(os.path.join(folder, name))
 
     @staticmethod
     def _verdict_text(s) -> str:
