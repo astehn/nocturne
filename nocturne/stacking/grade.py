@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 import sep
 
-from .frames import load_sub, luminance
+from .frames import is_stacked_master, load_sub, luminance
 
 
 STRICTNESS_K = {"relaxed": 4.0, "normal": 3.0, "strict": 2.0}
@@ -15,6 +15,7 @@ REASON_CLOUDS = "Very few stars — likely clouds or trailing"
 REASON_SOFT = "Stars softer than the rest of the session"
 WARN_SKY = "Brighter sky (twilight, moon or light pollution) — kept"
 REASON_MEASURE = "Couldn't measure this frame — excluded"
+REASON_NOT_RAW = "Already-stacked image (not a raw sub) — excluded"
 
 
 @dataclass
@@ -48,6 +49,10 @@ def _measure(lum: np.ndarray) -> tuple[int, float, float]:
 
 def grade_frame(path: str) -> FrameStats:
     try:
+        if is_stacked_master(path):
+            return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
+                              reason_code="not_raw", reason=REASON_NOT_RAW,
+                              error=True)
         img = load_sub(path, normalize=False)
         star_count, fwhm, background = _measure(luminance(img.data))
         score = star_count * (1.0 / (1.0 + fwhm)) * (1.0 / (1.0 + background * 10.0))

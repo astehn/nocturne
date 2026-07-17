@@ -141,6 +141,17 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
                       metadata=_parse_metadata(header, h, w))
 
 
+def is_stacked_master(path: str) -> bool:
+    """True if `path` is already a 3-plane RGB FITS cube (NAXIS=3) — e.g. a
+    previously written stacked master — as opposed to a raw single-plane
+    Bayer sub (NAXIS=2). Checked from the header only, before any debayer:
+    load_fits demosaics 2D Bayer data into a 3-channel array too, so
+    AstroImage.data.ndim is 3 for both a master AND a debayered raw sub —
+    only the on-disk NAXIS distinguishes them."""
+    with fits.open(path) as hdul:
+        return int(hdul[0].header.get("NAXIS", 0)) == 3
+
+
 def load_master(path: str) -> AstroImage:
     """Load a processed master back to a linear AstroImage. Supports the formats
     the app writes: FITS (via load_fits) and 16-bit TIFF (via tifffile)."""

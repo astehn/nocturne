@@ -1,26 +1,29 @@
 import pytest
 
 from nocturne.stacking.grade import grade_frame, grade_frames
-from tests.stacking.synthetic import make_star_field, write_color_fits
+from tests.stacking.synthetic import make_star_field, write_cfa_fits, write_color_fits
 
 
 def test_grade_frame_counts_stars(tmp_path):
     p = tmp_path / "s.fit"
-    write_color_fits(p, make_star_field(n_stars=25, seed=3))
+    write_cfa_fits(p, make_star_field(n_stars=25, seed=3))
     stats = grade_frame(str(p))
     assert stats.star_count >= 10
-    assert stats.background < 0.2
+    # write_cfa_fits stores raw ADU-scale counts (base * 1000, uint16), not
+    # normalized 0..1 floats, so the background sits well under the ~1000-scale
+    # star peaks rather than under 0.2.
+    assert stats.background < 20.0
 
 
 def test_grade_frames_flags_cloudy_outlier(tmp_path):
     paths = []
     for i in range(5):
         p = tmp_path / f"good{i}.fit"
-        write_color_fits(p, make_star_field(n_stars=30, seed=i, bg=0.02))
+        write_cfa_fits(p, make_star_field(n_stars=30, seed=i, bg=0.02))
         paths.append(str(p))
     cloudy = tmp_path / "cloudy.fit"
     # high background, few stars -> should be flagged not-included
-    write_color_fits(cloudy, make_star_field(n_stars=3, seed=99, bg=0.6))
+    write_cfa_fits(cloudy, make_star_field(n_stars=3, seed=99, bg=0.6))
     paths.append(str(cloudy))
 
     graded = grade_frames(paths)
@@ -129,10 +132,24 @@ def test_judge_skips_error_frames_and_leaves_them_excluded():
 
 def test_grade_frame_captures_exposure_and_target(tmp_path):
     p = tmp_path / "s.fit"
-    write_color_fits(p, make_star_field(n_stars=25, seed=3))  # exptime=10.0
+    write_cfa_fits(p, make_star_field(n_stars=25, seed=3))  # exptime=10.0
     stats = grade_frame(str(p))
     assert stats.exposure == pytest.approx(10.0)
     assert stats.error is False
+
+
+def test_grade_frame_excludes_already_stacked_master(tmp_path):
+    # A previously written master is a 3-plane RGB cube, the same shape
+    # save_fits writes (H, W, 3) -> (3, H, W) on disk. It must never be
+    # graded/measured like a raw sub, or it gets silently stacked into the
+    # new run and its EXPTIME (the whole prior session) pollutes stats.
+    p = tmp_path / "master.fit"
+    write_color_fits(p, make_star_field(n_stars=25, seed=3))
+    stats = grade_frame(str(p))
+    assert stats.error is True
+    assert stats.included is False
+    assert stats.reason_code == "not_raw"
+    assert "Already-stacked" in stats.reason
 
 
 def test_grade_frame_unreadable_returns_error_verdict(tmp_path):
@@ -149,7 +166,7 @@ def test_grade_frames_strictness_kwarg(tmp_path):
     paths = []
     for i in range(6):
         p = tmp_path / f"g{i}.fit"
-        write_color_fits(p, make_star_field(n_stars=30, seed=i, bg=0.02))
+        write_cfa_fits(p, make_star_field(n_stars=30, seed=i, bg=0.02))
         paths.append(str(p))
     graded = grade_frames(paths, strictness="relaxed")
     assert all(s.included for s in graded)
@@ -158,7 +175,7 @@ def test_grade_frames_strictness_kwarg(tmp_path):
 def test_grade_frame_bad_exptime_header_degrades_not_crashes(tmp_path):
     from astropy.io import fits as pyfits
     p = tmp_path / "badexp.fit"
-    write_color_fits(p, make_star_field(n_stars=25, seed=3))
+    write_cfa_fits(p, make_star_field(n_stars=25, seed=3))
     with pyfits.open(str(p), mode="update") as hdul:
         hdul[0].header["EXPTIME"] = "bogus"
     stats = grade_frame(str(p))
