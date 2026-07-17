@@ -3,7 +3,27 @@
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Now — core refinements
-- [ ] **Stacking memory runaway (observed 2026-07-17).** After stacking a 186-sub session
+- [ ] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17).** After
+      ZWO's firmware + app update (~2026-07-10), the Import step shows e.g.
+      "Total integration 60h 05m (104 × 2080s)" for an NGC 281 master. The numbers expose the
+      cause: 2080 = 104 × 20, so the new firmware appears to write `EXPTIME` as the
+      **cumulative total** integration of the stack (2080s) instead of the per-sub exposure
+      (20s); our `fits_io.format_metadata` still multiplies frames × EXPTIME → 104 × 2080s
+      ≈ 60h. Real value for that stack: 2080s ≈ 34m40s. (Second data point confirms:
+      "46h 00m (91 × 1820s)", 1820 = 91 × 20.) TO FIX (needs a real new-firmware master +
+      raw sub to inspect): dump full headers (`astropy.io.fits` — EXPTIME, STACKCNT/NSUBS,
+      any new per-sub-exposure keyword ZWO may have added); then make the integration
+      calculation robust to both firmware generations — plausible heuristic: if
+      EXPTIME/frames yields a sane per-sub value (5–60s) and EXPTIME alone is implausibly
+      long for one sub, treat EXPTIME as the total. Also check whether raw SUBS from the new
+      firmware still carry per-sub EXPTIME (old-firmware subs did — affects our own stacker's
+      minutes-of-light math + master filename if not). CONFIRMED (2026-07-17, code read):
+      `import_summary` multiplies exp × frames unconditionally (`fits_io.py:80-82`), and OUR
+      stacker writes EXPTIME = TOTAL (+NSUBS/STACKCNT) — the same convention ZWO switched to —
+      so re-opening a Nocturne master mis-displays the same way (e.g. 182 × 3640s ≈ 184h).
+      ZWO's change exposed a latent assumption, not just a ZWO quirk. Fix must handle: old-ZWO
+      (per-sub EXPTIME), new-ZWO (total EXPTIME), and Nocturne masters (total EXPTIME +
+      STACKCNT present — can key on our own NSUBS/STACKCNT headers for a reliable signal). After stacking a 186-sub session
       (NGC 7000), macOS reported "system has run out of application memory" with Nocturne at
       ~396 GB (Force Quit dialog — likely runaway allocation/virtual memory during or after
       the stack, not a slow leak). Investigate as the non-functional half of the stacking
