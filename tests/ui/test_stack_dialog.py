@@ -260,3 +260,43 @@ def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
     dlg.table.setCurrentCell(0, 1)      # cached — no third load
     qtbot.wait(100)
     assert len(loads) == 2
+
+
+def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
+    import numpy as np
+    for i in range(2):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(2)
+    ]
+    loads = []
+
+    def fake_loader(path):
+        loads.append(path)
+        return np.zeros((40, 60, 3), dtype=np.float32)
+
+    dlg._preview_loader = fake_loader
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    dlg.table.setCurrentCell(1, 1)
+    qtbot.waitUntil(lambda: len(loads) == 1, timeout=2000)
+    assert loads == [str(tmp_path / "f1.fit")]
+
+    # grade a different folder — same row count, different paths, current cell
+    # index (row 1) stays put, so currentCellChanged never fires.
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    for i in range(2):
+        (other_dir / f"g{i}.fit").write_text("x")
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(other_dir / f"g{i}.fit"), 0.5) for i in range(2)
+    ]
+    dlg.folder_edit.setText(str(other_dir))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    # preview must resync to the new row 1's file, not keep showing the old one
+    qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
+    assert loads[-1] == str(other_dir / "g1.fit")

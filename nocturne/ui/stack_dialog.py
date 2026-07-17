@@ -195,6 +195,19 @@ class StackDialog(QDialog):
             self._updating_table = False
         self.status.setText(self._selection_summary())
         self._auto_output_path()
+        self._resync_preview()
+
+    def _resync_preview(self) -> None:
+        """Re-grading can repopulate the table without moving the current cell
+        (currentCellChanged won't fire), so explicitly resync the preview to
+        whatever the current row now shows — or clear it if there is none."""
+        row = self.table.currentRow()
+        if 0 <= row < len(self._stats):
+            self._show_preview(row)
+        else:
+            self._preview_wanted = ""
+            self.preview.setPixmap(QPixmap())
+            self.preview.setText("Select a frame\nto preview it")
 
     def _on_item_changed(self, item) -> None:
         if self._updating_table or item.column() != 0:
