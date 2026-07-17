@@ -90,8 +90,14 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       the pre-stretch state (would need history to expose the last linear step, or re-run the
       pipeline to the stretch boundary). Low priority — noted so it isn't forgotten.
 - [ ] **L3** Project save / reopen (currently work is lost on close).
-- [ ] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
-      stacks (needs real-data testing).
+- [~] **T1** Tune Background / Noise / Sharpen strength mappings + free fallbacks on real
+      stacks. NOISE done (2026-07-17): NoiseX presets recalibrated light/medium/strong
+      0.4/0.7/0.9 → 0.75/0.90/0.95 (medium now = PixInsight's default 0.90; the old medium
+      0.7 was the under-denoising the user saw). Free TV fallback left unchanged (decoupled,
+      not benchmarked). Validated on NGC 7000 via recipe replay. STILL OPEN: Background &
+      Sharpen strength mappings; free TV-fallback calibration (own mini-audit).
+      Deferred (own deep-dive): dual-track starless architecture for stretch/detail (NOT
+      noise — proven equivalent).
 - [ ] **T2** Confirm the Stretch aggressiveness slider range feels right on real data.
 
 ## Processing features — quick wins (OSC essentials)
