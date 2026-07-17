@@ -74,3 +74,11 @@ def test_unlinked_stretch_constant_channel_does_not_crash():
     out = unlinked_stretch(img)
     assert np.isfinite(out).all()
     assert out.shape == img.shape
+
+
+def test_unlinked_stretch_constant_nonzero_channel_is_finite():
+    img = _cast_image()
+    img[..., 2] = 0.3                          # flat nonzero channel
+    out = unlinked_stretch(img)
+    assert np.isfinite(out).all()
+    assert abs(float(np.median(out[..., 2])) - _TARGET_BG) < 0.02

@@ -34,6 +34,7 @@ def test_show_message_over_image_then_clear(qtbot):
     fp.show_message("Preview failed:\ncould not read frame")
     assert "Preview failed" in fp.overlay.text()
     assert fp.overlay.isVisibleTo(fp)
+    assert fp.has_image()  # error overlay does not clear the image (deliberate contract)
     fp.clear()
     assert not fp.has_image()
     assert "Select a frame" in fp.overlay.text()

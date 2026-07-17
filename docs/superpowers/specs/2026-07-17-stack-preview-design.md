@@ -23,7 +23,9 @@ Replace the `QLabel` preview with an `ImageView` (`nocturne/ui/image_view.py`)
 instance. This brings, with zero new interaction code: cursor-centred wheel
 zoom, drag-to-pan, fit-to-window, the floating −/fit/+ zoom pill, and the app's
 canvas styling. Crop-overlay and before/after-compare features stay dormant
-(never enabled by the dialog). On new image: `set_image(qimage)` then `fit()`.
+(never enabled by the dialog). On new image: `set_image(qimage)` — ImageView
+fits on the first image or a size change and otherwise keeps the zoom/pan
+transform, so same-size subs can be blink-compared at 1:1.
 
 The empty state ("Select a frame to preview it") and the error state
 ("Preview failed: could not read frame") render as a centred overlay label on

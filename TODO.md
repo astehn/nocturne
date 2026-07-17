@@ -16,6 +16,11 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
+- [ ] **Coalesce duplicate in-flight preview loads in the stack dialog.** Rapid ↑/↓ row
+      navigation dispatches one full-res load per visited row with no dedup/cancel — harmless
+      today (each just runs a full-res unlinked stretch) but wasteful on fast repeated
+      navigation. Also note for later: possible display-only smoothing for single-sub RGB shot
+      noise at fit zoom (cosmetic, low priority).
 - [x] **Palette workflow reworked into one-press "Colourise" (fixes both palette bugs).** DONE. Replaced the modal-only palette with a one-press **Colourise** button on the Stretch step (StarX cached → auto Foraxx → stars screened back), recorded as a "Colourise" history step at the **stretch position** so later steps preserve it (fixes the "palette discarded by later steps / reset on Color" bug — you also skip the broadband Color step for narrowband, per the new tip). The old "Apply drops stars" bug is gone: the one-press path composes the cached stars back, and "Advanced…" opens the slider dialog seeded with those layers. Whole-branch review caught + fixed a data-loss bug (Advanced truncated history on open → cancel wiped work); now non-destructive (`Project.state_at`; truncate only on record). 348 tests.
 - [ ] **FOLLOW-UP: Recipes/batch don't capture Colourise.** "Colourise" is intentionally not a `PROCESSING_ORDER`/`STEP_NAME` id, so `recipe_from_entries` skips it — a saved recipe omits the colourise step (batch output un-colourised; safe, no crash). Add a `ColouriseStep` (StarX + compose) + factory + batch/recipe serialization so colourised sessions batch correctly. Recipes are a differentiator — do this next. `steps/`, `recipe.py`, `batch.py`.
 - [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop

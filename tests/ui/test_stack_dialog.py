@@ -365,6 +365,53 @@ def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
     assert len(loads) == 6
 
 
+def test_preview_cache_lru_access_order_not_fifo(qtbot, tmp_path):
+    # test_preview_cache_is_lru_of_four only proves the cache is capped at 4;
+    # it can't distinguish true LRU (evicts least-recently-*accessed*) from
+    # plain FIFO (evicts least-recently-*inserted*). Re-visiting row 0 before
+    # the 5th load must make it MRU, so the 5th load evicts row 1 (not row 0).
+    import numpy as np
+    paths = []
+    for i in range(6):
+        p = tmp_path / f"f{i}.fit"
+        p.write_text("x")
+        paths.append(str(p))
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda ps, on_progress=None, strictness="normal": [
+        _stats2(p, 0.5) for p in paths
+    ]
+    loads = []
+
+    def fake_loader(path):
+        loads.append(path)
+        return np.zeros((8, 8, 3), dtype=np.float32)
+
+    dlg._preview_loader = fake_loader
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+
+    for row in range(4):                       # visit rows 0..3 -> 4 loads, cache full
+        dlg.table.setCurrentCell(row, 1)
+        qtbot.waitUntil(lambda r=row: len(loads) == r + 1, timeout=2000)
+    assert len(dlg._preview_cache) == 4
+
+    dlg.table.setCurrentCell(0, 1)              # re-select row 0 -> cache hit, becomes MRU
+    qtbot.wait(100)
+    assert len(loads) == 4                      # no new load
+
+    dlg.table.setCurrentCell(4, 1)              # 5th load -> must evict row 1, not row 0
+    qtbot.waitUntil(lambda: len(loads) == 5, timeout=2000)
+
+    dlg.table.setCurrentCell(0, 1)              # still cached -> FIFO would have evicted it
+    qtbot.wait(100)
+    assert len(loads) == 5                      # no new load
+
+    dlg.table.setCurrentCell(1, 1)              # row 1 was evicted -> new load
+    qtbot.waitUntil(lambda: len(loads) == 6, timeout=2000)
+
+
 def test_stack_report_names_unregistered_frames(qtbot):
     from nocturne.stacking.stacker import StackResult
     dlg = StackDialog(Settings())

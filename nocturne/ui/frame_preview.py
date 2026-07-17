@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
 
 from .image_view import ImageView
@@ -28,6 +28,9 @@ class FramePreview(QWidget):
         self._has_image = False
 
     def show_image(self, qimage: QImage) -> None:
+        # ImageView deliberately keeps the current zoom/pan transform across
+        # same-size images (so blink review compares subs at 1:1) and only
+        # re-fits on the first image or a size change.
         self.view.set_image(qimage)
         self.overlay.hide()
         self._has_image = True
@@ -38,7 +41,6 @@ class FramePreview(QWidget):
 
     def clear(self) -> None:
         self.view.set_image(QImage())          # blank the scene
-        self.view._item.setPixmap(QPixmap())   # drop the pixmap entirely
         self._has_image = False
         self.show_message(PLACEHOLDER)
 
