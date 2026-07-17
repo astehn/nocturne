@@ -10,6 +10,12 @@ def _stats(path, score, included=True):
     return FrameStats(path, 100, 3.0, 0.02, score, included)
 
 
+def _stats2(path, score, included=True, reason="", warning="", exposure=20.0):
+    s = FrameStats(path, 100, 3.0, 0.02, score, included)
+    s.reason, s.warning, s.exposure = reason, warning, exposure
+    return s
+
+
 def test_grading_fills_table(qtbot, tmp_path):
     (tmp_path / "a.fit").write_text("x")
     (tmp_path / "b.fit").write_text("x")
@@ -112,3 +118,40 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
     release.set()
     qtbot.waitUntil(lambda: dlg._stack_btn.isEnabled(), timeout=2000)
     assert len(calls) == 1                                    # only one stack ran
+
+
+def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats2(str(tmp_path / "a.fit"), 0.2, included=False,
+                reason="Stars softer than the rest of the session (FWHM 3.5 vs limit 3.0)"),
+        _stats2(str(tmp_path / "b.fit"), 0.8, warning="Brighter sky (twilight, moon or light pollution) — kept"),
+        _stats2(str(tmp_path / "c.fit"), 0.9),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    assert dlg.table.columnCount() == 6
+    assert "softer" in dlg.table.item(0, 5).text()
+    assert "Brighter sky" in dlg.table.item(1, 5).text()
+    assert dlg.table.item(2, 5).text() == "OK"
+
+
+def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
+    for i in range(4):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5 + 0.1 * i) for i in range(4)]
+    stats[0].included = False
+    stats[0].reason = "Very few stars — likely clouds or trailing"
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 4, timeout=2000)
+    # 3 of 4 kept x 20s = 1 of 1 minute
+    assert "Keeping 3 of 4 frames" in dlg.status.text()
+    assert "minute" in dlg.status.text()

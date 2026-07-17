@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QProgressBar, QPushButton, QRadioButton, QTableWidget, QTableWidgetItem,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
 from ..stacking.frames import discover_subs
 from ..stacking.grade import grade_frames
 from ..stacking.stacker import StackOptions, run_stack
+from . import theme
 from .worker import run_async
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
@@ -49,8 +51,8 @@ class StackDialog(QDialog):
 
         self.folder_edit = QLineEdit()
         self.output_edit = QLineEdit()
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg", "Verdict"])
         self.avg_radio = QRadioButton("Average")
         self.sigma_radio = QRadioButton("Sigma-clipped")
         self.sigma_radio.setChecked(True)
@@ -144,8 +146,42 @@ class StackDialog(QDialog):
             self.table.setItem(row, 2, QTableWidgetItem(str(s.star_count)))
             self.table.setItem(row, 3, QTableWidgetItem(f"{s.fwhm:.1f}"))
             self.table.setItem(row, 4, QTableWidgetItem(f"{s.background:.3f}"))
-        kept = sum(1 for s in stats if s.included)
-        self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
+            self.table.setItem(row, 5, QTableWidgetItem(self._verdict_text(s)))
+            self._tint_row(row, s)
+        self.status.setText(self._selection_summary())
+
+    @staticmethod
+    def _verdict_text(s) -> str:
+        if s.reason:
+            return s.reason
+        if s.warning:
+            return s.warning
+        return "OK"
+
+    def _tint_row(self, row: int, s) -> None:
+        colour = None
+        if s.reason:
+            colour = QColor(theme.TEXT_FAINT)   # rejected: dimmed
+        elif s.warning:
+            colour = QColor(theme.WARNING)      # kept with warning: amber
+        for col in range(1, self.table.columnCount()):
+            item = self.table.item(row, col)
+            if item is not None:
+                item.setForeground(colour) if colour else item.setForeground(QColor(theme.TEXT))
+
+    def _selection_summary(self) -> str:
+        total = len(self._stats)
+        kept = [s for s in self._stats if s.included]
+        text = f"Keeping {len(kept)} of {total} frames"
+        kept_s = sum(s.exposure for s in kept)
+        all_s = sum(s.exposure for s in self._stats)
+        if all_s > 0:
+            unit = "minute" if round(all_s / 60) == 1 else "minutes"
+            text += (f" — {max(1, round(kept_s / 60))} of "
+                     f"{max(1, round(all_s / 60))} {unit} of light")
+        if 0 < total < 5:
+            text += " (too few frames to grade reliably — keeping all)"
+        return text + "."
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
