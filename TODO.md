@@ -3,6 +3,14 @@
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Now — core refinements
+- [ ] **Stacking memory runaway (observed 2026-07-17).** After stacking a 186-sub session
+      (NGC 7000), macOS reported "system has run out of application memory" with Nocturne at
+      ~396 GB (Force Quit dialog — likely runaway allocation/virtual memory during or after
+      the stack, not a slow leak). Investigate as the non-functional half of the stacking
+      deep-dive: profile grade → register → integrate on the real dataset; suspects include
+      registered-frame accumulation (registration output kept in memory rather than streamed),
+      per-frame float64 copies, and the master + history caches piling on top. Reproduce with
+      Activity Monitor / `memory_profiler` before fixing.
 - [x] **M5** Background "off" skips (no history entry / no done-mark).
 - [x] **L1** "Tools configured" indicator (GraXpert / RC-Astro) in the toolbar.
 - [x] **L2** Clear the error/status line when navigating between steps.
