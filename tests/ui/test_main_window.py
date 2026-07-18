@@ -855,3 +855,30 @@ def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatc
     # Saved the captured subset (Stretch), dropped the uncaptured Boost Red.
     stages = [s["stage"] for s in load_recipe(out).steps]
     assert "stretch" in stages
+
+
+def test_closeevent_no_edits_accepts(qtbot, tmp_path):
+    from PySide6.QtGui import QCloseEvent
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))          # loaded, no steps applied
+    assert not win.project.entries()
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    assert ev.isAccepted()                       # no prompt, quits cleanly
+
+
+def test_closeevent_with_edits_prompts_and_respects_choice(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._rotate()                                # applies a Rotate step -> has edits
+    assert win.project.entries()
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    ev = QCloseEvent(); win.closeEvent(ev)
+    assert not ev.isAccepted()                   # Cancel -> stays open
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    ev2 = QCloseEvent(); win.closeEvent(ev2)
+    assert ev2.isAccepted()                      # Discard -> quits

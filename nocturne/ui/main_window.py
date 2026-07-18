@@ -182,6 +182,20 @@ class MainWindow(QMainWindow):
         self._rebuild_panel()
         self._refresh()
 
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Warn before discarding an edited (un-exported) project on quit."""
+        if self.project is not None and self.project.entries():
+            resp = QMessageBox.question(
+                self, "Quit Nocturne",
+                "You have unsaved edits — quit anyway? Your work will be lost.",
+                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if resp != QMessageBox.StandardButton.Discard:
+                event.ignore()
+                return
+        event.accept()
+
     def _build_menu(self) -> None:
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
