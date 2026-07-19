@@ -96,6 +96,23 @@ def test_levels_panel_emits_tuple(qtbot):
     assert got == [(0.20, 1.50, 0.90)]
 
 
+def test_levels_panel_controls(qapp):
+    from PySide6.QtWidgets import QCheckBox
+    seen = {}
+    w = build_panel(_stage("levels"),
+                    on_levels_change=lambda b, g, wt: seen.setdefault("chg", (b, g, wt)),
+                    on_levels_auto=lambda: seen.setdefault("auto", True),
+                    on_levels_clipping=lambda c: seen.setdefault("clip", c))
+    assert hasattr(w, "auto_btn") and hasattr(w, "clip_check")
+    labels = " ".join(l.text() for l in w.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))
+    assert "Midtones" in labels and "(gamma)" not in labels
+    w.black_slider.setValue(20)                 # fires on_levels_change + readout
+    assert "chg" in seen
+    assert w.black_val.text().strip() != ""
+    w.auto_btn.click(); assert seen.get("auto") is True
+    w.clip_check.setChecked(True); assert seen.get("clip") is True
+
+
 def test_star_reduction_gated_without_rcastro(qtbot):
     w = build_panel(_stage("star_reduction"), on_apply=lambda o: None, apply_enabled=False)
     qtbot.addWidget(w)

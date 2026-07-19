@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
@@ -48,6 +48,9 @@ def build_panel(
     on_export=None,
     on_remove_green=None,
     on_enhance=None,
+    on_levels_change=None,
+    on_levels_auto=None,
+    on_levels_clipping=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -222,9 +225,31 @@ def build_panel(
 
     elif stage.kind == "levels":
         lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))
+        auto_btn = QPushButton("Auto")
+        if on_levels_auto is not None:
+            auto_btn.clicked.connect(lambda: on_levels_auto())
+        lay.addWidget(auto_btn)
+
         black = ResetSlider(0)
         gamma = ResetSlider(100, minimum=10, maximum=300)  # 1.00
         white = ResetSlider(100)
+        black_val = QLabel("0.00")
+        gamma_val = QLabel("1.00")
+        white_val = QLabel("1.00")
+
+        def _emit(*_):
+            black_val.setText(f"{black.value() / 100:.2f}")
+            gamma_val.setText(f"{gamma.value() / 100:.2f}")
+            white_val.setText(f"{white.value() / 100:.2f}")
+            if on_levels_change is not None:
+                on_levels_change(
+                    black.value() / 100.0, gamma.value() / 100.0, white.value() / 100.0
+                )
+
+        black.valueChanged.connect(_emit)
+        gamma.valueChanged.connect(_emit)
+        white.valueChanged.connect(_emit)
+
         apply_btn = QPushButton("Apply Levels")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -232,16 +257,39 @@ def build_panel(
             apply_btn.clicked.connect(lambda: on_apply(
                 (black.value() / 100.0, gamma.value() / 100.0, white.value() / 100.0)
             ))
-        lay.addWidget(QLabel("Black point"))
+
+        black_row = QHBoxLayout()
+        black_row.addWidget(QLabel("Black point"))
+        black_row.addWidget(black_val)
+        lay.addLayout(black_row)
         lay.addWidget(black)
-        lay.addWidget(QLabel("Midtones (gamma)"))
+
+        gamma_row = QHBoxLayout()
+        gamma_row.addWidget(QLabel("Midtones"))
+        gamma_row.addWidget(gamma_val)
+        lay.addLayout(gamma_row)
         lay.addWidget(gamma)
-        lay.addWidget(QLabel("White point"))
+
+        white_row = QHBoxLayout()
+        white_row.addWidget(QLabel("White point"))
+        white_row.addWidget(white_val)
+        lay.addLayout(white_row)
         lay.addWidget(white)
+
+        clip_check = QCheckBox("Show clipping")
+        if on_levels_clipping is not None:
+            clip_check.toggled.connect(lambda c: on_levels_clipping(c))
+        lay.addWidget(clip_check)
+
         lay.addWidget(apply_btn)
+        w.auto_btn = auto_btn
         w.black_slider = black
         w.gamma_slider = gamma
         w.white_slider = white
+        w.black_val = black_val
+        w.gamma_val = gamma_val
+        w.white_val = white_val
+        w.clip_check = clip_check
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":
