@@ -11,6 +11,11 @@ flags a real concern. Every agreed fix goes through the normal flow
 **Method:** independent audit — Claude forms its own findings before the user
 shares theirs, so convergence is a real signal.
 
+**Cross-cutting directive (2026-07-19):** live real-time slider preview
+(Levels pattern — debounced, non-committing, preview==commit) should be adopted
+by every cheap slider step — Saturation (next), and retrofit Stretch. NOT the
+external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-principle]].
+
 ## Roadmap
 
 | # | Step | Depth | Status | Known issue folded in |
@@ -21,8 +26,8 @@ shares theirs, so convergence is a real signal.
 | 4 | Color | algo-deep | ✅ fixed | grey-world → robust background-neutralization |
 | 5 | Deconvolution | algo-deep | ✅ reviewed | free unsharp-mask fallback → parked in TODO |
 | 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
-| 7 | Levels | UX | 🛠 fixing | live preview + auto + clipping + numeric + label |
-| 8 | Saturation | UX | ⬜ | recently remapped — verify |
+| 7 | Levels | UX | ✅ fixed | live preview + auto + clipping + numeric + label |
+| 8 | Saturation | UX | 🔎 next | recently remapped — verify; + adopt live preview |
 | 9 | Noise Reduction | algo-deep | ⬜ | — |
 | 10 | Local Contrast | algo + UX | ⬜ | — |
 | 11 | Star Reduction | algo + UX | ⬜ | retune (paused) |
