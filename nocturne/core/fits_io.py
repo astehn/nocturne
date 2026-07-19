@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 import numpy as np
 import tifffile
@@ -40,6 +41,9 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "bitpix": ("BITPIX",),
         "temp": ("CCD-TEMP", "CCD_TEMP"),
         "date": ("DATE-OBS", "DATE"),
+        "livetime": ("LIVETIME",),
+        "focal_length": ("FOCALLEN",),
+        "pixel_size": ("XPIXSZ", "YPIXSZ"),
     }
     for key, candidates in mapping.items():
         for card in candidates:
@@ -47,6 +51,52 @@ def _parse_metadata(header, height: int, width: int) -> dict:
                 meta[key] = header[card]
                 break
     return meta
+
+
+@dataclass
+class Integration:
+    total_s: float | None
+    per_sub_s: float | None
+    frames: int | None
+
+
+def _plausible_sub(x: float) -> bool:
+    return 0.5 <= x <= 600.0
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_integration(meta: dict) -> "Integration | None":
+    """Resolve total integration + per-sub exposure across the differing header
+    conventions. `EXPTIME` is per-sub in native ZWO/Siril files but the *total*
+    in Nocturne's own masters; native files carry the standard `LIVETIME` total.
+    Rule-2's ratio test only sees Nocturne `EXPTIME=total` masters, because
+    native files carry LIVETIME and are handled by rule 1."""
+    live = _num(meta.get("livetime"))
+    exp = _num(meta.get("exposure"))
+    frames = meta.get("frames")
+    try:
+        frames = int(frames) if frames is not None else None
+    except (TypeError, ValueError):
+        frames = None
+
+    if live and live > 0:
+        per = exp if (exp and _plausible_sub(exp)) else (
+            live / frames if frames else None)
+        return Integration(live, per, frames)
+    if exp and frames:
+        cand = exp / frames
+        if _plausible_sub(cand):
+            return Integration(exp, cand, frames)       # EXPTIME already total
+        return Integration(exp * frames, exp, frames)   # EXPTIME per-sub
+    if exp:
+        return Integration(None, exp, frames)
+    return None
 
 
 def format_integration(seconds: float) -> str:

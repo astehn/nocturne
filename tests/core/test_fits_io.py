@@ -97,3 +97,28 @@ def test_import_summary_full_and_sparse():
     sparse = import_summary({"width": 10, "height": 10})
     assert "Sony IMX585" in sparse and "10 × 10" in sparse
     assert "Total integration" not in sparse
+
+
+def test_resolve_integration_nocturne_master():
+    from nocturne.core.fits_io import resolve_integration
+    r = resolve_integration({"exposure": 1620.0, "frames": 81})  # EXPTIME=total
+    assert round(r.total_s) == 1620 and round(r.per_sub_s) == 20 and r.frames == 81
+
+
+def test_resolve_integration_native_livetime():
+    from nocturne.core.fits_io import resolve_integration
+    r = resolve_integration({"livetime": 3220.0, "exposure": 20.0, "frames": 161})
+    assert round(r.total_s) == 3220 and round(r.per_sub_s) == 20
+
+
+def test_resolve_integration_legacy_persub():
+    from nocturne.core.fits_io import resolve_integration
+    r = resolve_integration({"exposure": 20.0, "frames": 145})  # EXPTIME=per-sub
+    assert round(r.total_s) == 2900 and round(r.per_sub_s) == 20
+
+
+def test_resolve_integration_exposure_only_and_none():
+    from nocturne.core.fits_io import resolve_integration
+    r = resolve_integration({"exposure": 30.0})
+    assert r.total_s is None and round(r.per_sub_s) == 30
+    assert resolve_integration({"width": 10}) is None
