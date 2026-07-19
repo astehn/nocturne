@@ -57,6 +57,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
+- [ ] **Undo should take you to the affected step (reported 2026-07-19).** Undo reverts the last
+      change, but the stepper/viewport stays on the current step regardless — so undoing a change
+      made on another step reverts it invisibly. FIX (preferred): on Undo/Redo, jump the stepper to
+      the stage whose change was just reverted so the user sees what changed — `Project.entries()`
+      carry step names; map the undone entry's name → stage id → `_go_to_id`. (Alt: scope Undo to
+      the current step only — simpler but less powerful.)
 - [ ] **Coalesce duplicate in-flight preview loads in the stack dialog.** Rapid ↑/↓ row
       navigation dispatches one full-res load per visited row with no dedup/cancel — harmless
       today (each just runs a full-res unlinked stretch) but wasteful on fast repeated
