@@ -805,7 +805,8 @@ class MainWindow(QMainWindow):
             split_enabled=split_enabled,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
-            new_panel.meta_label.setText(import_summary(self.project.current().metadata))
+            new_panel.meta_label.setText(
+                import_summary(self.project.current().metadata, filename=self._source_label))
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel

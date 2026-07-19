@@ -247,3 +247,10 @@ def test_crop_panel_unlink_checkbox_reports_toggle(qapp):
 def test_crop_panel_unlink_reflects_initial_state(qapp):
     w = build_panel(_stage("crop"), unlinked_checked=True)
     assert w.unlink_check.isChecked() is True
+
+
+def test_import_panel_has_linear_preview_note(qapp):
+    w = build_panel(_stage("load"))
+    from PySide6.QtWidgets import QLabel
+    texts = " ".join(l.text() for l in w.findChildren(QLabel))
+    assert "histogram" in texts.lower() or "un-stretched" in texts.lower()

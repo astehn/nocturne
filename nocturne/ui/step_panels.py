@@ -71,6 +71,11 @@ def build_panel(
         meta.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(meta)
         w.meta_label = meta
+        note = _desc_label(
+            "Teal cast and a flat histogram are normal here — this is your "
+            "un-stretched data. Colour and contrast come in the next steps.")
+        note.setTextFormat(Qt.TextFormat.RichText)
+        lay.addWidget(note)
 
     elif stage.kind == "crop":
         lay.addWidget(_desc_label(
