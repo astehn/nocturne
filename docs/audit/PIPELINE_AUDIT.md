@@ -18,9 +18,9 @@ shares theirs, so convergence is a real signal.
 | 1 | Import | UX + correctness | ✅ fixed | integration-time / EXPTIME miscalc |
 | 2 | Crop | UX | ✅ fixed | unlink ✅ shipped; brightness-framing parked |
 | 3 | Background | UX + algo | ✅ fixed | GraXpert strengths |
-| 4 | Color | algo-deep | 🔎 auditing | OSC neutralize/WB correctness; green cast |
-| 5 | Deconvolution | algo-deep | ⬜ | — |
-| 6 | Stretch | algo + UX | ⬜ | slider→target mapping; preview fidelity ✅ |
+| 4 | Color | algo-deep | ✅ fixed | grey-world → robust background-neutralization |
+| 5 | Deconvolution | algo-deep | 🔎 next | — |
+| 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
 | 7 | Levels | UX | ⬜ | — |
 | 8 | Saturation | UX | ⬜ | recently remapped — verify |
 | 9 | Noise Reduction | algo-deep | ⬜ | — |
@@ -40,6 +40,35 @@ Each step's entry captures:
 3. **UX findings** — clarity, labels, feedback, discoverability, friction.
 4. **Verdict** — leave as-is / minor polish / structural fix.
 5. **Actions** — prioritized, each linked to its spec/plan/commit when done.
+
+---
+
+## Step 4 — Color  ✅
+
+**Finding (algo-deep, deep-research backed):** grey-world white balance assumes the
+whole frame averages to neutral grey — false for an emission nebula. On a
+red-dominant NGC 7000 frame it computed R×0.61 / B×1.53 (measured), desaturating
+real Hα and casting the sky the complementary colour; SCNR then turned the
+grey-world green-boost into a blue sky. **Fix (merged 85c6441):** replaced with
+robust background-neutralization — sample an empty-sky luminance band (10–40th
+pct), match each channel's background level via green-anchored multiplicative
+gains. Sky neutral, nebula colour preserved. `white_balance` setting removed
+(recipe deserialize tolerates old keys); help copy corrected. Deferred: star-based
+WB advanced toggle. _Status: ✅ complete._
+
+## Step 6 — Stretch  ✅
+
+**Finding (the "unnatural red" the user couldn't reproduce in PI/Siril):**
+`linked_stretch` subtracted ONE common luminance-derived black point from all
+channels, clipping the lowest (red) to zero on any non-neutral background (proven
+on the real file: raw→linked red→0; background-neutralize→linked neutral). It was
+used for both preview AND commit, so previews mispredicted the export — a
+[[wysiwyg-preview-principle]] violation. On real NGC 7000 the user judged the
+per-channel **unlinked** look right (linked reads over-the-top). **Fix (merged
+1fc0a17):** `autostretch` (preview) and `apply_stretch` (commit) both use the
+per-channel unlinked stretch — neutral background, no channel clipped, preview ==
+export. Retired the now-redundant Crop "Neutral preview" toggle. User: "best image
+edited with Nocturne so far, end to end." _Status: ✅ complete._
 
 ---
 
