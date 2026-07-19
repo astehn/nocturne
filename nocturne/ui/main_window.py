@@ -817,12 +817,19 @@ class MainWindow(QMainWindow):
         self._display_unlinked = bool(checked)
         self._refresh()
 
+    def _effective_unlinked(self) -> bool:
+        """Unlink is a Crop-stage framing aid only. Everywhere else the preview
+        stays faithful (linked) so the Stretch preview predicts the committed
+        stretch — an unlinked preview would under-show saturation and make the
+        commit look like a sudden colour jump."""
+        return self._display_unlinked and self._stages[self._stage].id == "crop"
+
     def _refresh(self) -> None:
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
             img = self.project.current()
-            self.image_view.set_image(to_qimage(img, self._display_unlinked))
+            self.image_view.set_image(to_qimage(img, self._effective_unlinked()))
             self.histogram_view.set_image(img)
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
