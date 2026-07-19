@@ -27,7 +27,7 @@ SEESTAR_S30_PRO = Instrument(
     width=3840,
     height=2160,
     pixel_size_um=2.9,
-    focal_length_mm=150.0,
-    aperture_mm=30.0,   # 150 / 30 = f/5
+    focal_length_mm=160.0,
+    aperture_mm=32.0,   # 160 / 32 = f/5 (device header: FOCALLEN=160, APERTURE=5.0)
     bayer_pattern="GRBG",  # confirmed from real S30 Pro sub headers (BAYERPAT='GRBG')
 )

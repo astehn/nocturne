@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -119,19 +120,38 @@ def _summary_section(title: str, pairs: list[tuple[str, str]]) -> str:
     return f"<b>{title}</b><table cellspacing='0'>{rows}</table>"
 
 
-def import_summary(meta: dict, instrument=SEESTAR_S30_PRO) -> str:
+def _target_from_filename(filename: str | None) -> str | None:
+    """Best-effort target name from a source filename: strip the extension and
+    a trailing capture suffix, e.g. 'NGC7000_182x20s_61min.fits' -> 'NGC7000'."""
+    if not filename:
+        return None
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    match = re.search(r"_\d+x?\d*", stem)
+    if match:
+        stem = stem[: match.start()]
+    return stem or None
+
+
+def import_summary(meta: dict, instrument=SEESTAR_S30_PRO,
+                    filename: str | None = None) -> str:
     """Grouped rich-HTML readout: 'Your stack' (header, present fields only) +
-    'Camera & scope' (from the instrument profile)."""
+    'Camera & scope' (per-file where available, else instrument profile)."""
     stack: list[tuple[str, str]] = []
-    if meta.get("target"):
-        stack.append(("Target", str(meta["target"])))
-    exp, frames = meta.get("exposure"), meta.get("frames")
-    if exp is not None and frames is not None:
-        try:
-            total = format_integration(float(exp) * float(frames))
-            stack.append(("Total integration", f"{total} ({frames} × {float(exp):g}s)"))
-        except (TypeError, ValueError):
-            pass
+    target = meta.get("target") or _target_from_filename(filename)
+    if target:
+        stack.append(("Target", str(target)))
+
+    integration = resolve_integration(meta)
+    if integration is not None:
+        if integration.total_s is not None:
+            value = format_integration(integration.total_s)
+            if integration.frames is not None and integration.per_sub_s is not None:
+                value += f" ({integration.frames} × {integration.per_sub_s:g}s)"
+            stack.append(("Total integration", value))
+        elif integration.per_sub_s is not None:
+            stack.append(("Exposure", f"{integration.per_sub_s:g}s"))
+
+    frames = meta.get("frames")
     if frames is not None:
         stack.append(("Frames", f"{frames}"))
     if meta.get("gain") is not None:
@@ -149,14 +169,20 @@ def import_summary(meta: dict, instrument=SEESTAR_S30_PRO) -> str:
     if meta.get("width") and meta.get("height"):
         stack.append(("Dimensions", f"{meta['width']} × {meta['height']}"))
 
+    if not stack:
+        stack.append(("", "Couldn't read capture details from this file's header."))
+
+    focal = meta.get("focal_length") or instrument.focal_length_mm
+    pix = meta.get("pixel_size") or instrument.pixel_size_um
+    scale = 206.265 * float(pix) / float(focal)
     scope = [
         ("Sensor", f"{instrument.sensor} (colour)"),
-        ("Pixel size", f"{instrument.pixel_size_um:g} µm"),
-        ("Focal length", f"{instrument.focal_length_mm:g} mm · f/{instrument.f_ratio:g}"),
-        ("Image scale", f"~{instrument.pixel_scale_arcsec:.1f}″ / pixel"),
+        ("Pixel size", f"{float(pix):g} µm"),
+        ("Focal length", f"{float(focal):g} mm · f/{instrument.f_ratio:g}"),
+        ("Image scale", f"~{scale:.1f}″ / pixel"),
     ]
 
-    html = _summary_section("Your stack", stack) if stack else ""
+    html = _summary_section("Your stack", stack)
     html += _summary_section("Camera &amp; scope", scope)
     return html
 

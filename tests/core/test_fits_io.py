@@ -92,7 +92,7 @@ def test_import_summary_full_and_sparse():
     full = import_summary({"exposure": 20, "frames": 145, "target": "IC 5070",
                            "width": 2160, "height": 3840})
     for token in ("IC 5070", "48m 20s", "145 × 20s", "2160 × 3840",
-                  "Sony IMX585", "4.0″"):
+                  "Sony IMX585", "3.7″"):
         assert token in full, token
     sparse = import_summary({"width": 10, "height": 10})
     assert "Sony IMX585" in sparse and "10 × 10" in sparse
@@ -122,3 +122,31 @@ def test_resolve_integration_exposure_only_and_none():
     r = resolve_integration({"exposure": 30.0})
     assert r.total_s is None and round(r.per_sub_s) == 30
     assert resolve_integration({"width": 10}) is None
+
+
+def test_import_summary_nocturne_master_integration():
+    from nocturne.core.fits_io import import_summary
+    s = import_summary({"exposure": 1620.0, "frames": 81, "width": 1792, "height": 3656})
+    assert "27m 00s" in s and "81 × 20s" in s
+    assert "184h" not in s and "81 × 1620s" not in s  # the old bug is gone
+
+
+def test_import_summary_camera_from_header():
+    from nocturne.core.fits_io import import_summary
+    s = import_summary({"focal_length": 160.0, "pixel_size": 2.9,
+                        "width": 100, "height": 100})
+    assert "160 mm" in s and "3.7″" in s
+
+
+def test_import_summary_target_from_filename():
+    from nocturne.core.fits_io import import_summary
+    s = import_summary({"width": 10, "height": 10},
+                       filename="NGC7000_182x20s_61min.fits")
+    assert "NGC7000" in s
+
+
+def test_import_summary_empty_stack_fallback():
+    from nocturne.core.fits_io import import_summary
+    s = import_summary({})
+    assert "Your stack" in s and "Couldn't read" in s
+    assert "Total integration" not in s
