@@ -693,7 +693,13 @@ class MainWindow(QMainWindow):
             b = self._panel.black_slider.value() / 100.0
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
-        img = self.project.current()
+        # Base = the pre-Levels state the commit (apply_current) also uses, so the
+        # preview equals what Apply produces even after a prior Levels apply (WYSIWYG).
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("levels")]
+        }
+        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
         out = np.clip(apply_levels(img, b, g, w).data, 0, 1)
         rgb = (out * 255 + 0.5).astype(np.uint8)
         if rgb.ndim == 2:
