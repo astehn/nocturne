@@ -15,7 +15,7 @@ shares theirs, so convergence is a real signal.
 
 | # | Step | Depth | Status | Known issue folded in |
 |---|------|-------|--------|-----------------------|
-| 1 | Import | UX + correctness | 🔎 auditing | integration-time / EXPTIME miscalc |
+| 1 | Import | UX + correctness | ✅ fixed | integration-time / EXPTIME miscalc |
 | 2 | Crop | UX | ⬜ | unlink ✅ shipped; brightness-framing parked |
 | 3 | Background | UX + algo | ⬜ | GraXpert strengths |
 | 4 | Color | algo-deep | ⬜ | OSC neutralize/WB correctness; green cast |
@@ -108,4 +108,23 @@ that Nocturne's stacker discards.
 6. Empty-metadata edge: always show "Your stack" with a graceful fallback line.
 7. Polish: hierarchy/dead-space, Stack discoverability, naming drift.
 
-_Status: audit complete; reconciling with user's own list before scoping fixes._
+### Resolution (branch `import-audit-fixes`, 2026-07-19)
+
+**Shipped** (validated end-to-end on the 3 real headers; full suite 472 pass):
+- **D1** `resolve_integration` — LIVETIME-first + ratio-test disambiguation.
+  NGC 281 now reads **27m 00s (81 × 20s)**, native NGC 7000 **53m 40s (161 × 20s)**
+  (was 184h / ~36h). (`7b4fa8f`)
+- **D2** camera & scope read from header (FOCALLEN/XPIXSZ/GAIN) with profile
+  fallback; profile FL 150→160 / aperture 30→32; image scale now computed
+  (~3.7″/px). (`0eef0ad`)
+- **U2** target OBJECT→filename fallback. **U4** graceful empty-metadata line.
+  **U1** linear-preview reassurance note in the panel. (`0eef0ad`, `0bbeaa7`)
+- Polish: sensor temp rounded to 1 decimal. (`e60cfad`)
+
+**Deferred (logged):** D3 stacker provenance → Stack audit (#14); U5 stack
+discoverability; U6 deeper hierarchy rework; U7 naming drift. Minor:
+`_target_from_filename` cuts at the first `_<digits>`, so an underscore-separated
+catalog name (`NGC_7000_…`) with no `OBJECT` header would yield `NGC` — rare
+cosmetic fallback, revisit if it bites.
+
+_Status: Import fixes complete on branch; awaiting user visual check + merge._
