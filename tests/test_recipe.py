@@ -61,6 +61,6 @@ def test_mixed_geometry_recipe_keeps_order():
 
 def test_uncaptured_step_names():
     from nocturne.recipe import uncaptured_step_names
-    entries = [("Stretch", 0.5), ("Colourise", ""), ("Boost Red", ""), ("Colourise", "")]
-    assert uncaptured_step_names(entries) == ["Colourise", "Boost Red"]
+    entries = [("Stretch", 0.5), ("Boost Red", ""), ("Darken Sky", ""), ("Boost Red", "")]
+    assert uncaptured_step_names(entries) == ["Boost Red", "Darken Sky"]
     assert uncaptured_step_names([("Stretch", 0.5), ("Levels", (0, 1, 1))]) == []

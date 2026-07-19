@@ -21,7 +21,7 @@ def test_sections_reference_only_real_topics():
 
 
 def test_concept_topics_exist():
-    for tid in ("getting-started", "linear-vs-stretched", "dualband", "colourise",
+    for tid in ("getting-started", "linear-vs-stretched", "dualband",
                 "tools", "stacking", "recipes", "troubleshooting"):
         assert tid in hc.TOPICS
 

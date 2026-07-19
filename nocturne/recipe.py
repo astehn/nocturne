@@ -65,8 +65,8 @@ def recipe_from_entries(entries) -> Recipe:
 
 
 def uncaptured_step_names(entries) -> list[str]:
-    """Distinct applied-step names a recipe can't serialize yet (e.g. Colourise
-    and the Enhancements taps), in first-seen order. Empty when everything the
+    """Distinct applied-step names a recipe can't serialize yet (e.g. the
+    Enhancements taps), in first-seen order. Empty when everything the
     user applied is representable in a recipe."""
     seen: list[str] = []
     for name, _ in entries:

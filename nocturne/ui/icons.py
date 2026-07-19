@@ -12,7 +12,7 @@ from .theme import TEXT
 _ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 
 ICON_NAMES = (
-    "open", "settings", "save-recipe", "batch", "stack", "haoiii", "palette",
+    "open", "settings", "save-recipe", "batch", "stack", "haoiii",
     "undo", "redo", "before-after", "log", "fit", "actual-size", "about", "reset",
 )
 

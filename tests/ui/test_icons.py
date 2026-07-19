@@ -19,7 +19,7 @@ def test_load_icon_returns_icon(qtbot):
 
 
 def test_load_icon_cached(qtbot):
-    assert load_icon("palette") is load_icon("palette")
+    assert load_icon("stack") is load_icon("stack")
 
 
 def test_load_icon_unknown_raises(qtbot):

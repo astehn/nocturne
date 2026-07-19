@@ -107,12 +107,11 @@ _TOPIC_LIST = (
        "Most emission nebulae glow strongly in Ha, which is why your raw frames look red.</p>"
        "<h4>What you can and can't do</h4>"
        "<p>Classic <b>SHO</b> ('Hubble palette') needs three separate filters, which the Seestar "
-       "can't capture — so SHO isn't possible from a single dualband master. Two-gas palettes "
-       "(HOO, Foraxx-style) are the natural fit and look excellent.</p>"
-       "<h4>Colourise</h4>"
-       "<p>On the Stretch step, <b>Colourise</b> turns a dualband master into a finished colour "
-       "image in one press: it separates the Ha and OIII signal, maps them to colour, and blends "
-       "the stars back. See the Colourise topic for details.</p>"),
+       "can't capture — so SHO isn't possible from a single dualband master. Two-gas colour "
+       "schemes (HOO, Foraxx-style) are the natural fit and look excellent.</p>"
+       "<h4>Working with the channels</h4>"
+       "<p>The <b>Ha/OIII</b> tool in the toolbar splits a dualband master into separate Ha and "
+       "OIII masters, so you can combine them into a two-gas image in your tool of choice.</p>"),
 
     _t("step-order", "Why the step order matters",
        "Some steps belong on linear data, others after the stretch — the flow keeps them in order.",
@@ -183,9 +182,8 @@ _TOPIC_LIST = (
        "<p>Just apply — it's automatic. You'll usually <i>not</i> need <b>Remove Green</b> now; "
        "use it only if stars or background still take on a green tinge.</p>"
        "<h4>Tips</h4>"
-       "<p>This is the step that cleans up the colour left over after Background extraction. For "
-       "a dualband master you'll usually get colour from <b>Colourise</b> on the Stretch step "
-       "instead — this step is mainly for broadband/OSC data.</p>"),
+       "<p>This is the step that cleans up the colour left over after Background extraction. It's "
+       "mainly for broadband/OSC data.</p>"),
 
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",
@@ -209,23 +207,8 @@ _TOPIC_LIST = (
        "<p>Use the aggressiveness slider: the middle roughly matches the preview you already see; "
        "higher reveals more faint signal (and more noise). Apply.</p>"
        "<h4>Tips</h4>"
-       "<p>If your data is a <b>dualband</b> master, use <b>Colourise</b> here instead for a "
-       "finished colour result in one press. If you move past this step without stretching, "
-       "Nocturne commits a sensible default stretch automatically so the later steps work.</p>"),
-
-    _t("colourise", "Colourise (dualband → colour)",
-       "One press turns a dualband master into a finished colour image.",
-       "<h4>What it does</h4>"
-       "<p>Turns a raw dualband (Ha/OIII) master into a finished colour image in a single press, "
-       "Foraxx-style: it removes the stars, colour-maps the starless Ha and OIII signal into a "
-       "natural two-gas palette, and screens the stars back in at their original brightness.</p>"
-       "<h4>How to use it</h4>"
-       "<p>On the <b>Stretch</b> step, press <b>Colourise</b>. For control, use <b>Advanced…</b> "
-       "to open palette sliders (palette, Ha/OIII strength, hue, saturation, star brightness).</p>"
-       "<h4>Tips</h4>"
-       "<p>Best star handling needs RC-Astro (StarXTerminator); without it, Colourise still "
-       "produces colour using a built-in method. Star reduction, saturation and the Enhancements "
-       "step let you refine the look afterwards.</p>"),
+       "<p>If you move past this step without stretching, Nocturne commits a sensible default "
+       "stretch automatically so the later steps work.</p>"),
 
     _t("levels", "Levels",
        "Fine-tune black point, midtones, and white point against the histogram.",
@@ -316,7 +299,7 @@ _TOPIC_LIST = (
        "<b>Settings</b> and press <b>Test</b>.</p>"
        "<h4>RC-Astro (paid, optional)</h4>"
        "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise), and "
-       "<b>StarXTerminator</b> (star removal/reduction, and the star handling in Colourise). "
+       "<b>StarXTerminator</b> (star removal/reduction). "
        "Set its path in Settings and Test it.</p>"
        "<h4>Do I need RC-Astro?</h4>"
        "<p>No — every RC-Astro step has a built-in free fallback, so the whole app works without "
@@ -345,8 +328,8 @@ _TOPIC_LIST = (
        "<h4>How to use it</h4>"
        "<p>Click <b>Ha/OIII</b> in the toolbar.</p>"
        "<h4>Tips</h4>"
-       "<p>This is optional. For most people the in-app <b>Colourise</b> already produces a "
-       "finished two-gas colour image without any manual channel juggling.</p>"),
+       "<p>This is optional, for people who prefer to combine the Ha and OIII channels by hand "
+       "in another tool.</p>"),
 
     # ---- Recipes & Batch ----
     _t("recipes", "Recipes & Batch",
@@ -359,7 +342,7 @@ _TOPIC_LIST = (
        "recipe at a folder and process everything in one go.</p>"
        "<h4>Tips</h4>"
        "<p>Great for a night of the same target shot in sessions. Note: a few steps "
-       "(Colourise and the Enhancements taps) aren't captured in recipes yet.</p>"),
+       "(the Enhancements taps) aren't captured in recipes yet.</p>"),
 
     # ---- Troubleshooting ----
     _t("troubleshooting", "Troubleshooting & FAQ",
@@ -371,8 +354,8 @@ _TOPIC_LIST = (
        "<p>Expected. Background removed the bluish light pollution, leaving the naturally red "
        "nebulosity more prominent; the <b>Color</b> step neutralises the residual cast.</p>"
        "<h4>My dualband image just looks red</h4>"
-       "<p>That's raw narrowband data — use <b>Colourise</b> on the Stretch step to turn it into "
-       "a finished colour image.</p>"
+       "<p>That's raw narrowband data from the dualband filter — see the Dualband topic. You can "
+       "split it into Ha and OIII channels with the <b>Ha/OIII</b> tool in the toolbar.</p>"
        "<h4>A tool isn't detected</h4>"
        "<p>Open <b>Settings</b>, set the path to the program, and press <b>Test</b>. GraXpert is "
        "required; RC-Astro is optional (steps fall back to free methods without it).</p>"
@@ -388,7 +371,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started",)),
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
-                              "colourise", "levels", "saturation", "noise_sharpen",
+                              "levels", "saturation", "noise_sharpen",
                               "local_contrast", "star_reduction", "enhancements", "export")),
     HelpSection("Tools", ("tools",)),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
