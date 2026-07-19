@@ -19,9 +19,9 @@ shares theirs, so convergence is a real signal.
 | 2 | Crop | UX | ✅ fixed | unlink ✅ shipped; brightness-framing parked |
 | 3 | Background | UX + algo | ✅ fixed | GraXpert strengths |
 | 4 | Color | algo-deep | ✅ fixed | grey-world → robust background-neutralization |
-| 5 | Deconvolution | algo-deep | 🔎 next | — |
+| 5 | Deconvolution | algo-deep | ✅ reviewed | free unsharp-mask fallback → parked in TODO |
 | 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
-| 7 | Levels | UX | ⬜ | — |
+| 7 | Levels | UX | 🔎 next | — |
 | 8 | Saturation | UX | ⬜ | recently remapped — verify |
 | 9 | Noise Reduction | algo-deep | ⬜ | — |
 | 10 | Local Contrast | algo + UX | ⬜ | — |

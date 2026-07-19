@@ -3,7 +3,7 @@
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Now — core refinements
-- [ ] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17).** After
+- [x] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17; RESOLVED 2026-07-19).** After
       ZWO's firmware + app update (~2026-07-10), the Import step shows e.g.
       "Total integration 60h 05m (104 × 2080s)" for an NGC 281 master. The numbers expose the
       cause: 2080 = 104 × 20, so the new firmware appears to write `EXPTIME` as the
@@ -23,7 +23,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       so re-opening a Nocturne master mis-displays the same way (e.g. 182 × 3640s ≈ 184h).
       ZWO's change exposed a latent assumption, not just a ZWO quirk. Fix must handle: old-ZWO
       (per-sub EXPTIME), new-ZWO (total EXPTIME), and Nocturne masters (total EXPTIME +
-      STACKCNT present — can key on our own NSUBS/STACKCNT headers for a reliable signal). After stacking a 186-sub session
+      STACKCNT present — can key on our own NSUBS/STACKCNT headers for a reliable signal).
+      RESOLVED 2026-07-19 (Import audit): `fits_io.resolve_integration` prefers `LIVETIME`; else
+      uses the EXPTIME/STACKCNT ∈ 0.5–600s ratio test to tell total-vs-per-sub apart — handles
+      old-ZWO (per-sub), new-ZWO (total), and Nocturne masters (total). Validated on real files
+      (NGC 281 → 27m, NGC 7000 → 61m). Camera specs now also read from the header.
+- [ ] **Stacking memory runaway (~396 GB) (reported 2026-07-17).** After stacking a 186-sub session
       (NGC 7000), macOS reported "system has run out of application memory" with Nocturne at
       ~396 GB (Force Quit dialog — likely runaway allocation/virtual memory during or after
       the stack, not a slow leak). Investigate as the non-functional half of the stacking
@@ -31,6 +36,22 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       registered-frame accumulation (registration output kept in memory rather than streamed),
       per-frame float64 copies, and the master + history caches piling on top. Reproduce with
       Activity Monitor / `memory_profiler` before fixing.
+- [ ] **Free deconvolution better than unsharp-mask (parked 2026-07-19, from Deconvolution audit).**
+      Without RC-Astro/BlurXTerminator (paid; the user is on an expiring trial, and Nocturne's
+      novice audience largely won't have it), the Deconvolution step falls back to
+      `core/deconvolution.sharpen` = skimage `unsharp_mask` on LINEAR data (radius 2, amount up
+      to 1.4 at "strong"). Unsharp mask on linear data amplifies background noise and is far
+      cruder than PSF deconvolution — yet the UI presents it identically to BlurX. IDEA: study
+      the deconvolution algorithms in **Siril** (Richardson–Lucy / Wiener / split-Bregman, with a
+      star-derived PSF) and **PixInsight** (classic Deconvolution: RL + PSF + regularization /
+      deringing) and implement an open numpy version that beats unsharp mask — e.g. RL with a PSF
+      estimated from the image's stars (`sep` already available), plus regularization + a
+      star/background mask to curb noise and ringing. ALSO evaluate free redistributable AI
+      options (Seti Astro "Cosmic Clarity" sharpen/deconv is free with an ONNX path) as a better
+      fallback. GOAL: the non-RC-Astro result should be clearly better than today's unsharp mask.
+      SECONDARY (same audit): consider separate star vs non-stellar strength (BlurX exposes both;
+      undersampled Seestar data often wants more star-tightening than non-stellar); add a
+      "zoom to 100% to see the effect" nudge; and signal the free path as "basic sharpening".
 - [x] **M5** Background "off" skips (no history entry / no done-mark).
 - [x] **L1** "Tools configured" indicator (GraXpert / RC-Astro) in the toolbar.
 - [x] **L2** Clear the error/status line when navigating between steps.
