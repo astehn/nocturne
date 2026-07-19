@@ -13,3 +13,22 @@ def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> A
     return AstroImage(
         out.astype(np.float32), is_linear=img.is_linear, metadata=dict(img.metadata)
     )
+
+
+def auto_levels(data: np.ndarray) -> tuple[float, float, float]:
+    """Suggested (black, gamma, white) for a stretched image — gentle, never
+    clips real signal hard."""
+    lum = data.mean(axis=2) if data.ndim == 3 else data
+    black = float(np.clip(np.percentile(lum, 1.0), 0.0, 0.5))
+    white = float(np.percentile(lum, 99.9))
+    white = max(white, black + 0.05)
+    med = float(np.median(lum))
+    x = float(np.clip((med - black) / max(white - black, 1e-4), 1e-3, 0.999))
+    gamma = float(np.clip(np.log(x) / np.log(0.35), 0.4, 2.5))
+    return black, gamma, white
+
+
+def clipping_masks(data: np.ndarray, black: float, white: float):
+    """Boolean (shadow_clipped, highlight_clipped) per pixel."""
+    lum = data.mean(axis=2) if data.ndim == 3 else data
+    return lum <= black, lum >= white
