@@ -17,8 +17,8 @@ shares theirs, so convergence is a real signal.
 |---|------|-------|--------|-----------------------|
 | 1 | Import | UX + correctness | ✅ fixed | integration-time / EXPTIME miscalc |
 | 2 | Crop | UX | ✅ fixed | unlink ✅ shipped; brightness-framing parked |
-| 3 | Background | UX + algo | 🔎 auditing | GraXpert strengths |
-| 4 | Color | algo-deep | ⬜ | OSC neutralize/WB correctness; green cast |
+| 3 | Background | UX + algo | ✅ fixed | GraXpert strengths |
+| 4 | Color | algo-deep | 🔎 auditing | OSC neutralize/WB correctness; green cast |
 | 5 | Deconvolution | algo-deep | ⬜ | — |
 | 6 | Stretch | algo + UX | ⬜ | slider→target mapping; preview fidelity ✅ |
 | 7 | Levels | UX | ⬜ | — |
@@ -76,11 +76,17 @@ Each step's entry captures:
 
 ### Verdict: **targeted fix** (one correctness default + beginner-clarity copy).
 
-_Status: building._
+### Resolution (merged to main 2026-07-19, 199d71c, suite 489 pass)
+- **BG1**: process panels now preselect `default_option()` — Background lands on
+  **light**, not off (systemic across all process steps).
+- **BG4/BG3**: Background panel explains "gradient" in plain language + points to
+  Before/After. Deferred: BG2, BG5, BG6/7/8 (logged above).
+
+_Status: ✅ complete._
 
 ---
 
-## Step 2 — Crop  🛠
+## Step 2 — Crop  ✅
 
 **Code:** `nocturne/ui/image_view.py` (overlay: `_Body`, `_Handle`,
 `set_crop_overlay`, `cropBoxChanged`), `nocturne/ui/step_panels.py` (crop panel),
