@@ -80,7 +80,7 @@ def build_panel(
 
     elif stage.kind == "crop":
         lay.addWidget(_desc_label(
-            "Drag the box then Apply Crop. Rotate/Flip apply instantly."))
+            "Click the image to place the crop box, adjust it, then Apply Crop."))
         aspect = QComboBox()
         aspect.addItems(ASPECTS)
         if on_crop_change is not None:
