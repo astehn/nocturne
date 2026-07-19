@@ -85,7 +85,7 @@ def build_panel(
         aspect.addItems(ASPECTS)
         if on_crop_change is not None:
             aspect.currentTextChanged.connect(lambda t: on_crop_change(t))
-        rotate_btn = QPushButton("Rotate 90°")
+        rotate_btn = QPushButton("Rotate 90° ↻")
         if on_rotate is not None:
             rotate_btn.clicked.connect(lambda: on_rotate())
         flip_h = QPushButton("Flip H")
@@ -115,10 +115,11 @@ def build_panel(
         flips.addWidget(flip_h)
         flips.addWidget(flip_v)
         lay.addLayout(flips)
+        lay.addWidget(_desc_label("Rotate / Flip apply instantly"))
         lay.addWidget(apply_btn)
         size = _desc_label("—")
         lay.addWidget(size)
-        unlink = QCheckBox("Unlink stretch (neutralize tint)")
+        unlink = QCheckBox("Neutral preview (for framing)")
         unlink.setChecked(unlinked_checked)
         if on_unlink_toggle is not None:
             unlink.toggled.connect(lambda c: on_unlink_toggle(c))

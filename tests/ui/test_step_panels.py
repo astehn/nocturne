@@ -266,3 +266,23 @@ def test_import_panel_has_linear_preview_note(qapp):
     from PySide6.QtWidgets import QLabel
     texts = " ".join(l.text() for l in w.findChildren(QLabel))
     assert "histogram" in texts.lower() or "un-stretched" in texts.lower()
+
+
+def test_crop_panel_labels_and_grouping_polish(qapp):
+    from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton
+    w = build_panel(_stage("crop"))
+
+    btn_texts = [b.text() for b in w.findChildren(QPushButton)]
+    assert any("↻" in t for t in btn_texts)
+
+    if hasattr(w, "unlink_check"):
+        unlink = w.unlink_check
+    else:
+        unlink = next(
+            c for c in w.findChildren(QCheckBox)
+            if "preview" in c.text().lower() or "unlink" in c.text().lower()
+        )
+    assert unlink.text() == "Neutral preview (for framing)"
+
+    label_texts = [l.text().lower() for l in w.findChildren(QLabel)]
+    assert any("apply instantly" in t for t in label_texts)
