@@ -194,7 +194,8 @@ def build_panel(
 
     elif stage.kind == "auto":
         lay.addWidget(_desc_label(
-            "Automatic background neutralization and white balance."
+            "Neutralises the sky background so it's colour-neutral, without "
+            "touching your nebula's real colour."
         ))
         lay.addWidget(_desc_label(
             "Dualband / narrowband image? Skip this — colour is applied later by Colourise."))

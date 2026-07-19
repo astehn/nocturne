@@ -173,14 +173,15 @@ _TOPIC_LIST = (
        "(set its path in Settings).</p>"),
 
     _t("color", "Color calibration",
-       "Neutralise the background and balance colour automatically.",
+       "Neutralise the sky background automatically.",
        "<h4>What it does</h4>"
-       "<p>Automatically neutralises the sky background (so it's a colour-neutral grey, not a "
-       "cast) and applies a grey-world white balance so the overall colour is honest. Optional "
-       "green removal (SCNR) cleans stray green pixels.</p>"
+       "<p>Samples your empty sky and neutralises any leftover colour cast so the background is a "
+       "clean grey — <i>without</i> touching your nebula's real colour. It measures the sky "
+       "itself (not the whole frame), so red or teal nebulosity is preserved rather than washed "
+       "out. Optional green removal (SCNR) is there if a green tinge remains.</p>"
        "<h4>How to use it</h4>"
-       "<p>Just apply — it's automatic. Use <b>Remove Green</b> if stars or background take on a "
-       "green tinge.</p>"
+       "<p>Just apply — it's automatic. You'll usually <i>not</i> need <b>Remove Green</b> now; "
+       "use it only if stars or background still take on a green tinge.</p>"
        "<h4>Tips</h4>"
        "<p>This is the step that cleans up the colour left over after Background extraction. For "
        "a dualband master you'll usually get colour from <b>Colourise</b> on the Stretch step "

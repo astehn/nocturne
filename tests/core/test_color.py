@@ -8,20 +8,31 @@ def test_neutralize_background_equalizes_channel_medians():
     data = np.full((32, 32, 3), 0.1, dtype=np.float32)
     data[..., 1] = 0.2  # green higher
     img = AstroImage(data)
-    out = apply_color(img, ColorSettings(neutralize_background=True, white_balance=False))
+    out = apply_color(img, ColorSettings(neutralize_background=True))
     meds = [float(np.median(out.data[..., c])) for c in range(3)]
     assert max(meds) - min(meds) < 1e-3
 
 
-def test_white_balance_brings_channel_means_together():
+def test_neutralize_keeps_bg_neutral_and_preserves_nebula():
+    # Red-dominant emission frame with a slightly-blue background (residual LP).
+    # The fix must neutralize the sky WITHOUT desaturating the nebula or casting
+    # the sky the complementary colour (the grey-world failure mode).
     rng = np.random.default_rng(0)
-    data = (rng.random((32, 32, 3)) * 0.6).astype(np.float32)  # headroom avoids clip noise
-    data[..., 2] *= 0.4  # blue weak
-    img = AstroImage(data)
-    before = [float(data[..., c].mean()) for c in range(3)]
-    out = apply_color(img, ColorSettings(neutralize_background=False, white_balance=True))
-    after = [float(out.data[..., c].mean()) for c in range(3)]
-    assert (max(after) - min(after)) < (max(before) - min(before))
+    H, W = 120, 120
+    d = np.full((H, W, 3), 0.02, dtype=np.float32)
+    d[..., 2] = 0.028                      # background slightly blue (LP residue)
+    neb = np.zeros((H, W), dtype=bool)
+    neb[:48, :] = True                     # ~40% of frame is red (Ha) nebula
+    d[neb, 0] = 0.16; d[neb, 1] = 0.05; d[neb, 2] = 0.045
+    d = np.clip(d + rng.normal(0, 0.002, d.shape).astype(np.float32), 0, 1)
+
+    out = apply_color(AstroImage(d), ColorSettings(neutralize_background=True)).data
+    bg = ~neb
+    bgmed = [float(np.median(out[..., c][bg])) for c in range(3)]
+    assert max(bgmed) - min(bgmed) < 0.005            # sky neutralized
+    assert bgmed[2] <= bgmed[0] + 0.003               # sky NOT cast blue
+    nebmed = [float(np.median(out[..., c][neb])) for c in range(3)]
+    assert nebmed[0] > nebmed[1] and nebmed[0] > nebmed[2]  # nebula stays red
 
 
 def test_mono_is_noop():
@@ -43,8 +54,7 @@ def test_remove_green_clamps_green_excess():
     data = np.full((8, 8, 3), 0.3, dtype=np.float32)
     data[..., 1] = 0.8  # green excess
     out = apply_color(AstroImage(data),
-                      ColorSettings(neutralize_background=False, white_balance=False,
-                                    remove_green=True))
+                      ColorSettings(neutralize_background=False, remove_green=True))
     assert out.data[..., 1].max() <= 0.3 + 1e-6  # clamped to (r+b)/2 = 0.3
 
 
