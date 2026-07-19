@@ -951,36 +951,6 @@ def test_closeevent_with_edits_prompts_and_respects_choice(qtbot, tmp_path, monk
     assert ev2.isAccepted()                      # Discard -> quits
 
 
-def test_unlink_toggle_sets_flag_and_survives_rebuild(qtbot, tmp_path):
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
-    qtbot.addWidget(win)
-    assert win._display_unlinked is False
-    win._on_unlink_toggle(True)
-    assert win._display_unlinked is True
-    win._go_to_id("crop")
-    win._rebuild_panel()
-    assert win._panel.unlink_check.isChecked() is True
-
-
-def test_unlink_only_effective_on_crop_stage(qtbot, tmp_path):
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
-    qtbot.addWidget(win)
-
-    def idx(sid):
-        return next(i for i, s in enumerate(win._stages) if s.id == sid)
-
-    win._display_unlinked = True
-    win._stage = idx("crop")
-    assert win._effective_unlinked() is True
-    # Stretch is still linear, but its preview must predict the linked commit.
-    win._stage = idx("stretch")
-    assert win._effective_unlinked() is False
-    win._stage = idx("color")
-    assert win._effective_unlinked() is False
-    # Off means off everywhere, including Crop.
-    win._display_unlinked = False
-    win._stage = idx("crop")
-    assert win._effective_unlinked() is False
 
 
 def test_background_stage_defaults_to_light(qtbot, tmp_path):

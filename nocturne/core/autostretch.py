@@ -74,4 +74,8 @@ def _mtf_midtones(current_med: float, target: float) -> float:
 
 def autostretch(img: AstroImage) -> np.ndarray:
     # Display-only: lift the background to a fixed target for a clear preview.
-    return linked_stretch(img.data, _TARGET_BG)
+    # Per-channel (unlinked) so the background stays neutral and no single channel
+    # is clipped — a common (linked) black point crushes the lowest channel (red
+    # on OSC LP data) and invents a colour cast. Matches the committed stretch, so
+    # the preview equals the exported result at every step.
+    return unlinked_stretch(img.data, _TARGET_BG)

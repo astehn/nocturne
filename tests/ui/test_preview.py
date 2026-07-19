@@ -36,16 +36,8 @@ def _tinted_linear():
     return AstroImage(data, is_linear=True)
 
 
-def test_unlinked_neutralizes_tint_on_linear(qapp):
-    img = _tinted_linear()
-    linked_spread = np.ptp(_channel_medians(to_qimage(img, unlinked=False)))
-    unlinked_spread = np.ptp(_channel_medians(to_qimage(img, unlinked=True)))
-    assert unlinked_spread < linked_spread
-
-
-def test_unlinked_is_noop_when_not_linear(qapp):
-    data = _tinted_linear().data
-    img = AstroImage(data, is_linear=False)
-    a = to_qimage(img, unlinked=False)
-    b = to_qimage(img, unlinked=True)
-    assert a == b  # QImage equality: identical pixels
+def test_preview_neutralizes_tint_on_linear(qapp):
+    # The display stretch is per-channel (unlinked), so a tinted linear image
+    # renders with a near-neutral background — no single channel is crushed.
+    spread = np.ptp(_channel_medians(to_qimage(_tinted_linear())))
+    assert spread < 20.0  # channel medians close together (0..255 scale)

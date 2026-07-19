@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
@@ -50,8 +50,6 @@ def build_panel(
     on_colourise=None,
     on_palette_advanced=None,
     on_enhance=None,
-    on_unlink_toggle=None,
-    unlinked_checked: bool = False,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -120,14 +118,6 @@ def build_panel(
         lay.addWidget(apply_btn)
         size = _desc_label("—")
         lay.addWidget(size)
-        unlink = QCheckBox("Neutral preview (for framing)")
-        unlink.setChecked(unlinked_checked)
-        if on_unlink_toggle is not None:
-            unlink.toggled.connect(lambda c: on_unlink_toggle(c))
-        lay.addWidget(unlink)
-        lay.addWidget(_desc_label(
-            "Preview only — evens out a colour cast so you can frame. "
-            "Doesn't change your image."))
         w.aspect_box = aspect
         w.guides_box = guides
         w.rotate_btn = rotate_btn
@@ -135,7 +125,6 @@ def build_panel(
         w.flip_v_btn = flip_v
         w.apply_btn = apply_btn
         w.crop_size_label = size
-        w.unlink_check = unlink
 
     elif stage.kind == "process":
         if stage.id == "background":

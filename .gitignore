@@ -13,3 +13,8 @@ site/config.php
 /site/
 /tests/test_site_links.py
 /tests/test_contribute_page.py
+
+# Pipeline-audit working artifacts (screenshots are large; reports are scratch)
+docs/audit/screenshots/**/*.png
+docs/audit/screenshots/**/*.jpg
+docs/superpowers/plans/*-report.md
