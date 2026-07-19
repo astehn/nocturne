@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -33,7 +34,8 @@ from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
-from .preview import to_qimage
+from ..core.levels import apply_levels, auto_levels, clipping_masks
+from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
 from .icons import load_icon
@@ -97,6 +99,12 @@ class MainWindow(QMainWindow):
         self._ellipsis_timer = QTimer(self)
         self._ellipsis_timer.setInterval(BUSY_DELAY_MS)
         self._ellipsis_timer.timeout.connect(self._tick_ellipsis)
+        # Levels live-preview: a debounced (90 ms) non-committing render.
+        self._levels_show_clipping = False
+        self._levels_pending = None
+        self._levels_timer = QTimer(self)
+        self._levels_timer.setSingleShot(True)
+        self._levels_timer.timeout.connect(self._render_levels_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -654,6 +662,49 @@ class MainWindow(QMainWindow):
         if hasattr(self._panel, "crop_size_label"):
             self._panel.crop_size_label.setText("—")
 
+    # --- levels live preview ---
+    def _on_levels_change(self, black: float, gamma: float, white: float) -> None:
+        """A Levels slider moved: stash the values and (re)start the debounce."""
+        self._levels_pending = (black, gamma, white)
+        self._levels_timer.start(90)
+
+    def _on_levels_auto(self) -> None:
+        if self.project is None or self.current_stage_id() != "levels":
+            return
+        b, g, w = auto_levels(self.project.current().data)
+        # Setting the sliders fires _on_levels_change (which debounces a render).
+        self._panel.black_slider.setValue(round(b * 100))
+        self._panel.gamma_slider.setValue(round(g * 100))
+        self._panel.white_slider.setValue(round(w * 100))
+        self._render_levels_preview()
+
+    def _on_levels_clipping(self, checked: bool) -> None:
+        self._levels_show_clipping = bool(checked)
+        self._render_levels_preview()
+
+    def _render_levels_preview(self) -> None:
+        """Non-committing live preview of the current Levels settings, with an
+        optional shadow/highlight clipping overlay."""
+        if self.project is None or self.current_stage_id() != "levels":
+            return
+        if self._levels_pending is not None:
+            b, g, w = self._levels_pending
+        else:
+            b = self._panel.black_slider.value() / 100.0
+            g = self._panel.gamma_slider.value() / 100.0
+            w = self._panel.white_slider.value() / 100.0
+        img = self.project.current()
+        out = np.clip(apply_levels(img, b, g, w).data, 0, 1)
+        rgb = (out * 255 + 0.5).astype(np.uint8)
+        if rgb.ndim == 2:
+            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        rgb = np.ascontiguousarray(rgb)
+        if self._levels_show_clipping:
+            sh, hi = clipping_masks(img.data, b, w)
+            rgb[sh] = (40, 120, 255)
+            rgb[hi] = (255, 60, 40)
+        self.image_view.set_image(rgb_to_qimage(rgb))
+
     # --- history ---
     def _reset_image(self) -> None:
         if self.project is None:
@@ -752,6 +803,9 @@ class MainWindow(QMainWindow):
     def _rebuild_panel(self) -> None:
         stage = self._stages[self._stage]
         loaded = self.project is not None
+        if stage.id == "levels":
+            self._levels_show_clipping = False  # each visit starts with clipping off
+            self._levels_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -771,6 +825,9 @@ class MainWindow(QMainWindow):
             on_export=self.export_final,
             on_remove_green=self._remove_green,
             on_enhance=self._enhance,
+            on_levels_change=self._on_levels_change,
+            on_levels_auto=self._on_levels_auto,
+            on_levels_clipping=self._on_levels_clipping,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
