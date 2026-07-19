@@ -43,6 +43,43 @@ Each step's entry captures:
 
 ---
 
+## Step 3 — Background  🛠
+
+**Code:** `nocturne/steps/background.py` (off/light=0.3/strong=0.7,
+`default_option()="light"`), `nocturne/tools/graxpert.py` (CLI invocation),
+`nocturne/ui/step_panels.py` (process-kind panel), `nocturne/ui/main_window.py`
+(`apply_current` → `_run_busy`).
+
+### Findings (audit — domain + UX)
+- **BG1 [High] Default strength is "off" — a no-op.** The process combo shows
+  the first item ("off"), ignoring `default_option()="light"` and the help. Trust
+  the flow → Apply does nothing. Background-specific (other process steps list
+  their default first). *(Both lenses — headline.)*
+- **BG2 [Med] "off" conflates skip with strength**; enabled even without GraXpert
+  so a beginner can "complete" the step doing nothing. Largely mitigated by BG1.
+- **BG3 [Med] Blind choice; result hard to judge** — nothing points to Before/After.
+- **BG4 [Med] "gradient" is unexplained jargon.**
+- **BG5 [Low] Settings link missing** on the (already-inline) gate note.
+- **BG6/7/8 [Low]** no "applied ✓" state; "Apply Background" verb; no GraXpert cancel.
+
+### Verified already-handled (corrects the UX agent)
+- **Progress feedback EXISTS**: `apply_current` → `_run_busy(…, "Applying
+  Background…")` shows the BusyBar + animated label. The agent's "no progress"
+  High finding is moot (residual: no cancel — Low).
+- The **gate note is already inline** (`_GATE_NOTE` shown under the control when
+  GraXpert is unset), not only in help prose.
+
+### User's list: none (considered Background good) — endorsed the fixes.
+
+### Scope → fix now: BG1 (preselect default), BG4 (gradient explainer), BG3
+(Before/After cue). Deferred: BG2, BG5, BG6/7/8.
+
+### Verdict: **targeted fix** (one correctness default + beginner-clarity copy).
+
+_Status: building._
+
+---
+
 ## Step 2 — Crop  🛠
 
 **Code:** `nocturne/ui/image_view.py` (overlay: `_Body`, `_Handle`,
