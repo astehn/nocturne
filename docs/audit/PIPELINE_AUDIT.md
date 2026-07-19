@@ -50,4 +50,62 @@ Each step's entry captures:
 panel: "Open FITS…" + metadata readout), `nocturne/core/instrument.py`
 (`SEESTAR_S30_PRO` profile).
 
-_Findings pending artifacts + independent audit._
+**Ground-truth headers (3 real files):**
+
+| File (source) | EXPTIME | STACKCNT | LIVETIME | true total |
+|---|---|---|---|---|
+| NGC 281 `master.fits` (**Nocturne stacker**) | 1620 = total | 81 | — | 27 min |
+| NGC 7000 `182x20s` (Nocturne/stripped) | 3640 = total | 182 | — | 61 min |
+| NGC 7000 `161x20sec` (**native, Siril-stacked**) | 20 = per-sub | 161 | 3220 = total | 54 min |
+
+`EXPTIME` = *per-sub* in native ZWO/Siril files but *total* in Nocturne's own
+masters. Native files also carry standard `LIVETIME` (= total) + rich metadata
+(`OBJECT`, `GAIN`, `CCD-TEMP`, `DATE-OBS`, `FILTER`, `FOCALLEN=160`, `XPIXSZ=2.9`)
+that Nocturne's stacker discards.
+
+### Domain findings
+- **D1 [Critical] Integration-time miscalc.** `import_summary` does
+  `EXPTIME × frames` unconditionally — right for native (per-sub) files,
+  catastrophically wrong for Nocturne masters (total), e.g. shows 184h 01m for a
+  61-min stack. The `(N × Xs)` derivation also prints the wrong per-sub.
+- **D2 [High] "Camera & scope" is hardcoded, never read from the file.** Always
+  prints IMX585 / 2.9µm / **150mm** / f5 regardless of the FITS. Real header says
+  `FOCALLEN=160` (→ ~3.7″/px, not the shown ~4.0″), and any non-S30-Pro file is
+  silently mislabeled. Profile FL (150) also disagrees with the device (160).
+- **D3 [Med] Nocturne's own stacker strips provenance.** Writes only
+  `NSUBS`/`STACKCNT`/`EXPTIME`(as total) — losing OBJECT/DATE/GAIN/temp/FOCALLEN
+  and using a non-standard EXPTIME. Root of both the sparse readout and the
+  EXPTIME ambiguity. (Bridges to the Stack tool, audit #14.)
+
+### UX findings (independent agent)
+- **U1 [High] First impression reads as "broken."** Strong teal canvas + a
+  near-empty histogram, with nothing explaining it's a display-only stretch of
+  still-linear data. Reassurance is buried behind "Full help."
+- **U2 [High] No target name = no orientation anchor.** OBJECT absent from the
+  readout though the filename shows it; surface target (fallback to filename).
+- **U3 [High] Hardcoded camera block looks "measured"** → trust hazard (= D2).
+- **U4 [Med] Empty-metadata edge drops the whole "Your stack" block** — no
+  confirmation the file was even read.
+- **U5 [Med] Stacking from subs is undiscoverable** at Import (only the generic
+  toolbar Stack icon; no pointer).
+- **U6 [Med] Weak hierarchy + dead space** — data vs boilerplate equal weight;
+  large empty gap that could hold the linear-preview explanation.
+- **U7 [Low] Naming drift** — Import / "Getting started" / `load`.
+- **U8 [Low] Integration is the hero number** — amplifies the (currently wrong)
+  value; keep the derivation once D1 is fixed.
+
+### Verdict: **structural fix** (one critical data bug + a systemic
+"read from the file, don't hardcode or discard" theme).
+
+### Proposed actions (prioritized — scope TBD with user)
+1. Fix integration time: prefer `LIVETIME`; else disambiguate EXPTIME by the
+   `EXPTIME/STACKCNT ∈ plausible-sub-range` ratio test; show correct total + per-sub.
+2. Read "Camera & scope" from the header when present (FOCALLEN/XPIXSZ/GAIN…),
+   fall back to profile only for missing fields; correct profile FL to 160.
+3. Surface Target (OBJECT → filename fallback).
+4. Stacker: propagate provenance + write standard `EXPTIME`(per-sub)+`LIVETIME`(total).
+5. Reassure on the linear preview (teal + empty histogram is normal).
+6. Empty-metadata edge: always show "Your stack" with a graceful fallback line.
+7. Polish: hierarchy/dead-space, Stack discoverability, naming drift.
+
+_Status: audit complete; reconciling with user's own list before scoping fixes._
