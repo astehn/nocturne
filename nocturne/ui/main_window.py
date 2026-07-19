@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
         self._colourise_layers = None
+        self._display_unlinked = False
         self._pool = QThreadPool.globalInstance()
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -798,6 +799,8 @@ class MainWindow(QMainWindow):
             on_colourise=self._colourise,
             on_palette_advanced=self._open_advanced_palette,
             on_enhance=self._enhance,
+            on_unlink_toggle=self._on_unlink_toggle,
+            unlinked_checked=self._display_unlinked,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
         )
@@ -809,12 +812,17 @@ class MainWindow(QMainWindow):
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         self._update_explainer()
 
+    def _on_unlink_toggle(self, checked: bool) -> None:
+        """Display-only: neutralize a tinted linear preview (Crop stage)."""
+        self._display_unlinked = bool(checked)
+        self._refresh()
+
     def _refresh(self) -> None:
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
             img = self.project.current()
-            self.image_view.set_image(to_qimage(img))
+            self.image_view.set_image(to_qimage(img, self._display_unlinked))
             self.histogram_view.set_image(img)
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)

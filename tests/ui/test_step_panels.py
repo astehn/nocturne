@@ -229,3 +229,21 @@ def test_import_panel_meta_label_is_rich_text(qtbot):
     w = build_panel(stage)
     qtbot.addWidget(w)
     assert w.meta_label.textFormat() == Qt.TextFormat.RichText
+
+
+def test_crop_panel_unlink_checkbox_reports_toggle(qapp):
+    seen = []
+    w = build_panel(
+        _stage("crop"),
+        on_unlink_toggle=lambda c: seen.append(c),
+        unlinked_checked=False,
+    )
+    assert hasattr(w, "unlink_check")
+    assert w.unlink_check.isChecked() is False
+    w.unlink_check.setChecked(True)
+    assert seen == [True]
+
+
+def test_crop_panel_unlink_reflects_initial_state(qapp):
+    w = build_panel(_stage("crop"), unlinked_checked=True)
+    assert w.unlink_check.isChecked() is True

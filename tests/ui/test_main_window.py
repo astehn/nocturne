@@ -882,3 +882,14 @@ def test_closeevent_with_edits_prompts_and_respects_choice(qtbot, tmp_path, monk
                         lambda *a, **k: QMessageBox.StandardButton.Discard)
     ev2 = QCloseEvent(); win.closeEvent(ev2)
     assert ev2.isAccepted()                      # Discard -> quits
+
+
+def test_unlink_toggle_sets_flag_and_survives_rebuild(qtbot, tmp_path):
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
+    qtbot.addWidget(win)
+    assert win._display_unlinked is False
+    win._on_unlink_toggle(True)
+    assert win._display_unlinked is True
+    win._go_to_id("crop")
+    win._rebuild_panel()
+    assert win._panel.unlink_check.isChecked() is True

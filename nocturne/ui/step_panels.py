@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QVBoxLayout, QWidget,
 )
 
 from ..core.color import ColorSettings
@@ -49,6 +49,8 @@ def build_panel(
     on_colourise=None,
     on_palette_advanced=None,
     on_enhance=None,
+    on_unlink_toggle=None,
+    unlinked_checked: bool = False,
     apply_enabled: bool = True,
     split_enabled: bool = False,
 ) -> QWidget:
@@ -99,11 +101,20 @@ def build_panel(
         flips.addWidget(flip_v)
         lay.addLayout(flips)
         lay.addWidget(apply_btn)
+        unlink = QCheckBox("Unlink stretch (neutralize tint)")
+        unlink.setChecked(unlinked_checked)
+        if on_unlink_toggle is not None:
+            unlink.toggled.connect(lambda c: on_unlink_toggle(c))
+        lay.addWidget(unlink)
+        lay.addWidget(_desc_label(
+            "Preview only — evens out a colour cast so you can frame. "
+            "Doesn't change your image."))
         w.aspect_box = aspect
         w.rotate_btn = rotate_btn
         w.flip_h_btn = flip_h
         w.flip_v_btn = flip_v
         w.apply_btn = apply_btn
+        w.unlink_check = unlink
 
     elif stage.kind == "process":
         box = QComboBox()
