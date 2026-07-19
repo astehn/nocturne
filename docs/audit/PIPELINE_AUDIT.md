@@ -21,7 +21,7 @@ shares theirs, so convergence is a real signal.
 | 4 | Color | algo-deep | ✅ fixed | grey-world → robust background-neutralization |
 | 5 | Deconvolution | algo-deep | ✅ reviewed | free unsharp-mask fallback → parked in TODO |
 | 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
-| 7 | Levels | UX | 🔎 next | — |
+| 7 | Levels | UX | 🛠 fixing | live preview + auto + clipping + numeric + label |
 | 8 | Saturation | UX | ⬜ | recently remapped — verify |
 | 9 | Noise Reduction | algo-deep | ⬜ | — |
 | 10 | Local Contrast | algo + UX | ⬜ | — |
