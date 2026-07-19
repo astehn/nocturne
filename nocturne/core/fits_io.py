@@ -161,7 +161,7 @@ def import_summary(meta: dict, instrument=SEESTAR_S30_PRO,
             pass
     if meta.get("temp") is not None:
         try:
-            stack.append(("Sensor temp", f"{float(meta['temp']):g} °C"))
+            stack.append(("Sensor temp", f"{float(meta['temp']):.1f} °C"))
         except (TypeError, ValueError):
             pass
     if meta.get("date"):
