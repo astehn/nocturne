@@ -99,8 +99,17 @@ def build_panel(
         apply_btn.setEnabled(False)  # off until the crop box is shown (cropBoxShown)
         if on_crop_apply is not None:
             apply_btn.clicked.connect(lambda: on_crop_apply())
+        guides = QComboBox()
+        guides.addItems(["None", "Rule of thirds", "Center cross"])
+        _GUIDE_KIND = {"None": "none", "Rule of thirds": "thirds",
+                       "Center cross": "center"}
+        if on_guides_change is not None:
+            guides.currentTextChanged.connect(
+                lambda t: on_guides_change(_GUIDE_KIND[t]))
         lay.addWidget(QLabel("Aspect ratio"))
         lay.addWidget(aspect)
+        lay.addWidget(QLabel("Guides"))
+        lay.addWidget(guides)
         lay.addWidget(rotate_btn)
         flips = QHBoxLayout()
         flips.addWidget(flip_h)
@@ -116,6 +125,7 @@ def build_panel(
             "Preview only — evens out a colour cast so you can frame. "
             "Doesn't change your image."))
         w.aspect_box = aspect
+        w.guides_box = guides
         w.rotate_btn = rotate_btn
         w.flip_h_btn = flip_h
         w.flip_v_btn = flip_v

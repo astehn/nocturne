@@ -637,6 +637,9 @@ class MainWindow(QMainWindow):
         # Snap the visible box to the chosen ratio (and lock future resizes).
         self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
 
+    def _on_guides_change(self, kind: str) -> None:
+        self.image_view.set_guides(kind)
+
     def _enhance(self, op: str) -> None:
         if self.project is None or self._busy:
             return
@@ -802,6 +805,7 @@ class MainWindow(QMainWindow):
             on_apply=self.apply_current,
             on_crop_apply=self._apply_crop,
             on_crop_change=self._on_crop_change,
+            on_guides_change=self._on_guides_change,
             on_rotate=self._rotate,
             on_flip_h=self._flip_h,
             on_flip_v=self._flip_v,

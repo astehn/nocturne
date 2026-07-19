@@ -123,6 +123,22 @@ def test_apply_aspect_reshapes_box_to_ratio(qtbot):
     assert abs(w / h - 2.0) < 0.05
 
 
+def test_set_guides_and_draw(qtbot):
+    from PySide6.QtGui import QImage, QPainter
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(0, 100, 0, 200))
+    view.show_crop_box()
+    for kind in ("none", "thirds", "center"):
+        view.set_guides(kind)
+        assert view._guides == kind
+        img = QImage(50, 50, QImage.Format.Format_ARGB32)
+        p = QPainter(img)
+        view.drawForeground(p, view.sceneRect())  # must not raise
+        p.end()
+
+
 def test_compare_mode_sets_and_clears(qtbot):
     view = ImageView()
     qtbot.addWidget(view)

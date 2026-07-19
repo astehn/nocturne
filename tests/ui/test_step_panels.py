@@ -251,6 +251,16 @@ def test_crop_panel_unlink_reflects_initial_state(qapp):
     assert w.unlink_check.isChecked() is True
 
 
+def test_crop_panel_has_guides_combo(qapp):
+    seen = []
+    w = build_panel(_stage("crop"), on_guides_change=lambda k: seen.append(k))
+    assert hasattr(w, "guides_box")
+    items = [w.guides_box.itemText(i) for i in range(w.guides_box.count())]
+    assert items == ["None", "Rule of thirds", "Center cross"]
+    w.guides_box.setCurrentText("Rule of thirds")
+    assert seen and seen[-1] == "thirds"
+
+
 def test_import_panel_has_linear_preview_note(qapp):
     w = build_panel(_stage("load"))
     from PySide6.QtWidgets import QLabel

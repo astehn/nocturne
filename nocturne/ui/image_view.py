@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPen, QPixmap, QRadialGradient,
 )
@@ -69,7 +69,7 @@ class _Body(QGraphicsRectItem):
         self._overlay = overlay
         pen = QPen(_ACCENT, 0, Qt.PenStyle.DashLine)
         self.setPen(pen)
-        self.setBrush(QBrush(QColor(45, 212, 191, 40)))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.setZValue(10)
         self.setFlag(self.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
@@ -104,6 +104,7 @@ class ImageView(QGraphicsView):
         self._has_image = False
         self._crop_mode = False               # crop stage active (box may still be hidden)
         self._content_bounds = None           # detected content edges for the next show
+        self._guides = "none"                 # composition guides: none | thirds | center
         self._body: _Body | None = None
         self._handles: dict[str, _Handle] = {}
         self._aspect: float | None = None  # width / height
@@ -194,6 +195,47 @@ class ImageView(QGraphicsView):
         painter.fillRect(vp, QBrush(grad))
         painter.restore()
 
+    def drawForeground(self, painter, rect) -> None:
+        """When the crop box is visible: dim the viewport outside the crop rect
+        and draw the selected composition guides inside it. Works in device/
+        viewport coords, mirroring `drawBackground`'s save/reset/restore."""
+        if not (self._crop_mode and self.crop_box_visible()):
+            return
+        box = self.mapFromScene(self._scene_rect()).boundingRect()
+        vp = self.viewport().rect()
+        painter.save()
+        painter.resetTransform()
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
+        # Dim the four regions outside the crop rect.
+        dim = QColor(0, 0, 0, 120)
+        left = box.left()
+        right = box.right()
+        top = box.top()
+        bottom = box.bottom()
+        painter.fillRect(QRectF(vp.left(), vp.top(),
+                                vp.width(), top - vp.top()), dim)             # above
+        painter.fillRect(QRectF(vp.left(), bottom,
+                                vp.width(), vp.bottom() - bottom), dim)       # below
+        painter.fillRect(QRectF(vp.left(), top,
+                                left - vp.left(), bottom - top), dim)         # left
+        painter.fillRect(QRectF(right, top,
+                                vp.right() - right, bottom - top), dim)       # right
+        # Composition guides inside the crop rect.
+        if self._guides != "none":
+            painter.setPen(QPen(QColor(255, 255, 255, 90), 1))
+            w, h = box.width(), box.height()
+            if self._guides == "thirds":
+                xs = (left + w / 3.0, left + 2.0 * w / 3.0)
+                ys = (top + h / 3.0, top + 2.0 * h / 3.0)
+            else:  # center
+                xs = (left + w / 2.0,)
+                ys = (top + h / 2.0,)
+            for x in xs:
+                painter.drawLine(QPointF(x, top), QPointF(x, bottom))
+            for y in ys:
+                painter.drawLine(QPointF(left, y), QPointF(right, y))
+        painter.restore()
+
     def zoom_in(self) -> None:
         if not self._item.pixmap().isNull():
             self.scale(1.25, 1.25)
@@ -252,6 +294,11 @@ class ImageView(QGraphicsView):
 
     def crop_box_visible(self) -> bool:
         return self._body is not None
+
+    def set_guides(self, kind: str) -> None:
+        """Select composition guides: "none" | "thirds" | "center"."""
+        self._guides = kind
+        self.viewport().update()
 
     def mousePressEvent(self, event) -> None:
         # First click while in crop mode reveals the box at the detected edges.
