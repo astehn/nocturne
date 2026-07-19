@@ -116,6 +116,8 @@ def build_panel(
         flips.addWidget(flip_v)
         lay.addLayout(flips)
         lay.addWidget(apply_btn)
+        size = _desc_label("—")
+        lay.addWidget(size)
         unlink = QCheckBox("Unlink stretch (neutralize tint)")
         unlink.setChecked(unlinked_checked)
         if on_unlink_toggle is not None:
@@ -130,6 +132,7 @@ def build_panel(
         w.flip_h_btn = flip_h
         w.flip_v_btn = flip_v
         w.apply_btn = apply_btn
+        w.crop_size_label = size
         w.unlink_check = unlink
 
     elif stage.kind == "process":

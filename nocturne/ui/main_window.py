@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
 
         self.image_view = ImageView()
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
+        self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0
@@ -625,6 +626,8 @@ class MainWindow(QMainWindow):
             )
             if hasattr(self._panel, "apply_btn"):
                 self._panel.apply_btn.setEnabled(False)
+            if hasattr(self._panel, "crop_size_label"):
+                self._panel.crop_size_label.setText("—")
         else:
             self.image_view.set_crop_overlay(False)
 
@@ -632,6 +635,13 @@ class MainWindow(QMainWindow):
         """Crop box became visible (first click) — enable Apply Crop."""
         if self.current_stage_id() == "crop" and hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setEnabled(True)
+        if self.current_stage_id() == "crop" and hasattr(self._panel, "crop_size_label"):
+            self._update_crop_readout(*self.image_view.crop_bounds())
+
+    def _update_crop_readout(self, t: int, b: int, l: int, r: int) -> None:
+        if (self.current_stage_id() == "crop" and self.image_view.crop_box_visible()
+                and hasattr(self._panel, "crop_size_label")):
+            self._panel.crop_size_label.setText(f"{r - l} × {b - t} px")
 
     def _on_crop_change(self, aspect_text: str) -> None:
         # Snap the visible box to the chosen ratio (and lock future resizes).
@@ -694,6 +704,8 @@ class MainWindow(QMainWindow):
         self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)))
         # Committed: hide the box; the next click re-shows it at the new edges.
         self.image_view.hide_crop_box()
+        if hasattr(self._panel, "crop_size_label"):
+            self._panel.crop_size_label.setText("—")
 
     # --- history ---
     def _reset_image(self) -> None:

@@ -108,6 +108,15 @@ def test_apply_crop_hides_box_and_disables_apply(qtbot, tmp_path):
     assert win._panel.apply_btn.isEnabled() is False       # Apply disabled again
 
 
+def test_crop_size_readout_updates_and_resets(qtbot, tmp_path):
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    assert win._panel.crop_size_label.text() == "—"   # reset by _setup_crop_overlay
+    win.image_view.show_crop_box()
+    win._update_crop_readout(0, 100, 0, 200)
+    assert win._panel.crop_size_label.text() == "200 × 100 px"
+
+
 def test_apply_color_with_none_option(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
