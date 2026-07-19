@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.stepper)
 
         self.image_view = ImageView()
+        self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0
@@ -618,11 +619,19 @@ class MainWindow(QMainWindow):
             aspect_text = "Original"
             if hasattr(self._panel, "aspect_box"):
                 aspect_text = self._panel.aspect_box.currentText()
+            # Crop mode on, box hidden until the first image click shows it.
             self.image_view.set_crop_overlay(
-                True, bounds=bounds, aspect_ratio=_ASPECT_RATIO.get(aspect_text)
+                True, content_bounds=bounds, aspect_ratio=_ASPECT_RATIO.get(aspect_text)
             )
+            if hasattr(self._panel, "apply_btn"):
+                self._panel.apply_btn.setEnabled(False)
         else:
             self.image_view.set_crop_overlay(False)
+
+    def _on_crop_box_shown(self) -> None:
+        """Crop box became visible (first click) — enable Apply Crop."""
+        if self.current_stage_id() == "crop" and hasattr(self._panel, "apply_btn"):
+            self._panel.apply_btn.setEnabled(True)
 
     def _on_crop_change(self, aspect_text: str) -> None:
         # Snap the visible box to the chosen ratio (and lock future resizes).
@@ -680,6 +689,8 @@ class MainWindow(QMainWindow):
         if (top, bottom, left, right) == (0, h, 0, w):
             return  # box is the full frame -> no real crop
         self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)))
+        # Committed: hide the box; the next click re-shows it at the new edges.
+        self.image_view.hide_crop_box()
 
     # --- history ---
     def _reset_image(self) -> None:

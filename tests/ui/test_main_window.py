@@ -70,17 +70,42 @@ def test_apply_ignored_while_busy(qtbot, tmp_path):
     assert win.project.entries() == []  # nothing applied while busy
 
 
-def test_entering_crop_enables_overlay(qtbot, tmp_path):
+def _bordered_window(qtbot, tmp_path):
+    """A window on a bordered image so detect_content_bounds is a sub-rectangle."""
     win = _window(qtbot, tmp_path)
-    # bordered image so detect_content_bounds is a sub-rectangle
     arr = np.zeros((3, 30, 30), dtype=np.uint16)
     arr[:, 5:25, 6:24] = 2000
     p = tmp_path / "b.fits"
     fits.PrimaryHDU(arr).writeto(str(p))
     win.open_fits(str(p))
+    return win
+
+
+def test_entering_crop_leaves_box_hidden(qtbot, tmp_path):
+    win = _bordered_window(qtbot, tmp_path)
     win._go_to_id("crop")
-    assert win.image_view._body is not None  # overlay active
-    assert win.image_view.crop_bounds() == (5, 25, 6, 24)
+    # crop mode is on but the box is not drawn until the image is clicked
+    assert win.image_view.crop_box_visible() is False
+    assert win._panel.apply_btn.isEnabled() is False   # Apply disabled until box shown
+
+
+def test_showing_crop_box_uses_content_bounds_and_enables_apply(qtbot, tmp_path):
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    assert win.image_view.crop_box_visible() is True
+    assert win.image_view.crop_bounds() == (5, 25, 6, 24)  # detected content edges
+    assert win._panel.apply_btn.isEnabled() is True        # cropBoxShown -> Apply on
+
+
+def test_apply_crop_hides_box_and_disables_apply(qtbot, tmp_path):
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    win._apply_crop()
+    assert win.project.entries()[-1][0] == "Crop"          # crop committed
+    assert win.image_view.crop_box_visible() is False      # box hidden after apply
+    assert win._panel.apply_btn.isEnabled() is False       # Apply disabled again
 
 
 def test_apply_color_with_none_option(qtbot, tmp_path):

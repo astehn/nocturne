@@ -29,11 +29,56 @@ def test_fit_and_actual_size_do_not_raise(qtbot):
     view.actual_size()
 
 
+def test_crop_box_hidden_until_shown(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(10, 90, 20, 180))
+    assert view.crop_box_visible() is False   # crop mode on, box not drawn
+    view.show_crop_box()
+    assert view.crop_box_visible() is True
+    assert view.crop_bounds() == (10, 90, 20, 180)   # shown at stored content bounds
+    view.hide_crop_box()
+    assert view.crop_box_visible() is False
+    assert view._crop_mode is True            # still in crop mode after hiding
+
+
+def test_show_crop_box_emits_signal(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(10, 90, 20, 180))
+    with qtbot.waitSignal(view.cropBoxShown, timeout=500):
+        view.show_crop_box()
+
+
+def test_show_crop_box_is_idempotent(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(10, 90, 20, 180))
+    view.show_crop_box()
+    body = view._body
+    view.show_crop_box()  # second call is a no-op, does not rebuild the box
+    assert view._body is body
+    assert len(view._handles) == 8
+
+
+def test_show_crop_box_falls_back_to_full_pixmap(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True)  # no content bounds
+    view.show_crop_box()
+    assert view.crop_bounds() == (0, 100, 0, 200)
+
+
 def test_crop_overlay_roundtrips_bounds(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(40, 30))
-    view.set_crop_overlay(True, bounds=(5, 25, 8, 35))
+    view.set_crop_overlay(True, content_bounds=(5, 25, 8, 35))
+    view.show_crop_box()
     assert view.crop_bounds() == (5, 25, 8, 35)
 
 
@@ -41,7 +86,8 @@ def test_crop_overlay_move_updates_bounds(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(40, 30))
-    view.set_crop_overlay(True, bounds=(0, 10, 0, 10))
+    view.set_crop_overlay(True, content_bounds=(0, 10, 0, 10))
+    view.show_crop_box()
     view._body.setPos(5, 5)  # move the box by (5,5)
     assert view.crop_bounds() == (5, 15, 5, 15)
 
@@ -50,7 +96,8 @@ def test_crop_overlay_disable_clears_box(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(40, 30))
-    view.set_crop_overlay(True, bounds=(0, 10, 0, 10))
+    view.set_crop_overlay(True, content_bounds=(0, 10, 0, 10))
+    view.show_crop_box()
     view.set_crop_overlay(False)
     assert view._body is None
 
@@ -59,7 +106,8 @@ def test_crop_overlay_has_eight_handles(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(40, 30))
-    view.set_crop_overlay(True, bounds=(0, 20, 0, 20))
+    view.set_crop_overlay(True, content_bounds=(0, 20, 0, 20))
+    view.show_crop_box()
     assert len(view._handles) == 8
 
 
@@ -67,7 +115,8 @@ def test_apply_aspect_reshapes_box_to_ratio(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(100, 100))
-    view.set_crop_overlay(True, bounds=(0, 80, 0, 80))  # 80x80 square box
+    view.set_crop_overlay(True, content_bounds=(0, 80, 0, 80))  # 80x80 square box
+    view.show_crop_box()
     view.apply_aspect(2.0)  # width:height = 2:1
     top, bottom, left, right = view.crop_bounds()
     w, h = right - left, bottom - top

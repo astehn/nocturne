@@ -82,6 +82,7 @@ class _Body(QGraphicsRectItem):
 
 class ImageView(QGraphicsView):
     cropBoxChanged = Signal(int, int, int, int)
+    cropBoxShown = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -101,6 +102,8 @@ class ImageView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._has_image = False
+        self._crop_mode = False               # crop stage active (box may still be hidden)
+        self._content_bounds = None           # detected content edges for the next show
         self._body: _Body | None = None
         self._handles: dict[str, _Handle] = {}
         self._aspect: float | None = None  # width / height
@@ -206,8 +209,14 @@ class ImageView(QGraphicsView):
             self.zoom_out()
 
     # --- crop overlay ---
-    def set_crop_overlay(self, enabled: bool, bounds=None, aspect_ratio=None) -> None:
+    def set_crop_overlay(self, enabled: bool, content_bounds=None,
+                         aspect_ratio=None) -> None:
+        """Toggle crop *mode* and store the detected content bounds. Crop mode
+        being on is distinct from the box being visible — this never draws the
+        box; the first click (or `show_crop_box`) does."""
+        self._crop_mode = enabled
         self._aspect = aspect_ratio
+        self._content_bounds = content_bounds
         # Hide the floating zoom pill while cropping so it can't sit over a
         # bottom-right crop handle and swallow its drags.
         self._zoom_pill.setVisible(not enabled)
@@ -216,17 +225,41 @@ class ImageView(QGraphicsView):
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             return
         self.setDragMode(QGraphicsView.DragMode.NoDrag)  # let the box take drags
-        if self._body is None:
-            self._body = _Body(self)
-            self._scene.addItem(self._body)
-            for name in _HANDLES:
-                h = _Handle(name, self)
-                self._handles[name] = h
-                self._scene.addItem(h)
+
+    def show_crop_box(self) -> None:
+        """Build + show the crop body/handles at the stored content bounds
+        (idempotent) and announce it via `cropBoxShown`."""
+        if self._body is not None:
+            return  # already visible
+        self._body = _Body(self)
+        self._scene.addItem(self._body)
+        for name in _HANDLES:
+            h = _Handle(name, self)
+            self._handles[name] = h
+            self._scene.addItem(h)
+        bounds = self._content_bounds
         if bounds is None:
             pm = self._item.pixmap()
             bounds = (0, pm.height(), 0, pm.width())
         self._set_bounds(bounds)
+        self.viewport().update()
+        self.cropBoxShown.emit()
+
+    def hide_crop_box(self) -> None:
+        """Remove the crop body/handles but stay in crop mode."""
+        self._teardown_overlay()
+        self.viewport().update()
+
+    def crop_box_visible(self) -> bool:
+        return self._body is not None
+
+    def mousePressEvent(self, event) -> None:
+        # First click while in crop mode reveals the box at the detected edges.
+        if self._crop_mode and not self.crop_box_visible():
+            scene_pos = self.mapToScene(event.position().toPoint())
+            if self._item.sceneBoundingRect().contains(scene_pos):
+                self.show_crop_box()
+        super().mousePressEvent(event)
 
     def set_aspect(self, aspect_ratio) -> None:
         self._aspect = aspect_ratio

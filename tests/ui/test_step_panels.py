@@ -45,9 +45,11 @@ def test_crop_panel_immediate_buttons(qtbot):
     qtbot.addWidget(w)
     assert w.flip_h_btn.isCheckable() is False   # momentary, not sticky
     assert w.flip_v_btn.isCheckable() is False
+    assert w.apply_btn.isEnabled() is False      # off until the crop box is shown
     w.rotate_btn.click()
     w.flip_h_btn.click()
     w.flip_v_btn.click()
+    w.apply_btn.setEnabled(True)                  # main_window enables on cropBoxShown
     w.apply_btn.click()
     assert got == ["rotate", "flip_h", "flip_v", "crop"]
 

@@ -41,6 +41,7 @@ def build_panel(
     on_apply=None,
     on_crop_apply=None,
     on_crop_change=None,
+    on_guides_change=None,
     on_rotate=None,
     on_flip_h=None,
     on_flip_v=None,
@@ -95,7 +96,7 @@ def build_panel(
             flip_v.clicked.connect(lambda: on_flip_v())
         apply_btn = QPushButton("Apply Crop")
         apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
+        apply_btn.setEnabled(False)  # off until the crop box is shown (cropBoxShown)
         if on_crop_apply is not None:
             apply_btn.clicked.connect(lambda: on_crop_apply())
         lay.addWidget(QLabel("Aspect ratio"))
