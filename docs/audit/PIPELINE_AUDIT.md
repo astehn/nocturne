@@ -16,8 +16,8 @@ shares theirs, so convergence is a real signal.
 | # | Step | Depth | Status | Known issue folded in |
 |---|------|-------|--------|-----------------------|
 | 1 | Import | UX + correctness | ✅ fixed | integration-time / EXPTIME miscalc |
-| 2 | Crop | UX | 🛠 fixing | unlink ✅ shipped; brightness-framing parked |
-| 3 | Background | UX + algo | ⬜ | GraXpert strengths |
+| 2 | Crop | UX | ✅ fixed | unlink ✅ shipped; brightness-framing parked |
+| 3 | Background | UX + algo | 🔎 auditing | GraXpert strengths |
 | 4 | Color | algo-deep | ⬜ | OSC neutralize/WB correctness; green cast |
 | 5 | Deconvolution | algo-deep | ⬜ | — |
 | 6 | Stretch | algo + UX | ⬜ | slider→target mapping; preview fidelity ✅ |
@@ -80,7 +80,17 @@ cue; checkbox relabel. Engine unchanged (display-only).
 
 ### Verdict: **structural fix** (interaction-model rework of the overlay).
 
-_Status: design approved; writing spec + plan._
+### Resolution (merged to main 2026-07-19, 7 commits, suite 486 pass)
+- Overlay **hidden by default**; click summons it **at content edges**; **hides
+  after Apply** (C1/C3 + user 2/3).
+- **Exterior dimming** + inside-tint removed (C1/user 1); **guides** None/Thirds/
+  Center (C6/user 4); **live W×H readout** (C2).
+- **Dismiss**: click-outside / Esc, **confirm-only-if-modified** (user follow-up).
+- Polish: Rotate `↻` + instant note (C4); checkbox → "Neutral preview (for
+  framing)" (C5); intro copy → click-to-place.
+- Deferred: rule-of-thirds *snapping*, diagonal/golden guides.
+
+_Status: ✅ complete._
 
 ---
 
