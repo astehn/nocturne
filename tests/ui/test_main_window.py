@@ -981,3 +981,10 @@ def test_unlink_only_effective_on_crop_stage(qtbot, tmp_path):
     win._display_unlinked = False
     win._stage = idx("crop")
     assert win._effective_unlinked() is False
+
+
+def test_background_stage_defaults_to_light(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    assert win._panel.option_box.currentText() == "light"

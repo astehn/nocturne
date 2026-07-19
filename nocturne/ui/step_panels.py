@@ -54,6 +54,7 @@ def build_panel(
     unlinked_checked: bool = False,
     apply_enabled: bool = True,
     split_enabled: bool = False,
+    option_default: str | None = None,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -137,8 +138,15 @@ def build_panel(
         w.unlink_check = unlink
 
     elif stage.kind == "process":
+        if stage.id == "background":
+            lay.addWidget(_desc_label(
+                "A gradient is uneven sky-glow — brighter toward one edge or corner. "
+                "Light suits most images; use Strong when it's heavy. After applying, "
+                "use Before/After (toolbar) to check the result."))
         box = QComboBox()
         box.addItems(_PROCESS_OPTIONS[stage.id])
+        if option_default:
+            box.setCurrentText(option_default)
         apply_btn = QPushButton(f"Apply {stage.label}")
         apply_btn.setObjectName("primary")
         note = _desc_label(_GATE_NOTE.get(stage.id, ""))

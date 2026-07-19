@@ -852,6 +852,8 @@ class MainWindow(QMainWindow):
             unlinked_checked=self._display_unlinked,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
+            option_default=(self._step_for(stage.id).default_option()
+                            if stage.kind == "process" else None),
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(

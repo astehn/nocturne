@@ -286,3 +286,15 @@ def test_crop_panel_labels_and_grouping_polish(qapp):
 
     label_texts = [l.text().lower() for l in w.findChildren(QLabel)]
     assert any("apply instantly" in t for t in label_texts)
+
+
+def test_process_panel_preselects_default_option(qapp):
+    w = build_panel(_stage("background"), option_default="light")
+    assert w.option_box.currentText() == "light"   # not "off"
+
+
+def test_background_panel_explains_gradient(qapp):
+    from PySide6.QtWidgets import QLabel
+    w = build_panel(_stage("background"))
+    texts = " ".join(l.text().lower() for l in w.findChildren(QLabel))
+    assert "gradient" in texts and "before/after" in texts
