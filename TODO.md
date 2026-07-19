@@ -53,6 +53,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       stronger "framing stretch" toggle in the crop view (display-only, doesn't touch data).
       Deferred until real-data samples confirm whether the existing display auto-stretch is
       failing (bug) or just too gentle (needs a stronger toggle).
+      RELATED (done 2026-07-19, merged f23da41): the **colour-cast** side of crop-framing is now
+      handled by the "Unlink stretch (neutralize tint)" checkbox in the Crop panel — a
+      display-only per-channel stretch that evens out a blue/green LP cast (PixInsight STF-unlink
+      style, off by default). It also lifts each channel to the background target, so it brightens
+      a dark frame somewhat; this deferred item is now only the *pure-brightness* case (a neutral
+      but under-exposed linear frame). Re-evaluate whether that still needs its own toggle.
 - [x] **Reset sliders to default.** DONE — double-click any slider resets to its default (`ResetSlider`, tooltip 'Double-click to reset'); applied across stretch/levels/saturation/palette. Whole-branch review clean; 324 tests.
 - [x] **Saturation remap.** Current slider is additive-only: 0 = native saturation (never
       desaturates) and the top end is too weak — you must crank it to see effect, and low
