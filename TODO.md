@@ -63,6 +63,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       the stage whose change was just reverted so the user sees what changed — `Project.entries()`
       carry step names; map the undone entry's name → stage id → `_go_to_id`. (Alt: scope Undo to
       the current step only — simpler but less powerful.)
+- [ ] **Saturation "expert mode" — per-channel R/G/B saturation (suggested 2026-07-19).** The
+      re-centred saturation slider (0 grey / 0.5 native / 1 strong) works well as-is; add an
+      optional **expert mode** exposing per-channel R/G/B chroma control for users who want finer
+      colour shaping (scale each channel's `data - lum` residual independently). Consider during
+      the Step 8 (Saturation) audit as an advanced toggle/panel, alongside the live-preview + numeric
+      readout that step will inherit. User has no complaints about the current default behaviour.
 - [ ] **Coalesce duplicate in-flight preview loads in the stack dialog.** Rapid ↑/↓ row
       navigation dispatches one full-res load per visited row with no dedup/cancel — harmless
       today (each just runs a full-res unlinked stretch) but wasteful on fast repeated
