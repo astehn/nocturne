@@ -16,7 +16,7 @@ shares theirs, so convergence is a real signal.
 | # | Step | Depth | Status | Known issue folded in |
 |---|------|-------|--------|-----------------------|
 | 1 | Import | UX + correctness | ✅ fixed | integration-time / EXPTIME miscalc |
-| 2 | Crop | UX | ⬜ | unlink ✅ shipped; brightness-framing parked |
+| 2 | Crop | UX | 🛠 fixing | unlink ✅ shipped; brightness-framing parked |
 | 3 | Background | UX + algo | ⬜ | GraXpert strengths |
 | 4 | Color | algo-deep | ⬜ | OSC neutralize/WB correctness; green cast |
 | 5 | Deconvolution | algo-deep | ⬜ | — |
@@ -40,6 +40,47 @@ Each step's entry captures:
 3. **UX findings** — clarity, labels, feedback, discoverability, friction.
 4. **Verdict** — leave as-is / minor polish / structural fix.
 5. **Actions** — prioritized, each linked to its spec/plan/commit when done.
+
+---
+
+## Step 2 — Crop  🛠
+
+**Code:** `nocturne/ui/image_view.py` (overlay: `_Body`, `_Handle`,
+`set_crop_overlay`, `cropBoxChanged`), `nocturne/ui/step_panels.py` (crop panel),
+`nocturne/ui/main_window.py` (`_setup_crop_overlay`, `_apply_crop`,
+`_on_crop_change`), `nocturne/core/crop.py` (`apply_crop_params`,
+`detect_content_bounds`/`auto_crop`, `ASPECTS`).
+
+### Findings (audit — domain + UX)
+- **C1 [High] Crop box nearly invisible; no exterior dimming.** Dashed teal
+  outline + faint *inside* fill (alpha 40), no darkening of the removed area. On
+  a dark sky at the near-full-frame default the box is imperceptible and its
+  inside-tint is misread as a colour cast. *(Both audit lenses independently.)*
+- **C2 [Med] No live selection readout** (W×H / resulting size).
+- **C3 [Med] Auto-trim is implicit.** `detect_content_bounds` *does* set the
+  initial box on entry (verified — corrects the UX agent's "not wired" claim),
+  but it runs silently with no affordance/feedback.
+- **C4 [Med] Apply-Crop vs instant Rotate/Flip under-signalled**; Rotate 90° has
+  no direction cue.
+- **C5 [Low] "Unlink stretch (neutralize tint)" label is jargon.**
+- **C6 [Low] No composition/framing grid** despite "frame your target".
+
+### User's own list (independent)
+1. Overlay colour makes the (full-frame default) image look tinted → **= C1**.
+2. **Don't show the crop box until the user clicks the image.** *(new)*
+3. **Hide the overlay again after cropping**, until the next click. *(new)*
+4. Offer composition guides (rule of thirds, center cross) → **= C6**, concrete.
+
+### Agreed design → spec `docs/superpowers/specs/2026-07-19-crop-rework-design.md`
+Overlay **hidden by default**; a click on the image shows it **at detected
+content edges**; **hidden again after Apply**. When shown: **dim the exterior**
+(drop the inside tint), **selectable guides** (None / Rule of thirds / Center
+cross), **live W×H readout**. Polish: Rotate/Flip grouped as instant + direction
+cue; checkbox relabel. Engine unchanged (display-only).
+
+### Verdict: **structural fix** (interaction-model rework of the overlay).
+
+_Status: design approved; writing spec + plan._
 
 ---
 
