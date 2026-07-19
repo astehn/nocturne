@@ -83,6 +83,7 @@ class _Body(QGraphicsRectItem):
 class ImageView(QGraphicsView):
     cropBoxChanged = Signal(int, int, int, int)
     cropBoxShown = Signal()
+    cropDismissRequested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -105,6 +106,7 @@ class ImageView(QGraphicsView):
         self._crop_mode = False               # crop stage active (box may still be hidden)
         self._content_bounds = None           # detected content edges for the next show
         self._guides = "none"                 # composition guides: none | thirds | center
+        self._box_modified = False            # user adjusted the box since it was shown
         self._body: _Body | None = None
         self._handles: dict[str, _Handle] = {}
         self._aspect: float | None = None  # width / height
@@ -284,6 +286,7 @@ class ImageView(QGraphicsView):
             pm = self._item.pixmap()
             bounds = (0, pm.height(), 0, pm.width())
         self._set_bounds(bounds)
+        self._box_modified = False  # fresh box at content edges — nothing to lose yet
         self.viewport().update()
         self.cropBoxShown.emit()
 
@@ -295,18 +298,40 @@ class ImageView(QGraphicsView):
     def crop_box_visible(self) -> bool:
         return self._body is not None
 
+    def crop_box_modified(self) -> bool:
+        """True if the user has moved/resized/reshaped the box since it appeared."""
+        return self._box_modified
+
     def set_guides(self, kind: str) -> None:
         """Select composition guides: "none" | "thirds" | "center"."""
         self._guides = kind
         self.viewport().update()
 
     def mousePressEvent(self, event) -> None:
+        pos = event.position().toPoint()
         # First click while in crop mode reveals the box at the detected edges.
         if self._crop_mode and not self.crop_box_visible():
-            scene_pos = self.mapToScene(event.position().toPoint())
+            scene_pos = self.mapToScene(pos)
             if self._item.sceneBoundingRect().contains(scene_pos):
                 self.show_crop_box()
+            super().mousePressEvent(event)
+            return
+        # A click on the dimmed area (not the box or a handle) asks to dismiss.
+        if self._crop_mode and self.crop_box_visible():
+            item = self.itemAt(pos)
+            if item is None or item is self._item:
+                self.cropDismissRequested.emit()
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if (event.key() == Qt.Key.Key_Escape
+                and self._crop_mode and self.crop_box_visible()):
+            self.cropDismissRequested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def set_aspect(self, aspect_ratio) -> None:
         self._aspect = aspect_ratio
@@ -395,4 +420,5 @@ class ImageView(QGraphicsView):
         return top, bottom, left, right
 
     def _emit_bounds(self) -> None:
+        self._box_modified = True  # any user-driven bounds change counts as work
         self.cropBoxChanged.emit(*self.crop_bounds())

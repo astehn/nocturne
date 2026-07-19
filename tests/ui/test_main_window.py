@@ -117,6 +117,39 @@ def test_crop_size_readout_updates_and_resets(qtbot, tmp_path):
     assert win._panel.crop_size_label.text() == "200 × 100 px"
 
 
+def test_crop_dismiss_unmodified_hides_without_dialog(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    called = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: called.append(True))
+    win._on_crop_dismiss()
+    assert win.image_view.crop_box_visible() is False
+    assert called == []                               # no confirm for a fresh box
+    assert win._panel.apply_btn.isEnabled() is False
+    assert win._panel.crop_size_label.text() == "—"
+
+
+def test_crop_dismiss_modified_confirms(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    win.image_view._geometry_changed()                # mark modified
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    win._on_crop_dismiss()
+    assert win.image_view.crop_box_visible() is True   # Cancel keeps the box
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    win._on_crop_dismiss()
+    assert win.image_view.crop_box_visible() is False  # Discard hides it
+
+
 def test_apply_color_with_none_option(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

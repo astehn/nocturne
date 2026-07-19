@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         self.image_view = ImageView()
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
+        self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0
@@ -642,6 +643,27 @@ class MainWindow(QMainWindow):
         if (self.current_stage_id() == "crop" and self.image_view.crop_box_visible()
                 and hasattr(self._panel, "crop_size_label")):
             self._panel.crop_size_label.setText(f"{r - l} × {b - t} px")
+
+    def _on_crop_dismiss(self) -> None:
+        """Clicking the dimmed area (or Esc) hides the box without applying. Only
+        confirm if the user actually adjusted it — a fresh, untouched box has no
+        work to lose, so it dismisses silently."""
+        if not self.image_view.crop_box_visible():
+            return
+        if self.image_view.crop_box_modified():
+            resp = QMessageBox.question(
+                self, "Discard crop?",
+                "Discard your crop selection?",
+                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if resp != QMessageBox.StandardButton.Discard:
+                return
+        self.image_view.hide_crop_box()
+        if hasattr(self._panel, "apply_btn"):
+            self._panel.apply_btn.setEnabled(False)
+        if hasattr(self._panel, "crop_size_label"):
+            self._panel.crop_size_label.setText("—")
 
     def _on_crop_change(self, aspect_text: str) -> None:
         # Snap the visible box to the chosen ratio (and lock future resizes).

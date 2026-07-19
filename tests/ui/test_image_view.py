@@ -43,6 +43,33 @@ def test_crop_box_hidden_until_shown(qtbot):
     assert view._crop_mode is True            # still in crop mode after hiding
 
 
+def test_crop_box_modified_tracks_user_changes(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(10, 90, 20, 180))
+    view.show_crop_box()
+    assert view.crop_box_modified() is False   # fresh box at content edges
+    view._geometry_changed()                   # simulate a user move/resize
+    assert view.crop_box_modified() is True
+    view.hide_crop_box()
+    view.show_crop_box()                        # re-showing resets it
+    assert view.crop_box_modified() is False
+
+
+def test_dismiss_requested_on_escape_when_box_visible(qtbot):
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent, Qt
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(200, 100))
+    view.set_crop_overlay(True, content_bounds=(10, 90, 20, 180))
+    view.show_crop_box()
+    with qtbot.waitSignal(view.cropDismissRequested, timeout=500):
+        view.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape,
+                                     Qt.KeyboardModifier.NoModifier))
+
+
 def test_show_crop_box_emits_signal(qtbot):
     view = ImageView()
     qtbot.addWidget(view)
