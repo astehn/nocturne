@@ -4,11 +4,12 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Future features — Enhancements / finishing (from research 2026-07-20)
 Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
-- [ ] **HDR core / highlight recovery (HIGH — top pick).** Short Seestar subs clip bright cores
-      (M42, M8, galaxy nuclei) to a featureless white blob after stretch. Add a "Recover Core"
-      slider that compresses just the top ~15% of the tone range under a highlight mask (simple),
-      later upgradeable to a proper multiscale (à-trous/Gaussian-pyramid) HDR. Risk: haloing if
-      overdone. Most Seestar-relevant gap found.
+- [x] **HDR core / highlight recovery (HIGH — top pick; done 2026-07-20).** Shipped the "Recover
+      Core" step (after Stretch): single-scale local HDR under a feathered highlight mask
+      (`core/hdr.py` `recover_core`), one Strength slider with live preview + live histogram.
+      Validated on real data (recovers usable core detail on M31). Fully-clipped-to-white cores stay
+      white by design (nothing to recover) — accepted, help text says so. Future upgrade path:
+      multiscale (à-trous/Gaussian-pyramid) HDR on the same mask/luminance plumbing.
 - [ ] **Curves — S-curve / tone curve (HIGH).** The one classic control Nocturne lacks; Levels
       can't add midtone contrast a draggable curve can. numpy-easy (monotone-cubic LUT on
       luminance, background-pinned so the sky isn't lifted). Ship a gentle "add contrast" preset.

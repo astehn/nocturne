@@ -37,6 +37,7 @@ from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSIN
 from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
+from ..core.hdr import recover_core
 from ..core.star_reduction import reduce_stars
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
@@ -125,6 +126,11 @@ class MainWindow(QMainWindow):
         self._lc_timer = QTimer(self)
         self._lc_timer.setSingleShot(True)
         self._lc_timer.timeout.connect(self._render_lc_preview)
+        # Recover-core live-preview: a debounced (90 ms) non-committing render.
+        self._recover_pending = None
+        self._recover_timer = QTimer(self)
+        self._recover_timer.setSingleShot(True)
+        self._recover_timer.timeout.connect(self._render_recover_preview)
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
@@ -801,6 +807,21 @@ class MainWindow(QMainWindow):
                   else self._panel.lc_slider.value() / 100.0)
         self._show_preview(enhance(img, amount).data)
 
+    # --- recover core live preview ---
+    def _on_recover_change(self, amount: float) -> None:
+        """The Recover Core slider moved: stash the value and (re)start debounce."""
+        self._recover_pending = amount
+        self._recover_timer.start(90)
+
+    def _render_recover_preview(self) -> None:
+        """Non-committing live preview of the current Recover Core setting."""
+        if self.project is None or self.current_stage_id() != "recover_core":
+            return
+        img = self._preview_base("recover_core")
+        amount = (self._recover_pending if self._recover_pending is not None
+                  else self._panel.recover_slider.value() / 100.0)
+        self._show_preview(recover_core(img, amount).data)
+
     # --- star reduction live preview (cached StarX split) ---
     def _sr_preceding(self) -> set:
         """Names of the steps that precede Star Reduction — the predecessors an
@@ -1018,6 +1039,8 @@ class MainWindow(QMainWindow):
             self._sat_pending = None
         if stage.id == "local_contrast":
             self._lc_pending = None
+        if stage.id == "recover_core":
+            self._recover_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
         apply_enabled = loaded
@@ -1043,6 +1066,7 @@ class MainWindow(QMainWindow):
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_lc_change=self._on_lc_change,
+            on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
             apply_enabled=apply_enabled,

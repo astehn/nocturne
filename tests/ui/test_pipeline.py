@@ -12,9 +12,9 @@ def test_core_stages_expected():
 def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "crop", "background", "color", "deconvolution", "stretch", "levels",
-        "saturation", "noise_sharpen", "local_contrast", "star_reduction", "enhancements",
-        "export",
+        "load", "crop", "background", "color", "deconvolution", "stretch",
+        "recover_core", "levels", "saturation", "noise_sharpen", "local_contrast",
+        "star_reduction", "enhancements", "export",
     ]
 
 
@@ -32,8 +32,9 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "remove_green", "deconvolution", "stretch", "levels",
-        "saturation", "noise_sharpen", "local_contrast", "star_reduction",
+        "background", "color", "remove_green", "deconvolution", "stretch",
+        "recover_core", "levels", "saturation", "noise_sharpen", "local_contrast",
+        "star_reduction",
     ]
 
 
@@ -72,10 +73,19 @@ def test_enhancements_stage_and_names():
 def test_post_stretch_ids_are_the_finishing_steps_minus_export():
     from nocturne.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
     assert POST_STRETCH_IDS == frozenset({
-        "levels", "saturation", "noise_sharpen",
+        "recover_core", "levels", "saturation", "noise_sharpen",
         "local_contrast", "star_reduction", "enhancements",
     })
     assert "export" not in POST_STRETCH_IDS
     assert "stretch" not in POST_STRETCH_IDS
     pre = PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
     assert POST_STRETCH_IDS.isdisjoint(pre)
+
+
+def test_recover_core_placed_after_stretch():
+    from nocturne.ui.pipeline import POST_STRETCH_IDS, STEP_NAME
+    ids = [s.id for s in path_stages()]
+    assert ids.index("recover_core") == ids.index("stretch") + 1
+    assert ids.index("recover_core") < ids.index("levels")
+    assert STEP_NAME["recover_core"] == "Recover Core"
+    assert "recover_core" in POST_STRETCH_IDS

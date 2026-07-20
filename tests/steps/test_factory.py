@@ -23,3 +23,24 @@ def test_make_step_types():
     assert isinstance(make_step("flip_v", s), CropStep)
     from nocturne.steps.deconvolution_step import DeconvolutionStep
     assert isinstance(make_step("deconvolution", s), DeconvolutionStep)
+
+
+def test_make_step_recover_core():
+    from nocturne.steps.factory import make_step
+    from nocturne.steps.recover_core import RecoverCoreStep
+    from nocturne.settings import Settings
+    step = make_step("recover_core", Settings())
+    assert isinstance(step, RecoverCoreStep)
+    assert step.name == "Recover Core"
+
+
+def test_recover_core_step_applies_amount():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.hdr import recover_core
+    from nocturne.steps.recover_core import RecoverCoreStep
+    img = AstroImage(np.full((32, 32, 3), 0.9, np.float32), is_linear=False)
+    got = RecoverCoreStep().apply(img, 0.6).data
+    assert np.allclose(got, recover_core(img, 0.6).data)
+    # empty option -> no-op amount 0
+    assert np.allclose(RecoverCoreStep().apply(img, "").data, img.data, atol=1e-6)

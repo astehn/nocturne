@@ -51,6 +51,7 @@ def build_panel(
     on_levels_clipping=None,
     on_sat_change=None,
     on_lc_change=None,
+    on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
     apply_enabled: bool = True,
@@ -333,6 +334,34 @@ def build_panel(
         lay.addWidget(apply_btn)
         w.sat_slider = slider
         w.sat_val = sat_val
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "recover_core":
+        lay.addWidget(_desc_label(
+            "Pull blown-out bright cores back so they show detail instead of a "
+            "white blob. 0 = off."))
+        slider = ResetSlider(0)
+        recover_val = QLabel(f"{slider.value() / 100:.2f}")
+
+        def _emit_recover(*_):
+            recover_val.setText(f"{slider.value() / 100:.2f}")
+            if on_recover_change is not None:
+                on_recover_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_recover)
+        apply_btn = QPushButton("Apply Recover Core")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        rec_row = QHBoxLayout()
+        rec_row.addWidget(QLabel("Strength (off → full)"))
+        rec_row.addWidget(recover_val)
+        lay.addLayout(rec_row)
+        lay.addWidget(slider)
+        lay.addWidget(apply_btn)
+        w.recover_slider = slider
+        w.recover_val = recover_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "local_contrast":

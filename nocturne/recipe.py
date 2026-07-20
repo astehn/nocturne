@@ -32,7 +32,7 @@ def serialize_option(stage_id, option):
         return [b, g, w]
     if stage_id == "stretch":
         return float(option) if option not in (None, "") else 0.5
-    if stage_id in ("local_contrast", "star_reduction"):
+    if stage_id in ("local_contrast", "star_reduction", "recover_core"):
         try:
             return float(option)
         except (TypeError, ValueError):
