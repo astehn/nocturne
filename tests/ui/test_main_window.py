@@ -392,6 +392,38 @@ def test_recover_core_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
     assert seen                                 # shared _show_preview fed the histogram
 
 
+def test_curve_live_preview_renders_without_commit(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("curves")
+    entries_before = [name for name, _ in win.project.entries()]
+    win._on_curve_change([(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)])
+    win._render_curve_preview()
+    assert not win.image_view._item.pixmap().isNull()
+    assert [name for name, _ in win.project.entries()] == entries_before  # no commit
+
+
+def test_curve_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("curves")
+    seen = []
+    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
+    win._on_curve_change([(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)])
+    win._render_curve_preview()
+    assert seen
+
+
+def test_curve_add_contrast_preset_seeds_non_identity(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("curves")
+    win._on_curve_preset("add_contrast")
+    assert win._panel.curve_editor.points() != [(0.0, 0.0), (1.0, 1.0)]
+    win._on_curve_preset("reset")
+    assert win._panel.curve_editor.points() == [(0.0, 0.0), (1.0, 1.0)]
+
+
 def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     import nocturne.ui.main_window as mw
