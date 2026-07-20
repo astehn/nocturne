@@ -255,17 +255,18 @@ _TOPIC_LIST = (
     _t("green_fringe", "Remove Green Fringe",
        "Remove the green colour fringe around stars.",
        "<h4>What it does</h4>"
-       "<p>Stars are never truly green, so a green fringe or halo around them is "
-       "always an artifact (from chromatic aberration or debayering). This reduces "
-       "green only where it exceeds the red/blue level — hardest on bright star halos, "
-       "with no effect on neutral, red, or blue tones.</p>"
+       "<p>Stars are never truly green, so a green fringe or halo around them is an "
+       "artifact (chromatic aberration or debayering). This splits the stars from the "
+       "background with <b>StarXTerminator</b>, removes the green excess from the stars "
+       "only, and recombines — so the nebula and background colour are left completely "
+       "untouched.</p>"
        "<h4>How to use it</h4>"
-       "<p>Raise <b>Strength</b> until the green fringe fades. 0 = off; at full strength "
-       "it matches the quick Remove Green in the Color step, but here you dial it in late "
-       "and watch the live preview. Apply.</p>"
+       "<p>Raise <b>Strength</b> until the green fringe on the stars fades (0 = off). "
+       "The star split runs once when you enter the step, then the slider previews "
+       "instantly. Needs RC-Astro (StarXTerminator) — set its path in Settings.</p>"
        "<h4>Tips</h4>"
-       "<p>A little usually does it. If a stubborn fringe survives, apply the step twice "
-       "rather than pushing one pass too hard.</p>"),
+       "<p>A little usually does it. Because only the stars are affected, you can be "
+       "fairly aggressive without shifting the overall colour.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",

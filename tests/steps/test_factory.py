@@ -72,14 +72,20 @@ def test_make_step_green_fringe():
     assert isinstance(make_step("green_fringe", Settings()), GreenFringeStep)
 
 
-def test_green_fringe_step_applies_strength():
+def test_green_fringe_step_splits_then_degreens():
     import numpy as np
     from nocturne.core.image import AstroImage
     from nocturne.core.color import remove_green_fringe
     from nocturne.steps.green_fringe import GreenFringeStep
-    a = np.full((8, 8, 3), 0.3, np.float32)
-    a[..., 1] = 0.9
-    img = AstroImage(a, is_linear=False)
-    assert np.allclose(GreenFringeStep().apply(img, 0.6).data,
-                       remove_green_fringe(img, 0.6).data)
-    assert np.allclose(GreenFringeStep().apply(img, "").data, img.data)   # empty -> no-op
+
+    starless = AstroImage(np.full((4, 4, 3), 0.3, np.float32), is_linear=False)
+    stars = np.zeros((4, 4, 3), np.float32); stars[2, 2] = (0.2, 0.9, 0.3)
+    stars = AstroImage(stars, is_linear=False)
+
+    class _FakeRC:
+        def remove_stars(self, img, runner=None):
+            return starless, stars
+
+    step = GreenFringeStep(_FakeRC())
+    out = step.apply(AstroImage(np.full((4, 4, 3), 0.5, np.float32)), 0.6).data
+    assert np.allclose(out, remove_green_fringe(starless, stars, 0.6).data)

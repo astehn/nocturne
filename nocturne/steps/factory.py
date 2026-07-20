@@ -46,7 +46,9 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
     if stage_id == "saturation":
         return SaturationStep()
     if stage_id == "green_fringe":
-        return GreenFringeStep()
+        step = GreenFringeStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        step._runner = rc_runner
+        return step
     if stage_id == "local_contrast":
         return LocalContrastStep()
     if stage_id == "deconvolution":
