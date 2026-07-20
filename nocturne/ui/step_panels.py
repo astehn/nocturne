@@ -51,6 +51,7 @@ def build_panel(
     on_levels_change=None,
     on_levels_auto=None,
     on_levels_clipping=None,
+    on_sat_change=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -298,15 +299,27 @@ def build_panel(
         slider = ResetSlider(50)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         slider.setTickInterval(50)
+        sat_val = QLabel(f"{slider.value() / 100:.2f}")
+
+        def _emit_sat(*_):
+            sat_val.setText(f"{slider.value() / 100:.2f}")
+            if on_sat_change is not None:
+                on_sat_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_sat)
         apply_btn = QPushButton("Apply Saturation")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
-        lay.addWidget(QLabel("Saturation (mute ← native → boost)"))
+        sat_row = QHBoxLayout()
+        sat_row.addWidget(QLabel("Saturation (mute ← native → boost)"))
+        sat_row.addWidget(sat_val)
+        lay.addLayout(sat_row)
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
         w.sat_slider = slider
+        w.sat_val = sat_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "export":

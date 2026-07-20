@@ -154,6 +154,17 @@ def test_saturation_panel_emits_amount(qtbot):
     assert got == [0.50]
 
 
+def test_saturation_panel_has_readout_and_live_change(qapp):
+    seen = {}
+    w = build_panel(_stage("saturation"),
+                    on_sat_change=lambda a: seen.__setitem__("amt", a))
+    assert hasattr(w, "sat_val")
+    assert w.sat_val.text().strip() == "0.50"     # default slider 50 -> 0.50
+    w.sat_slider.setValue(80)                      # fires readout + on_sat_change
+    assert w.sat_val.text().strip() == "0.80"
+    assert seen.get("amt") == 0.80
+
+
 def test_export_panel_split_disabled_without_rcastro(qtbot):
     w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)

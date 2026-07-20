@@ -35,6 +35,7 @@ from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels, clipping_masks
+from ..core.saturation import saturate
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -105,6 +106,11 @@ class MainWindow(QMainWindow):
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
         self._levels_timer.timeout.connect(self._render_levels_preview)
+        # Saturation live-preview: a debounced (90 ms) non-committing render.
+        self._sat_pending = None
+        self._sat_timer = QTimer(self)
+        self._sat_timer.setSingleShot(True)
+        self._sat_timer.timeout.connect(self._render_saturation_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -711,6 +717,32 @@ class MainWindow(QMainWindow):
             rgb[hi] = (255, 60, 40)
         self.image_view.set_image(rgb_to_qimage(rgb))
 
+    # --- saturation live preview ---
+    def _on_sat_change(self, amount: float) -> None:
+        """The Saturation slider moved: stash the value and (re)start the debounce."""
+        self._sat_pending = amount
+        self._sat_timer.start(90)
+
+    def _render_saturation_preview(self) -> None:
+        """Non-committing live preview of the current Saturation setting."""
+        if self.project is None or self.current_stage_id() != "saturation":
+            return
+        # Base = the pre-Saturation state the commit (apply_current) also uses, so
+        # the preview equals what Apply produces (WYSIWYG).
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("saturation")]
+        }
+        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
+        amount = (self._sat_pending if self._sat_pending is not None
+                  else self._panel.sat_slider.value() / 100.0)
+        out = np.clip(saturate(img, amount).data, 0, 1)
+        rgb = (out * 255 + 0.5).astype(np.uint8)
+        if rgb.ndim == 2:
+            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        rgb = np.ascontiguousarray(rgb)
+        self.image_view.set_image(rgb_to_qimage(rgb))
+
     # --- history ---
     def _reset_image(self) -> None:
         if self.project is None:
@@ -812,6 +844,8 @@ class MainWindow(QMainWindow):
         if stage.id == "levels":
             self._levels_show_clipping = False  # each visit starts with clipping off
             self._levels_pending = None
+        if stage.id == "saturation":
+            self._sat_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -834,6 +868,7 @@ class MainWindow(QMainWindow):
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_levels_clipping=self._on_levels_clipping,
+            on_sat_change=self._on_sat_change,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()

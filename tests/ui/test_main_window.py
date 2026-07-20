@@ -856,6 +856,20 @@ def test_levels_clipping_preview_paints(qtbot, tmp_path):
     assert found
 
 
+def test_saturation_preview_renders(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                 # need a non-linear image
+    win._go_to_id("saturation")
+    win._on_sat_change(1.0)                # strong boost
+    win._render_saturation_preview()
+    pm = win.image_view._item.pixmap()
+    assert not pm.isNull()
+    h, w = win.project.current().data.shape[:2]
+    assert (pm.width(), pm.height()) == (w, h)
+
+
 def test_background_stage_defaults_to_light(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
