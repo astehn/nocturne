@@ -348,6 +348,27 @@ def test_export_dialog_opens_on_chosen_format(qtbot, tmp_path, monkeypatch):
     assert seen["initial"].endswith(".fits")       # suggested name matches format
 
 
+def test_stretch_live_preview_renders(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win._on_stretch_change(0.7)
+    win._render_stretch_preview()          # non-committing preview, must render
+    assert not win.image_view._item.pixmap().isNull()
+    assert win.project.current().is_linear  # preview did NOT commit the stretch
+
+
+def test_slider_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    seen = []
+    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
+    win._on_stretch_change(0.6)
+    win._render_stretch_preview()
+    assert seen  # the shared _show_preview fed the previewed data to the histogram
+
+
 def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     import nocturne.ui.main_window as mw
