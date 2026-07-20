@@ -257,8 +257,9 @@ _TOPIC_LIST = (
        "grey. 0 = off. Watch the live preview. Apply.</p>"
        "<h4>Tips</h4>"
        "<p>Only the brightest regions are affected — the sky and faint nebulosity are "
-       "left alone. If a core is completely clipped to white in the data there is no "
-       "detail left to recover; the region will just darken smoothly.</p>"),
+       "left alone. Recover Core brings back detail that is still hiding in a bright, "
+       "compressed core; but if a core is completely clipped to pure white in the data "
+       "there is nothing left to recover, and it simply stays white.</p>"),
 
     _t("local_contrast", "Local Contrast",
        "Add mid-scale depth so nebulosity pops.",

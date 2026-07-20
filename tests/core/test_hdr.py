@@ -9,7 +9,7 @@ def _blob():
     blur into the detail layer and be re-expanded."""
     h = w = 200
     lum = np.full((h, w), 0.2, np.float32)
-    yy, xx = np.mgrid[0:h, 0:w]
+    _, xx = np.mgrid[0:h, 0:w]
     ripple = 0.04 * np.sin(2 * np.pi * xx / 3.0).astype(np.float32)  # period 3px
     core = slice(60, 140)
     lum[core, core] = 0.88 + ripple[core, core]
