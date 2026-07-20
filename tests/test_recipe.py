@@ -98,3 +98,11 @@ def test_curves_option_round_trip():
     ser = serialize_option("curves", pts)
     assert ser == [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]   # JSON-friendly
     assert deserialize_option("curves", ser) == pts
+
+
+def test_star_spikes_option_round_trip():
+    from nocturne.recipe import serialize_option, deserialize_option
+    opt = (0.3, 8, 45.0)
+    ser = serialize_option("star_spikes", opt)
+    assert ser == [0.3, 8, 45.0]
+    assert deserialize_option("star_spikes", ser) == opt

@@ -40,6 +40,9 @@ def serialize_option(stage_id, option):
     if stage_id == "curves":
         pts = option if option else [(0.0, 0.0), (1.0, 1.0)]
         return [[float(x), float(y)] for x, y in pts]
+    if stage_id == "star_spikes":
+        length, count, angle = option if option else (0.0, 6, 0.0)
+        return [float(length), int(count), float(angle)]
     return option  # background / noise_sharpen: str
 
 
@@ -61,6 +64,9 @@ def deserialize_option(stage_id, value):
         return CropParams(flip_v=True)
     if stage_id == "curves":
         return [tuple(p) for p in value]
+    if stage_id == "star_spikes":
+        length, count, angle = value
+        return (float(length), int(count), float(angle))
     return value
 
 

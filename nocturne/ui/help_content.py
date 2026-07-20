@@ -34,6 +34,7 @@ _STAGE_TO_TOPIC = {
     "noise_sharpen": "noise_sharpen",
     "local_contrast": "local_contrast",
     "star_reduction": "star_reduction",
+    "star_spikes": "star_spikes",
     "enhancements": "enhancements",
     "export": "export",
 }
@@ -299,6 +300,21 @@ _TOPIC_LIST = (
        "<p>Needs RC-Astro. A little goes a long way — over-reduction leaves an unnatural, "
        "starless-looking frame. It pairs well just before the Enhancements step.</p>"),
 
+    _t("star_spikes", "Star Spikes",
+       "Add diffraction spikes to the brightest stars.",
+       "<h4>What it does</h4>"
+       "<p>Refractor scopes like the Seestar produce no diffraction spikes — the "
+       "four-point flares many people associate with an astrophoto. This step draws "
+       "tasteful, colour-matched spikes on the brightest stars.</p>"
+       "<h4>How to use it</h4>"
+       "<p><b>Length</b> sets how long the spikes are (0 = off). <b>Number of stars</b> "
+       "chooses how many of the brightest stars get spikes. <b>Rotation</b> tilts the "
+       "cross (e.g. 45° for a diagonal X). Brighter stars get bolder spikes automatically. "
+       "Watch the live preview. Apply.</p>"
+       "<h4>Tips</h4>"
+       "<p>Less is more — a few long spikes on the brightest stars looks intentional; "
+       "spikes on everything looks fake. Keep the count low.</p>"),
+
     _t("enhancements", "Enhancements",
        "Targeted finishing: boost specific colours and adjust the sky.",
        "<h4>What it does</h4>"
@@ -407,7 +423,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "recover_core", "levels", "curves", "saturation",
                               "noise_sharpen", "local_contrast", "star_reduction",
-                              "enhancements", "export")),
+                              "star_spikes", "enhancements", "export")),
     HelpSection("Tools", ("tools",)),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),

@@ -29,6 +29,7 @@ _IN_APP_TAIL = [
     Stage("noise_sharpen", "Noise Reduction", "process"),
     Stage("local_contrast", "Local Contrast", "local_contrast"),
     Stage("star_reduction", "Star Reduction", "star_reduction"),
+    Stage("star_spikes", "Star Spikes", "star_spikes"),
     Stage("enhancements", "Enhancements", "enhance"),
     Stage("export", "Export", "export"),
 ]
@@ -46,11 +47,12 @@ STEP_NAME = {
     "noise_sharpen": "Noise Reduction",
     "local_contrast": "Local Contrast",
     "star_reduction": "Star Reduction",
+    "star_spikes": "Star Spikes",
 }
 PROCESSING_ORDER = [
     "background", "color", "remove_green", "deconvolution", "stretch",
     "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-    "local_contrast", "star_reduction",
+    "local_contrast", "star_reduction", "star_spikes",
 ]
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
@@ -60,7 +62,7 @@ ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten
 # legitimate, so Export never forces a stretch).
 POST_STRETCH_IDS = frozenset({
     "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-    "local_contrast", "star_reduction", "enhancements",
+    "local_contrast", "star_reduction", "star_spikes", "enhancements",
 })
 
 
