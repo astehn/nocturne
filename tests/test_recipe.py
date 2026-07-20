@@ -90,3 +90,11 @@ def test_uncaptured_step_names():
     entries = [("Stretch", 0.5), ("Boost Red", ""), ("Darken Sky", ""), ("Boost Red", "")]
     assert uncaptured_step_names(entries) == ["Boost Red", "Darken Sky"]
     assert uncaptured_step_names([("Stretch", 0.5), ("Levels", (0, 1, 1))]) == []
+
+
+def test_curves_option_round_trip():
+    from nocturne.recipe import serialize_option, deserialize_option
+    pts = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
+    ser = serialize_option("curves", pts)
+    assert ser == [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]   # JSON-friendly
+    assert deserialize_option("curves", ser) == pts

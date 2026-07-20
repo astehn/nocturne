@@ -38,6 +38,7 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
+from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
@@ -131,6 +132,11 @@ class MainWindow(QMainWindow):
         self._recover_timer = QTimer(self)
         self._recover_timer.setSingleShot(True)
         self._recover_timer.timeout.connect(self._render_recover_preview)
+        # Curves live-preview: a debounced (90 ms) non-committing render.
+        self._curve_pending = None
+        self._curve_timer = QTimer(self)
+        self._curve_timer.setSingleShot(True)
+        self._curve_timer.timeout.connect(self._render_curve_preview)
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
@@ -509,7 +515,7 @@ class MainWindow(QMainWindow):
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
-        if stage_id in ("color", "levels"):
+        if stage_id in ("color", "levels", "curves"):
             label = ""  # option is a settings object/tuple, not user-facing text
         elif isinstance(option, float):
             label = f"{option:.2f}"
@@ -822,6 +828,31 @@ class MainWindow(QMainWindow):
                   else self._panel.recover_slider.value() / 100.0)
         self._show_preview(recover_core(img, amount).data)
 
+    # --- curves live preview ---
+    def _on_curve_change(self, points) -> None:
+        """The curve was edited: stash the points and (re)start debounce."""
+        self._curve_pending = list(points)
+        self._curve_timer.start(90)
+
+    def _render_curve_preview(self) -> None:
+        """Non-committing live preview of the current curve."""
+        if self.project is None or self.current_stage_id() != "curves":
+            return
+        img = self._preview_base("curves")
+        points = (self._curve_pending if self._curve_pending is not None
+                  else self._panel.curve_editor.points())
+        self._show_preview(apply_curve(img, points).data)
+
+    def _on_curve_preset(self, kind: str) -> None:
+        """Reset or Add-contrast preset button: seed the editor's points."""
+        if self.project is None or self.current_stage_id() != "curves":
+            return
+        if kind == "add_contrast":
+            pts = gentle_s_points(self._preview_base("curves").data)
+        else:
+            pts = [(0.0, 0.0), (1.0, 1.0)]
+        self._panel.curve_editor.set_points(pts)   # emits curveChanged -> preview
+
     # --- star reduction live preview (cached StarX split) ---
     def _sr_preceding(self) -> set:
         """Names of the steps that precede Star Reduction — the predecessors an
@@ -1041,6 +1072,8 @@ class MainWindow(QMainWindow):
             self._lc_pending = None
         if stage.id == "recover_core":
             self._recover_pending = None
+        if stage.id == "curves":
+            self._curve_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
         apply_enabled = loaded
@@ -1066,6 +1099,8 @@ class MainWindow(QMainWindow):
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_lc_change=self._on_lc_change,
+            on_curve_change=self._on_curve_change,
+            on_curve_preset=self._on_curve_preset,
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
@@ -1077,6 +1112,8 @@ class MainWindow(QMainWindow):
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
                 import_summary(self.project.current().metadata, filename=self._source_label))
+        if stage.id == "curves" and loaded:
+            new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel

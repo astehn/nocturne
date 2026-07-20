@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from ..core.color import ColorSettings
 from ..core.crop import ASPECTS
+from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
 
 _PROCESS_OPTIONS = {
@@ -51,6 +52,8 @@ def build_panel(
     on_levels_clipping=None,
     on_sat_change=None,
     on_lc_change=None,
+    on_curve_change=None,
+    on_curve_preset=None,
     on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
@@ -305,6 +308,37 @@ def build_panel(
         w.gamma_val = gamma_val
         w.white_val = white_val
         w.clip_check = clip_check
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "curves":
+        lay.addWidget(_desc_label(
+            "Drag the curve to add midtone contrast. Drop a point on the "
+            "background peak to pin the sky. Double-click a point to remove it."))
+        editor = CurveEditor()
+        if on_curve_change is not None:
+            editor.curveChanged.connect(lambda pts: on_curve_change(pts))
+        lay.addWidget(editor)
+
+        preset_row = QHBoxLayout()
+        reset_btn = QPushButton("Reset")
+        add_btn = QPushButton("Add contrast")
+        if on_curve_preset is not None:
+            reset_btn.clicked.connect(lambda: on_curve_preset("reset"))
+            add_btn.clicked.connect(lambda: on_curve_preset("add_contrast"))
+        preset_row.addWidget(reset_btn)
+        preset_row.addWidget(add_btn)
+        lay.addLayout(preset_row)
+
+        apply_btn = QPushButton("Apply Curves")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(editor.points()))
+        lay.addWidget(apply_btn)
+
+        w.curve_editor = editor
+        w.reset_btn = reset_btn
+        w.add_contrast_btn = add_btn
         w.apply_btn = apply_btn
 
     elif stage.kind == "saturation":

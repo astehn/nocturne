@@ -29,6 +29,7 @@ _STAGE_TO_TOPIC = {
     "stretch": "stretch",
     "recover_core": "recover_core",
     "levels": "levels",
+    "curves": "curves",
     "saturation": "saturation",
     "noise_sharpen": "noise_sharpen",
     "local_contrast": "local_contrast",
@@ -224,6 +225,22 @@ _TOPIC_LIST = (
        "point would clip everything to black, so it must come after Stretch. Nocturne handles "
        "that ordering for you. Small black-point nudges go a long way.</p>"),
 
+    _t("curves", "Curves",
+       "Shape a tone curve to add midtone contrast.",
+       "<h4>What it does</h4>"
+       "<p>Bends the tones with a smooth curve. Where Levels sets the black point, "
+       "midtone brightness and white point, Curves lets you add <b>contrast</b> in "
+       "the middle — steepening the slope so the nebula gains punch — while leaving "
+       "the darkest and brightest tones anchored.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Click the curve to add a point, drag to move it, double-click to remove it. "
+       "The faint histogram behind the grid shows where the sky and nebula sit — drop a "
+       "point on the sky peak and leave it to pin the background, then lift the midtones. "
+       "Or press <b>Add contrast</b> for a gentle S. Watch the live preview. Apply.</p>"
+       "<h4>Tips</h4>"
+       "<p>Small moves go a long way. A steep curve can crush the faint outer nebulosity "
+       "into the background — keep an eye on the dim detail as you pull.</p>"),
+
     _t("saturation", "Saturation",
        "Mute or boost colour intensity.",
        "<h4>What it does</h4>"
@@ -388,8 +405,9 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started",)),
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
-                              "recover_core", "levels", "saturation", "noise_sharpen",
-                              "local_contrast", "star_reduction", "enhancements", "export")),
+                              "recover_core", "levels", "curves", "saturation",
+                              "noise_sharpen", "local_contrast", "star_reduction",
+                              "enhancements", "export")),
     HelpSection("Tools", ("tools",)),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),

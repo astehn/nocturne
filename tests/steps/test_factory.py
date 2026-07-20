@@ -44,3 +44,22 @@ def test_recover_core_step_applies_amount():
     assert np.allclose(got, recover_core(img, 0.6).data)
     # empty option -> no-op amount 0
     assert np.allclose(RecoverCoreStep().apply(img, "").data, img.data, atol=1e-6)
+
+
+def test_make_step_curves():
+    from nocturne.steps.factory import make_step
+    from nocturne.steps.curves import CurvesStep
+    from nocturne.settings import Settings
+    assert isinstance(make_step("curves", Settings()), CurvesStep)
+
+
+def test_curves_step_applies_points():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.curves import apply_curve
+    from nocturne.steps.curves import CurvesStep
+    img = AstroImage(np.full((16, 16, 3), 0.5, np.float32), is_linear=False)
+    pts = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
+    assert np.allclose(CurvesStep().apply(img, pts).data, apply_curve(img, pts).data)
+    # empty option -> identity no-op
+    assert np.allclose(CurvesStep().apply(img, "").data, img.data, atol=1e-4)

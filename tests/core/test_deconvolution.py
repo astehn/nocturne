@@ -28,3 +28,14 @@ def test_sharpen_preserves_is_linear_and_mono():
     out = sharpen(img, 0.3)
     assert out.is_linear is True
     assert out.data.ndim == 2
+
+
+def test_sharpen_output_is_finite_after_curve_build():
+    # Regression: building a curve LUT upstream can leave a sticky CPU FP flag
+    # that made skimage's unsharp_mask return NaN on the next call. sharpen must
+    # still emit only finite pixels (never NaN reaching an export).
+    from nocturne.core.curves import build_lut
+    build_lut([(0.0, 0.0), (0.15, 0.15), (0.45, 0.40), (0.79, 0.84), (1.0, 1.0)])
+    data = np.random.default_rng(1).random((16, 16, 3)).astype(np.float32)
+    out = sharpen(AstroImage(data), 0.5)
+    assert np.all(np.isfinite(out.data))

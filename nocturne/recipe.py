@@ -37,6 +37,9 @@ def serialize_option(stage_id, option):
             return float(option)
         except (TypeError, ValueError):
             return option   # legacy string
+    if stage_id == "curves":
+        pts = option if option else [(0.0, 0.0), (1.0, 1.0)]
+        return [[float(x), float(y)] for x, y in pts]
     return option  # background / noise_sharpen: str
 
 
@@ -56,6 +59,8 @@ def deserialize_option(stage_id, value):
         return CropParams(flip_h=True)
     if stage_id == "flip_v":
         return CropParams(flip_v=True)
+    if stage_id == "curves":
+        return [tuple(p) for p in value]
     return value
 
 
