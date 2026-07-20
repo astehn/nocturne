@@ -44,9 +44,16 @@ def test_count_zero_is_noop():
 
 def test_spikes_brighten_the_four_arms():
     out = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0).data
-    assert out[32, 35].max() > 0.05        # on the horizontal arm (3 px out)
-    assert out[35, 32].max() > 0.05        # on the vertical arm
-    assert out[35, 35].max() < 0.02        # off any arm -> essentially untouched
+    assert out[32, 34].max() > 0.05        # on the horizontal arm (2 px out)
+    assert out[34, 32].max() > 0.05        # on the vertical arm
+    assert out[44, 44].max() < 0.02        # far off any arm -> untouched
+
+
+def test_core_has_a_bloom_glow():
+    # The star core carries a soft bloom so spikes emanate from a glow, not a dot.
+    out = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0).data
+    assert out[32, 32].max() > 0.3         # bright bloomed core
+    assert out[33, 33].max() > 0.1         # glow bleeds a little off-axis near the core
 
 
 def test_brighter_star_gets_longer_arm():
@@ -65,8 +72,8 @@ def test_brighter_star_gets_longer_arm():
 
 def test_rotation_puts_spikes_on_the_diagonal():
     out = add_spikes(_dark(), _one_star(), 1.0, 1, 45.0).data
-    assert out[35, 35].max() > 0.05        # diagonal arm now lit
-    assert out[32, 35].max() < 0.02        # pure horizontal no longer lit
+    assert out[34, 34].max() > 0.05        # diagonal arm now lit
+    assert out[32, 40].max() < 0.02        # beyond the original horizontal axis: dark
 
 
 def test_star_colour_tints_its_spikes():

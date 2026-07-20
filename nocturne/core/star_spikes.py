@@ -9,7 +9,12 @@ from .image import AstroImage
 
 _MAX_STARS = 100          # detection cap; the slider picks how many actually draw
 _MAX_LEN_FRAC = 0.08      # longest arm as a fraction of the short edge
-_THICKNESS = 1.0          # gaussian sigma (px) across each arm
+_FALLOFF = 2.4            # arm brightness concentration near the core (higher = needlier)
+_CORE_SIGMA = 1.4         # arm half-thickness (px) at the core
+_TIP_SIGMA = 0.45         # arm half-thickness (px) at the tip (tapers to a point)
+_BLOOM_FRAC = 0.09        # core bloom radius as a fraction of arm length
+_BLOOM_MIN = 1.5          # minimum bloom radius (px)
+_BLOOM_MAX = 5.0          # maximum bloom radius (px) — keep the glow from going milky
 
 
 @dataclass
@@ -53,22 +58,53 @@ def detect_stars(data: np.ndarray) -> list[Star]:
     return stars
 
 
-def _splat_line(layer, xs, ys, fall, col):
-    """Accumulate a gaussian-thickness line into `layer` (HxWx3): each sample
-    point (xs[i], ys[i]) with intensity fall[i], tinted by `col`."""
+def _bbox(cx, cy, tipx, tipy, pad, h, w):
+    """Clamped integer bounding box around a segment, padded by `pad` px."""
+    x0 = int(max(0, np.floor(min(cx, tipx) - pad)))
+    x1 = int(min(w - 1, np.ceil(max(cx, tipx) + pad)))
+    y0 = int(max(0, np.floor(min(cy, tipy) - pad)))
+    y1 = int(min(h - 1, np.ceil(max(cy, tipy) + pad)))
+    return x0, x1, y0, y1
+
+
+def _splat_arm(layer, cx, cy, ang, arm, wgt, col):
+    """Rasterise one tapered, anti-aliased spike arm into `layer` as a distance
+    field: brightness falls off sharply toward the tip (needle-like) and the
+    cross-section thins from `_CORE_SIGMA` at the core to `_TIP_SIGMA` at the tip.
+    Accumulated with `np.maximum` so crossing arms don't over-brighten the core."""
     h, w = layer.shape[:2]
-    xi = np.round(xs).astype(np.int64)
-    yi = np.round(ys).astype(np.int64)
-    for dxp in (-1, 0, 1):
-        for dyp in (-1, 0, 1):
-            wgt = float(np.exp(-(dxp * dxp + dyp * dyp) / (2.0 * _THICKNESS ** 2)))
-            xx = xi + dxp
-            yy = yi + dyp
-            m = (xx >= 0) & (xx < w) & (yy >= 0) & (yy < h)
-            if not np.any(m):
-                continue
-            contrib = (fall[m] * wgt)[:, None] * np.asarray(col, np.float32)[None, :]
-            np.add.at(layer, (yy[m], xx[m]), contrib)
+    dx, dy = float(np.cos(ang)), float(np.sin(ang))
+    x0, x1, y0, y1 = _bbox(cx, cy, cx + arm * dx, cy + arm * dy,
+                           _CORE_SIGMA * 3.0 + 1.0, h, w)
+    if x1 < x0 or y1 < y0:
+        return
+    gy, gx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+    rx = gx - cx
+    ry = gy - cy
+    t = rx * dx + ry * dy                          # distance along the arm
+    perp = rx * (-dy) + ry * dx                    # perpendicular distance
+    frac = np.clip(t / arm, 0.0, 1.0)
+    sigma = _TIP_SIGMA + (_CORE_SIGMA - _TIP_SIGMA) * (1.0 - frac)
+    inten = wgt * (1.0 - frac) ** _FALLOFF * np.exp(-(perp ** 2) / (2.0 * sigma ** 2))
+    inten = np.where((t >= 0.0) & (t <= arm), inten, 0.0).astype(np.float32)
+    contrib = inten[:, :, None] * np.asarray(col, np.float32)[None, None, :]
+    sub = layer[y0:y1 + 1, x0:x1 + 1]
+    np.maximum(sub, contrib, out=sub)
+
+
+def _splat_bloom(layer, cx, cy, wgt, col, radius):
+    """A soft circular core glow so spikes emanate from a bloomed star rather
+    than a bare dot. Max-blended into `layer`."""
+    h, w = layer.shape[:2]
+    x0, x1, y0, y1 = _bbox(cx, cy, cx, cy, radius * 3.0 + 1.0, h, w)
+    if x1 < x0 or y1 < y0:
+        return
+    gy, gx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+    r2 = (gx - cx) ** 2 + (gy - cy) ** 2
+    glow = (wgt * np.exp(-r2 / (2.0 * radius ** 2))).astype(np.float32)
+    contrib = glow[:, :, None] * np.asarray(col, np.float32)[None, None, :]
+    sub = layer[y0:y1 + 1, x0:x1 + 1]
+    np.maximum(sub, contrib, out=sub)
 
 
 def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
@@ -97,11 +133,10 @@ def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
         arm = max_len * (0.4 + 0.6 * wgt) * length
         if arm < 1.0:
             continue
-        n = int(arm * 2) + 2
-        ts = np.linspace(0.0, arm, n)
-        fall = wgt * (1.0 - ts / arm)
+        bloom_r = float(np.clip(_BLOOM_FRAC * arm, _BLOOM_MIN, _BLOOM_MAX))
+        _splat_bloom(layer, s.x, s.y, wgt, s.color, bloom_r)
         for a in arm_angles:
-            _splat_line(layer, s.x + ts * np.cos(a), s.y + ts * np.sin(a), fall, s.color)
+            _splat_arm(layer, s.x, s.y, a, arm, wgt, s.color)
 
     screened = 1.0 - (1.0 - rgb) * (1.0 - np.clip(layer, 0.0, 1.0))
     out = np.clip(screened, 0.0, 1.0)
