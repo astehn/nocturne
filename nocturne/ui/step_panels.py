@@ -45,6 +45,7 @@ def build_panel(
     on_export=None,
     on_remove_green=None,
     on_enhance=None,
+    on_stretch_change=None,
     on_levels_change=None,
     on_levels_auto=None,
     on_levels_clipping=None,
@@ -210,6 +211,14 @@ def build_panel(
         target.currentTextChanged.connect(
             lambda t: slider.setValue(STRETCH_TARGET_DEFAULTS[t])
         )
+        stretch_val = QLabel(f"{slider.value() / 100:.2f}")
+
+        def _emit_stretch(*_):
+            stretch_val.setText(f"{slider.value() / 100:.2f}")
+            if on_stretch_change is not None:
+                on_stretch_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_stretch)
         apply_btn = QPushButton("Apply Stretch")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
@@ -217,11 +226,15 @@ def build_panel(
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
         lay.addWidget(QLabel("Target"))
         lay.addWidget(target)
-        lay.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
+        agg_row = QHBoxLayout()
+        agg_row.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
+        agg_row.addWidget(stretch_val)
+        lay.addLayout(agg_row)
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
         w.target_box = target
         w.stretch_slider = slider
+        w.stretch_val = stretch_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "levels":

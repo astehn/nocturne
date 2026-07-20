@@ -38,6 +38,8 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
 from ..core.star_reduction import reduce_stars
+from ..core.stretch import apply_stretch
+from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -108,6 +110,11 @@ class MainWindow(QMainWindow):
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
         self._levels_timer.timeout.connect(self._render_levels_preview)
+        # Stretch live-preview: a debounced (90 ms) non-committing render.
+        self._stretch_pending = None
+        self._stretch_timer = QTimer(self)
+        self._stretch_timer.setSingleShot(True)
+        self._stretch_timer.timeout.connect(self._render_stretch_preview)
         # Saturation live-preview: a debounced (90 ms) non-committing render.
         self._sat_pending = None
         self._sat_timer = QTimer(self)
@@ -704,6 +711,28 @@ class MainWindow(QMainWindow):
         self._levels_show_clipping = bool(checked)
         self._render_levels_preview()
 
+    def _preview_base(self, stage_id: str):
+        """The pre-<stage> image the commit also operates on, so a live preview
+        equals what Apply will produce (WYSIWYG)."""
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
+        }
+        return self.project.state_at(
+            self._leading_kept(self.project.entries(), preceding))
+
+    def _show_preview(self, out, rgb=None) -> None:
+        """Push a previewed float array to BOTH the canvas and the histogram, so
+        the histogram tracks the slider live. `rgb` overrides the canvas pixels
+        (e.g. the Levels clipping overlay); the histogram always uses clean `out`."""
+        out = np.clip(out, 0.0, 1.0).astype(np.float32)
+        if rgb is None:
+            rgb = (out * 255 + 0.5).astype(np.uint8)
+            if rgb.ndim == 2:
+                rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+        self.histogram_view.set_image(AstroImage(out, is_linear=False))
+
     def _render_levels_preview(self) -> None:
         """Non-committing live preview of the current Levels settings, with an
         optional shadow/highlight clipping overlay."""
@@ -715,13 +744,7 @@ class MainWindow(QMainWindow):
             b = self._panel.black_slider.value() / 100.0
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
-        # Base = the pre-Levels state the commit (apply_current) also uses, so the
-        # preview equals what Apply produces even after a prior Levels apply (WYSIWYG).
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("levels")]
-        }
-        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
+        img = self._preview_base("levels")
         out = np.clip(apply_levels(img, b, g, w).data, 0, 1)
         rgb = (out * 255 + 0.5).astype(np.uint8)
         if rgb.ndim == 2:
@@ -731,7 +754,22 @@ class MainWindow(QMainWindow):
             sh, hi = clipping_masks(img.data, b, w)
             rgb[sh] = (40, 120, 255)
             rgb[hi] = (255, 60, 40)
-        self.image_view.set_image(rgb_to_qimage(rgb))
+        self._show_preview(out, rgb)
+
+    # --- stretch live preview ---
+    def _on_stretch_change(self, amount: float) -> None:
+        """The Stretch aggressiveness slider moved: stash + (re)start the debounce."""
+        self._stretch_pending = amount
+        self._stretch_timer.start(90)
+
+    def _render_stretch_preview(self) -> None:
+        """Non-committing live preview of the Stretch aggressiveness."""
+        if self.project is None or self.current_stage_id() != "stretch":
+            return
+        img = self._preview_base("stretch")
+        amount = (self._stretch_pending if self._stretch_pending is not None
+                  else self._panel.stretch_slider.value() / 100.0)
+        self._show_preview(apply_stretch(img, amount).data)
 
     # --- saturation live preview ---
     def _on_sat_change(self, amount: float) -> None:
@@ -743,21 +781,10 @@ class MainWindow(QMainWindow):
         """Non-committing live preview of the current Saturation setting."""
         if self.project is None or self.current_stage_id() != "saturation":
             return
-        # Base = the pre-Saturation state the commit (apply_current) also uses, so
-        # the preview equals what Apply produces (WYSIWYG).
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("saturation")]
-        }
-        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
+        img = self._preview_base("saturation")
         amount = (self._sat_pending if self._sat_pending is not None
                   else self._panel.sat_slider.value() / 100.0)
-        out = np.clip(saturate(img, amount).data, 0, 1)
-        rgb = (out * 255 + 0.5).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        rgb = np.ascontiguousarray(rgb)
-        self.image_view.set_image(rgb_to_qimage(rgb))
+        self._show_preview(saturate(img, amount).data)
 
     # --- local contrast live preview ---
     def _on_lc_change(self, amount: float) -> None:
@@ -769,21 +796,10 @@ class MainWindow(QMainWindow):
         """Non-committing live preview of the current Local Contrast setting."""
         if self.project is None or self.current_stage_id() != "local_contrast":
             return
-        # Base = the pre-Local-Contrast state the commit (apply_current) also uses,
-        # so the preview equals what Apply produces (WYSIWYG).
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("local_contrast")]
-        }
-        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
+        img = self._preview_base("local_contrast")
         amount = (self._lc_pending if self._lc_pending is not None
                   else self._panel.lc_slider.value() / 100.0)
-        out = np.clip(enhance(img, amount).data, 0, 1)
-        rgb = (out * 255 + 0.5).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        rgb = np.ascontiguousarray(rgb)
-        self.image_view.set_image(rgb_to_qimage(rgb))
+        self._show_preview(enhance(img, amount).data)
 
     # --- star reduction live preview (cached StarX split) ---
     def _sr_preceding(self) -> set:
@@ -871,12 +887,7 @@ class MainWindow(QMainWindow):
         amount = (self._sr_pending if self._sr_pending is not None
                   else self._panel.sr_slider.value() / 100.0)
         _, starless, stars = self._sr_layers
-        out = np.clip(reduce_stars(starless, stars, amount).data, 0, 1)
-        rgb = (out * 255 + 0.5).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        rgb = np.ascontiguousarray(rgb)
-        self.image_view.set_image(rgb_to_qimage(rgb))
+        self._show_preview(reduce_stars(starless, stars, amount).data)
 
     def _apply_star_reduction(self, amount) -> None:
         """Commit the reduction at the current amount using the cached split — no
@@ -998,6 +1009,8 @@ class MainWindow(QMainWindow):
     def _rebuild_panel(self) -> None:
         stage = self._stages[self._stage]
         loaded = self.project is not None
+        if stage.id == "stretch":
+            self._stretch_pending = None
         if stage.id == "levels":
             self._levels_show_clipping = False  # each visit starts with clipping off
             self._levels_pending = None
@@ -1024,6 +1037,7 @@ class MainWindow(QMainWindow):
             on_export=self.export_final,
             on_remove_green=self._remove_green,
             on_enhance=self._enhance,
+            on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_levels_clipping=self._on_levels_clipping,

@@ -113,6 +113,18 @@ def test_levels_panel_controls(qapp):
     w.clip_check.setChecked(True); assert seen.get("clip") is True
 
 
+def test_stretch_panel_has_live_preview_readout(qtbot):
+    seen = {}
+    w = build_panel(_stage("stretch"),
+                    on_stretch_change=lambda a: seen.__setitem__("amt", a))
+    qtbot.addWidget(w)
+    assert hasattr(w, "stretch_slider")
+    assert hasattr(w, "stretch_val")
+    w.stretch_slider.setValue(70)
+    assert w.stretch_val.text().strip() == "0.70"   # numeric readout tracks the slider
+    assert seen.get("amt") == 0.70                   # live-preview hook fires
+
+
 def test_star_reduction_panel_has_slider_disabled_initially(qtbot):
     w = build_panel(_stage("star_reduction"))
     qtbot.addWidget(w)
