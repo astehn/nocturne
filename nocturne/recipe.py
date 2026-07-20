@@ -32,7 +32,12 @@ def serialize_option(stage_id, option):
         return [b, g, w]
     if stage_id == "stretch":
         return float(option) if option not in (None, "") else 0.5
-    return option  # background / noise_sharpen / local_contrast / star_reduction: str
+    if stage_id == "local_contrast":
+        try:
+            return float(option)
+        except (TypeError, ValueError):
+            return option   # legacy string
+    return option  # background / noise_sharpen / star_reduction: str
 
 
 def deserialize_option(stage_id, value):

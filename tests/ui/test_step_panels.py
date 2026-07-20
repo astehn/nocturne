@@ -165,6 +165,33 @@ def test_saturation_panel_has_readout_and_live_change(qapp):
     assert seen.get("amt") == 0.80
 
 
+def test_local_contrast_panel_default_is_off(qtbot):
+    w = build_panel(_stage("local_contrast"))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "local_contrast"
+    assert w.lc_slider.value() == 0
+
+
+def test_local_contrast_panel_emits_amount(qtbot):
+    got = []
+    w = build_panel(_stage("local_contrast"), on_apply=got.append)
+    qtbot.addWidget(w)
+    w.lc_slider.setValue(60)
+    w.apply_btn.click()
+    assert got == [0.60]
+
+
+def test_local_contrast_panel_has_readout_and_live_change(qapp):
+    seen = {}
+    w = build_panel(_stage("local_contrast"),
+                    on_lc_change=lambda a: seen.__setitem__("amt", a))
+    assert hasattr(w, "lc_val")
+    assert w.lc_val.text().strip() == "0.00"       # default slider 0 -> 0.00
+    w.lc_slider.setValue(80)                        # fires readout + on_lc_change
+    assert w.lc_val.text().strip() == "0.80"
+    assert seen.get("amt") == 0.80
+
+
 def test_export_panel_split_disabled_without_rcastro(qtbot):
     w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)

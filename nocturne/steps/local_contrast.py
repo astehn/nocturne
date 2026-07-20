@@ -11,10 +11,14 @@ class LocalContrastStep(Step):
     name = "Local Contrast"
 
     def options(self) -> list[str]:
-        return ["light", "medium", "strong"]
+        return []
 
     def default_option(self) -> str:
-        return "medium"
+        return ""
 
-    def apply(self, img: AstroImage, option: str) -> AstroImage:
-        return enhance(img, _AMOUNT[option])
+    def apply(self, img: AstroImage, option) -> AstroImage:
+        if isinstance(option, str) and option in _AMOUNT:
+            amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
+        else:
+            amount = float(option) if option not in (None, "") else 0.0
+        return enhance(img, amount)

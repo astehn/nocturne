@@ -16,6 +16,19 @@ def test_option_roundtrips():
     assert isinstance(cs, ColorSettings) and cs.remove_green is True
 
 
+def test_local_contrast_float_roundtrips():
+    assert serialize_option("local_contrast", 0.6) == 0.6
+    assert deserialize_option("local_contrast",
+                              serialize_option("local_contrast", 0.6)) == 0.6
+
+
+def test_local_contrast_legacy_string_roundtrips():
+    # Pre-slider recipes stored light/medium/strong strings.
+    assert serialize_option("local_contrast", "medium") == "medium"
+    assert deserialize_option("local_contrast",
+                              serialize_option("local_contrast", "medium")) == "medium"
+
+
 def test_crop_serialize_drops_bounds():
     val = serialize_option("crop", CropParams(bounds=(1, 2, 3, 4), aspect="1:1", rotate=90))
     assert "bounds" not in val

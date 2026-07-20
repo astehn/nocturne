@@ -36,6 +36,7 @@ from .log_panel import LogPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
+from ..core.local_contrast import enhance
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -111,6 +112,11 @@ class MainWindow(QMainWindow):
         self._sat_timer = QTimer(self)
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
+        # Local-contrast live-preview: a debounced (90 ms) non-committing render.
+        self._lc_pending = None
+        self._lc_timer = QTimer(self)
+        self._lc_timer.setSingleShot(True)
+        self._lc_timer.timeout.connect(self._render_lc_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -743,6 +749,32 @@ class MainWindow(QMainWindow):
         rgb = np.ascontiguousarray(rgb)
         self.image_view.set_image(rgb_to_qimage(rgb))
 
+    # --- local contrast live preview ---
+    def _on_lc_change(self, amount: float) -> None:
+        """The Local Contrast slider moved: stash the value and (re)start debounce."""
+        self._lc_pending = amount
+        self._lc_timer.start(90)
+
+    def _render_lc_preview(self) -> None:
+        """Non-committing live preview of the current Local Contrast setting."""
+        if self.project is None or self.current_stage_id() != "local_contrast":
+            return
+        # Base = the pre-Local-Contrast state the commit (apply_current) also uses,
+        # so the preview equals what Apply produces (WYSIWYG).
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("local_contrast")]
+        }
+        img = self.project.state_at(self._leading_kept(self.project.entries(), preceding))
+        amount = (self._lc_pending if self._lc_pending is not None
+                  else self._panel.lc_slider.value() / 100.0)
+        out = np.clip(enhance(img, amount).data, 0, 1)
+        rgb = (out * 255 + 0.5).astype(np.uint8)
+        if rgb.ndim == 2:
+            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        rgb = np.ascontiguousarray(rgb)
+        self.image_view.set_image(rgb_to_qimage(rgb))
+
     # --- history ---
     def _reset_image(self) -> None:
         if self.project is None:
@@ -846,6 +878,8 @@ class MainWindow(QMainWindow):
             self._levels_pending = None
         if stage.id == "saturation":
             self._sat_pending = None
+        if stage.id == "local_contrast":
+            self._lc_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -869,6 +903,7 @@ class MainWindow(QMainWindow):
             on_levels_auto=self._on_levels_auto,
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
+            on_lc_change=self._on_lc_change,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()

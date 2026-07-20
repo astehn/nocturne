@@ -25,7 +25,7 @@ _IN_APP_TAIL = [
     Stage("levels", "Levels", "levels"),
     Stage("saturation", "Saturation", "saturation"),
     Stage("noise_sharpen", "Noise Reduction", "process"),
-    Stage("local_contrast", "Local Contrast", "process"),
+    Stage("local_contrast", "Local Contrast", "local_contrast"),
     Stage("star_reduction", "Star Reduction", "process"),
     Stage("enhancements", "Enhancements", "enhance"),
     Stage("export", "Export", "export"),

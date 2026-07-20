@@ -14,7 +14,6 @@ _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
-    "local_contrast": ["light", "medium", "strong"],
     "star_reduction": ["light", "medium", "strong"],
 }
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
@@ -52,6 +51,7 @@ def build_panel(
     on_levels_auto=None,
     on_levels_clipping=None,
     on_sat_change=None,
+    on_lc_change=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -320,6 +320,33 @@ def build_panel(
         lay.addWidget(apply_btn)
         w.sat_slider = slider
         w.sat_val = sat_val
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "local_contrast":
+        lay.addWidget(_desc_label(
+            "Drag up to add mid-scale depth. 0 = off."))
+        slider = ResetSlider(0)
+        lc_val = QLabel(f"{slider.value() / 100:.2f}")
+
+        def _emit_lc(*_):
+            lc_val.setText(f"{slider.value() / 100:.2f}")
+            if on_lc_change is not None:
+                on_lc_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_lc)
+        apply_btn = QPushButton("Apply Local Contrast")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        lc_row = QHBoxLayout()
+        lc_row.addWidget(QLabel("Strength (off → full)"))
+        lc_row.addWidget(lc_val)
+        lay.addLayout(lc_row)
+        lay.addWidget(slider)
+        lay.addWidget(apply_btn)
+        w.lc_slider = slider
+        w.lc_val = lc_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "export":
