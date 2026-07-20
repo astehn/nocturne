@@ -10,10 +10,15 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       Validated on real data (recovers usable core detail on M31). Fully-clipped-to-white cores stay
       white by design (nothing to recover) — accepted, help text says so. Future upgrade path:
       multiscale (à-trous/Gaussian-pyramid) HDR on the same mask/luminance plumbing.
-- [ ] **Curves — S-curve / tone curve (HIGH).** The one classic control Nocturne lacks; Levels
-      can't add midtone contrast a draggable curve can. numpy-easy (monotone-cubic LUT on
-      luminance, background-pinned so the sky isn't lifted). Ship a gentle "add contrast" preset.
-      Likely its own step; add live preview (slider steps pattern). Risk: crushing shadows.
+- [x] **Curves — S-curve / tone curve (HIGH; done 2026-07-20).** Shipped the "Curves" step (after
+      Levels): a draggable `CurveEditor` widget (monotone-cubic / Fritsch–Carlson LUT on luminance,
+      hue-preserved) with pinned corners, a faint histogram backdrop, Reset + background-aware
+      "Add contrast" preset, and live preview + live histogram. User-validated ("works as it should,
+      very useful"); may fine-tune the Add-contrast preset strength after more use.
+      Deferred polish (from final review): (a) wrap `build_lut`'s arithmetic in `np.errstate` to clear
+      the sticky FP flag at the source (root-cause complement to the `sharpen` NaN guard already
+      shipped); (b) `CurveEditor.mousePressEvent` add-then-regrab narrow edge case when a click's x is
+      within the 0.02 min-gap of an existing point (cosmetic). Future: per-channel R/G/B curves.
 - [ ] **Diffraction / star spikes (MED, high wow).** Aesthetic flourish (refractors like Seestar
       get none). Detect brightest N stars, draw additive 4-point spikes w/ radial falloff scaled to
       brightness, screen-blend; tap-to-stack button + length slider. Gate default low so it doesn't
