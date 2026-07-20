@@ -38,6 +38,7 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
+from ..core.color import remove_green_fringe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.stretch import apply_stretch
@@ -137,6 +138,15 @@ class MainWindow(QMainWindow):
         self._curve_timer = QTimer(self)
         self._curve_timer.setSingleShot(True)
         self._curve_timer.timeout.connect(self._render_curve_preview)
+        # Green-fringe live-preview: the (slow) StarX split runs once on entering
+        # the step (async, cached in _fringe_layers); the slider then previews the
+        # instant de-green + recombine via a debounced (90 ms) render.
+        self._fringe_layers = None    # (sig, starless, stars) once the split lands
+        self._fringe_pending = None
+        self._fringe_ready = False
+        self._fringe_timer = QTimer(self)
+        self._fringe_timer.setSingleShot(True)
+        self._fringe_timer.timeout.connect(self._render_fringe_preview)
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
@@ -853,6 +863,93 @@ class MainWindow(QMainWindow):
             pts = [(0.0, 0.0), (1.0, 1.0)]
         self._panel.curve_editor.set_points(pts)   # emits curveChanged -> preview
 
+    # --- green fringe live preview (cached StarX split) ---
+    def _fringe_preceding(self) -> set:
+        """Names of the steps that precede Remove Green Fringe — the predecessors
+        a commit preserves (and whose state the split runs on)."""
+        return set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("green_fringe")]
+        }
+
+    def _fringe_base(self):
+        """The pre-Remove-Green-Fringe image the split + commit both operate on."""
+        return self.project.state_at(
+            self._leading_kept(self.project.entries(), self._fringe_preceding()))
+
+    def _setup_green_fringe(self) -> None:
+        """On entering Remove Green Fringe: run the StarX split once, off-thread,
+        and cache it. The slider then previews the instant de-green recombine. A
+        cached split for the same base is reused; without RC-Astro the step is
+        gated with a note and the slider/Apply stay disabled."""
+        self._fringe_pending = None
+        if self.project is None:
+            return
+        panel = self._panel
+        if not rcastro_valid(self.settings):
+            self._fringe_ready = False
+            if hasattr(panel, "fringe_slider"):
+                panel.fringe_status.setText("Needs RC-Astro — set its path in Settings.")
+                panel.fringe_slider.setEnabled(False)
+                panel.apply_btn.setEnabled(False)
+            return
+        base = self._fringe_base()
+        sig = self._sr_sig(base)
+        if self._fringe_layers and self._fringe_layers[0] == sig:
+            self._fringe_ready = True
+            if hasattr(panel, "fringe_slider"):
+                panel.fringe_slider.setEnabled(True)
+                panel.apply_btn.setEnabled(True)
+                panel.fringe_status.setText("")
+            self._render_fringe_preview()
+            return
+        self._fringe_ready = False
+        if hasattr(panel, "fringe_slider"):
+            panel.fringe_slider.setEnabled(False)
+            panel.apply_btn.setEnabled(False)
+            panel.fringe_status.setText("Separating stars…")
+        self._run_busy(lambda: self._remove_stars(base),
+                       lambda layers: self._on_fringe_split(sig, layers),
+                       "Separating stars…", "Star separation failed")
+
+    def _on_fringe_split(self, sig, layers) -> None:
+        if self.current_stage_id() != "green_fringe":
+            return
+        self._fringe_layers = (sig, layers[0], layers[1])
+        self._fringe_ready = True
+        if hasattr(self._panel, "fringe_slider"):
+            self._panel.fringe_slider.setEnabled(True)
+            self._panel.apply_btn.setEnabled(True)
+            self._panel.fringe_status.setText("")
+        self._render_fringe_preview()
+
+    def _on_fringe_change(self, strength: float) -> None:
+        self._fringe_pending = strength
+        if self._fringe_ready:
+            self._fringe_timer.start(90)
+
+    def _render_fringe_preview(self) -> None:
+        if (self.project is None or self.current_stage_id() != "green_fringe"
+                or not self._fringe_ready or not self._fringe_layers):
+            return
+        strength = (self._fringe_pending if self._fringe_pending is not None
+                    else self._panel.fringe_slider.value() / 100.0)
+        _, starless, stars = self._fringe_layers
+        self._show_preview(remove_green_fringe(starless, stars, strength).data)
+
+    def _apply_green_fringe(self, strength) -> None:
+        if self.project is None or not self._fringe_ready or self._busy or not self._fringe_layers:
+            return
+        self.project.jump_back(
+            self._leading_kept(self.project.entries(), self._fringe_preceding()))
+        _, starless, stars = self._fringe_layers
+        result = remove_green_fringe(starless, stars, float(strength))
+        self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
+        self.log_panel.append_entry(
+            format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
+        self._status.setText("")
+        self._refresh()
+
     # --- star reduction live preview (cached StarX split) ---
     def _sr_preceding(self) -> set:
         """Names of the steps that precede Star Reduction — the predecessors an
@@ -1074,6 +1171,8 @@ class MainWindow(QMainWindow):
             self._recover_pending = None
         if stage.id == "curves":
             self._curve_pending = None
+        if stage.id == "green_fringe":
+            self._fringe_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
         apply_enabled = loaded
@@ -1099,6 +1198,8 @@ class MainWindow(QMainWindow):
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_lc_change=self._on_lc_change,
+            on_fringe_change=self._on_fringe_change,
+            on_fringe_apply=self._apply_green_fringe,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
             on_recover_change=self._on_recover_change,
@@ -1120,6 +1221,8 @@ class MainWindow(QMainWindow):
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         if stage.id == "star_reduction":
             self._setup_star_reduction()  # kick off the cached StarX split on entry
+        if stage.id == "green_fringe":
+            self._setup_green_fringe()
         self._update_explainer()
 
     def _refresh(self) -> None:

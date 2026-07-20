@@ -378,3 +378,23 @@ def test_curves_panel_has_editor_and_presets(qtbot):
     w.reset_btn.click()
     w.add_contrast_btn.click()
     assert presets == ["reset", "add_contrast"]
+
+
+def test_green_fringe_panel_gated_and_wired(qtbot):
+    changed, applied = {}, {}
+    w = build_panel(_stage("green_fringe"),
+                    on_fringe_change=lambda s: changed.__setitem__("s", s),
+                    on_fringe_apply=lambda s: applied.__setitem__("s", s))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "green_fringe"
+    assert hasattr(w, "fringe_status") and hasattr(w, "fringe_slider")
+    # slider + Apply start disabled (main_window enables once the split lands)
+    assert w.fringe_slider.isEnabled() is False
+    assert w.apply_btn.isEnabled() is False
+    w.fringe_slider.setEnabled(True)
+    w.fringe_slider.setValue(60)
+    assert w.fringe_val.text().strip() == "0.60"
+    assert changed.get("s") == 0.60
+    w.apply_btn.setEnabled(True)
+    w.apply_btn.click()
+    assert applied.get("s") == 0.60

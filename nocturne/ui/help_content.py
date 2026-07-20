@@ -31,6 +31,7 @@ _STAGE_TO_TOPIC = {
     "levels": "levels",
     "curves": "curves",
     "saturation": "saturation",
+    "green_fringe": "green_fringe",
     "noise_sharpen": "noise_sharpen",
     "local_contrast": "local_contrast",
     "star_reduction": "star_reduction",
@@ -251,6 +252,22 @@ _TOPIC_LIST = (
        "<p>Gentle boosts look natural and bring out nebula colour; heavy boosts also amplify "
        "colour noise in the background, so go easy.</p>"),
 
+    _t("green_fringe", "Remove Green Fringe",
+       "Remove the green colour fringe around stars.",
+       "<h4>What it does</h4>"
+       "<p>Stars are never truly green, so a green fringe or halo around them is an "
+       "artifact (chromatic aberration or debayering). This splits the stars from the "
+       "background with <b>StarXTerminator</b>, removes the green excess from the stars "
+       "only, and recombines — so the nebula and background colour are left completely "
+       "untouched.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Raise <b>Strength</b> until the green fringe on the stars fades (0 = off). "
+       "The star split runs once when you enter the step, then the slider previews "
+       "instantly. Needs RC-Astro (StarXTerminator) — set its path in Settings.</p>"
+       "<h4>Tips</h4>"
+       "<p>A little usually does it. Because only the stars are affected, you can be "
+       "fairly aggressive without shifting the overall colour.</p>"),
+
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
        "<h4>What it does</h4>"
@@ -406,8 +423,8 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "recover_core", "levels", "curves", "saturation",
-                              "noise_sharpen", "local_contrast", "star_reduction",
-                              "enhancements", "export")),
+                              "green_fringe", "noise_sharpen", "local_contrast",
+                              "star_reduction", "enhancements", "export")),
     HelpSection("Tools", ("tools",)),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),
