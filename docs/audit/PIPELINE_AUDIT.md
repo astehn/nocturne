@@ -28,8 +28,8 @@ external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-prin
 | 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
 | 7 | Levels | UX | ✅ fixed | live preview + auto + clipping + numeric + label |
 | 8 | Saturation | UX | ✅ fixed | midtone-weighted boost (protects bg noise) + live preview + numeric |
-| 9 | Noise Reduction | algo-deep | 🔎 next | — |
-| 10 | Local Contrast | algo + UX | ⬜ | — |
+| 9 | Noise Reduction | algo-deep | ✅ reviewed | free TV fallback → GraXpert AI denoise, parked |
+| 10 | Local Contrast | algo + UX | 🔎 next | — |
 | 11 | Star Reduction | algo + UX | ⬜ | retune (paused) |
 | 12 | Enhancements | UX | ⬜ | boost buttons; narrowband adjacent |
 | 13 | Export | UX + correctness | ⬜ | — |

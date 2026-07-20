@@ -52,6 +52,16 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       SECONDARY (same audit): consider separate star vs non-stellar strength (BlurX exposes both;
       undersampled Seestar data often wants more star-tightening than non-stellar); add a
       "zoom to 100% to see the effect" nudge; and signal the free path as "basic sharpening".
+- [ ] **Free noise reduction better than TV — wire GraXpert AI denoise (parked 2026-07-20, from
+      Noise Reduction audit).** Without RC-Astro/NoiseXTerminator, `core/noise.reduce_noise` falls
+      back to skimage `denoise_tv_chambolle` (TV) — the classic watercolour/plastic smearer that
+      flattens faint nebulosity and softens stars. But **GraXpert (already installed for Background)
+      has an AI *denoise* mode**, and Nocturne already has the wrapper `GraXpert.denoise` — just
+      unwired. FIX: chain the Noise Reduction fallback **RC-Astro → GraXpert AI denoise (free,
+      already configured) → TV last-resort**; pass a `graxpert` instance into `NoiseSharpenStep`.
+      CAVEAT: verify the GraXpert *denoise* CLI flag — the existing wrapper passes `-smoothing` but
+      denoise likely needs `-strength`; test against real GraXpert. Same "better free path for
+      non-RC-Astro novices" theme as the free-deconvolution item above.
 - [x] **M5** Background "off" skips (no history entry / no done-mark).
 - [x] **L1** "Tools configured" indicator (GraXpert / RC-Astro) in the toolbar.
 - [x] **L2** Clear the error/status line when navigating between steps.
