@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )

@@ -1086,5 +1086,3 @@ def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
                         lambda *a, **k: opened.append(True))
     win._open_star_spikes()
     assert not opened                         # refused on a linear image
-
-

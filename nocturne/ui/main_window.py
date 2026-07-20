@@ -333,6 +333,8 @@ class MainWindow(QMainWindow):
                          on_apply=self._apply_star_spikes).exec()
 
     def _apply_star_spikes(self, result) -> None:
+        if self.project is None or self._busy:
+            return
         self.project.run_step(_PrecomputedStep("Star Spikes", result), "")
         self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
         self._status.setText("")
