@@ -19,10 +19,19 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       the sticky FP flag at the source (root-cause complement to the `sharpen` NaN guard already
       shipped); (b) `CurveEditor.mousePressEvent` add-then-regrab narrow edge case when a click's x is
       within the 0.02 min-gap of an existing point (cosmetic). Future: per-channel R/G/B curves.
-- [ ] **Diffraction / star spikes (MED, high wow).** Aesthetic flourish (refractors like Seestar
-      get none). Detect brightest N stars, draw additive 4-point spikes w/ radial falloff scaled to
-      brightness, screen-blend; tap-to-stack button + length slider. Gate default low so it doesn't
-      look fake.
+- [x] **Diffraction / star spikes (MED, high wow; done 2026-07-20).** Shipped as a **toolbar tool**
+      (like Ha/OIII) rather than a pipeline step — it's a purely artistic choice, so it lives outside
+      the faithful-processing flow. `core/star_spikes.py` (sep detection + tapered needle + core-bloom
+      render), `ui/star_spikes_dialog.py` (live-preview dialog: Length / Number-of-stars / Rotation),
+      records a `_PrecomputedStep`; refuses on a linear image. Deferred: a dedicated toolbar icon
+      (reuses the Ha/OIII icon for now); make dialog-open star detection non-blocking if sluggish on
+      full-res.
+- [x] **Remove Green Fringe (done 2026-07-20; user-requested).** New finishing step after Saturation:
+      splits stars from background (StarXTerminator), de-greens ONLY the stars layer via green-excess
+      suppression, screen-recombines — nebula/background colour untouched. Strength slider, live
+      preview, RC-Astro-gated (disabled + message when absent), Star-Reduction architecture. Chosen
+      over a global green-excess pass (which over-corrected the nebula → magenta shift). Deferred: a
+      non-RC-Astro fallback (brightness-weighted or sep-mask) for users without StarXTerminator.
 - [ ] **Masked "nebula-only" saturation (MED-HIGH).** Structure/luminance mask so saturation lifts
       nebulosity while sparing sky background + star cores — distinct from today's global saturation
       + R/C/B hue boosts. Slider. Low risk, high colour payoff on OSC data.
