@@ -110,13 +110,11 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       `graxpert_path`/`rcastro_path`), used as the dialog's start directory. NICE: also remember the
       last-used folder on each open and prefer it, with the configured base as the fallback — best of
       both. Apply to the Stack / Ha-OIII folder pickers too (they also start cold).
-- [ ] **Live histogram during slider preview (reported 2026-07-20).** The live slider previews
-      (Levels, Saturation; future Stretch) update the canvas but not the histogram (top-right), which
-      still shows the committed state. Feasible + cheap: each live-preview render already computes the
-      previewed array `out` — also feed it to `self.histogram_view.set_image(AstroImage(out,
-      is_linear=...))` in `_render_levels_preview` / `_render_saturation_preview` (and any future
-      live-preview render). Best: factor "render preview array → image_view + histogram" into one
-      helper so every live-preview step updates both in sync.
+- [x] **Live histogram during slider preview (reported 2026-07-20; done 2026-07-20).** Factored a
+      shared `_show_preview()` helper (image + histogram in sync) and routed Levels / Saturation /
+      Local Contrast / Star Reduction / Stretch previews through it, so the histogram now tracks every
+      slider live. Also retrofit the Stretch aggressiveness slider with a debounced non-committing
+      live preview + numeric readout (group A). Merged to main.
 - [ ] **Coalesce duplicate in-flight preview loads in the stack dialog.** Rapid ↑/↓ row
       navigation dispatches one full-res load per visited row with no dedup/cancel — harmless
       today (each just runs a full-res unlinked stretch) but wasteful on fast repeated
