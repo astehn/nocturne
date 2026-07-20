@@ -26,6 +26,17 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       Dark Structure Enhancement (expert-niche for undersampled Seestar data); aesthetic vignette.
       Skip: dehaze (redundant with background removal + contrast).
 
+## UX affordances
+- [ ] **Spacebar before/after toggle (requested 2026-07-20).** Like most photo editors: holding (or
+      pressing) the spacebar shows the "before" of the current step/tool, releasing (or pressing
+      again) returns to "after", so the user can judge exactly what the current step did. In
+      Nocturne's architecture the "before" is the pre-step state we already compute for live preview
+      (`_preview_base(stage_id)`) and the "after" is the current committed/previewed image; a
+      keyPress/keyRelease handler on the main window (or image view) would swap `image_view`
+      (and ideally the histogram) between the two. Decide: momentary (hold-to-peek, matches
+      Lightroom's `\`) vs toggle (press on/off). Should work on any step that has a before/after,
+      not just live-preview slider steps. Low risk, high everyday value.
+
 ## Now — core refinements
 - [x] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17; RESOLVED 2026-07-19).** After
       ZWO's firmware + app update (~2026-07-10), the Import step shows e.g.
