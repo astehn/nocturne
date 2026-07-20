@@ -69,6 +69,14 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       colour shaping (scale each channel's `data - lum` residual independently). Consider during
       the Step 8 (Saturation) audit as an advanced toggle/panel, alongside the live-preview + numeric
       readout that step will inherit. User has no complaints about the current default behaviour.
+- [ ] **Configurable base / default open directory (reported 2026-07-20).** Photographers keep
+      their images on a specific drive/folder; Open FITS should start there instead of forcing the
+      user to traverse their locations every time. Today `_choose_fits` calls
+      `QFileDialog.getOpenFileName(self, "Open FITS", "", ...)` with an empty start dir. ADD a
+      "Default image folder" setting in Settings, persisted to `settings.json` (alongside
+      `graxpert_path`/`rcastro_path`), used as the dialog's start directory. NICE: also remember the
+      last-used folder on each open and prefer it, with the configured base as the fallback — best of
+      both. Apply to the Stack / Ha-OIII folder pickers too (they also start cold).
 - [ ] **Coalesce duplicate in-flight preview loads in the stack dialog.** Rapid ↑/↓ row
       navigation dispatches one full-res load per visited row with no dedup/cancel — harmless
       today (each just runs a full-res unlinked stretch) but wasteful on fast repeated
