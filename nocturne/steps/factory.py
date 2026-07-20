@@ -9,6 +9,7 @@ from .deconvolution_step import DeconvolutionStep
 from .color import ColorStep
 from .crop import CropStep
 from .curves import CurvesStep
+from .green_fringe import GreenFringeStep
 from .levels import LevelsStep
 from .local_contrast import LocalContrastStep
 from .noise_sharpen import NoiseSharpenStep
@@ -44,6 +45,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         return CurvesStep()
     if stage_id == "saturation":
         return SaturationStep()
+    if stage_id == "green_fringe":
+        return GreenFringeStep()
     if stage_id == "local_contrast":
         return LocalContrastStep()
     if stage_id == "deconvolution":

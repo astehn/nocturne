@@ -35,7 +35,7 @@ def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     seq = ["crop", "background", "color", "deconvolution", "stretch", "recover_core",
-           "levels", "curves", "saturation", "noise_sharpen", "local_contrast",
+           "levels", "curves", "saturation", "green_fringe", "noise_sharpen", "local_contrast",
            "star_reduction", "enhancements", "export"]
     for sid in seq:
         win.go_next()

@@ -26,6 +26,7 @@ _IN_APP_TAIL = [
     Stage("levels", "Levels", "levels"),
     Stage("curves", "Curves", "curves"),
     Stage("saturation", "Saturation", "saturation"),
+    Stage("green_fringe", "Remove Green Fringe", "green_fringe"),
     Stage("noise_sharpen", "Noise Reduction", "process"),
     Stage("local_contrast", "Local Contrast", "local_contrast"),
     Stage("star_reduction", "Star Reduction", "star_reduction"),
@@ -43,14 +44,15 @@ STEP_NAME = {
     "levels": "Levels",
     "curves": "Curves",
     "saturation": "Saturation",
+    "green_fringe": "Remove Green Fringe",
     "noise_sharpen": "Noise Reduction",
     "local_contrast": "Local Contrast",
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
     "background", "color", "remove_green", "deconvolution", "stretch",
-    "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-    "local_contrast", "star_reduction",
+    "recover_core", "levels", "curves", "saturation", "green_fringe",
+    "noise_sharpen", "local_contrast", "star_reduction",
 ]
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
@@ -59,7 +61,7 @@ ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten
 # These are the in-app tail stages minus "export" (exporting a linear file is
 # legitimate, so Export never forces a stretch).
 POST_STRETCH_IDS = frozenset({
-    "recover_core", "levels", "curves", "saturation", "noise_sharpen",
+    "recover_core", "levels", "curves", "saturation", "green_fringe", "noise_sharpen",
     "local_contrast", "star_reduction", "enhancements",
 })
 

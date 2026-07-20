@@ -63,3 +63,23 @@ def test_curves_step_applies_points():
     assert np.allclose(CurvesStep().apply(img, pts).data, apply_curve(img, pts).data)
     # empty option -> identity no-op
     assert np.allclose(CurvesStep().apply(img, "").data, img.data, atol=1e-4)
+
+
+def test_make_step_green_fringe():
+    from nocturne.steps.factory import make_step
+    from nocturne.steps.green_fringe import GreenFringeStep
+    from nocturne.settings import Settings
+    assert isinstance(make_step("green_fringe", Settings()), GreenFringeStep)
+
+
+def test_green_fringe_step_applies_strength():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.color import remove_green_fringe
+    from nocturne.steps.green_fringe import GreenFringeStep
+    a = np.full((8, 8, 3), 0.3, np.float32)
+    a[..., 1] = 0.9
+    img = AstroImage(a, is_linear=False)
+    assert np.allclose(GreenFringeStep().apply(img, 0.6).data,
+                       remove_green_fringe(img, 0.6).data)
+    assert np.allclose(GreenFringeStep().apply(img, "").data, img.data)   # empty -> no-op
