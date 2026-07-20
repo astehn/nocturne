@@ -1103,3 +1103,28 @@ def test_green_fringe_apply_records_step(qtbot, tmp_path, monkeypatch):
     win._apply_green_fringe(0.6)
     names = [name for name, _ in win.project.entries()]
     assert names[-1] == "Remove Green Fringe"
+
+
+def test_star_spikes_tool_records_step_on_apply(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")                  # ensure a display-space image
+    win.apply_current("")                     # commit a stretch so current() is non-linear
+    from nocturne.core.image import AstroImage
+    import numpy as np
+    before = len(win.project.entries())
+    result = AstroImage(np.clip(win.project.current().data, 0, 1), is_linear=False)
+    win._apply_star_spikes(result)
+    names = [name for name, _ in win.project.entries()]
+    assert names[-1] == "Star Spikes"
+    assert len(win.project.entries()) == before + 1
+
+
+def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))       # freshly loaded image is linear
+    opened = []
+    monkeypatch.setattr("nocturne.ui.star_spikes_dialog.StarSpikesDialog",
+                        lambda *a, **k: opened.append(True))
+    win._open_star_spikes()
+    assert not opened                         # refused on a linear image

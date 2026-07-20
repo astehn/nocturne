@@ -331,6 +331,25 @@ class MainWindow(QMainWindow):
         HaOIIIDialog(self.settings, self,
                      on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
 
+    def _open_star_spikes(self) -> None:
+        if self.project is None:
+            return
+        if self.project.current().is_linear:
+            self._status.setText("Stretch the image first — Star Spikes works on the "
+                                 "stretched image.")
+            return
+        from .star_spikes_dialog import StarSpikesDialog
+        StarSpikesDialog(self.project.current(), parent=self,
+                         on_apply=self._apply_star_spikes).exec()
+
+    def _apply_star_spikes(self, result) -> None:
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Star Spikes", result), "")
+        self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
+        self._status.setText("")
+        self._refresh()
+
     def _remove_stars(self, img):
         rc = RCAstro(resolve_binary(self.settings.rcastro_path))
         return rc.remove_stars(img, runner=self._rc_runner)
@@ -347,6 +366,7 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
         tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
+        tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)

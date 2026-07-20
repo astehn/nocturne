@@ -316,6 +316,22 @@ _TOPIC_LIST = (
        "<p>Needs RC-Astro. A little goes a long way — over-reduction leaves an unnatural, "
        "starless-looking frame. It pairs well just before the Enhancements step.</p>"),
 
+    _t("star_spikes", "Star Spikes",
+       "Add diffraction spikes to the brightest stars.",
+       "<h4>What it does</h4>"
+       "<p>Refractor scopes like the Seestar produce no diffraction spikes — the "
+       "four-point flares many people associate with an astrophoto. This tool draws "
+       "tasteful, colour-matched spikes on the brightest stars. It is a purely artistic "
+       "choice, so it lives in the toolbar rather than the processing steps.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Finish your normal processing first, then click <b>Star Spikes…</b> in the "
+       "toolbar. <b>Length</b> sets how long the spikes are (0 = off), <b>Number of stars</b> "
+       "how many of the brightest stars get spikes, and <b>Rotation</b> tilts the cross. "
+       "Watch the live preview, then Apply.</p>"
+       "<h4>Tips</h4>"
+       "<p>Less is more — a few long spikes on the brightest stars looks intentional; "
+       "spikes on everything looks fake. Keep the count low.</p>"),
+
     _t("enhancements", "Enhancements",
        "Targeted finishing: boost specific colours and adjust the sky.",
        "<h4>What it does</h4>"
@@ -425,7 +441,7 @@ SECTIONS: tuple[HelpSection, ...] = (
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
-    HelpSection("Tools", ("tools",)),
+    HelpSection("Tools", ("tools", "star_spikes")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),
     HelpSection("Troubleshooting", ("troubleshooting",)),
