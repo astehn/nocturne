@@ -23,23 +23,32 @@ def remove_green(img: AstroImage) -> AstroImage:
     return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
-def remove_green_fringe(img: AstroImage, strength: float) -> AstroImage:
-    """Suppress green *excess* (average-neutral SCNR scaled by `strength`).
+def _suppress_green_excess(data: np.ndarray, strength: float) -> np.ndarray:
+    """Reduce green where it exceeds the red/blue average, scaled by `strength`.
+    Red and blue are never modified. Returns a new float32 array. Non-3-channel
+    input is returned unchanged (no green channel to fix)."""
+    out = data.astype(np.float32).copy()
+    if out.ndim != 3 or out.shape[-1] < 3:
+        return out
+    avg_rb = (out[..., 0] + out[..., 2]) / 2.0
+    excess = np.maximum(out[..., 1] - avg_rb, 0.0)
+    out[..., 1] = out[..., 1] - float(strength) * excess
+    return out
 
-    Reduces green only where it exceeds the red/blue average — the definition of
-    a green fringe — leaving red, blue, and neutral/red/blue-dominant pixels
-    untouched. `strength` 0 = no-op; `strength` 1 == `remove_green` (full
-    average-neutral SCNR). Mono images are unchanged.
-    """
+
+def remove_green_fringe(starless: AstroImage, stars: AstroImage,
+                        strength: float) -> AstroImage:
+    """De-green the stars layer (green-excess suppression) and screen-recombine
+    with the untouched starless background — so only stars change and the
+    background/nebula colour is preserved. `strength` 0 = plain recombine."""
     strength = float(np.clip(strength, 0.0, 1.0))
-    if not img.is_color or strength == 0.0:
-        return img.copy()
-    data = img.data.astype(np.float32).copy()
-    avg_rb = (data[..., 0] + data[..., 2]) / 2.0
-    excess = np.maximum(data[..., 1] - avg_rb, 0.0)
-    data[..., 1] = data[..., 1] - strength * excess
-    return AstroImage(np.clip(data, 0.0, 1.0).astype(np.float32),
-                      is_linear=img.is_linear, metadata=dict(img.metadata))
+    base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
+    st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
+    if strength > 0.0:
+        st = _suppress_green_excess(st, strength)
+    out = 1.0 - (1.0 - base) * (1.0 - st)
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=starless.is_linear, metadata=dict(starless.metadata))
 
 
 def _background_mask(lum: np.ndarray) -> np.ndarray:
