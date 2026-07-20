@@ -40,6 +40,7 @@ from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
+from ..core.star_spikes import add_spikes, detect_stars
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
@@ -146,6 +147,12 @@ class MainWindow(QMainWindow):
         self._sr_timer = QTimer(self)
         self._sr_timer.setSingleShot(True)
         self._sr_timer.timeout.connect(self._render_sr_preview)
+        self._spikes_pending = None
+        self._spikes_stars = None      # (sig, list[Star]) cache, or None
+        self._spikes_ready = False
+        self._spikes_timer = QTimer(self)
+        self._spikes_timer.setSingleShot(True)
+        self._spikes_timer.timeout.connect(self._render_spikes_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -517,6 +524,9 @@ class MainWindow(QMainWindow):
         name = STEP_NAME[stage_id]
         if stage_id in ("color", "levels", "curves"):
             label = ""  # option is a settings object/tuple, not user-facing text
+        elif stage_id == "star_spikes":
+            length, cnt, ang = option
+            label = f"len {length:.2f}, {cnt} stars, {int(ang)}°"
         elif isinstance(option, float):
             label = f"{option:.2f}"
         else:
@@ -956,6 +966,65 @@ class MainWindow(QMainWindow):
         self._status.setText("")
         self._refresh()
 
+    # --- star spikes live preview (cached SEP detection) ---
+    def _enable_spikes_panel(self, on: bool, status: str = "") -> None:
+        panel = self._panel
+        if not hasattr(panel, "length_slider"):
+            return
+        for wdg in (panel.length_slider, panel.stars_slider,
+                    panel.angle_slider, panel.apply_btn):
+            wdg.setEnabled(on)
+        panel.spikes_status.setText(status)
+
+    def _setup_star_spikes(self) -> None:
+        """On entering Star Spikes: detect stars once, off-thread, and cache them.
+        The three sliders then re-render instantly. A cached detection for the same
+        base is reused."""
+        self._spikes_pending = None
+        if self.project is None:
+            return
+        base = self._preview_base("star_spikes")
+        sig = self._sr_sig(base)
+        if self._spikes_stars is not None and self._spikes_stars[0] == sig:
+            self._spikes_ready = True
+            self._enable_spikes_panel(True)
+            self._render_spikes_preview()
+            return
+        self._spikes_ready = False
+        self._enable_spikes_panel(False, "Detecting stars…")
+        self._run_busy(lambda: detect_stars(base.data),
+                       lambda stars: self._on_spikes_detected(sig, stars),
+                       "Detecting stars…", "Star detection failed")
+
+    def _on_spikes_detected(self, sig, stars) -> None:
+        if self.current_stage_id() != "star_spikes":
+            return
+        self._spikes_stars = (sig, stars)
+        self._spikes_ready = True
+        self._enable_spikes_panel(True)
+        self._render_spikes_preview()
+
+    def _on_spikes_change(self, length: float, count: int, angle: float) -> None:
+        self._spikes_pending = (length, count, angle)
+        if self._spikes_ready:
+            self._spikes_timer.start(90)
+
+    def _render_spikes_preview(self) -> None:
+        """Non-committing live preview against the cached star list."""
+        if (self.project is None or self.current_stage_id() != "star_spikes"
+                or not self._spikes_ready or self._spikes_stars is None):
+            return
+        if self._spikes_pending is not None:
+            length, count, angle = self._spikes_pending
+        else:
+            p = self._panel
+            length = p.length_slider.value() / 100.0
+            count = p.stars_slider.value()
+            angle = float(p.angle_slider.value())
+        base = self._preview_base("star_spikes")
+        _, stars = self._spikes_stars
+        self._show_preview(add_spikes(base, stars, length, count, angle).data)
+
     # --- history ---
     def _reset_image(self) -> None:
         if self.project is None:
@@ -1076,6 +1145,8 @@ class MainWindow(QMainWindow):
             self._curve_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
+        if stage.id == "star_spikes":
+            self._spikes_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -1104,6 +1175,7 @@ class MainWindow(QMainWindow):
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
+            on_spikes_change=self._on_spikes_change,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
@@ -1120,6 +1192,8 @@ class MainWindow(QMainWindow):
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         if stage.id == "star_reduction":
             self._setup_star_reduction()  # kick off the cached StarX split on entry
+        if stage.id == "star_spikes":
+            self._setup_star_spikes()
         self._update_explainer()
 
     def _refresh(self) -> None:
