@@ -23,6 +23,25 @@ def remove_green(img: AstroImage) -> AstroImage:
     return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
+def remove_green_fringe(img: AstroImage, strength: float) -> AstroImage:
+    """Suppress green *excess* (average-neutral SCNR scaled by `strength`).
+
+    Reduces green only where it exceeds the red/blue average — the definition of
+    a green fringe — leaving red, blue, and neutral/red/blue-dominant pixels
+    untouched. `strength` 0 = no-op; `strength` 1 == `remove_green` (full
+    average-neutral SCNR). Mono images are unchanged.
+    """
+    strength = float(np.clip(strength, 0.0, 1.0))
+    if not img.is_color or strength == 0.0:
+        return img.copy()
+    data = img.data.astype(np.float32).copy()
+    avg_rb = (data[..., 0] + data[..., 2]) / 2.0
+    excess = np.maximum(data[..., 1] - avg_rb, 0.0)
+    data[..., 1] = data[..., 1] - strength * excess
+    return AstroImage(np.clip(data, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
 def _background_mask(lum: np.ndarray) -> np.ndarray:
     """Boolean mask of 'empty sky' pixels — above the noise floor, below the
     nebula and stars — so the colour estimate isn't contaminated by real signal.
