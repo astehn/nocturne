@@ -231,6 +231,21 @@ def test_local_contrast_panel_has_readout_and_live_change(qapp):
     assert seen.get("amt") == 0.80
 
 
+def test_recover_core_panel_has_live_preview_readout(qtbot):
+    seen = {}
+    w = build_panel(_stage("recover_core"),
+                    on_recover_change=lambda a: seen.__setitem__("amt", a))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "recover_core"
+    assert hasattr(w, "recover_slider")
+    assert hasattr(w, "recover_val")
+    assert w.recover_slider.value() == 0          # default off
+    assert w.recover_val.text().strip() == "0.00"
+    w.recover_slider.setValue(60)
+    assert w.recover_val.text().strip() == "0.60"  # readout tracks the slider
+    assert seen.get("amt") == 0.60                 # live-preview hook fires
+
+
 def test_export_panel_split_disabled_without_rcastro(qtbot):
     w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)
