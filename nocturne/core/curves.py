@@ -5,6 +5,7 @@ import numpy as np
 from .image import AstroImage
 
 _MIN_GAP = 0.02
+_DUP_EPS = 1e-9  # x-points closer than this are treated as coincident in build_lut
 
 
 def _pchip_tangents(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
@@ -29,6 +30,17 @@ def build_lut(points: list[tuple[float, float]], n: int = 1024) -> np.ndarray:
     """A 1-D lookup table over [0,1] from control points, using monotone-cubic
     (Fritsch–Carlson) interpolation so the curve never overshoots or inverts."""
     pts = sorted((float(x), float(y)) for x, y in points)
+    # Guard against duplicate/near-duplicate x: h = diff(xs) must be strictly
+    # positive or the tangent computation divides by zero (-> inf/nan in the
+    # LUT). Keep the first point of any near-duplicate cluster. This is a
+    # pure robustness guard, not a spacing policy - unlike sanitize_points()
+    # it does not force corners or enforce a minimum gap.
+    deduped: list[tuple[float, float]] = []
+    for x, y in pts:
+        if deduped and x - deduped[-1][0] < _DUP_EPS:
+            continue
+        deduped.append((x, y))
+    pts = deduped
     xs = np.array([p[0] for p in pts], dtype=np.float64)
     ys = np.array([p[1] for p in pts], dtype=np.float64)
     grid = np.linspace(0.0, 1.0, n)
@@ -73,6 +85,23 @@ def apply_curve(img: AstroImage, points: list[tuple[float, float]]) -> AstroImag
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
+def sanitize_points(pts, min_gap: float = _MIN_GAP) -> list[tuple[float, float]]:
+    """Sort control points, clamp to [0,1], force the corner endpoints
+    (0,0)/(1,1), and enforce a minimum x-gap between interior points -
+    dropping any interior point too close to the previously-kept point or
+    too close to the right corner."""
+    interior = sorted((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1)))
+                      for x, y in pts if 0.0 < x < 1.0)
+    out = [(0.0, 0.0)]
+    for x, y in interior:
+        if x - out[-1][0] >= min_gap:
+            out.append((x, y))
+    if len(out) > 1 and (1.0 - out[-1][0]) < min_gap:
+        out.pop()
+    out.append((1.0, 1.0))
+    return out
+
+
 def gentle_s_points(data: np.ndarray) -> list[tuple[float, float]]:
     """Background-aware 'Add contrast' preset: pin an anchor at the sky level,
     then dip a lower-mid point and lift an upper-mid point for a gentle S that
@@ -85,14 +114,4 @@ def gentle_s_points(data: np.ndarray) -> list[tuple[float, float]]:
     d = span * 0.06
     raw = [(0.0, 0.0), (bg, bg),
            (lo_x, lo_x - d), (hi_x, hi_x + d), (1.0, 1.0)]
-    # sort, clamp, drop interior points too close together (keeps strictly-increasing x)
-    interior = sorted((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1)))
-                      for x, y in raw if 0.0 < x < 1.0)
-    out = [(0.0, 0.0)]
-    for x, y in interior:
-        if x - out[-1][0] >= _MIN_GAP:
-            out.append((x, y))
-    if len(out) > 1 and (1.0 - out[-1][0]) < _MIN_GAP:
-        out.pop()
-    out.append((1.0, 1.0))
-    return out
+    return sanitize_points(raw)

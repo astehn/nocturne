@@ -5,10 +5,9 @@ from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from ..core.curves import build_lut
+from ..core.curves import _MIN_GAP, build_lut, sanitize_points
 from .theme import BG_0, BORDER
 
-_MIN_GAP = 0.02
 _HIT = 0.035          # handle hit radius in normalized coords
 _MARGIN = 8           # px inset so handles at the edges stay visible
 
@@ -34,16 +33,7 @@ class CurveEditor(QWidget):
 
     @staticmethod
     def _sanitize(pts) -> list[tuple[float, float]]:
-        interior = sorted((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1)))
-                          for x, y in pts if 0.0 < x < 1.0)
-        out = [(0.0, 0.0)]
-        for x, y in interior:
-            if x - out[-1][0] >= _MIN_GAP:
-                out.append((x, y))
-        if len(out) > 1 and (1.0 - out[-1][0]) < _MIN_GAP:
-            out.pop()
-        out.append((1.0, 1.0))
-        return out
+        return sanitize_points(pts)
 
     def set_points(self, pts) -> None:
         self._points = self._sanitize(pts)
