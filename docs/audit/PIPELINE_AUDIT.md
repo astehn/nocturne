@@ -31,8 +31,8 @@ external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-prin
 | 9 | Noise Reduction | algo-deep | ✅ reviewed | free TV fallback → GraXpert AI denoise, parked |
 | 10 | Local Contrast | algo + UX | ✅ fixed | dropdown→slider + live preview |
 | 11 | Star Reduction | algo + UX | ✅ fixed | erosion→wing-curve (no blur) + slider + live preview |
-| 12 | Enhancements | UX | 🔎 next | boost buttons; narrowband adjacent |
-| 13 | Export | UX + correctness | ⬜ | — |
+| 12 | Enhancements | UX | ✅ reviewed | good as-is; research → 4 finishing features backlogged |
+| 13 | Export | UX + correctness | 🔎 next | — |
 | 14 | Stack (adjacent tool) | correctness | ⬜ | ~396 GB memory runaway |
 
 Legend: ⬜ not started · 🔎 auditing · 🛠 fixing · ✅ done

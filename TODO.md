@@ -2,6 +2,29 @@
 
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
+## Future features — Enhancements / finishing (from research 2026-07-20)
+Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
+- [ ] **HDR core / highlight recovery (HIGH — top pick).** Short Seestar subs clip bright cores
+      (M42, M8, galaxy nuclei) to a featureless white blob after stretch. Add a "Recover Core"
+      slider that compresses just the top ~15% of the tone range under a highlight mask (simple),
+      later upgradeable to a proper multiscale (à-trous/Gaussian-pyramid) HDR. Risk: haloing if
+      overdone. Most Seestar-relevant gap found.
+- [ ] **Curves — S-curve / tone curve (HIGH).** The one classic control Nocturne lacks; Levels
+      can't add midtone contrast a draggable curve can. numpy-easy (monotone-cubic LUT on
+      luminance, background-pinned so the sky isn't lifted). Ship a gentle "add contrast" preset.
+      Likely its own step; add live preview (slider steps pattern). Risk: crushing shadows.
+- [ ] **Diffraction / star spikes (MED, high wow).** Aesthetic flourish (refractors like Seestar
+      get none). Detect brightest N stars, draw additive 4-point spikes w/ radial falloff scaled to
+      brightness, screen-blend; tap-to-stack button + length slider. Gate default low so it doesn't
+      look fake.
+- [ ] **Masked "nebula-only" saturation (MED-HIGH).** Structure/luminance mask so saturation lifts
+      nebulosity while sparing sky background + star cores — distinct from today's global saturation
+      + R/C/B hue boosts. Slider. Low risk, high colour payoff on OSC data.
+- [ ] **Secondary (lower priority):** "Clarity" large-radius luminance unsharp (overlaps CLAHE —
+      only if differentiated); colour-temperature tweak (careful — fights the colour calibration);
+      Dark Structure Enhancement (expert-niche for undersampled Seestar data); aesthetic vignette.
+      Skip: dehaze (redundant with background removal + contrast).
+
 ## Now — core refinements
 - [x] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17; RESOLVED 2026-07-19).** After
       ZWO's firmware + app update (~2026-07-10), the Import step shows e.g.
