@@ -360,3 +360,21 @@ def test_background_panel_explains_gradient(qapp):
     w = build_panel(_stage("background"))
     texts = " ".join(l.text().lower() for l in w.findChildren(QLabel))
     assert "gradient" in texts and "before/after" in texts
+
+
+def test_curves_panel_has_editor_and_presets(qtbot):
+    changed, presets = [], []
+    w = build_panel(_stage("curves"),
+                    on_curve_change=changed.append,
+                    on_curve_preset=presets.append)
+    qtbot.addWidget(w)
+    assert w.panel_kind == "curves"
+    assert hasattr(w, "curve_editor")
+    assert hasattr(w, "reset_btn") and hasattr(w, "add_contrast_btn")
+    # editor edits route to on_curve_change
+    w.curve_editor.add_point(0.5, 0.7)
+    assert changed and changed[-1][-1] == (1.0, 1.0)   # emitted a point list
+    # preset buttons route to on_curve_preset with the right kind
+    w.reset_btn.click()
+    w.add_contrast_btn.click()
+    assert presets == ["reset", "add_contrast"]
