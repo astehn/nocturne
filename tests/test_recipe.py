@@ -29,6 +29,19 @@ def test_local_contrast_legacy_string_roundtrips():
                               serialize_option("local_contrast", "medium")) == "medium"
 
 
+def test_star_reduction_float_roundtrips():
+    assert serialize_option("star_reduction", 0.5) == 0.5
+    assert deserialize_option("star_reduction",
+                              serialize_option("star_reduction", 0.5)) == 0.5
+
+
+def test_star_reduction_legacy_string_roundtrips():
+    # Pre-slider recipes stored light/medium/strong strings.
+    assert serialize_option("star_reduction", "medium") == "medium"
+    assert deserialize_option("star_reduction",
+                              serialize_option("star_reduction", "medium")) == "medium"
+
+
 def test_crop_serialize_drops_bounds():
     val = serialize_option("crop", CropParams(bounds=(1, 2, 3, 4), aspect="1:1", rotate=90))
     assert "bounds" not in val

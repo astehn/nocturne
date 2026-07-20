@@ -113,12 +113,39 @@ def test_levels_panel_controls(qapp):
     w.clip_check.setChecked(True); assert seen.get("clip") is True
 
 
-def test_star_reduction_gated_without_rcastro(qtbot):
-    w = build_panel(_stage("star_reduction"), on_apply=lambda o: None, apply_enabled=False)
+def test_star_reduction_panel_has_slider_disabled_initially(qtbot):
+    w = build_panel(_stage("star_reduction"))
     qtbot.addWidget(w)
-    assert w.panel_kind == "process"
+    assert w.panel_kind == "star_reduction"
+    assert hasattr(w, "sr_slider")
+    assert hasattr(w, "sr_val")
+    assert hasattr(w, "sr_status")
+    assert w.sr_slider.value() == 0
+    assert w.sr_val.text().strip() == "0.00"
+    # Slider + Apply start disabled — main_window enables them once the split lands.
+    assert w.sr_slider.isEnabled() is False
     assert w.apply_btn.isEnabled() is False
-    assert w.disabled_note.isHidden() is False
+
+
+def test_star_reduction_slider_emits_amount(qtbot):
+    seen = {}
+    w = build_panel(_stage("star_reduction"),
+                    on_sr_change=lambda a: seen.__setitem__("amt", a))
+    qtbot.addWidget(w)
+    w.sr_slider.setEnabled(True)  # simulate main_window enabling after the split
+    w.sr_slider.setValue(80)
+    assert w.sr_val.text().strip() == "0.80"
+    assert seen.get("amt") == 0.80
+
+
+def test_star_reduction_apply_emits_amount(qtbot):
+    got = []
+    w = build_panel(_stage("star_reduction"), on_sr_apply=got.append)
+    qtbot.addWidget(w)
+    w.apply_btn.setEnabled(True)
+    w.sr_slider.setValue(50)
+    w.apply_btn.click()
+    assert got == [0.50]
 
 
 def test_stretch_panel_slider_emits_amount(qtbot):

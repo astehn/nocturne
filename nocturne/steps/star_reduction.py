@@ -17,11 +17,15 @@ class StarReductionStep(Step):
         self._runner = run_cli
 
     def options(self) -> list[str]:
-        return ["light", "medium", "strong"]
+        return []
 
     def default_option(self) -> str:
-        return "medium"
+        return ""
 
-    def apply(self, img: AstroImage, option: str) -> AstroImage:
+    def apply(self, img: AstroImage, option) -> AstroImage:
         starless, stars = self._rc.remove_stars(img, runner=self._runner)
-        return reduce_stars(starless, stars, _AMOUNT[option])
+        if isinstance(option, str) and option in _AMOUNT:
+            amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
+        else:
+            amount = float(option) if option not in (None, "") else 0.0
+        return reduce_stars(starless, stars, amount)

@@ -37,6 +37,7 @@ from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSIN
 from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
+from ..core.star_reduction import reduce_stars
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .step_panels import build_panel
@@ -117,6 +118,15 @@ class MainWindow(QMainWindow):
         self._lc_timer = QTimer(self)
         self._lc_timer.setSingleShot(True)
         self._lc_timer.timeout.connect(self._render_lc_preview)
+        # Star-reduction live-preview: the (slow) StarX split runs once on entering
+        # the step (async, cached in _sr_layers); the slider then previews the fast
+        # wing-curve reduce_stars instantly via a debounced (90 ms) render.
+        self._sr_layers = None    # (sig, starless, stars) once the split lands
+        self._sr_pending = None
+        self._sr_ready = False
+        self._sr_timer = QTimer(self)
+        self._sr_timer.setSingleShot(True)
+        self._sr_timer.timeout.connect(self._render_sr_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -775,6 +785,114 @@ class MainWindow(QMainWindow):
         rgb = np.ascontiguousarray(rgb)
         self.image_view.set_image(rgb_to_qimage(rgb))
 
+    # --- star reduction live preview (cached StarX split) ---
+    def _sr_preceding(self) -> set:
+        """Names of the steps that precede Star Reduction — the predecessors an
+        Apply-Star-Reduction preserves (and whose state the split runs on)."""
+        return set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("star_reduction")]
+        }
+
+    def _sr_base(self):
+        """The pre-Star-Reduction image the split + commit both operate on."""
+        return self.project.state_at(
+            self._leading_kept(self.project.entries(), self._sr_preceding()))
+
+    @staticmethod
+    def _sr_sig(img):
+        """A cheap fingerprint of the base image so a cached split can be reused
+        when the user re-enters the step without changing the upstream pipeline."""
+        return (img.data.shape,
+                round(float(img.data.mean()), 6),
+                round(float(img.data.std()), 6))
+
+    def _setup_star_reduction(self) -> None:
+        """On entering Star Reduction: run the (slow) StarX split once, off-thread,
+        and cache it. The slider then previews the fast wing-curve instantly. A
+        cached split for the same base is reused; without RC-Astro the step is
+        gated with a note and the slider/Apply stay disabled."""
+        self._sr_pending = None
+        if self.project is None:
+            return
+        panel = self._panel
+        if not rcastro_valid(self.settings):
+            self._sr_ready = False
+            if hasattr(panel, "sr_status"):
+                panel.sr_status.setText("Needs RC-Astro — set its path in Settings.")
+                panel.sr_slider.setEnabled(False)
+                panel.apply_btn.setEnabled(False)
+            return
+        base = self._sr_base()
+        sig = self._sr_sig(base)
+        if self._sr_layers and self._sr_layers[0] == sig:
+            # Already split for this exact base — reuse it, no StarX rerun.
+            self._sr_ready = True
+            if hasattr(panel, "sr_slider"):
+                panel.sr_slider.setEnabled(True)
+                panel.apply_btn.setEnabled(True)
+                panel.sr_status.setText("")
+            self._render_sr_preview()
+            return
+        self._sr_ready = False
+        if hasattr(panel, "sr_slider"):
+            panel.sr_slider.setEnabled(False)
+            panel.apply_btn.setEnabled(False)
+            panel.sr_status.setText("Separating stars…")
+        self._run_busy(lambda: self._remove_stars(base),
+                       lambda layers: self._on_sr_split(sig, layers),
+                       "Separating stars…", "Star separation failed")
+
+    def _on_sr_split(self, sig, layers) -> None:
+        """The StarX split finished: cache it and enable the slider — unless the
+        user has already navigated away from Star Reduction."""
+        if self.current_stage_id() != "star_reduction":
+            return
+        self._sr_layers = (sig, layers[0], layers[1])
+        self._sr_ready = True
+        if hasattr(self._panel, "sr_slider"):
+            self._panel.sr_slider.setEnabled(True)
+            self._panel.apply_btn.setEnabled(True)
+            self._panel.sr_status.setText("")
+        self._render_sr_preview()
+
+    def _on_sr_change(self, amount: float) -> None:
+        """The Star Reduction slider moved: stash the value and (re)start debounce."""
+        self._sr_pending = amount
+        if self._sr_ready:
+            self._sr_timer.start(90)
+
+    def _render_sr_preview(self) -> None:
+        """Non-committing live preview of the current reduction against the cached
+        split — the fast wing-curve, so it tracks the slider instantly."""
+        if (self.project is None or self.current_stage_id() != "star_reduction"
+                or not self._sr_ready or not self._sr_layers):
+            return
+        amount = (self._sr_pending if self._sr_pending is not None
+                  else self._panel.sr_slider.value() / 100.0)
+        _, starless, stars = self._sr_layers
+        out = np.clip(reduce_stars(starless, stars, amount).data, 0, 1)
+        rgb = (out * 255 + 0.5).astype(np.uint8)
+        if rgb.ndim == 2:
+            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        rgb = np.ascontiguousarray(rgb)
+        self.image_view.set_image(rgb_to_qimage(rgb))
+
+    def _apply_star_reduction(self, amount) -> None:
+        """Commit the reduction at the current amount using the cached split — no
+        StarX rerun, so Apply is instant."""
+        if self.project is None or not self._sr_ready or self._busy or not self._sr_layers:
+            return
+        self.project.jump_back(
+            self._leading_kept(self.project.entries(), self._sr_preceding()))
+        _, starless, stars = self._sr_layers
+        result = reduce_stars(starless, stars, float(amount))
+        self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
+        self.log_panel.append_entry(
+            format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
+        self._status.setText("")
+        self._refresh()
+
     # --- history ---
     def _reset_image(self) -> None:
         if self.project is None:
@@ -880,11 +998,11 @@ class MainWindow(QMainWindow):
             self._sat_pending = None
         if stage.id == "local_contrast":
             self._lc_pending = None
+        if stage.id == "star_reduction":
+            self._sr_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
-        if stage.id == "star_reduction":
-            apply_enabled = loaded and rcastro_valid(self.settings)  # needs StarX
         split_enabled = loaded and rcastro_valid(self.settings)
         new_panel = build_panel(
             stage,
@@ -904,6 +1022,8 @@ class MainWindow(QMainWindow):
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_lc_change=self._on_lc_change,
+            on_sr_change=self._on_sr_change,
+            on_sr_apply=self._apply_star_reduction,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
@@ -916,6 +1036,8 @@ class MainWindow(QMainWindow):
         self._panel.deleteLater()
         self._panel = new_panel
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
+        if stage.id == "star_reduction":
+            self._setup_star_reduction()  # kick off the cached StarX split on entry
         self._update_explainer()
 
     def _refresh(self) -> None:

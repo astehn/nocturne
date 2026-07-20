@@ -14,7 +14,6 @@ _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
-    "star_reduction": ["light", "medium", "strong"],
 }
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
 # Target-type stretch presets → default aggressiveness (slider 0–100).
@@ -22,7 +21,6 @@ STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
     "background": "Needs GraXpert — set its path in Settings.",
-    "star_reduction": "Needs RC-Astro — set its path in Settings.",
 }
 
 
@@ -52,6 +50,8 @@ def build_panel(
     on_levels_clipping=None,
     on_sat_change=None,
     on_lc_change=None,
+    on_sr_change=None,
+    on_sr_apply=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -347,6 +347,39 @@ def build_panel(
         lay.addWidget(apply_btn)
         w.lc_slider = slider
         w.lc_val = lc_val
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "star_reduction":
+        lay.addWidget(_desc_label(
+            "Shrink and dim the stars so the nebula stands out. Drag right for "
+            "more reduction. 0 = untouched."))
+        status = _desc_label("")   # main_window sets "Separating stars…" / gate text
+        lay.addWidget(status)
+        slider = ResetSlider(0)
+        sr_val = QLabel(f"{slider.value() / 100:.2f}")
+
+        def _emit_sr(*_):
+            sr_val.setText(f"{slider.value() / 100:.2f}")
+            if on_sr_change is not None:
+                on_sr_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_sr)
+        apply_btn = QPushButton("Apply Star Reduction")
+        apply_btn.setObjectName("primary")
+        if on_sr_apply is not None:
+            apply_btn.clicked.connect(lambda: on_sr_apply(slider.value() / 100.0))
+        # Start disabled — main_window enables once the (slow) StarX split is ready.
+        slider.setEnabled(False)
+        apply_btn.setEnabled(False)
+        sr_row = QHBoxLayout()
+        sr_row.addWidget(QLabel("Reduction (none → strong)"))
+        sr_row.addWidget(sr_val)
+        lay.addLayout(sr_row)
+        lay.addWidget(slider)
+        lay.addWidget(apply_btn)
+        w.sr_status = status
+        w.sr_slider = slider
+        w.sr_val = sr_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "export":

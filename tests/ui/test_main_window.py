@@ -884,6 +884,83 @@ def test_local_contrast_preview_renders(qtbot, tmp_path):
     assert (pm.width(), pm.height()) == (w, h)
 
 
+def _fake_rc_settings(tmp_path):
+    from nocturne.settings import Settings
+    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    return Settings(rcastro_path=str(rc_bin))
+
+
+class _FakeSplitRC:
+    def __init__(self, *a, **k):
+        pass
+
+    def remove_stars(self, img, runner=None):
+        starless = AstroImage(img.data * 0.4, is_linear=img.is_linear)
+        stars = AstroImage(img.data * 0.6, is_linear=img.is_linear)
+        return starless, stars
+
+
+def test_setup_star_reduction_caches_split(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings = _fake_rc_settings(tmp_path)
+    monkeypatch.setattr(mw, "RCAstro", _FakeSplitRC)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)               # non-linear image for the finishing tail
+    win._go_to_id("star_reduction")      # triggers _setup_star_reduction (sync)
+    assert win._sr_ready is True
+    assert win._sr_layers is not None
+    assert win._panel.sr_slider.isEnabled() is True
+    assert win._panel.apply_btn.isEnabled() is True
+
+
+def test_setup_star_reduction_needs_rcastro(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("star_reduction")      # no RC-Astro configured
+    assert win._sr_ready is False
+    assert win._panel.sr_slider.isEnabled() is False
+    assert win._panel.apply_btn.isEnabled() is False
+    assert "RC-Astro" in win._panel.sr_status.text()
+
+
+def test_star_reduction_preview_renders(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("star_reduction")
+    base = win.project.current()
+    starless = AstroImage(base.data * 0.4, is_linear=base.is_linear)
+    stars = AstroImage(base.data * 0.6, is_linear=base.is_linear)
+    win._sr_layers = (win._sr_sig(base), starless, stars)
+    win._sr_ready = True
+    win._on_sr_change(0.7)
+    win._render_sr_preview()
+    pm = win.image_view._item.pixmap()
+    assert not pm.isNull()
+    h, w = win.project.current().data.shape[:2]
+    assert (pm.width(), pm.height()) == (w, h)
+
+
+def test_apply_star_reduction_commits(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("star_reduction")
+    base = win.project.current()
+    starless = AstroImage(base.data * 0.4, is_linear=base.is_linear)
+    stars = AstroImage(base.data * 0.6, is_linear=base.is_linear)
+    win._sr_layers = (win._sr_sig(base), starless, stars)
+    win._sr_ready = True
+    win._apply_star_reduction(0.5)
+    assert win.project.entries()[-1][0] == "Star Reduction"
+
+
 def test_background_stage_defaults_to_light(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
