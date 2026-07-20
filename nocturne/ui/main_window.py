@@ -38,6 +38,7 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
+from ..core.color import remove_green_fringe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.stretch import apply_stretch
@@ -137,6 +138,11 @@ class MainWindow(QMainWindow):
         self._curve_timer = QTimer(self)
         self._curve_timer.setSingleShot(True)
         self._curve_timer.timeout.connect(self._render_curve_preview)
+        # Green-fringe live-preview: a debounced (90 ms) non-committing render.
+        self._fringe_pending = None
+        self._fringe_timer = QTimer(self)
+        self._fringe_timer.setSingleShot(True)
+        self._fringe_timer.timeout.connect(self._render_fringe_preview)
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
@@ -853,6 +859,21 @@ class MainWindow(QMainWindow):
             pts = [(0.0, 0.0), (1.0, 1.0)]
         self._panel.curve_editor.set_points(pts)   # emits curveChanged -> preview
 
+    # --- green fringe live preview ---
+    def _on_fringe_change(self, strength: float) -> None:
+        """The Remove Green Fringe slider moved: stash the value and (re)start debounce."""
+        self._fringe_pending = strength
+        self._fringe_timer.start(90)
+
+    def _render_fringe_preview(self) -> None:
+        """Non-committing live preview of the current green-fringe strength."""
+        if self.project is None or self.current_stage_id() != "green_fringe":
+            return
+        img = self._preview_base("green_fringe")
+        strength = (self._fringe_pending if self._fringe_pending is not None
+                    else self._panel.fringe_slider.value() / 100.0)
+        self._show_preview(remove_green_fringe(img, strength).data)
+
     # --- star reduction live preview (cached StarX split) ---
     def _sr_preceding(self) -> set:
         """Names of the steps that precede Star Reduction — the predecessors an
@@ -1074,6 +1095,8 @@ class MainWindow(QMainWindow):
             self._recover_pending = None
         if stage.id == "curves":
             self._curve_pending = None
+        if stage.id == "green_fringe":
+            self._fringe_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
         apply_enabled = loaded
@@ -1099,6 +1122,7 @@ class MainWindow(QMainWindow):
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_lc_change=self._on_lc_change,
+            on_fringe_change=self._on_fringe_change,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
             on_recover_change=self._on_recover_change,

@@ -1061,3 +1061,25 @@ def test_background_stage_defaults_to_light(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
     assert win._panel.option_box.currentText() == "light"
+
+
+def test_green_fringe_live_preview_renders_without_commit(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("green_fringe")
+    entries_before = [name for name, _ in win.project.entries()]
+    win._on_fringe_change(0.6)
+    win._render_fringe_preview()
+    assert not win.image_view._item.pixmap().isNull()
+    assert [name for name, _ in win.project.entries()] == entries_before  # no commit
+
+
+def test_green_fringe_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("green_fringe")
+    seen = []
+    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
+    win._on_fringe_change(0.6)
+    win._render_fringe_preview()
+    assert seen
