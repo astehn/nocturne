@@ -1063,23 +1063,43 @@ def test_background_stage_defaults_to_light(qtbot, tmp_path):
     assert win._panel.option_box.currentText() == "light"
 
 
-def test_green_fringe_live_preview_renders_without_commit(qtbot, tmp_path):
+def test_green_fringe_gated_without_rcastro(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("green_fringe")
+    win._go_to_id("green_fringe")               # no RC-Astro configured in tests
+    assert win._panel.fringe_slider.isEnabled() is False
+    assert "RC-Astro" in win._panel.fringe_status.text()
+
+
+def _fake_rc_layers(win, monkeypatch):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    starless = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=False)
+    stars = np.zeros((16, 16, 3), np.float32); stars[8, 8] = (0.2, 0.9, 0.3)
+    stars = AstroImage(stars, is_linear=False)
+    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+    monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
+
+
+def test_green_fringe_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _fake_rc_layers(win, monkeypatch)
+    win._go_to_id("green_fringe")               # sync split (_async_enabled False)
+    assert win._fringe_ready is True
+    assert win._panel.fringe_slider.isEnabled() is True
     entries_before = [name for name, _ in win.project.entries()]
     win._on_fringe_change(0.6)
     win._render_fringe_preview()
     assert not win.image_view._item.pixmap().isNull()
-    assert [name for name, _ in win.project.entries()] == entries_before  # no commit
+    assert [name for name, _ in win.project.entries()] == entries_before   # no commit
 
 
-def test_green_fringe_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
+def test_green_fringe_apply_records_step(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    _fake_rc_layers(win, monkeypatch)
     win._go_to_id("green_fringe")
-    seen = []
-    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
-    win._on_fringe_change(0.6)
-    win._render_fringe_preview()
-    assert seen
+    win._apply_green_fringe(0.6)
+    names = [name for name, _ in win.project.entries()]
+    assert names[-1] == "Remove Green Fringe"
