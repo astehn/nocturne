@@ -52,6 +52,7 @@ def build_panel(
     on_levels_clipping=None,
     on_sat_change=None,
     on_fringe_change=None,
+    on_fringe_apply=None,
     on_lc_change=None,
     on_curve_change=None,
     on_curve_preset=None,
@@ -373,8 +374,11 @@ def build_panel(
 
     elif stage.kind == "green_fringe":
         lay.addWidget(_desc_label(
-            "Remove the green colour fringe around stars. Green isn't real in astro "
-            "images, so this only reduces green excess. 0 = off."))
+            "Remove the green colour fringe around stars. Splits the stars from the "
+            "background and de-greens only the stars, so nebula colour is untouched. "
+            "0 = off. Needs RC-Astro."))
+        status = _desc_label("")   # main_window sets "Separating stars…" / gate text
+        lay.addWidget(status)
         slider = ResetSlider(0)
         fringe_val = QLabel(f"{slider.value() / 100:.2f}")
 
@@ -386,15 +390,18 @@ def build_panel(
         slider.valueChanged.connect(_emit_fringe)
         apply_btn = QPushButton("Apply Remove Green Fringe")
         apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        if on_fringe_apply is not None:
+            apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))
+        # Start disabled — main_window enables once the (slow) StarX split is ready.
+        slider.setEnabled(False)
+        apply_btn.setEnabled(False)
         fringe_row = QHBoxLayout()
         fringe_row.addWidget(QLabel("Strength (off → full)"))
         fringe_row.addWidget(fringe_val)
         lay.addLayout(fringe_row)
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
+        w.fringe_status = status
         w.fringe_slider = slider
         w.fringe_val = fringe_val
         w.apply_btn = apply_btn
