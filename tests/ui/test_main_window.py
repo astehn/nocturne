@@ -36,7 +36,7 @@ def test_default_in_app_path_navigation(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     seq = ["crop", "background", "color", "deconvolution", "stretch", "recover_core",
            "levels", "curves", "saturation", "noise_sharpen", "local_contrast",
-           "star_reduction", "star_spikes", "enhancements", "export"]
+           "star_reduction", "enhancements", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
@@ -1063,31 +1063,3 @@ def test_background_stage_defaults_to_light(qtbot, tmp_path):
     assert win._panel.option_box.currentText() == "light"
 
 
-def test_star_spikes_caches_stars_and_enables_controls(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("star_spikes")            # sync detection (_async_enabled False in tests)
-    assert win._spikes_ready is True
-    assert win._panel.length_slider.isEnabled() is True
-
-
-def test_star_spikes_preview_renders_without_commit(qtbot, tmp_path):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("star_spikes")
-    entries_before = [name for name, _ in win.project.entries()]
-    win._on_spikes_change(0.6, 6, 0.0)
-    win._render_spikes_preview()
-    assert not win.image_view._item.pixmap().isNull()
-    assert [name for name, _ in win.project.entries()] == entries_before   # no commit
-
-
-def test_star_spikes_preview_updates_histogram(qtbot, tmp_path, monkeypatch):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("star_spikes")
-    seen = []
-    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
-    win._on_spikes_change(0.6, 6, 0.0)
-    win._render_spikes_preview()
-    assert seen

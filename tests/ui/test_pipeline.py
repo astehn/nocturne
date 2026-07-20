@@ -14,7 +14,7 @@ def test_path_stages_single_linear_flow():
     assert ids == [
         "load", "crop", "background", "color", "deconvolution", "stretch",
         "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-        "local_contrast", "star_reduction", "star_spikes", "enhancements", "export",
+        "local_contrast", "star_reduction", "enhancements", "export",
     ]
 
 
@@ -34,7 +34,7 @@ def test_step_name_and_order():
     assert PROCESSING_ORDER == [
         "background", "color", "remove_green", "deconvolution", "stretch",
         "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-        "local_contrast", "star_reduction", "star_spikes",
+        "local_contrast", "star_reduction",
     ]
 
 
@@ -74,7 +74,7 @@ def test_post_stretch_ids_are_the_finishing_steps_minus_export():
     from nocturne.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
     assert POST_STRETCH_IDS == frozenset({
         "recover_core", "levels", "curves", "saturation", "noise_sharpen",
-        "local_contrast", "star_reduction", "star_spikes", "enhancements",
+        "local_contrast", "star_reduction", "enhancements",
     })
     assert "export" not in POST_STRETCH_IDS
     assert "stretch" not in POST_STRETCH_IDS
@@ -98,12 +98,3 @@ def test_curves_placed_after_levels():
     assert ids.index("curves") < ids.index("saturation")
     assert STEP_NAME["curves"] == "Curves"
     assert "curves" in POST_STRETCH_IDS
-
-
-def test_star_spikes_placed_after_star_reduction():
-    from nocturne.ui.pipeline import POST_STRETCH_IDS, STEP_NAME
-    ids = [s.id for s in path_stages()]
-    assert ids.index("star_spikes") == ids.index("star_reduction") + 1
-    assert ids.index("star_spikes") < ids.index("enhancements")
-    assert STEP_NAME["star_spikes"] == "Star Spikes"
-    assert "star_spikes" in POST_STRETCH_IDS

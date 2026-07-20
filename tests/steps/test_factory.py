@@ -63,20 +63,3 @@ def test_curves_step_applies_points():
     assert np.allclose(CurvesStep().apply(img, pts).data, apply_curve(img, pts).data)
     # empty option -> identity no-op
     assert np.allclose(CurvesStep().apply(img, "").data, img.data, atol=1e-4)
-
-
-def test_make_step_star_spikes():
-    from nocturne.steps.factory import make_step
-    from nocturne.steps.star_spikes import StarSpikesStep
-    from nocturne.settings import Settings
-    assert isinstance(make_step("star_spikes", Settings()), StarSpikesStep)
-
-
-def test_star_spikes_step_is_self_contained_noop_on_empty():
-    import numpy as np
-    from nocturne.core.image import AstroImage
-    from nocturne.steps.star_spikes import StarSpikesStep
-    img = AstroImage(np.zeros((32, 32, 3), np.float32), is_linear=False)
-    # empty option -> no-op; length 0 -> no-op
-    assert np.allclose(StarSpikesStep().apply(img, "").data, img.data)
-    assert np.allclose(StarSpikesStep().apply(img, (0.0, 6, 0.0)).data, img.data)

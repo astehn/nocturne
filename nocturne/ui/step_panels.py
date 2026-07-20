@@ -57,7 +57,6 @@ def build_panel(
     on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
-    on_spikes_change=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -457,64 +456,6 @@ def build_panel(
         w.sr_status = status
         w.sr_slider = slider
         w.sr_val = sr_val
-        w.apply_btn = apply_btn
-
-    elif stage.kind == "star_spikes":
-        lay.addWidget(_desc_label(
-            "Add diffraction spikes to the brightest stars. Length 0 = off. "
-            "Keep the star count low so it looks intentional."))
-        status = _desc_label("")   # main_window sets "Detecting stars…"
-        lay.addWidget(status)
-        length = ResetSlider(0)
-        stars = ResetSlider(6, minimum=0, maximum=50)
-        angle = ResetSlider(0, minimum=0, maximum=90)
-        length_val = QLabel(f"{length.value() / 100:.2f}")
-        stars_val = QLabel(str(stars.value()))
-        angle_val = QLabel(f"{angle.value()}°")
-
-        def _emit(*_):
-            length_val.setText(f"{length.value() / 100:.2f}")
-            stars_val.setText(str(stars.value()))
-            angle_val.setText(f"{angle.value()}°")
-            if on_spikes_change is not None:
-                on_spikes_change(length.value() / 100.0, stars.value(),
-                                 float(angle.value()))
-
-        length.valueChanged.connect(_emit)
-        stars.valueChanged.connect(_emit)
-        angle.valueChanged.connect(_emit)
-
-        apply_btn = QPushButton("Apply Star Spikes")
-        apply_btn.setObjectName("primary")
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(
-                (length.value() / 100.0, stars.value(), float(angle.value()))))
-
-        # Start disabled — main_window enables once detection has cached.
-        for wdg in (length, stars, angle, apply_btn):
-            wdg.setEnabled(False)
-
-        def _row(label, val):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(label))
-            row.addWidget(val)
-            lay.addLayout(row)
-
-        _row("Length (off → long)", length_val)
-        lay.addWidget(length)
-        _row("Number of stars", stars_val)
-        lay.addWidget(stars)
-        _row("Rotation", angle_val)
-        lay.addWidget(angle)
-        lay.addWidget(apply_btn)
-
-        w.spikes_status = status
-        w.length_slider = length
-        w.stars_slider = stars
-        w.angle_slider = angle
-        w.length_val = length_val
-        w.stars_val = stars_val
-        w.angle_val = angle_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "export":

@@ -34,7 +34,6 @@ _STAGE_TO_TOPIC = {
     "noise_sharpen": "noise_sharpen",
     "local_contrast": "local_contrast",
     "star_reduction": "star_reduction",
-    "star_spikes": "star_spikes",
     "enhancements": "enhancements",
     "export": "export",
 }
@@ -304,13 +303,14 @@ _TOPIC_LIST = (
        "Add diffraction spikes to the brightest stars.",
        "<h4>What it does</h4>"
        "<p>Refractor scopes like the Seestar produce no diffraction spikes — the "
-       "four-point flares many people associate with an astrophoto. This step draws "
-       "tasteful, colour-matched spikes on the brightest stars.</p>"
+       "four-point flares many people associate with an astrophoto. This tool draws "
+       "tasteful, colour-matched spikes on the brightest stars. It is a purely artistic "
+       "choice, so it lives in the toolbar rather than the processing steps.</p>"
        "<h4>How to use it</h4>"
-       "<p><b>Length</b> sets how long the spikes are (0 = off). <b>Number of stars</b> "
-       "chooses how many of the brightest stars get spikes. <b>Rotation</b> tilts the "
-       "cross (e.g. 45° for a diagonal X). Brighter stars get bolder spikes automatically. "
-       "Watch the live preview. Apply.</p>"
+       "<p>Finish your normal processing first, then click <b>Star Spikes…</b> in the "
+       "toolbar. <b>Length</b> sets how long the spikes are (0 = off), <b>Number of stars</b> "
+       "how many of the brightest stars get spikes, and <b>Rotation</b> tilts the cross. "
+       "Watch the live preview, then Apply.</p>"
        "<h4>Tips</h4>"
        "<p>Less is more — a few long spikes on the brightest stars looks intentional; "
        "spikes on everything looks fake. Keep the count low.</p>"),
@@ -423,8 +423,8 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "recover_core", "levels", "curves", "saturation",
                               "noise_sharpen", "local_contrast", "star_reduction",
-                              "star_spikes", "enhancements", "export")),
-    HelpSection("Tools", ("tools",)),
+                              "enhancements", "export")),
+    HelpSection("Tools", ("tools", "star_spikes")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),
     HelpSection("Troubleshooting", ("troubleshooting",)),

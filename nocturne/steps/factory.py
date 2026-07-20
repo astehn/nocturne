@@ -16,7 +16,6 @@ from .recover_core import RecoverCoreStep
 from .remove_green_step import RemoveGreenStep
 from .saturation_step import SaturationStep
 from .star_reduction import StarReductionStep
-from .star_spikes import StarSpikesStep
 from .stretch_step import StretchStep
 
 
@@ -61,6 +60,4 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         step = StarReductionStep(RCAstro(resolve_binary(settings.rcastro_path)))
         step._runner = rc_runner
         return step
-    if stage_id == "star_spikes":
-        return StarSpikesStep()
     raise ValueError(stage_id)

@@ -378,24 +378,3 @@ def test_curves_panel_has_editor_and_presets(qtbot):
     w.reset_btn.click()
     w.add_contrast_btn.click()
     assert presets == ["reset", "add_contrast"]
-
-
-def test_star_spikes_panel_controls(qtbot):
-    seen = []
-    w = build_panel(_stage("star_spikes"), on_spikes_change=lambda *a: seen.append(a))
-    qtbot.addWidget(w)
-    assert w.panel_kind == "star_spikes"
-    for attr in ("spikes_status", "length_slider", "stars_slider", "angle_slider",
-                 "length_val", "stars_val", "angle_val", "apply_btn"):
-        assert hasattr(w, attr)
-    # sliders start disabled (enabled by main_window once detection caches)
-    assert w.length_slider.isEnabled() is False
-    assert w.apply_btn.isEnabled() is False
-    # defaults
-    assert w.stars_slider.value() == 6
-    # a change fires the callback with (length, count, angle) and updates readouts
-    w.length_slider.setEnabled(True)
-    w.length_slider.setValue(40)
-    assert seen and seen[-1] == (0.40, 6, 0.0)
-    assert w.length_val.text().strip() == "0.40"
-    assert w.angle_val.text().strip() == "0°"
