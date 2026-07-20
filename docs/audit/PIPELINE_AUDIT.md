@@ -29,8 +29,8 @@ external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-prin
 | 7 | Levels | UX | ✅ fixed | live preview + auto + clipping + numeric + label |
 | 8 | Saturation | UX | ✅ fixed | midtone-weighted boost (protects bg noise) + live preview + numeric |
 | 9 | Noise Reduction | algo-deep | ✅ reviewed | free TV fallback → GraXpert AI denoise, parked |
-| 10 | Local Contrast | algo + UX | 🔎 next | — |
-| 11 | Star Reduction | algo + UX | ⬜ | retune (paused) |
+| 10 | Local Contrast | algo + UX | ✅ fixed | dropdown→slider + live preview |
+| 11 | Star Reduction | algo + UX | 🔎 next | retune (paused) — resume |
 | 12 | Enhancements | UX | ⬜ | boost buttons; narrowband adjacent |
 | 13 | Export | UX + correctness | ⬜ | — |
 | 14 | Stack (adjacent tool) | correctness | ⬜ | ~396 GB memory runaway |
