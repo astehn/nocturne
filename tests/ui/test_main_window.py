@@ -329,6 +329,25 @@ def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
     assert calls == ["Exporting…"]     # export now goes through the busy helper
 
 
+def test_export_dialog_opens_on_chosen_format(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    seen = {}
+
+    def fake(parent, title, initial, filters, selected):
+        seen["initial"] = initial
+        seen["selected"] = selected
+        return (str(tmp_path / "out.fits"), "")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(fake))
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix: None)
+    win.export_final("FITS")
+    assert seen["selected"] == "FITS (*.fits)"     # dialog respects the app choice
+    assert seen["initial"].endswith(".fits")       # suggested name matches format
+
+
 def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     import nocturne.ui.main_window as mw

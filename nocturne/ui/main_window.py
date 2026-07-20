@@ -956,8 +956,15 @@ class MainWindow(QMainWindow):
                            lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
                            "Exporting…", "Export failed")
             return
+        # Open the dialog on the format the user picked in the app (respect their
+        # choice) and suggest a filename from the opened file's stem.
+        filters = "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
+        selected = {"PNG": "PNG (*.png)", "FITS": "FITS (*.fits)"}.get(
+            fmt, "TIFF (*.tiff)")
+        ext = {"PNG": ".png", "FITS": ".fits"}.get(fmt, ".tiff")
+        stem = os.path.splitext(self._source_label or "export")[0]
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export", "", "TIFF (*.tiff);;PNG (*.png);;FITS (*.fits)"
+            self, "Export", stem + ext, filters, selected
         )
         if not path:
             return
