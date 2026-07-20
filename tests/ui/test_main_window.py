@@ -1128,3 +1128,31 @@ def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
                         lambda *a, **k: opened.append(True))
     win._open_star_spikes()
     assert not opened                         # refused on a linear image
+
+
+def test_open_fits_starts_in_base_dir(qtbot, tmp_path, monkeypatch):
+    from nocturne import ui
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.settings = mw.load_settings(str(tmp_path / "s.json"))
+    win.settings.base_dir = str(tmp_path)
+    seen = {}
+    def _fake_open(*a, **k):
+        seen["dir"] = a[2]          # 3rd positional arg is the start `dir`
+        return ("", "")             # (path, filter) — path "" so nothing opens
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", staticmethod(_fake_open))
+    win._choose_fits()
+    assert seen["dir"] == str(tmp_path)     # opened at the base folder
+
+
+def test_open_fits_blank_base_dir_uses_os_default(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.settings.base_dir = ""
+    seen = {}
+    def _fake_open(*a, **k):
+        seen["dir"] = a[2]          # 3rd positional arg is the start `dir`
+        return ("", "")             # (path, filter) — path "" so nothing opens
+    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", staticmethod(_fake_open))
+    win._choose_fits()
+    assert seen["dir"] == ""

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.autostretch import unlinked_stretch
+from ..settings import start_dir
 from ..stacking.frames import discover_subs, load_sub
 from ..stacking.grade import grade_frames, judge
 from ..stacking.stacker import StackOptions, run_stack, master_filename
@@ -144,13 +145,13 @@ class StackDialog(QDialog):
 
     # --- browse ---
     def _browse_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Folder of subs")
+        path = QFileDialog.getExistingDirectory(self, "Folder of subs", start_dir(self._settings.base_dir))
         if path:
             self.folder_edit.setText(path)
             self.grade()
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getSaveFileName(self, "Master FITS", "", "FITS (*.fits)")[0]
+        path = QFileDialog.getSaveFileName(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
         if path:
             self.output_edit.setText(path)
             self._output_user_edited = True

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..batch import run_batch
 from ..recipe import load_recipe
+from ..settings import start_dir
 from .worker import run_async
 
 
@@ -72,17 +73,17 @@ class BatchDialog(QDialog):
 
     # --- browse handlers ---
     def _browse_recipe(self) -> None:
-        path = QFileDialog.getOpenFileName(self, "Recipe", "", "Recipe (*.json)")[0]
+        path = QFileDialog.getOpenFileName(self, "Recipe", start_dir(self._settings.base_dir), "Recipe (*.json)")[0]
         if path:
             self.recipe_edit.setText(path)
 
     def _browse_input(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Input folder")
+        path = QFileDialog.getExistingDirectory(self, "Input folder", start_dir(self._settings.base_dir))
         if path:
             self.input_edit.setText(path)
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Output folder")
+        path = QFileDialog.getExistingDirectory(self, "Output folder", start_dir(self._settings.base_dir))
         if path:
             self.output_edit.setText(path)
 
