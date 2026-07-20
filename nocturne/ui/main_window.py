@@ -17,7 +17,7 @@ from ..core.fits_io import import_summary
 from ..history.project import Project
 from ..history.step import Step
 from ..settings import (
-    graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
+    graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
             )
             if resp != QMessageBox.StandardButton.Save:
                 return
-        path, _ = QFileDialog.getSaveFileName(self, "Save Recipe", "", "Recipe (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save Recipe", start_dir(self.settings.base_dir), "Recipe (*.json)")
         if not path:
             return
         if not path.lower().endswith(".json"):
@@ -451,7 +451,7 @@ class MainWindow(QMainWindow):
 
     # --- file / project ---
     def _choose_fits(self) -> None:
-        path = QFileDialog.getOpenFileName(self, "Open FITS", "", "FITS (*.fit *.fits)")[0]
+        path = QFileDialog.getOpenFileName(self, "Open FITS", start_dir(self.settings.base_dir), "FITS (*.fit *.fits)")[0]
         if path:
             self.open_fits(path)
 
@@ -1122,7 +1122,7 @@ class MainWindow(QMainWindow):
             if not rcastro_valid(self.settings):
                 self._status.setText("Starless + stars split needs RC-Astro (see Settings).")
                 return
-            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…")
+            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…", start_dir(self.settings.base_dir))
             if not folder:
                 return
 
@@ -1144,7 +1144,8 @@ class MainWindow(QMainWindow):
         ext = {"PNG": ".png", "FITS": ".fits"}.get(fmt, ".tiff")
         stem = os.path.splitext(self._source_label or "export")[0]
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export", stem + ext, filters, selected
+            self, "Export", os.path.join(start_dir(self.settings.base_dir), stem + ext),
+            filters, selected
         )
         if not path:
             return

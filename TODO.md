@@ -128,14 +128,12 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       colour shaping (scale each channel's `data - lum` residual independently). Consider during
       the Step 8 (Saturation) audit as an advanced toggle/panel, alongside the live-preview + numeric
       readout that step will inherit. User has no complaints about the current default behaviour.
-- [ ] **Configurable base / default open directory (reported 2026-07-20).** Photographers keep
-      their images on a specific drive/folder; Open FITS should start there instead of forcing the
-      user to traverse their locations every time. Today `_choose_fits` calls
-      `QFileDialog.getOpenFileName(self, "Open FITS", "", ...)` with an empty start dir. ADD a
-      "Default image folder" setting in Settings, persisted to `settings.json` (alongside
-      `graxpert_path`/`rcastro_path`), used as the dialog's start directory. NICE: also remember the
-      last-used folder on each open and prefer it, with the configured base as the fallback — best of
-      both. Apply to the Stack / Ha-OIII folder pickers too (they also start cold).
+- [x] **Configurable base / default open directory (reported 2026-07-20; done 2026-07-20).** Added a
+      **Default folder** setting (`Settings.base_dir`, persisted in `settings.json`) + a `start_dir()`
+      helper (returns the base if it exists, else the OS default). Every file/folder picker across
+      Open FITS, Save Recipe, Export, Stack, Ha/OIII, and Batch now starts there. Set it once in
+      Settings. Last-used-folder memory was considered and deliberately left out (a fixed base is
+      simpler/predictable) — noted as a possible future enhancement.
 - [x] **Live histogram during slider preview (reported 2026-07-20; done 2026-07-20).** Factored a
       shared `_show_preview()` helper (image + histogram in sync) and routed Levels / Saturation /
       Local Contrast / Star Reduction / Stretch previews through it, so the histogram now tracks every

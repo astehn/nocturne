@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ..settings import start_dir
 from ..stacking.grade import grade_frames
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .worker import run_async
@@ -92,7 +93,7 @@ class HaOIIIDialog(QDialog):
 
     # --- browse ---
     def _browse_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Folder of raw subs")
+        path = QFileDialog.getExistingDirectory(self, "Folder of raw subs", start_dir(self._settings.base_dir))
         if path:
             self.folder_edit.setText(path)
             if not self.output_edit.text().strip():
@@ -100,7 +101,7 @@ class HaOIIIDialog(QDialog):
             self.grade()
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getSaveFileName(self, "Master FITS", "", "FITS (*.fits)")[0]
+        path = QFileDialog.getSaveFileName(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
         if path:
             self.output_edit.setText(path)
 

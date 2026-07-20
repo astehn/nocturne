@@ -35,3 +35,11 @@ def test_result_settings_roundtrip(qtbot):
     qtbot.addWidget(dlg)
     s = dlg.result_settings()
     assert s.graxpert_path == "/a" and s.rcastro_path == "/b"
+
+
+def test_settings_dialog_round_trips_base_dir(qtbot, tmp_path):
+    d = SettingsDialog(Settings(base_dir=str(tmp_path)))
+    qtbot.addWidget(d)
+    assert d._dir.text() == str(tmp_path)          # prefilled from settings
+    d._dir.setText("/tmp/newbase")
+    assert d.result_settings().base_dir == "/tmp/newbase"

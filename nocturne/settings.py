@@ -27,6 +27,7 @@ def resolve_settings_path(home: str | None = None) -> str:
 class Settings:
     graxpert_path: str = ""
     rcastro_path: str = ""
+    base_dir: str = ""
 
 
 def load_settings(path: str) -> Settings:
@@ -37,12 +38,20 @@ def load_settings(path: str) -> Settings:
     return Settings(
         graxpert_path=data.get("graxpert_path", ""),
         rcastro_path=data.get("rcastro_path", ""),
+        base_dir=data.get("base_dir", ""),
     )
 
 
 def save_settings(s: Settings, path: str) -> None:
     with open(path, "w") as f:
         json.dump(asdict(s), f, indent=2)
+
+
+def start_dir(base_dir: str) -> str:
+    """The directory a file picker should open in: the configured base folder if
+    it is a real existing directory, else '' (the OS default)."""
+    base_dir = (base_dir or "").strip()
+    return base_dir if base_dir and os.path.isdir(base_dir) else ""
 
 
 def resolve_binary(path: str) -> str:
