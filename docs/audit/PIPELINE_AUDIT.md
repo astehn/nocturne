@@ -27,8 +27,8 @@ external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-prin
 | 5 | Deconvolution | algo-deep | ✅ reviewed | free unsharp-mask fallback → parked in TODO |
 | 6 | Stretch | algo + UX | ✅ fixed | linked→unlinked (red-clip); WYSIWYG preview==export |
 | 7 | Levels | UX | ✅ fixed | live preview + auto + clipping + numeric + label |
-| 8 | Saturation | UX | 🔎 next | recently remapped — verify; + adopt live preview |
-| 9 | Noise Reduction | algo-deep | ⬜ | — |
+| 8 | Saturation | UX | ✅ fixed | midtone-weighted boost (protects bg noise) + live preview + numeric |
+| 9 | Noise Reduction | algo-deep | 🔎 next | — |
 | 10 | Local Contrast | algo + UX | ⬜ | — |
 | 11 | Star Reduction | algo + UX | ⬜ | retune (paused) |
 | 12 | Enhancements | UX | ⬜ | boost buttons; narrowband adjacent |
