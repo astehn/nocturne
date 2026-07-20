@@ -378,3 +378,16 @@ def test_curves_panel_has_editor_and_presets(qtbot):
     w.reset_btn.click()
     w.add_contrast_btn.click()
     assert presets == ["reset", "add_contrast"]
+
+
+def test_green_fringe_panel_has_slider_readout(qtbot):
+    seen = {}
+    w = build_panel(_stage("green_fringe"),
+                    on_fringe_change=lambda s: seen.__setitem__("s", s))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "green_fringe"
+    assert hasattr(w, "fringe_slider") and hasattr(w, "fringe_val")
+    assert w.fringe_slider.value() == 0            # default off
+    w.fringe_slider.setValue(60)
+    assert w.fringe_val.text().strip() == "0.60"   # readout tracks the slider
+    assert seen.get("s") == 0.60                    # live-preview hook fires
