@@ -51,6 +51,19 @@ def test_preserves_is_linear_and_range():
     assert out.data.min() >= 0.0 and out.data.max() <= 1.0
 
 
+def test_background_protected_vs_midtones():
+    # dark, noisy-background colour vs nebula-midtone colour: boosting must NOT
+    # blow up the background's chroma the way it does the nebula's.
+    bg = np.tile(np.array([0.12, 0.08, 0.06], np.float32), (4, 4, 1))   # lum ~0.087
+    mid = np.tile(np.array([0.45, 0.35, 0.25], np.float32), (4, 4, 1))  # lum ~0.35
+    sbg = saturate(AstroImage(bg), 1.0).data[0, 0]
+    sm = saturate(AstroImage(mid), 1.0).data[0, 0]
+    gain_bg = (sbg.max() - sbg.min()) - (0.12 - 0.06)
+    gain_m = (sm.max() - sm.min()) - (0.45 - 0.25)
+    assert gain_bg < gain_m          # background barely boosted; nebula boosted
+    assert gain_bg < 0.02            # deep background essentially protected
+
+
 def test_highlights_protected_vs_midtones():
     bright = np.tile(np.array([0.95, 0.85, 0.75], np.float32), (4, 4, 1))
     mid = np.tile(np.array([0.45, 0.35, 0.25], np.float32), (4, 4, 1))
