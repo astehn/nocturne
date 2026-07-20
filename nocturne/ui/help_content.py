@@ -27,6 +27,7 @@ _STAGE_TO_TOPIC = {
     "color": "color",
     "deconvolution": "deconvolution",
     "stretch": "stretch",
+    "recover_core": "recover_core",
     "levels": "levels",
     "saturation": "saturation",
     "noise_sharpen": "noise_sharpen",
@@ -244,6 +245,21 @@ _TOPIC_LIST = (
        "<p>Denoise after stretching (which is where the grain shows). Don't overdo it — too much "
        "smears fine structure and stars. Light is often enough on a well-stacked master.</p>"),
 
+    _t("recover_core", "Recover Core",
+       "Pull blown-out bright cores back so they show detail.",
+       "<h4>What it does</h4>"
+       "<p>Short exposures blow out the bright centre of targets like M42, M8 or a "
+       "galaxy nucleus — after stretching it becomes a featureless white blob. "
+       "Recover Core pulls those highlights back down and re-expands the structure "
+       "hiding inside them, so the core shows swirls and detail instead of pure white.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Drag <b>Strength</b> up until the core shows detail without looking flat or "
+       "grey. 0 = off. Watch the live preview. Apply.</p>"
+       "<h4>Tips</h4>"
+       "<p>Only the brightest regions are affected — the sky and faint nebulosity are "
+       "left alone. If a core is completely clipped to white in the data there is no "
+       "detail left to recover; the region will just darken smoothly.</p>"),
+
     _t("local_contrast", "Local Contrast",
        "Add mid-scale depth so nebulosity pops.",
        "<h4>What it does</h4>"
@@ -371,7 +387,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started",)),
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
-                              "levels", "saturation", "noise_sharpen",
+                              "recover_core", "levels", "saturation", "noise_sharpen",
                               "local_contrast", "star_reduction", "enhancements", "export")),
     HelpSection("Tools", ("tools",)),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
