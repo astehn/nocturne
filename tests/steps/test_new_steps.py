@@ -156,6 +156,15 @@ def test_noise_graxpert_strength_per_preset():
         assert seen["s"] == expected
 
 
+def test_noise_dict_unknown_level_coerces_to_medium():
+    # A hand-edited / corrupted recipe with a bad level must degrade to "medium",
+    # not raise KeyError (symmetry with the legacy bare-string path).
+    from nocturne.steps.noise_sharpen import parse_noise_option
+    assert parse_noise_option({"engine": "graxpert", "level": "ludicrous"}) == ("graxpert", "medium")
+    assert parse_noise_option({"engine": "rcastro", "level": ""}) == ("rcastro", "medium")
+    assert parse_noise_option({"engine": "graxpert", "level": "strong"}) == ("graxpert", "strong")
+
+
 def test_noise_recipe_option_round_trips():
     from nocturne.recipe import serialize_option, deserialize_option
     opt = {"engine": "graxpert", "level": "strong"}

@@ -16,7 +16,8 @@ def parse_noise_option(option) -> tuple[str | None, str]:
     """Return (engine, level). option is {"engine","level"} (engine in
     {"rcastro","graxpert"}) or a legacy bare level string (engine None)."""
     if isinstance(option, dict):
-        return option.get("engine"), option.get("level", "medium")
+        lvl = option.get("level", "medium")
+        return option.get("engine"), (lvl if lvl in _TV_LEVELS else "medium")
     return None, (option if option in _TV_LEVELS else "medium")
 
 
