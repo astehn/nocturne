@@ -58,6 +58,16 @@ def test_oiii_slider_changes_the_render(qtbot):
     assert not np.allclose(low, high)
 
 
+def test_value_labels_and_default_preserve_off(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    assert d.lightness_check.isChecked() is False          # brighter combine is the default
+    assert d.oiii_val.text().startswith("×")               # OIII boost shown as a multiplier
+    d.oiii_slider.setValue(75)                              # 75/50 = 1.5
+    assert d.oiii_val.text() == "×1.50"
+    d.protect_slider.setValue(30)
+    assert d.protect_val.text() == "30%"
+
+
 def test_apply_screens_stars_back_and_calls_on_apply(qtbot):
     got = []
     stars = AstroImage(np.zeros((40, 40, 3), np.float32), is_linear=False)

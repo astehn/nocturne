@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QThreadPool, QTimer
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
     QPushButton, QVBoxLayout, QWidget,
@@ -61,8 +61,13 @@ class NarrowbandDialog(QDialog):
         self.sat_slider = ResetSlider(50)
         self.bright_slider = ResetSlider(50)
         self.protect_slider = ResetSlider(40)
+        self.oiii_val = QLabel()
+        self.blend_val = QLabel()
+        self.protect_val = QLabel()
+        self.sat_val = QLabel()
+        self.bright_val = QLabel()
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
-        self.lightness_check.setChecked(True)
+        self.lightness_check.setChecked(False)   # off = brighter combine; the better default
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.clicked.connect(self.reset)
         self.status = QLabel("")
@@ -75,18 +80,30 @@ class NarrowbandDialog(QDialog):
         self.palette_box.currentTextChanged.connect(lambda _t: self._schedule_render())
         for s in (self.blend_slider, self.oiii_slider, self.sat_slider,
                   self.bright_slider, self.protect_slider):
-            s.valueChanged.connect(lambda _v: self._schedule_render())
+            s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
+
+        def _row(slider, value_label):
+            value_label.setMinimumWidth(48)
+            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            box = QHBoxLayout()
+            box.setContentsMargins(0, 0, 0, 0)
+            box.addWidget(slider, 1)
+            box.addWidget(value_label)
+            wrap = QWidget()
+            wrap.setLayout(box)
+            return wrap
 
         controls = QFormLayout()
         controls.addRow("Palette", self.palette_box)
-        controls.addRow("OIII boost", self.oiii_slider)
-        controls.addRow("Green blend", self.blend_slider)
-        controls.addRow("Protect background", self.protect_slider)
-        controls.addRow("Saturation", self.sat_slider)
-        controls.addRow("Brightness", self.bright_slider)
+        controls.addRow("OIII boost", _row(self.oiii_slider, self.oiii_val))
+        controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
+        controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
+        controls.addRow("Saturation", _row(self.sat_slider, self.sat_val))
+        controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow("", self.lightness_check)
         controls.addRow("", self.reset_btn)
+        self._update_value_labels()
 
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
@@ -149,8 +166,22 @@ class NarrowbandDialog(QDialog):
         self.sat_slider.setValue(50)
         self.bright_slider.setValue(50)
         self.protect_slider.setValue(40)
-        self.lightness_check.setChecked(True)
+        self.lightness_check.setChecked(False)
+        self._update_value_labels()
         self._do_render()
+
+    def _on_slider_change(self) -> None:
+        self._update_value_labels()
+        self._schedule_render()
+
+    def _update_value_labels(self) -> None:
+        """Show each slider's mapped value. OIII boost / Brightness read as a
+        multiplier (×1.33) to match the numbers a tutorial or PixInsight uses."""
+        self.oiii_val.setText(f"×{max(0.3, self.oiii_slider.value() / 50.0):.2f}")
+        self.bright_val.setText(f"×{max(0.3, self.bright_slider.value() / 50.0):.2f}")
+        self.blend_val.setText(f"{self.blend_slider.value() / 100.0:.2f}")
+        self.sat_val.setText(f"{self.sat_slider.value() / 100.0:.2f}")
+        self.protect_val.setText(f"{self.protect_slider.value()}%")
 
     def _params(self) -> NarrowbandParams:
         return NarrowbandParams(

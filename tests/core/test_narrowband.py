@@ -125,6 +125,21 @@ def test_render_all_palettes_run_and_are_colour():
         assert np.isfinite(out.data).all()
 
 
+def test_brightness_effective_under_preserve_lightness():
+    # Regression: Brightness must change the image even with lightness_preserve on
+    # (it used to be overwritten by preserve_lightness and appeared dead). Applying
+    # it after the lightness step keeps the slider live in both modes.
+    ha = np.full((32, 32), 0.4, np.float32)
+    oiii = np.full((32, 32), 0.2, np.float32)
+    oiii[8:24, 8:24] = 0.5
+    img = _rgb(ha, oiii)
+    dim = render(img, NarrowbandParams(palette="HOO", lightness_preserve=True,
+                                       brightness=1.0, protect_background=0.0)).data
+    bright = render(img, NarrowbandParams(palette="HOO", lightness_preserve=True,
+                                          brightness=1.8, protect_background=0.0)).data
+    assert bright.mean() > dim.mean() + 0.02
+
+
 def test_render_rejects_mono():
     with pytest.raises(ValueError):
         render(AstroImage(np.zeros((8, 8), np.float32), is_linear=False), NarrowbandParams())

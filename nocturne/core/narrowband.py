@@ -147,7 +147,6 @@ def render_palette(img: AstroImage, params: NarrowbandParams) -> AstroImage:
     r, g, b = _combine(ha, oiii_n, params.palette, params.blend_amount, params.scnr)
     rgb = np.stack([r, g, b], axis=2).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)
-    rgb = brightness(rgb, params.brightness)
     rgb = highlight_recover(rgb, params.highlight_recover)
     tinted = AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
                         is_linear=False, metadata=dict(img.metadata))
@@ -189,6 +188,11 @@ def render(img: AstroImage, params: NarrowbandParams) -> AstroImage:
     if params.lightness_preserve:
         out = AstroImage(preserve_lightness(out.data, original),
                          is_linear=False, metadata=dict(img.metadata))
+    # Brightness is applied to the FINAL image (after the lightness step) so the
+    # slider always works — under Preserve lightness it would otherwise be
+    # overwritten by the original's L* and appear dead.
+    out = AstroImage(brightness(out.data, params.brightness),
+                     is_linear=False, metadata=dict(img.metadata))
     if params.protect_background > 0:
         m = nebula_mask(original, params.protect_background)[..., None]
         blended = m * out.data + (1.0 - m) * original
