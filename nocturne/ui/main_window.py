@@ -357,6 +357,28 @@ class MainWindow(QMainWindow):
         self._status.setText("")
         self._refresh()
 
+    def _open_narrowband(self) -> None:
+        if self.project is None:
+            return
+        if self.project.current().is_linear:
+            self._status.setText("Stretch the image first — Narrowband works on the "
+                                 "stretched image.")
+            return
+        if not self.project.current().is_color:
+            self._status.setText("Narrowband needs a colour image.")
+            return
+        from .narrowband_dialog import NarrowbandDialog
+        NarrowbandDialog(self.settings, self.project.current(), parent=self,
+                         on_apply=self._apply_narrowband).exec()
+
+    def _apply_narrowband(self, result, params) -> None:
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Narrowband", result), params)
+        self.log_panel.append_entry(format_log_entry("Narrowband", params.palette, None))
+        self._status.setText("")
+        self._refresh()
+
     def _remove_stars(self, img):
         rc = RCAstro(resolve_binary(self.settings.rcastro_path))
         return rc.remove_stars(img, runner=self._rc_runner)
@@ -374,6 +396,7 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
+        tb.addAction(load_icon("haoiii", ACCENT), "Narrowband…", self._open_narrowband)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)

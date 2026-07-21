@@ -14,6 +14,23 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
       but wanted. Fix likely benefits all three split-based steps at once.
 
+## Narrowband tool — deferred polish (from whole-branch review 2026-07-21, pre-merge)
+Guided **Narrowband…** colour tool built on branch `narrowband-tool` (NBN engine: MTF median-lift
+of OIII→Ha per Blanshan/Cranfield V8; HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image;
+recipe-captured). Review READY TO MERGE; these are non-blocking follow-ups:
+- [ ] **"Brightness" slider feels nearly inert at the default.** With **Preserve lightness** on
+      (default), `render_palette` applies `brightness` before `preserve_lightness` overwrites L\*
+      with the original's, so Brightness only survives as a*/b* chroma drift. Decide after real-data
+      use: gate Brightness on `lightness_preserve=False`, apply it after the L\*-swap, or relabel it.
+- [ ] **`PALETTES` duplicated** — a list in `ui/narrowband_dialog.py` and a tuple in
+      `core/narrowband.py`. Import the core tuple to keep one source of truth (a parity test guards drift).
+- [ ] **Preview is a downscaled approximation of Apply.** `nebula_mask` percentiles and
+      `preserve_lightness` are resolution-sensitive, so the live (downscaled starless) preview is close
+      but not pixel-identical to the full-res Apply. Standard preview behaviour; note it against the
+      project's strict preview==export principle during validation.
+- [ ] Dedicated toolbar icon (currently reuses `haoiii`); free star-mask fallback + continuum
+      subtraction (`OIII − k·Ha`) remain future sub-projects (see spec "Out of scope").
+
 ## Future features — Enhancements / finishing (from research 2026-07-20)
 Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
 - [x] **HDR core / highlight recovery (HIGH — top pick; done 2026-07-20).** Shipped the "Recover

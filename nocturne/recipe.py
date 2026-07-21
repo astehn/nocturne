@@ -12,6 +12,7 @@ _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but st
 _NAME_TO_STAGE["Rotate"] = "rotate"
 _NAME_TO_STAGE["Flip H"] = "flip_h"
 _NAME_TO_STAGE["Flip V"] = "flip_v"
+_NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
 
 
 @dataclass
@@ -43,6 +44,16 @@ def serialize_option(stage_id, option):
     if stage_id == "saturation":
         amount, nebula = option if isinstance(option, (tuple, list)) else (option, 0.0)
         return [float(amount), float(nebula)]
+    if stage_id == "narrowband":
+        from .core.narrowband import NarrowbandParams
+        p = option if isinstance(option, NarrowbandParams) else NarrowbandParams()
+        return {
+            "palette": p.palette, "blackpoint": p.blackpoint, "oiii_boost": p.oiii_boost,
+            "blend_amount": p.blend_amount, "highlight_reduction": p.highlight_reduction,
+            "brightness": p.brightness, "highlight_recover": p.highlight_recover,
+            "saturation": p.saturation, "lightness_preserve": p.lightness_preserve,
+            "protect_background": p.protect_background, "scnr": p.scnr,
+        }
     return option  # background / noise_sharpen: str
 
 
@@ -68,6 +79,11 @@ def deserialize_option(stage_id, value):
         if isinstance(value, (tuple, list)):
             return (float(value[0]), float(value[1]))
         return (float(value), 0.0)   # legacy bare float
+    if stage_id == "narrowband":
+        import dataclasses
+        from .core.narrowband import NarrowbandParams
+        fields = {f.name for f in dataclasses.fields(NarrowbandParams)}
+        return NarrowbandParams(**{k: v for k, v in value.items() if k in fields})
     return value
 
 
