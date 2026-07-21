@@ -14,22 +14,31 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
       but wanted. Fix likely benefits all three split-based steps at once.
 
-## Narrowband tool — deferred polish (MERGED to main 2026-07-21; these are follow-ups)
-Guided **Narrowband…** colour tool built on branch `narrowband-tool` (NBN engine: MTF median-lift
-of OIII→Ha per Blanshan/Cranfield V8; HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image;
-recipe-captured). Review READY TO MERGE; these are non-blocking follow-ups:
-- [ ] **"Brightness" slider feels nearly inert at the default.** With **Preserve lightness** on
-      (default), `render_palette` applies `brightness` before `preserve_lightness` overwrites L\*
-      with the original's, so Brightness only survives as a*/b* chroma drift. Decide after real-data
-      use: gate Brightness on `lightness_preserve=False`, apply it after the L\*-swap, or relabel it.
+## Narrowband tool (MERGED to main 2026-07-21) — follow-ups
+Guided **Narrowband…** colour tool (NBN engine: MTF median-lift of OIII→Ha per Blanshan/Cranfield V8;
+HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image; params-serialised recipe step). HOO
+user-validated on NGC 7000. Non-blocking follow-ups:
+- [ ] **Palette work — validate & tune Pseudo-SHO and Pseudo-bicolor on real data.** Only **HOO** was
+      validated. The two pseudo palettes' channel math was deliberately left tunable (spec: "exact
+      channel math for the pseudo palettes may be tuned during real-data validation"). Current routing
+      (`core/narrowband.py` `_combine`): Pseudo-SHO = (Ha, Ha, OIII) → gold/teal; Pseudo-bicolor =
+      (Ha, OIII, Ha) → magenta/green. TO DO: run both on real Seestar HOO frames, judge whether the
+      gold-teal and magenta-green looks are pleasing/distinct, and tune the channel mix, SCNR scope,
+      hue, and per-palette default sliders as needed. Also consider whether the **default OIII boost**
+      should sit above ×1.00 (user liked ~×1.3 in testing) and whether more palettes are wanted.
+- [x] **"Brightness" slider inert at the default — FIXED (commit 1de0462).** Moved `brightness` to
+      apply on the FINAL image (after the lightness step) so the slider is live in both modes; also
+      defaulted **Preserve lightness OFF** (brighter combine is the better default) and added numeric
+      slider readouts (OIII boost / Brightness as ×N). User: "much better".
 - [ ] **`PALETTES` duplicated** — a list in `ui/narrowband_dialog.py` and a tuple in
       `core/narrowband.py`. Import the core tuple to keep one source of truth (a parity test guards drift).
 - [ ] **Preview is a downscaled approximation of Apply.** `nebula_mask` percentiles and
       `preserve_lightness` are resolution-sensitive, so the live (downscaled starless) preview is close
       but not pixel-identical to the full-res Apply. Standard preview behaviour; note it against the
-      project's strict preview==export principle during validation.
-- [ ] Dedicated toolbar icon (currently reuses `haoiii`); free star-mask fallback + continuum
-      subtraction (`OIII − k·Ha`) remain future sub-projects (see spec "Out of scope").
+      project's strict preview==export principle.
+- [ ] **Dedicated toolbar icon** (currently reuses the `haoiii` icon).
+- [ ] **Free star-mask fallback** (narrowband without RC-Astro StarX) and **continuum subtraction**
+      (`OIII − k·Ha`, to clean Ha bleed-through from OIII) — future sub-projects (spec "Out of scope").
 
 ## Future features — Enhancements / finishing (from research 2026-07-20)
 Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
@@ -180,7 +189,11 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       navigation. Also note for later: possible display-only smoothing for single-sub RGB shot
       noise at fit zoom (cosmetic, low priority).
 - [x] **Palette workflow reworked into one-press "Colourise" (fixes both palette bugs).** DONE. Replaced the modal-only palette with a one-press **Colourise** button on the Stretch step (StarX cached → auto Foraxx → stars screened back), recorded as a "Colourise" history step at the **stretch position** so later steps preserve it (fixes the "palette discarded by later steps / reset on Color" bug — you also skip the broadband Color step for narrowband, per the new tip). The old "Apply drops stars" bug is gone: the one-press path composes the cached stars back, and "Advanced…" opens the slider dialog seeded with those layers. Whole-branch review caught + fixed a data-loss bug (Advanced truncated history on open → cancel wiped work); now non-destructive (`Project.state_at`; truncate only on record). 348 tests.
-- [ ] **FOLLOW-UP: Recipes/batch don't capture Colourise.** "Colourise" is intentionally not a `PROCESSING_ORDER`/`STEP_NAME` id, so `recipe_from_entries` skips it — a saved recipe omits the colourise step (batch output un-colourised; safe, no crash). Add a `ColouriseStep` (StarX + compose) + factory + batch/recipe serialization so colourised sessions batch correctly. Recipes are a differentiator — do this next. `steps/`, `recipe.py`, `batch.py`.
+- [x] **~~FOLLOW-UP: Recipes/batch don't capture Colourise~~ — SUPERSEDED (2026-07-21).** The old
+      one-press "Colourise" lived only on the never-merged `narrowband-core` branch; it was replaced on
+      `main` by the guided **Narrowband tool**, which IS a params-serialised recipe step
+      (`NarrowbandStep` + factory + recipe serialize/deserialize) captured by recipes/batch. The
+      recipe-capture gap this item described no longer exists.
 - [x] **Crop rotate/flip decoupled.** Rotate/Flip are immediate undoable buttons; Apply Crop
       crops only; flipping no longer re-crops; processing steps preserve geometry (crop/rotate/
       flip each their own history step).
