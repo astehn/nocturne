@@ -579,6 +579,8 @@ class MainWindow(QMainWindow):
             label = ""  # option is a settings object/tuple, not user-facing text
         elif stage_id == "saturation" and isinstance(option, (tuple, list)):
             label = f"{float(option[0]):.2f} / neb {float(option[1]):.2f}"
+        elif stage_id == "noise_sharpen" and isinstance(option, dict):
+            label = f"{option.get('level', 'medium')} ({option.get('engine') or 'auto'})"
         elif isinstance(option, float):
             label = f"{option:.2f}"
         else:
@@ -1337,6 +1339,8 @@ class MainWindow(QMainWindow):
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
         split_enabled = loaded and rcastro_valid(self.settings)
+        both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
+        denoise_choices = ["Default", "RC-Astro", "GraXpert"] if both_denoise else None
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
@@ -1368,6 +1372,8 @@ class MainWindow(QMainWindow):
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
                             if stage.kind == "process" else None),
+            denoise_engine_choices=denoise_choices,
+            denoise_default_engine=self.settings.denoise_engine,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
