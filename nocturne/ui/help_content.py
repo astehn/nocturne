@@ -333,6 +333,33 @@ _TOPIC_LIST = (
        "<p>Less is more — a few long spikes on the brightest stars looks intentional; "
        "spikes on everything looks fake. Keep the count low.</p>"),
 
+    _t("narrowband", "Narrowband",
+       "Natural Hubble-palette colour from dual-band (Ha + OIII) data.",
+       "<p>The Seestar dual-band filter captures two real signals: <b>Ha</b> "
+       "(hydrogen, red) and <b>OIII</b> (oxygen). Because Ha is usually much "
+       "stronger than OIII, a plain colour combine looks orange. Narrowband first "
+       "lifts the weak OIII up to Ha's level, so oxygen shows as real teal/blue.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Finish your normal processing first (Narrowband works on the stretched "
+       "image), then click <b>Narrowband…</b> in the toolbar. Pick a <b>Palette</b>, "
+       "and use <b>OIII boost</b> to bring out the oxygen — it is the key control for "
+       "Seestar data. <b>Protect background</b> keeps the dark sky its natural colour; "
+       "<b>Preserve lightness</b> keeps your tonal structure while only the colour "
+       "changes. Watch the live preview, then Apply.</p>"
+       "<h4>Palettes</h4>"
+       "<p><b>HOO</b> — natural (red-gold nebula, teal oxygen). "
+       "<b>Pseudo-SHO</b> — a gold/teal &quot;Hubble&quot; look. "
+       "<b>Pseudo-bicolor</b> — magenta nebula, green oxygen. There is no real sulfur "
+       "(SII) in dual-band data, so the pseudo palettes are stylistic arrangements of "
+       "the two real signals.</p>"
+       "<h4>Stars</h4>"
+       "<p>With StarXTerminator (RC-Astro) installed, stars are removed first so they "
+       "keep their natural colour, then added back on top. Without it, the whole image "
+       "is recoloured and star colour may look off.</p>"
+       "<h4>Credit</h4>"
+       "<p>Normalization concept and palette formulas by Bill Blanshan &amp; Mike "
+       "Cranfield (PixInsight NarrowbandNormalization).</p>"),
+
     _t("enhancements", "Enhancements",
        "Targeted finishing: boost specific colours and adjust the sky.",
        "<h4>What it does</h4>"
@@ -442,7 +469,7 @@ SECTIONS: tuple[HelpSection, ...] = (
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
-    HelpSection("Tools", ("tools", "star_spikes")),
+    HelpSection("Tools", ("tools", "star_spikes", "narrowband")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),
     HelpSection("Troubleshooting", ("troubleshooting",)),

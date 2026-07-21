@@ -1263,3 +1263,28 @@ def test_peek_is_scoped_to_current_step(qtbot, tmp_path, monkeypatch):
     # entry (post-stretch) must differ from the last-applied step's before
     # (pre-stretch) — proving the peek no longer walks back over an earlier step.
     assert not np.allclose(entry.data, last_applied_before.data)
+
+
+def test_narrowband_records_recipe_captured_step(qtbot, tmp_path):
+    from nocturne.core.narrowband import NarrowbandParams
+    from nocturne.recipe import recipe_from_entries
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                                  # need a stretched image
+    result = win.project.current()                         # stand-in recoloured result
+    win._apply_narrowband(result, NarrowbandParams(palette="HOO", oiii_boost=1.3))
+    names = [n for n, _ in win.project.entries()]
+    assert "Narrowband" in names
+    # and a saved recipe captures it (not dropped)
+    recipe = recipe_from_entries(win.project.entries())
+    assert any(s["stage"] == "narrowband" for s in recipe.steps)
+
+
+def test_narrowband_refused_on_linear_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))                    # linear, pre-stretch
+    win._go_to_id("background")
+    win._open_narrowband()                                 # should no-op with a status
+    names = [n for n, _ in win.project.entries()]
+    assert "Narrowband" not in names
