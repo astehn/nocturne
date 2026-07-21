@@ -43,3 +43,10 @@ def test_settings_dialog_round_trips_base_dir(qtbot, tmp_path):
     assert d._dir.text() == str(tmp_path)          # prefilled from settings
     d._dir.setText("/tmp/newbase")
     assert d.result_settings().base_dir == "/tmp/newbase"
+
+
+def test_dialog_round_trips_denoise_engine(qtbot):
+    d = SettingsDialog(Settings(denoise_engine="graxpert"))
+    qtbot.addWidget(d)
+    assert d.denoise_box.currentText() == "GraXpert"
+    assert d.result_settings().denoise_engine == "graxpert"

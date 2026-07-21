@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..settings import Settings, resolve_binary
@@ -53,6 +53,10 @@ class SettingsDialog(QDialog):
         self._rc_result = QLabel("")
         self._gx_result.setWordWrap(True)
         self._rc_result.setWordWrap(True)
+        self.denoise_box = QComboBox()
+        self.denoise_box.addItems(["RC-Astro", "GraXpert"])
+        self.denoise_box.setCurrentText(
+            "GraXpert" if settings.denoise_engine == "graxpert" else "RC-Astro")
 
         form = QFormLayout(self)
         form.addRow("Default folder", _folder_row(self._dir))
@@ -60,6 +64,7 @@ class SettingsDialog(QDialog):
                     _path_row(self._gx, self._test_graxpert, self._gx_result))
         form.addRow("RC-Astro (optional)",
                     _path_row(self._rc, self._test_rcastro, self._rc_result))
+        form.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export.")
         note.setWordWrap(True)
         form.addRow(note)
@@ -84,5 +89,10 @@ class SettingsDialog(QDialog):
         self._show_result(self._rc_result, self._rc.text(), ["--no-banner", "--help"])
 
     def result_settings(self) -> Settings:
-        return Settings(self._gx.text().strip(), self._rc.text().strip(),
-                        self._dir.text().strip())
+        return Settings(
+            graxpert_path=self._gx.text().strip(),
+            rcastro_path=self._rc.text().strip(),
+            base_dir=self._dir.text().strip(),
+            denoise_engine=("graxpert" if self.denoise_box.currentText() == "GraXpert"
+                            else "rcastro"),
+        )

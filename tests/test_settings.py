@@ -48,3 +48,18 @@ def test_load_settings_defaults_base_dir_blank(tmp_path):
     with open(p, "w") as f:
         json.dump({"graxpert_path": "", "rcastro_path": ""}, f)   # no base_dir key
     assert load_settings(p).base_dir == ""
+
+
+def test_denoise_engine_persists(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings
+    p = str(tmp_path / "s.json")
+    save_settings(Settings(graxpert_path="g", rcastro_path="r", base_dir="d",
+                           denoise_engine="graxpert"), p)
+    assert load_settings(p).denoise_engine == "graxpert"
+
+
+def test_denoise_engine_defaults_to_rcastro(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings
+    p = str(tmp_path / "s.json")
+    save_settings(Settings(), p)                 # no engine set
+    assert load_settings(p).denoise_engine == "rcastro"
