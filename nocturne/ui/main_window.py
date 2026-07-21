@@ -364,6 +364,9 @@ class MainWindow(QMainWindow):
             self._status.setText("Stretch the image first — Narrowband works on the "
                                  "stretched image.")
             return
+        if not self.project.current().is_color:
+            self._status.setText("Narrowband needs a colour image.")
+            return
         from .narrowband_dialog import NarrowbandDialog
         NarrowbandDialog(self.settings, self.project.current(), parent=self,
                          on_apply=self._apply_narrowband).exec()

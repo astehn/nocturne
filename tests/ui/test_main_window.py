@@ -1288,3 +1288,18 @@ def test_narrowband_refused_on_linear_image(qtbot, tmp_path):
     win._open_narrowband()                                 # should no-op with a status
     names = [n for n, _ in win.project.entries()]
     assert "Narrowband" not in names
+
+
+def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                                 # stretched (non-linear)
+    mono = AstroImage(np.full((16, 16), 0.5, np.float32), is_linear=False)
+    win.project.current = lambda: mono                    # pretend the current image is mono
+    win._open_narrowband()                                 # refused (needs colour) — no crash
+    names = [n for n, _ in win.project.entries()]
+    assert "Narrowband" not in names
+    assert "colour" in win._status.text().lower()
