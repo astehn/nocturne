@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
         self._peek_active = False
+        self._displayed = None   # the AstroImage currently on the canvas (peek 'after')
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -780,8 +781,10 @@ class MainWindow(QMainWindow):
             rgb = (out * 255 + 0.5).astype(np.uint8)
             if rgb.ndim == 2:
                 rgb = np.repeat(rgb[:, :, None], 3, axis=2)
+        self._peek_active = False   # a fresh preview repaint always shows the 'after'
+        self._displayed = AstroImage(out, is_linear=False)
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
-        self.histogram_view.set_image(AstroImage(out, is_linear=False))
+        self.histogram_view.set_image(self._displayed)
 
     def _render_levels_preview(self) -> None:
         """Non-committing live preview of the current Levels settings, with an
@@ -1187,16 +1190,28 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _toggle_peek(self) -> None:
-        """Flip the main image between the current state and the previous one (the
-        last applied step), swapping the histogram too. The only thing Space does."""
-        if self.project is None:
+        """Flip the main image between the *current step's* entry state (its before)
+        and whatever is on the canvas now (its after — a live preview or the
+        committed result), swapping the histogram too. Scoped to the current step,
+        so peeking never reveals an earlier step's effect. The only thing Space does."""
+        if self.project is None or self._displayed is None:
             return
         self._peek_active = not self._peek_active
-        before, after = self.project.before_after()
-        img = before if self._peek_active else after
+        img = self._peek_before() if self._peek_active else self._displayed
         self.image_view.set_image(to_qimage(img))
         self.histogram_view.set_image(img)
         self._status.setText("Before — press Space to compare" if self._peek_active else "")
+
+    def _peek_before(self):
+        """The image entering the current step — the same pre-step base a commit
+        operates on (WYSIWYG), so Space compares only THIS step's effect. For
+        non-processing stages (import/crop/export/enhancements) fall back to the
+        previous history state."""
+        stage_id = self.current_stage_id()
+        if stage_id in PROCESSING_ORDER:
+            return self._preview_base(stage_id)
+        before, _ = self.project.before_after()
+        return before
 
     def _toggle_before_after(self) -> None:
         if self.project is None:
@@ -1356,6 +1371,7 @@ class MainWindow(QMainWindow):
             img = self.project.current()
             self.image_view.set_image(to_qimage(img))
             self.histogram_view.set_image(img)
+            self._displayed = img
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))

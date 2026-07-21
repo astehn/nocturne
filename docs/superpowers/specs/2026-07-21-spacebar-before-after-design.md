@@ -19,11 +19,16 @@ hint. Press again to toggle back. That is the only thing Space does.
 
 ## Decisions (made autonomously; flag on review if you'd prefer otherwise)
 
-- **What "before/after" means:** `project.before_after()` — the previous history state
-  vs the current state, i.e. the effect of the **last applied step**. So the intended
-  flow is: apply a step → press Space to compare. (During an *uncommitted* live-preview
-  slider drag, Space shows the last *applied* step's before/after, not the transient
-  preview — an accepted limitation, kept for robustness/simplicity.)
+- **What "before/after" means (revised 2026-07-21 after real-data feedback):** the
+  peek is **scoped to the current step**. *Before* = the current step's **entry image**
+  (`_preview_base(stage_id)` — the same pre-step base a commit operates on, so it's
+  WYSIWYG). *After* = whatever is currently on the canvas (`self._displayed`), i.e. the
+  live preview if the slider is being dragged, else the committed result. So Space shows
+  **only this step's effect**, whether or not the step has been applied yet — and never
+  reveals an earlier step's change (the original bug: sitting on Local Contrast, Space
+  brought back the noise removed two steps earlier, because it showed the last *applied*
+  step's before/after). For non-processing stages (import/crop/export/enhancements) it
+  falls back to `project.before_after()`.
 - **Toggle, not hold:** Space flips before↔after on each press (not hold-to-peek). Simpler,
   and doesn't depend on key-release/auto-repeat quirks.
 - **Full-image swap** (not the split-view): swaps both `image_view` and `histogram_view`
@@ -70,5 +75,4 @@ No new dependency; `to_qimage` and `before_after()` already exist.
 ## Out of scope
 
 - Hold-to-peek (momentary) variant.
-- Per-step "before = pre-step preview base" for uncommitted live previews.
 - Changing the existing split-view Before/After toolbar button.
