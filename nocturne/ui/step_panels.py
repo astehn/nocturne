@@ -51,6 +51,7 @@ def build_panel(
     on_levels_auto=None,
     on_levels_clipping=None,
     on_sat_change=None,
+    on_sat_apply=None,
     on_fringe_change=None,
     on_fringe_apply=None,
     on_lc_change=None,
@@ -345,31 +346,47 @@ def build_panel(
 
     elif stage.kind == "saturation":
         lay.addWidget(_desc_label(
-            "Drag left to mute colour, right to boost. Centre = no change."))
+            "Drag Saturation left to mute colour, right to boost. Centre = no change. "
+            "Nebula boost lifts only the nebulosity (stars & sky untouched); needs RC-Astro."))
         slider = ResetSlider(50)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         slider.setTickInterval(50)
         sat_val = QLabel(f"{slider.value() / 100:.2f}")
+        neb = ResetSlider(0)
+        neb_val = QLabel(f"{neb.value() / 100:.2f}")
+        neb_status = _desc_label("")   # main_window sets "Separating stars…" / gate text
 
         def _emit_sat(*_):
             sat_val.setText(f"{slider.value() / 100:.2f}")
+            neb_val.setText(f"{neb.value() / 100:.2f}")
             if on_sat_change is not None:
-                on_sat_change(slider.value() / 100.0)
+                on_sat_change(slider.value() / 100.0, neb.value() / 100.0)
 
         slider.valueChanged.connect(_emit_sat)
+        neb.valueChanged.connect(_emit_sat)
         apply_btn = QPushButton("Apply Saturation")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        if on_sat_apply is not None:
+            apply_btn.clicked.connect(
+                lambda: on_sat_apply(slider.value() / 100.0, neb.value() / 100.0))
         sat_row = QHBoxLayout()
         sat_row.addWidget(QLabel("Saturation (mute ← native → boost)"))
         sat_row.addWidget(sat_val)
         lay.addLayout(sat_row)
         lay.addWidget(slider)
+        neb_row = QHBoxLayout()
+        neb_row.addWidget(QLabel("Nebula boost (off → strong)"))
+        neb_row.addWidget(neb_val)
+        lay.addLayout(neb_row)
+        lay.addWidget(neb)
+        lay.addWidget(neb_status)
         lay.addWidget(apply_btn)
         w.sat_slider = slider
         w.sat_val = sat_val
+        w.neb_slider = neb
+        w.neb_val = neb_val
+        w.neb_status = neb_status
         w.apply_btn = apply_btn
 
     elif stage.kind == "green_fringe":

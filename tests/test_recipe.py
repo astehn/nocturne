@@ -104,3 +104,10 @@ def test_green_fringe_option_round_trip():
     from nocturne.recipe import serialize_option, deserialize_option
     assert serialize_option("green_fringe", 0.4) == 0.4
     assert deserialize_option("green_fringe", 0.4) == 0.4
+
+
+def test_saturation_option_round_trip():
+    from nocturne.recipe import serialize_option, deserialize_option
+    assert serialize_option("saturation", (0.7, 0.4)) == [0.7, 0.4]
+    assert deserialize_option("saturation", [0.7, 0.4]) == (0.7, 0.4)
+    assert deserialize_option("saturation", 0.7) == (0.7, 0.0)   # legacy bare float

@@ -72,3 +72,77 @@ def test_highlights_protected_vs_midtones():
     gain_b = (sb.max() - sb.min()) - (0.95 - 0.75)
     gain_m = (sm.max() - sm.min()) - (0.45 - 0.25)
     assert gain_b < gain_m  # bright pixels gain less chroma
+
+
+def _screen(a, b):
+    return 1.0 - (1.0 - a) * (1.0 - b)
+
+
+def _sky_and_nebula():
+    from nocturne.core.image import AstroImage
+    a = np.full((100, 100, 3), 0.12, np.float32)      # sky
+    a[30:70, 30:70] = (0.6, 0.3, 0.3)                  # reddish nebula block (lum 0.4)
+    return AstroImage(a, is_linear=False, metadata={"k": 1})
+
+
+def test_nebula_mask_sky_low_nebula_high():
+    from nocturne.core.saturation import _nebula_mask
+    lum = _sky_and_nebula().data.mean(axis=2)
+    m = _nebula_mask(lum)
+    assert m[50, 50] > 0.8        # nebula interior
+    assert m[5, 5] < 0.2          # sky corner
+
+
+def test_nebula_saturate_strength_zero_is_recombine():
+    from nocturne.core.saturation import nebula_saturate
+    from nocturne.core.image import AstroImage
+    starless = _sky_and_nebula()
+    stars = AstroImage(np.zeros((100, 100, 3), np.float32), is_linear=False)
+    out = nebula_saturate(starless, stars, 0.0).data
+    assert np.allclose(out, _screen(starless.data, stars.data))
+
+
+def test_nebula_saturate_boosts_nebula_spares_sky():
+    from nocturne.core.saturation import nebula_saturate
+    from nocturne.core.image import AstroImage
+    starless = _sky_and_nebula()
+    stars = AstroImage(np.zeros((100, 100, 3), np.float32), is_linear=False)
+    out = nebula_saturate(starless, stars, 1.0).data
+    # nebula pixel: chroma (distance from its own luminance) grew
+    def chroma(px):
+        return float(np.abs(px - px.mean()).sum())
+    assert chroma(out[50, 50]) > chroma(starless.data[50, 50])
+    # sky pixel unchanged (mask ~0, stars 0 there)
+    assert np.allclose(out[5, 5], starless.data[5, 5], atol=1e-3)
+
+
+def test_nebula_saturate_screens_stars_untouched():
+    from nocturne.core.saturation import nebula_saturate
+    from nocturne.core.image import AstroImage
+    starless = _sky_and_nebula()
+    star_layer = np.zeros((100, 100, 3), np.float32)
+    star_layer[5, 5] = (0.9, 0.9, 0.9)                 # a star over sky
+    stars = AstroImage(star_layer, is_linear=False)
+    out = nebula_saturate(starless, stars, 1.0).data
+    plain = _screen(starless.data, star_layer)
+    assert np.allclose(out[5, 5], plain[5, 5], atol=1e-3)   # star pixel unaffected by boost
+
+
+def test_nebula_saturate_range_dtype_metadata():
+    from nocturne.core.saturation import nebula_saturate
+    from nocturne.core.image import AstroImage
+    starless = _sky_and_nebula()
+    stars = AstroImage(np.zeros((100, 100, 3), np.float32), is_linear=False)
+    out = nebula_saturate(starless, stars, 0.7)
+    assert out.data.dtype == np.float32
+    assert out.data.min() >= 0.0 and out.data.max() <= 1.0
+    assert out.is_linear is False and out.metadata == {"k": 1}
+
+
+def test_nebula_saturate_mono_no_chroma_change():
+    from nocturne.core.saturation import nebula_saturate
+    from nocturne.core.image import AstroImage
+    starless = AstroImage(np.full((16, 16), 0.4, np.float32), is_linear=False)
+    stars = AstroImage(np.zeros((16, 16), np.float32), is_linear=False)
+    out = nebula_saturate(starless, stars, 1.0).data
+    assert np.allclose(out, _screen(starless.data, stars.data))

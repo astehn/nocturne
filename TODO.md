@@ -32,9 +32,15 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       preview, RC-Astro-gated (disabled + message when absent), Star-Reduction architecture. Chosen
       over a global green-excess pass (which over-corrected the nebula → magenta shift). Deferred: a
       non-RC-Astro fallback (brightness-weighted or sep-mask) for users without StarXTerminator.
-- [ ] **Masked "nebula-only" saturation (MED-HIGH).** Structure/luminance mask so saturation lifts
-      nebulosity while sparing sky background + star cores — distinct from today's global saturation
-      + R/C/B hue boosts. Slider. Low risk, high colour payoff on OSC data.
+- [x] **Masked "nebula-only" saturation (MED-HIGH; done 2026-07-21).** Added a **Nebula boost** slider
+      to the Saturation step: StarX-split star separation (stars untouched) + a sky-anchored nebula
+      mask on the starless layer (`core/saturation.py` `nebula_saturate`), boosting only nebulosity
+      (faint included) while sky stays neutral. Lazy cached split, RC-Astro-gated; the global
+      Saturation slider still works for everyone. User-validated ("worked perfectly"). Also fixed a
+      long-standing quirk: fully-left Saturation now mutes to greyscale (explicit 0 = grey; only an
+      unset option is native). Deferred polish: clear the "Separating stars…" status if a StarX split
+      *fails* — a shared bug across Saturation / Remove Green Fringe / Star Reduction, worth one pass;
+      a non-RC-Astro fallback for the Nebula boost.
 - [ ] **Secondary (lower priority):** "Clarity" large-radius luminance unsharp (overlaps CLAHE —
       only if differentiated); colour-temperature tweak (careful — fights the colour calibration);
       Dark Structure Enhancement (expert-niche for undersampled Seestar data); aesthetic vignette.

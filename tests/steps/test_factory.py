@@ -65,6 +65,15 @@ def test_curves_step_applies_points():
     assert np.allclose(CurvesStep().apply(img, "").data, img.data, atol=1e-4)
 
 
+def test_make_step_saturation_has_rcastro():
+    from nocturne.steps.factory import make_step
+    from nocturne.steps.saturation_step import SaturationStep
+    from nocturne.settings import Settings
+    step = make_step("saturation", Settings())
+    assert isinstance(step, SaturationStep)
+    assert step._rc is not None            # constructed with an RCAstro
+
+
 def test_make_step_green_fringe():
     from nocturne.steps.factory import make_step
     from nocturne.steps.green_fringe import GreenFringeStep

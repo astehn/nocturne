@@ -957,7 +957,7 @@ def test_saturation_preview_renders(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)                 # need a non-linear image
     win._go_to_id("saturation")
-    win._on_sat_change(1.0)                # strong boost
+    win._on_sat_change(1.0, 0.0)            # strong boost, no nebula boost
     win._render_saturation_preview()
     pm = win.image_view._item.pixmap()
     assert not pm.isNull()
@@ -1156,3 +1156,44 @@ def test_open_fits_blank_base_dir_uses_os_default(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", staticmethod(_fake_open))
     win._choose_fits()
     assert seen["dir"] == ""
+
+
+def test_saturation_nebula_gated_without_rcastro(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("saturation")
+    assert win._panel.neb_slider.isEnabled() is False
+    assert "RC-Astro" in win._panel.neb_status.text()
+    assert win._panel.sat_slider.isEnabled() is True      # global still works
+
+
+def test_saturation_global_only_applies_without_rcastro(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("saturation")
+    win._apply_saturation(0.7, 0.0)
+    assert [n for n, _ in win.project.entries()][-1] == "Saturation"
+
+
+def _fake_sat_split(win, monkeypatch):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    starless = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=False)
+    stars = np.zeros((16, 16, 3), np.float32); stars[8, 8] = (0.2, 0.9, 0.3)
+    stars = AstroImage(stars, is_linear=False)
+    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+    monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
+
+
+def test_saturation_nebula_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _fake_sat_split(win, monkeypatch)
+    win._go_to_id("saturation")
+    entries_before = [n for n, _ in win.project.entries()]
+    win._on_sat_change(0.5, 0.6)              # sync split (_async_enabled False)
+    win._render_saturation_preview()
+    assert not win.image_view._item.pixmap().isNull()
+    assert [n for n, _ in win.project.entries()] == entries_before   # no commit
+    win._apply_saturation(0.5, 0.6)
+    assert [n for n, _ in win.project.entries()][-1] == "Saturation"

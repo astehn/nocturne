@@ -35,7 +35,7 @@ from .image_view import ImageView
 from .log_panel import LogPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels, clipping_masks
-from ..core.saturation import saturate
+from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import remove_green_fringe
@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self._sat_timer = QTimer(self)
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
+        self._sat_layers = None   # (sig, starless, stars) once a split lands
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
         self._lc_timer = QTimer(self)
@@ -547,6 +548,8 @@ class MainWindow(QMainWindow):
         name = STEP_NAME[stage_id]
         if stage_id in ("color", "levels", "curves"):
             label = ""  # option is a settings object/tuple, not user-facing text
+        elif stage_id == "saturation" and isinstance(option, (tuple, list)):
+            label = f"{float(option[0]):.2f} / neb {float(option[1]):.2f}"
         elif isinstance(option, float):
             label = f"{option:.2f}"
         else:
@@ -813,20 +816,84 @@ class MainWindow(QMainWindow):
                   else self._panel.stretch_slider.value() / 100.0)
         self._show_preview(apply_stretch(img, amount).data)
 
-    # --- saturation live preview ---
-    def _on_sat_change(self, amount: float) -> None:
-        """The Saturation slider moved: stash the value and (re)start the debounce."""
-        self._sat_pending = amount
+    # --- saturation live preview (global + lazy cached-split nebula boost) ---
+    def _sat_preceding(self) -> set:
+        return set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("saturation")]
+        }
+
+    def _setup_saturation(self) -> None:
+        """On entering Saturation: gate the Nebula slider on RC-Astro. The global
+        slider always works; the StarX split is deferred until the Nebula slider
+        is first raised (lazy)."""
+        self._sat_pending = None
+        if self.project is None or not hasattr(self._panel, "neb_slider"):
+            return
+        if rcastro_valid(self.settings):
+            self._panel.neb_slider.setEnabled(True)
+            self._panel.neb_status.setText("")
+        else:
+            self._panel.neb_slider.setEnabled(False)
+            self._panel.neb_status.setText("Needs RC-Astro — set its path in Settings.")
+
+    def _on_sat_change(self, amount: float, nebula: float) -> None:
+        """A Saturation slider moved: stash both values; lazily split for the
+        nebula boost; (re)start the debounce."""
+        self._sat_pending = (amount, nebula)
+        if nebula > 0.0 and rcastro_valid(self.settings) and not self._busy:
+            base = self._preview_base("saturation")
+            sig = self._sr_sig(base)
+            if not (self._sat_layers and self._sat_layers[0] == sig):
+                self._panel.neb_status.setText("Separating stars…")
+                self._run_busy(lambda: self._remove_stars(base),
+                               lambda layers: self._on_sat_split(sig, layers),
+                               "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
 
+    def _on_sat_split(self, sig, layers) -> None:
+        if self.current_stage_id() != "saturation":
+            return
+        self._sat_layers = (sig, layers[0], layers[1])
+        if hasattr(self._panel, "neb_status"):
+            self._panel.neb_status.setText("")
+        self._render_saturation_preview()
+
+    def _sat_result(self, base, amount, nebula):
+        """The Saturation output for the given base: nebula boost (from the cached
+        split, when available) then the global saturate. Falls back to global-only
+        when the split isn't ready."""
+        img = base
+        if nebula > 0.0 and self._sat_layers and self._sat_layers[0] == self._sr_sig(base):
+            _, starless, stars = self._sat_layers
+            img = nebula_saturate(starless, stars, nebula)
+        return saturate(img, amount)
+
     def _render_saturation_preview(self) -> None:
-        """Non-committing live preview of the current Saturation setting."""
+        """Non-committing live preview of Saturation + Nebula boost."""
         if self.project is None or self.current_stage_id() != "saturation":
             return
-        img = self._preview_base("saturation")
-        amount = (self._sat_pending if self._sat_pending is not None
-                  else self._panel.sat_slider.value() / 100.0)
-        self._show_preview(saturate(img, amount).data)
+        if self._sat_pending is not None:
+            amount, nebula = self._sat_pending
+        else:
+            amount = self._panel.sat_slider.value() / 100.0
+            nebula = self._panel.neb_slider.value() / 100.0
+        base = self._preview_base("saturation")
+        self._show_preview(self._sat_result(base, amount, nebula).data)
+
+    def _apply_saturation(self, amount: float, nebula: float) -> None:
+        """Commit Saturation (+ Nebula boost) using the cached split — instant."""
+        if self.project is None or self._busy:
+            return
+        self.project.jump_back(
+            self._leading_kept(self.project.entries(), self._sat_preceding()))
+        base = self.project.current()
+        result = self._sat_result(base, amount, nebula)
+        self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
+        self.log_panel.append_entry(
+            format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
+        self._status.setText("")
+        self._refresh()
 
     # --- local contrast live preview ---
     def _on_lc_change(self, amount: float) -> None:
@@ -1218,6 +1285,7 @@ class MainWindow(QMainWindow):
             on_levels_auto=self._on_levels_auto,
             on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
+            on_sat_apply=self._apply_saturation,
             on_lc_change=self._on_lc_change,
             on_fringe_change=self._on_fringe_change,
             on_fringe_apply=self._apply_green_fringe,
@@ -1244,6 +1312,8 @@ class MainWindow(QMainWindow):
             self._setup_star_reduction()  # kick off the cached StarX split on entry
         if stage.id == "green_fringe":
             self._setup_green_fringe()
+        if stage.id == "saturation":
+            self._setup_saturation()
         self._update_explainer()
 
     def _refresh(self) -> None:

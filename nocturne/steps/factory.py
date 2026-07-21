@@ -44,7 +44,9 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
     if stage_id == "curves":
         return CurvesStep()
     if stage_id == "saturation":
-        return SaturationStep()
+        step = SaturationStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        step._runner = rc_runner
+        return step
     if stage_id == "green_fringe":
         step = GreenFringeStep(RCAstro(resolve_binary(settings.rcastro_path)))
         step._runner = rc_runner

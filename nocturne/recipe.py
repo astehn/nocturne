@@ -40,6 +40,9 @@ def serialize_option(stage_id, option):
     if stage_id == "curves":
         pts = option if option else [(0.0, 0.0), (1.0, 1.0)]
         return [[float(x), float(y)] for x, y in pts]
+    if stage_id == "saturation":
+        amount, nebula = option if isinstance(option, (tuple, list)) else (option, 0.0)
+        return [float(amount), float(nebula)]
     return option  # background / noise_sharpen: str
 
 
@@ -61,6 +64,10 @@ def deserialize_option(stage_id, value):
         return CropParams(flip_v=True)
     if stage_id == "curves":
         return [tuple(p) for p in value]
+    if stage_id == "saturation":
+        if isinstance(value, (tuple, list)):
+            return (float(value[0]), float(value[1]))
+        return (float(value), 0.0)   # legacy bare float
     return value
 
 

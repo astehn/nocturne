@@ -186,22 +186,29 @@ def test_saturation_panel_default_is_native(qtbot):
 
 def test_saturation_panel_emits_amount(qtbot):
     got = []
-    w = build_panel(_stage("saturation"), on_apply=got.append)
+    w = build_panel(_stage("saturation"), on_sat_apply=lambda a, n: got.append((a, n)))
     qtbot.addWidget(w)
     w.sat_slider.setValue(50)
     w.apply_btn.click()
-    assert got == [0.50]
+    assert got == [(0.50, 0.0)]
 
 
-def test_saturation_panel_has_readout_and_live_change(qapp):
-    seen = {}
+def test_saturation_panel_has_nebula_boost(qtbot):
+    changed, applied = [], []
     w = build_panel(_stage("saturation"),
-                    on_sat_change=lambda a: seen.__setitem__("amt", a))
-    assert hasattr(w, "sat_val")
-    assert w.sat_val.text().strip() == "0.50"     # default slider 50 -> 0.50
-    w.sat_slider.setValue(80)                      # fires readout + on_sat_change
-    assert w.sat_val.text().strip() == "0.80"
-    assert seen.get("amt") == 0.80
+                    on_sat_change=lambda a, n: changed.append((a, n)),
+                    on_sat_apply=lambda a, n: applied.append((a, n)))
+    qtbot.addWidget(w)
+    assert w.panel_kind == "saturation"
+    for attr in ("sat_slider", "sat_val", "neb_slider", "neb_val", "neb_status", "apply_btn"):
+        assert hasattr(w, attr)
+    assert w.sat_slider.value() == 50          # native default
+    assert w.neb_slider.value() == 0           # off default
+    w.neb_slider.setValue(60)
+    assert changed[-1] == (0.50, 0.60)         # (amount, nebula)
+    assert w.neb_val.text().strip() == "0.60"
+    w.apply_btn.click()
+    assert applied[-1] == (0.50, 0.60)
 
 
 def test_local_contrast_panel_default_is_off(qtbot):
