@@ -97,6 +97,73 @@ def test_noise_sharpen_fallback_strength_unchanged():
     assert ns._TV_LEVELS == {"light": 0.4, "medium": 0.7, "strong": 0.9}
 
 
+def test_noise_engine_resolution_matrix():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+
+    class FakeRC:
+        def __init__(self): self.called = False
+        def denoise(self, image, strength, runner=None):
+            self.called = True; return image
+
+    class FakeGX:
+        def __init__(self): self.called = False
+        def denoise(self, image, strength, runner=None):
+            self.called = True; return image
+
+    def run(option, rc, gx):
+        r, g = (FakeRC() if rc else None), (FakeGX() if gx else None)
+        NoiseSharpenStep(r, g).apply(img, option)
+        return (r.called if r else False), (g.called if g else False)
+
+    # both installed -> honour the chosen engine
+    assert run({"engine": "rcastro", "level": "medium"}, True, True) == (True, False)
+    assert run({"engine": "graxpert", "level": "medium"}, True, True) == (False, True)
+    # legacy bare string / no engine -> prefer RC-Astro
+    assert run("medium", True, True) == (True, False)
+    # only the OTHER engine installed -> fall back to it
+    assert run({"engine": "rcastro", "level": "medium"}, False, True) == (False, True)
+    assert run({"engine": "graxpert", "level": "medium"}, True, False) == (True, False)
+
+
+def test_noise_neither_engine_falls_back_to_tv():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+    rng = np.random.default_rng(0)
+    img = AstroImage(np.clip(0.5 + rng.normal(0, 0.1, (24, 24, 3)), 0, 1).astype(np.float32))
+    out = NoiseSharpenStep(None, None).apply(img, {"engine": "graxpert", "level": "strong"})
+    assert out.data.shape == img.data.shape
+    assert not np.allclose(out.data, img.data)          # TV changed the image
+
+
+def test_noise_graxpert_strength_per_preset():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+    seen = {}
+
+    class FakeGX:
+        def denoise(self, image, strength, runner=None):
+            seen["s"] = strength; return image
+
+    for level, expected in (("light", 0.5), ("medium", 0.7), ("strong", 0.9)):
+        NoiseSharpenStep(None, FakeGX()).apply(img, {"engine": "graxpert", "level": level})
+        assert seen["s"] == expected
+
+
+def test_noise_recipe_option_round_trips():
+    from nocturne.recipe import serialize_option, deserialize_option
+    opt = {"engine": "graxpert", "level": "strong"}
+    back = deserialize_option("noise_sharpen", serialize_option("noise_sharpen", opt))
+    assert back == opt
+    assert deserialize_option("noise_sharpen", serialize_option("noise_sharpen", "medium")) == "medium"
+
+
 def test_remove_green_step_clamps_green():
     import numpy as np
     from nocturne.core.image import AstroImage

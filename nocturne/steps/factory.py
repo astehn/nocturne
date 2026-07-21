@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..settings import Settings, rcastro_valid, resolve_binary
+from ..settings import Settings, graxpert_valid, rcastro_valid, resolve_binary
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
@@ -61,7 +61,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         return step
     if stage_id == "noise_sharpen":
         rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = NoiseSharpenStep(rc)
+        gx = GraXpert(resolve_binary(settings.graxpert_path)) if graxpert_valid(settings) else None
+        step = NoiseSharpenStep(rc, gx)
         step._runner = rc_runner
         return step
     if stage_id == "star_reduction":
