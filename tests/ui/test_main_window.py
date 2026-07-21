@@ -1242,3 +1242,24 @@ def test_spacebar_event_filter_toggles_peek(qtbot, tmp_path):
     ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
     assert win.eventFilter(win, ev) is True            # Space consumed -> peek
     assert win._peek_active is True
+
+
+def test_peek_is_scoped_to_current_step(qtbot, tmp_path, monkeypatch):
+    # Regression: on a step you have NOT applied yet, Space must compare THIS
+    # step's entry image, not the last *applied* step's before/after — otherwise
+    # peeking on a later step reveals an earlier step's effect (e.g. noise
+    # reappearing while sitting on Local Contrast).
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                             # the only APPLIED step
+    win._go_to_id("levels")                            # a later step, NOT applied
+    seen = []
+    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
+    win._toggle_peek()                                 # peek 'before'
+    entry = win._preview_base("levels")                # this step's entry image
+    last_applied_before = win.project.before_after()[0]  # the OLD (buggy) 'before'
+    assert np.allclose(seen[-1].data, entry.data)      # scoped to the current step
+    # entry (post-stretch) must differ from the last-applied step's before
+    # (pre-stretch) — proving the peek no longer walks back over an earlier step.
+    assert not np.allclose(entry.data, last_applied_before.data)
