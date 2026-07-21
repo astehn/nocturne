@@ -49,6 +49,26 @@ def test_spikes_brighten_the_four_arms():
     assert out[44, 44].max() < 0.02        # far off any arm -> untouched
 
 
+def test_intensity_scales_spike_brightness():
+    # A lower intensity makes the same spikes fainter everywhere they draw.
+    full = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0, 1.0).data
+    half = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0, 0.5).data
+    for px in ((32, 32), (32, 34), (34, 32)):        # core + both arms
+        assert 0.0 < half[px].max() < full[px].max()
+
+
+def test_intensity_default_is_full_strength():
+    # Omitting intensity must reproduce the previous (full-strength) look exactly.
+    default = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0).data
+    explicit = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0, 1.0).data
+    assert np.allclose(default, explicit)
+
+
+def test_intensity_zero_is_noop():
+    img = _dark()
+    assert np.allclose(add_spikes(img, _one_star(), 1.0, 6, 0.0, 0.0).data, img.data)
+
+
 def test_core_has_a_bloom_glow():
     # The star core carries a soft bloom so spikes emanate from a glow, not a dot.
     out = add_spikes(_dark(), _one_star(), 1.0, 1, 0.0).data

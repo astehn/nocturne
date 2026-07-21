@@ -18,8 +18,24 @@ def test_dialog_builds_and_detects(qtbot):
     d = StarSpikesDialog(_img())
     qtbot.addWidget(d)
     assert d.length_slider.value() == 0
+    assert d.intensity_slider.value() == 100  # full strength by default
     assert d.stars_slider.value() == 6
     assert len(d._stars) >= 1                 # detected on construction
+
+
+def test_intensity_slider_dims_the_spikes(qtbot):
+    d = StarSpikesDialog(_img())
+    qtbot.addWidget(d)
+    d.length_slider.setValue(80)
+    d._render_preview()
+    full = d.result().data.copy()
+    d.intensity_slider.setValue(40)
+    d._render_preview()
+    dimmed = d.result().data
+    # same spikes, fainter — less deviation from the base than at full strength
+    base = d._base.data
+    assert np.abs(dimmed - base).sum() < np.abs(full - base).sum()
+    assert not np.allclose(dimmed, base)      # still visibly present
 
 
 def test_slider_change_renders_preview(qtbot):
