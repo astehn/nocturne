@@ -60,12 +60,14 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
 
 ## UX affordances
 - [x] **Spacebar before/after toggle (requested 2026-07-20; done 2026-07-21).** Space toggles a
-      full-image before↔after swap (image + histogram) of the most recently applied step
-      (`project.before_after()`), with a status hint; app-wide event filter so it works regardless of
-      focus (skipped in text fields / while a modal dialog is up); auto-resets on navigation/apply.
-      Chose **press-to-toggle** (not hold-to-peek) and the last-applied-transition as "before/after".
-      Known limitation: during an *uncommitted* live-preview slider drag it shows the last *applied*
-      step's before/after, not the transient preview (`_preview_base`-based per-step peek deferred).
+      full-image before↔after swap (image + histogram), with a status hint; app-wide event filter so
+      it works regardless of focus (skipped in text fields / while a modal dialog is up); auto-resets
+      on navigation/apply. Chose **press-to-toggle** (not hold-to-peek). **Step-scoped (fixed
+      2026-07-21):** *before* = the current step's entry image (`_preview_base(stage_id)`), *after* =
+      whatever's on the canvas now (`_displayed` — the live preview mid-drag, else the committed
+      result), so Space shows only THIS step's effect and never reveals an earlier step's change
+      (original bug: noise reappearing while on Local Contrast). Non-pipeline stages fall back to
+      `before_after()`. Works on all 13 pipeline steps + before a step is applied.
 
 ## Now — core refinements
 - [x] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17; RESOLVED 2026-07-19).** After
