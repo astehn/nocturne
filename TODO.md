@@ -14,7 +14,7 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
       but wanted. Fix likely benefits all three split-based steps at once.
 
-## Narrowband tool — deferred polish (from whole-branch review 2026-07-21, pre-merge)
+## Narrowband tool — deferred polish (MERGED to main 2026-07-21; these are follow-ups)
 Guided **Narrowband…** colour tool built on branch `narrowband-tool` (NBN engine: MTF median-lift
 of OIII→Ha per Blanshan/Cranfield V8; HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image;
 recipe-captured). Review READY TO MERGE; these are non-blocking follow-ups:
