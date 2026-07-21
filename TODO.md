@@ -2,6 +2,18 @@
 
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
+## Investigate
+- [ ] **Stars come back softer after a StarX split + screen recombine (reported 2026-07-21).** Every
+      step that separates stars from the background and screens them back — Star Reduction, Remove
+      Green Fringe, Masked Nebula Saturation (all use `out = 1-(1-starless)*(1-stars)`) — tends to
+      return the stars *softer* than they were before, and sharp stars matter. Suspect we're "doing
+      something" in the screen-back. Investigate where the softening comes from: (a) the screen
+      recombine itself vs a plain add/max, (b) the StarXTerminator split's own star layer (is the
+      `stars` layer already softened by StarX?), (c) any clip/interp/resample in `rc.remove_stars`
+      (`tools/rcastro.py` `_read_corrected`) or the AstroImage round-trip. Compare a bright star's
+      FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
+      but wanted. Fix likely benefits all three split-based steps at once.
+
 ## Future features — Enhancements / finishing (from research 2026-07-20)
 Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
 - [x] **HDR core / highlight recovery (HIGH — top pick; done 2026-07-20).** Shipped the "Recover
