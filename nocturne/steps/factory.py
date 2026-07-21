@@ -12,6 +12,7 @@ from .curves import CurvesStep
 from .green_fringe import GreenFringeStep
 from .levels import LevelsStep
 from .local_contrast import LocalContrastStep
+from .narrowband_step import NarrowbandStep
 from .noise_sharpen import NoiseSharpenStep
 from .recover_core import RecoverCoreStep
 from .remove_green_step import RemoveGreenStep
@@ -65,6 +66,11 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         return step
     if stage_id == "star_reduction":
         step = StarReductionStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        step._runner = rc_runner
+        return step
+    if stage_id == "narrowband":
+        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
+        step = NarrowbandStep(rc)
         step._runner = rc_runner
         return step
     raise ValueError(stage_id)
