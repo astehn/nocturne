@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
@@ -96,6 +96,11 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
         self._pool = QThreadPool.globalInstance()
+        # Spacebar before/after peek: toggles the main image between the current
+        # state and the previous one (the last applied step). App-wide event
+        # filter so Space works regardless of focus (except in text inputs).
+        self._peek_active = False
+        QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
         self._cursor_active = False     # whether an override cursor is currently set
@@ -1166,6 +1171,33 @@ class MainWindow(QMainWindow):
             self.log_panel.append_entry("Redo")
             self._refresh()
 
+    def eventFilter(self, obj, event) -> bool:
+        """Space anywhere (except in a text field or while a modal dialog is up)
+        toggles the before/after peek."""
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() == Qt.Key.Key_Space
+                and not event.isAutoRepeat()
+                and event.modifiers() == Qt.KeyboardModifier.NoModifier
+                and QApplication.activeModalWidget() is None):
+            from PySide6.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit
+            if not isinstance(QApplication.focusWidget(),
+                              (QLineEdit, QPlainTextEdit, QTextEdit)):
+                self._toggle_peek()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_peek(self) -> None:
+        """Flip the main image between the current state and the previous one (the
+        last applied step), swapping the histogram too. The only thing Space does."""
+        if self.project is None:
+            return
+        self._peek_active = not self._peek_active
+        before, after = self.project.before_after()
+        img = before if self._peek_active else after
+        self.image_view.set_image(to_qimage(img))
+        self.histogram_view.set_image(img)
+        self._status.setText("Before — press Space to compare" if self._peek_active else "")
+
     def _toggle_before_after(self) -> None:
         if self.project is None:
             self._ba_act.setChecked(False)
@@ -1317,6 +1349,7 @@ class MainWindow(QMainWindow):
         self._update_explainer()
 
     def _refresh(self) -> None:
+        self._peek_active = False   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
