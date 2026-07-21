@@ -69,3 +69,34 @@ def test_preserves_is_linear():
     gx = GraXpert(binary_path="/fake/graxpert")
     out = gx.background_extraction(img, 0.5, runner=_writes_output(img.copy(), 0.7))
     assert out.is_linear is True
+
+
+def _capture():
+    calls = []
+
+    def fake(args):
+        calls.append(args)
+        # write an output file where GraXpert would (out + ".fits") so _find_output succeeds
+        out = args[args.index("-output") + 1]
+        write_temp_fits(AstroImage(np.zeros((4, 4), np.float32)), out + ".fits")
+    return calls, fake
+
+
+def test_denoise_uses_strength_not_smoothing():
+    img = AstroImage(np.random.rand(4, 4).astype(np.float32))
+    calls, fake = _capture()
+    GraXpert("/fake/graxpert").denoise(img, 0.7, runner=fake)
+    args = calls[0]
+    assert args[args.index("-cmd") + 1] == "denoising"
+    assert "-strength" in args and args[args.index("-strength") + 1] == "0.7"
+    assert "-smoothing" not in args
+
+
+def test_background_extraction_still_uses_smoothing():
+    img = AstroImage(np.random.rand(4, 4).astype(np.float32))
+    calls, fake = _capture()
+    GraXpert("/fake/graxpert").background_extraction(img, 0.3, runner=fake)
+    args = calls[0]
+    assert args[args.index("-cmd") + 1] == "background-extraction"
+    assert "-smoothing" in args and args[args.index("-smoothing") + 1] == "0.3"
+    assert "-strength" not in args
