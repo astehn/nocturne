@@ -45,7 +45,7 @@ def test_crop_step_none_option_is_identity():
 
 def test_saturation_step_increases_chroma():
     data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
-    out = SaturationStep().apply(AstroImage(data), 1.0)
+    out = SaturationStep(None).apply(AstroImage(data), 1.0)
     assert out.data[0, 0].max() - out.data[0, 0].min() > 0.4
 
 
@@ -53,7 +53,7 @@ def test_saturation_step_falsy_option_is_native_noop():
     # A falsy option must mean "no change" (native), not greyscale.
     data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
     for falsy in (None, "", 0):
-        out = SaturationStep().apply(AstroImage(data), falsy)
+        out = SaturationStep(None).apply(AstroImage(data), falsy)
         assert np.allclose(out.data, data, atol=1e-6)
 
 
