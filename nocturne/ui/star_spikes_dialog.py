@@ -30,16 +30,19 @@ class StarSpikesDialog(QDialog):
 
         self.preview = FramePreview()
         self.length_slider = ResetSlider(0)
+        self.intensity_slider = ResetSlider(100, minimum=0, maximum=100)
         self.stars_slider = ResetSlider(6, minimum=0, maximum=50)
         self.angle_slider = ResetSlider(0, minimum=0, maximum=90)
         self.length_val = QLabel("0.00")
+        self.intensity_val = QLabel("100%")
         self.stars_val = QLabel("6")
         self.angle_val = QLabel("0°")
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._render_preview)
-        for s in (self.length_slider, self.stars_slider, self.angle_slider):
+        for s in (self.length_slider, self.intensity_slider,
+                  self.stars_slider, self.angle_slider):
             s.valueChanged.connect(self._on_change)
 
         self.apply_btn = QPushButton("Apply")
@@ -64,6 +67,7 @@ class StarSpikesDialog(QDialog):
         note.setWordWrap(True)
         root.addWidget(note)
         root.addLayout(_row("Length (off → long)", self.length_slider, self.length_val))
+        root.addLayout(_row("Intensity (faint → full)", self.intensity_slider, self.intensity_val))
         root.addLayout(_row("Number of stars", self.stars_slider, self.stars_val))
         root.addLayout(_row("Rotation", self.angle_slider, self.angle_val))
         buttons = QHBoxLayout()
@@ -76,17 +80,19 @@ class StarSpikesDialog(QDialog):
     def _params(self):
         return (self.length_slider.value() / 100.0,
                 self.stars_slider.value(),
-                float(self.angle_slider.value()))
+                float(self.angle_slider.value()),
+                self.intensity_slider.value() / 100.0)
 
     def _on_change(self, *_):
         self.length_val.setText(f"{self.length_slider.value() / 100:.2f}")
+        self.intensity_val.setText(f"{self.intensity_slider.value()}%")
         self.stars_val.setText(str(self.stars_slider.value()))
         self.angle_val.setText(f"{self.angle_slider.value()}°")
         self._timer.start(90)
 
     def _render_preview(self) -> None:
-        length, count, angle = self._params()
-        self._result = add_spikes(self._base, self._stars, length, count, angle)
+        length, count, angle, intensity = self._params()
+        self._result = add_spikes(self._base, self._stars, length, count, angle, intensity)
         data = np.clip(self._result.data, 0.0, 1.0)
         if data.ndim == 2:
             rgb = np.repeat((data * 255 + 0.5).astype(np.uint8)[:, :, None], 3, axis=2)

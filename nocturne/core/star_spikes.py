@@ -108,15 +108,17 @@ def _splat_bloom(layer, cx, cy, wgt, col, radius):
 
 
 def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
-               angle: float) -> AstroImage:
+               angle: float, intensity: float = 1.0) -> AstroImage:
     """Draw 4-point diffraction spikes on the brightest `count` stars, tinted by
-    each star's colour, and screen-blend onto the image. No-op when length or
-    count is 0 or there are no stars."""
+    each star's colour, and screen-blend onto the image. `intensity` (0..1) scales
+    the whole spike layer's opacity — 1.0 is full strength, lower makes the spikes
+    fainter/more transparent. No-op when length, count, intensity, or stars is 0."""
     data = np.clip(img.data, 0.0, 1.0).astype(np.float32)
     length = float(np.clip(length, 0.0, 1.0))
+    intensity = float(np.clip(intensity, 0.0, 1.0))
     count = int(count)
     mono = data.ndim == 2
-    if length <= 0.0 or count <= 0 or not stars:
+    if length <= 0.0 or count <= 0 or intensity <= 0.0 or not stars:
         return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
 
     h, w = data.shape[:2] if not mono else data.shape
@@ -138,7 +140,7 @@ def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
         for a in arm_angles:
             _splat_arm(layer, s.x, s.y, a, arm, wgt, s.color)
 
-    screened = 1.0 - (1.0 - rgb) * (1.0 - np.clip(layer, 0.0, 1.0))
+    screened = 1.0 - (1.0 - rgb) * (1.0 - np.clip(layer * intensity, 0.0, 1.0))
     out = np.clip(screened, 0.0, 1.0)
     if mono:
         out = out.mean(axis=2)
