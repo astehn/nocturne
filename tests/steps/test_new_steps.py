@@ -49,12 +49,17 @@ def test_saturation_step_increases_chroma():
     assert out.data[0, 0].max() - out.data[0, 0].min() > 0.4
 
 
-def test_saturation_step_falsy_option_is_native_noop():
-    # A falsy option must mean "no change" (native), not greyscale.
+def test_saturation_step_unset_option_is_native_but_zero_is_grey():
+    # An UNSET option (None / "") means "no change" (native). An EXPLICIT 0 means
+    # full desaturation (greyscale) — the slider's left endpoint — so the live
+    # commit and a recipe replay of the same option agree.
     data = np.tile(np.array([0.6, 0.4, 0.2], np.float32), (8, 8, 1))
-    for falsy in (None, "", 0):
-        out = SaturationStep(None).apply(AstroImage(data), falsy)
-        assert np.allclose(out.data, data, atol=1e-6)
+    for unset in (None, ""):
+        out = SaturationStep(None).apply(AstroImage(data), unset)
+        assert np.allclose(out.data, data, atol=1e-6)          # native = no change
+    grey = SaturationStep(None).apply(AstroImage(data), 0.0).data
+    assert np.allclose(grey[..., 0], grey[..., 1])             # explicit 0 -> greyscale
+    assert np.allclose(grey[..., 1], grey[..., 2])
 
 
 def test_noise_sharpen_fallback_changes_image():
