@@ -1197,3 +1197,48 @@ def test_saturation_nebula_caches_split_and_previews(qtbot, tmp_path, monkeypatc
     assert [n for n, _ in win.project.entries()] == entries_before   # no commit
     win._apply_saturation(0.5, 0.6)
     assert [n for n, _ in win.project.entries()][-1] == "Saturation"
+
+
+def test_spacebar_peek_toggles_before_after(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                      # one applied step -> distinct before/after
+    seen = []
+    monkeypatch.setattr(win.histogram_view, "set_image", lambda img: seen.append(img))
+    before, after = win.project.before_after()
+    win._toggle_peek()
+    assert win._peek_active is True
+    assert np.allclose(seen[-1].data, before.data)     # showing the 'before'
+    win._toggle_peek()
+    assert win._peek_active is False
+    assert np.allclose(seen[-1].data, after.data)      # back to the 'after'
+
+
+def test_spacebar_peek_noop_without_project(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._toggle_peek()                                 # no project loaded -> no crash
+    assert win._peek_active is False
+
+
+def test_refresh_resets_peek(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    win._toggle_peek()
+    assert win._peek_active is True
+    win._refresh()
+    assert win._peek_active is False                   # a rebuilt view resets the peek
+
+
+def test_spacebar_event_filter_toggles_peek(qtbot, tmp_path):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
+    assert win.eventFilter(win, ev) is True            # Space consumed -> peek
+    assert win._peek_active is True

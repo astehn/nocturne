@@ -59,15 +59,13 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       Skip: dehaze (redundant with background removal + contrast).
 
 ## UX affordances
-- [ ] **Spacebar before/after toggle (requested 2026-07-20).** Like most photo editors: holding (or
-      pressing) the spacebar shows the "before" of the current step/tool, releasing (or pressing
-      again) returns to "after", so the user can judge exactly what the current step did. In
-      Nocturne's architecture the "before" is the pre-step state we already compute for live preview
-      (`_preview_base(stage_id)`) and the "after" is the current committed/previewed image; a
-      keyPress/keyRelease handler on the main window (or image view) would swap `image_view`
-      (and ideally the histogram) between the two. Decide: momentary (hold-to-peek, matches
-      Lightroom's `\`) vs toggle (press on/off). Should work on any step that has a before/after,
-      not just live-preview slider steps. Low risk, high everyday value.
+- [x] **Spacebar before/after toggle (requested 2026-07-20; done 2026-07-21).** Space toggles a
+      full-image before↔after swap (image + histogram) of the most recently applied step
+      (`project.before_after()`), with a status hint; app-wide event filter so it works regardless of
+      focus (skipped in text fields / while a modal dialog is up); auto-resets on navigation/apply.
+      Chose **press-to-toggle** (not hold-to-peek) and the last-applied-transition as "before/after".
+      Known limitation: during an *uncommitted* live-preview slider drag it shows the last *applied*
+      step's before/after, not the transient preview (`_preview_base`-based per-step peek deferred).
 
 ## Now — core refinements
 - [x] **Total integration wrong for new ZWO-firmware masters (reported 2026-07-17; RESOLVED 2026-07-19).** After
