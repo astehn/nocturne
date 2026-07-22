@@ -76,12 +76,22 @@ def test_auto_panel_apply_color_has_no_green(qtbot):
     assert got[0].remove_green is False
 
 
-def test_auto_panel_remove_green_button_invokes_callback(qtbot):
+def test_auto_panel_remove_green_button_passes_strength(qtbot):
     calls = []
-    w = build_panel(_stage("color"), on_remove_green=lambda: calls.append(True))
+    w = build_panel(_stage("color"), on_remove_green=calls.append)
     qtbot.addWidget(w)
+    w.rg_slider.setValue(70)
     w.remove_green_btn.click()
-    assert calls == [True]
+    assert calls == [0.70]                    # button hands the slider strength through
+
+
+def test_auto_panel_remove_green_slider_previews_live(qtbot):
+    changes = []
+    w = build_panel(_stage("color"), on_removegreen_change=changes.append)
+    qtbot.addWidget(w)
+    assert w.rg_slider.value() == 40          # gentle default (0.40)
+    w.rg_slider.setValue(25)
+    assert changes[-1] == 0.25                # slider drives the live preview
 
 
 def test_levels_panel_emits_tuple(qtbot):

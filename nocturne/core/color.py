@@ -13,14 +13,16 @@ class ColorSettings:
     remove_green: bool = False
 
 
-def remove_green(img: AstroImage) -> AstroImage:
-    """SCNR (average neutral): clamp green to the red/blue average. Mono unchanged."""
+def remove_green(img: AstroImage, strength: float = 1.0) -> AstroImage:
+    """SCNR green removal: reduce green where it exceeds the red/blue average,
+    scaled by `strength` (0 = none, 1 = full average-neutral clamp). Red and blue
+    are never touched; mono is unchanged. strength 1.0 reproduces the classic
+    `G = min(G, (R+B)/2)` clamp."""
     if not img.is_color:
         return img.copy()
-    data = img.data.astype(np.float32).copy()
-    avg_rb = (data[..., 0] + data[..., 2]) / 2.0
-    data[..., 1] = np.minimum(data[..., 1], avg_rb)
-    return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
+    out = _suppress_green_excess(img.data, float(np.clip(strength, 0.0, 1.0)))
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
 def _suppress_green_excess(data: np.ndarray, strength: float) -> np.ndarray:

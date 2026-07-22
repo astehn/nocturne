@@ -38,7 +38,7 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
-from ..core.color import remove_green_fringe
+from ..core.color import remove_green, remove_green_fringe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.stretch import apply_stretch
@@ -154,6 +154,11 @@ class MainWindow(QMainWindow):
         self._fringe_timer = QTimer(self)
         self._fringe_timer.setSingleShot(True)
         self._fringe_timer.timeout.connect(self._render_fringe_preview)
+        # Remove-Green (SCNR) live preview: a pure per-pixel op, debounced 90 ms.
+        self._rg_pending = None
+        self._rg_timer = QTimer(self)
+        self._rg_timer.setSingleShot(True)
+        self._rg_timer.timeout.connect(self._render_removegreen_preview)
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
@@ -747,20 +752,40 @@ class MainWindow(QMainWindow):
     def _flip_v(self) -> None:
         self._apply_geometry("Flip V", CropParams(flip_v=True))
 
-    def _remove_green(self) -> None:
+    def _remove_green(self, strength: float = 1.0) -> None:
         if self.project is None or self._busy:
             return
+        strength = float(strength)
         idx = PROCESSING_ORDER.index("remove_green")
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
         }
         self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
         base = self.project.current()
-        result = self._step_for("remove_green").apply(base, None)
-        self.project.run_step(_PrecomputedStep("Remove Green", result), "")
-        self.log_panel.append_entry(format_log_entry("Remove Green", "", rms_delta(base, result)))
+        result = self._step_for("remove_green").apply(base, strength)
+        self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
+        self.log_panel.append_entry(
+            format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
         self._status.setText("")
         self._refresh()
+
+    def _on_removegreen_change(self, strength: float) -> None:
+        """Live-preview SCNR at the slider strength on the pre-remove-green base
+        (== what the commit operates on, so preview == apply)."""
+        self._rg_pending = float(strength)
+        self._rg_timer.start(90)
+
+    def _render_removegreen_preview(self) -> None:
+        if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
+            return
+        # Color is a PRE-stretch step, so the image is linear — display it through
+        # to_qimage (which auto-stretches), not _show_preview (which assumes
+        # display-space data and would render linear values as near-black).
+        result = remove_green(self._preview_base("remove_green"), self._rg_pending)
+        self._peek_active = False
+        self._displayed = result
+        self.image_view.set_image(to_qimage(result))
+        self.histogram_view.set_image(result)
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
@@ -1343,6 +1368,8 @@ class MainWindow(QMainWindow):
             self._fringe_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
+        if stage.id == "color":
+            self._rg_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -1361,6 +1388,7 @@ class MainWindow(QMainWindow):
             on_flip_v=self._flip_v,
             on_export=self.export_final,
             on_remove_green=self._remove_green,
+            on_removegreen_change=self._on_removegreen_change,
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,

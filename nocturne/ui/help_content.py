@@ -183,7 +183,10 @@ _TOPIC_LIST = (
        "out. Optional green removal (SCNR) is there if a green tinge remains.</p>"
        "<h4>How to use it</h4>"
        "<p>Just apply — it's automatic. You'll usually <i>not</i> need <b>Remove Green</b> now; "
-       "use it only if stars or background still take on a green tinge.</p>"
+       "use it only if stars or background still take on a green tinge. Remove Green has a "
+       "<b>strength</b> dial with a live preview — start gentle (the default) and drag up only as "
+       "far as the green needs; full strength can flatten real nebula colour, so a light touch "
+       "usually wins.</p>"
        "<h4>Tips</h4>"
        "<p>This is the step that cleans up the colour left over after Background extraction. It's "
        "mainly for broadband/OSC data.</p>"),
