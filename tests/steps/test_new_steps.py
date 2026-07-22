@@ -239,6 +239,22 @@ def test_deconvolution_free_fallback_brightens_star_core_not_destroys():
     assert strong[32, 32, 0] > light[32, 32, 0] + 0.02    # strength genuinely differs
 
 
+def test_deconvolution_no_dark_ring_around_bright_stars():
+    # Positive-only unsharp: a big bright star must NOT get a black ring carved
+    # around it (the overshoot artifact a plain unsharp mask leaves).
+    from nocturne.core.deconvolution import sharpen
+    h = w = 80
+    yy, xx = np.mgrid[0:h, 0:w]
+    bg = np.full((h, w), 0.004, np.float32)
+    star = 0.30 * np.exp(-(((yy - 40) ** 2 + (xx - 40) ** 2) / (2 * 2.2 ** 2)))
+    img = AstroImage(np.stack([np.clip(bg + star, 0, 1)] * 3, axis=2), is_linear=True)
+    out = sharpen(img, 0.7).data[..., 0]
+    d = np.sqrt((yy - 40) ** 2 + (xx - 40) ** 2)
+    ring = out[(d >= 4) & (d <= 8)]                       # annulus around the star
+    assert ring.min() >= 0.004 - 1e-4                     # surround not darkened below bg
+    assert out[40, 40] > 0.30                             # core still sharpened up
+
+
 def test_deconvolution_uses_bxt_and_sharpens_stars():
     from nocturne.steps.deconvolution_step import DeconvolutionStep
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
