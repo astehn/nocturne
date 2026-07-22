@@ -41,6 +41,7 @@ from ..core.hdr import recover_core
 from ..core.color import remove_green, remove_green_fringe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
+from ..core.starless import split_stars
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
@@ -54,6 +55,10 @@ from .worker import run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
+
+_FREE_STAR_NOTE = (
+    "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
+)
 
 _ENHANCE_FN = {
     "Boost Red": lambda i: boost_hue(i, 0.0),
@@ -385,8 +390,10 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _remove_stars(self, img):
-        rc = RCAstro(resolve_binary(self.settings.rcastro_path))
-        return rc.remove_stars(img, runner=self._rc_runner)
+        if rcastro_valid(self.settings):
+            rc = RCAstro(resolve_binary(self.settings.rcastro_path))
+            return rc.remove_stars(img, runner=self._rc_runner)
+        return split_stars(img)
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
@@ -890,24 +897,20 @@ class MainWindow(QMainWindow):
         }
 
     def _setup_saturation(self) -> None:
-        """On entering Saturation: gate the Nebula slider on RC-Astro. The global
-        slider always works; the StarX split is deferred until the Nebula slider
-        is first raised (lazy)."""
+        """On entering Saturation: the Nebula slider is always enabled. The global
+        slider always works; the split (StarX or the free fallback) is deferred
+        until the Nebula slider is first raised (lazy)."""
         self._sat_pending = None
         if self.project is None or not hasattr(self._panel, "neb_slider"):
             return
-        if rcastro_valid(self.settings):
-            self._panel.neb_slider.setEnabled(True)
-            self._panel.neb_status.setText("")
-        else:
-            self._panel.neb_slider.setEnabled(False)
-            self._panel.neb_status.setText("Needs RC-Astro — set its path in Settings.")
+        self._panel.neb_slider.setEnabled(True)
+        self._panel.neb_status.setText("" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
 
     def _on_sat_change(self, amount: float, nebula: float) -> None:
         """A Saturation slider moved: stash both values; lazily split for the
         nebula boost; (re)start the debounce."""
         self._sat_pending = (amount, nebula)
-        if nebula > 0.0 and rcastro_valid(self.settings) and not self._busy:
+        if nebula > 0.0 and not self._busy:
             base = self._preview_base("saturation")
             sig = self._sr_sig(base)
             if not (self._sat_layers and self._sat_layers[0] == sig):
@@ -1031,21 +1034,18 @@ class MainWindow(QMainWindow):
             self._leading_kept(self.project.entries(), self._fringe_preceding()))
 
     def _setup_green_fringe(self) -> None:
-        """On entering Remove Green Fringe: run the StarX split once, off-thread,
-        and cache it. The slider then previews the instant de-green recombine. A
-        cached split for the same base is reused; without RC-Astro the step is
-        gated with a note and the slider/Apply stay disabled."""
+        """On entering Remove Green Fringe: run the split (StarX, or the free
+        fallback without RC-Astro) once, off-thread, and cache it. The slider
+        then previews the instant de-green recombine. A cached split for the
+        same base is reused; without RC-Astro a note is shown but the
+        slider/Apply stay enabled."""
         self._fringe_pending = None
         if self.project is None:
             return
         panel = self._panel
-        if not rcastro_valid(self.settings):
-            self._fringe_ready = False
-            if hasattr(panel, "fringe_slider"):
-                panel.fringe_status.setText("Needs RC-Astro — set its path in Settings.")
-                panel.fringe_slider.setEnabled(False)
-                panel.apply_btn.setEnabled(False)
-            return
+        if not rcastro_valid(self.settings) and hasattr(panel, "fringe_status"):
+            panel.fringe_status.setText(_FREE_STAR_NOTE)
+        # (fall through — the split runs via _remove_stars, free or StarX)
         base = self._fringe_base()
         sig = self._sr_sig(base)
         if self._fringe_layers and self._fringe_layers[0] == sig:
@@ -1053,7 +1053,8 @@ class MainWindow(QMainWindow):
             if hasattr(panel, "fringe_slider"):
                 panel.fringe_slider.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
-                panel.fringe_status.setText("")
+                panel.fringe_status.setText(
+                    "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
             self._render_fringe_preview()
             return
         self._fringe_ready = False
@@ -1073,7 +1074,8 @@ class MainWindow(QMainWindow):
         if hasattr(self._panel, "fringe_slider"):
             self._panel.fringe_slider.setEnabled(True)
             self._panel.apply_btn.setEnabled(True)
-            self._panel.fringe_status.setText("")
+            self._panel.fringe_status.setText(
+                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
         self._render_fringe_preview()
 
     def _on_fringe_change(self, strength: float) -> None:
@@ -1126,30 +1128,27 @@ class MainWindow(QMainWindow):
                 round(float(img.data.std()), 6))
 
     def _setup_star_reduction(self) -> None:
-        """On entering Star Reduction: run the (slow) StarX split once, off-thread,
-        and cache it. The slider then previews the fast wing-curve instantly. A
-        cached split for the same base is reused; without RC-Astro the step is
-        gated with a note and the slider/Apply stay disabled."""
+        """On entering Star Reduction: run the split (StarX, or the free
+        fallback without RC-Astro) once, off-thread, and cache it. The slider
+        then previews the fast wing-curve instantly. A cached split for the
+        same base is reused; without RC-Astro a note is shown but the
+        slider/Apply stay enabled."""
         self._sr_pending = None
         if self.project is None:
             return
         panel = self._panel
-        if not rcastro_valid(self.settings):
-            self._sr_ready = False
-            if hasattr(panel, "sr_status"):
-                panel.sr_status.setText("Needs RC-Astro — set its path in Settings.")
-                panel.sr_slider.setEnabled(False)
-                panel.apply_btn.setEnabled(False)
-            return
+        if not rcastro_valid(self.settings) and hasattr(panel, "sr_status"):
+            panel.sr_status.setText(_FREE_STAR_NOTE)
         base = self._sr_base()
         sig = self._sr_sig(base)
         if self._sr_layers and self._sr_layers[0] == sig:
-            # Already split for this exact base — reuse it, no StarX rerun.
+            # Already split for this exact base — reuse it, no rerun.
             self._sr_ready = True
             if hasattr(panel, "sr_slider"):
                 panel.sr_slider.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
-                panel.sr_status.setText("")
+                panel.sr_status.setText(
+                    "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
             self._render_sr_preview()
             return
         self._sr_ready = False
@@ -1162,7 +1161,7 @@ class MainWindow(QMainWindow):
                        "Separating stars…", "Star separation failed")
 
     def _on_sr_split(self, sig, layers) -> None:
-        """The StarX split finished: cache it and enable the slider — unless the
+        """The split finished: cache it and enable the slider — unless the
         user has already navigated away from Star Reduction."""
         if self.current_stage_id() != "star_reduction":
             return
@@ -1171,7 +1170,8 @@ class MainWindow(QMainWindow):
         if hasattr(self._panel, "sr_slider"):
             self._panel.sr_slider.setEnabled(True)
             self._panel.apply_btn.setEnabled(True)
-            self._panel.sr_status.setText("")
+            self._panel.sr_status.setText(
+                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
         self._render_sr_preview()
 
     def _on_sr_change(self, amount: float) -> None:

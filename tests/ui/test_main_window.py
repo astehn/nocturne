@@ -1038,16 +1038,45 @@ def test_setup_star_reduction_caches_split(qtbot, tmp_path, monkeypatch):
     assert win._panel.apply_btn.isEnabled() is True
 
 
-def test_setup_star_reduction_needs_rcastro(qtbot, tmp_path):
+def test_setup_star_reduction_ungated_without_rcastro(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    win._go_to_id("star_reduction")      # no RC-Astro configured
-    assert win._sr_ready is False
-    assert win._panel.sr_slider.isEnabled() is False
-    assert win._panel.apply_btn.isEnabled() is False
-    assert "RC-Astro" in win._panel.sr_status.text()
+    win._go_to_id("star_reduction")      # no RC-Astro configured -> free split used
+    assert win._sr_ready is True
+    assert win._sr_layers is not None
+    assert win._panel.sr_slider.isEnabled() is True
+    assert win._panel.apply_btn.isEnabled() is True
+    assert "RC-Astro" in win._panel.sr_status.text()            # free-detection note
+    assert "Needs RC-Astro" not in win._panel.sr_status.text()  # not the old gate text
+
+
+def test_star_reduction_ungated_without_rcastro(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw, "rcastro_valid", lambda s: False)   # simulate no RC-Astro
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch"); win.apply_current(0.6)
+    win._go_to_id("star_reduction")
+    # panel slider is ENABLED (not gated) and shows a free-detection note, not "Needs RC-Astro"
+    assert win._panel.sr_slider.isEnabled() is True
+    assert "RC-Astro" in win._panel.sr_status.text()            # note mentions RC-Astro
+    assert "Needs RC-Astro" not in win._panel.sr_status.text()  # but not the old gate text
+
+
+def test_remove_stars_uses_free_split_without_rcastro(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    import numpy as np
+    monkeypatch.setattr(mw, "rcastro_valid", lambda s: False)
+    used = {"free": False}
+    monkeypatch.setattr(mw, "split_stars",
+                        lambda img: (used.__setitem__("free", True) or (img, img)))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    img = win.project.current()
+    win._remove_stars(img)
+    assert used["free"] is True                                 # free split, no RC-Astro call
 
 
 def test_star_reduction_preview_renders(qtbot, tmp_path):
@@ -1091,12 +1120,14 @@ def test_background_stage_defaults_to_light(qtbot, tmp_path):
     assert win._panel.option_box.currentText() == "light"
 
 
-def test_green_fringe_gated_without_rcastro(qtbot, tmp_path):
+def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("green_fringe")               # no RC-Astro configured in tests
-    assert win._panel.fringe_slider.isEnabled() is False
-    assert "RC-Astro" in win._panel.fringe_status.text()
+    win._go_to_id("green_fringe")               # no RC-Astro configured -> free split used
+    assert win._fringe_ready is True
+    assert win._panel.fringe_slider.isEnabled() is True
+    assert "RC-Astro" in win._panel.fringe_status.text()            # free-detection note
+    assert "Needs RC-Astro" not in win._panel.fringe_status.text()  # not the old gate text
 
 
 def _fake_rc_layers(win, monkeypatch):
@@ -1186,12 +1217,13 @@ def test_open_fits_blank_base_dir_uses_os_default(qtbot, tmp_path, monkeypatch):
     assert seen["dir"] == ""
 
 
-def test_saturation_nebula_gated_without_rcastro(qtbot, tmp_path):
+def test_saturation_nebula_ungated_without_rcastro(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("saturation")
-    assert win._panel.neb_slider.isEnabled() is False
-    assert "RC-Astro" in win._panel.neb_status.text()
+    assert win._panel.neb_slider.isEnabled() is True            # ungated -> free split
+    assert "RC-Astro" in win._panel.neb_status.text()           # free-detection note
+    assert "Needs RC-Astro" not in win._panel.neb_status.text()  # not the old gate text
     assert win._panel.sat_slider.isEnabled() is True      # global still works
 
 
