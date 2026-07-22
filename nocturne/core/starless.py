@@ -36,8 +36,10 @@ def _local_background(data: np.ndarray) -> np.ndarray:
                   anti_aliasing=False).astype(np.float32)
 
 
-def _star_mask(lum: np.ndarray) -> np.ndarray:
-    """Feathered 0..1 mask of detected stars (empty if none / sep fails)."""
+def _star_mask(lum: np.ndarray, mask_scale: float = 1.0) -> np.ndarray:
+    """Feathered 0..1 mask of detected stars (empty if none / sep fails).
+    `mask_scale` widens the per-star radius + feather — Green Fringe uses a wider
+    mask so it captures the fringe HALO around stars, not just the core."""
     h, w = lum.shape
     mask = np.zeros((h, w), np.float32)
     try:
@@ -45,8 +47,10 @@ def _star_mask(lum: np.ndarray) -> np.ndarray:
         obj = sep.extract(lum - bkg.back(), _THRESH, err=bkg.globalrms)
     except Exception:
         return mask
+    rmax = int(round(_RMAX * mask_scale))
     for o in obj:
-        r = int(np.clip(_RFAC * np.sqrt(float(o["a"]) * float(o["b"])), _RMIN, _RMAX))
+        r = int(np.clip(_RFAC * mask_scale * np.sqrt(float(o["a"]) * float(o["b"])),
+                        _RMIN, rmax))
         y0, y1 = max(0, int(o["y"]) - r), min(h, int(o["y"]) + r + 1)
         x0, x1 = max(0, int(o["x"]) - r), min(w, int(o["x"]) + r + 1)
         if y1 <= y0 or x1 <= x0:
@@ -57,7 +61,16 @@ def _star_mask(lum: np.ndarray) -> np.ndarray:
             ((gy - o["y"]) ** 2 + (gx - o["x"]) ** 2 <= r * r).astype(np.float32))
     if mask.max() <= 0.0:
         return mask
-    return np.clip(gaussian_filter(mask, _FEATHER), 0.0, 1.0)
+    return np.clip(gaussian_filter(mask, _FEATHER * mask_scale), 0.0, 1.0)
+
+
+def star_mask(img: AstroImage, mask_scale: float = 1.0) -> np.ndarray:
+    """Public feathered 0..1 star-neighbourhood mask. Green Fringe passes
+    `mask_scale`>1 to cover the fringe HALO around stars (not just the core) and
+    de-greens the image in place inside it — see `remove_green_fringe_masked`."""
+    data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
+    lum = data if data.ndim == 2 else data.mean(axis=2)
+    return _star_mask(np.ascontiguousarray(lum, dtype=np.float32), mask_scale)
 
 
 def split_stars(img: AstroImage) -> tuple[AstroImage, AstroImage]:

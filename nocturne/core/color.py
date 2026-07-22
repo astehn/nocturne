@@ -53,6 +53,26 @@ def remove_green_fringe(starless: AstroImage, stars: AstroImage,
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))
 
 
+def remove_green_fringe_masked(img: AstroImage, mask: np.ndarray,
+                               strength: float) -> AstroImage:
+    """Free-path green-fringe removal (no StarXTerminator): suppress green excess
+    directly on the image, blended by a feathered star-neighbourhood `mask`, so
+    only the region around stars is de-greened and the nebula/background colour is
+    preserved. The free split can't isolate a broad chromatic halo into a stars
+    layer (a smooth halo is absorbed into the median background), so the
+    stars-layer de-green of `remove_green_fringe` barely touches real fringe —
+    de-greening in place inside the star mask does. `strength` 0 = unchanged."""
+    strength = float(np.clip(strength, 0.0, 1.0))
+    data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
+    if strength <= 0.0 or not img.is_color or mask is None or float(mask.max()) <= 0.0:
+        return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
+    degreened = _suppress_green_excess(data, strength)
+    m = mask[..., None]
+    out = (1.0 - m) * data + m * degreened
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
 def _background_mask(lum: np.ndarray) -> np.ndarray:
     """Boolean mask of 'empty sky' pixels — above the noise floor, below the
     nebula and stars — so the colour estimate isn't contaminated by real signal.

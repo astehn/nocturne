@@ -38,10 +38,11 @@ from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
-from ..core.color import remove_green, remove_green_fringe
+from ..core.color import remove_green, remove_green_fringe, remove_green_fringe_masked
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
-from ..core.starless import split_stars
+from ..core.starless import split_stars, star_mask
+from ..steps.green_fringe import FRINGE_MASK_SCALE
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
@@ -1063,14 +1064,30 @@ class MainWindow(QMainWindow):
             panel.fringe_slider.setEnabled(False)
             panel.apply_btn.setEnabled(False)
             panel.fringe_status.setText("Separating stars…")
-        self._run_busy(lambda: self._remove_stars(base),
-                       lambda layers: self._on_fringe_split(sig, layers),
+        self._run_busy(lambda: self._fringe_prepare(base),
+                       lambda payload: self._on_fringe_split(sig, payload),
                        "Separating stars…", "Star separation failed")
 
-    def _on_fringe_split(self, sig, layers) -> None:
+    def _fringe_prepare(self, base):
+        """Off-thread: build what the fringe preview de-greens. StarX gives a
+        clean (starless, stars) split we can de-green cleanly; without RC-Astro
+        the split can't isolate a broad chromatic halo, so we cache a widened
+        star-neighbourhood mask and de-green the image in place inside it."""
+        if rcastro_valid(self.settings):
+            starless, stars = self._remove_stars(base)
+            return ("split", starless, stars)
+        return ("mask", base, star_mask(base, FRINGE_MASK_SCALE))
+
+    def _fringe_result(self, strength) -> AstroImage:
+        _, kind, a, b = self._fringe_layers
+        if kind == "split":
+            return remove_green_fringe(a, b, float(strength))
+        return remove_green_fringe_masked(a, b, float(strength))
+
+    def _on_fringe_split(self, sig, payload) -> None:
         if self.current_stage_id() != "green_fringe":
             return
-        self._fringe_layers = (sig, layers[0], layers[1])
+        self._fringe_layers = (sig,) + tuple(payload)
         self._fringe_ready = True
         if hasattr(self._panel, "fringe_slider"):
             self._panel.fringe_slider.setEnabled(True)
@@ -1090,16 +1107,14 @@ class MainWindow(QMainWindow):
             return
         strength = (self._fringe_pending if self._fringe_pending is not None
                     else self._panel.fringe_slider.value() / 100.0)
-        _, starless, stars = self._fringe_layers
-        self._show_preview(remove_green_fringe(starless, stars, strength).data)
+        self._show_preview(self._fringe_result(strength).data)
 
     def _apply_green_fringe(self, strength) -> None:
         if self.project is None or not self._fringe_ready or self._busy or not self._fringe_layers:
             return
         self.project.jump_back(
             self._leading_kept(self.project.entries(), self._fringe_preceding()))
-        _, starless, stars = self._fringe_layers
-        result = remove_green_fringe(starless, stars, float(strength))
+        result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
         self.log_panel.append_entry(
             format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))

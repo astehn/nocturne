@@ -310,3 +310,36 @@ def test_star_split_steps_work_without_rcastro():
     assert StarReductionStep(None).apply(img, 0.6).data.shape == (40, 40, 3)
     assert GreenFringeStep(None).apply(img, 1.0).data.shape == (40, 40, 3)
     assert SaturationStep(None).apply(img, (0.5, 0.6)).data.shape == (40, 40, 3)
+
+
+def test_green_fringe_free_masked_degreens_star_not_background():
+    # Free path (rc=None): de-greens the green halo AROUND a star in place, while
+    # leaving a green background pixel far from any star untouched. This is the
+    # correct behaviour after finding the stars-layer de-green couldn't remove a
+    # broad chromatic halo (it's absorbed into the median background).
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.green_fringe import GreenFringeStep
+    h = w = 120
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.sqrt((yy - 60) ** 2 + (xx - 60) ** 2)
+    core = 0.9 * np.exp(-r ** 2 / (2 * 1.5 ** 2))
+    halo = 0.18 * np.exp(-r ** 2 / (2 * 7.0 ** 2))         # broad green fringe halo
+    R = np.clip(0.08 + core, 0, 1)
+    G = np.clip(0.11 + core + halo, 0, 1)                  # uniform +0.03 green cast everywhere
+    B = np.clip(0.08 + core, 0, 1)
+    img = AstroImage(np.stack([R, G, B], axis=2).astype(np.float32), is_linear=False)
+    out = GreenFringeStep(None).apply(img, 1.0)
+    halo_mask = (r > 4) & (r < 10)
+    assert out.data[..., 1][halo_mask].mean() < G[halo_mask].mean() - 0.02  # fringe de-greened
+    assert abs(float(out.data[5, 5, 1]) - float(G[5, 5])) < 1e-4  # far green background untouched
+
+
+def test_green_fringe_free_strength_zero_is_identity():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.green_fringe import GreenFringeStep
+    rng = np.random.default_rng(0)
+    img = AstroImage(rng.random((30, 30, 3)).astype(np.float32), is_linear=False)
+    out = GreenFringeStep(None).apply(img, 0.0)            # strength 0 -> unchanged
+    assert np.allclose(out.data, img.data)

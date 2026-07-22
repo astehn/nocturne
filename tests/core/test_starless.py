@@ -49,3 +49,20 @@ def test_mono_image_splits():
     starless, stars = split_stars(img)
     recon = 1.0 - (1.0 - starless.data) * (1.0 - stars.data)
     assert np.abs(recon - img.data).max() < 1e-4
+
+
+def test_star_mask_covers_stars_and_widens_with_scale():
+    # star_mask() is the public feathered star-neighbourhood mask the free
+    # Green-Fringe path de-greens inside. It must be ~1 on the star, ~0 on empty
+    # sky, and a larger scale must extend the covered region past the core.
+    from nocturne.core.starless import star_mask
+    h = w = 100
+    yy, xx = np.mgrid[0:h, 0:w]
+    r2 = (yy - 50) ** 2 + (xx - 50) ** 2
+    data = np.clip(0.08 + 0.7 * np.exp(-r2 / (2 * 1.6 ** 2)), 0, 1).astype(np.float32)
+    img = AstroImage(np.stack([data] * 3, axis=2), is_linear=False)
+    narrow = star_mask(img, mask_scale=1.0)
+    wide = star_mask(img, mask_scale=2.5)
+    assert narrow[50, 50] > 0.8                            # covers the star core (feather softens peak)
+    assert narrow[5, 5] < 0.05                             # spares empty sky
+    assert (wide > 0.5).sum() > (narrow > 0.5).sum() * 1.5  # wider mask, larger region

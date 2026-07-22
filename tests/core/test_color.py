@@ -86,3 +86,30 @@ def test_remove_green_preserves_is_linear():
     from nocturne.core.color import remove_green
     img = AstroImage(np.full((4, 4, 3), 0.4, dtype=np.float32), is_linear=False)
     assert remove_green(img).is_linear is False
+
+
+def test_remove_green_fringe_masked_degreens_inside_mask_only():
+    from nocturne.core.color import remove_green_fringe_masked
+    data = np.zeros((4, 4, 3), dtype=np.float32)
+    data[..., 0] = 0.2; data[..., 1] = 0.8; data[..., 2] = 0.2   # strong green excess everywhere
+    mask = np.zeros((4, 4), dtype=np.float32)
+    mask[0, 0] = 1.0                                             # only this pixel is "near a star"
+    out = remove_green_fringe_masked(AstroImage(data), mask, 1.0)
+    assert out.data[0, 0, 1] < 0.3                              # masked pixel de-greened to ~avg(R,B)
+    assert np.allclose(out.data[1, 1, 1], 0.8)                  # unmasked pixel untouched
+
+
+def test_remove_green_fringe_masked_strength_zero_and_empty_mask_are_identity():
+    from nocturne.core.color import remove_green_fringe_masked
+    data = np.random.default_rng(1).random((4, 4, 3)).astype(np.float32)
+    mask = np.ones((4, 4), dtype=np.float32)
+    assert np.allclose(remove_green_fringe_masked(AstroImage(data), mask, 0.0).data, data)
+    assert np.allclose(
+        remove_green_fringe_masked(AstroImage(data), np.zeros((4, 4), np.float32), 1.0).data, data)
+
+
+def test_remove_green_fringe_masked_mono_is_noop():
+    from nocturne.core.color import remove_green_fringe_masked
+    img = AstroImage(np.full((4, 4), 0.5, dtype=np.float32))
+    out = remove_green_fringe_masked(img, np.ones((4, 4), np.float32), 1.0)
+    assert out.data.ndim == 2 and np.allclose(out.data, 0.5)
