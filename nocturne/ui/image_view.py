@@ -114,6 +114,7 @@ class ImageView(QGraphicsView):
         self._compare_item = None
         self._divider = None
         self._split_x = 0.0
+        self._annotations = None
         self._zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
         self._zoom_pill.raise_()
         self._position_zoom_pill()
@@ -357,6 +358,16 @@ class ImageView(QGraphicsView):
         for h in self._handles.values():
             self._scene.removeItem(h)
         self._handles.clear()
+
+    # --- annotation overlay (DSO labels + compass + scale bar) ---
+    def set_annotations(self, group) -> None:
+        if self._annotations is not None:
+            self._scene.removeItem(self._annotations)
+            self._annotations = None
+        if group is not None:
+            group.setZValue(8)
+            self._scene.addItem(group)
+            self._annotations = group
 
     def _set_bounds(self, bounds) -> None:
         top, bottom, left, right = bounds
