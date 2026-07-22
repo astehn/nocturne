@@ -925,7 +925,8 @@ class MainWindow(QMainWindow):
             return
         self._sat_layers = (sig, layers[0], layers[1])
         if hasattr(self._panel, "neb_status"):
-            self._panel.neb_status.setText("")
+            self._panel.neb_status.setText(
+                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
         self._render_saturation_preview()
 
     def _sat_result(self, base, amount, nebula):

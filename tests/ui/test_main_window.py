@@ -1245,6 +1245,22 @@ def _fake_sat_split(win, monkeypatch):
     monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
 
 
+def test_saturation_nebula_split_keeps_free_note_without_rcastro(qtbot, tmp_path, monkeypatch):
+    # Regression: after the free nebula split completes without RC-Astro,
+    # _on_sat_split must preserve the free-detection note (not wipe it to "").
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    starless = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=False)
+    stars = AstroImage(np.zeros((16, 16, 3), np.float32), is_linear=False)
+    monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: False)
+    win = _window(qtbot, tmp_path)
+    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("saturation")
+    win._on_sat_change(0.5, 0.6)                       # sync free split -> _on_sat_split
+    assert "RC-Astro" in win._panel.neb_status.text()  # free note preserved, not ""
+
+
 def test_saturation_nebula_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
