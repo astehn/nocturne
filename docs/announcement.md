@@ -16,15 +16,20 @@ single time. So I've been building a small, native desktop app that turns that r
 into a **guided, one-step-at-a-time process**, dedicated to the S30 Pro.
 
 What it does today:
-- 🎨 **One-press "Colourise"** — turns a raw dualband (Ha/OIII) master into a finished colour image
-  (Foraxx-style), stars removed and screened back automatically. Advanced sliders if you want to tune.
-- 🔭 **Real deconvolution & star tools** — integrates **GraXpert** (free) and **RC-Astro** (BlurX /
-  NoiseX / StarX), with free fallbacks if you don't own them.
+- 🎨 **Narrowband colour** — turns a dualband (Ha/OIII) master into a finished colour image with
+  natural **HOO** or Hubble-style palettes. Stars are separated (StarXTerminator) and screened back
+  automatically, with an **OIII boost** to bring out the oxygen. Live preview; sliders to taste.
+- 🔭 **Real deconvolution, denoise & star tools** — integrates **GraXpert** (free) and **RC-Astro**
+  (BlurX / NoiseX / StarX). **Choose your denoise engine** (GraXpert or NoiseX), with free fallbacks
+  if you own neither.
 - 🧱 **Built-in stacking** — point it at a folder of subs; it grades/rejects, registers (handles
   alt-az field rotation), and integrates a master.
-- 🪄 **Guided steps** — crop, background extraction, deconvolution, stretch, levels, saturation,
-  local contrast, noise reduction, star reduction — each with simple Light/Medium/Strong choices,
-  live before/after, and full undo / jump-back (nothing is destructive).
+- 🪄 **Guided, non-destructive steps** — crop, background extraction, colour calibration,
+  deconvolution, stretch, core recovery (HDR), curves, levels, saturation, green removal (with a
+  strength dial), noise reduction, local contrast, star reduction — each with simple
+  Light/Medium/Strong choices or sliders, a **live before/after preview**, and full undo / jump-back.
+- ✨ **Artistic finishing** — narrowband palettes, tasteful **diffraction star-spikes**, and
+  targeted colour boosts.
 - ♻️ **Recipes & batch** — save your steps and apply them to a whole folder.
 - 💾 Export 16-bit TIFF / PNG / FITS (incl. starless + stars).
 
@@ -51,8 +56,9 @@ Thanks 🙌 clear skies.
 
 ## Short version (2–3 lines)
 
-Building **Nocturne**, a free guided processing app for the ZWO Seestar S30 Pro — one-press dualband
-→ colour, built-in stacking, and GraXpert/RC-Astro integration. I only got my Seestar a few weeks
+Building **Nocturne**, a free guided processing app for the ZWO Seestar S30 Pro — guided dualband
+→ narrowband colour, built-in stacking, and GraXpert/RC-Astro integration (with a choice of denoise
+engine). I only got my Seestar a few weeks
 ago (and the skies have not cooperated 🌧️), so I'm short on data to test it. If you can share a
 stacked dualband/LP **FITS master** (raw subs a bonus), upload here (no account needed): **[UPLOAD
 LINK]** — or comment/DM 🙏. Your data is used **only** to test/improve Nocturne — never shared or
