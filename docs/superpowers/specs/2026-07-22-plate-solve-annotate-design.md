@@ -2,7 +2,7 @@
 
 **Status:** Draft for review · 2026-07-22
 **Depends on:** ASTAP (external, user-installed) · OpenNGC catalogue (bundled)
-**Unlocks later (separate specs):** Photometric colour calibration (SPCC) · Mosaic stitching
+**Unlocks later (separate specs, in this order):** Photometric colour calibration (SPCC) **then** Mosaic stitching — SPCC first because the user has no mosaic data to validate against yet (2026-07-22).
 
 ## Goal
 
