@@ -63,6 +63,8 @@ def build_panel(
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
+    denoise_engine_choices: list | None = None,
+    denoise_default_engine: str = "rcastro",
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -163,8 +165,29 @@ def build_panel(
                 apply_btn.setEnabled(apply_enabled)
 
         box.currentTextChanged.connect(_update_enabled)
+
+        engine_box = None
+        if stage.id == "noise_sharpen" and denoise_engine_choices:
+            engine_box = QComboBox()
+            engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
+            lay.addWidget(QLabel("Engine"))
+            lay.addWidget(engine_box)
+            w.engine_box = engine_box
+
+        def _noise_apply_option():
+            level = box.currentText()
+            if stage.id != "noise_sharpen":
+                return level                              # background / deconvolution: bare level
+            if engine_box is not None:
+                sel = engine_box.currentText()
+                engine = (denoise_default_engine if sel == "Default"
+                          else "graxpert" if sel == "GraXpert" else "rcastro")
+            else:
+                engine = denoise_default_engine
+            return {"engine": engine, "level": level}
+
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(box.currentText()))
+            apply_btn.clicked.connect(lambda: on_apply(_noise_apply_option()))
         lay.addWidget(QLabel("Strength"))
         lay.addWidget(box)
         lay.addWidget(apply_btn)

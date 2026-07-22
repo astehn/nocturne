@@ -387,6 +387,43 @@ def test_curves_panel_has_editor_and_presets(qtbot):
     assert presets == ["reset", "add_contrast"]
 
 
+def test_noise_engine_dropdown_shown_when_both_installed(qtbot):
+    captured = []
+    w = build_panel(_stage("noise_sharpen"), on_apply=captured.append,
+                    denoise_engine_choices=["Default", "RC-Astro", "GraXpert"],
+                    denoise_default_engine="rcastro")
+    qtbot.addWidget(w)
+    assert hasattr(w, "engine_box")
+    w.engine_box.setCurrentText("GraXpert")
+    w.option_box.setCurrentText("strong")
+    w.apply_btn.click()
+    assert captured == [{"engine": "graxpert", "level": "strong"}]
+
+
+def test_noise_default_choice_uses_setting(qtbot):
+    captured = []
+    w = build_panel(_stage("noise_sharpen"), on_apply=captured.append,
+                    denoise_engine_choices=["Default", "RC-Astro", "GraXpert"],
+                    denoise_default_engine="graxpert")
+    qtbot.addWidget(w)
+    # "Default" resolves to the passed default engine
+    w.engine_box.setCurrentText("Default")
+    w.option_box.setCurrentText("medium")
+    w.apply_btn.click()
+    assert captured == [{"engine": "graxpert", "level": "medium"}]
+
+
+def test_noise_no_dropdown_when_not_both_installed(qtbot):
+    captured = []
+    w = build_panel(_stage("noise_sharpen"), on_apply=captured.append,
+                    denoise_engine_choices=None, denoise_default_engine="rcastro")
+    qtbot.addWidget(w)
+    assert not hasattr(w, "engine_box")
+    w.option_box.setCurrentText("light")
+    w.apply_btn.click()
+    assert captured == [{"engine": "rcastro", "level": "light"}]
+
+
 def test_green_fringe_panel_gated_and_wired(qtbot):
     changed, applied = {}, {}
     w = build_panel(_stage("green_fringe"),

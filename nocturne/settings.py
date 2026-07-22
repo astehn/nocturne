@@ -28,6 +28,7 @@ class Settings:
     graxpert_path: str = ""
     rcastro_path: str = ""
     base_dir: str = ""
+    denoise_engine: str = "rcastro"
 
 
 def load_settings(path: str) -> Settings:
@@ -39,6 +40,7 @@ def load_settings(path: str) -> Settings:
         graxpert_path=data.get("graxpert_path", ""),
         rcastro_path=data.get("rcastro_path", ""),
         base_dir=data.get("base_dir", ""),
+        denoise_engine=data.get("denoise_engine", "rcastro"),
     )
 
 

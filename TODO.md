@@ -14,6 +14,31 @@ Working notes for what's next. Core pipeline + UX are functional on `main`.
       FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
       but wanted. Fix likely benefits all three split-based steps at once.
 
+## GraXpert AI denoise + engine choice (branch `graxpert-denoise`, awaiting user validation 2026-07-21)
+Wired GraXpert AI denoise into the Noise Reduction step as a choosable engine. Verified GraXpert
+3.0.2 CLI (`-cmd denoising -strength`). `NoiseSharpenStep(rc, gx)` resolves: chosen engine → other
+installed → TV. Global default (RC-Astro) in Settings + per-image "Engine" dropdown in the Noise
+panel (shown only when both installed). Recipe captures `{engine, level}`. Whole-branch review
+READY WITH FIXES → the one recommended fix (coerce unknown level) is landed; 616 green.
+- [ ] **VALIDATE + calibrate (blocks merge).** Judge GraXpert denoise quality vs NoiseXTerminator vs
+      the TV fallback on real Seestar data (NGC 7000), and **tune `_GX_LEVELS`** in
+      `nocturne/steps/noise_sharpen.py` (currently light 0.5 / medium 0.7 / strong 0.9) so the presets
+      feel right. Confirm the Engine dropdown + global default behave.
+- [ ] **Recorded option captures the CHOSEN engine, not the RESOLVED one (by design).** If you author
+      on a GraXpert-only machine while the setting is "rcastro" (default), the recipe records
+      `engine: rcastro` even though the local preview used GraXpert (fallback). Replaying elsewhere then
+      uses rcastro. Consequence of the spec's "record chosen, resolve at apply-time" model — noted for
+      awareness; revisit only if it bites.
+- [ ] Small: no direct unit test for the main_window both-installed dropdown gating (low risk; panel
+      side is tested). `_noise_apply_option` name is narrower than its scope (serves all process stages).
+- [x] **Heads-up that GraXpert is slow — DONE (commit below).** Speed confirmed INHERENT to the newer
+      GraXpert denoise models — user reproduced the same multi-minute times in Siril (2026-07-22); not a
+      Nocturne setting (CoreML accelerates only ~78/2527 model nodes on Mac, rest is CPU). Busy status
+      now shows "Denoising with GraXpert — this can take a few minutes…" when GraXpert is the running
+      engine (`main_window._busy_label_for`).
+- [ ] Update the Noise Reduction help topic to mention the two AI engines + free fallback + the Engine
+      selector (note GraXpert = free but slower, RC-Astro NoiseX = fast).
+
 ## Narrowband tool (MERGED to main 2026-07-21) — follow-ups
 Guided **Narrowband…** colour tool (NBN engine: MTF median-lift of OIII→Ha per Blanshan/Cranfield V8;
 HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image; params-serialised recipe step). HOO

@@ -17,22 +17,24 @@ class GraXpert:
     def background_extraction(
         self, img: AstroImage, strength: float, *, runner=run_cli
     ) -> AstroImage:
-        return self._run("background-extraction", img, strength, runner)
+        return self._run("background-extraction", "-smoothing", img, strength, runner)
 
     def denoise(self, img: AstroImage, strength: float, *, runner=run_cli) -> AstroImage:
-        return self._run("denoising", img, strength, runner)
+        return self._run("denoising", "-strength", img, strength, runner)
 
-    def _run(self, command: str, img: AstroImage, strength: float, runner) -> AstroImage:
+    def _run(self, command: str, strength_flag: str, img: AstroImage,
+             strength: float, runner) -> AstroImage:
         tmp = tempfile.mkdtemp(prefix="gx_")
         in_fits = os.path.join(tmp, "in.fits")
         out_fits = os.path.join(tmp, "out.fits")
         try:
             write_temp_fits(img, in_fits)
-            # `-cli` is mandatory for command-line use; `-output` is the full
-            # output filename; `-smoothing` is the 0..1 strength.
+            # `-cli` is mandatory; `-output` is the base output filename; the
+            # strength flag differs per command: background-extraction uses
+            # `-smoothing`, denoising uses `-strength` (GraXpert 3.x).
             runner([
                 self.binary_path, "-cli", "-cmd", command,
-                in_fits, "-output", out_fits, "-smoothing", str(strength),
+                in_fits, "-output", out_fits, strength_flag, str(strength),
             ])
             produced = out_fits if os.path.exists(out_fits) else self._find_output(tmp, in_fits)
             result = read_fits_array(produced)
