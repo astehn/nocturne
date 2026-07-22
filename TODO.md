@@ -3,16 +3,13 @@
 Working notes for what's next. Core pipeline + UX are functional on `main`.
 
 ## Investigate
-- [ ] **Stars come back softer after a StarX split + screen recombine (reported 2026-07-21).** Every
-      step that separates stars from the background and screens them back — Star Reduction, Remove
-      Green Fringe, Masked Nebula Saturation (all use `out = 1-(1-starless)*(1-stars)`) — tends to
-      return the stars *softer* than they were before, and sharp stars matter. Suspect we're "doing
-      something" in the screen-back. Investigate where the softening comes from: (a) the screen
-      recombine itself vs a plain add/max, (b) the StarXTerminator split's own star layer (is the
-      `stars` layer already softened by StarX?), (c) any clip/interp/resample in `rc.remove_stars`
-      (`tools/rcastro.py` `_read_corrected`) or the AstroImage round-trip. Compare a bright star's
-      FWHM/peak before vs after a no-op split→recombine (strength 0) to isolate it. Not a major deal
-      but wanted. Fix likely benefits all three split-based steps at once.
+- [x] **Stars come back softer after a StarX split + screen recombine — RESOLVED 2026-07-22.** Root
+      cause: `remove_stars` ran `sxt --stars` WITHOUT `--unscreen` (stars = original−starless, meant
+      for ADDITIVE recombine) but every caller SCREEN-recombines → dimmed/puffed stars even at zero
+      reduction. Fix: `remove_stars` now defaults `unscreen=True`, so `1-(1-starless)*(1-stars)` is
+      exact. Proven objectively (Star Reduction at 0.00 = perfect no-op, stars sharp) + audited: single
+      split path, all recombines are screen, no additive recombine. Fixes all four split-based steps +
+      previews + the starless/stars export (now exports unscreened, Screen-recombine-ready stars).
 
 ## GraXpert AI denoise + engine choice (branch `graxpert-denoise`, awaiting user validation 2026-07-21)
 Wired GraXpert AI denoise into the Noise Reduction step as a choosable engine. Verified GraXpert
