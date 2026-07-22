@@ -65,13 +65,15 @@ def test_curves_step_applies_points():
     assert np.allclose(CurvesStep().apply(img, "").data, img.data, atol=1e-4)
 
 
-def test_make_step_saturation_has_rcastro():
+def test_make_step_saturation_rc_or_none():
     from nocturne.steps.factory import make_step
     from nocturne.steps.saturation_step import SaturationStep
     from nocturne.settings import Settings
+    # No RC-Astro path (default) -> rc is None so the step uses the free star split;
+    # this mirrors the deconvolution/noise_sharpen rc-or-None wiring.
     step = make_step("saturation", Settings())
     assert isinstance(step, SaturationStep)
-    assert step._rc is not None            # constructed with an RCAstro
+    assert step._rc is None
 
 
 def test_make_step_green_fringe():
