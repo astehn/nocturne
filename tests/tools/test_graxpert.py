@@ -100,3 +100,20 @@ def test_background_extraction_still_uses_smoothing():
     assert args[args.index("-cmd") + 1] == "background-extraction"
     assert "-smoothing" in args and args[args.index("-smoothing") + 1] == "0.3"
     assert "-strength" not in args
+
+
+def test_graxpert_preserves_input_metadata():
+    # GraXpert changes pixels, not headers — the plate-solve hint cards (and
+    # target/exposure) must survive the round-trip. Regression: read_fits_array
+    # returned empty metadata, silently dropping solve_cards after Background.
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True,
+                     metadata={"target": "NGC 281",
+                               "solve_cards": {"OBJCTRA": "00 53 06", "FOCALLEN": 160.0}})
+
+    def fake_runner(args):
+        write_temp_fits(AstroImage(img.data * 0.5), args[args.index("-output") + 1])
+
+    out = GraXpert("/fake/graxpert").background_extraction(img, 0.5, runner=fake_runner)
+    assert out.metadata["target"] == "NGC 281"
+    assert out.metadata["solve_cards"]["OBJCTRA"] == "00 53 06"
+    assert out.is_linear is True

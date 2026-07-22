@@ -106,3 +106,20 @@ def test_rcastro_corrects_vertical_flip():
     assert np.allclose(out.data, disk[::-1], atol=1e-5)
 
 
+
+
+def test_rcastro_preserves_input_metadata():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.base import write_temp_fits
+    from nocturne.tools.rcastro import RCAstro
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True,
+                     metadata={"target": "NGC 281",
+                               "solve_cards": {"OBJCTRA": "00 53 06", "FOCALLEN": 160.0}})
+
+    def fake_runner(args):
+        write_temp_fits(AstroImage(img.data * 0.9), args[args.index("-o") + 1])
+
+    out = RCAstro("/fake/rc").denoise(img, 0.5, runner=fake_runner)
+    assert out.metadata["target"] == "NGC 281"
+    assert out.metadata["solve_cards"]["FOCALLEN"] == 160.0

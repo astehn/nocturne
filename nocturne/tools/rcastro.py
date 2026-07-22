@@ -12,13 +12,16 @@ from .base import read_fits_array, run_cli, write_temp_fits
 _IMAGE_EXTS = (".fits", ".fit", ".fts", ".tiff", ".tif", ".xisf", ".png")
 
 
-def _read_corrected(path: str, is_linear: bool) -> AstroImage:
+def _read_corrected(path: str, is_linear: bool, metadata: dict | None = None) -> AstroImage:
     """Read an RC-Astro FITS output and correct its orientation. RC-Astro uses
     the FITS bottom-row-first convention, so its output comes back vertically
-    flipped relative to our top-row-first arrays — flip it back."""
+    flipped relative to our top-row-first arrays — flip it back. `metadata` is the
+    INPUT image's metadata, carried through (the tool changes pixels, not headers);
+    the output file itself has none, so without this it would be lost."""
     img = read_fits_array(path)
     return AstroImage(
-        np.ascontiguousarray(img.data[::-1]), is_linear=is_linear, metadata=dict(img.metadata)
+        np.ascontiguousarray(img.data[::-1]), is_linear=is_linear,
+        metadata=dict(metadata or {}),
     )
 
 
@@ -70,9 +73,9 @@ class RCAstro:
             if unscreen:
                 args.append("--unscreen")
             runner(args)
-            starless = _read_corrected(out_fits, img.is_linear)
+            starless = _read_corrected(out_fits, img.is_linear, img.metadata)
             stars_path = self._find_other(tmp, {in_fits, out_fits})
-            stars = _read_corrected(stars_path, img.is_linear)
+            stars = _read_corrected(stars_path, img.is_linear, img.metadata)
             return starless, stars
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -99,7 +102,7 @@ class RCAstro:
                 *extra,
             ])
             produced = out_fits if os.path.exists(out_fits) else self._find_output(tmp, in_fits)
-            return _read_corrected(produced, img.is_linear)
+            return _read_corrected(produced, img.is_linear, img.metadata)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 

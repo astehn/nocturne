@@ -39,6 +39,7 @@ class GraXpert:
             produced = out_fits if os.path.exists(out_fits) else self._find_output(tmp, in_fits)
             result = read_fits_array(produced)
             result.is_linear = img.is_linear
+            result.metadata = dict(img.metadata)   # the tool changes pixels, not metadata
             return result
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
