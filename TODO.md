@@ -36,6 +36,21 @@ READY WITH FIXES → the one recommended fix (coerce unknown level) is landed; 6
 - [ ] Update the Noise Reduction help topic to mention the two AI engines + free fallback + the Engine
       selector (note GraXpert = free but slower, RC-Astro NoiseX = fast).
 
+## Free star split (branch `free-star-split`, awaiting user validation 2026-07-22)
+Free sep-based `(starless, stars)` split (`core/starless.py`) ungates Star Reduction, Remove Green
+Fringe, and the Nebula boost without RC-Astro. Screen-recombine-exact. Whole-branch review READY TO
+MERGE; awaiting real-data validation (RC-Astro cleared) + constant tuning. Follow-ups:
+- [ ] **VALIDATE + tune (blocks merge).** With RC-Astro cleared, confirm the 3 steps work + look
+      acceptable; tune `split_stars` constants (`_THRESH`, `_RFAC`, `_RMIN/_RMAX`, `_FEATHER`,
+      `_BG_STEP/_BG_MED`) and the note wording. Confirm no change when RC-Astro IS configured. Check
+      the free split isn't too slow on full-res.
+- [ ] **Export "Starless + Stars" still RC-Astro-gated** — the free split could power that export too
+      (`step_panels.py:559-570`, `main_window.py:1295`). Out of scope this cycle; extend later.
+- [ ] Help topics: Star Reduction / Remove Green Fringe / Saturation now work without RC-Astro (free
+      star detection; RC-Astro cleaner). Update the copy.
+- [ ] Cosmetics: redundant `np.ascontiguousarray` in `core/starless.py`; hoist the repeated local
+      `resolve_star_split` import; redundant Star-Reduction ungated test pair.
+
 ## Narrowband tool (MERGED to main 2026-07-21) — follow-ups
 Guided **Narrowband…** colour tool (NBN engine: MTF median-lift of OIII→Ha per Blanshan/Cranfield V8;
 HOO / Pseudo-SHO / Pseudo-bicolor; StarX-or-whole-image; params-serialised recipe step). HOO
