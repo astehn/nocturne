@@ -107,15 +107,61 @@ class ASTAP:
                 args += ["-ra", str(round(float(ra_hours), 4)),
                          "-spd", str(round(float(dec_deg) + 90.0, 4))]  # south pole distance
             runner(args, tmp)
-            wcs_path = base + ".wcs"
-            if not os.path.isfile(wcs_path):
-                return SolveResult(False, None, 0.0, 0.0, 0.0, message=self._output(tmp))
-            res = self._parse(wcs_path)
-            if not res.solved and not res.message:
-                res.message = self._output(tmp)
-            return res
+            res = self._read_solution(tmp, base, in_fits)
+            if res is not None:
+                return res
+            return SolveResult(False, None, 0.0, 0.0, 0.0,
+                               message=(self._output(tmp) + " | produced: "
+                                        + self._listing(tmp)).strip(" |"))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _read_solution(self, tmp: str, base: str, in_fits: str):
+        """Find ASTAP's solution wherever it landed: a `.wcs` sidecar (FITS
+        cards), the `.ini` solution file (KEY=value), or the input FITS header
+        ASTAP updates in place. Returns a solved SolveResult, or None."""
+        import glob
+        for path in [base + ".wcs"] + sorted(glob.glob(os.path.join(tmp, "*.wcs"))):
+            if os.path.isfile(path):
+                r = self._build(self._read_wcs_header(path))
+                if r is not None:
+                    return r
+        for path in [base + ".ini"] + sorted(glob.glob(os.path.join(tmp, "*.ini"))):
+            if os.path.isfile(path):
+                r = self._build(self._read_ini_header(path))
+                if r is not None:
+                    return r
+        try:
+            from astropy.io import fits
+            r = self._build(fits.getheader(in_fits))
+            if r is not None:
+                return r
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _read_ini_header(path: str):
+        """ASTAP's `.ini` solution as a header: plain KEY=value lines (CRVAL1,
+        CRPIX1, CD1_1…, PLTSOLVD). Not 80-col FITS, so parsed separately."""
+        from astropy.io import fits
+        header = fits.Header()
+        try:
+            with open(path, "r", errors="ignore") as f:
+                for line in f:
+                    if "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key, val = key.strip().upper(), val.strip().strip("'\"").strip()
+                    if not key or len(key) > 8:
+                        continue
+                    try:
+                        header[key] = float(val)
+                    except ValueError:
+                        header[key] = val
+        except OSError:
+            return None
+        return header
 
     @staticmethod
     def _output(tmp: str) -> str:
@@ -123,6 +169,13 @@ class ASTAP:
         try:
             with open(os.path.join(tmp, _OUT_FILE)) as f:
                 return f.read().strip()[-400:]
+        except OSError:
+            return ""
+
+    @staticmethod
+    def _listing(tmp: str) -> str:
+        try:
+            return ", ".join(n for n in sorted(os.listdir(tmp)) if n != _OUT_FILE)
         except OSError:
             return ""
 
@@ -156,18 +209,29 @@ class ASTAP:
                 continue                                    # skip any card astropy chokes on
         return header
 
-    def _parse(self, wcs_path: str) -> SolveResult:
-        from astropy.wcs import WCS
-        header = self._read_wcs_header(wcs_path)
-        if header is None or "CRVAL1" not in header:
-            return SolveResult(False, None, 0.0, 0.0, 0.0)
+    @staticmethod
+    def _build(header) -> "SolveResult | None":
+        """Build a solved SolveResult from a parsed header (from any source), or
+        None if it has no usable astrometric solution. Injects CTYPE if the source
+        (e.g. an .ini) omitted it; never raises."""
+        if header is None or "CRVAL1" not in header or "CRVAL2" not in header:
+            return None
         if str(header.get("PLTSOLVD", "T")).strip().upper() in ("F", "FALSE"):
-            return SolveResult(False, None, 0.0, 0.0, 0.0)
+            return None
+        if "CTYPE1" not in header:            # .ini solutions omit CTYPE
+            header["CTYPE1"] = "RA---TAN"
+            header["CTYPE2"] = "DEC--TAN"
         try:
+            from astropy.wcs import WCS
             wcs = WCS(header)
             cd = wcs.pixel_scale_matrix       # deg/px 2x2
             pixscale = float(np.sqrt(abs(cd[0, 0] * cd[1, 1] - cd[0, 1] * cd[1, 0])) * 3600.0)
             return SolveResult(True, wcs, float(header["CRVAL1"]),
                                float(header["CRVAL2"]), pixscale)
         except Exception:
-            return SolveResult(False, None, 0.0, 0.0, 0.0)  # never crash the UI on a bad .wcs
+            return None                        # never crash the UI on a bad header
+
+    def _parse(self, wcs_path: str) -> SolveResult:
+        """Parse a `.wcs` sidecar into a SolveResult (used by tests + the reader)."""
+        r = self._build(self._read_wcs_header(wcs_path))
+        return r if r is not None else SolveResult(False, None, 0.0, 0.0, 0.0)

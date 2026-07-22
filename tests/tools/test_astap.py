@@ -150,3 +150,51 @@ def test_solve_failure_captures_astap_message(tmp_path):
     res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
     assert res.solved is False
     assert "no star database" in res.message
+
+
+_INI = (
+    "PLTSOLVD=T\n"
+    "CRPIX1=792\n" "CRPIX2=1772\n"
+    "CRVAL1=313.9\n" "CRVAL2=43.9\n"
+    "CD1_1=-0.001038\n" "CD1_2=0\n" "CD2_1=0\n" "CD2_2=0.001038\n"
+)
+
+
+def test_solve_reads_solution_from_ini_when_no_wcs():
+    # ASTAP wrote its .ini solution (KEY=value) but no .wcs — must still be read.
+    def fake_runner(args, cwd):
+        base = args[args.index("-o") + 1]
+        open(base + ".ini", "w").write(_INI)
+        return 0
+    res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
+    assert res.solved is True
+    assert abs(res.center_ra_deg - 313.9) < 1e-6
+    assert res.wcs is not None                              # CTYPE injected, WCS built
+
+
+def test_solve_reads_solution_from_updated_input_header():
+    # ASTAP wrote the solution back into the input FITS header (no sidecar).
+    from astropy.io import fits
+    def fake_runner(args, cwd):
+        in_fits = args[args.index("-f") + 1]
+        with fits.open(in_fits, mode="update") as h:
+            hdr = h[0].header
+            hdr["CRPIX1"] = 792; hdr["CRPIX2"] = 1772
+            hdr["CRVAL1"] = 313.9; hdr["CRVAL2"] = 43.9
+            hdr["CD1_1"] = -0.001038; hdr["CD1_2"] = 0.0
+            hdr["CD2_1"] = 0.0; hdr["CD2_2"] = 0.001038
+            hdr["CTYPE1"] = "RA---TAN"; hdr["CTYPE2"] = "DEC--TAN"; hdr["PLTSOLVD"] = "T"
+        return 0
+    res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
+    assert res.solved is True
+    assert abs(res.center_ra_deg - 313.9) < 1e-6
+
+
+def test_solve_failure_message_lists_produced_files():
+    def fake_runner(args, cwd):
+        import os
+        open(os.path.join(cwd, "solve.001"), "w").write("junk")   # not a solution
+        return 1
+    res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
+    assert res.solved is False
+    assert "produced:" in res.message                       # diagnostic lists what ASTAP wrote
