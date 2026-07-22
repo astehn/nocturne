@@ -29,6 +29,7 @@ class Settings:
     rcastro_path: str = ""
     base_dir: str = ""
     denoise_engine: str = "rcastro"
+    astap_path: str = ""
 
 
 def load_settings(path: str) -> Settings:
@@ -41,6 +42,7 @@ def load_settings(path: str) -> Settings:
         rcastro_path=data.get("rcastro_path", ""),
         base_dir=data.get("base_dir", ""),
         denoise_engine=data.get("denoise_engine", "rcastro"),
+        astap_path=data.get("astap_path", ""),
     )
 
 
@@ -79,3 +81,7 @@ def graxpert_valid(s: Settings) -> bool:
 
 def rcastro_valid(s: Settings) -> bool:
     return bool(s.rcastro_path) and os.path.isfile(resolve_binary(s.rcastro_path))
+
+
+def astap_valid(s: Settings) -> bool:
+    return bool(s.astap_path) and os.path.isfile(resolve_binary(s.astap_path))

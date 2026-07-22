@@ -63,3 +63,18 @@ def test_denoise_engine_defaults_to_rcastro(tmp_path):
     p = str(tmp_path / "s.json")
     save_settings(Settings(), p)                 # no engine set
     assert load_settings(p).denoise_engine == "rcastro"
+
+
+def test_astap_path_round_trips(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings, astap_valid
+    p = str(tmp_path / "settings.json")
+    save_settings(Settings(astap_path="/opt/astap/astap"), p)
+    assert load_settings(p).astap_path == "/opt/astap/astap"   # survives save+load
+
+
+def test_astap_valid_checks_file(tmp_path):
+    from nocturne.settings import Settings, astap_valid
+    assert astap_valid(Settings(astap_path="")) is False
+    real = tmp_path / "astap"; real.write_text("x")
+    assert astap_valid(Settings(astap_path=str(real))) is True
+    assert astap_valid(Settings(astap_path=str(tmp_path / "nope"))) is False
