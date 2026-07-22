@@ -17,7 +17,8 @@ from ..core.fits_io import import_summary
 from ..history.project import Project
 from ..history.step import Step
 from ..settings import (
-    graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings, start_dir,
+    astap_valid, graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
+    start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
@@ -94,6 +95,7 @@ class MainWindow(QMainWindow):
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
+        self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
         self._stages = path_stages()
         self._stage = 0
@@ -390,6 +392,71 @@ class MainWindow(QMainWindow):
         self._status.setText("")
         self._refresh()
 
+    def _solve_current(self):
+        """Blocking solve of the current display image; returns (SolveResult, objects)."""
+        from ..tools.astap import ASTAP, hint_from_metadata
+        from ..core.catalog import objects_in_field
+        img = self.project.current()
+        meta = img.metadata
+        h, w = img.data.shape[:2]
+        # FOV from focal length + pixel size if known.
+        fov = None
+        fl, px = meta.get("focal_length"), meta.get("pixel_size")
+        if fl and px:
+            fov = (206.265 * float(px) / float(fl)) * h / 3600.0
+        hint = hint_from_metadata(meta)
+        ra_h, dec_d = hint if hint else (None, None)
+        res = ASTAP(resolve_binary(self.settings.astap_path)).solve(
+            img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d)
+        objs = objects_in_field(res.wcs, (h, w)) if res.solved else []
+        return res, objs
+
+    def _open_plate_solve(self):
+        if self.project is None:
+            return
+        if not astap_valid(self.settings):
+            self._status.setText("Set the ASTAP path in Settings to plate-solve.")
+            return
+        sig = self._sr_sig(self.project.current())
+        if self._solve and self._solve[0] == sig:          # cached: toggle overlay
+            if self.image_view._annotations is not None:
+                self.image_view.set_annotations(None)
+            else:
+                self._show_annotations(*self._solve[1:])
+            return
+        self._status.setText("Plate-solving…")
+        self._run_busy(self._solve_current,
+                       lambda r: self._on_solved(sig, *r),
+                       "Plate-solving…", "Plate-solve failed")
+
+    def _on_solved(self, sig, res, objs):
+        if not res.solved:
+            self._status.setText("Couldn't plate-solve this image — try after Stretch, "
+                                 "or check the field isn't mostly empty.")
+            return
+        self._solve = (sig, res, objs)
+        from ..core.catalog import identify_target
+        h, w = self.project.current().data.shape[:2]
+        name = identify_target(objs, (h, w))
+        if name:
+            # Project.current() returns a fresh copy each call (loaded from the
+            # on-disk cache), so a mutation on it is lost immediately; write
+            # through to the project's cached metadata for the current position.
+            self.project._meta[self.project._position]["target_solved"] = name
+        self._status.setText("")
+        self._show_annotations(res, objs)
+        self._rebuild_panel()                               # refresh Target line
+
+    def _show_annotations(self, res, objs):
+        from ..core.annotate import compass_angles, scale_bar
+        from .annotation_overlay import build_annotation_group
+        h, w = self.project.current().data.shape[:2]
+        north, _east = compass_angles(res.wcs, (h, w))
+        length, label = scale_bar(res.pixscale_arcsec, w)
+        theme = "dark"
+        self.image_view.set_annotations(
+            build_annotation_group(objs, north, length, label, (h, w), theme))
+
     def _remove_stars(self, img):
         if rcastro_valid(self.settings):
             rc = RCAstro(resolve_binary(self.settings.rcastro_path))
@@ -410,6 +477,7 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
         tb.addAction(load_icon("haoiii", ACCENT), "Narrowband…", self._open_narrowband)
+        tb.addAction(load_icon("haoiii", ACCENT), "Plate Solve…", self._open_plate_solve)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -444,6 +512,8 @@ class MainWindow(QMainWindow):
             chip("GraXpert", graxpert_valid(self.settings))
             + '  <span style="color:#6b6f76">·</span>  '
             + chip("RC-Astro", rcastro_valid(self.settings))
+            + '  <span style="color:#6b6f76">·</span>  '
+            + chip("ASTAP", astap_valid(self.settings))
         )
 
     # --- navigation ---
@@ -1491,6 +1561,10 @@ class MainWindow(QMainWindow):
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)
+        if self.image_view._annotations is not None:
+            sig = self._sr_sig(self.project.current()) if self.project is not None else None
+            if not self._solve or self._solve[0] != sig:
+                self.image_view.set_annotations(None)
 
     def _done_ids(self) -> set:
         done = set()

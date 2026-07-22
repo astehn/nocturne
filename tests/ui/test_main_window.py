@@ -1405,3 +1405,22 @@ def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
     names = [n for n, _ in win.project.entries()]
     assert "Narrowband" not in names
     assert "colour" in win._status.text().lower()
+
+
+def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+
+    # Fake a solve: a WCS centred on the frame + one catalogue object dead-centre.
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                 [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    win._open_plate_solve()
+    assert win.project.current().metadata.get("target_solved", "").startswith("NGC 7000")
+    assert win.image_view._annotations is not None            # overlay shown
