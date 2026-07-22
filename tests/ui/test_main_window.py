@@ -245,6 +245,18 @@ def test_apply_levels_stays_on_step_and_logs(qtbot, tmp_path):
     assert "Levels" in win.log_panel.text()
 
 
+def test_noise_busy_label_warns_for_graxpert(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    monkeypatch.setattr(mw, "graxpert_valid", lambda s: True)
+    warn = win._busy_label_for("noise_sharpen", {"engine": "graxpert", "level": "medium"})
+    assert "GraXpert" in warn and "minute" in warn
+    # non-GraXpert (and other steps) use the plain label
+    assert win._busy_label_for("noise_sharpen", {"engine": "rcastro", "level": "medium"}) \
+        == "Applying Noise Reduction…"
+    assert win._busy_label_for("levels", (0.0, 1.0, 1.0)) == "Applying Levels…"
+
+
 def test_noise_records_engine_dict_option(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

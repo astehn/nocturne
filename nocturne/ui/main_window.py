@@ -571,7 +571,15 @@ class MainWindow(QMainWindow):
             self._refresh()  # stay on this step; user clicks Next to advance
 
         self._run_busy(lambda: step.apply(base, option), on_result,
-                       f"Applying {STEP_NAME[stage_id]}…", "Failed")
+                       self._busy_label_for(stage_id, option), "Failed")
+
+    def _busy_label_for(self, stage_id: str, option) -> str:
+        """Busy message for an apply. GraXpert AI denoise takes minutes (inherent
+        to the model, confirmed vs Siril), so warn when it's the engine running."""
+        if (stage_id == "noise_sharpen" and isinstance(option, dict)
+                and option.get("engine") == "graxpert" and graxpert_valid(self.settings)):
+            return "Denoising with GraXpert — this can take a few minutes…"
+        return f"Applying {STEP_NAME[stage_id]}…"
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
