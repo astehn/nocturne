@@ -667,7 +667,7 @@ def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
     win.open_fits(_make_fits(tmp_path))
     wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
     wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    win._solve = (win._sr_sig(win.project.current()), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
+    win._solve = (win._solve_sig(win.project.current()), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
     out = tmp_path / "out.fits"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: (str(out), "")))
@@ -1488,3 +1488,42 @@ def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatc
 
     win._open_plate_solve()                                   # third call
     assert win.image_view._annotations is not None             # toggled back on
+
+
+def test_solve_sig_is_flip_sensitive():
+    # _sr_sig's (shape, mean, std) fingerprint is identical under H/V flip and
+    # 180-rotate, which let a stale plate-solve cache survive a mirror flip.
+    # _solve_sig must distinguish these cases via per-quadrant means.
+    arr = np.zeros((20, 20), dtype=np.float32)
+    arr[2:6, 2:6] = 100.0                       # bright blob off-centre (top-left quadrant)
+    img = AstroImage(arr)
+    sig = MainWindow._solve_sig(img)
+
+    assert MainWindow._solve_sig(img) == sig                       # stable / self-equal
+
+    flipped_h = AstroImage(np.fliplr(arr))
+    assert MainWindow._solve_sig(flipped_h) != sig
+
+    flipped_v = AstroImage(np.flipud(arr))
+    assert MainWindow._solve_sig(flipped_v) != sig
+
+
+def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                 [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    win._open_plate_solve()
+    assert win.image_view._annotations is not None            # overlay shown
+
+    win._flip_h()                                              # geometry change: mirror-wrong overlay must clear
+    win._refresh()
+    assert win.image_view._annotations is None

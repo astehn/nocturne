@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
             self._status.setText("Set the ASTAP path in Settings to plate-solve.")
             return
         img = self.project.current()
-        sig = self._sr_sig(img)
+        sig = self._solve_sig(img)
         if self._solve and self._solve[0] == sig:          # cached: toggle overlay
             if self.image_view._annotations is not None:
                 self.image_view.set_annotations(None)
@@ -434,7 +434,7 @@ class MainWindow(QMainWindow):
             self._status.setText("Couldn't plate-solve this image — try after Stretch, "
                                  "or check the field isn't mostly empty.")
             return
-        if self._sr_sig(self.project.current()) != sig:
+        if self._solve_sig(self.project.current()) != sig:
             return   # image changed (nav/undo) while the solve was running — discard
         self._solve = (sig, res, objs)
         from ..core.catalog import identify_target
@@ -1215,6 +1215,21 @@ class MainWindow(QMainWindow):
                 round(float(img.data.mean()), 6),
                 round(float(img.data.std()), 6))
 
+    @staticmethod
+    def _solve_sig(img):
+        """Flip/orientation-sensitive fingerprint for the plate-solve cache.
+        Unlike _sr_sig's (shape, mean, std) — which is identical under H/V-flip
+        and 180 rotate — this samples per-quadrant luminance means, so any flip,
+        rotate, crop, or pixel-changing edit invalidates the cached solve
+        (spec: any geometry re-solves)."""
+        import numpy as np
+        d = img.data
+        lum = d if d.ndim == 2 else d.mean(axis=2)
+        h, w = lum.shape
+        hh, hw = h // 2, w // 2
+        quads = (lum[:hh, :hw], lum[:hh, hw:], lum[hh:, :hw], lum[hh:, hw:])
+        return (d.shape,) + tuple(round(float(q.mean()), 6) if q.size else 0.0 for q in quads)
+
     def _setup_star_reduction(self) -> None:
         """On entering Star Reduction: run the split (StarX, or the free
         fallback without RC-Astro) once, off-thread, and cache it. The slider
@@ -1442,7 +1457,7 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
-        sig = self._sr_sig(self.project.current())
+        sig = self._solve_sig(self.project.current())
         solved = self._solve is not None and self._solve[0] == sig
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
@@ -1568,7 +1583,7 @@ class MainWindow(QMainWindow):
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
-            sig = self._sr_sig(self.project.current()) if loaded else None
+            sig = self._solve_sig(self.project.current()) if loaded else None
             solved = loaded and self._solve is not None and self._solve[0] == sig
             new_panel.burn_annotations.setEnabled(solved)
         self._right_layout.replaceWidget(self._panel, new_panel)
@@ -1598,7 +1613,7 @@ class MainWindow(QMainWindow):
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)
         if self.image_view._annotations is not None:
-            sig = self._sr_sig(self.project.current()) if self.project is not None else None
+            sig = self._solve_sig(self.project.current()) if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
                 self.image_view.set_annotations(None)
 
