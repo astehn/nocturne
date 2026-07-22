@@ -778,8 +778,14 @@ class MainWindow(QMainWindow):
     def _render_removegreen_preview(self) -> None:
         if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
             return
-        base = self._preview_base("remove_green")
-        self._show_preview(remove_green(base, self._rg_pending).data)
+        # Color is a PRE-stretch step, so the image is linear — display it through
+        # to_qimage (which auto-stretches), not _show_preview (which assumes
+        # display-space data and would render linear values as near-black).
+        result = remove_green(self._preview_base("remove_green"), self._rg_pending)
+        self._peek_active = False
+        self._displayed = result
+        self.image_view.set_image(to_qimage(result))
+        self.histogram_view.set_image(result)
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
