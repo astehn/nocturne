@@ -41,6 +41,11 @@ class Project:
     def current(self) -> AstroImage:
         return self._load(self._position)
 
+    def set_current_metadata(self, key: str, value) -> None:
+        """Persist a metadata key onto the current cached state (survives reload,
+        since current() rebuilds AstroImage.metadata from self._meta[index])."""
+        self._meta[self._position][key] = value
+
     def state_at(self, index: int) -> AstroImage:
         """Non-destructive read of the cached state at `index` (no truncation)."""
         return self._load(index)

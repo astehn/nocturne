@@ -392,11 +392,10 @@ class MainWindow(QMainWindow):
         self._status.setText("")
         self._refresh()
 
-    def _solve_current(self):
-        """Blocking solve of the current display image; returns (SolveResult, objects)."""
+    def _solve_current(self, img):
+        """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""
         from ..tools.astap import ASTAP, hint_from_metadata
         from ..core.catalog import objects_in_field
-        img = self.project.current()
         meta = img.metadata
         h, w = img.data.shape[:2]
         # FOV from focal length + pixel size if known.
@@ -417,7 +416,8 @@ class MainWindow(QMainWindow):
         if not astap_valid(self.settings):
             self._status.setText("Set the ASTAP path in Settings to plate-solve.")
             return
-        sig = self._sr_sig(self.project.current())
+        img = self.project.current()
+        sig = self._sr_sig(img)
         if self._solve and self._solve[0] == sig:          # cached: toggle overlay
             if self.image_view._annotations is not None:
                 self.image_view.set_annotations(None)
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
                 self._show_annotations(*self._solve[1:])
             return
         self._status.setText("Plate-solving…")
-        self._run_busy(self._solve_current,
+        self._run_busy(lambda: self._solve_current(img),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
 
@@ -434,6 +434,8 @@ class MainWindow(QMainWindow):
             self._status.setText("Couldn't plate-solve this image — try after Stretch, "
                                  "or check the field isn't mostly empty.")
             return
+        if self._sr_sig(self.project.current()) != sig:
+            return   # image changed (nav/undo) while the solve was running — discard
         self._solve = (sig, res, objs)
         from ..core.catalog import identify_target
         h, w = self.project.current().data.shape[:2]
@@ -442,7 +444,7 @@ class MainWindow(QMainWindow):
             # Project.current() returns a fresh copy each call (loaded from the
             # on-disk cache), so a mutation on it is lost immediately; write
             # through to the project's cached metadata for the current position.
-            self.project._meta[self.project._position]["target_solved"] = name
+            self.project.set_current_metadata("target_solved", name)
         self._status.setText("")
         self._show_annotations(res, objs)
         self._rebuild_panel()                               # refresh Target line

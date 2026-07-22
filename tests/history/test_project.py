@@ -63,6 +63,12 @@ def test_jump_back_truncates_forward(tmp_path):
     assert p.entries() == [("double", "x2"), ("double", "x1")]
 
 
+def test_set_current_metadata_persists(tmp_path):
+    p = Project(_base(), str(tmp_path))
+    p.set_current_metadata("k", "v")
+    assert p.current().metadata["k"] == "v"
+
+
 def test_state_at_is_non_destructive(tmp_path):
     import numpy as np
     from nocturne.core.image import AstroImage
