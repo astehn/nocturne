@@ -1236,17 +1236,50 @@ class MainWindow(QMainWindow):
             return
         self.open_image(self._source_base, self._source_label)
 
-    def _undo(self) -> None:
-        if self.project:
-            self.project.undo()
-            self.log_panel.append_entry("Undo")
+    def _stage_for_step_name(self, name):
+        """Map a history step name to the stepper stage that produced it, for
+        undo/redo navigation. Geometry -> Crop, Enhancements taps -> Enhancements,
+        Remove Green (a Color-step button, no own stage) -> Color. Toolbar-tool
+        steps (Narrowband, Star Spikes) have no stepper stage -> None (stay put)."""
+        if not name:
+            return None
+        if name in GEOMETRY_NAMES:
+            return "crop"
+        if name in ENHANCE_NAMES:
+            return "enhancements"
+        sid = {sname: s for s, sname in STEP_NAME.items()}.get(name)
+        if sid == "remove_green":          # applied on the Color step
+            return "color"
+        return sid
+
+    def _navigate_to_step(self, name) -> None:
+        """Jump the stepper to the stage that owns `name`, if it is a reachable
+        (enabled) stage; otherwise just refresh in place (toolbar tools, unknown)."""
+        sid = self._stage_for_step_name(name)
+        target = next((i for i, s in enumerate(self._stages)
+                       if s.id == sid and s.enabled), None) if sid else None
+        if target is not None:
+            self._go_to(target)
+        else:
             self._refresh()
 
+    def _undo(self) -> None:
+        if not (self.project and self.project.can_undo()):
+            return
+        entries = self.project.entries()
+        affected = entries[-1][0] if entries else None   # step being reverted
+        self.project.undo()
+        self.log_panel.append_entry("Undo")
+        self._navigate_to_step(affected)
+
     def _redo(self) -> None:
-        if self.project:
-            self.project.redo()
-            self.log_panel.append_entry("Redo")
-            self._refresh()
+        if not (self.project and self.project.can_redo()):
+            return
+        self.project.redo()
+        entries = self.project.entries()
+        affected = entries[-1][0] if entries else None   # step just re-applied
+        self.log_panel.append_entry("Redo")
+        self._navigate_to_step(affected)
 
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)

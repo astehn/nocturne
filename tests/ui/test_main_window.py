@@ -217,6 +217,29 @@ def test_undo_reverses_one_geometry_op(qtbot, tmp_path):
     assert win.project.entries()[-1][0] == "Crop"                   # rotate undone, crop remains
 
 
+def test_undo_redo_jumps_to_affected_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                          # step 1, stage "stretch"
+    win._go_to_id("levels")
+    win.apply_current((0.2, 1.0, 1.0))              # step 2, stage "levels"
+    names = [n for n, _ in win.project.entries()]
+    assert names == ["Stretch", "Levels"]
+
+    win._go_to_id("load")                            # navigate somewhere unrelated
+
+    win._undo()                                       # reverts Levels
+    assert win.current_stage_id() == "levels"
+
+    win._redo()                                        # re-applies Levels
+    assert win.current_stage_id() == "levels"
+
+    win._undo()                                        # reverts Levels again
+    win._undo()                                         # reverts Stretch
+    assert win.current_stage_id() == "stretch"
+
+
 def test_step_for_types(qtbot, tmp_path):
     from nocturne.steps.crop import CropStep
     from nocturne.steps.saturation_step import SaturationStep
@@ -274,13 +297,16 @@ def test_noise_records_engine_dict_option(qtbot, tmp_path):
 
 
 def test_levels_refused_on_linear_image(qtbot, tmp_path):
-    # Belt-and-suspenders: navigation auto-stretches, but undoing that leaves us
-    # on Levels with a linear image. Applying Levels then would clip the tiny
-    # linear values (~0.003) to black; the guard must refuse with a hint instead.
+    # Belt-and-suspenders: _undo() now navigates to the stage of the reverted
+    # step (Stretch), so it no longer leaves the stepper on Levels. Reach the
+    # same linear-image-on-Levels corner case via project.undo() directly (as
+    # test_undo_reverses_one_geometry_op does) to keep exercising the
+    # apply_current guard: applying Levels then would clip the tiny linear
+    # values (~0.003) to black; the guard must refuse with a hint instead.
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("levels")                         # auto-stretches, lands on Levels
-    win._undo()                                     # undo the auto-stretch -> linear again
+    win.project.undo()                              # undo the auto-stretch -> linear again
     assert win.current_stage_id() == "levels"
     assert win.project.current().is_linear
     names_before = [n for n, _ in win.project.entries()]
