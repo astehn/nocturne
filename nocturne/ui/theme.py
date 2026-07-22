@@ -6,9 +6,10 @@ BG_1 = "#1e1f22"     # window
 BG_2 = "#26282c"     # panels / toolbar
 BG_3 = "#2f3237"     # inputs / raised
 BORDER = "#3c4046"
-ACCENT = "#2dd4bf"   # teal
-ACCENT_HI = "#34e3cd"
-SUCCESS = "#3fb950"  # green
+ACCENT = "#4a90e2"   # blue — interactive accent (sliders, focus, Next/advance)
+ACCENT_HI = "#5fa0ee"
+SUCCESS = "#3fb950"  # green — commit/apply hero ("done with this edit")
+SUCCESS_HI = "#4cc85e"
 WARNING = "#e3b341"  # amber
 DANGER = "#f85149"   # red
 TEXT = "#e6e6e6"
@@ -42,9 +43,12 @@ QPushButton {{ background: {BG_3}; border: 1px solid {BORDER}; border-radius: 8p
     padding: 8px 14px; }}
 QPushButton:hover {{ background: #3e4248; }}
 QPushButton:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
-QPushButton#primary {{ background: {ACCENT}; color: #06201c; font-weight: 600; border: none; }}
-QPushButton#primary:hover {{ background: {ACCENT_HI}; }}
+QPushButton#primary {{ background: {SUCCESS}; color: #052611; font-weight: 600; border: none; }}
+QPushButton#primary:hover {{ background: {SUCCESS_HI}; }}
 QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
+QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
+QPushButton#nav:hover {{ background: {ACCENT_HI}; }}
+QPushButton#nav:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 
 QGraphicsView {{ background: {BG_0}; border: 1px solid #2c2f34; }}
 

@@ -216,7 +216,7 @@ class MainWindow(QMainWindow):
         nav = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
         self._next_btn = QPushButton("Next →")
-        self._next_btn.setObjectName("primary")
+        self._next_btn.setObjectName("nav")   # blue "advance" — distinct from green Apply
         self._back_btn.clicked.connect(self.go_back)
         self._next_btn.clicked.connect(self.go_next)
         nav.addWidget(self._back_btn)
