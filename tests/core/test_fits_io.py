@@ -170,3 +170,17 @@ def test_import_summary_shows_solved_target():
     assert "NGC 7000" in out
     # absent key -> no solved line
     assert "Target (solved)" not in import_summary({"width": 1920, "height": 1080})
+
+
+def test_parse_metadata_stashes_solve_cards():
+    from astropy.io import fits
+    from nocturne.core.fits_io import _parse_metadata
+    h = fits.Header()
+    h["OBJCTRA"] = "20 59 15"; h["OBJCTDEC"] = "+44 20 43"
+    h["FOCALLEN"] = 160.0; h["XPIXSZ"] = 2.9
+    meta = _parse_metadata(h, 2160, 3840)
+    sc = meta["solve_cards"]
+    assert sc["OBJCTRA"] == "20 59 15" and sc["OBJCTDEC"] == "+44 20 43"
+    assert float(sc["FOCALLEN"]) == 160.0 and float(sc["XPIXSZ"]) == 2.9
+    # a header with no astrometry cards -> no solve_cards key
+    assert "solve_cards" not in _parse_metadata(fits.Header(), 100, 100)

@@ -53,6 +53,17 @@ def _parse_metadata(header, height: int, width: int) -> dict:
             if card in header:
                 meta[key] = header[card]
                 break
+    # Raw header cards ASTAP reads to seed a plate-solve (pointing + scale). Stash
+    # them verbatim so the solver can be handed the same hints ASTAP gets when it
+    # opens the original file directly — without which a headerless image won't
+    # solve. Kept as a plain {card: value} dict; travels with the image metadata.
+    solve = {}
+    for card in ("OBJCTRA", "OBJCTDEC", "RA", "DEC", "FOCALLEN", "FOCALLEN2",
+                 "XPIXSZ", "YPIXSZ", "FOCRATIO", "CD1_1", "CD1_2", "CD2_1", "CD2_2"):
+        if card in header:
+            solve[card] = header[card]
+    if solve:
+        meta["solve_cards"] = solve
     return meta
 
 

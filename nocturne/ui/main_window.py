@@ -406,7 +406,8 @@ class MainWindow(QMainWindow):
         hint = hint_from_metadata(meta)
         ra_h, dec_d = hint if hint else (None, None)
         res = ASTAP(resolve_binary(self.settings.astap_path)).solve(
-            img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d)
+            img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
+            header_cards=meta.get("solve_cards"))
         objs = objects_in_field(res.wcs, (h, w)) if res.solved else []
         return res, objs
 
@@ -431,8 +432,9 @@ class MainWindow(QMainWindow):
 
     def _on_solved(self, sig, res, objs):
         if not res.solved:
+            hint = f" (ASTAP: {res.message.splitlines()[-1]})" if res.message else ""
             self._status.setText("Couldn't plate-solve this image — try after Stretch, "
-                                 "or check the field isn't mostly empty.")
+                                 "or check the field isn't mostly empty." + hint)
             return
         if self._solve_sig(self.project.current()) != sig:
             return   # image changed (nav/undo) while the solve was running — discard

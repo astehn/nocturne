@@ -114,3 +114,39 @@ def test_parse_pltsolvd_false_is_unsolved(tmp_path):
 def test_parse_garbage_wcs_returns_unsolved_without_raising(tmp_path):
     res = ASTAP("/x/astap")._parse(_write(tmp_path, "not a fits header at all\njust junk\n"))
     assert res.solved is False                               # graceful, no exception
+
+
+def test_write_solve_fits_is_mono_with_header_cards(tmp_path):
+    from astropy.io import fits
+    from nocturne.tools.astap import _write_solve_fits
+    out = str(tmp_path / "s.fits")
+    _write_solve_fits(_img(), out, {"OBJCTRA": "20 59 15", "FOCALLEN": 160.0})
+    with fits.open(out) as hdul:
+        assert hdul[0].data.ndim == 2                       # mono, not 3-plane
+        assert hdul[0].header["OBJCTRA"] == "20 59 15"      # pointing card written
+        assert float(hdul[0].header["FOCALLEN"]) == 160.0   # scale card written
+
+
+def test_solve_with_header_pointing_omits_radec_flags():
+    seen = {}
+    def fake_runner(args, cwd):
+        seen["args"] = args
+        open(args[args.index("-o") + 1] + ".wcs", "w").write(_WCS_TEXT)
+        return 0
+    ASTAP("/x/astap").solve(_img(), fov_deg=2.0, ra_hours=20.98, dec_deg=44.3,
+                            header_cards={"OBJCTRA": "20 59 15", "FOCALLEN": 160.0},
+                            runner=fake_runner)
+    a = seen["args"]
+    assert "-ra" not in a and "-spd" not in a    # header pointing is authoritative
+    assert "-fov" in a                            # scale hint still passed as a safety net
+
+
+def test_solve_failure_captures_astap_message(tmp_path):
+    def fake_runner(args, cwd):
+        import os
+        with open(os.path.join(cwd, "_astap_out.txt"), "w") as f:
+            f.write("no star database found for this field of view\n")
+        return 1                                            # no .wcs written
+    res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
+    assert res.solved is False
+    assert "no star database" in res.message
