@@ -221,6 +221,24 @@ def test_deconvolution_free_fallback_sharpens():
     assert not np.allclose(out.data, img.data)            # sharpening changed the image
 
 
+def test_deconvolution_free_fallback_brightens_star_core_not_destroys():
+    # Regression: skimage.unsharp_mask collapsed bright star cores to 0 and blew
+    # pixels up to ~1e34 on faint LINEAR data (so Deconvolution destroyed stars and
+    # looked identical at every strength). A correct unsharp raises the star peak,
+    # stays finite/in-range, and strength must make a difference.
+    from nocturne.core.deconvolution import sharpen
+    h = w = 64
+    yy, xx = np.mgrid[0:h, 0:w]
+    data = np.clip(0.004 + 0.25 * np.exp(-(((yy - 32) ** 2 + (xx - 32) ** 2) / (2 * 1.4 ** 2))),
+                   0, 1).astype(np.float32)
+    img = AstroImage(np.stack([data] * 3, axis=2), is_linear=True)
+    light = sharpen(img, 0.3).data
+    strong = sharpen(img, 0.7).data
+    assert np.isfinite(strong).all() and strong.max() <= 1.0
+    assert strong[32, 32, 0] > data[32, 32] + 0.02        # star core sharpened UP, not zeroed
+    assert strong[32, 32, 0] > light[32, 32, 0] + 0.02    # strength genuinely differs
+
+
 def test_deconvolution_uses_bxt_and_sharpens_stars():
     from nocturne.steps.deconvolution_step import DeconvolutionStep
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
