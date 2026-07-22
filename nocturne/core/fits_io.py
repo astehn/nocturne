@@ -45,6 +45,8 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "livetime": ("LIVETIME",),
         "focal_length": ("FOCALLEN",),
         "pixel_size": ("XPIXSZ", "YPIXSZ"),
+        "ra": ("OBJCTRA", "RA"),
+        "dec": ("OBJCTDEC", "DEC"),
     }
     for key, candidates in mapping.items():
         for card in candidates:
@@ -140,6 +142,9 @@ def import_summary(meta: dict, instrument=SEESTAR_S30_PRO,
     target = meta.get("target") or _target_from_filename(filename)
     if target:
         stack.append(("Target", str(target)))
+    solved = meta.get("target_solved")
+    if solved:
+        stack.append(("Target (solved)", str(solved)))
 
     integration = resolve_integration(meta)
     if integration is not None:

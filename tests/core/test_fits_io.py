@@ -150,3 +150,23 @@ def test_import_summary_empty_stack_fallback():
     s = import_summary({})
     assert "Your stack" in s and "Couldn't read" in s
     assert "Total integration" not in s
+
+
+def test_parse_metadata_captures_ra_dec():
+    from astropy.io import fits
+    from nocturne.core.fits_io import _parse_metadata
+    h = fits.Header()
+    h["OBJCTRA"] = "20 58 47"
+    h["OBJCTDEC"] = "+44 18 36"
+    meta = _parse_metadata(h, 1080, 1920)
+    assert meta["ra"] == "20 58 47"
+    assert meta["dec"] == "+44 18 36"
+
+
+def test_import_summary_shows_solved_target():
+    from nocturne.core.fits_io import import_summary
+    out = import_summary({"width": 1920, "height": 1080, "target_solved": "NGC 7000 · North America Nebula"})
+    assert "Target (solved)" in out
+    assert "NGC 7000" in out
+    # absent key -> no solved line
+    assert "Target (solved)" not in import_summary({"width": 1920, "height": 1080})
