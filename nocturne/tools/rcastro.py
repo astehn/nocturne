@@ -48,9 +48,16 @@ class RCAstro:
         return self._run("nxt", img, ["--denoise", str(strength)], runner)
 
     def remove_stars(
-        self, img: AstroImage, *, unscreen: bool = False, runner=run_cli
+        self, img: AstroImage, *, unscreen: bool = True, runner=run_cli
     ) -> tuple[AstroImage, AstroImage]:
-        """Run StarXTerminator; return (starless, stars_only)."""
+        """Run StarXTerminator; return (starless, stars_only).
+
+        `unscreen` defaults True: the stars image is prepared for SCREEN
+        recombine — `1-(1-starless)*(1-stars)` reconstructs the original exactly.
+        Every caller here screen-recombines (Star Reduction, Remove Green Fringe,
+        Nebula Saturation, Narrowband), so this is required — the un-`--unscreen`
+        (subtractive/additive) stars screen-recombine WRONG, dimming and puffing
+        the stars even at zero reduction."""
         tmp = tempfile.mkdtemp(prefix="rc_")
         in_fits = os.path.join(tmp, "in.fits")
         out_fits = os.path.join(tmp, "starless.fits")

@@ -72,6 +72,24 @@ def test_remove_stars_returns_starless_and_stars():
     assert np.allclose(stars.data, (img.data * 0.4)[::-1], atol=1e-5)
 
 
+def test_remove_stars_defaults_to_unscreen():
+    # All callers screen-recombine, so the stars must be unscreen-prepared by
+    # default; otherwise the split->recombine round-trip dims/puffs the stars.
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=False)
+    captured = {}
+
+    def fake_runner(args):
+        captured["args"] = args
+        out_path = args[args.index("-o") + 1]
+        write_temp_fits(AstroImage(img.data * 0.6), out_path)
+        import os
+        write_temp_fits(AstroImage(img.data * 0.4),
+                        os.path.join(os.path.dirname(out_path), "starless-sxt.fits"))
+
+    RCAstro("/fake/rc-astro").remove_stars(img, runner=fake_runner)   # no unscreen kwarg
+    assert "--unscreen" in captured["args"]
+
+
 def test_rcastro_corrects_vertical_flip():
     # The adapter flips RC-Astro's FITS output vertically (bottom-row-first ->
     # top-row-first), so the returned array is the disk content reversed.
@@ -88,16 +106,3 @@ def test_rcastro_corrects_vertical_flip():
     assert np.allclose(out.data, disk[::-1], atol=1e-5)
 
 
-def test_remove_stars_omits_unscreen_by_default():
-    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
-    captured = {}
-
-    def fake_runner(args):
-        import os
-        captured["args"] = args
-        out_path = args[args.index("-o") + 1]
-        write_temp_fits(img, out_path)
-        write_temp_fits(img, os.path.join(os.path.dirname(out_path), "s-sxt.fits"))
-
-    RCAstro("/fake").remove_stars(img, runner=fake_runner)
-    assert "--unscreen" not in captured["args"]
