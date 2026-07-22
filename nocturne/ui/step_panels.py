@@ -566,6 +566,9 @@ def build_panel(
         lay.addWidget(QLabel("Format"))
         lay.addWidget(box)
         lay.addWidget(export_btn)
+        w.burn_annotations = QCheckBox("Burn annotations (PNG)")
+        w.burn_annotations.setEnabled(False)   # main_window enables when a solve exists
+        lay.addWidget(w.burn_annotations)
         if not split_enabled:
             lay.addWidget(_desc_label(
                 "Starless + stars split needs RC-Astro (set its path in Settings)."))

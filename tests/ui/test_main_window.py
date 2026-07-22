@@ -658,6 +658,24 @@ def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
     assert win._status.text() == ""   # stale error cleared on the successful export
 
 
+def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    win._solve = (win._sr_sig(win.project.current()), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
+    out = tmp_path / "out.fits"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(out), "")))
+    win.export_final("FITS")
+    qtbot.waitUntil(lambda: out.exists(), timeout=3000)
+    assert "CRVAL1" in fits.getheader(str(out))
+
+
 def test_next_from_load_is_crop(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

@@ -1442,14 +1442,24 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        sig = self._sr_sig(self.project.current())
+        solved = self._solve is not None and self._solve[0] == sig
         if fmt == "PNG":
             if not path.lower().endswith(".png"):
                 path += ".png"
-            save, name = save_png, os.path.basename(path)
+            name = os.path.basename(path)
+            panel = self._panel
+            burn = solved and hasattr(panel, "burn_annotations") and panel.burn_annotations.isChecked()
+            if burn:
+                save = lambda img, path: self._save_png_with_annotations(img, path, self._solve[1])
+            else:
+                save = save_png
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
-            save, name = save_fits, os.path.basename(path)
+            name = os.path.basename(path)
+            header = dict(self._solve[1].wcs.to_header()) if solved else None
+            save = lambda img, path: save_fits(img, path, header=header)
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
@@ -1457,6 +1467,26 @@ class MainWindow(QMainWindow):
         self._run_busy(lambda: save(img, path),
                        lambda _: self.log_panel.append_entry(f"Exported {name}"),
                        "Exporting…", "Export failed")
+
+    def _save_png_with_annotations(self, img, path, res) -> None:
+        from PySide6.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
+        from PySide6.QtGui import QImage, QPixmap, QPainter
+        from ..core.annotate import compass_angles, scale_bar
+        from .annotation_overlay import build_annotation_group
+        h, w = img.data.shape[:2]
+        north, _east = compass_angles(res.wcs, (h, w))
+        length, label = scale_bar(res.pixscale_arcsec, w)
+        _sig, _res, objs = self._solve
+        group = build_annotation_group(objs, north, length, label, (h, w), "dark")
+        base = to_qimage(img)
+        scene = QGraphicsScene()
+        scene.addItem(QGraphicsPixmapItem(QPixmap.fromImage(base)))
+        scene.addItem(group)
+        out = QImage(base.size(), QImage.Format.Format_ARGB32)
+        painter = QPainter(out)
+        scene.render(painter, target=out.rect(), source=scene.itemsBoundingRect())
+        painter.end()
+        out.save(path)
 
     # --- settings ---
     def _open_settings(self) -> None:
@@ -1537,6 +1567,10 @@ class MainWindow(QMainWindow):
                 import_summary(self.project.current().metadata, filename=self._source_label))
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
+        if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
+            sig = self._sr_sig(self.project.current()) if loaded else None
+            solved = loaded and self._solve is not None and self._solve[0] == sig
+            new_panel.burn_annotations.setEnabled(solved)
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel
