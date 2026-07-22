@@ -184,3 +184,15 @@ def test_parse_metadata_stashes_solve_cards():
     assert float(sc["FOCALLEN"]) == 160.0 and float(sc["XPIXSZ"]) == 2.9
     # a header with no astrometry cards -> no solve_cards key
     assert "solve_cards" not in _parse_metadata(fits.Header(), 100, 100)
+
+
+def test_solve_cards_from_header_extracts_pointing_and_scale():
+    from astropy.io import fits
+    from nocturne.core.fits_io import solve_cards_from_header
+    h = fits.Header()
+    h["OBJCTRA"] = "20 59 15"; h["OBJCTDEC"] = "+44 20 43"
+    h["FOCALLEN"] = 160.0; h["XPIXSZ"] = 2.9; h["OBJECT"] = "NGC 7000"
+    sc = solve_cards_from_header(h)
+    assert sc["OBJCTRA"] == "20 59 15" and float(sc["FOCALLEN"]) == 160.0
+    assert "OBJECT" not in sc                                # OBJECT isn't a solve card
+    assert solve_cards_from_header(fits.Header()) == {}

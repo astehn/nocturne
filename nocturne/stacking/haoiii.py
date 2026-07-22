@@ -7,7 +7,7 @@ from astropy.io import fits
 from skimage.transform import resize
 
 from ..core.export import save_fits
-from ..core.fits_io import _bayer_pattern
+from ..core.fits_io import _bayer_pattern, solve_cards_from_header
 from ..core.image import AstroImage
 from .coverage import coverage_map, full_coverage_bounds
 from .integrate import average_integrate, sigma_clip_integrate
@@ -99,7 +99,7 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     # The output master is written back into the graded folder, so a stray
     # debayered FITS (e.g. a prior run's RGB master) can grade highest — reject
     # such frames and promote the next best rather than aborting the whole run.
-    ref_path = ref_ha = ref_shape = None
+    ref_path = ref_ha = ref_shape = ref_header = None
     ref_exp = 0.0
     remaining = list(paths)
     while remaining:
@@ -111,6 +111,7 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
             continue
         ref_path, ref_ha = candidate, extract_cfa_planes(cfa, pat)[0]
         ref_shape, ref_exp = cfa.shape, exp
+        ref_header = fits.getheader(candidate)   # for the master's astrometry cards
         break
     if ref_path is None:
         raise ValueError("no raw (un-debayered) CFA subs found to use as a reference")
@@ -184,6 +185,9 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
         is_linear=True,
         metadata={"frames": len(used), "exposure": integ, "width": cw, "height": ch},
     )
-    save_fits(image, opts.output_path,
-              header={"NSUBS": len(used), "STACKCNT": len(used), "EXPTIME": integ})
+    header = {"NSUBS": len(used), "STACKCNT": len(used), "EXPTIME": integ}
+    header.update(solve_cards_from_header(ref_header))       # pointing + scale, for solving
+    if ref_header.get("OBJECT"):
+        header["OBJECT"] = ref_header["OBJECT"]
+    save_fits(image, opts.output_path, header=header)
     return HaOIIIResult(image, used, rejected, len(used), integ, opts.output_path)

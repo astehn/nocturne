@@ -53,18 +53,24 @@ def _parse_metadata(header, height: int, width: int) -> dict:
             if card in header:
                 meta[key] = header[card]
                 break
-    # Raw header cards ASTAP reads to seed a plate-solve (pointing + scale). Stash
-    # them verbatim so the solver can be handed the same hints ASTAP gets when it
-    # opens the original file directly — without which a headerless image won't
-    # solve. Kept as a plain {card: value} dict; travels with the image metadata.
-    solve = {}
-    for card in ("OBJCTRA", "OBJCTDEC", "RA", "DEC", "FOCALLEN", "FOCALLEN2",
-                 "XPIXSZ", "YPIXSZ", "FOCRATIO", "CD1_1", "CD1_2", "CD2_1", "CD2_2"):
-        if card in header:
-            solve[card] = header[card]
+    solve = solve_cards_from_header(header)
     if solve:
         meta["solve_cards"] = solve
     return meta
+
+
+# Raw header cards ASTAP reads to seed a plate-solve: pointing (OBJCTRA/OBJCTDEC/
+# RA/DEC) + scale (FOCALLEN/XPIXSZ…) + any existing WCS. Handed to the solver so a
+# processed/re-saved image gets the same hints ASTAP has when it opens the
+# original file — without them a headerless image won't solve.
+SOLVE_CARDS = ("OBJCTRA", "OBJCTDEC", "RA", "DEC", "FOCALLEN", "FOCALLEN2",
+               "XPIXSZ", "YPIXSZ", "FOCRATIO", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
+
+
+def solve_cards_from_header(header) -> dict:
+    """The plate-solve hint cards (pointing + scale) present in a FITS header,
+    as a plain {card: value} dict. Empty if none are present."""
+    return {card: header[card] for card in SOLVE_CARDS if card in header}
 
 
 @dataclass

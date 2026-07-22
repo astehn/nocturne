@@ -146,3 +146,15 @@ def test_master_filename_no_exposure():
 
 def test_master_filename_fractional_exposure():
     assert master_filename("Moon", 100, 0.5, 50.0) == "Moon_100x0.5s_1min.fits"
+
+
+def test_master_header_carries_astrometry_and_target():
+    from nocturne.stacking.stacker import master_header
+    ref_meta = {"target": "NGC 7000",
+                "solve_cards": {"OBJCTRA": "20 59 15", "FOCALLEN": 160.0, "XPIXSZ": 2.9}}
+    h = master_header(ref_meta, count=177, integ=3540.0)
+    assert h["STACKCNT"] == 177 and h["NSUBS"] == 177 and h["EXPTIME"] == 3540.0
+    assert h["OBJCTRA"] == "20 59 15" and float(h["FOCALLEN"]) == 160.0   # solvable
+    assert h["OBJECT"] == "NGC 7000"
+    # no astrometry available -> just the stack counts, no crash
+    assert master_header({"frames": 3}, 3, 60.0)["STACKCNT"] == 3

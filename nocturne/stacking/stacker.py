@@ -13,6 +13,18 @@ from .integrate import average_integrate, sigma_clip_integrate
 from .register import RegistrationError, find_transform, warp_to
 
 
+def master_header(ref_meta: dict, count: int, integ: float) -> dict:
+    """FITS header for a written master: stack counts + the reference sub's
+    astrometry cards (pointing + scale) and target, so the master plate-solves
+    like an original Seestar file instead of failing as a headerless image."""
+    header = {"NSUBS": count, "STACKCNT": count, "EXPTIME": integ}
+    header.update(ref_meta.get("solve_cards") or {})
+    target = ref_meta.get("target")
+    if target:
+        header["OBJECT"] = target
+    return header
+
+
 def master_filename(target: str, count: int, exposure_s: float, total_s: float) -> str:
     """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits.
     Degrades gracefully as header info is missing; worst case master.fits."""
@@ -135,5 +147,5 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
         },
     )
     save_fits(image, opts.output_path,
-              header={"NSUBS": len(used), "STACKCNT": len(used), "EXPTIME": integ})
+              header=master_header(ref_img.metadata, len(used), integ))
     return StackResult(image, used, rejected, len(used), integ, opts.output_path)
