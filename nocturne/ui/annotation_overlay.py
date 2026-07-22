@@ -15,38 +15,39 @@ _LABEL_PT = 13.0        # DSO label size (constant on-screen px)
 _COMPASS_PT = 16.0      # the "N"
 
 
-def _text(s, fill, size=_LABEL_PT, bold=False, outline="#05070b"):
-    """A constant-size text item with a dark outline so it stays legible over
-    both bright stars and dark sky."""
+def _text(s, fill, size=_LABEL_PT, bold=False, outline="#0a0f18"):
+    """A constant-size text item with a THIN dark outline so the bright fill
+    stays legible over both stars and dark sky (a heavy outline reads as black)."""
     t = QGraphicsSimpleTextItem(s)
     f = QFont()
     f.setPointSizeF(size)
     f.setBold(bold)
     t.setFont(f)
-    t.setBrush(QColor(fill))
+    t.setBrush(QColor(fill))                        # the fill is the colour you read
     pen = QPen(QColor(outline))
-    pen.setWidthF(2.2)
+    pen.setWidthF(1.1)                              # subtle halo, does not swamp the fill
     pen.setCosmetic(True)
-    t.setPen(pen)                                   # halo the glyphs for contrast
+    t.setPen(pen)
     t.setFlag(_IGNORE, True)
     return t
 
 
 def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
                            shape, theme="dark") -> QGraphicsItemGroup:
-    color = "#f2f5fb" if theme == "dark" else "#111722"
-    accent = "#6aa8f2"                              # bright blue
+    label_color = "#5fe3d0"                         # readable teal (blue/green)
+    accent = "#6aa8f2"                              # bright blue for the compass
+    scale_color = "#e7ecf4" if theme == "dark" else "#111722"
     g = QGraphicsItemGroup()
     h, w = shape
 
     for o in objects:
         marker = QGraphicsEllipseItem(-5, -5, 10, 10)   # small ring on the object
         marker.setPos(o.x, o.y)
-        marker.setPen(QPen(QColor(accent), 2))
+        marker.setPen(QPen(QColor(label_color), 2))
         marker.setBrush(Qt.BrushStyle.NoBrush)
         marker.setFlag(_IGNORE, True)
         g.addToGroup(marker)
-        label = _text(f"{o.name}" + (f"  {o.common}" if o.common else ""), color)
+        label = _text(f"{o.name}" + (f"  {o.common}" if o.common else ""), label_color)
         label.setPos(o.x + 9, o.y + 7)                  # anchored beside the object
         g.addToGroup(label)
 
@@ -71,10 +72,10 @@ def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
     # scale bar near the bottom-left, with end ticks.
     bx, by = 90, h - 90
     bar = QGraphicsLineItem(bx, by, bx + scale_len_px, by)
-    bar.setPen(QPen(QColor(color), 3))
+    bar.setPen(QPen(QColor(scale_color), 3))
     bar.setFlag(_IGNORE, True)
     g.addToGroup(bar)
-    slab = _text(scale_label, color)
+    slab = _text(scale_label, scale_color)
     slab.setPos(bx, by - 26)
     g.addToGroup(slab)
     return g

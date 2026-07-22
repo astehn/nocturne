@@ -667,7 +667,7 @@ def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
     win.open_fits(_make_fits(tmp_path))
     wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
     wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
-    win._solve = (win._solve_sig(win.project.current()), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
     out = tmp_path / "out.fits"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: (str(out), "")))
@@ -1490,22 +1490,20 @@ def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatc
     assert win.image_view._annotations is not None             # toggled back on
 
 
-def test_solve_sig_is_flip_sensitive():
-    # _sr_sig's (shape, mean, std) fingerprint is identical under H/V flip and
-    # 180-rotate, which let a stale plate-solve cache survive a mirror flip.
-    # _solve_sig must distinguish these cases via per-quadrant means.
-    arr = np.zeros((20, 20), dtype=np.float32)
-    arr[2:6, 2:6] = 100.0                       # bright blob off-centre (top-left quadrant)
-    img = AstroImage(arr)
-    sig = MainWindow._solve_sig(img)
+def test_solve_sig_stable_under_tonal_steps_changes_on_geometry(qtbot, tmp_path):
+    # The plate-solve cache keys on FRAMING (shape + geometry ops), not pixel
+    # content: the WCS is invariant under tonal steps (which don't move stars),
+    # so a solve stays valid through them; only Crop/Rotate/Flip re-solve.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win._solve_sig()
 
-    assert MainWindow._solve_sig(img) == sig                       # stable / self-equal
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                                   # a tonal step
+    assert win._solve_sig() == base                         # framing unchanged -> same sig
 
-    flipped_h = AstroImage(np.fliplr(arr))
-    assert MainWindow._solve_sig(flipped_h) != sig
-
-    flipped_v = AstroImage(np.flipud(arr))
-    assert MainWindow._solve_sig(flipped_v) != sig
+    win._flip_h()                                           # a geometry op
+    assert win._solve_sig() != base                         # framing changed -> re-solve
 
 
 def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
