@@ -259,17 +259,20 @@ _TOPIC_LIST = (
        "Remove the green colour fringe around stars.",
        "<h4>What it does</h4>"
        "<p>Stars are never truly green, so a green fringe or halo around them is an "
-       "artifact (chromatic aberration or debayering). This splits the stars from the "
-       "background with <b>StarXTerminator</b>, removes the green excess from the stars "
-       "only, and recombines — so the nebula and background colour are left completely "
-       "untouched.</p>"
+       "artifact (chromatic aberration or debayering). It suppresses the green excess "
+       "only in the region around stars, so the nebula and background colour are left "
+       "untouched. With <b>StarXTerminator</b> (RC-Astro) the stars are cleanly split "
+       "out first for the most precise result; without it, a built-in star detector "
+       "finds the stars and de-greens around them in place.</p>"
        "<h4>How to use it</h4>"
        "<p>Raise <b>Strength</b> until the green fringe on the stars fades (0 = off). "
-       "The star split runs once when you enter the step, then the slider previews "
-       "instantly. Needs RC-Astro (StarXTerminator) — set its path in Settings.</p>"
+       "The star detection runs once when you enter the step, then the slider previews "
+       "instantly. Works without RC-Astro; setting RC-Astro (StarXTerminator) in "
+       "Settings gives a cleaner separation.</p>"
        "<h4>Tips</h4>"
        "<p>A little usually does it. Because only the stars are affected, you can be "
-       "fairly aggressive without shifting the overall colour.</p>"),
+       "fairly aggressive without shifting the overall colour. Removing the green often "
+       "leaves the star a touch blue — a perfectly natural star colour.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
@@ -311,13 +314,15 @@ _TOPIC_LIST = (
     _t("star_reduction", "Star Reduction",
        "Shrink stars so nebulosity takes centre stage.",
        "<h4>What it does</h4>"
-       "<p>Reduces the size and dominance of stars using <b>StarXTerminator</b> (RC-Astro), so a "
-       "busy star field stops competing with the nebula.</p>"
+       "<p>Reduces the size and dominance of stars, so a busy star field stops competing "
+       "with the nebula. With <b>StarXTerminator</b> (RC-Astro) the split is cleanest; "
+       "without it, a built-in star detector is used instead.</p>"
        "<h4>How to use it</h4>"
        "<p>Choose <b>light</b>, <b>medium</b>, or <b>strong</b>. Apply.</p>"
        "<h4>Tips</h4>"
-       "<p>Needs RC-Astro. A little goes a long way — over-reduction leaves an unnatural, "
-       "starless-looking frame. It pairs well just before the Enhancements step.</p>"),
+       "<p>Works without RC-Astro; RC-Astro gives a cleaner separation. A little goes a "
+       "long way — over-reduction leaves an unnatural, starless-looking frame. It pairs "
+       "well just before the Enhancements step.</p>"),
 
     _t("star_spikes", "Star Spikes",
        "Add diffraction spikes to the brightest stars.",

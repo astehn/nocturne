@@ -389,7 +389,8 @@ def build_panel(
     elif stage.kind == "saturation":
         lay.addWidget(_desc_label(
             "Drag Saturation left to mute colour, right to boost. Centre = no change. "
-            "Nebula boost lifts only the nebulosity (stars & sky untouched); needs RC-Astro."))
+            "Nebula boost lifts only the nebulosity (stars & sky untouched); RC-Astro "
+            "(StarX) gives a cleaner separation but is not required."))
         slider = ResetSlider(50)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         slider.setTickInterval(50)
@@ -433,9 +434,9 @@ def build_panel(
 
     elif stage.kind == "green_fringe":
         lay.addWidget(_desc_label(
-            "Remove the green colour fringe around stars. Splits the stars from the "
-            "background and de-greens only the stars, so nebula colour is untouched. "
-            "0 = off. Needs RC-Astro."))
+            "Remove the green colour fringe around stars. De-greens only the region "
+            "around stars, so nebula colour is untouched. 0 = off. Works without "
+            "RC-Astro; RC-Astro (StarX) gives a cleaner result."))
         status = _desc_label("")   # main_window sets "Separating stars…" / gate text
         lay.addWidget(status)
         slider = ResetSlider(0)
