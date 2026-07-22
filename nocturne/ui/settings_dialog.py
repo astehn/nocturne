@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..settings import Settings, resolve_binary
+from ..settings import Settings, astap_valid, resolve_binary
 from ..tools.probe import probe_binary
 
 
@@ -49,8 +49,10 @@ class SettingsDialog(QDialog):
         self._dir = QLineEdit(settings.base_dir)
         self._gx = QLineEdit(settings.graxpert_path)
         self._rc = QLineEdit(settings.rcastro_path)
+        self._astap = QLineEdit(settings.astap_path)
         self._gx_result = QLabel("")
         self._rc_result = QLabel("")
+        self._astap_result = QLabel("")
         self._gx_result.setWordWrap(True)
         self._rc_result.setWordWrap(True)
         self.denoise_box = QComboBox()
@@ -64,6 +66,8 @@ class SettingsDialog(QDialog):
                     _path_row(self._gx, self._test_graxpert, self._gx_result))
         form.addRow("RC-Astro (optional)",
                     _path_row(self._rc, self._test_rcastro, self._rc_result))
+        form.addRow("ASTAP (optional)",
+                    _path_row(self._astap, self._test_astap, self._astap_result))
         form.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export.")
         note.setWordWrap(True)
@@ -88,10 +92,15 @@ class SettingsDialog(QDialog):
     def _test_rcastro(self) -> None:
         self._show_result(self._rc_result, self._rc.text(), ["--no-banner", "--help"])
 
+    def _test_astap(self) -> None:
+        ok = astap_valid(Settings(astap_path=self._astap.text().strip()))
+        self._astap_result.setText("✓ Found ASTAP" if ok else "✗ Not found")
+
     def result_settings(self) -> Settings:
         return Settings(
             graxpert_path=self._gx.text().strip(),
             rcastro_path=self._rc.text().strip(),
+            astap_path=self._astap.text().strip(),
             base_dir=self._dir.text().strip(),
             denoise_engine=("graxpert" if self.denoise_box.currentText() == "GraXpert"
                             else "rcastro"),

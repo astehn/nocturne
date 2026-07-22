@@ -50,3 +50,11 @@ def test_dialog_round_trips_denoise_engine(qtbot):
     qtbot.addWidget(d)
     assert d.denoise_box.currentText() == "GraXpert"
     assert d.result_settings().denoise_engine == "graxpert"
+
+
+def test_settings_dialog_round_trips_astap_path(qtbot):
+    from nocturne.ui.settings_dialog import SettingsDialog
+    from nocturne.settings import Settings
+    dlg = SettingsDialog(Settings(astap_path="/opt/astap/astap"))
+    qtbot.addWidget(dlg)
+    assert dlg.result_settings().astap_path == "/opt/astap/astap"
