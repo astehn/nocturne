@@ -9,7 +9,16 @@ from ..settings import Settings, astap_valid, resolve_binary
 from ..tools.probe import probe_binary
 
 
-def _path_row(edit: QLineEdit, on_test, result: QLabel) -> QWidget:
+# Where to download each external tool (shown as a link next to its path row).
+DOWNLOAD_URLS = {
+    "graxpert": "https://graxpert.com",
+    "rcastro": "https://www.rc-astro.com",
+    "astap": "https://www.hnsky.org/astap.htm",
+}
+
+
+def _path_row(edit: QLineEdit, on_test, result: QLabel,
+              download_url: str | None = None) -> QWidget:
     row = QWidget()
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 0, 0, 0)
@@ -23,6 +32,10 @@ def _path_row(edit: QLineEdit, on_test, result: QLabel) -> QWidget:
     test.clicked.connect(on_test)
     line.addWidget(browse)
     line.addWidget(test)
+    if download_url:
+        link = QLabel(f'<a href="{download_url}">Download&nbsp;↗</a>')
+        link.setOpenExternalLinks(True)      # opens in the user's browser
+        line.addWidget(link)
     outer.addLayout(line)
     outer.addWidget(result)
     return row
@@ -63,13 +76,18 @@ class SettingsDialog(QDialog):
         form = QFormLayout(self)
         form.addRow("Default folder", _folder_row(self._dir))
         form.addRow("GraXpert (required)",
-                    _path_row(self._gx, self._test_graxpert, self._gx_result))
+                    _path_row(self._gx, self._test_graxpert, self._gx_result,
+                              DOWNLOAD_URLS["graxpert"]))
         form.addRow("RC-Astro (optional)",
-                    _path_row(self._rc, self._test_rcastro, self._rc_result))
+                    _path_row(self._rc, self._test_rcastro, self._rc_result,
+                              DOWNLOAD_URLS["rcastro"]))
         form.addRow("ASTAP (optional)",
-                    _path_row(self._astap, self._test_astap, self._astap_result))
+                    _path_row(self._astap, self._test_astap, self._astap_result,
+                              DOWNLOAD_URLS["astap"]))
         form.addRow("Preferred denoise engine", self.denoise_box)
-        note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export.")
+        note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
+                      "ASTAP adds plate-solving — install it and its D05 star database "
+                      "(from the ASTAP page) for target identification and annotation.")
         note.setWordWrap(True)
         form.addRow(note)
         buttons = QDialogButtonBox(

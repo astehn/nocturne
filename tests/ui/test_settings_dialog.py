@@ -58,3 +58,14 @@ def test_settings_dialog_round_trips_astap_path(qtbot):
     dlg = SettingsDialog(Settings(astap_path="/opt/astap/astap"))
     qtbot.addWidget(dlg)
     assert dlg.result_settings().astap_path == "/opt/astap/astap"
+
+
+def test_settings_dialog_has_tool_download_links(qtbot):
+    from nocturne.ui.settings_dialog import SettingsDialog, DOWNLOAD_URLS
+    from nocturne.settings import Settings
+    assert set(DOWNLOAD_URLS) == {"graxpert", "rcastro", "astap"}
+    assert all(u.startswith("https://") for u in DOWNLOAD_URLS.values())
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    labels = [w.text() for w in dlg.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel)]
+    assert any("astap.htm" in t for t in labels)          # ASTAP download link rendered
