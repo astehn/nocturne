@@ -211,12 +211,12 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
 - [x] **L2** Clear the error/status line when navigating between steps.
 
 ## Tweaks (small, from real-data use)
-- [ ] **Undo should take you to the affected step (reported 2026-07-19).** Undo reverts the last
-      change, but the stepper/viewport stays on the current step regardless — so undoing a change
-      made on another step reverts it invisibly. FIX (preferred): on Undo/Redo, jump the stepper to
-      the stage whose change was just reverted so the user sees what changed — `Project.entries()`
-      carry step names; map the undone entry's name → stage id → `_go_to_id`. (Alt: scope Undo to
-      the current step only — simpler but less powerful.)
+- [x] **Undo takes you to the affected step (reported 2026-07-19; DONE 2026-07-22, commit a28d89b).**
+      Undo/redo now capture the step at the top of the applied stack and navigate the stepper to its
+      stage (`_stage_for_step_name` + `_navigate_to_step`): geometry → Crop, Enhancements taps →
+      Enhancements, Remove Green → Color; toolbar tools (Narrowband/Star Spikes) have no stepper stage
+      → stay put. Reverting a post-stretch step always leaves Stretch applied, so the auto-stretch
+      commit never fires on the jump (redo stack intact). 638 tests.
 - [ ] **Saturation "expert mode" — per-channel R/G/B saturation (suggested 2026-07-19).** The
       re-centred saturation slider (0 grey / 0.5 native / 1 strong) works well as-is; add an
       optional **expert mode** exposing per-channel R/G/B chroma control for users who want finer
