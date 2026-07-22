@@ -412,21 +412,26 @@ class MainWindow(QMainWindow):
         return res, objs
 
     def _open_plate_solve(self):
-        if self.project is None:
+        """Toggle the annotation overlay. If it's showing, hide it. Otherwise
+        show it — reusing the cached solution for this framing, or solving once
+        if there isn't one. The toolbar action's checked state mirrors whether
+        the overlay is visible."""
+        if self.image_view._annotations is not None:        # currently shown -> hide
+            self.image_view.set_annotations(None)
+            self._solve_act.setChecked(False)
             return
-        if not astap_valid(self.settings):
-            self._status.setText("Set the ASTAP path in Settings to plate-solve.")
+        if self.project is None or not astap_valid(self.settings):
+            self._solve_act.setChecked(False)
+            if self.project is not None:
+                self._status.setText("Set the ASTAP path in Settings to plate-solve.")
             return
-        img = self.project.current()
         sig = self._solve_sig()
-        if self._solve and self._solve[0] == sig:          # cached: toggle overlay
-            if self.image_view._annotations is not None:
-                self.image_view.set_annotations(None)
-            else:
-                self._show_annotations(*self._solve[1:])
+        if self._solve and self._solve[0] == sig:           # cached solution: just show it
+            self._show_annotations(*self._solve[1:])
+            self._solve_act.setChecked(True)
             return
         self._status.setText("Plate-solving…")
-        self._run_busy(lambda: self._solve_current(img),
+        self._run_busy(lambda: self._solve_current(self.project.current()),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
 
@@ -435,8 +440,10 @@ class MainWindow(QMainWindow):
             hint = f" (ASTAP: {res.message.splitlines()[-1]})" if res.message else ""
             self._status.setText("Couldn't plate-solve this image — try after Stretch, "
                                  "or check the field isn't mostly empty." + hint)
+            self._solve_act.setChecked(False)
             return
         if self._solve_sig() != sig:
+            self._solve_act.setChecked(False)
             return   # framing changed (crop/rotate/flip) while solving — discard
         self._solve = (sig, res, objs)
         from ..core.catalog import identify_target
@@ -449,6 +456,7 @@ class MainWindow(QMainWindow):
             self.project.set_current_metadata("target_solved", name)
         self._status.setText("")
         self._show_annotations(res, objs)
+        self._solve_act.setChecked(True)
         self._rebuild_panel()                               # refresh Target line
 
     def _show_annotations(self, res, objs):
@@ -481,7 +489,10 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
         tb.addAction(load_icon("haoiii", ACCENT), "Narrowband…", self._open_narrowband)
-        tb.addAction(load_icon("haoiii", ACCENT), "Plate Solve…", self._open_plate_solve)
+        self._solve_act = tb.addAction(load_icon("haoiii", ACCENT), "Plate Solve",
+                                       self._open_plate_solve)
+        self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
+        self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -1619,6 +1630,7 @@ class MainWindow(QMainWindow):
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
                 self.image_view.set_annotations(None)
+                self._solve_act.setChecked(False)
 
     def _done_ids(self) -> set:
         done = set()

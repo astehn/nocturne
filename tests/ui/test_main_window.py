@@ -1525,3 +1525,26 @@ def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
     win._flip_h()                                              # geometry change: mirror-wrong overlay must clear
     win._refresh()
     assert win.image_view._annotations is None
+
+
+def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                     [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    assert win._solve_act.isChecked() is False
+    win._open_plate_solve()                                  # solve + show
+    assert win._solve_act.isChecked() is True                # button reflects overlay ON
+    win._open_plate_solve()                                  # hide
+    assert win._solve_act.isChecked() is False               # button reflects overlay OFF
+    win._open_plate_solve()                                  # show again (cached)
+    assert win._solve_act.isChecked() is True
+    win._flip_h(); win._refresh()                            # framing change clears overlay
+    assert win._solve_act.isChecked() is False               # and unchecks the button
