@@ -66,3 +66,51 @@ def test_hint_from_metadata_parses_sexagesimal():
     assert abs(ra_h - 20.9797) < 1e-3
     assert abs(dec_d - 44.31) < 1e-2
     assert hint_from_metadata({}) is None
+
+
+# A messy but realistic ASTAP .wcs: value-only cards we need, plus the long
+# PLTSOLVD comment / COMMENT / CONTINUE lines that make astropy's strict reader
+# choke ("CONTINUE cards must have string values"). The tolerant parser must
+# still extract the WCS and never raise.
+_MESSY_WCS = (
+    "CTYPE1  = 'RA---TAN'\n"
+    "CTYPE2  = 'DEC--TAN'\n"
+    "CRPIX1  =           1920.00000\n"
+    "CRPIX2  =           1080.00000\n"
+    "CRVAL1  =        314.750000000\n"
+    "CRVAL2  =         44.310000000\n"
+    "CD1_1   =    -0.001038000000000\n"
+    "CD1_2   =     0.000000000000000\n"
+    "CD2_1   =     0.000000000000000\n"
+    "CD2_2   =     0.001038000000000\n"
+    "PLTSOLVD=                    T / Astrometric solution found by ASTAP using D05 with 312 stars matched over field\n"
+    "COMMENT  Solved by ASTAP. FOV 4.0 x 2.2 deg. Camera IMX585. Nothing here should break the parse.\n"
+    "CONTINUE  '' / a stray continue card\n"
+    "END\n"
+)
+
+
+def _write(tmp_path, text, name="solve.wcs"):
+    p = tmp_path / name
+    p.write_text(text)
+    return str(p)
+
+
+def test_parse_tolerant_of_messy_astap_wcs(tmp_path):
+    res = ASTAP("/x/astap")._parse(_write(tmp_path, _MESSY_WCS))
+    assert res.solved is True
+    assert abs(res.center_ra_deg - 314.75) < 1e-6
+    assert abs(res.center_dec_deg - 44.31) < 1e-6
+    assert abs(res.pixscale_arcsec - 3.7368) < 0.05          # 0.001038 deg/px * 3600
+    assert res.wcs is not None
+
+
+def test_parse_pltsolvd_false_is_unsolved(tmp_path):
+    text = _MESSY_WCS.replace("PLTSOLVD=                    T", "PLTSOLVD=                    F")
+    res = ASTAP("/x/astap")._parse(_write(tmp_path, text))
+    assert res.solved is False
+
+
+def test_parse_garbage_wcs_returns_unsolved_without_raising(tmp_path):
+    res = ASTAP("/x/astap")._parse(_write(tmp_path, "not a fits header at all\njust junk\n"))
+    assert res.solved is False                               # graceful, no exception

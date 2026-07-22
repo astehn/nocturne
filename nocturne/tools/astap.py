@@ -80,13 +80,48 @@ class ASTAP:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def _parse(self, wcs_path: str) -> SolveResult:
+    @staticmethod
+    def _read_wcs_header(wcs_path: str):
+        """Tolerantly read ASTAP's `.wcs` sidecar into a header. ASTAP writes
+        FITS-like cards but also long COMMENT/WARNING lines and CONTINUE cards
+        that astropy's strict `Header.fromtextfile` rejects with 'CONTINUE cards
+        must have string values'. Parse card-by-card, keep only the keyword cards
+        that parse cleanly (CRVAL/CRPIX/CD/CTYPE/PLTSOLVD…), and drop anything
+        else — so a stray comment can't sink an otherwise-valid solution."""
         from astropy.io import fits
+        try:
+            with open(wcs_path, "r", errors="ignore") as f:
+                raw = f.read()
+        except OSError:
+            return None
+        header = fits.Header()
+        for line in raw.replace("\r", "").split("\n"):
+            line = line.rstrip()
+            key = line[:8].strip().upper()
+            if not line or key in ("", "END", "COMMENT", "HISTORY", "CONTINUE"):
+                continue
+            if len(line) < 9 or line[8] != "=":            # not a FITS value card
+                continue
+            try:
+                card = fits.Card.fromstring(line.ljust(80)[:80])
+                if card.keyword and card.keyword not in ("COMMENT", "HISTORY", "CONTINUE"):
+                    header[card.keyword] = card.value      # forces value parse
+            except Exception:
+                continue                                    # skip any card astropy chokes on
+        return header
+
+    def _parse(self, wcs_path: str) -> SolveResult:
         from astropy.wcs import WCS
-        header = fits.Header.fromtextfile(wcs_path)
+        header = self._read_wcs_header(wcs_path)
+        if header is None or "CRVAL1" not in header:
+            return SolveResult(False, None, 0.0, 0.0, 0.0)
         if str(header.get("PLTSOLVD", "T")).strip().upper() in ("F", "FALSE"):
             return SolveResult(False, None, 0.0, 0.0, 0.0)
-        wcs = WCS(header)
-        cd = wcs.pixel_scale_matrix           # deg/px 2x2
-        pixscale = float(np.sqrt(abs(cd[0, 0] * cd[1, 1] - cd[0, 1] * cd[1, 0])) * 3600.0)
-        return SolveResult(True, wcs, float(header["CRVAL1"]), float(header["CRVAL2"]), pixscale)
+        try:
+            wcs = WCS(header)
+            cd = wcs.pixel_scale_matrix       # deg/px 2x2
+            pixscale = float(np.sqrt(abs(cd[0, 0] * cd[1, 1] - cd[0, 1] * cd[1, 0])) * 3600.0)
+            return SolveResult(True, wcs, float(header["CRVAL1"]),
+                               float(header["CRVAL2"]), pixscale)
+        except Exception:
+            return SolveResult(False, None, 0.0, 0.0, 0.0)  # never crash the UI on a bad .wcs
