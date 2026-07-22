@@ -166,12 +166,17 @@ Ranked; all pure-numpy/scikit-image, no paid deps. Sources in the audit ledger.
       registered-frame accumulation (registration output kept in memory rather than streamed),
       per-frame float64 copies, and the master + history caches piling on top. Reproduce with
       Activity Monitor / `memory_profiler` before fixing.
-- [ ] **Free deconvolution better than unsharp-mask (parked 2026-07-19, from Deconvolution audit).**
-      Without RC-Astro/BlurXTerminator (paid; the user is on an expiring trial, and Nocturne's
-      novice audience largely won't have it), the Deconvolution step falls back to
-      `core/deconvolution.sharpen` = skimage `unsharp_mask` on LINEAR data (radius 2, amount up
-      to 1.4 at "strong"). Unsharp mask on linear data amplifies background noise and is far
-      cruder than PSF deconvolution — yet the UI presents it identically to BlurX. IDEA: study
+- [ ] **Free deconvolution better than unsharp-mask — NEAR-TERM (RL decided 2026-07-22).** Update:
+      `sharpen` was fixed today (broken skimage `unsharp_mask` → manual gaussian high-pass →
+      positive-only, no dark rings). But real-data testing confirmed the ceiling: **unsharp only
+      BRIGHTENS star cores, it does not TIGHTEN them** (FWHM unchanged). The "tightening" the user
+      liked earlier was actually the dark-ring artifact carving the halo (fake tightening); removing
+      the rings (positive-only) removed the apparent tightening. User chose to KEEP the honest
+      positive-only sharpen for now (option A) and set expectations in the help + presentation.
+      THE REAL FIX (this item): a proper **Richardson–Lucy PSF deconvolution** — estimate a PSF from
+      the image's stars (`sep` available), RL iterate with regularization + a star/background mask to
+      curb noise and ringing. That's the only free path that genuinely tightens without artifacts.
+      IDEA: study
       the deconvolution algorithms in **Siril** (Richardson–Lucy / Wiener / split-Bregman, with a
       star-derived PSF) and **PixInsight** (classic Deconvolution: RL + PSF + regularization /
       deringing) and implement an open numpy version that beats unsharp mask — e.g. RL with a PSF
