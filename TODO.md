@@ -31,8 +31,13 @@ READY WITH FIXES → the one recommended fix (coerce unknown level) is landed; 6
       awareness; revisit only if it bites.
 - [ ] Small: no direct unit test for the main_window both-installed dropdown gating (low risk; panel
       side is tested). `_noise_apply_option` name is narrower than its scope (serves all process stages).
+- [ ] **Heads-up that GraXpert is slow (now clearly warranted).** Speed confirmed INHERENT to the newer
+      GraXpert denoise models — user reproduced the same multi-minute times in Siril (2026-07-22); not a
+      Nocturne setting (CoreML accelerates only ~78/2527 model nodes on Mac, rest is CPU; batch_size
+      probe was moot). Add a heads-up to the busy status when GraXpert is the chosen engine, e.g.
+      "Denoising with GraXpert — this can take a few minutes." Turns "is it stuck?" into "expected".
 - [ ] Update the Noise Reduction help topic to mention the two AI engines + free fallback + the Engine
-      selector.
+      selector (note GraXpert = free but slower, RC-Astro NoiseX = fast).
 
 ## Narrowband tool (MERGED to main 2026-07-21) — follow-ups
 Guided **Narrowband…** colour tool (NBN engine: MTF median-lift of OIII→Ha per Blanshan/Cranfield V8;
