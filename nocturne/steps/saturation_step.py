@@ -24,7 +24,7 @@ def parse_saturation_option(option) -> tuple[float, float]:
 class SaturationStep(Step):
     name = "Saturation"
 
-    def __init__(self, rcastro: RCAstro) -> None:
+    def __init__(self, rcastro: RCAstro | None = None) -> None:
         self._rc = rcastro
         self._runner = run_cli
 
@@ -37,6 +37,7 @@ class SaturationStep(Step):
     def apply(self, img: AstroImage, option) -> AstroImage:
         amount, nebula = parse_saturation_option(option)
         if nebula > 0.0:
-            starless, stars = self._rc.remove_stars(img, runner=self._runner)
+            from .star_split import resolve_star_split
+            starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
             img = nebula_saturate(starless, stars, nebula)
         return saturate(img, amount)

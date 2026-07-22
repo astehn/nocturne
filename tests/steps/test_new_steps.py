@@ -269,3 +269,44 @@ def test_deconvolution_uses_bxt_and_sharpens_stars():
     assert products == ["bxt"]                            # BXT deconvolution
     bxt = calls[0]
     assert float(bxt[bxt.index("--sharpen-stars") + 1]) > 0   # tightens stars on linear
+
+
+def test_resolve_star_split_picks_free_when_no_rcastro(monkeypatch):
+    from nocturne.core.image import AstroImage
+    from nocturne.steps import star_split
+    import numpy as np
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=False)
+    called = {"free": False, "rc": False}
+
+    def fake_free(i):
+        called["free"] = True
+        return i, i
+    monkeypatch.setattr(star_split, "split_stars", fake_free)
+
+    class FakeRC:
+        def remove_stars(self, i, runner=None):
+            called["rc"] = True
+            return i, i
+
+    star_split.resolve_star_split(img, None)              # no RC-Astro -> free
+    assert called == {"free": True, "rc": False}
+    called.update(free=False, rc=False)
+    star_split.resolve_star_split(img, FakeRC())          # RC-Astro -> StarX
+    assert called == {"free": False, "rc": True}
+
+
+def test_star_split_steps_work_without_rcastro():
+    # Each of the three steps, built with rc=None, changes the image via the free split.
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.star_reduction import StarReductionStep
+    from nocturne.steps.green_fringe import GreenFringeStep
+    from nocturne.steps.saturation_step import SaturationStep
+    rng = np.random.default_rng(0)
+    yy, xx = np.mgrid[0:40, 0:40]
+    data = np.clip(0.3 + 0.4 * np.exp(-(((yy - 20) ** 2 + (xx - 20) ** 2) / (2 * 1.5 ** 2)))
+                   + 0.02 * rng.standard_normal((40, 40)), 0, 1).astype(np.float32)
+    img = AstroImage(np.stack([data] * 3, axis=2), is_linear=False)
+    assert StarReductionStep(None).apply(img, 0.6).data.shape == (40, 40, 3)
+    assert GreenFringeStep(None).apply(img, 1.0).data.shape == (40, 40, 3)
+    assert SaturationStep(None).apply(img, (0.5, 0.6)).data.shape == (40, 40, 3)

@@ -12,7 +12,7 @@ _AMOUNT = {"light": 0.3, "medium": 0.6, "strong": 0.9}
 class StarReductionStep(Step):
     name = "Star Reduction"
 
-    def __init__(self, rcastro: RCAstro) -> None:
+    def __init__(self, rcastro: RCAstro | None = None) -> None:
         self._rc = rcastro
         self._runner = run_cli
 
@@ -23,7 +23,8 @@ class StarReductionStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        starless, stars = self._rc.remove_stars(img, runner=self._runner)
+        from .star_split import resolve_star_split
+        starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
         if isinstance(option, str) and option in _AMOUNT:
             amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
         else:

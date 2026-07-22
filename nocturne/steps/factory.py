@@ -45,11 +45,13 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
     if stage_id == "curves":
         return CurvesStep()
     if stage_id == "saturation":
-        step = SaturationStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
+        step = SaturationStep(rc)
         step._runner = rc_runner
         return step
     if stage_id == "green_fringe":
-        step = GreenFringeStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
+        step = GreenFringeStep(rc)
         step._runner = rc_runner
         return step
     if stage_id == "local_contrast":
@@ -66,7 +68,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         step._runner = rc_runner
         return step
     if stage_id == "star_reduction":
-        step = StarReductionStep(RCAstro(resolve_binary(settings.rcastro_path)))
+        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
+        step = StarReductionStep(rc)
         step._runner = rc_runner
         return step
     if stage_id == "narrowband":

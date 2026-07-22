@@ -10,7 +10,7 @@ from ..tools.rcastro import RCAstro
 class GreenFringeStep(Step):
     name = "Remove Green Fringe"
 
-    def __init__(self, rcastro: RCAstro) -> None:
+    def __init__(self, rcastro: RCAstro | None = None) -> None:
         self._rc = rcastro
         self._runner = run_cli
 
@@ -21,6 +21,7 @@ class GreenFringeStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        starless, stars = self._rc.remove_stars(img, runner=self._runner)
+        from .star_split import resolve_star_split
+        starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
         strength = float(option) if option not in (None, "") else 0.0
         return remove_green_fringe(starless, stars, strength)
