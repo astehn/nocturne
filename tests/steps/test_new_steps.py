@@ -179,8 +179,38 @@ def test_remove_green_step_clamps_green():
     from nocturne.steps.remove_green_step import RemoveGreenStep
     data = np.full((4, 4, 3), 0.3, dtype=np.float32)
     data[..., 1] = 0.9
-    out = RemoveGreenStep().apply(AstroImage(data))
+    out = RemoveGreenStep().apply(AstroImage(data))   # no option -> full strength (legacy)
     assert out.data[..., 1].max() <= 0.3 + 1e-6
+
+
+def test_remove_green_strength_is_a_dial():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.color import remove_green
+    data = np.full((4, 4, 3), 0.3, dtype=np.float32)
+    data[..., 1] = 0.9                                  # green excess of 0.6 over avg_rb 0.3
+    full = remove_green(AstroImage(data), 1.0).data[..., 1].max()
+    half = remove_green(AstroImage(data), 0.5).data[..., 1].max()
+    none = remove_green(AstroImage(data), 0.0).data[..., 1].max()
+    assert abs(full - 0.3) < 1e-6                       # 1.0 == classic clamp to avg
+    assert abs(half - 0.6) < 1e-6                       # 0.5 removes half the excess
+    assert abs(none - 0.9) < 1e-6                       # 0.0 leaves green untouched
+    # red/blue never touched
+    assert np.allclose(remove_green(AstroImage(data), 1.0).data[..., 0], 0.3)
+
+
+def test_remove_green_step_parses_float_and_legacy_option():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.remove_green_step import RemoveGreenStep
+    data = np.full((4, 4, 3), 0.3, dtype=np.float32)
+    data[..., 1] = 0.9
+    img = AstroImage(data)
+    assert abs(RemoveGreenStep().apply(img, 0.5).data[..., 1].max() - 0.6) < 1e-6
+    assert abs(RemoveGreenStep().apply(img, "").data[..., 1].max() - 0.3) < 1e-6   # legacy full
+    # recipe round-trip of the float strength
+    from nocturne.recipe import serialize_option, deserialize_option
+    assert deserialize_option("remove_green", serialize_option("remove_green", 0.5)) == 0.5
 
 
 def test_deconvolution_free_fallback_sharpens():

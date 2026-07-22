@@ -45,6 +45,7 @@ def build_panel(
     on_flip_v=None,
     on_export=None,
     on_remove_green=None,
+    on_removegreen_change=None,
     on_enhance=None,
     on_stretch_change=None,
     on_levels_change=None,
@@ -224,14 +225,32 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(ColorSettings()))
+        lay.addWidget(apply_btn)
+        # Remove Green (SCNR) with a strength dial + live preview — a knob, not a
+        # hammer. Default gentle so it knocks back a green cast without flattening
+        # real nebula colour; 1.00 == the classic full clamp.
+        lay.addWidget(_desc_label(
+            "Optional: knock back a green cast. Drag for strength (right = stronger); "
+            "you usually won't need much."))
+        rg_slider = ResetSlider(40)          # default 0.40 (gentle)
+        rg_val = QLabel("0.40")
+        rg_row = QHBoxLayout()
+        rg_row.addWidget(QLabel("Green removal"))
+        rg_row.addWidget(rg_val)
         remove_green_btn = QPushButton("Remove Green")
         remove_green_btn.setEnabled(apply_enabled)
+        if on_removegreen_change is not None:
+            rg_slider.valueChanged.connect(
+                lambda v: (rg_val.setText(f"{v / 100:.2f}"), on_removegreen_change(v / 100.0)))
         if on_remove_green is not None:
-            remove_green_btn.clicked.connect(lambda: on_remove_green())
-        lay.addWidget(apply_btn)
+            remove_green_btn.clicked.connect(
+                lambda: on_remove_green(rg_slider.value() / 100.0))
+        lay.addLayout(rg_row)
+        lay.addWidget(rg_slider)
         lay.addWidget(remove_green_btn)
         w.apply_btn = apply_btn
         w.remove_green_btn = remove_green_btn
+        w.rg_slider = rg_slider
 
     elif stage.kind == "stretch":
         lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
