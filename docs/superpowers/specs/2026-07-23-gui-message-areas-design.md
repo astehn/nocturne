@@ -41,7 +41,7 @@ Feedback is routed to one of three areas by *what the message is for*:
 | Channel | Where | Widget | Content |
 |---|---|---|---|
 | **Log** | bottom bar, left | existing `log_panel` (`QPlainTextEdit`) | timestamped step history (Δ%), auto-appended. Unchanged. |
-| **Output** | bottom bar, centre | **new**: read-only *selectable* text field | routine results & progress: "142 stars matched · gains…", "Saved recipe…", "Plate-solving…", "Separating stars…". Copyable. Shows the latest output line(s). |
+| **Output** | bottom bar, centre | **new**: read-only *multi-line* `QPlainTextEdit` (like `log_panel`) | routine results & progress: "142 stars matched · gains…", "Saved recipe…", "Plate-solving…", "Separating stars…". Selectable/copyable; shows recent output lines. |
 | **Warning** | right pane, just above the nav buttons | **new**: `QLabel`, red/amber, word-wrap | blocking guidance & errors: "Stretch the image first…", "Set the ASTAP path…", "Could not open file…", "…unavailable — install…". Near the action, cleared on step change. |
 
 The bottom bar becomes a horizontal split: **log (left) | output (centre)**,
@@ -107,8 +107,9 @@ which is worse than the wall of text. Per-step granularity (keep one step's
 help open, others shut) is a deliberate **non-goal** for v1.
 
 When expanded: header + `<b>summary</b> + body` + "Full help →" link (opens the
-existing `HelpDialog` for the topic). When collapsed: just the header row; the
-freed vertical space lets the right pane breathe / gives tools room.
+existing `HelpDialog` for the topic). When collapsed: **just the header row** —
+the "Full help →" link is hidden along with the body; the freed vertical space
+lets the right pane breathe / gives tools room.
 
 ### Message routing classification (the `_status` call sites)
 
@@ -133,9 +134,11 @@ label — decided at plan time). `""`-clears currently on `_status` map to
 ### `_busy_label` (animated progress)
 
 `_busy_label` (`:242`, ellipsis animation) is transient progress, not something
-to copy later. It stays a transient indicator but moves out from under the nav
-(it currently contributes to button jump). Placement — inside the output area
-vs. a small inline cue — is settled at plan time; it must not push the nav row.
+to copy later. It keeps its existing animated-`QLabel` mechanism but is
+**relocated to sit just above the warning label** in the right pane (inside the
+grow-upward zone above the pinned nav). This keeps progress near the action,
+leaves the animation untouched, and — because it's above the nav's stretch
+anchor — it can never push the buttons.
 
 ## Data / settings changes
 
@@ -165,11 +168,15 @@ vs. a small inline cue — is settled at plan time; it must not push the nav row
 - Reworking `help_content` topics themselves or the `HelpDialog`.
 - Changing the toolbar "Log" button behaviour beyond what the split requires.
 
-## Open questions for the plan phase
+## Resolved (were open questions)
 
-1. Output widget type: read-only `QPlainTextEdit` (multi-line, matches log) vs.
-   a selectable single-line field. Leaning multi-line read-only for symmetry
-   with the log and easy copy.
-2. Exact home for `_busy_label` / the peek indicator.
-3. Whether "Full help →" also appears when collapsed (probably no — collapsed
-   means minimal).
+1. **Output widget:** read-only multi-line `QPlainTextEdit` (matches `log_panel`,
+   easy multi-line copy). ✓
+2. **`_busy_label` home:** relocated just above the warning label in the
+   right-pane grow-upward zone (see §"_busy_label"). ✓
+3. **"Full help →" when collapsed:** hidden — collapsed shows only the header
+   row. ✓
+
+Remaining detail deferred to the plan: exact classification of the star-split
+result lines (:1020/:1149/:1186/:1273/:1296) and the peek indicator (:1417) as
+output vs. a dedicated cue — mechanical, decided per-site during implementation.
