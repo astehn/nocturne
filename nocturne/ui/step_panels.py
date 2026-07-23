@@ -220,11 +220,21 @@ def build_panel(
             "Neutralises the sky background so it's colour-neutral, without "
             "touching your nebula's real colour."
         ))
+        lay.addWidget(QLabel("Method"))
+        method_box = QComboBox()
+        method_box.addItems(["Sky balance", "Photometric (SPCC)"])
+        lay.addWidget(method_box)
+        w.method_box = method_box
+
+        def _color_option():
+            photometric = method_box.currentText().startswith("Photometric")
+            return ColorSettings(method="photometric" if photometric else "sky")
+
         apply_btn = QPushButton("Apply Color")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(ColorSettings()))
+            apply_btn.clicked.connect(lambda: on_apply(_color_option()))
         lay.addWidget(apply_btn)
         # Remove Green (SCNR) with a strength dial + live preview — a knob, not a
         # hammer. Default gentle so it knocks back a green cast without flattening

@@ -668,6 +668,9 @@ class MainWindow(QMainWindow):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._log_step(stage_id, option, base, result)
             self._refresh()  # stay on this step; user clicks Next to advance
+            msg = getattr(step, "last_message", "")
+            if msg:
+                self._status.setText(msg)
 
         self._run_busy(lambda: step.apply(base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
@@ -678,6 +681,8 @@ class MainWindow(QMainWindow):
         if (stage_id == "noise_sharpen" and isinstance(option, dict)
                 and option.get("engine") == "graxpert" and graxpert_valid(self.settings)):
             return "Denoising with GraXpert — this can take a few minutes…"
+        if stage_id == "color" and getattr(option, "method", "sky") == "photometric":
+            return "Calibrating colour…"
         return f"Applying {STEP_NAME[stage_id]}…"
 
     def _log_step(self, stage_id: str, option, base, result) -> None:

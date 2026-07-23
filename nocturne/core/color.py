@@ -11,6 +11,7 @@ from .image import AstroImage
 class ColorSettings:
     neutralize_background: bool = True
     remove_green: bool = False
+    method: str = "sky"           # "sky" (background balance) or "photometric" (SPCC)
 
 
 def remove_green(img: AstroImage, strength: float = 1.0) -> AstroImage:

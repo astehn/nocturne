@@ -158,6 +158,21 @@ def test_apply_color_with_none_option(qtbot, tmp_path):
     assert win.project.entries()[-1][0] == "Color"
 
 
+def test_color_photometric_fallback_message_shown(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    from nocturne.core.color import ColorSettings
+    # Force _step_for to return a stub Color step that reports a fallback.
+    class _Stub:
+        name = "Color"; last_message = "Couldn't reach Gaia — used sky balance."
+        def apply(self, img, option):
+            return img
+    monkeypatch.setattr(win, "_step_for", lambda sid: _Stub())
+    win._go_to_id("color")
+    win.apply_current(ColorSettings(method="photometric"))
+    assert "sky balance" in win._status.text().lower()
+
+
 def test_apply_geometry_crop_changes_dimensions(qtbot, tmp_path):
     from nocturne.core.crop import CropParams
     win = _window(qtbot, tmp_path)

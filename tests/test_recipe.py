@@ -111,3 +111,15 @@ def test_saturation_option_round_trip():
     assert serialize_option("saturation", (0.7, 0.4)) == [0.7, 0.4]
     assert deserialize_option("saturation", [0.7, 0.4]) == (0.7, 0.4)
     assert deserialize_option("saturation", 0.7) == (0.7, 0.0)   # legacy bare float
+
+
+def test_color_option_round_trips_method():
+    from nocturne.core.color import ColorSettings
+    from nocturne.recipe import serialize_option, deserialize_option
+    s = serialize_option("color", ColorSettings(method="photometric"))
+    assert s["method"] == "photometric"
+    back = deserialize_option("color", s)
+    assert back.method == "photometric"
+    # default/legacy (no method key) -> "sky"
+    assert deserialize_option("color", {"neutralize_background": True,
+                                        "remove_green": False}).method == "sky"
