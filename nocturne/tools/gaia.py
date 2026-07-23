@@ -39,8 +39,9 @@ def query_field(ra_deg: float, dec_deg: float, radius_deg: float, *,
         "-source=I/355/gaiadr3"
         f"&-c={quote(f'{ra_deg:.6f} {dec_deg:+.6f}')}"       # 'RA +DEC' (space, signed dec)
         f"&-c.rd={radius_deg:.4f}"
-        f"&-out={quote('RA_ICRS,DE_ICRS,Gmag,BP-RP', safe=',')}"
-        "&-out.max=3000"
+        "&-sort=_r"                                          # nearest-first, so the out.max cap
+        f"&-out={quote('RA_ICRS,DE_ICRS,Gmag,BP-RP', safe=',')}"  # keeps the frame-covering stars,
+        "&-out.max=3000"                                     # not an edge cluster in a dense field
         f"&Gmag={mag_min:g}..{mag_max:g}"
     )
     url = _VIZIER + "?" + query

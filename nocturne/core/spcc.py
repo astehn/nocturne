@@ -13,7 +13,7 @@ from .image import AstroImage
 
 _BP_RP_SUN = 0.82        # solar colour -> the neutral reference
 _THRESH = 5.0            # sep detection sigma
-_MATCH_PX = 4.0          # cross-match tolerance
+_MATCH_PX = 5.0          # cross-match tolerance (undersampled Seestar stars + WCS residual)
 _SAT = 0.95             # skip stars with a channel this close to clipping
 _MIN_STARS = 15
 _GAIN_LO, _GAIN_HI = 0.2, 5.0

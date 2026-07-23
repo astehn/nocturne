@@ -58,8 +58,11 @@ class ColorStep(Step):
             if res is not None and res.message:
                 self.last_message += f" (ASTAP: {res.message})"
             return None
-        # generous cone covering the frame's half-diagonal (+margin), for any aspect ratio
-        radius = (fov or 2.0) * 0.5 * (1.0 + (w / h) ** 2) ** 0.5 * 1.15
+        # Cone covering the frame's half-diagonal, capped at 1.2deg: a bigger cone in
+        # a dense field just makes the VizieR query slow AND (even nearest-first) reaches
+        # past the frame — 1.2deg of nearest stars densely covers the centre, which is
+        # all SPCC needs. (gaia sorts nearest-first so the cap keeps these.)
+        radius = min((fov or 2.0) * 0.5 * (1.0 + (w / h) ** 2) ** 0.5, 1.2)
         try:
             gaia = self._gaia_query(res.center_ra_deg, res.center_dec_deg, radius)
         except GaiaError:
