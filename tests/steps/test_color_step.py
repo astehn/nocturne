@@ -2,6 +2,7 @@ import numpy as np
 from astropy.wcs import WCS
 from nocturne.core.image import AstroImage
 from nocturne.core.color import ColorSettings
+from nocturne.core.spcc import SpccResult
 from nocturne.steps.color import ColorStep
 from nocturne.tools.astap import SolveResult
 from nocturne.tools.gaia import GaiaStar, GaiaError
@@ -48,3 +49,30 @@ def test_photometric_no_astap_configured_falls_back():
     step = ColorStep(astap=None, gaia_query=lambda *a, **k: [])
     out = step.apply(_img(), ColorSettings(method="photometric"))
     assert out.data.shape == (40, 40, 3) and step.last_message
+
+
+def test_photometric_success_applies_gains_without_double_balance(monkeypatch):
+    monkeypatch.setattr("nocturne.core.spcc.photometric_gains",
+                        lambda img, wcs, gaia, **k: SpccResult((2.0, 1.0, 0.5), 40))
+    fake = _FakeAstap()
+    fake_query = lambda *a, **k: [GaiaStar(100.0, 0.0, 0.8, 10.0),
+                                  GaiaStar(100.01, 0.01, 1.2, 11.0)]
+    step = ColorStep(astap=fake, gaia_query=fake_query)
+    img = AstroImage(np.full((40, 40, 3), 0.4, np.float32), is_linear=True)
+    out = step.apply(img, ColorSettings(method="photometric"))
+    # Gains must be visibly applied (0.4 * (2.0, 1.0, 0.5)); a double-neutralize
+    # would rebalance the channels back toward equal/grey, destroying this ratio.
+    assert np.allclose(out.data[..., 0], 0.8, atol=1e-4)
+    assert np.allclose(out.data[..., 1], 0.4, atol=1e-4)
+    assert np.allclose(out.data[..., 2], 0.2, atol=1e-4)
+    assert step.last_message == ""
+
+
+def test_photometric_too_few_stars_falls_back(monkeypatch):
+    monkeypatch.setattr("nocturne.core.spcc.photometric_gains",
+                        lambda img, wcs, gaia, **k: None)
+    step = ColorStep(astap=_FakeAstap(),
+                     gaia_query=lambda *a, **k: [GaiaStar(100.0, 0.0, 0.8, 10.0)])
+    out = step.apply(_img(), ColorSettings(method="photometric"))
+    assert out.data.shape == (40, 40, 3)
+    assert "matched stars" in step.last_message.lower() or "sky balance" in step.last_message.lower()

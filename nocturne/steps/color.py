@@ -41,7 +41,7 @@ class ColorStep(Step):
             self.last_message = "ASTAP not set — used sky balance."
             return None
         meta = img.metadata
-        h, w = img.data.shape[:2]
+        h = img.data.shape[0]
         fov = None
         fl, px = meta.get("focal_length"), meta.get("pixel_size")
         if fl and px:
