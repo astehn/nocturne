@@ -49,7 +49,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 
 ## Requirements
 
-- **macOS** (a prebuilt `Nocturne.app`; see below). Building for Windows/Linux is possible from source or via CI — see [Building](#building).
+- **macOS on Apple Silicon** (M1 or newer) — a prebuilt `Nocturne.app`; see below. There's no Intel-Mac build yet; Windows/Linux is possible from source or via CI — see [Building](#building).
 - **[GraXpert](https://www.graxpert.com/)** — free. Powers background/gradient extraction and one of the denoise engines; the one tool worth installing first. Point Nocturne at it in **Settings**.
 - **[ASTAP](https://www.hnsky.org/astap.htm)** — free, **optional**. Adds plate-solving, target identification and annotation. Install it *and its D05 star database* (from the ASTAP page), then set the path in Settings.
 - **[RC-Astro](https://www.rc-astro.com/) (BlurXTerminator / NoiseXTerminator / StarXTerminator)** — paid, **optional**. Every RC-Astro step has a built-in free fallback, so Nocturne works fully without it — it's simply better with it. Set its path in Settings if you own it.
@@ -60,7 +60,7 @@ Nocturne drives these as separate installs and does not bundle them.
 
 ### Download (macOS)
 
-Grab the latest `Nocturne.app` from [Releases](../../releases), drag it to Applications, and open it.
+Grab the latest `Nocturne.app` from [Releases](../../releases) (**Apple Silicon**, M1 or newer), drag it to Applications, and open it.
 
 > [!NOTE]
 > The app isn't notarized yet, so on first launch macOS may block it. Right-click the app → **Open** → **Open**, or allow it under **System Settings → Privacy & Security**. (Notarization is planned.)
