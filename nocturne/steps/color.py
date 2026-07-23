@@ -68,20 +68,14 @@ class ColorStep(Step):
         except GaiaError:
             self.last_message = "Couldn't reach Gaia — used sky balance."
             return None
-        report = {}
         try:
-            spcc = photometric_gains(img, res.wcs, gaia, report=report)
+            spcc = photometric_gains(img, res.wcs, gaia)
         except Exception:
             self.last_message = "Colour calibration failed — used sky balance."
             return None
         if spcc is None:
-            expected_px = (206.265 * float(px) / float(fl)) if (fl and px) else 0.0
-            self.last_message = (
-                f"Too few matched stars — used sky balance. "
-                f"[detected {report.get('n_detected', 0)}, catalogue {report.get('n_catalogue', 0)}, "
-                f"in-frame {report.get('n_in_frame', 0)}, matched {report.get('n_matched', 0)}, "
-                f"offset {report.get('median_offset_px', -1):.1f}px, "
-                f"solved-scale {res.pixscale_arcsec:.2f}\"/px vs expected {expected_px:.2f}\"/px]")
+            self.last_message = ("Couldn't find enough catalogue stars to "
+                                 "colour-calibrate — used sky balance instead.")
             return None
         gr, gg, gb = spcc.gains
         self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "

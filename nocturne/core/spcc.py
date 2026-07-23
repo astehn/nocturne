@@ -63,11 +63,7 @@ def _robust_fit(x, y, iters=3, sigma=2.5):
     return (a, b) if a is not None else (None, None)
 
 
-def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS, report=None):
-    """`report`, if given, is filled with diagnostic counts (n_catalogue, n_detected,
-    n_matched) whether or not the fit succeeds — for surfacing why it fell back."""
-    if report is not None:
-        report.update(n_catalogue=len(gaia), n_detected=0, n_matched=0)
+def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS):
     if not img.is_color or not gaia:
         return None
     data = np.clip(img.data.astype(np.float32), 0.0, None)
@@ -76,8 +72,6 @@ def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS, repor
         return None
     x, y, peakmax, flux = m
     h, w = data.shape[:2]
-    if report is not None:
-        report["n_detected"] = len(x)
 
     from astropy.coordinates import SkyCoord
     import astropy.units as u
@@ -89,7 +83,6 @@ def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS, repor
         gy = (h - 1) - gy
 
     cols, R, G, B = [], [], [], []
-    nearest = []                                         # nearest detected-star distance, per in-frame Gaia star
     for i in range(len(gx)):
         if not (np.isfinite(gx[i]) and np.isfinite(gy[i])):
             continue
@@ -97,18 +90,12 @@ def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS, repor
             continue
         d2 = (x - gx[i]) ** 2 + (y - gy[i]) ** 2
         j = int(np.argmin(d2))
-        nearest.append(float(d2[j]) ** 0.5)
         if d2[j] > _MATCH_PX ** 2 or peakmax[j] >= _SAT:
             continue
         r, g, b = flux[j]
         if r <= 0 or g <= 0 or b <= 0:
             continue
         cols.append(gbprp[i]); R.append(r); G.append(g); B.append(b)
-    if report is not None:
-        report["n_in_frame"] = len(nearest)
-        report["median_offset_px"] = float(np.median(nearest)) if nearest else -1.0
-    if report is not None:
-        report["n_matched"] = len(cols)
     if len(cols) < min_stars:
         return None
 
