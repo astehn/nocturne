@@ -41,12 +41,13 @@ def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
     h, w = shape
 
     for o in objects:
-        marker = QGraphicsEllipseItem(-5, -5, 10, 10)   # small ring on the object
-        marker.setPos(o.x, o.y)
-        marker.setPen(QPen(QColor(label_color), 2))
-        marker.setBrush(Qt.BrushStyle.NoBrush)
-        marker.setFlag(_IGNORE, True)
-        g.addToGroup(marker)
+        if getattr(o, "centered", True):                # ring only when the centre is in-frame
+            marker = QGraphicsEllipseItem(-5, -5, 10, 10)   # small ring on the object
+            marker.setPos(o.x, o.y)
+            marker.setPen(QPen(QColor(label_color), 2))
+            marker.setBrush(Qt.BrushStyle.NoBrush)
+            marker.setFlag(_IGNORE, True)
+            g.addToGroup(marker)
         label = _text(f"{o.name}" + (f"  {o.common}" if o.common else ""), label_color)
         label.setPos(o.x + 9, o.y + 7)                  # anchored beside the object
         g.addToGroup(label)
