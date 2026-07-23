@@ -33,9 +33,19 @@ external-tool steps (Background/Deconvolution/Noise). See [[wysiwyg-preview-prin
 | 11 | Star Reduction | algo + UX | ✅ fixed | erosion→wing-curve (no blur) + slider + live preview |
 | 12 | Enhancements | UX | ✅ reviewed | good as-is; research → 4 finishing features backlogged |
 | 13 | Export | UX + correctness | ✅ fixed | save dialog respects chosen format + suggested filename |
-| 14 | Stack (adjacent tool) | correctness | ⬜ | ~396 GB memory runaway |
+| 14 | Stack (adjacent tool) | correctness | ⏸ benched | ~396 GB memory runaway — one-off, unreproducible under heavy use; stacker is streaming by design; monitoring |
 
-Legend: ⬜ not started · 🔎 auditing · 🛠 fixing · ✅ done
+Legend: ⬜ not started · 🔎 auditing · 🛠 fixing · ✅ done · ⏸ benched (monitoring)
+
+**Step 14 — Stack · benched (2026-07-23).** The ~396 GB memory runaway was seen
+once and has never recurred despite heavy real use, and the user couldn't
+replicate it. The current stacker is streaming by design (register keeps only
+the 3×3 transform per sub; integration reloads + warps one frame at a time via a
+generator; sigma-clip is a two-pass streaming walk), so a deterministic blow-up
+doesn't fit the code path. Likely a pathological one-off input, an external
+memory event, or a pre-streaming version — none reproducible. Benched pending
+recurrence; revisit only if it happens again (optionally with a pre-stack
+memory-estimate guard that fails loudly with diagnostics).
 
 ## Per-step template
 
