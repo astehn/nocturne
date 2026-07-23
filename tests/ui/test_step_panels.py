@@ -76,6 +76,23 @@ def test_auto_panel_apply_color_has_no_green(qtbot):
     assert got[0].remove_green is False
 
 
+def test_color_panel_apply_passes_method(qtbot):
+    from nocturne.core.color import ColorSettings
+    captured = {}
+    w = build_panel(_stage("color"), on_apply=lambda opt: captured.setdefault("opt", opt))
+    qtbot.addWidget(w)
+    assert hasattr(w, "method_box")
+    w.method_box.setCurrentText("Photometric (SPCC)")
+    w.apply_btn.click()
+    assert isinstance(captured["opt"], ColorSettings)
+    assert captured["opt"].method == "photometric"
+    # default selection -> sky
+    w2 = build_panel(_stage("color"), on_apply=lambda opt: captured.__setitem__("opt2", opt))
+    qtbot.addWidget(w2)
+    w2.apply_btn.click()
+    assert captured["opt2"].method == "sky"
+
+
 def test_auto_panel_remove_green_button_passes_strength(qtbot):
     calls = []
     w = build_panel(_stage("color"), on_remove_green=calls.append)
