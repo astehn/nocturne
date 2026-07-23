@@ -65,13 +65,18 @@ class ColorStep(Step):
         except GaiaError:
             self.last_message = "Couldn't reach Gaia — used sky balance."
             return None
+        report = {}
         try:
-            spcc = photometric_gains(img, res.wcs, gaia)
+            spcc = photometric_gains(img, res.wcs, gaia, report=report)
         except Exception:
             self.last_message = "Colour calibration failed — used sky balance."
             return None
         if spcc is None:
-            self.last_message = "Too few matched stars — used sky balance."
+            self.last_message = (
+                f"Too few matched stars ({report.get('n_matched', 0)} matched of "
+                f"{report.get('n_detected', 0)} detected, {report.get('n_catalogue', 0)} "
+                "in catalogue) — used sky balance. SPCC needs broadband stars; a "
+                "duo-band/narrowband capture has too few.")
             return None
         gr, gg, gb = spcc.gains
         self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "
