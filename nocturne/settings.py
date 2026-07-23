@@ -30,6 +30,7 @@ class Settings:
     base_dir: str = ""
     denoise_engine: str = "rcastro"
     astap_path: str = ""
+    help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
 
 
 def load_settings(path: str) -> Settings:
@@ -43,6 +44,7 @@ def load_settings(path: str) -> Settings:
         base_dir=data.get("base_dir", ""),
         denoise_engine=data.get("denoise_engine", "rcastro"),
         astap_path=data.get("astap_path", ""),
+        help_expanded=data.get("help_expanded", True),
     )
 
 

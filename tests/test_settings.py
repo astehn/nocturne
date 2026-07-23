@@ -78,3 +78,19 @@ def test_astap_valid_checks_file(tmp_path):
     real = tmp_path / "astap"; real.write_text("x")
     assert astap_valid(Settings(astap_path=str(real))) is True
     assert astap_valid(Settings(astap_path=str(tmp_path / "nope"))) is False
+
+
+def test_help_expanded_defaults_true_and_round_trips(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings
+    assert Settings().help_expanded is True                 # novice-first default
+    p = tmp_path / "s.json"
+    save_settings(Settings(help_expanded=False), str(p))
+    assert load_settings(str(p)).help_expanded is False       # survives round-trip
+
+
+def test_help_expanded_absent_in_old_file_defaults_true(tmp_path):
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"base_dir": "/x"}))              # pre-feature settings.json
+    assert load_settings(str(p)).help_expanded is True
