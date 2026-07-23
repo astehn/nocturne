@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsIte
                                QGraphicsLineItem, QGraphicsSimpleTextItem)
 
 _IGNORE = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
-_LABEL_PT = 13.0        # DSO label size (constant on-screen px)
-_COMPASS_PT = 16.0      # the "N"
+_LABEL_PT = 15.0        # DSO label size (constant on-screen px)
+_COMPASS_PT = 17.0      # the "N"
 
 
 def _text(s, fill, size=_LABEL_PT, bold=False, outline="#0a0f18"):
@@ -34,7 +34,10 @@ def _text(s, fill, size=_LABEL_PT, bold=False, outline="#0a0f18"):
 
 def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
                            shape, theme="dark") -> QGraphicsItemGroup:
-    label_color = "#5fe3d0"                         # readable teal (blue/green)
+    # Green: the one colour that's RARE in a finished astro image (Ha=red,
+    # OIII=teal/blue, and green is actively removed) — so labels never blend into
+    # or clash with the nebulosity.
+    label_color = "#5cff5c"                         # bright green
     accent = "#6aa8f2"                              # bright blue for the compass
     scale_color = "#e7ecf4" if theme == "dark" else "#111722"
     g = QGraphicsItemGroup()
