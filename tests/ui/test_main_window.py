@@ -170,7 +170,7 @@ def test_color_photometric_fallback_message_shown(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_step_for", lambda sid: _Stub())
     win._go_to_id("color")
     win.apply_current(ColorSettings(method="photometric"))
-    assert "sky balance" in win._status.text().lower()
+    assert "sky balance" in win.output_panel.toPlainText().lower()
 
 
 def test_apply_geometry_crop_changes_dimensions(qtbot, tmp_path):
@@ -328,7 +328,7 @@ def test_levels_refused_on_linear_image(qtbot, tmp_path):
     win.apply_current((0.01, 1.0, 1.0))             # a tiny black-point nudge
     assert [n for n, _ in win.project.entries()] == names_before   # nothing applied
     assert win.project.current().is_linear          # image untouched, not blacked out
-    assert "Stretch" in win._status.text()
+    assert "Stretch" in win._warning.text()
 
 
 def test_histogram_updates_on_open(qtbot, tmp_path):
@@ -381,7 +381,7 @@ def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     bad.write_text("not a fits file")
     win.open_fits(str(bad))  # must not raise
     assert win.project is None
-    assert "open" in win._status.text().lower()
+    assert "open" in win._warning.text().lower()
 
 
 def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
@@ -504,7 +504,7 @@ def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "save_png",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     win.export_final("PNG")
-    assert "Export failed: disk full" in win._status.text()
+    assert "Export failed: disk full" in win._warning.text()
     assert win._busy is False
 
 
@@ -520,9 +520,9 @@ def test_background_off_records_no_history(qtbot, tmp_path):
 def test_status_cleared_on_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._status.setText("some error")
+    win._show_warning("some error")
     win._go_to_id("crop")
-    assert win._status.text() == ""
+    assert win._warning.text() == ""
 
 
 def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
@@ -560,7 +560,7 @@ def test_log_toggle_hides_panel(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._log_act.setChecked(False)
     win._toggle_log()
-    assert win.log_panel.isHidden() is True
+    assert win._bottom_bar.isHidden() is True
 
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
@@ -664,13 +664,13 @@ def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._status.setText("Export failed: disk full")   # stale error from a prior attempt
+    win._show_warning("Export failed: disk full")   # stale error from a prior attempt
     out = tmp_path / "pic.png"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: (str(out), "")))
     win.export_final("PNG")
     assert out.exists()
-    assert win._status.text() == ""   # stale error cleared on the successful export
+    assert win._warning.text() == ""   # stale error cleared on the successful export
 
 
 def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
@@ -841,7 +841,7 @@ def test_run_busy_reports_error_prefix(qtbot, tmp_path):
 
     win._run_busy(work, lambda r: None, "Working…", "Export failed")
     assert win._busy is False
-    assert "Export failed: disk full" in win._status.text()
+    assert "Export failed: disk full" in win._warning.text()
 
 
 def test_set_busy_gates_immediately_but_delays_visuals(qtbot, tmp_path):
@@ -1437,7 +1437,7 @@ def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
     win._open_narrowband()                                 # refused (needs colour) — no crash
     names = [n for n, _ in win.project.entries()]
     assert "Narrowband" not in names
-    assert "colour" in win._status.text().lower()
+    assert "colour" in win._warning.text().lower()
 
 
 def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
@@ -1465,7 +1465,7 @@ def test_plate_solve_not_configured_shows_hint(qtbot, tmp_path):
     # No astap_path configured — astap_valid(win.settings) should be False.
     win._open_plate_solve()
     assert win._solve is None
-    assert win._status.text() != ""
+    assert win._warning.text() != ""
 
 
 def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch):
@@ -1477,7 +1477,7 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(False, None, 0.0, 0.0, 0.0), []))
     win._open_plate_solve()
-    assert win._status.text() != ""
+    assert win._warning.text() != ""
     assert win.image_view._annotations is None
     assert win._solve is None
 
@@ -1563,3 +1563,93 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is True
     win._flip_h(); win._refresh()                            # framing change clears overlay
     assert win._solve_act.isChecked() is False               # and unchecks the button
+
+
+def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
+    from PySide6.QtWidgets import QPlainTextEdit
+    from PySide6.QtCore import Qt
+    win = _window(qtbot, tmp_path)
+    assert isinstance(win.output_panel, QPlainTextEdit)
+    assert win.output_panel.isReadOnly()                     # not editable
+    assert win.output_panel.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse  # copyable
+    win._show_output("142 stars matched")
+    assert "142 stars matched" in win.output_panel.toPlainText()
+
+
+def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "r.json"), "")))
+    win._save_recipe()
+    assert "Saved recipe" in win.output_panel.toPlainText()
+
+
+def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
+    from PySide6.QtWidgets import QLabel
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1200, 800)                                     # ensure the stretch has slack
+    win.show(); qtbot.waitExposed(win)
+    lay = win._right_layout
+    last = lay.itemAt(lay.count() - 1)
+    assert last.layout() is not None                          # nav is a QHBoxLayout, the last item
+    assert win._next_btn in (last.layout().itemAt(i).widget()
+                             for i in range(last.layout().count()))
+    y0 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
+    win._show_warning("Stretch the image first — a long wrapping message " * 3)
+    qtbot.wait(10)
+    y1 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
+    assert y1 == y0                                            # buttons never move
+
+
+def test_warning_channel_and_clear(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._show_warning("Set the ASTAP path in Settings to plate-solve.")
+    assert "ASTAP" in win._warning.text()
+    win._clear_warning()
+    assert win._warning.text() == ""
+    assert not hasattr(win, "_status")                        # old surface removed
+
+
+def test_help_collapse_is_global_sticky_and_persisted(qtbot, tmp_path):
+    from nocturne.settings import load_settings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win.go_next()  # a stage with a help topic (crop)
+    assert win.settings.help_expanded is True
+    assert win._explainer_scroll.isVisible()                 # body shown when expanded
+    assert win._full_help_link.isVisible()
+
+    win._toggle_help()                                       # collapse
+    assert win.settings.help_expanded is False
+    assert not win._explainer_scroll.isVisible()             # body hidden
+    assert not win._full_help_link.isVisible()               # Full help hidden when collapsed
+    assert load_settings(str(tmp_path / "settings.json")).help_expanded is False  # persisted
+
+    win.go_next()                                            # different step
+    assert not win._explainer_scroll.isVisible()             # stays collapsed everywhere
+
+
+def test_help_starts_collapsed_when_setting_off(qtbot, tmp_path):
+    import json
+    (tmp_path / "settings.json").write_text(json.dumps({"help_expanded": False}))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win.go_next()
+    assert not win._explainer_scroll.isVisible()             # honours persisted state on launch
+
+
+def test_peek_label_clears_when_leaving_peek(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._displayed is not None
+    win._toggle_peek()                                       # Space → show 'before'
+    assert win._peek_active is True and win._peek_label.text() != ""
+    win.go_next()                                            # navigate → _refresh exits peek
+    assert win._peek_active is False
+    assert win._peek_label.text() == ""                      # cue cleared, not left stale

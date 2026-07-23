@@ -345,24 +345,50 @@ Add the methods (near `_show_output`):
         self._warning.setText("")
 ```
 
-- [ ] **Step 4: Migrate remaining `_status` sites**
+- [ ] **Step 4: Migrate remaining `self._status` sites**
 
-Replace every remaining `self._status.setText(...)`:
-- Warning-class messages → `self._show_warning(...)`: `:340`, `:349`, `:358`, `:377`, `:381`, `:426`, `:441`, `:591`, `:647`, `:716`, `:1451`, and the `_FREE_STAR_NOTE` sites `:999`, `:1140`, `:1264` (e.g. `self._show_warning("" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)`).
-- Every `self._status.setText("")` clear → `self._clear_warning()` (`:370`, `:392`, `:457`, `:568`, `:602`, `:659`, `:665`, `:831`, `:841`, `:868`, `:1057`, `:1212`, `:1329`, `:1448`).
-- `:1417` peek indicator needs set/clear (not append) semantics → its own tiny label: `self._peek_label.setText("Before — press Space to compare" if self._peek_active else "")`.
+**CRITICAL SCOPE NOTE:** match `self._status` **exactly**. The per-panel labels
+`self._panel.neb_status` / `panel.fringe_status` / `panel.sr_status` — including
+all `_FREE_STAR_NOTE` and "Separating stars…" messages — also contain the text
+`_status` but are **OUT OF SCOPE; do NOT touch them**. Route by message content,
+not line number (numbers shift as you edit). After Task 2, the true `self._status`
+sites are exactly: 11 warning-class, 14 empty-string clears, and 1 peek.
 
-Confirm with `grep -n "_status" nocturne/ui/main_window.py` returning **nothing** afterward.
+Replace every `self._status.setText(...)`:
+- Warning-class (non-empty) → `self._show_warning(...)` — these exact messages:
+  "Stacking unavailable — install astroalign and sep.",
+  "Ha/OIII extract unavailable — install astroalign and sep.",
+  "Stretch the image first — Star Spikes works on the …",
+  "Stretch the image first — Narrowband works on the …",
+  "Narrowband needs a colour image.",
+  "Set the ASTAP path in Settings to plate-solve.",
+  "Couldn't plate-solve this image — try after Stretch, …",
+  "Could not open file: {exc}",
+  "Apply Stretch first — Levels works on the stretched image.",
+  "{err_prefix}: {exc}",
+  "Starless + stars split needs RC-Astro (see Settings)."
+- Every `self._status.setText("")` clear → `self._clear_warning()` (all 14 clear sites).
+- The peek indicator needs set/clear (not append) semantics → its own tiny label:
+  `self._peek_label.setText("Before — press Space to compare" if self._peek_active else "")`.
+
+Confirm with `grep -nE "self\._status" nocturne/ui/main_window.py` returning
+**nothing** afterward (the panel `*_status` labels must remain).
 
 - [ ] **Step 5: Migrate the remaining `_status` test assertions**
 
-In `tests/ui/test_main_window.py`, update to `_warning`:
-- `:331` → `assert "Stretch" in win._warning.text()`
-- `:384` → `assert "open" in win._warning.text().lower()`
-- `:507`, `:844` → `assert "Export failed: disk full" in win._warning.text()`
-- `test_status_cleared_on_navigation` (`:520-525`): `win._show_warning("some error")` then assert `win._warning.text() == ""` after nav.
-- `:667-673` stale-error-cleared-on-export: `win._show_warning("Export failed: disk full")` then assert `win._warning.text() == ""`.
-- `:1468`, `:1480` (`!= ""`) → assert against `win._warning.text()` (these are gate warnings).
+In `tests/ui/test_main_window.py`, change every remaining `win._status` reference
+to `win._warning` (locate by content — Task 2 already migrated the two output
+ones to `win.output_panel`):
+- the "Stretch" assertion → `win._warning.text()`
+- the "open" (could-not-open-file) assertion → `win._warning.text().lower()`
+- both "Export failed: disk full" assertions → `win._warning.text()`
+- `test_status_cleared_on_navigation`: `win._show_warning("some error")`, then assert `win._warning.text() == ""` after nav.
+- the stale-error-cleared-on-export test: `win._show_warning("Export failed: disk full")`, then assert `win._warning.text() == ""`.
+- the "colour" (Narrowband-needs-a-colour-image) assertion → `win._warning.text().lower()`.
+- the two `!= ""` gate-warning assertions → `win._warning.text()`.
+
+Confirm `grep -nE "win\._status|self\._status" tests/ui/test_main_window.py` returns **nothing**
+(only panel `sr_status`/`fringe_status`/`neb_status` references may remain).
 
 - [ ] **Step 6: Run tests**
 
