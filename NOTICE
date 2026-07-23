@@ -3,3 +3,6 @@ https://github.com/mattiaverga/OpenNGC
 
 IAU Catalog of Star Names (IAU-CSN), IAU Division C Working Group on Star
 Names (WGSN). Licensed CC BY. https://www.iau.org/public/themes/naming_stars/
+
+Gaia DR3 photometry queried live via CDS/VizieR (catalogue I/355). Gaia data
+(c) ESA/Gaia/DPAC, CC BY-NC 3.0 IGO. Service: https://vizier.cds.unistra.fr
