@@ -170,7 +170,7 @@ def test_color_photometric_fallback_message_shown(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_step_for", lambda sid: _Stub())
     win._go_to_id("color")
     win.apply_current(ColorSettings(method="photometric"))
-    assert "sky balance" in win._status.text().lower()
+    assert "sky balance" in win.output_panel.toPlainText().lower()
 
 
 def test_apply_geometry_crop_changes_dimensions(qtbot, tmp_path):
@@ -560,7 +560,7 @@ def test_log_toggle_hides_panel(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._log_act.setChecked(False)
     win._toggle_log()
-    assert win.log_panel.isHidden() is True
+    assert win._bottom_bar.isHidden() is True
 
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
@@ -1563,3 +1563,24 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is True
     win._flip_h(); win._refresh()                            # framing change clears overlay
     assert win._solve_act.isChecked() is False               # and unchecks the button
+
+
+def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
+    from PySide6.QtWidgets import QPlainTextEdit
+    from PySide6.QtCore import Qt
+    win = _window(qtbot, tmp_path)
+    assert isinstance(win.output_panel, QPlainTextEdit)
+    assert win.output_panel.isReadOnly()                     # not editable
+    assert win.output_panel.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse  # copyable
+    win._show_output("142 stars matched")
+    assert "142 stars matched" in win.output_panel.toPlainText()
+
+
+def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "r.json"), "")))
+    win._save_recipe()
+    assert "Saved recipe" in win.output_panel.toPlainText()

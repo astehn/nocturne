@@ -33,7 +33,7 @@ from .help_dialog import HelpDialog
 from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
-from .log_panel import LogPanel, format_log_entry
+from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels, clipping_masks
 from ..core.saturation import nebula_saturate, saturate
@@ -245,7 +245,13 @@ class MainWindow(QMainWindow):
         root.addWidget(right)
 
         self.log_panel = LogPanel()
-        outer.addWidget(self.log_panel)
+        self.output_panel = OutputPanel()
+        self._bottom_bar = QWidget()
+        bottom = QHBoxLayout(self._bottom_bar)
+        bottom.setContentsMargins(0, 0, 0, 0)
+        bottom.addWidget(self.log_panel, 3)      # history gets the wider share
+        bottom.addWidget(self.output_panel, 2)   # results/progress, copyable
+        outer.addWidget(self._bottom_bar)
 
         self.setCentralWidget(central)
         self._build_toolbar()
@@ -301,6 +307,10 @@ class MainWindow(QMainWindow):
         self._explainer_scroll.setVisible(True)
         self._full_help_link.setVisible(True)
 
+    def _show_output(self, text: str) -> None:
+        """Routine results & progress → the copyable Output box."""
+        self.output_panel.show_line(text)
+
     def _make_about_dialog(self) -> AboutDialog:
         return AboutDialog(self)
 
@@ -328,7 +338,7 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".json"):
             path += ".json"
         save_recipe(recipe_from_entries(self.project.entries()), path)
-        self._status.setText(f"Saved recipe: {os.path.basename(path)}")
+        self._show_output(f"Saved recipe: {os.path.basename(path)}")
 
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
@@ -430,7 +440,7 @@ class MainWindow(QMainWindow):
             self._show_annotations(*self._solve[1:])
             self._solve_act.setChecked(True)
             return
-        self._status.setText("Plate-solving…")
+        self._show_output("Plate-solving…")
         self._run_busy(lambda: self._solve_current(self.project.current()),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
@@ -670,7 +680,7 @@ class MainWindow(QMainWindow):
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
-                self._status.setText(msg)
+                self._show_output(msg)
 
         self._run_busy(lambda: step.apply(base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
@@ -1438,7 +1448,7 @@ class MainWindow(QMainWindow):
             self.image_view.set_compare(None)
 
     def _toggle_log(self) -> None:
-        self.log_panel.setVisible(self._log_act.isChecked())
+        self._bottom_bar.setVisible(self._log_act.isChecked())
 
     # --- exports ---
     def export_final(self, fmt: str) -> None:
