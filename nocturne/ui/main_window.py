@@ -922,7 +922,7 @@ class MainWindow(QMainWindow):
         # to_qimage (which auto-stretches), not _show_preview (which assumes
         # display-space data and would render linear values as near-black).
         result = remove_green(self._preview_base("remove_green"), self._rg_pending)
-        self._peek_active = False
+        self._set_peek(False)
         self._displayed = result
         self.image_view.set_image(to_qimage(result))
         self.histogram_view.set_image(result)
@@ -979,7 +979,7 @@ class MainWindow(QMainWindow):
             rgb = (out * 255 + 0.5).astype(np.uint8)
             if rgb.ndim == 2:
                 rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        self._peek_active = False   # a fresh preview repaint always shows the 'after'
+        self._set_peek(False)   # a fresh preview repaint always shows the 'after'
         self._displayed = AstroImage(out, is_linear=False)
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
         self.histogram_view.set_image(self._displayed)
@@ -1444,6 +1444,12 @@ class MainWindow(QMainWindow):
                 return True
         return super().eventFilter(obj, event)
 
+    def _set_peek(self, active: bool) -> None:
+        """Single source of truth for peek state + its cue label, so every path that
+        exits peek (nav, apply, preview repaint) clears the 'Before' cue too."""
+        self._peek_active = active
+        self._peek_label.setText("Before — press Space to compare" if active else "")
+
     def _toggle_peek(self) -> None:
         """Flip the main image between the *current step's* entry state (its before)
         and whatever is on the canvas now (its after — a live preview or the
@@ -1451,11 +1457,10 @@ class MainWindow(QMainWindow):
         so peeking never reveals an earlier step's effect. The only thing Space does."""
         if self.project is None or self._displayed is None:
             return
-        self._peek_active = not self._peek_active
+        self._set_peek(not self._peek_active)
         img = self._peek_before() if self._peek_active else self._displayed
         self.image_view.set_image(to_qimage(img))
         self.histogram_view.set_image(img)
-        self._peek_label.setText("Before — press Space to compare" if self._peek_active else "")
 
     def _peek_before(self):
         """The image entering the current step — the same pre-step base a commit
@@ -1660,7 +1665,7 @@ class MainWindow(QMainWindow):
         self._update_explainer()
 
     def _refresh(self) -> None:
-        self._peek_active = False   # a rebuilt view always shows the current image
+        self._set_peek(False)   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:

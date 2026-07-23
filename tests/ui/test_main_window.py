@@ -1642,3 +1642,14 @@ def test_help_starts_collapsed_when_setting_off(qtbot, tmp_path):
     win.show(); qtbot.waitExposed(win)
     win.go_next()
     assert not win._explainer_scroll.isVisible()             # honours persisted state on launch
+
+
+def test_peek_label_clears_when_leaving_peek(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._displayed is not None
+    win._toggle_peek()                                       # Space → show 'before'
+    assert win._peek_active is True and win._peek_label.text() != ""
+    win.go_next()                                            # navigate → _refresh exits peek
+    assert win._peek_active is False
+    assert win._peek_label.text() == ""                      # cue cleared, not left stale
