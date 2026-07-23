@@ -23,6 +23,7 @@ for pkg in ("skimage", "colour", "colour_demosaicing"):
 hiddenimports += collect_submodules("astroalign")
 hiddenimports += collect_submodules("astropy.wcs") + collect_submodules("astropy.coordinates")
 datas += [(os.path.join(ROOT, "nocturne", "data", "openngc.csv"), "nocturne/data")]
+datas += [(os.path.join(ROOT, "nocturne", "data", "named_stars.csv"), "nocturne/data")]
 
 a = Analysis(
     [SCRIPT],

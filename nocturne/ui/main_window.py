@@ -461,13 +461,14 @@ class MainWindow(QMainWindow):
 
     def _show_annotations(self, res, objs):
         from ..core.annotate import compass_angles, scale_bar
+        from ..core.catalog import named_stars_in_field
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
         north, _east = compass_angles(res.wcs, (h, w))
         length, label = scale_bar(res.pixscale_arcsec, w)
-        theme = "dark"
+        stars = named_stars_in_field(res.wcs, (h, w))
         self.image_view.set_annotations(
-            build_annotation_group(objs, north, length, label, (h, w), theme))
+            build_annotation_group(objs, north, length, label, (h, w), "dark", stars=stars))
 
     def _remove_stars(self, img):
         if rcastro_valid(self.settings):

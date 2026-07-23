@@ -55,3 +55,22 @@ def test_identify_target_picks_largest():
     ]
     assert identify_target(objs, (1080, 1920)) == "NGC B · Beta"
     assert identify_target([], (1080, 1920)) == ""
+
+
+def test_named_stars_in_field_keeps_in_frame():
+    from nocturne.core.catalog import named_stars_in_field
+    wcs = _wcs(center_ra=100.0, center_dec=0.0)     # ~0.6x0.3 deg field at RA100/Dec0
+    rows = [("Alpha", 100.0, 0.0, 1.5),             # dead centre -> in
+            ("Beta", 100.0, 5.0, 2.0)]              # 5 deg north -> out
+    stars = named_stars_in_field(wcs, (1080, 1920), rows=rows)
+    names = [s.name for s in stars]
+    assert names == ["Alpha"]
+    assert abs(stars[0].x - 960) < 2 and abs(stars[0].y - 540) < 2
+
+
+def test_bundled_named_stars_has_known_stars():
+    from nocturne.core.catalog import load_named_stars
+    d = {n: (ra, dec) for n, ra, dec, mag in load_named_stars()}
+    assert "Deneb" in d and "Vega" in d and "Altair" in d
+    ra, dec = d["Deneb"]
+    assert abs(ra - 310.36) < 0.1 and abs(dec - 45.28) < 0.1     # sanity: real coords

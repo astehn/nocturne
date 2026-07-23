@@ -33,7 +33,7 @@ def _text(s, fill, size=_LABEL_PT, bold=False, outline="#0a0f18"):
 
 
 def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
-                           shape, theme="dark") -> QGraphicsItemGroup:
+                           shape, theme="dark", stars=None) -> QGraphicsItemGroup:
     # Green: the one colour that's RARE in a finished astro image (Ha=red,
     # OIII=teal/blue, and green is actively removed) — so labels never blend into
     # or clash with the nebulosity.
@@ -54,6 +54,18 @@ def build_annotation_group(objects, north_angle, scale_len_px, scale_label,
         label = _text(f"{o.name}" + (f"  {o.common}" if o.common else ""), label_color)
         label.setPos(o.x + 9, o.y + 7)                  # anchored beside the object
         g.addToGroup(label)
+
+    # named bright stars: a small cross on the star + its proper name.
+    for s in (stars or []):
+        for x1, y1, x2, y2 in ((-6, 0, 6, 0), (0, -6, 0, 6)):
+            tick = QGraphicsLineItem(x1, y1, x2, y2)
+            tick.setPos(s.x, s.y)
+            tick.setPen(QPen(QColor(label_color), 1.5))
+            tick.setFlag(_IGNORE, True)
+            g.addToGroup(tick)
+        slabel = _text(s.name, label_color, size=_LABEL_PT - 2)   # slightly smaller than DSOs
+        slabel.setPos(s.x + 8, s.y + 6)
+        g.addToGroup(slabel)
 
     # compass: an arrow toward celestial North from a fixed top-right anchor.
     ax, ay = w - 120, 120
