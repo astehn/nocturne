@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..settings import Settings, graxpert_valid, rcastro_valid, resolve_binary
+from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid, resolve_binary
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
@@ -33,7 +33,10 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         step._runner = bg_runner
         return step
     if stage_id == "color":
-        return ColorStep()
+        from ..tools.astap import ASTAP
+        from ..tools.gaia import query_field
+        astap = ASTAP(resolve_binary(settings.astap_path)) if astap_valid(settings) else None
+        return ColorStep(astap=astap, gaia_query=query_field)
     if stage_id == "remove_green":
         return RemoveGreenStep()
     if stage_id == "stretch":
