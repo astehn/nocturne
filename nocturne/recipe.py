@@ -27,7 +27,8 @@ def serialize_option(stage_id, option):
     if stage_id == "color":
         c = option if isinstance(option, ColorSettings) else ColorSettings()
         return {"neutralize_background": c.neutralize_background,
-                "remove_green": c.remove_green}
+                "remove_green": c.remove_green,
+                "method": c.method}
     if stage_id == "levels":
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
