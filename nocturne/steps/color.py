@@ -73,4 +73,7 @@ class ColorStep(Step):
         if spcc is None:
             self.last_message = "Too few matched stars — used sky balance."
             return None
+        gr, gg, gb = spcc.gains
+        self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "
+                             f"gains R {gr:.2f} · G {gg:.2f} · B {gb:.2f}")
         return apply_gains(img, spcc.gains)

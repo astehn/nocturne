@@ -65,7 +65,8 @@ def test_photometric_success_applies_gains_without_double_balance(monkeypatch):
     assert np.allclose(out.data[..., 0], 0.8, atol=1e-4)
     assert np.allclose(out.data[..., 1], 0.4, atol=1e-4)
     assert np.allclose(out.data[..., 2], 0.2, atol=1e-4)
-    assert step.last_message == ""
+    # success reports what it did (star count + gains), not empty
+    assert "40 stars matched" in step.last_message and "gains" in step.last_message
 
 
 def test_photometric_too_few_stars_falls_back(monkeypatch):
