@@ -73,10 +73,10 @@ class ColorStep(Step):
             return None
         if spcc is None:
             self.last_message = (
-                f"Too few matched stars ({report.get('n_matched', 0)} matched of "
-                f"{report.get('n_detected', 0)} detected, {report.get('n_catalogue', 0)} "
-                "in catalogue) — used sky balance. SPCC needs broadband stars; a "
-                "duo-band/narrowband capture has too few.")
+                f"Too few matched stars — used sky balance. "
+                f"[detected {report.get('n_detected', 0)}, catalogue {report.get('n_catalogue', 0)}, "
+                f"in-frame {report.get('n_in_frame', 0)}, matched {report.get('n_matched', 0)}, "
+                f"median offset {report.get('median_offset_px', -1):.1f}px]")
             return None
         gr, gg, gb = spcc.gains
         self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "
