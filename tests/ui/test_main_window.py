@@ -328,7 +328,7 @@ def test_levels_refused_on_linear_image(qtbot, tmp_path):
     win.apply_current((0.01, 1.0, 1.0))             # a tiny black-point nudge
     assert [n for n, _ in win.project.entries()] == names_before   # nothing applied
     assert win.project.current().is_linear          # image untouched, not blacked out
-    assert "Stretch" in win._status.text()
+    assert "Stretch" in win._warning.text()
 
 
 def test_histogram_updates_on_open(qtbot, tmp_path):
@@ -381,7 +381,7 @@ def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     bad.write_text("not a fits file")
     win.open_fits(str(bad))  # must not raise
     assert win.project is None
-    assert "open" in win._status.text().lower()
+    assert "open" in win._warning.text().lower()
 
 
 def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
@@ -504,7 +504,7 @@ def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "save_png",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
     win.export_final("PNG")
-    assert "Export failed: disk full" in win._status.text()
+    assert "Export failed: disk full" in win._warning.text()
     assert win._busy is False
 
 
@@ -520,9 +520,9 @@ def test_background_off_records_no_history(qtbot, tmp_path):
 def test_status_cleared_on_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._status.setText("some error")
+    win._show_warning("some error")
     win._go_to_id("crop")
-    assert win._status.text() == ""
+    assert win._warning.text() == ""
 
 
 def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
@@ -664,13 +664,13 @@ def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._status.setText("Export failed: disk full")   # stale error from a prior attempt
+    win._show_warning("Export failed: disk full")   # stale error from a prior attempt
     out = tmp_path / "pic.png"
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: (str(out), "")))
     win.export_final("PNG")
     assert out.exists()
-    assert win._status.text() == ""   # stale error cleared on the successful export
+    assert win._warning.text() == ""   # stale error cleared on the successful export
 
 
 def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
@@ -841,7 +841,7 @@ def test_run_busy_reports_error_prefix(qtbot, tmp_path):
 
     win._run_busy(work, lambda r: None, "Working…", "Export failed")
     assert win._busy is False
-    assert "Export failed: disk full" in win._status.text()
+    assert "Export failed: disk full" in win._warning.text()
 
 
 def test_set_busy_gates_immediately_but_delays_visuals(qtbot, tmp_path):
@@ -1437,7 +1437,7 @@ def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
     win._open_narrowband()                                 # refused (needs colour) — no crash
     names = [n for n, _ in win.project.entries()]
     assert "Narrowband" not in names
-    assert "colour" in win._status.text().lower()
+    assert "colour" in win._warning.text().lower()
 
 
 def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
@@ -1465,7 +1465,7 @@ def test_plate_solve_not_configured_shows_hint(qtbot, tmp_path):
     # No astap_path configured — astap_valid(win.settings) should be False.
     win._open_plate_solve()
     assert win._solve is None
-    assert win._status.text() != ""
+    assert win._warning.text() != ""
 
 
 def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch):
@@ -1477,7 +1477,7 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(False, None, 0.0, 0.0, 0.0), []))
     win._open_plate_solve()
-    assert win._status.text() != ""
+    assert win._warning.text() != ""
     assert win.image_view._annotations is None
     assert win._solve is None
 
@@ -1584,3 +1584,31 @@ def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
                         staticmethod(lambda *a, **k: (str(tmp_path / "r.json"), "")))
     win._save_recipe()
     assert "Saved recipe" in win.output_panel.toPlainText()
+
+
+def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
+    from PySide6.QtWidgets import QLabel
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1200, 800)                                     # ensure the stretch has slack
+    win.show(); qtbot.waitExposed(win)
+    lay = win._right_layout
+    last = lay.itemAt(lay.count() - 1)
+    assert last.layout() is not None                          # nav is a QHBoxLayout, the last item
+    assert win._next_btn in (last.layout().itemAt(i).widget()
+                             for i in range(last.layout().count()))
+    y0 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
+    win._show_warning("Stretch the image first — a long wrapping message " * 3)
+    qtbot.wait(10)
+    y1 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
+    assert y1 == y0                                            # buttons never move
+
+
+def test_warning_channel_and_clear(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._show_warning("Set the ASTAP path in Settings to plate-solve.")
+    assert "ASTAP" in win._warning.text()
+    win._clear_warning()
+    assert win._warning.text() == ""
+    assert not hasattr(win, "_status")                        # old surface removed

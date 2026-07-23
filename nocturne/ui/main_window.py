@@ -226,6 +226,19 @@ class MainWindow(QMainWindow):
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
         self._right_layout.addWidget(self._full_help_link)
+        # peek + busy + warning sit above the nav, inside the stretch's grow-upward
+        # zone, so the nav row stays pinned flush to the pane bottom and never moves.
+        self._peek_label = QLabel("")                         # transient before/after cue
+        self._peek_label.setStyleSheet("color: #9aa0a6;")
+        self._right_layout.addWidget(self._peek_label)
+        self._busy_label = QLabel("")
+        self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
+        self._right_layout.addWidget(self._busy_label)
+        self._warning = QLabel("")
+        self._warning.setObjectName("warning")
+        self._warning.setWordWrap(True)
+        self._warning.setStyleSheet("color: #ff6b6b;")        # blocking guidance / errors
+        self._right_layout.addWidget(self._warning)
         nav = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
         self._next_btn = QPushButton("Next →")
@@ -234,14 +247,7 @@ class MainWindow(QMainWindow):
         self._next_btn.clicked.connect(self.go_next)
         nav.addWidget(self._back_btn)
         nav.addWidget(self._next_btn)
-        self._right_layout.addLayout(nav)
-        self._status = QLabel("")
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: #ff6b6b;")
-        self._right_layout.addWidget(self._status)
-        self._busy_label = QLabel("")
-        self._busy_label.setStyleSheet("color: #9aa0a6;")   # neutral grey, not error-red
-        self._right_layout.addWidget(self._busy_label)
+        self._right_layout.addLayout(nav)                     # LAST widget — flush bottom
         root.addWidget(right)
 
         self.log_panel = LogPanel()
@@ -311,6 +317,13 @@ class MainWindow(QMainWindow):
         """Routine results & progress → the copyable Output box."""
         self.output_panel.show_line(text)
 
+    def _show_warning(self, text: str) -> None:
+        """Blocking guidance / errors → prominent right-pane label near the buttons."""
+        self._warning.setText(text)
+
+    def _clear_warning(self) -> None:
+        self._warning.setText("")
+
     def _make_about_dialog(self) -> AboutDialog:
         return AboutDialog(self)
 
@@ -347,7 +360,7 @@ class MainWindow(QMainWindow):
         try:
             from .stack_dialog import StackDialog
         except ImportError:
-            self._status.setText("Stacking unavailable — install astroalign and sep.")
+            self._show_warning("Stacking unavailable — install astroalign and sep.")
             return
         StackDialog(self.settings, self,
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
@@ -356,7 +369,7 @@ class MainWindow(QMainWindow):
         try:
             from .haoiii_dialog import HaOIIIDialog
         except ImportError:
-            self._status.setText("Ha/OIII extract unavailable — install astroalign and sep.")
+            self._show_warning("Ha/OIII extract unavailable — install astroalign and sep.")
             return
         HaOIIIDialog(self.settings, self,
                      on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
@@ -365,7 +378,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         if self.project.current().is_linear:
-            self._status.setText("Stretch the image first — Star Spikes works on the "
+            self._show_warning("Stretch the image first — Star Spikes works on the "
                                  "stretched image.")
             return
         from .star_spikes_dialog import StarSpikesDialog
@@ -377,18 +390,18 @@ class MainWindow(QMainWindow):
             return
         self.project.run_step(_PrecomputedStep("Star Spikes", result), "")
         self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     def _open_narrowband(self) -> None:
         if self.project is None:
             return
         if self.project.current().is_linear:
-            self._status.setText("Stretch the image first — Narrowband works on the "
+            self._show_warning("Stretch the image first — Narrowband works on the "
                                  "stretched image.")
             return
         if not self.project.current().is_color:
-            self._status.setText("Narrowband needs a colour image.")
+            self._show_warning("Narrowband needs a colour image.")
             return
         from .narrowband_dialog import NarrowbandDialog
         NarrowbandDialog(self.settings, self.project.current(), parent=self,
@@ -399,7 +412,7 @@ class MainWindow(QMainWindow):
             return
         self.project.run_step(_PrecomputedStep("Narrowband", result), params)
         self.log_panel.append_entry(format_log_entry("Narrowband", params.palette, None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     def _solve_current(self, img):
@@ -433,7 +446,7 @@ class MainWindow(QMainWindow):
         if self.project is None or not astap_valid(self.settings):
             self._solve_act.setChecked(False)
             if self.project is not None:
-                self._status.setText("Set the ASTAP path in Settings to plate-solve.")
+                self._show_warning("Set the ASTAP path in Settings to plate-solve.")
             return
         sig = self._solve_sig()
         if self._solve and self._solve[0] == sig:           # cached solution: just show it
@@ -448,7 +461,7 @@ class MainWindow(QMainWindow):
     def _on_solved(self, sig, res, objs):
         if not res.solved:
             hint = f" (ASTAP: {res.message.splitlines()[-1]})" if res.message else ""
-            self._status.setText("Couldn't plate-solve this image — try after Stretch, "
+            self._show_warning("Couldn't plate-solve this image — try after Stretch, "
                                  "or check the field isn't mostly empty." + hint)
             self._solve_act.setChecked(False)
             return
@@ -464,7 +477,7 @@ class MainWindow(QMainWindow):
             # on-disk cache), so a mutation on it is lost immediately; write
             # through to the project's cached metadata for the current position.
             self.project.set_current_metadata("target_solved", name)
-        self._status.setText("")
+        self._clear_warning()
         self._show_annotations(res, objs)
         self._solve_act.setChecked(True)
         self._rebuild_panel()                               # refresh Target line
@@ -575,7 +588,7 @@ class MainWindow(QMainWindow):
                 and self.project.current().is_linear):
             self._ensure_stretched()
         self._stage = index
-        self._status.setText("")  # clear any stale error when changing steps
+        self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
             self._ba_act.setChecked(False)
             self.image_view.set_compare(None)
@@ -598,7 +611,7 @@ class MainWindow(QMainWindow):
         try:
             base = load_fits(path)
         except Exception as exc:
-            self._status.setText(f"Could not open file: {exc}")
+            self._show_warning(f"Could not open file: {exc}")
             return
         self.open_image(base, os.path.basename(path))
 
@@ -609,7 +622,7 @@ class MainWindow(QMainWindow):
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
-        self._status.setText("")
+        self._clear_warning()
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
@@ -654,7 +667,7 @@ class MainWindow(QMainWindow):
             # Levels remaps [black, white] in display space; on a still-linear
             # image (values ~0.003) any black point clips the whole frame to
             # black. Require a stretch first instead of producing a black image.
-            self._status.setText(
+            self._show_warning(
                 "Apply Stretch first — Levels works on the stretched image.")
             return
         # Truncate history to this stage's applied predecessors (synchronous).
@@ -666,13 +679,13 @@ class MainWindow(QMainWindow):
         self.project.jump_back(target)
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
-            self._status.setText("")
+            self._clear_warning()
             self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
             self._refresh()
             return
         step = self._step_for(stage_id)
         base = self.project.current()
-        self._status.setText("")
+        self._clear_warning()
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
@@ -723,7 +736,7 @@ class MainWindow(QMainWindow):
 
         def err(exc):
             try:
-                self._status.setText(f"{err_prefix}: {exc}")
+                self._show_warning(f"{err_prefix}: {exc}")
             finally:
                 self._set_busy(False)
 
@@ -838,7 +851,7 @@ class MainWindow(QMainWindow):
         result = _ENHANCE_FN[op](self.project.current())
         self.project.run_step(_PrecomputedStep(op, result), "")
         self.log_panel.append_entry(format_log_entry(op, "", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     def _apply_geometry(self, name: str, params) -> None:
@@ -848,7 +861,7 @@ class MainWindow(QMainWindow):
         result = self._step_for("crop").apply(self.project.current(), params)
         self.project.run_step(_PrecomputedStep(name, result), "")
         self.log_panel.append_entry(format_log_entry(name, "", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
         self._setup_crop_overlay()
 
@@ -875,7 +888,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
         self.log_panel.append_entry(
             format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     def _on_removegreen_change(self, strength: float) -> None:
@@ -1064,7 +1077,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
         self.log_panel.append_entry(
             format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     # --- local contrast live preview ---
@@ -1219,7 +1232,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
         self.log_panel.append_entry(
             format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     # --- star reduction live preview (cached StarX split) ---
@@ -1336,7 +1349,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
         self.log_panel.append_entry(
             format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
-        self._status.setText("")
+        self._clear_warning()
         self._refresh()
 
     # --- history ---
@@ -1424,7 +1437,7 @@ class MainWindow(QMainWindow):
         img = self._peek_before() if self._peek_active else self._displayed
         self.image_view.set_image(to_qimage(img))
         self.histogram_view.set_image(img)
-        self._status.setText("Before — press Space to compare" if self._peek_active else "")
+        self._peek_label.setText("Before — press Space to compare" if self._peek_active else "")
 
     def _peek_before(self):
         """The image entering the current step — the same pre-step base a commit
@@ -1455,10 +1468,10 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         img = self.project.current()
-        self._status.setText("")   # clear any stale error before exporting (parity with apply_current)
+        self._clear_warning()   # clear any stale error before exporting (parity with apply_current)
         if fmt == "Starless + Stars (two TIFFs)":
             if not rcastro_valid(self.settings):
-                self._status.setText("Starless + stars split needs RC-Astro (see Settings).")
+                self._show_warning("Starless + stars split needs RC-Astro (see Settings).")
                 return
             folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…", start_dir(self.settings.base_dir))
             if not folder:
