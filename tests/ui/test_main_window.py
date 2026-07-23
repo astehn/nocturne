@@ -1612,3 +1612,33 @@ def test_warning_channel_and_clear(qtbot, tmp_path):
     win._clear_warning()
     assert win._warning.text() == ""
     assert not hasattr(win, "_status")                        # old surface removed
+
+
+def test_help_collapse_is_global_sticky_and_persisted(qtbot, tmp_path):
+    from nocturne.settings import load_settings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win.go_next()  # a stage with a help topic (crop)
+    assert win.settings.help_expanded is True
+    assert win._explainer_scroll.isVisible()                 # body shown when expanded
+    assert win._full_help_link.isVisible()
+
+    win._toggle_help()                                       # collapse
+    assert win.settings.help_expanded is False
+    assert not win._explainer_scroll.isVisible()             # body hidden
+    assert not win._full_help_link.isVisible()               # Full help hidden when collapsed
+    assert load_settings(str(tmp_path / "settings.json")).help_expanded is False  # persisted
+
+    win.go_next()                                            # different step
+    assert not win._explainer_scroll.isVisible()             # stays collapsed everywhere
+
+
+def test_help_starts_collapsed_when_setting_off(qtbot, tmp_path):
+    import json
+    (tmp_path / "settings.json").write_text(json.dumps({"help_expanded": False}))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win.go_next()
+    assert not win._explainer_scroll.isVisible()             # honours persisted state on launch

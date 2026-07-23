@@ -219,6 +219,11 @@ class MainWindow(QMainWindow):
         self._explainer_scroll.setWidgetResizable(True)
         self._explainer_scroll.setWidget(self._explainer)
         self._explainer_scroll.setMaximumHeight(240)   # never crowd the nav row
+        self._help_header = QLabel("")
+        self._help_header.setObjectName("helpHeader")
+        self._help_header.setOpenExternalLinks(False)
+        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
+        self._right_layout.addWidget(self._help_header)
         self._right_layout.addWidget(self._explainer_scroll)
         self._full_help_link = QLabel('<a href="#">Full help →</a>')
         self._full_help_link.setObjectName("fullHelpLink")
@@ -305,13 +310,26 @@ class MainWindow(QMainWindow):
         tid = help_content.stage_topic_id(self.current_stage_id()) if self.project else None
         t = help_content.topic(tid) if tid else None
         self._current_topic_id = tid
-        if t is None:
-            self._explainer_scroll.setVisible(False)
-            self._full_help_link.setVisible(False)
-            return
-        self._explainer.setText(f"<b>{t.summary}</b>{t.body}")
-        self._explainer_scroll.setVisible(True)
-        self._full_help_link.setVisible(True)
+        if t is not None:
+            self._explainer.setText(f"<b>{t.summary}</b>{t.body}")
+        self._apply_help_expanded()
+
+    def _toggle_help(self) -> None:
+        self.settings.help_expanded = not self.settings.help_expanded
+        save_settings(self.settings, self._settings_path)
+        self._apply_help_expanded()
+
+    def _apply_help_expanded(self) -> None:
+        """Show/hide the detailed help body per the global sticky flag. The one-line
+        step description (in the panel) is always visible regardless."""
+        expanded = self.settings.help_expanded
+        has_topic = self._current_topic_id is not None
+        self._help_header.setText(
+            '<a href="#">How this works ▾</a>' if expanded
+            else '<a href="#">How this works ▸</a>')
+        self._help_header.setVisible(has_topic)
+        self._explainer_scroll.setVisible(has_topic and expanded)
+        self._full_help_link.setVisible(has_topic and expanded)
 
     def _show_output(self, text: str) -> None:
         """Routine results & progress → the copyable Output box."""
