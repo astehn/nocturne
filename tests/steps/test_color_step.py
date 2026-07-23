@@ -76,3 +76,15 @@ def test_photometric_too_few_stars_falls_back(monkeypatch):
     out = step.apply(_img(), ColorSettings(method="photometric"))
     assert out.data.shape == (40, 40, 3)
     assert "matched stars" in step.last_message.lower() or "sky balance" in step.last_message.lower()
+
+
+def test_photometric_gains_exception_falls_back(monkeypatch):
+    def boom(img, wcs, gaia, **k):
+        raise ValueError("degenerate WCS")
+    monkeypatch.setattr("nocturne.core.spcc.photometric_gains", boom)
+    step = ColorStep(astap=_FakeAstap(),
+                     gaia_query=lambda *a, **k: [GaiaStar(100.0, 0.0, 0.8, 10.0),
+                                                 GaiaStar(100.01, 0.01, 1.2, 11.0)])
+    out = step.apply(_img(), ColorSettings(method="photometric"))
+    assert out.data.shape == (40, 40, 3)                     # no raise, fell back
+    assert step.last_message                                 # a fallback reason is set

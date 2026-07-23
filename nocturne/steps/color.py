@@ -41,7 +41,7 @@ class ColorStep(Step):
             self.last_message = "ASTAP not set — used sky balance."
             return None
         meta = img.metadata
-        h = img.data.shape[0]
+        h, w = img.data.shape[:2]
         fov = None
         fl, px = meta.get("focal_length"), meta.get("pixel_size")
         if fl and px:
@@ -55,14 +55,21 @@ class ColorStep(Step):
             res = None
         if res is None or not res.solved:
             self.last_message = "Couldn't plate-solve — used sky balance."
+            if res is not None and res.message:
+                self.last_message += f" (ASTAP: {res.message})"
             return None
-        radius = (fov or 2.0) * 0.75          # generous cone covering the field's half-diagonal
+        # generous cone covering the frame's half-diagonal (+margin), for any aspect ratio
+        radius = (fov or 2.0) * 0.5 * (1.0 + (w / h) ** 2) ** 0.5 * 1.15
         try:
             gaia = self._gaia_query(res.center_ra_deg, res.center_dec_deg, radius)
         except GaiaError:
             self.last_message = "Couldn't reach Gaia — used sky balance."
             return None
-        spcc = photometric_gains(img, res.wcs, gaia)
+        try:
+            spcc = photometric_gains(img, res.wcs, gaia)
+        except Exception:
+            self.last_message = "Colour calibration failed — used sky balance."
+            return None
         if spcc is None:
             self.last_message = "Too few matched stars — used sky balance."
             return None
