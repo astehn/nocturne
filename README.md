@@ -25,26 +25,33 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
   <em>The guided flow — every step explained, with live stack &amp; sensor details.</em>
 </p>
 <p align="center">
-  <img src="docs/img/shot-result.jpg" alt="A colourised nebula at the Enhancements step" width="90%"><br>
-  <em>Finishing a colourised nebula with targeted enhancements.</em>
+  <img src="docs/img/shot-platesolve.jpg" alt="Plate-solved annotation overlay identifying objects, with a compass and scale bar" width="90%"><br>
+  <em>Plate Solve &amp; Annotate — identify the target and overlay objects, named stars, a compass and a scale bar.</em>
+</p>
+<p align="center">
+  <img src="docs/img/shot-narrowband.jpg" alt="A nebula rendered in narrowband colour" width="90%"><br>
+  <em>Dualband → finished narrowband colour, in one press.</em>
 </p>
 
 ## Features
 
-- 🪄 **Guided, non-destructive flow** — Crop → Background → Color → Deconvolution → Stretch → Levels → Saturation → Noise Reduction → Local Contrast → Star Reduction → Enhancements → Export. Each step has simple Light/Medium/Strong choices, a live before/after, and full undo / jump-back. Nothing is destructive until you export.
-- 🎨 **One-press Colourise** — turn a raw dualband (Ha/OIII) master into a finished colour image in a single press (Foraxx-style): stars removed, the starless nebula colour-mapped, stars screened back. Advanced sliders if you want to tune.
-- 🔭 **Real deconvolution & star tools** — integrates **GraXpert** (background extraction) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
-- 🧱 **Built-in stacking** — point it at a folder of subs; it grades/rejects, registers (handles alt-az field rotation), and integrates a master.
-- 🌈 **Ha / OIII extraction** — split a dualband master into separate Ha and OIII channels for external work.
+- 🪄 **Guided, non-destructive flow** — Crop → Background → Color → Deconvolution → Stretch → Recover Core → Levels → Curves → Saturation → Remove Green → Noise Reduction → Local Contrast → Star Reduction → Enhancements → Export. Each step has simple choices, a live before/after, and full undo / jump-back. Nothing is destructive until you export.
+- 🎯 **Plate Solve & Annotate** — solve a frame with **ASTAP** to identify exactly what you shot, then overlay deep-sky object labels, named stars, a compass and a scale bar (they burn into your export).
+- 🌡️ **Photometric colour (SPCC)** — calibrate colour against real Gaia catalogue stars in the frame, so the sky is neutral and star colours are true, with an automatic fall-back to sky balance.
+- 🌈 **Narrowband, one press** — turn a dualband Ha/OIII master into a finished two-gas colour image (stars removed, nebula colour-mapped, stars screened back), or use the guided Narrowband tool for multiple palettes with a live preview. Ha/OIII channel extraction too.
+- 🧱 **Smart stacking & frame grading** — point it at a folder of subs; it grades every frame (flagging clouds and soft stars), rejects the duds, registers (handles alt-az field rotation) and integrates a clean master.
+- 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
+- ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves, auto Levels with clipping preview, and HDR core recovery — each with a live preview.
 - ✨ **Targeted Enhancements** — tap-to-stack colour boosts (Ha / OIII / blue) and sky darken/lighten, each individually undoable.
 - ♻️ **Recipes & batch** — save your steps and apply them to a whole folder.
-- 💾 **Export** — 16-bit TIFF / PNG / FITS, or a starless + stars pair.
-- ❓ **Comprehensive in-app Help** — a browsable guide plus a per-step explainer, written for people new to astro processing.
+- 💾 **Export** — 16-bit TIFF / PNG / FITS (WCS preserved), or a starless + stars pair.
+- ❓ **Beginner-friendly** — a copyable log/output area, a browsable Help window and a per-step explainer you can collapse once you know the ropes.
 
 ## Requirements
 
 - **macOS** (a prebuilt `Nocturne.app`; see below). Building for Windows/Linux is possible from source or via CI — see [Building](#building).
-- **[GraXpert](https://www.graxpert.com/)** — free, **required** for background extraction. Install it, then point Nocturne at it in **Settings**.
+- **[GraXpert](https://www.graxpert.com/)** — free. Powers background/gradient extraction and one of the denoise engines; the one tool worth installing first. Point Nocturne at it in **Settings**.
+- **[ASTAP](https://www.hnsky.org/astap.htm)** — free, **optional**. Adds plate-solving, target identification and annotation. Install it *and its D05 star database* (from the ASTAP page), then set the path in Settings.
 - **[RC-Astro](https://www.rc-astro.com/) (BlurXTerminator / NoiseXTerminator / StarXTerminator)** — paid, **optional**. Every RC-Astro step has a built-in free fallback, so Nocturne works fully without it — it's simply better with it. Set its path in Settings if you own it.
 
 Nocturne drives these as separate installs and does not bundle them.
@@ -77,7 +84,7 @@ python -m nocturne
 4. For dualband data, use **Colourise** on the Stretch step for one-press colour.
 5. Finish at **Export**.
 
-The histogram (top-right) and the log (bottom) show what each step changed; wheel = zoom, drag = pan; Undo/Redo and Before/After are in the toolbar.
+The histogram (top-right) and the log &amp; output areas (bottom) show what each step changed; wheel = zoom, drag = pan; Undo/Redo and Before/After are in the toolbar. With ASTAP set, **Plate Solve** in the toolbar identifies and annotates your target.
 
 ## How it works
 
