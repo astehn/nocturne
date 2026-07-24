@@ -669,18 +669,30 @@ class MainWindow(QMainWindow):
         self._save_recipe_act = tb.addAction(load_icon("save-recipe"), "Save Recipe", self._save_recipe)
         tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
         tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
-        tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
-        tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
-        tb.addAction(load_icon("haoiii", ACCENT), "Narrowband…", self._open_narrowband)
-        self._auto_enhance_act = tb.addAction(load_icon("haoiii", ACCENT), "Auto Enhance",
+        # Distinct glyph + a muted per-tool tint so these tools are easy to tell
+        # apart (the shared icon caused mis-clicks). Colours are a gentle secondary
+        # cue — the glyphs do the work — and easy to tweak later.
+        tint = {
+            "haoiii": "#5b93d1",       # blue
+            "star-spikes": "#7d8ed6",  # indigo
+            "narrowband": "#a284c9",   # violet
+            "auto-enhance": "#c99a5b",  # warm gold
+            "plate-solve": "#5faa8c",  # teal-green
+            "share": "#5aa9c9",        # cyan
+            "upscale": "#cf8f9b",      # muted rose
+        }
+        tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
+        tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
+        self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]), "Auto Enhance",
                                               self._auto_enhance)
-        self._solve_act = tb.addAction(load_icon("haoiii", ACCENT), "Plate Solve",
+        self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
         self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
-        self._share_act = tb.addAction(load_icon("haoiii", ACCENT), "Share", self._share)
+        self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
-        self._upscale_act = tb.addAction(load_icon("haoiii", ACCENT), "Upscale Crop", self._upscale)
+        self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
         self._upscale_act.setEnabled(False)
         tb.addSeparator()
         # Edit / compare
