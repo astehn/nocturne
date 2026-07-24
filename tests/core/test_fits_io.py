@@ -58,6 +58,16 @@ def test_metadata_parsed_from_header(tmp_path):
     assert "M31" in summary and "30" in summary
 
 
+def test_metadata_parses_filter(tmp_path):
+    arr = np.random.randint(0, 4096, size=(16, 16)).astype(np.uint16)
+    hdu = fits.PrimaryHDU(arr)
+    hdu.header["FILTER"] = "LP"
+    p = tmp_path / "lp.fits"
+    hdu.writeto(str(p), overwrite=True)
+    img = load_fits(str(p))
+    assert img.metadata["filter"] == "LP"
+
+
 def test_unsupported_3d_shape_raises(tmp_path):
     arr = np.zeros((5, 16, 16), dtype=np.uint16)
     p = tmp_path / "bad.fits"

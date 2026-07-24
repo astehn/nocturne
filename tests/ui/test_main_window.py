@@ -7,10 +7,13 @@ from nocturne.ui.main_window import MainWindow  # noqa: E402
 from nocturne.core.image import AstroImage  # noqa: E402
 
 
-def _make_fits(tmp_path):
+def _make_fits(tmp_path, filter_card="L"):
     arr = (np.random.rand(3, 24, 24) * 1000).astype(np.uint16)
     p = tmp_path / "stack.fits"
-    fits.PrimaryHDU(arr).writeto(str(p))
+    hdu = fits.PrimaryHDU(arr)
+    if filter_card is not None:
+        hdu.header["FILTER"] = filter_card
+    hdu.writeto(str(p))
     return str(p)
 
 
@@ -1652,4 +1655,81 @@ def test_peek_label_clears_when_leaving_peek(qtbot, tmp_path):
     assert win._peek_active is True and win._peek_label.text() != ""
     win.go_next()                                            # navigate → _refresh exits peek
     assert win._peek_active is False
+    assert win._peek_label.text() == ""                      # cue cleared, not left stale
+
+
+# --- Auto Enhance ---
+
+def test_auto_enhance_action_exists_on_toolbar(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert hasattr(win, "_auto_enhance")
+    assert win._auto_enhance_act.text() == "Auto Enhance"
+
+
+def test_auto_enhance_populates_editable_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))              # default filter_card="L" -> broadband
+    assert hasattr(win, "_auto_enhance")
+    win._auto_enhance()
+    names = [n for n, _o in win.project.entries()]
+    assert len(names) >= 3
+    assert "Stretch" in names or "Color" in names
+
+
+def test_auto_enhance_starts_from_linear_base(qtbot, tmp_path):
+    """A prior manual step is discarded — auto-enhance resets to the linear
+    base (jump_back(0)) rather than stacking on top of it."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)                            # manual step first
+    assert win.project.entries()[-1][0] == "Stretch"
+    win._auto_enhance()
+    names = [n for n, _o in win.project.entries()]
+    assert names[0] == "Crop"                          # auto plan's first stage, not "Stretch"
+    assert names.count("Stretch") == 1                  # not stacked on the manual Stretch
+
+
+def test_auto_enhance_uses_same_path_for_dualband_filter(qtbot, tmp_path):
+    # The dual-band/narrowband branch is gone -- LP-filter (Seestar Ha/OIII)
+    # data now goes through the same photometric-color plan as everything
+    # else; there's no more data-type prompt or Narrowband stage.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path, filter_card="LP"))
+    win._auto_enhance()
+    names = [n for n, _o in win.project.entries()]
+    assert "Narrowband" not in names
+    assert "Stretch" in names or "Color" in names
+
+
+def test_auto_enhance_no_project_cancelled_dialog_does_nothing(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    monkeypatch.setattr(win, "_choose_fits", lambda: None)  # simulate user cancelling the dialog
+    win._auto_enhance()  # no project loaded, dialog cancelled — should no-op, not raise
+    assert win.project is None
+    assert win._warning.text() == ""
+
+
+def test_auto_enhance_no_project_opens_dialog_and_enhances_chosen_file(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    path = _make_fits(tmp_path)
+
+    def fake_choose_fits():
+        win.open_fits(path)
+
+    monkeypatch.setattr(win, "_choose_fits", fake_choose_fits)
+    win._auto_enhance()
+    assert win.project is not None
+    names = [n for n, _o in win.project.entries()]
+    assert len(names) >= 3
+    assert "Stretch" in names or "Color" in names
+
+
+def test_auto_enhance_reports_step_count_and_nudges(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._auto_enhance()
+    out = win.output_panel.toPlainText()
+    assert "Auto-enhanced" in out
+    assert "GraXpert" in out  # not installed in a bare test Settings() -> nudge shown
     assert win._peek_label.text() == ""                      # cue cleared, not left stale

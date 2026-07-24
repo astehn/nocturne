@@ -63,6 +63,22 @@ class Project:
         self._position = index
         return result
 
+    def record_precomputed(self, name: str, option: str, img: AstroImage) -> None:
+        """Append an already-computed image as a new editable history state,
+        without re-running the step that produced it (mirrors the tail of
+        run_step, minus the step.apply call). Used to fold a pre-run chain
+        (e.g. auto_enhance.run_auto_plan's output) into the live project so
+        each stage is undoable/editable without re-invoking slow external
+        tools."""
+        del self._paths[self._position + 1:]
+        del self._records[self._position:]
+        del self._meta[self._position + 1:]
+        del self._linear[self._position + 1:]
+        index = self._position + 1
+        self._save(index, img)
+        self._records.append((name, option))
+        self._position = index
+
     def can_undo(self) -> bool:
         return self._position > 0
 

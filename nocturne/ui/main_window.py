@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 
 import numpy as np
-from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from .. import APP_NAME
+from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff
@@ -88,6 +89,14 @@ class _PrecomputedStep(Step):
         return self._image
 
 
+class _AutoEnhanceSignals(QObject):
+    """Marshals run_auto_plan's on_progress callbacks (fired from the worker
+    thread when async is enabled) back onto the GUI thread via a queued
+    connection — mirrors batch_dialog/haoiii_dialog/stack_dialog's Signal-based
+    progress plumbing."""
+    progress = Signal(int, int, str)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str) -> None:
         super().__init__()
@@ -104,6 +113,8 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
         self._pool = QThreadPool.globalInstance()
+        self._auto_signals = _AutoEnhanceSignals()
+        self._auto_signals.progress.connect(self._on_auto_progress)
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -433,6 +444,44 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _on_auto_progress(self, i: int, n: int, name: str) -> None:
+        self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
+        if self._busy_shown:
+            self._busy_label.setText(self._busy_label_text)
+
+    def _auto_enhance(self) -> None:
+        if self.project is None:
+            self._choose_fits()      # open the file dialog; loads synchronously if a file is picked
+            if self.project is None:  # cancelled, or load failed (warning already shown)
+                return
+        if self._busy:
+            return
+        self.project.jump_back(0)   # reset to the linear base (import state)
+        base = self.project.current()
+        plan = build_auto_plan(base, self.settings)
+        self._clear_warning()
+
+        def work():
+            return run_auto_plan(
+                base, plan, self.settings,
+                bg_runner=self._bg_runner, rc_runner=self._rc_runner,
+                on_progress=lambda i, n, name: self._auto_signals.progress.emit(i, n, name),
+            )
+
+        def on_result(results) -> None:
+            for name, option, img in results:
+                self.project.record_precomputed(name, option, img)
+            self._rebuild_panel()
+            self._refresh()
+            msg = f"Auto-enhanced — {len(results)} steps"
+            if not graxpert_valid(self.settings):
+                msg += ". Install GraXpert (free) for better background & noise."
+            if not rcastro_valid(self.settings):
+                msg += " RC-Astro (StarX/NoiseX) gives cleaner stars & denoise, if you have it."
+            self._show_output(msg)
+
+        self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
+
     def _solve_current(self, img):
         """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""
         from ..tools.astap import ASTAP, hint_from_metadata
@@ -531,6 +580,8 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("haoiii", ACCENT), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("haoiii", ACCENT), "Star Spikes…", self._open_star_spikes)
         tb.addAction(load_icon("haoiii", ACCENT), "Narrowband…", self._open_narrowband)
+        self._auto_enhance_act = tb.addAction(load_icon("haoiii", ACCENT), "Auto Enhance",
+                                              self._auto_enhance)
         self._solve_act = tb.addAction(load_icon("haoiii", ACCENT), "Plate Solve",
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
