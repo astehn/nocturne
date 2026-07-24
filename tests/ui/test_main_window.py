@@ -1857,3 +1857,14 @@ def test_auto_progress_drives_determinate_bar(qtbot, tmp_path):
     win._on_auto_progress(2, 7, "Stretch")
     assert win._progress.isVisible() and win._progress.value() == 2 and win._progress.maximum() == 7
     win._set_busy(False)
+
+
+def test_status_text_does_not_widen_right_panel(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    assert win._busy_label.wordWrap() and win._peek_label.wordWrap()
+    win._busy_label.setText("x")
+    short = win._right_panel.minimumSizeHint().width()
+    win._busy_label.setText("Auto-enhancing — Local Contrast (12/13)… a long status line that must wrap")
+    assert win._right_panel.minimumSizeHint().width() == short   # wrapped -> text doesn't drive width

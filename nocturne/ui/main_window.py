@@ -257,9 +257,11 @@ class MainWindow(QMainWindow):
         # zone, so the nav row stays pinned flush to the pane bottom and never moves.
         self._peek_label = QLabel("")                         # transient before/after cue
         self._peek_label.setStyleSheet("color: #9aa0a6;")
+        self._peek_label.setWordWrap(True)                    # don't let changing text drive panel width
         self._right_layout.addWidget(self._peek_label)
         self._busy_label = QLabel("")
         self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
+        self._busy_label.setWordWrap(True)                    # rapid status updates must not resize the pane
         self._right_layout.addWidget(self._busy_label)
         self._progress = QProgressBar()
         self._progress.hide()
