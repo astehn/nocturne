@@ -26,6 +26,13 @@ def test_selecting_aspect_locks_ratio(qtbot):
     out = d._compose_current()
     assert abs(out.width() - out.height()) <= 2      # square
 
+def test_original_after_ratio_restores_full_frame(qtbot):
+    d = _dlg(qtbot)
+    d._select_aspect(1.0, "1:1")               # lock to a square box
+    d._select_aspect(None, "Original")         # go back to Original
+    assert d._current_crop() == (0, 400, 0, 300)   # full frame (h=400,w=300), not the 1:1 box
+
+
 def test_caption_toggle_controls_band(qtbot):
     d = _dlg(qtbot)
     d._set_caption(False)

@@ -98,8 +98,14 @@ class ShareDialog(QDialog):
         self._aspect = aspect
         self._aspect_label = label
         self._image_view.set_aspect(aspect)
-        self._image_view.show_crop_box()
-        self._image_view.apply_aspect(aspect)
+        if aspect is None:
+            # Original = full frame, no crop. Drop any prior aspect box so the
+            # user can go "back" to the whole image (crop_box hidden -> _current_crop
+            # falls through to the full-frame centered_crop).
+            self._image_view.hide_crop_box()
+        else:
+            self._image_view.show_crop_box()
+            self._image_view.apply_aspect(aspect)
         self._refresh_preview()
 
     def _set_caption(self, on) -> None:

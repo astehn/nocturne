@@ -58,8 +58,8 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
-BAND_FRAC = 0.09
-FONT_FRAC = 0.040
+BAND_FRAC = 0.07     # caption band height as a fraction of composited height
+FONT_FRAC = 0.028    # caption font size as a fraction of composited height (kept light, not heavy)
 PAD_FRAC = 0.03
 
 
