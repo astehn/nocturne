@@ -1690,29 +1690,16 @@ def test_auto_enhance_starts_from_linear_base(qtbot, tmp_path):
     assert names.count("Stretch") == 1                  # not stacked on the manual Stretch
 
 
-def test_auto_enhance_detects_dualband(qtbot, tmp_path):
+def test_auto_enhance_uses_same_path_for_dualband_filter(qtbot, tmp_path):
+    # The dual-band/narrowband branch is gone -- LP-filter (Seestar Ha/OIII)
+    # data now goes through the same photometric-color plan as everything
+    # else; there's no more data-type prompt or Narrowband stage.
     win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path, filter_card="LP"))  # Seestar Ha/OIII dual-band filter
+    win.open_fits(_make_fits(tmp_path, filter_card="LP"))
     win._auto_enhance()
     names = [n for n, _o in win.project.entries()]
-    assert "Narrowband" in names
-
-
-def test_auto_enhance_asks_when_filter_unknown(qtbot, tmp_path, monkeypatch):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path, filter_card=None))  # no FILTER header -> "unknown"
-    monkeypatch.setattr(win, "_ask_data_type", lambda: "dualband")
-    win._auto_enhance()
-    names = [n for n, _o in win.project.entries()]
-    assert "Narrowband" in names
-
-
-def test_auto_enhance_cancelled_ask_leaves_project_untouched(qtbot, tmp_path, monkeypatch):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path, filter_card=None))
-    monkeypatch.setattr(win, "_ask_data_type", lambda: None)  # user dismissed the dialog
-    win._auto_enhance()
-    assert win.project.entries() == []
+    assert "Narrowband" not in names
+    assert "Stretch" in names or "Color" in names
 
 
 def test_auto_enhance_no_project_cancelled_dialog_does_nothing(qtbot, tmp_path, monkeypatch):

@@ -8,7 +8,6 @@ from .color import ColorSettings
 from .crop import CropParams, detect_content_bounds
 from .image import AstroImage
 from .levels import auto_levels
-from .narrowband import NarrowbandParams
 
 
 def detect_data_type(metadata: dict) -> str:
@@ -28,11 +27,13 @@ def detect_data_type(metadata: dict) -> str:
 # existing step pipeline (see steps/factory.py::make_step).
 
 AUTO_CROP_MARGIN = 0.02          # provisional — tuned on real data (see plan Final): extra trim (fraction of each side) beyond the detected content rectangle, to clear soft/registration edges
-AUTO_BACKGROUND_STRENGTH = "light"  # provisional — tuned on real data (see plan Final): GraXpert extraction strength
-AUTO_STRETCH_AMOUNT = 0.5        # provisional — tuned on real data (see plan Final): mid-slider stretch aggressiveness (see core/stretch.py amount_to_target)
+AUTO_BACKGROUND_STRENGTH = "strong"  # provisional — tuned on real data (see plan Final): GraXpert extraction strength
+AUTO_STRETCH_AMOUNT = 0.3        # provisional — tuned on real data (see plan Final): gentler stretch aggressiveness (see core/stretch.py amount_to_target)
 AUTO_LEVELS = (0.0, 1.0, 1.0)    # build-time placeholder (identity black/gamma/white); overridden at apply time in run_auto_plan by auto_levels() on the stretched image, since a black-point only means something once the image has been stretched
-AUTO_SATURATION_AMOUNT = 0.6     # provisional — tuned on real data (see plan Final): native saturation slider amount (0.5 = neutral)
-AUTO_SATURATION_NEBULA = 0.0     # provisional — tuned on real data (see plan Final): no starless nebula-boost by default (safe/cheap default)
+AUTO_SATURATION_AMOUNT = 0.5     # provisional — tuned on real data (see plan Final): native saturation slider amount (0.5 = neutral)
+AUTO_SATURATION_NEBULA = 0.2     # provisional — tuned on real data (see plan Final): light starless nebula-boost
+AUTO_GREEN_FRINGE = 1.0          # provisional — tuned on real data (see plan Final): full-strength green fringe removal
+AUTO_LOCAL_CONTRAST = 0.15       # provisional — tuned on real data (see plan Final): light local-contrast finishing pass
 
 AUTO_DENOISE_STRONG = "strong"   # fixed level -- the image-based noise proxy didn't discriminate real Seestar data, so denoise always runs at "strong" (engine still adapts to what's installed)
 
@@ -68,7 +69,7 @@ def _auto_denoise_option(settings: Settings) -> dict:
     return {"engine": engine, "level": AUTO_DENOISE_STRONG}
 
 
-def build_auto_plan(img, settings: Settings, *, data_type: str | None = None) -> list[tuple[str, object]]:
+def build_auto_plan(img, settings: Settings) -> list[tuple[str, object]]:
     """Build (do not apply) the ordered one-tap enhance plan: a list of
     (stage_id, native_option) pairs matching steps/factory.py's stage_ids and
     recipe.py::serialize_option's native option types for each stage.
@@ -76,31 +77,26 @@ def build_auto_plan(img, settings: Settings, *, data_type: str | None = None) ->
     Adaptive to the image (crop bounds) and to which external tools are
     installed (settings.*_valid). Never raises, even with a bare
     Settings() (nothing installed) -- background is simply omitted and
-    denoise/color degrade to built-in engines. Deliberately excludes the more
-    aggressive stages (deconvolution, star_reduction, green_fringe,
-    local_contrast, curves, recover_core) for a balanced, natural default."""
-    if data_type is None:
-        data_type = detect_data_type(img.metadata)
-
+    denoise/color degrade to built-in engines. Always uses photometric colour
+    (falling back to sky-neutralize when ASTAP isn't configured) for all
+    data -- there is no separate dual-band/narrowband branch; narrowband
+    (HOO) remains available only as a manual toolbar tool. Deliberately
+    excludes the more aggressive stages (deconvolution, star_reduction,
+    recover_core, curves) for a balanced, natural default; local_contrast
+    and green_fringe are included as safe finishing steps."""
     plan: list[tuple[str, object]] = [("crop", _auto_crop_option(img))]
 
     if graxpert_valid(settings):
         plan.append(("background", AUTO_BACKGROUND_STRENGTH))
 
-    if data_type == "dualband":
-        # Narrowband works on the stretched image (see core/narrowband.py's
-        # docstring and ui/main_window.py's guard) -- crop/background leave
-        # the image linear, so stretch must run immediately before it.
-        plan.append(("stretch", AUTO_STRETCH_AMOUNT))
-        plan.append(("narrowband", NarrowbandParams()))
-    else:
-        method = "photometric" if astap_valid(settings) else "sky"
-        plan.append(("color", ColorSettings(method=method)))
-        plan.append(("stretch", AUTO_STRETCH_AMOUNT))
-
+    method = "photometric" if astap_valid(settings) else "sky"
+    plan.append(("color", ColorSettings(method=method)))
+    plan.append(("stretch", AUTO_STRETCH_AMOUNT))
     plan.append(("levels", AUTO_LEVELS))
-    plan.append(("noise_sharpen", _auto_denoise_option(settings)))
     plan.append(("saturation", (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)))
+    plan.append(("green_fringe", AUTO_GREEN_FRINGE))
+    plan.append(("noise_sharpen", _auto_denoise_option(settings)))
+    plan.append(("local_contrast", AUTO_LOCAL_CONTRAST))
 
     return plan
 
@@ -138,7 +134,8 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             if stage_id == "crop":
                 option = _auto_crop_option(img)
             elif stage_id == "levels":
-                option = auto_levels(img.data)
+                black, _, _ = auto_levels(img.data)
+                option = (black, 1.0, 1.0)
             result = step.apply(img, option)
         except Exception:
             if on_progress is not None:

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME
-from ..core.auto_enhance import build_auto_plan, detect_data_type, run_auto_plan
+from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff
@@ -444,26 +444,6 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
-    def _ask_data_type(self) -> str | None:
-        """One-time Broadband/Dual-band ask when the filter can't be detected
-        from metadata. Returns "broadband"/"dualband", or None if dismissed."""
-        box = QMessageBox(self)
-        box.setWindowTitle(f"{APP_NAME} — Auto Enhance")
-        box.setText(
-            "Couldn't tell from this file's metadata whether it's broadband "
-            "(RGB/OSC) or dual-band (Ha/OIII, e.g. a Seestar LP filter) data.\n"
-            "Which is it?")
-        broadband_btn = box.addButton("Broadband", QMessageBox.ButtonRole.AcceptRole)
-        dualband_btn = box.addButton("Dual-band", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is broadband_btn:
-            return "broadband"
-        if clicked is dualband_btn:
-            return "dualband"
-        return None
-
     def _on_auto_progress(self, i: int, n: int, name: str) -> None:
         self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
         if self._busy_shown:
@@ -476,14 +456,9 @@ class MainWindow(QMainWindow):
                 return
         if self._busy:
             return
-        dt = detect_data_type(self.project.current().metadata)
-        if dt == "unknown":
-            dt = self._ask_data_type()
-            if dt is None:
-                return
         self.project.jump_back(0)   # reset to the linear base (import state)
         base = self.project.current()
-        plan = build_auto_plan(base, self.settings, data_type=dt)
+        plan = build_auto_plan(base, self.settings)
         self._clear_warning()
 
         def work():
