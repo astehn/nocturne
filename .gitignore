@@ -18,3 +18,10 @@ site/config.php
 docs/audit/screenshots/**/*.png
 docs/audit/screenshots/**/*.jpg
 docs/superpowers/plans/*-report.md
+
+# Internal development docs — kept local, never published
+/docs/superpowers/
+/docs/audit/
+/docs/specs.md
+/PIPELINE_SPEC.md
+/TODO.md
