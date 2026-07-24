@@ -1,4 +1,28 @@
-from nocturne.core.auto_enhance import detect_data_type
+import numpy as np
+
+from nocturne.core.auto_enhance import build_auto_plan, detect_data_type
+from nocturne.core.image import AstroImage
+from nocturne.settings import Settings
+
+
+def _stages(plan):
+    return [sid for sid, _ in plan]
+
+
+def _broadband_stack():
+    """OSC linear AstroImage with a broadband filter tag."""
+    rng = np.random.default_rng(0)
+    data = (0.003 + rng.normal(0, 0.0005, (48, 64, 3))).astype(np.float32)
+    data = np.clip(data, 0.0, 1.0)
+    return AstroImage(data, is_linear=True, metadata={"filter": "IRCUT"})
+
+
+def _dualband_stack():
+    """OSC linear AstroImage with the Seestar LP (dual-band) filter tag."""
+    rng = np.random.default_rng(1)
+    data = (0.003 + rng.normal(0, 0.0005, (48, 64, 3))).astype(np.float32)
+    data = np.clip(data, 0.0, 1.0)
+    return AstroImage(data, is_linear=True, metadata={"filter": "LP"})
 
 
 def test_lp_filter_is_dualband():
@@ -14,3 +38,91 @@ def test_other_filter_is_broadband():
 def test_absent_filter_is_unknown():
     assert detect_data_type({}) == "unknown"
     assert detect_data_type({"filter": ""}) == "unknown"
+
+
+def test_broadband_plan_shape():
+    img = _broadband_stack()
+    plan = build_auto_plan(img, Settings(), data_type="broadband")
+    s = _stages(plan)
+    assert s[0] == "crop" and "color" in s and "stretch" in s
+    assert "levels" in s and "noise_sharpen" in s and "saturation" in s
+    # aggressive steps excluded from the default
+    assert "deconvolution" not in s and "star_reduction" not in s
+    assert "green_fringe" not in s and "local_contrast" not in s
+    assert "curves" not in s and "recover_core" not in s
+
+
+def test_broadband_plan_uses_photometric_color_when_astap_available(tmp_path):
+    astap = tmp_path / "astap"
+    astap.write_text("#!/bin/sh\n")
+    astap.chmod(0o755)
+    settings = Settings(astap_path=str(astap))
+    plan = build_auto_plan(_broadband_stack(), settings, data_type="broadband")
+    options = dict(plan)
+    assert options["color"].method == "photometric"
+
+
+def test_broadband_plan_uses_sky_color_without_astap():
+    plan = build_auto_plan(_broadband_stack(), Settings(), data_type="broadband")
+    options = dict(plan)
+    assert options["color"].method == "sky"
+
+
+def test_dualband_plan_uses_colourise():
+    img = _dualband_stack()
+    plan = build_auto_plan(img, Settings(), data_type="dualband")
+    s = _stages(plan)
+    assert "crop" in s
+    assert "narrowband" in s          # the Colourise/HOO engine, not plain color+stretch
+    assert "color" not in s and "stretch" not in s
+
+
+def test_no_graxpert_still_produces_a_plan():
+    # background/denoise fall back to built-ins; plan is never empty and never raises
+    plan = build_auto_plan(_broadband_stack(), Settings(), data_type="broadband")
+    s = _stages(plan)
+    assert len(plan) >= 4
+    assert "background" not in s      # no graxpert configured -> omitted, not faked
+
+
+def test_graxpert_available_adds_background_stage(tmp_path):
+    graxpert = tmp_path / "graxpert"
+    graxpert.write_text("#!/bin/sh\n")
+    graxpert.chmod(0o755)
+    settings = Settings(graxpert_path=str(graxpert))
+    plan = build_auto_plan(_broadband_stack(), settings, data_type="broadband")
+    assert "background" in _stages(plan)
+
+
+def test_denoise_engine_prefers_rcastro_over_graxpert(tmp_path):
+    rcastro = tmp_path / "rcastro"
+    rcastro.write_text("#!/bin/sh\n")
+    rcastro.chmod(0o755)
+    graxpert = tmp_path / "graxpert"
+    graxpert.write_text("#!/bin/sh\n")
+    graxpert.chmod(0o755)
+    settings = Settings(rcastro_path=str(rcastro), graxpert_path=str(graxpert))
+    plan = build_auto_plan(_broadband_stack(), settings, data_type="broadband")
+    noise_option = dict(plan)["noise_sharpen"]
+    assert noise_option["engine"] == "rcastro"
+
+
+def test_denoise_engine_falls_back_to_graxpert(tmp_path):
+    graxpert = tmp_path / "graxpert"
+    graxpert.write_text("#!/bin/sh\n")
+    graxpert.chmod(0o755)
+    settings = Settings(graxpert_path=str(graxpert))
+    plan = build_auto_plan(_broadband_stack(), settings, data_type="broadband")
+    noise_option = dict(plan)["noise_sharpen"]
+    assert noise_option["engine"] == "graxpert"
+
+
+def test_denoise_engine_none_when_nothing_installed():
+    plan = build_auto_plan(_broadband_stack(), Settings(), data_type="broadband")
+    noise_option = dict(plan)["noise_sharpen"]
+    assert noise_option["engine"] is None
+
+
+def test_data_type_defaults_to_detection_when_omitted():
+    plan = build_auto_plan(_dualband_stack(), Settings())
+    assert "narrowband" in _stages(plan)
