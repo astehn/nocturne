@@ -63,6 +63,8 @@ class SettingsDialog(QDialog):
         self._gx = QLineEdit(settings.graxpert_path)
         self._rc = QLineEdit(settings.rcastro_path)
         self._astap = QLineEdit(settings.astap_path)
+        self._handle = QLineEdit(settings.handle)
+        self._handle.setPlaceholderText("@yourhandle — shown on shared images")
         self._gx_result = QLabel("")
         self._rc_result = QLabel("")
         self._astap_result = QLabel("")
@@ -84,6 +86,7 @@ class SettingsDialog(QDialog):
         form.addRow("ASTAP (optional)",
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"]))
+        form.addRow("Handle (for shares)", self._handle)
         form.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
                       "ASTAP adds plate-solving — install it and its D05 star database "
@@ -122,4 +125,5 @@ class SettingsDialog(QDialog):
             base_dir=self._dir.text().strip(),
             denoise_engine=("graxpert" if self.denoise_box.currentText() == "GraXpert"
                             else "rcastro"),
+            handle=self._handle.text().strip(),
         )

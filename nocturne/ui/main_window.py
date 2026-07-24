@@ -13,7 +13,7 @@ from .. import APP_NAME
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
-from ..core.export import save_fits, save_png, save_tiff
+from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import import_summary
 from ..history.project import Project
 from ..history.step import Step
@@ -49,6 +49,7 @@ from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
+from .share_dialog import ShareDialog
 from .step_panels import build_panel
 from .icons import load_icon
 from .stepper import Stepper
@@ -586,6 +587,8 @@ class MainWindow(QMainWindow):
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
         self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
+        self._share_act = tb.addAction(load_icon("haoiii", ACCENT), "Share", self._share)
+        self._share_act.setEnabled(False)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -1482,6 +1485,17 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry("Redo")
         self._navigate_to_step(affected)
 
+    def _share(self) -> None:
+        if self.project is None or self._busy:
+            return
+        data = self.project.current().data
+        rgb8 = _to_uint(data, 8)
+        if rgb8.ndim == 2:
+            rgb8 = np.stack([rgb8] * 3, axis=2)
+        meta = dict(self.project.current().metadata)
+        meta["source_label"] = self._source_label
+        ShareDialog(rgb8, meta, self.settings, parent=self).exec()
+
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)
         toggles the before/after peek."""
@@ -1731,6 +1745,7 @@ class MainWindow(QMainWindow):
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)
+        self._share_act.setEnabled(self.project is not None)
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:

@@ -1749,3 +1749,25 @@ def test_open_image_clears_prior_message_channels(qtbot, tmp_path):
     assert "stale log line" not in log
     assert log.count("Opened") == 1                 # only the fresh open entry, not the prior image's
     assert win.output_panel.toPlainText() == ""
+
+
+def test_share_action_disabled_until_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._share_act.isEnabled() is False
+    win.open_fits(_make_fits(tmp_path))
+    assert win._share_act.isEnabled() is True
+
+
+def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    captured = {}
+    import nocturne.ui.main_window as mw
+    class _Fake:
+        def __init__(self, rgb8, metadata, settings, parent=None):
+            captured["shape"] = rgb8.shape; captured["target_key"] = "source_label" in metadata
+        def exec(self): captured["shown"] = True
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    win._share()
+    assert captured["shown"] and captured["target_key"]
+    assert captured["shape"][2] == 3            # RGB 8-bit handed to the dialog
