@@ -1891,3 +1891,11 @@ def test_auto_enhance_confirms_only_when_edits_exist(qtbot, tmp_path, monkeypatc
     win._auto_enhance()                       # now has edits -> prompt -> Cancel
     assert calls["n"] == 1
     assert list(win.project.entries()) == before   # cancelled: nothing reset/re-run
+
+
+def test_toolbar_tool_icons_all_load(qtbot):
+    """Each tool has its own glyph now (was all 'haoiii'); guards the assets."""
+    from nocturne.ui.icons import load_icon
+    for n in ["haoiii", "star-spikes", "narrowband", "auto-enhance",
+              "plate-solve", "share", "upscale"]:
+        assert not load_icon(n, "#ffffff").isNull(), f"icon missing/invalid: {n}"
