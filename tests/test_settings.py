@@ -94,3 +94,16 @@ def test_help_expanded_absent_in_old_file_defaults_true(tmp_path):
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"base_dir": "/x"}))              # pre-feature settings.json
     assert load_settings(str(p)).help_expanded is True
+
+
+def test_handle_field_roundtrips(tmp_path):
+    from nocturne.settings import Settings, load_settings, save_settings
+    p = tmp_path / "s.json"
+    s = Settings(handle="andreas")
+    save_settings(s, str(p))
+    assert load_settings(str(p)).handle == "andreas"
+
+
+def test_handle_defaults_blank(tmp_path):
+    from nocturne.settings import load_settings
+    assert load_settings(str(tmp_path / "missing.json")).handle == ""

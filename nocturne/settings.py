@@ -31,6 +31,7 @@ class Settings:
     denoise_engine: str = "rcastro"
     astap_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
+    handle: str = ""                # user's @handle, burned onto shared images
 
 
 def load_settings(path: str) -> Settings:
@@ -45,6 +46,7 @@ def load_settings(path: str) -> Settings:
         denoise_engine=data.get("denoise_engine", "rcastro"),
         astap_path=data.get("astap_path", ""),
         help_expanded=data.get("help_expanded", True),
+        handle=data.get("handle", ""),
     )
 
 
