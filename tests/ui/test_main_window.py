@@ -1699,14 +1699,18 @@ def test_auto_enhance_populates_editable_history(qtbot, tmp_path):
     assert "Stretch" in names or "Color" in names
 
 
-def test_auto_enhance_starts_from_linear_base(qtbot, tmp_path):
+def test_auto_enhance_starts_from_linear_base(qtbot, tmp_path, monkeypatch):
     """A prior manual step is discarded — auto-enhance resets to the linear
     base (jump_back(0)) rather than stacking on top of it."""
+    import nocturne.ui.main_window as mw
+    from PySide6.QtWidgets import QMessageBox
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)                            # manual step first
     assert win.project.entries()[-1][0] == "Stretch"
+    monkeypatch.setattr(mw.QMessageBox, "question",  # discard-edits confirm -> Yes
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
     win._auto_enhance()
     names = [n for n, _o in win.project.entries()]
     assert names[0] == "Crop"                          # auto plan's first stage, not "Stretch"
