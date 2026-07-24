@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import subprocess
+import time
 
 import numpy as np
 from astropy.io import fits
 
 from ..core.image import AstroImage
+from ..core.tasks import Cancelled, current
 
 
 class ToolError(Exception):
-    def __init__(self, returncode: int, stderr: str) -> None:
+    def __init__(self, command, returncode: int, stdout: str, stderr: str, elapsed: float) -> None:
         super().__init__(f"CLI failed ({returncode}): {stderr}")
+        self.command = list(command)
         self.returncode = returncode
+        self.stdout = stdout
         self.stderr = stderr
+        self.elapsed = elapsed
 
 
 def write_temp_fits(img: AstroImage, path: str) -> None:
@@ -30,7 +35,16 @@ def read_fits_array(path: str) -> AstroImage:
     return AstroImage(data, is_linear=True)
 
 
-def run_cli(args: list[str]) -> None:
-    proc = subprocess.run(args, capture_output=True, text=True)
+def run_cli(args: list[str], cancel=None) -> None:
+    token = cancel if cancel is not None else current()
+    start = time.monotonic()
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    if token is not None:
+        token.bind_process(proc)
+    out, err = proc.communicate()             # returns when the child exits (incl. after a kill)
+    elapsed = time.monotonic() - start
+    if token is not None and token.cancelled:
+        raise Cancelled()
     if proc.returncode != 0:
-        raise ToolError(proc.returncode, proc.stderr)
+        raise ToolError(args, proc.returncode, out or "", err or "", elapsed)
