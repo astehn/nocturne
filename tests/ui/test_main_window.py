@@ -1839,3 +1839,21 @@ def test_run_busy_cancel_sets_token_and_is_not_an_error(qtbot, tmp_path):
     qtbot.waitUntil(lambda: not win._busy, timeout=3000)
     assert "result" not in seen                 # cancelled -> on_result NOT called
     assert win._warning.text() == ""            # cancelled is NOT surfaced as an error
+
+
+def test_toolerror_diagnostic_is_available(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    from nocturne.tools.base import ToolError
+    win._report_tool_error("Denoise failed", ToolError(["graxpert", "-x"], 2, "", "model missing", 1.2))
+    txt = win._last_diagnostic_text()             # accessor the impl exposes for the details/copy payload
+    assert "graxpert" in txt and "model missing" in txt
+
+
+def test_auto_progress_drives_determinate_bar(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Auto…"); win._show_busy_visuals()
+    win._on_auto_progress(2, 7, "Stretch")
+    assert win._progress.isVisible() and win._progress.value() == 2 and win._progress.maximum() == 7
+    win._set_busy(False)

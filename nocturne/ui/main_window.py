@@ -25,7 +25,7 @@ from ..settings import (
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
 from ..steps.load import load_fits
-from ..tools.base import run_cli
+from ..tools.base import run_cli, ToolError
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from .histogram_view import HistogramView
@@ -280,6 +280,25 @@ class MainWindow(QMainWindow):
         self._warning.setWordWrap(True)
         self._warning.setStyleSheet("color: #ff6b6b;")        # blocking guidance / errors
         self._right_layout.addWidget(self._warning)
+        diag_row = QHBoxLayout()
+        self._show_details_btn = QPushButton("Show details")
+        self._show_details_btn.setFlat(True)
+        self._show_details_btn.clicked.connect(self._toggle_diagnostic_details)
+        self._show_details_btn.hide()
+        self._copy_log_btn = QPushButton("Copy log")
+        self._copy_log_btn.setFlat(True)
+        self._copy_log_btn.clicked.connect(self._copy_diagnostic_to_clipboard)
+        self._copy_log_btn.hide()
+        diag_row.addWidget(self._show_details_btn)
+        diag_row.addWidget(self._copy_log_btn)
+        diag_row.addStretch(1)
+        self._right_layout.addLayout(diag_row)
+        self._diagnostic_label = QLabel("")
+        self._diagnostic_label.setWordWrap(True)
+        self._diagnostic_label.setStyleSheet("color: #9aa0a6; font-family: monospace;")
+        self._diagnostic_label.hide()
+        self._right_layout.addWidget(self._diagnostic_label)
+        self._last_diagnostic = ""
         nav = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
         self._next_btn = QPushButton("Next →")
@@ -377,6 +396,42 @@ class MainWindow(QMainWindow):
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
+        self._show_details_btn.hide()
+        self._copy_log_btn.hide()
+        self._diagnostic_label.hide()
+        self._diagnostic_label.setText("")
+
+    def _report_tool_error(self, prefix: str, exc) -> None:
+        """Surface a `ToolError` as a concise warning plus an expandable
+        diagnostic (command + stderr + elapsed) with a Copy-log affordance."""
+        command = " ".join(str(part) for part in exc.command)
+        self._last_diagnostic = (
+            f"Command: {command}\n"
+            f"Elapsed: {exc.elapsed:.1f}s\n"
+            f"stderr:\n{exc.stderr}"
+        )
+        self._show_warning(prefix)
+        self._show_details_btn.show()
+        self._copy_log_btn.show()
+        self._diagnostic_label.hide()
+        self._diagnostic_label.setText("")
+        self._show_details_btn.setText("Show details")
+
+    def _last_diagnostic_text(self) -> str:
+        return self._last_diagnostic
+
+    def _toggle_diagnostic_details(self) -> None:
+        showing = self._diagnostic_label.isVisible()
+        if showing:
+            self._diagnostic_label.hide()
+            self._show_details_btn.setText("Show details")
+        else:
+            self._diagnostic_label.setText(self._last_diagnostic)
+            self._diagnostic_label.show()
+            self._show_details_btn.setText("Hide details")
+
+    def _copy_diagnostic_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._last_diagnostic)
 
     def _make_about_dialog(self) -> AboutDialog:
         return AboutDialog(self)
@@ -473,6 +528,7 @@ class MainWindow(QMainWindow):
         self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
         if self._busy_shown:
             self._busy_label.setText(self._busy_label_text)
+        self._set_progress(name, i, n)
 
     def _auto_enhance(self) -> None:
         if self.project is None:
@@ -855,6 +911,8 @@ class MainWindow(QMainWindow):
             try:
                 if isinstance(exc, Cancelled):
                     self._show_output("Cancelled.")     # neutral channel, not a warning
+                elif isinstance(exc, ToolError):
+                    self._report_tool_error(err_prefix, exc)
                 else:
                     self._show_warning(f"{err_prefix}: {exc}")
             finally:
