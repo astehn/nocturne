@@ -6,7 +6,8 @@ import numpy as np
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
+    QWidget,
 )
 
 from .. import APP_NAME
@@ -138,6 +139,10 @@ class MainWindow(QMainWindow):
         self._ellipsis_timer = QTimer(self)
         self._ellipsis_timer.setInterval(BUSY_DELAY_MS)
         self._ellipsis_timer.timeout.connect(self._tick_ellipsis)
+        self._progress_state = ("", 0, 0)   # last (phase, done, total) from _set_progress
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)   # 1s tick while busy visuals are shown
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
         # Levels live-preview: a debounced (90 ms) non-committing render.
         self._levels_show_clipping = False
         self._levels_pending = None
@@ -256,6 +261,20 @@ class MainWindow(QMainWindow):
         self._busy_label = QLabel("")
         self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
         self._right_layout.addWidget(self._busy_label)
+        self._progress = QProgressBar()
+        self._progress.hide()
+        self._right_layout.addWidget(self._progress)
+        busy_row = QHBoxLayout()
+        self._elapsed_label = QLabel("")
+        self._elapsed_label.setStyleSheet("color: #9aa0a6;")
+        self._elapsed_label.hide()
+        busy_row.addWidget(self._elapsed_label)
+        busy_row.addStretch(1)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.clicked.connect(self._cancel_active)
+        self._cancel_btn.hide()
+        busy_row.addWidget(self._cancel_btn)
+        self._right_layout.addLayout(busy_row)
         self._warning = QLabel("")
         self._warning.setObjectName("warning")
         self._warning.setWordWrap(True)
@@ -884,9 +903,15 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
             self._cursor_active = True
         self._busy_shown = True
+        self._cancel_btn.show()
+        self._elapsed_label.show()
+        self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
+        self._elapsed_timer.start()
+        self._apply_progress_state()    # reflect any progress reported before visuals appeared
 
     def _hide_busy_visuals(self) -> None:
         self._ellipsis_timer.stop()
+        self._elapsed_timer.stop()
         if self._busy_shown:
             self._busy_bar.hide_bar()
             self._busy_label.setText("")
@@ -894,10 +919,36 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
         self._busy_shown = False
+        self._cancel_btn.hide()
+        self._elapsed_label.hide()
+        self._elapsed_label.setText("")
+        self._progress_state = ("", 0, 0)
+        self._progress.reset()
+        self._progress.hide()
 
     def _tick_ellipsis(self) -> None:
         self._ellipsis_n = (self._ellipsis_n + 1) % 4
         self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
+
+    def _tick_elapsed(self) -> None:
+        self._elapsed_label.setText(f"{self.elapsed_seconds():.0f}s")
+
+    def _set_progress(self, phase: str, done: int, total: int) -> None:
+        """Drive the determinate progress bar; `total == 0` falls back to the
+        indeterminate BusyBar sweep (the bar itself is simply hidden)."""
+        self._progress_state = (phase, done, total)
+        if self._busy_shown:
+            self._apply_progress_state()
+
+    def _apply_progress_state(self) -> None:
+        phase, done, total = self._progress_state
+        if total > 0:
+            self._progress.setMaximum(total)
+            self._progress.setValue(done)
+            self._progress.setFormat(f"{phase} — %v/%m" if phase else "%v/%m")
+            self._progress.show()
+        else:
+            self._progress.hide()
 
     # --- crop overlay ---
     def _setup_crop_overlay(self) -> None:

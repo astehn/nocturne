@@ -879,6 +879,29 @@ def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
     assert QApplication.overrideCursor() is None       # balanced, no leftover override
 
 
+def test_busy_panel_shows_cancel_and_elapsed_when_visuals_appear(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Working…")
+    win._show_busy_visuals()                      # force the visuals (bypass the 400ms delay)
+    assert win._cancel_btn.isVisible()
+    win._cancel_btn.click()                       # wired to _cancel_active (no active token -> no crash)
+    win._set_busy(False)
+
+
+def test_set_progress_switches_to_determinate(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Stacking…"); win._show_busy_visuals()
+    win._set_progress("integrating", 3, 10)
+    assert win._progress.isVisible() and win._progress.maximum() == 10 and win._progress.value() == 3
+    win._set_progress("", 0, 0)                   # total 0 -> indeterminate, bar hidden
+    assert not win._progress.isVisible()
+    win._set_busy(False)
+
+
 def test_navigating_to_levels_auto_stretches(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
