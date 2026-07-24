@@ -1793,3 +1793,26 @@ def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "UpscaleDialog", _Fake)
     win._upscale()
     assert seen["shown"] and seen["has_source_label"] and seen["is_astroimage"]
+
+
+def test_run_busy_cancel_sets_token_and_is_not_an_error(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._async_enabled = True
+    import time
+    from nocturne.core.tasks import Cancelled, current
+    seen = {}
+    def work():
+        # the worker sees the ambient token; simulate a cancellable op
+        tok = current()
+        for _ in range(100):
+            if tok and tok.cancelled:
+                raise Cancelled()
+            time.sleep(0.02)
+        return "done"
+    def on_result(_): seen["result"] = True
+    win._run_busy(work, on_result, "Working…", "Failed")
+    qtbot.waitUntil(lambda: win._active_token is not None, timeout=1000)
+    win._cancel_active()
+    qtbot.waitUntil(lambda: not win._busy, timeout=3000)
+    assert "result" not in seen                 # cancelled -> on_result NOT called
+    assert win._warning.text() == ""            # cancelled is NOT surfaced as an error

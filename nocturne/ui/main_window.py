@@ -47,6 +47,8 @@ from ..core.starless import split_stars, star_mask
 from ..steps.green_fringe import FRINGE_MASK_SCALE
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
+from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+import time as _time
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -114,6 +116,8 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        self._active_token = None       # CancelToken for the running op, if any
+        self._busy_start = 0.0          # time.monotonic() when the current op started
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
@@ -802,30 +806,61 @@ class MainWindow(QMainWindow):
     def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
         """Run `work` off the UI thread with busy indication; `on_result(result)`
         on success, `f"{err_prefix}: {exc}"` in the status label on failure.
-        Busy is always cleared in a finally (even if `on_result` raises)."""
+        Busy is always cleared in a finally (even if `on_result` raises).
+
+        Publishes a `CancelToken` (`self._active_token`) so `_cancel_active()` can
+        request a clean stop; the token is set as the AMBIENT token on the worker
+        thread itself (inside `wrapped`, not here on the UI thread) so `run_cli`
+        and friends can see it via `nocturne.core.tasks.current()`. A `Cancelled`
+        raised by `work` is treated as a clean stop, not an error."""
+        token = CancelToken()
+        self._active_token = token
+        self._busy_start = _time.monotonic()
         self._set_busy(True, label)
+
+        def wrapped():
+            set_ambient(token)
+            try:
+                return work()
+            finally:
+                clear_ambient()
 
         def done(result):
             try:
                 on_result(result)
             finally:
+                self._active_token = None
                 self._set_busy(False)
 
         def err(exc):
             try:
-                self._show_warning(f"{err_prefix}: {exc}")
+                if isinstance(exc, Cancelled):
+                    self._show_output("Cancelled.")     # neutral channel, not a warning
+                else:
+                    self._show_warning(f"{err_prefix}: {exc}")
             finally:
+                self._active_token = None
                 self._set_busy(False)
 
         if self._async_enabled:
-            run_async(self._pool, work, done, err)
+            run_async(self._pool, wrapped, done, err)
         else:
             try:
-                result = work()
+                result = wrapped()
             except Exception as exc:  # mirror the async error path
                 err(exc)
             else:
                 done(result)          # an on_result throw propagates after the finally
+
+    def _cancel_active(self) -> None:
+        """Request a clean stop of the currently-running busy op, if any."""
+        tok = self._active_token
+        if tok is not None:
+            tok.cancel()
+
+    def elapsed_seconds(self) -> float:
+        """Seconds since the current busy op started; 0.0 when idle."""
+        return _time.monotonic() - self._busy_start if self._busy else 0.0
 
     def _set_busy(self, busy: bool, label: str = "Working…") -> None:
         self._busy = busy
