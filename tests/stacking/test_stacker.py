@@ -127,6 +127,20 @@ def test_run_stack_normalizes_raw_scale_subs(tmp_path):
     assert m.max() > 0.5                   # a bright star survived (not a flat/clipped frame)
 
 
+def test_run_stack_cancels_via_ambient_token(tmp_path):
+    from nocturne.core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+    paths = _make_subs(tmp_path)
+    opts = StackOptions("average", 2.5, paths, str(tmp_path / "master.fits"))
+    tok = CancelToken()
+    tok.cancel()
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            run_stack(opts)
+    finally:
+        clear_ambient()
+
+
 def test_master_filename_full_info():
     assert master_filename("NGC 7000", 177, 20.0, 3540.0) == "NGC7000_177x20s_59min.fits"
 
