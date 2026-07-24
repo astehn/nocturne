@@ -257,9 +257,11 @@ class MainWindow(QMainWindow):
         # zone, so the nav row stays pinned flush to the pane bottom and never moves.
         self._peek_label = QLabel("")                         # transient before/after cue
         self._peek_label.setStyleSheet("color: #9aa0a6;")
+        self._peek_label.setWordWrap(True)                    # don't let changing text drive panel width
         self._right_layout.addWidget(self._peek_label)
         self._busy_label = QLabel("")
         self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
+        self._busy_label.setWordWrap(True)                    # rapid status updates must not resize the pane
         self._right_layout.addWidget(self._busy_label)
         self._progress = QProgressBar()
         self._progress.hide()
@@ -537,6 +539,15 @@ class MainWindow(QMainWindow):
                 return
         if self._busy:
             return
+        if self.project.entries():   # only confirm when there are edits to discard (not a fresh import)
+            resp = QMessageBox.question(
+                self, "Auto Enhance",
+                "This discards your current edits and runs Auto Enhance from the "
+                "original image. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if resp != QMessageBox.StandardButton.Yes:
+                return
         self.project.jump_back(0)   # reset to the linear base (import state)
         base = self.project.current()
         plan = build_auto_plan(base, self.settings)
