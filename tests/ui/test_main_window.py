@@ -1733,3 +1733,19 @@ def test_auto_enhance_reports_step_count_and_nudges(qtbot, tmp_path):
     assert "Auto-enhanced" in out
     assert "GraXpert" in out  # not installed in a bare test Settings() -> nudge shown
     assert win._peek_label.text() == ""                      # cue cleared, not left stale
+
+
+def test_open_image_clears_prior_message_channels(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.log_panel.append_entry("stale log line")   # dirty the log + output from image one
+    win._show_output("stale output line")
+    assert "stale log line" in win.log_panel.text()
+    assert "stale output line" in win.output_panel.toPlainText()
+    d2 = tmp_path / "second"
+    d2.mkdir()
+    win.open_fits(_make_fits(d2))                   # opening a new image starts fresh channels
+    log = win.log_panel.text()
+    assert "stale log line" not in log
+    assert log.count("Opened") == 1                 # only the fresh open entry, not the prior image's
+    assert win.output_panel.toPlainText() == ""

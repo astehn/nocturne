@@ -692,6 +692,8 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
+        self.log_panel.clear_log()   # fresh image → fresh message channels
+        self.output_panel.clear()
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
