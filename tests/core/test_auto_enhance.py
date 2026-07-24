@@ -1,6 +1,6 @@
 import numpy as np
 
-from nocturne.core.auto_enhance import build_auto_plan, detect_data_type, run_auto_plan
+from nocturne.core.auto_enhance import AUTO_LEVELS, build_auto_plan, detect_data_type, run_auto_plan
 from nocturne.core.image import AstroImage
 from nocturne.settings import Settings
 
@@ -127,6 +127,14 @@ def test_denoise_engine_none_when_nothing_installed():
     assert noise_option["engine"] is None
 
 
+def test_denoise_level_is_always_strong():
+    # Real Seestar data measured too low/uniform for the old MAD-based proxy
+    # to discriminate -- denoise is now fixed at "strong" regardless of what
+    # tools (if any) are installed.
+    plan = build_auto_plan(_broadband_stack(), Settings(), data_type="broadband")
+    assert dict(plan)["noise_sharpen"]["level"] == "strong"
+
+
 def test_data_type_defaults_to_detection_when_omitted():
     plan = build_auto_plan(_dualband_stack(), Settings())
     assert "narrowband" in _stages(plan)
@@ -147,6 +155,24 @@ def test_run_auto_plan_applies_each_step():
     # etc, and every step returns a real AstroImage.
     for _name, _option, img in out:
         assert img.data.size > 0
+
+
+def test_run_auto_plan_records_real_levels_black_point():
+    # AUTO_LEVELS in the built plan is just an identity placeholder -- once
+    # the plan reaches the (post-stretch) image at apply time, run_auto_plan
+    # must recompute a real auto_levels() black-point and record it, not the
+    # identity (0.0, 1.0, 1.0) used at build time.
+    base = _broadband_stack()
+    plan = build_auto_plan(base, Settings(), data_type="broadband")
+    assert dict(plan)["levels"] == AUTO_LEVELS   # build-time placeholder is still identity
+
+    out = run_auto_plan(base, plan, Settings())
+    levels_entries = [(name, opt) for name, opt, _img in out if name == "Levels"]
+    assert len(levels_entries) == 1
+    _name, recorded = levels_entries[0]
+    black = recorded[0]
+    assert black > 0.0
+    assert tuple(recorded) != AUTO_LEVELS
 
 
 def test_run_auto_plan_reports_progress():
