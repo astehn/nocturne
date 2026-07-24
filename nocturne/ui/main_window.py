@@ -50,6 +50,7 @@ from ..core.image import AstroImage
 from .preview import rgb_to_qimage, to_qimage
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
+from .upscale_dialog import UpscaleDialog
 from .step_panels import build_panel
 from .icons import load_icon
 from .stepper import Stepper
@@ -589,6 +590,8 @@ class MainWindow(QMainWindow):
         self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
         self._share_act = tb.addAction(load_icon("haoiii", ACCENT), "Share", self._share)
         self._share_act.setEnabled(False)
+        self._upscale_act = tb.addAction(load_icon("haoiii", ACCENT), "Upscale Crop", self._upscale)
+        self._upscale_act.setEnabled(False)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -1496,6 +1499,20 @@ class MainWindow(QMainWindow):
         meta["source_label"] = self._source_label
         ShareDialog(rgb8, meta, self.settings, parent=self).exec()
 
+    def _upscale(self) -> None:
+        if self.project is None or self._busy:
+            return
+        snap = self.project.current()
+        meta = dict(snap.metadata)
+        meta["source_label"] = self._source_label
+        img = AstroImage(snap.data.copy(), is_linear=snap.is_linear, metadata=meta)
+        rc = RCAstro(resolve_binary(self.settings.rcastro_path))
+        UpscaleDialog(img, meta, self.settings, rc=rc,
+                      on_open_copy=self._open_upscaled, parent=self).exec()
+
+    def _open_upscaled(self, result) -> None:
+        self.open_image(result, f"{os.path.splitext(self._source_label or 'image')[0]}_2x")
+
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)
         toggles the before/after peek."""
@@ -1746,6 +1763,7 @@ class MainWindow(QMainWindow):
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)
         self._share_act.setEnabled(self.project is not None)
+        self._upscale_act.setEnabled(self.project is not None)
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:

@@ -1771,3 +1771,25 @@ def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
     win._share()
     assert captured["shown"] and captured["target_key"]
     assert captured["shape"][2] == 3            # RGB 8-bit handed to the dialog
+
+
+def test_upscale_action_disabled_until_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._upscale_act.isEnabled() is False
+    win.open_fits(_make_fits(tmp_path))
+    assert win._upscale_act.isEnabled() is True
+
+
+def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    seen = {}
+    import nocturne.ui.main_window as mw
+    class _Fake:
+        def __init__(self, img, metadata, settings, rc=None, on_open_copy=None, parent=None):
+            seen["has_source_label"] = "source_label" in metadata
+            seen["is_astroimage"] = hasattr(img, "data")
+        def exec(self): seen["shown"] = True
+    monkeypatch.setattr(mw, "UpscaleDialog", _Fake)
+    win._upscale()
+    assert seen["shown"] and seen["has_source_label"] and seen["is_astroimage"]
