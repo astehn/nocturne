@@ -47,3 +47,13 @@ def test_open_as_copy_calls_callback(qtbot):
     d._run_upscale()
     d._do_open_copy()
     assert got["shape"] == (120, 120, 3)
+
+
+def test_open_as_copy_closes_the_dialog(qtbot):
+    from PySide6.QtWidgets import QDialog
+    opened = {}
+    d = _dlg(qtbot, on_open_copy=lambda img: opened.update(ok=True))
+    d._run_upscale()
+    d._do_open_copy()
+    assert opened.get("ok") is True
+    assert d.result() == QDialog.DialogCode.Accepted   # dialog closed -> main window (with the copy) is revealed

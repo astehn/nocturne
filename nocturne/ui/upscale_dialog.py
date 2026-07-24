@@ -227,3 +227,5 @@ class UpscaleDialog(QDialog):
     def _do_open_copy(self) -> None:
         if self._result is not None and self._on_open_copy is not None:
             self._on_open_copy(self._result)
+            self.accept()      # close so the user lands on the main window showing the copy
+                               # (the swap was invisible behind the modal dialog, esp. full screen)
