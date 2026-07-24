@@ -22,6 +22,9 @@ def master_header(ref_meta: dict, count: int, integ: float) -> dict:
     target = ref_meta.get("target")
     if target:
         header["OBJECT"] = target
+    filt = ref_meta.get("filter")
+    if filt:
+        header["FILTER"] = filt
     return header
 
 

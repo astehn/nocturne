@@ -158,3 +158,11 @@ def test_master_header_carries_astrometry_and_target():
     assert h["OBJECT"] == "NGC 7000"
     # no astrometry available -> just the stack counts, no crash
     assert master_header({"frames": 3}, 3, 60.0)["STACKCNT"] == 3
+
+
+def test_master_header_carries_filter():
+    from nocturne.stacking.stacker import master_header
+    h = master_header({"filter": "LP"}, count=5, integ=100.0)
+    assert h["FILTER"] == "LP"
+    # no filter available -> no FILTER card, no crash
+    assert "FILTER" not in master_header({"frames": 3}, 3, 60.0)

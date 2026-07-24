@@ -47,6 +47,7 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "pixel_size": ("XPIXSZ", "YPIXSZ"),
         "ra": ("OBJCTRA", "RA"),
         "dec": ("OBJCTDEC", "DEC"),
+        "filter": ("FILTER",),
     }
     for key, candidates in mapping.items():
         for card in candidates:
