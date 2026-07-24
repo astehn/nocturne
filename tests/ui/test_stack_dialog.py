@@ -444,6 +444,32 @@ def test_dialog_opens_roomy_and_resizable(qtbot):
     assert (dlg.minimumWidth(), dlg.minimumHeight()) == (800, 500)
 
 
+def test_cancel_button_stops_a_grade(qtbot, tmp_path):
+    import time
+    from nocturne.core.tasks import current
+
+    (tmp_path / "a.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+
+    def slow_grade(paths, on_progress=None, strictness="normal"):
+        for _ in range(200):
+            tok = current()
+            if tok is not None:
+                tok.check()            # raises Cancelled when cancelled
+            time.sleep(0.01)
+        return []
+
+    dlg._grade_runner = slow_grade
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg._active_token is not None, timeout=1000)
+    dlg._cancel_btn.click()
+    qtbot.waitUntil(lambda: not dlg._busy, timeout=3000)
+    assert "Cancelled" in dlg.status.text()          # clean stop, not "Failed"
+    assert dlg._active_token is None
+
+
 def test_cells_carry_tooltips(qtbot, tmp_path):
     for i in range(3):
         (tmp_path / f"f{i}.fit").write_text("x")
