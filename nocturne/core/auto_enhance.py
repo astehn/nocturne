@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..recipe import serialize_option
 from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid
+from ..steps.factory import make_step
+from ..tools.base import run_cli
 from .color import ColorSettings
 from .crop import CropParams, detect_content_bounds
+from .image import AstroImage
 from .narrowband import NarrowbandParams
 
 
@@ -115,3 +119,47 @@ def build_auto_plan(img, settings: Settings, *, data_type: str | None = None) ->
     plan.append(("saturation", (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)))
 
     return plan
+
+
+def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runner=run_cli,
+                   on_progress=None) -> list[tuple[str, str, AstroImage]]:
+    """Apply an auto-enhance plan (as built by build_auto_plan) in order,
+    starting from `base` and threading the image forward through each stage.
+
+    Mirrors batch.py::apply_recipe's engine wiring (make_step + step.apply on
+    the *native* option -- never round-tripped through
+    recipe.serialize_option/deserialize_option, which would e.g. silently
+    turn crop into a no-op by dropping CropParams.bounds). Crop bounds are
+    re-detected from the image actually reaching that stage (same
+    conservative margin as _auto_crop_option), matching apply_recipe's
+    per-image auto-detection instead of trusting a possibly-stale bounds
+    computed when the plan was built.
+
+    Returns a list of (step.name, serialized_option, image_after_step) per
+    successfully-applied step -- the display name and a serialize_option()
+    encoding (fine for recording/display; only the apply above must use the
+    native option) so the caller can fold each stage into the live Project's
+    editable history via Project.record_precomputed without recomputing the
+    slow external-tool steps.
+
+    Robust to a single stage failing (e.g. an external tool subprocess
+    errors): that stage is skipped -- not recorded, image left unchanged --
+    and the rest of the chain still runs. Never aborts the whole enhance."""
+    img = base
+    n = len(plan)
+    results: list[tuple[str, str, AstroImage]] = []
+    for i, (stage_id, option) in enumerate(plan):
+        step = make_step(stage_id, settings, bg_runner=bg_runner, rc_runner=rc_runner)
+        try:
+            if stage_id == "crop":
+                option = _auto_crop_option(img)
+            result = step.apply(img, option)
+        except Exception:
+            if on_progress is not None:
+                on_progress(i + 1, n, step.name)
+            continue
+        img = result
+        results.append((step.name, serialize_option(stage_id, option), img))
+        if on_progress is not None:
+            on_progress(i + 1, n, step.name)
+    return results

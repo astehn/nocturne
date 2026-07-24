@@ -1,6 +1,6 @@
 import numpy as np
 
-from nocturne.core.auto_enhance import build_auto_plan, detect_data_type
+from nocturne.core.auto_enhance import build_auto_plan, detect_data_type, run_auto_plan
 from nocturne.core.image import AstroImage
 from nocturne.settings import Settings
 
@@ -130,3 +130,57 @@ def test_denoise_engine_none_when_nothing_installed():
 def test_data_type_defaults_to_detection_when_omitted():
     plan = build_auto_plan(_dualband_stack(), Settings())
     assert "narrowband" in _stages(plan)
+
+
+def test_run_auto_plan_applies_each_step():
+    base = _broadband_stack()
+    plan = build_auto_plan(base, Settings(), data_type="broadband")
+    out = run_auto_plan(base, plan, Settings())
+    assert len(out) == len(plan)
+    names = [n for n, _o, _img in out]
+    assert "Stretch" in names or "Color" in names           # real steps ran
+    # crop may legitimately shrink the frame; just confirm a real image came out
+    assert out[-1][2].data.shape[0] <= base.data.shape[0]
+    assert out[-1][2].data.shape[1] <= base.data.shape[1]
+
+    # Each step's image threads forward: crop's output feeds color's input,
+    # etc, and every step returns a real AstroImage.
+    for _name, _option, img in out:
+        assert img.data.size > 0
+
+
+def test_run_auto_plan_reports_progress():
+    base = _broadband_stack()
+    plan = build_auto_plan(base, Settings(), data_type="broadband")
+    calls = []
+    run_auto_plan(base, plan, Settings(), on_progress=lambda i, n, name: calls.append((i, n, name)))
+    assert len(calls) == len(plan)
+    assert calls[0][1] == len(plan)
+
+
+def test_run_auto_plan_skips_failing_step_and_continues():
+    class _Boom:
+        name = "Boom"
+        def apply(self, img, option):
+            raise RuntimeError("external tool exploded")
+
+    import nocturne.core.auto_enhance as auto_enhance_mod
+
+    base = _broadband_stack()
+    plan = build_auto_plan(base, Settings(), data_type="broadband")
+    real_make_step = auto_enhance_mod.make_step
+
+    def _patched(stage_id, settings, *, bg_runner, rc_runner):
+        if stage_id == "stretch":
+            return _Boom()
+        return real_make_step(stage_id, settings, bg_runner=bg_runner, rc_runner=rc_runner)
+
+    auto_enhance_mod.make_step = _patched
+    try:
+        out = run_auto_plan(base, plan, Settings())
+    finally:
+        auto_enhance_mod.make_step = real_make_step
+
+    names = [n for n, _o, _img in out]
+    assert "Stretch" not in names              # failing step skipped, not recorded
+    assert len(out) == len(plan) - 1           # rest of the chain still ran

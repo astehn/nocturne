@@ -8,6 +8,10 @@ def _base():
     return AstroImage(np.ones((2, 2), np.float32))
 
 
+def _base2():
+    return AstroImage(np.full((2, 2), 2.0, np.float32))
+
+
 def test_run_step_caches_and_advances(tmp_path):
     p = Project(_base(), str(tmp_path))
     out = p.run_step(_Double(), "x2")
@@ -61,6 +65,15 @@ def test_jump_back_truncates_forward(tmp_path):
     assert p.can_redo() is False
     p.run_step(_Double(), "x1")   # new branch -> 2.0
     assert p.entries() == [("double", "x2"), ("double", "x1")]
+
+
+def test_record_precomputed_appends_editable_state(tmp_path):
+    p = Project(_base(), str(tmp_path))
+    p.record_precomputed("Background", "strong", _base2())
+    assert p.entries() == [("Background", "strong")]
+    assert np.allclose(p.current().data, _base2().data)      # current is the recorded state
+    p.undo()
+    assert np.allclose(p.current().data, _base().data)        # base restored
 
 
 def test_set_current_metadata_persists(tmp_path):
