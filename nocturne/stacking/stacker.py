@@ -7,10 +7,17 @@ import numpy as np
 
 from ..core.export import save_fits
 from ..core.image import AstroImage
+from ..core.tasks import current
 from .coverage import coverage_map, full_coverage_bounds
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
 from .register import RegistrationError, find_transform, warp_to
+
+
+def _check_cancel() -> None:
+    tok = current()
+    if tok is not None:
+        tok.check()      # raises Cancelled if the user cancelled
 
 
 def master_header(ref_meta: dict, count: int, integ: float) -> dict:
@@ -79,6 +86,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
 
     # Phase A: register each remaining sub against the reference.
     for i, path in enumerate(paths[1:], start=1):
+        _check_cancel()
         try:
             sub = load_sub(path, normalize=False)
         except Exception as exc:
@@ -115,6 +123,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
         pass_no["n"] += 1
         label = "integrating" if passes == 1 else f"integrating (pass {pass_no['n']}/{passes})"
         for i, path in enumerate(used, start=1):
+            _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
             yield warp_to(load_sub(path, normalize=False).data, transforms[path])

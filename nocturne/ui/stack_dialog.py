@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.autostretch import unlinked_stretch
+from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
 from ..stacking.frames import discover_subs, load_sub
 from ..stacking.grade import grade_frames, judge
@@ -53,6 +54,7 @@ class StackDialog(QDialog):
         self._stack_runner = run_stack      # injectable for tests
         self._stats = []
         self._busy = False
+        self._active_token: CancelToken | None = None
         self._output_user_edited = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
@@ -119,10 +121,15 @@ class StackDialog(QDialog):
         self._stack_btn = QPushButton("Stack")
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.clicked.connect(self._cancel_active)
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.hide()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self._stack_btn)
+        buttons.addWidget(self._cancel_btn)
         buttons.addWidget(close_btn)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -162,6 +169,29 @@ class StackDialog(QDialog):
         two workers can't stack to the same output path at once."""
         self._busy = busy
         self._stack_btn.setEnabled(not busy)
+        self._cancel_btn.setEnabled(busy)
+        self._cancel_btn.setVisible(busy)
+
+    # --- cancellable async dispatch ---
+    def _start(self, work, on_done, status: str) -> None:
+        token = CancelToken()
+        self._active_token = token
+        self.status.setText(status)
+        self._set_busy(True)
+
+        def wrapped():
+            set_ambient(token)
+            try:
+                return work()
+            finally:
+                clear_ambient()
+
+        run_async(self._pool, wrapped, on_done, self._on_error)
+
+    def _cancel_active(self) -> None:
+        tok = self._active_token
+        if tok is not None:
+            tok.cancel()
 
     # --- grade ---
     def grade(self) -> None:
@@ -172,8 +202,6 @@ class StackDialog(QDialog):
         if not paths:
             self.status.setText("No .fit subs found in that folder.")
             return
-        self.status.setText("Grading frames…")
-        self._set_busy(True)
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
@@ -182,12 +210,13 @@ class StackDialog(QDialog):
                           self._signals.progress.emit(i, n, "grading"),
                           strictness=strictness)
 
-        run_async(self._pool, work, self._on_graded, self._on_error)
+        self._start(work, self._on_graded, "Grading frames…")
 
     def _on_graded(self, stats) -> None:
         # Strictness may have changed while the async measure was running —
         # re-judge against the knob's current value before painting anything.
         judge(stats, self.strictness_box.currentText().lower())
+        self._active_token = None
         self._set_busy(False)
         self._stats = stats
         self._user_touched = set()
@@ -380,14 +409,12 @@ class StackDialog(QDialog):
         opts = StackOptions(method, KAPPA[self.kappa_box.currentText()],
                             include, self.output_edit.text().strip())
         runner = self._stack_runner
-        self.status.setText("Stacking…")
-        self._set_busy(True)
 
         def work():
             return runner(opts, on_progress=lambda i, n, label:
                           self._signals.progress.emit(i, n, label))
 
-        run_async(self._pool, work, self._on_stacked, self._on_error)
+        self._start(work, self._on_stacked, "Stacking…")
 
     def _on_progress(self, i: int, n: int, label: str) -> None:
         self.progress.setMaximum(max(1, n))
@@ -413,6 +440,7 @@ class StackDialog(QDialog):
         return text
 
     def _on_stacked(self, result) -> None:
+        self._active_token = None
         self._set_busy(False)
         report = self._stack_report(result)
         self.status.setText(report)
@@ -423,5 +451,10 @@ class StackDialog(QDialog):
         self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        if isinstance(exc, Cancelled):
+            self._active_token = None
+            self._set_busy(False)
+            self.status.setText("Cancelled.")
+            return
         self._set_busy(False)
         self.status.setText(f"Failed: {exc}")

@@ -7,7 +7,14 @@ import numpy as np
 import sep
 
 from ..core.fits_io import is_stacked_master
+from ..core.tasks import current
 from .frames import load_sub, luminance
+
+
+def _check_cancel() -> None:
+    tok = current()
+    if tok is not None:
+        tok.check()      # raises Cancelled if the user cancelled
 
 
 STRICTNESS_K = {"relaxed": 4.0, "normal": 3.0, "strict": 2.0}
@@ -114,6 +121,7 @@ def grade_frames(paths: list[str], on_progress=None,
     stats: list[FrameStats] = []
     n = len(paths)
     for i, path in enumerate(paths):
+        _check_cancel()
         stats.append(grade_frame(path))
         if on_progress is not None:
             on_progress(i + 1, n, os.path.basename(path))

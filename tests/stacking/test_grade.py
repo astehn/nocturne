@@ -191,6 +191,23 @@ def test_grade_frames_strictness_kwarg(tmp_path):
     assert all(s.included for s in graded)
 
 
+def test_grade_frames_cancels_via_ambient_token(tmp_path):
+    from nocturne.core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+    paths = []
+    for i in range(3):
+        p = tmp_path / f"g{i}.fit"
+        write_cfa_fits(p, make_star_field(n_stars=25, seed=i))
+        paths.append(str(p))
+    tok = CancelToken()
+    tok.cancel()
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            grade_frames(paths)
+    finally:
+        clear_ambient()
+
+
 def test_grade_frame_bad_exptime_header_degrades_not_crashes(tmp_path):
     from astropy.io import fits as pyfits
     p = tmp_path / "badexp.fit"
