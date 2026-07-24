@@ -100,6 +100,10 @@ def build_auto_plan(img, settings: Settings, *, data_type: str | None = None) ->
         plan.append(("background", AUTO_BACKGROUND_STRENGTH))
 
     if data_type == "dualband":
+        # Narrowband works on the stretched image (see core/narrowband.py's
+        # docstring and ui/main_window.py's guard) -- crop/background leave
+        # the image linear, so stretch must run immediately before it.
+        plan.append(("stretch", AUTO_STRETCH_AMOUNT))
         plan.append(("narrowband", NarrowbandParams()))
     else:
         method = "photometric" if astap_valid(settings) else "sky"

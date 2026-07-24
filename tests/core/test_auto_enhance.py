@@ -74,7 +74,11 @@ def test_dualband_plan_uses_colourise():
     s = _stages(plan)
     assert "crop" in s
     assert "narrowband" in s          # the Colourise/HOO engine, not plain color+stretch
-    assert "color" not in s and "stretch" not in s
+    assert "color" not in s
+    # narrowband requires an already-stretched image (core/narrowband.py's
+    # docstring; ui/main_window.py's guard) -- stretch must precede it.
+    assert "stretch" in s
+    assert s.index("stretch") < s.index("narrowband")
 
 
 def test_no_graxpert_still_produces_a_plan():
