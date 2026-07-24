@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
+from ..core.tasks import Cancelled
+
 
 class WorkerSignals(QObject):
     done = Signal(object)
@@ -18,7 +20,9 @@ class Worker(QRunnable):
     def run(self) -> None:
         try:
             result = self._fn()
-        except Exception as exc:  # surfaced to on_error on the main thread
+        except (Exception, Cancelled) as exc:  # surfaced to on_error on the main thread
+            # Cancelled is a BaseException, so `except Exception` would miss it —
+            # catch it here so a user cancel routes to the clean-stop handler.
             self.signals.error.emit(exc)
         else:
             self.signals.done.emit(result)

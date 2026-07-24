@@ -5,8 +5,13 @@ import signal
 import threading
 
 
-class Cancelled(Exception):
-    """Raised to unwind an operation the user cancelled (never an error)."""
+class Cancelled(BaseException):
+    """Raised to unwind an operation the user cancelled (never an error).
+
+    Deliberately a BaseException, not an Exception, so it propagates cleanly
+    through the app's pervasive `except Exception` fallback/resilience handlers
+    (a cancel must never be swallowed and turned into a silent fallback). The
+    worker (ui/worker.py) catches it explicitly and routes it to a clean stop."""
 
 
 def kill_process(proc) -> None:

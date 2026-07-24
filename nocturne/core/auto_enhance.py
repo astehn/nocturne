@@ -125,10 +125,16 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     Robust to a single stage failing (e.g. an external tool subprocess
     errors): that stage is skipped -- not recorded, image left unchanged --
     and the rest of the chain still runs. Never aborts the whole enhance."""
+    from .tasks import Cancelled, current
+
     img = base
     n = len(plan)
     results: list[tuple[str, str, AstroImage]] = []
     for i, (stage_id, option) in enumerate(plan):
+        tok = current()
+        if tok is not None and tok.cancelled:
+            raise Cancelled()      # stop the chain cleanly between steps (a mid-step
+                                   # subprocess is already killed via run_cli's token)
         step = make_step(stage_id, settings, bg_runner=bg_runner, rc_runner=rc_runner)
         try:
             if stage_id == "crop":
