@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Protocol
 
 import numpy as np
@@ -83,3 +84,27 @@ def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None
     meta["upscale"] = {**engine.provenance(), "scale": scale, "tighten": tighten,
                        "crop": list(crop) if crop else None}
     return AstroImage(result.data, is_linear=result.is_linear, metadata=meta)
+
+
+def upscale_filename(source_label, scale: int) -> str:
+    stem = os.path.splitext(source_label or "upscale")[0] or "upscale"
+    return f"{stem}_{scale}x.jpg"
+
+
+def upscale_provenance_text(metadata: dict) -> str:
+    up = metadata.get("upscale") or {}
+    engine = up.get("engine", "?")
+    scale = up.get("scale", "?")
+    lines = [
+        f"Upscale derivative — {scale}× ({engine})",
+        f"Source: {metadata.get('source_label', 'unknown')}",
+    ]
+    if metadata.get("target"):
+        lines.append(f"Target: {metadata['target']}")
+    if up.get("crop"):
+        lines.append(f"Crop (t,b,l,r): {up['crop']}")
+    if up.get("fabricates"):
+        lines.append("Contains AI-synthesized detail — NOT for measurement or source discovery.")
+    else:
+        lines.append(f"{scale}× presentation derivative — enlarged, no synthesized detail.")
+    return "\n".join(lines)

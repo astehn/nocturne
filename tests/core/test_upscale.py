@@ -67,3 +67,19 @@ def test_upscale_crop_records_provenance():
     out = upscale_crop(_starry(), None, LanczosEngine(), scale=2)
     prov = out.metadata.get("upscale")
     assert prov and prov["engine"] == "Lanczos" and prov["scale"] == 2
+
+
+from nocturne.core.upscale import upscale_provenance_text, upscale_filename
+
+
+def test_provenance_text_mentions_engine_scale_and_honesty():
+    out = upscale_crop(_starry(), None, LanczosEngine(), scale=2)
+    out.metadata["source_label"] = "m42.fits"
+    txt = upscale_provenance_text(out.metadata)
+    assert "Lanczos" in txt and "2×" in txt
+    assert "no synthesized detail" in txt.lower()
+
+
+def test_upscale_filename():
+    assert upscale_filename("NGC7000_182x20s_61min.fits", 2) == "NGC7000_182x20s_61min_2x.jpg"
+    assert upscale_filename(None, 2) == "upscale_2x.jpg"
