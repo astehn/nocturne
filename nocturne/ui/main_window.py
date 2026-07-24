@@ -539,6 +539,15 @@ class MainWindow(QMainWindow):
                 return
         if self._busy:
             return
+        if self.project.entries():   # only confirm when there are edits to discard (not a fresh import)
+            resp = QMessageBox.question(
+                self, "Auto Enhance",
+                "This discards your current edits and runs Auto Enhance from the "
+                "original image. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if resp != QMessageBox.StandardButton.Yes:
+                return
         self.project.jump_back(0)   # reset to the linear base (import state)
         base = self.project.current()
         plan = build_auto_plan(base, self.settings)

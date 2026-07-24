@@ -1868,3 +1868,22 @@ def test_status_text_does_not_widen_right_panel(qtbot, tmp_path):
     short = win._right_panel.minimumSizeHint().width()
     win._busy_label.setText("Auto-enhancing — Local Contrast (12/13)… a long status line that must wrap")
     assert win._right_panel.minimumSizeHint().width() == short   # wrapped -> text doesn't drive width
+
+
+def test_auto_enhance_confirms_only_when_edits_exist(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    calls = {"n": 0}
+    def fake_q(*a, **k):
+        calls["n"] += 1
+        return QMessageBox.StandardButton.Cancel
+    monkeypatch.setattr(mw.QMessageBox, "question", fake_q)
+    win._auto_enhance()                       # fresh import, no entries -> NO prompt, runs
+    assert calls["n"] == 0
+    assert win.project.entries()              # auto-enhance recorded steps
+    before = list(win.project.entries())
+    win._auto_enhance()                       # now has edits -> prompt -> Cancel
+    assert calls["n"] == 1
+    assert list(win.project.entries()) == before   # cancelled: nothing reset/re-run
