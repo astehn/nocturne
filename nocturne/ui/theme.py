@@ -42,12 +42,15 @@ QComboBox:focus, QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
 QPushButton {{ background: {BG_3}; border: 1px solid {BORDER}; border-radius: 8px;
     padding: 8px 14px; }}
 QPushButton:hover {{ background: #3e4248; }}
+QPushButton:pressed {{ background: {BG_2}; }}
 QPushButton:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
 QPushButton#primary {{ background: {SUCCESS}; color: #052611; font-weight: 600; border: none; }}
 QPushButton#primary:hover {{ background: {SUCCESS_HI}; }}
+QPushButton#primary:pressed {{ background: #37a247; }}
 QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
 QPushButton#nav:hover {{ background: {ACCENT_HI}; }}
+QPushButton#nav:pressed {{ background: #3f80cc; }}
 QPushButton#nav:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 
 QGraphicsView {{ background: {BG_0}; border: 1px solid #2c2f34; }}
@@ -91,6 +94,7 @@ QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radiu
 QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
+QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
 QLabel#aboutWordmark {{ font-size: 34px; font-weight: 700; color: #ffffff; padding: 10px; }}
 QLabel#aboutBody {{ font-size: 13px; color: {TEXT}; padding: 4px 12px; }}
 QScrollArea {{ border: none; background: {BG_1}; }}
