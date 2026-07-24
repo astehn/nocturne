@@ -879,6 +879,29 @@ def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
     assert QApplication.overrideCursor() is None       # balanced, no leftover override
 
 
+def test_busy_panel_shows_cancel_and_elapsed_when_visuals_appear(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Working…")
+    win._show_busy_visuals()                      # force the visuals (bypass the 400ms delay)
+    assert win._cancel_btn.isVisible()
+    win._cancel_btn.click()                       # wired to _cancel_active (no active token -> no crash)
+    win._set_busy(False)
+
+
+def test_set_progress_switches_to_determinate(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Stacking…"); win._show_busy_visuals()
+    win._set_progress("integrating", 3, 10)
+    assert win._progress.isVisible() and win._progress.maximum() == 10 and win._progress.value() == 3
+    win._set_progress("", 0, 0)                   # total 0 -> indeterminate, bar hidden
+    assert not win._progress.isVisible()
+    win._set_busy(False)
+
+
 def test_navigating_to_levels_auto_stretches(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -1793,3 +1816,44 @@ def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "UpscaleDialog", _Fake)
     win._upscale()
     assert seen["shown"] and seen["has_source_label"] and seen["is_astroimage"]
+
+
+def test_run_busy_cancel_sets_token_and_is_not_an_error(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._async_enabled = True
+    import time
+    from nocturne.core.tasks import Cancelled, current
+    seen = {}
+    def work():
+        # the worker sees the ambient token; simulate a cancellable op
+        tok = current()
+        for _ in range(100):
+            if tok and tok.cancelled:
+                raise Cancelled()
+            time.sleep(0.02)
+        return "done"
+    def on_result(_): seen["result"] = True
+    win._run_busy(work, on_result, "Working…", "Failed")
+    qtbot.waitUntil(lambda: win._active_token is not None, timeout=1000)
+    win._cancel_active()
+    qtbot.waitUntil(lambda: not win._busy, timeout=3000)
+    assert "result" not in seen                 # cancelled -> on_result NOT called
+    assert win._warning.text() == ""            # cancelled is NOT surfaced as an error
+
+
+def test_toolerror_diagnostic_is_available(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    from nocturne.tools.base import ToolError
+    win._report_tool_error("Denoise failed", ToolError(["graxpert", "-x"], 2, "", "model missing", 1.2))
+    txt = win._last_diagnostic_text()             # accessor the impl exposes for the details/copy payload
+    assert "graxpert" in txt and "model missing" in txt
+
+
+def test_auto_progress_drives_determinate_bar(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show(); qtbot.waitExposed(win)
+    win._set_busy(True, "Auto…"); win._show_busy_visuals()
+    win._on_auto_progress(2, 7, "Stretch")
+    assert win._progress.isVisible() and win._progress.value() == 2 and win._progress.maximum() == 7
+    win._set_busy(False)

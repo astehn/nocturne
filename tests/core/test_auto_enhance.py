@@ -238,3 +238,18 @@ def test_run_auto_plan_skips_failing_step_and_continues():
     names = [n for n, _o, _img in out]
     assert "Stretch" not in names              # failing step skipped, not recorded
     assert len(out) == len(plan) - 1           # rest of the chain still ran
+
+
+def test_run_auto_plan_stops_on_cancel():
+    import pytest
+    from nocturne.core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+    img = _broadband_stack()
+    plan = build_auto_plan(img, Settings())
+    tok = CancelToken()
+    tok.cancel()
+    set_ambient(tok)                           # ambient token, cancelled
+    try:
+        with pytest.raises(Cancelled):         # chain bails (does not swallow-and-continue)
+            run_auto_plan(img, plan, Settings())
+    finally:
+        clear_ambient()
