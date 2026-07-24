@@ -471,8 +471,9 @@ class MainWindow(QMainWindow):
 
     def _auto_enhance(self) -> None:
         if self.project is None:
-            self._show_warning("Open a FITS file first.")
-            return
+            self._choose_fits()      # open the file dialog; loads synchronously if a file is picked
+            if self.project is None:  # cancelled, or load failed (warning already shown)
+                return
         if self._busy:
             return
         dt = detect_data_type(self.project.current().metadata)

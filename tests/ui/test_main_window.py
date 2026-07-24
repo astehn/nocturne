@@ -1715,10 +1715,27 @@ def test_auto_enhance_cancelled_ask_leaves_project_untouched(qtbot, tmp_path, mo
     assert win.project.entries() == []
 
 
-def test_auto_enhance_no_project_shows_warning(qtbot, tmp_path):
+def test_auto_enhance_no_project_cancelled_dialog_does_nothing(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
-    win._auto_enhance()  # no project loaded — should warn, not raise
-    assert win._warning.text() != ""
+    monkeypatch.setattr(win, "_choose_fits", lambda: None)  # simulate user cancelling the dialog
+    win._auto_enhance()  # no project loaded, dialog cancelled — should no-op, not raise
+    assert win.project is None
+    assert win._warning.text() == ""
+
+
+def test_auto_enhance_no_project_opens_dialog_and_enhances_chosen_file(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    path = _make_fits(tmp_path)
+
+    def fake_choose_fits():
+        win.open_fits(path)
+
+    monkeypatch.setattr(win, "_choose_fits", fake_choose_fits)
+    win._auto_enhance()
+    assert win.project is not None
+    names = [n for n, _o in win.project.entries()]
+    assert len(names) >= 3
+    assert "Stretch" in names or "Color" in names
 
 
 def test_auto_enhance_reports_step_count_and_nudges(qtbot, tmp_path):
