@@ -24,10 +24,14 @@ def next_minor(s: str) -> str:
 def set_version_files(root: Path, version: str) -> None:
     parse_version(version)  # guard: refuse to write a malformed version
     pyproject = root / "pyproject.toml"
-    pyproject.write_text(
-        re.sub(r'(?m)^version = "[^"]*"',
-               f'version = "{version}"', pyproject.read_text()))
+    text, n = re.subn(r'(?m)^version = "[^"]*"',
+                      f'version = "{version}"', pyproject.read_text(), count=1)
+    if n != 1:
+        raise ValueError(f"no version line found in {pyproject}")
+    pyproject.write_text(text)
     init = root / "nocturne" / "__init__.py"
-    init.write_text(
-        re.sub(r'(?m)^__version__ = "[^"]*"',
-               f'__version__ = "{version}"', init.read_text()))
+    text, n = re.subn(r'(?m)^__version__ = "[^"]*"',
+                      f'__version__ = "{version}"', init.read_text(), count=1)
+    if n != 1:
+        raise ValueError(f"no __version__ line found in {init}")
+    init.write_text(text)

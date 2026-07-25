@@ -30,3 +30,12 @@ def test_set_version_files_writes_both(tmp_path):
     deploy.set_version_files(tmp_path, "0.4.0")
     assert 'version = "0.4.0"' in (tmp_path / "pyproject.toml").read_text()
     assert '__version__ = "0.4.0"' in (tmp_path / "nocturne" / "__init__.py").read_text()
+    assert '0.3.0' not in (tmp_path / "pyproject.toml").read_text()   # replaced, not appended
+
+
+def test_set_version_files_raises_if_no_version_line(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('name = "nocturne"\n')  # no version line
+    (tmp_path / "nocturne").mkdir()
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
+    with pytest.raises(ValueError):
+        deploy.set_version_files(tmp_path, "0.4.0")
