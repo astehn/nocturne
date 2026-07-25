@@ -1998,4 +1998,177 @@ def test_open_project_without_solve_leaves_unsolved(qtbot, tmp_path, monkeypatch
     win.project = None
     win._open_project(out)
 
+
+# --- dirty-state tracking, window title, save-before-close/open guard ---
+
+def test_dirty_false_after_open(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._dirty is False
+
+
+def test_dirty_true_after_edit(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._dirty is True
+
+
+def test_dirty_false_after_save_project_as(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._dirty is True
+    out = str(tmp_path / "dirty.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert win._dirty is False
+
+
+def test_window_title_reflects_name_and_dirty_marker(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    assert win.windowTitle() == "Nocturne"   # no image yet
+    win.open_fits(_make_fits(tmp_path))
+    assert "stack" in win.windowTitle()
+    assert "•" not in win.windowTitle()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "•" in win.windowTitle()
+    out = str(tmp_path / "titled.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert "titled" in win.windowTitle()
+    assert "•" not in win.windowTitle()
+
+
+def test_confirm_save_if_dirty_cancel_aborts(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    assert win._confirm_save_if_dirty() is False
+    assert win._dirty is True   # nothing changed
+
+
+def test_confirm_save_if_dirty_discard_returns_true(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    assert win._confirm_save_if_dirty() is True
+    assert win._dirty is True   # discard doesn't save; caller proceeds to replace the project
+
+
+def test_confirm_save_if_dirty_save_runs_save_project(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = str(tmp_path / "confirmed.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    assert win._confirm_save_if_dirty() is True
+    assert win._dirty is False
+    assert win._project_path == out
+
+
+def test_confirm_save_if_dirty_save_dialog_cancelled_returns_false(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))   # user dismisses Save As
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    assert win._confirm_save_if_dirty() is False
+    assert win._dirty is True
+
+
+def test_confirm_save_if_dirty_clean_project_no_prompt(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    called = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: called.append(1) or QMessageBox.StandardButton.Cancel)
+    assert win._confirm_save_if_dirty() is True
+    assert called == []
+
+
+def test_open_project_guarded_by_confirm_save_if_dirty(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    project_before = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    win._open_project(str(tmp_path / "nonexistent.nocturne"))
+    assert win.project is project_before   # aborted, nothing replaced
+
+
+def test_open_fits_guarded_by_confirm_save_if_dirty(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    project_before = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    other_dir = tmp_path / "second"
+    other_dir.mkdir()
+    win.open_fits(_make_fits(other_dir, filter_card="R"))
+    assert win.project is project_before   # aborted
+
+
+def test_closeevent_dirty_offers_save(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = str(tmp_path / "closesave.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    assert ev.isAccepted()
+    assert (tmp_path / "closesave.nocturne").exists()
+
+
+def test_closeevent_clean_project_does_not_prompt(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    called = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: called.append(1) or QMessageBox.StandardButton.Cancel)
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    assert ev.isAccepted()
+    assert called == []
+
     assert win._solve is None  # no crash, just nothing to annotate
