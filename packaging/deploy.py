@@ -230,11 +230,21 @@ def preflight(config: DeployConfig, run=real_run) -> None:
     run(["git", "fetch", "origin", "main"])
     if run(["git", "rev-list", "HEAD..origin/main", "--count"], capture=True).strip() != "0":
         raise SystemExit("preflight: behind origin/main — pull first")
-    subprocess.run([".venv/bin/python", "-m", "pytest", "-q"], cwd=ROOT, check=True)
-    run(["gh", "auth", "status"])
+    try:
+        subprocess.run([".venv/bin/python", "-m", "pytest", "-q"], cwd=ROOT, check=True)
+    except subprocess.CalledProcessError:
+        raise SystemExit("preflight: tests failed")
     host = config.ssh_host
-    run(["ssh", "-o", "BatchMode=yes", host, "true"])
-    run(["ssh", host, "sudo", "-n", "true"])
+    for cmd, msg in [
+        (["gh", "auth", "status"], "preflight: gh not authenticated"),
+        (["ssh", "-o", "BatchMode=yes", host, "true"], f"preflight: cannot ssh to {host}"),
+        (["ssh", host, "sudo", "-n", "true"],
+         f"preflight: passwordless sudo not available on {host}"),
+    ]:
+        try:
+            run(cmd)
+        except subprocess.CalledProcessError:
+            raise SystemExit(msg)
 
 
 def _load_notes(path: Path) -> Notes:

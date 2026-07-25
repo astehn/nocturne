@@ -248,6 +248,7 @@ def test_dry_run_prints_plan_and_does_not_mutate(tmp_path, capsys, monkeypatch):
     notes = tmp_path / "notes.json"
     notes.write_text(json.dumps({"headline": "h", "added": ["X"], "changed": [], "fixed": []}))
     monkeypatch.setattr(deploy, "ROOT", tmp_path)
+    monkeypatch.setattr(deploy, "SITE", site)
     monkeypatch.setattr(deploy, "preflight", lambda c, run: None)
     rc = deploy.main(["--config", str(cfg), "--version", "0.4.0",
                       "--notes-json", str(notes), "--dry-run"])
@@ -257,3 +258,27 @@ def test_dry_run_prints_plan_and_does_not_mutate(tmp_path, capsys, monkeypatch):
     assert "rsync" in out and "gh release create" in out   # remote plan printed
     # nothing actually changed:
     assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()
+
+
+def test_preflight_aborts_when_not_on_main(tmp_path):
+    def fake_run(cmd, *, capture=False):
+        if "rev-parse" in cmd:
+            return "feature-x\n"
+        return ""
+    with pytest.raises(SystemExit):
+        deploy.preflight(_cfg(tmp_path), run=fake_run)
+
+
+def test_preflight_aborts_on_gh_auth_failure(tmp_path, monkeypatch):
+    import subprocess as sp
+    monkeypatch.setattr(deploy.subprocess, "run", lambda *a, **k: None)  # skip real pytest
+    def fake_run(cmd, *, capture=False):
+        if "rev-parse" in cmd:
+            return "main\n"
+        if "rev-list" in cmd:
+            return "0\n"
+        if cmd[:3] == ["gh", "auth", "status"]:
+            raise sp.CalledProcessError(1, cmd)
+        return ""
+    with pytest.raises(SystemExit):
+        deploy.preflight(_cfg(tmp_path), run=fake_run)
