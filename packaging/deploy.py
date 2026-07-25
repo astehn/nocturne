@@ -158,6 +158,13 @@ def _resolve_includes(config: DeployConfig, site_dir: Path) -> list[str]:
 
 
 def build_rsync_cmd(config: DeployConfig, site_dir: Path) -> list[str]:
+    # SAFETY: this exclude guard is load-bearing even though `include` is an
+    # allowlist. rsync applies --exclude filters to explicitly-named source
+    # args too, so these excludes are the last line of defense if `include` is
+    # ever misconfigured to match server state (config.php, db/, uploads/). Do
+    # NOT remove this guard, and do NOT switch to --files-from (which does not
+    # apply exclude filtering to its file list the same way) without replacing
+    # this protection.
     missing = [e for e in REQUIRED_EXCLUDES if e not in config.exclude]
     if missing:
         raise ValueError(f"deploy config exclude is missing server-state guards: {missing}")
@@ -169,6 +176,12 @@ def build_rsync_cmd(config: DeployConfig, site_dir: Path) -> list[str]:
 
 
 def build_chown_cmd(config: DeployConfig) -> list[str]:
+    import re as _re
+    if not _re.match(r"^[\w.-]+:[\w.-]+$", config.owner):
+        raise ValueError(f"invalid owner (want user:group): {config.owner!r}")
+    for mode in (config.dir_mode, config.file_mode):
+        if not _re.match(r"^[0-7]{3,4}$", mode):
+            raise ValueError(f"invalid mode: {mode!r}")
     p = config.remote_path
     remote = (f"sudo chown -R {config.owner} {p} && "
               f"sudo find {p} -type d -exec chmod {config.dir_mode} {{}} + && "

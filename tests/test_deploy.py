@@ -134,7 +134,7 @@ def test_build_rsync_cmd_is_safe(tmp_path):
         (site / f).write_text("x")
     (site / "img" / "shot.jpg").write_text("x")
     cmd = deploy.build_rsync_cmd(_cfg(tmp_path), site)
-    assert "--delete" not in cmd
+    assert not any(a.startswith("--del") for a in cmd)   # no --delete / --delete-after / --del
     assert "--rsync-path=sudo rsync" in cmd
     # every configured exclude is present
     for e in _cfg(tmp_path).exclude:
@@ -174,3 +174,38 @@ def test_build_chown_cmd(tmp_path):
     assert "-type d -exec chmod 755" in remote
     assert "-type f -exec chmod 644" in remote
     assert "/var/www/nocturne" in remote and remote.count("/var/www/nocturne") == 3
+
+
+def test_rsync_excludes_survive_colliding_include(tmp_path):
+    # even if include is misconfigured to match server state, the exclude filter
+    # for it must still be in the argv (rsync applies it to named sources)
+    p = tmp_path / "c.toml"
+    p.write_text('''
+[github]
+repo = "r"
+[website]
+ssh_host = "h"
+remote_path = "/p"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.php"]
+exclude = ["config*.php", "db/", "uploads/"]
+''')
+    site = tmp_path / "site"; site.mkdir()
+    (site / "config.php").write_text("secret")
+    cmd = deploy.build_rsync_cmd(deploy.load_config(p), site)
+    assert "--exclude=config*.php" in cmd
+
+
+def test_rsync_skips_missing_include_dir(tmp_path):
+    site = tmp_path / "site"; site.mkdir()   # no img/ subdir present
+    cmd = deploy.build_rsync_cmd(_cfg(tmp_path), site)   # config includes "img/"
+    assert not any(a == str(site / "img") for a in cmd)  # missing dir skipped, no crash
+
+
+def test_build_chown_cmd_rejects_bad_owner(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.owner = "rm -rf /"
+    with pytest.raises(ValueError):
+        deploy.build_chown_cmd(cfg)
