@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import os
 
 import numpy as np
@@ -10,8 +11,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME
+from .. import APP_NAME, __version__
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
+from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
@@ -33,6 +35,7 @@ from .histogram_view import HistogramView
 from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
+from .provenance_dialog import ProvenanceDialog
 from .theme import ACCENT
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
@@ -399,6 +402,8 @@ class MainWindow(QMainWindow):
         project_menu.addSeparator()
         self._close_project_act = project_menu.addAction(
             "Close Project", self._close_project)   # back to the welcome screen
+        self._provenance_act = project_menu.addAction(
+            "Provenance report…", self._show_provenance)   # readable record of the edit pipeline
 
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
@@ -2163,6 +2168,13 @@ class MainWindow(QMainWindow):
         self._show_chrome(False)
         self._update_title()
         self._update_info_strip()
+
+    def _show_provenance(self) -> None:
+        if self.project is None:
+            return
+        report = build_report(self.project.entries(), self.project.current().metadata,
+                              app_version=__version__, date=datetime.date.today())
+        ProvenanceDialog(report, self.settings, parent=self).exec()
 
     def _refresh(self) -> None:
         self._set_peek(False)   # a rebuilt view always shows the current image
