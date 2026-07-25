@@ -228,8 +228,10 @@ def preflight(config: DeployConfig, run=real_run) -> None:
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).strip()
     if branch != "main":
         raise SystemExit(f"preflight: not on main (on {branch})")
-    if run(["git", "status", "--porcelain"], capture=True).strip():
-        raise SystemExit("preflight: working tree has uncommitted changes")
+    # tracked-only: stray untracked files (local junk, un-ignored build artifacts)
+    # must not block a release — only uncommitted changes to tracked files do.
+    if run(["git", "status", "--porcelain", "--untracked-files=no"], capture=True).strip():
+        raise SystemExit("preflight: tracked files have uncommitted changes")
     run(["git", "fetch", "origin", "main"])
     if run(["git", "rev-list", "HEAD..origin/main", "--count"], capture=True).strip() != "0":
         raise SystemExit("preflight: behind origin/main — pull first")
