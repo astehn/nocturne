@@ -3,12 +3,15 @@ call routes through an injectable `run` so tests capture commands without
 executing them. See docs/superpowers/specs/2026-07-25-deploy-skill-design.md."""
 from __future__ import annotations
 
+import datetime
+import html as _html
 import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_PREFIX_RE = re.compile(r"^(\w+)(\([^)]*\))?!?:\s*")   # conventional-commit prefix
 
 
 def parse_version(s: str) -> tuple[int, int, int]:
@@ -68,3 +71,67 @@ def load_config(path: Path) -> DeployConfig:
         )
     except KeyError as e:
         raise ValueError(f"deploy config missing required key: {e}") from e
+
+
+@dataclass
+class Notes:
+    headline: str
+    added: list[str]
+    changed: list[str]
+    fixed: list[str]
+
+
+def draft_notes_from_log(log_lines: list[str]) -> Notes:
+    added: list[str] = []
+    changed: list[str] = []
+    fixed: list[str] = []
+    for raw in log_lines:
+        line = raw.strip()
+        if not line:
+            continue
+        m = _PREFIX_RE.match(line)
+        kind = (m[1].lower() if m else "")
+        subject = line[m.end():] if m else line
+        if kind == "feat":
+            added.append(subject)
+        elif kind == "fix":
+            fixed.append(subject)
+        else:
+            changed.append(subject)
+    return Notes(headline="", added=added, changed=changed, fixed=fixed)
+
+
+def _sections(notes: Notes) -> list[tuple[str, list[str]]]:
+    return [("Added", notes.added), ("Changed", notes.changed), ("Fixed", notes.fixed)]
+
+
+def render_release_notes(notes: Notes) -> str:
+    parts: list[str] = []
+    if notes.headline:
+        parts.append(notes.headline)
+    for name, items in _sections(notes):
+        if items:
+            parts.append(f"### {name}\n" + "\n".join(f"- {i}" for i in items))
+    return "\n\n".join(parts)
+
+
+def render_changelog_md(version: str, date: datetime.date, notes: Notes) -> str:
+    return f"## [{version}] — {date.isoformat()}\n\n{render_release_notes(notes)}"
+
+
+def _human_date(date: datetime.date) -> str:
+    return f"{date.day} {date:%B %Y}"
+
+
+def render_changelog_html(version: str, date: datetime.date, notes: Notes) -> str:
+    lines = ['<article class="release">',
+             f"  <h2>{_html.escape(notes.headline or version)}</h2>",
+             f'  <p class="when">{_human_date(date)}</p>']
+    for name, items in _sections(notes):
+        if items:
+            lines.append(f"  <h3>{name}</h3>")
+            lines.append("  <ul>")
+            lines += [f"    <li>{_html.escape(i)}</li>" for i in items]
+            lines.append("  </ul>")
+    lines.append("</article>")
+    return "\n".join(lines)

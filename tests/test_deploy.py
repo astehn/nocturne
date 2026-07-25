@@ -75,3 +75,45 @@ def test_load_config_missing_key_raises(tmp_path):
     p.write_text('[website]\nssh_host = "x"\n')
     with pytest.raises(ValueError):
         deploy.load_config(p)
+
+
+import datetime
+
+
+def test_draft_notes_categorizes_by_prefix():
+    n = deploy.draft_notes_from_log([
+        "feat(ui): add close project",
+        "fix: correct crop math",
+        "chore: bump deps",
+        "docs: tweak readme",
+    ])
+    assert n.added == ["add close project"]
+    assert n.fixed == ["correct crop math"]
+    assert n.changed == ["bump deps", "tweak readme"]
+    assert n.headline == ""
+
+
+def test_render_release_notes_skips_empty_sections():
+    n = deploy.Notes(headline="A calmer build", added=["X"], changed=[], fixed=["Y"])
+    md = deploy.render_release_notes(n)
+    assert md.startswith("A calmer build")
+    assert "### Added" in md and "- X" in md
+    assert "### Fixed" in md and "- Y" in md
+    assert "### Changed" not in md
+
+
+def test_render_changelog_md_has_dated_header():
+    n = deploy.Notes(headline="h", added=["X"], changed=[], fixed=[])
+    md = deploy.render_changelog_md("0.4.0", datetime.date(2026, 7, 25), n)
+    assert md.startswith("## [0.4.0] — 2026-07-25")
+    assert "### Added" in md
+
+
+def test_render_changelog_html_is_escaped_article():
+    n = deploy.Notes(headline="Colour & light", added=["a < b"], changed=[], fixed=[])
+    html = deploy.render_changelog_html("0.4.0", datetime.date(2026, 7, 25), n)
+    assert html.lstrip().startswith('<article class="release">')
+    assert "<h2>Colour &amp; light</h2>" in html
+    assert '<p class="when">25 July 2026</p>' in html
+    assert "<li>a &lt; b</li>" in html
+    assert html.rstrip().endswith("</article>")
