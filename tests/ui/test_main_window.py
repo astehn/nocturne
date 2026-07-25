@@ -23,7 +23,7 @@ def _make_fits(tmp_path, filter_card="L"):
 
 
 def _window(qtbot, tmp_path):
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
     win._async_enabled = False  # run step processing synchronously in tests
     qtbot.addWidget(win)
     return win
@@ -2328,3 +2328,20 @@ def test_close_event_clears_cache_on_quit(qtbot, tmp_path):
     win.closeEvent(ev)   # not dirty after open, so the save-guard passes
     assert ev.accepted
     assert not any(n.startswith("state_") for n in os.listdir(win._cache_dir))
+
+
+def test_update_indicator_shows_when_newer(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert not win._update_act.isVisible()          # hidden by default
+    win._on_update_check("0.999.0")                 # a much newer release
+    assert win._update_act.isVisible()
+    assert "0.999.0" in win._update_act.toolTip()
+
+
+def test_update_indicator_hidden_when_current_or_none(qtbot, tmp_path):
+    from nocturne import __version__
+    win = _window(qtbot, tmp_path)
+    win._on_update_check(__version__)               # same version
+    assert not win._update_act.isVisible()
+    win._on_update_check(None)                       # check failed / offline
+    assert not win._update_act.isVisible()
