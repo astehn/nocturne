@@ -7,13 +7,18 @@ import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
 from ..tools.astap import FITS_Y_DOWN
 
-_DATA = os.path.join(os.path.dirname(__file__), "..", "data", "openngc.csv")
-_STARS = os.path.join(os.path.dirname(__file__), "..", "data", "named_stars.csv")
+# Resolve via Path.resolve() (like ui/icons.py) so the ".." collapses to a real
+# path. A raw os.path.join(..., "..", "data", ...) leaves a "core/../data" that
+# the OS can't traverse in the PyInstaller bundle — nocturne/core/ isn't a real
+# directory there (the code lives in the PYZ archive) — so open() raised ENOENT.
+_DATA = str(Path(__file__).resolve().parent.parent / "data" / "openngc.csv")
+_STARS = str(Path(__file__).resolve().parent.parent / "data" / "named_stars.csv")
 _LABEL_MARGIN = 8               # keep a clamped label this many px inside the frame
 _NAME_RE = re.compile(r"^([A-Za-z]+)0*(\d+)(.*)$")
 

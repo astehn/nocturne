@@ -74,3 +74,16 @@ def test_bundled_named_stars_has_known_stars():
     assert "Deneb" in d and "Vega" in d and "Altair" in d
     ra, dec = d["Deneb"]
     assert abs(ra - 310.36) < 0.1 and abs(dec - 45.28) < 0.1     # sanity: real coords
+
+
+def test_data_paths_are_resolved_without_dotdot():
+    # In the PyInstaller bundle, nocturne/core/ is not a real directory (code
+    # lives in the PYZ archive), so an un-normalized "core/../data/..." path
+    # can't be traversed and open() raises ENOENT. The paths must be resolved
+    # (no "..") and point at existing files.
+    import os
+    from nocturne.core import catalog
+    assert ".." not in catalog._DATA
+    assert ".." not in catalog._STARS
+    assert os.path.exists(catalog._DATA)
+    assert os.path.exists(catalog._STARS)
