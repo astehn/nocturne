@@ -209,3 +209,51 @@ def test_build_chown_cmd_rejects_bad_owner(tmp_path):
     cfg.owner = "rm -rf /"
     with pytest.raises(ValueError):
         deploy.build_chown_cmd(cfg)
+
+
+import json
+
+
+class RecordingRunner:
+    """Captures commands; returns canned stdout for read-only queries."""
+    def __init__(self, outputs=None):
+        self.calls = []
+        self.outputs = outputs or {}
+    def __call__(self, cmd, *, capture=False):
+        self.calls.append(cmd)
+        for key, out in self.outputs.items():
+            if key in " ".join(cmd):
+                return out
+        return ""
+
+
+def test_prepend_file_inserts_before_anchor(tmp_path):
+    f = tmp_path / "CHANGELOG.md"
+    f.write_text("# Changelog\n\npreamble\n\n## [0.3.0] — 2026-07-23\nold\n")
+    deploy.prepend_file(f, "## [0.4.0] — 2026-07-25\nnew", anchor="## [")
+    text = f.read_text()
+    assert text.index("[0.4.0]") < text.index("[0.3.0]")
+    assert "preamble" in text
+
+
+def test_dry_run_prints_plan_and_does_not_mutate(tmp_path, capsys, monkeypatch):
+    # minimal fake repo tree
+    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n')
+    (tmp_path / "nocturne").mkdir()
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n")
+    site = tmp_path / "site"; site.mkdir()
+    (site / "changelog.html").write_text('<div class="wrap prose">\n<article class="release">old</article>\n</div>')
+    cfg = _write_config(tmp_path)
+    notes = tmp_path / "notes.json"
+    notes.write_text(json.dumps({"headline": "h", "added": ["X"], "changed": [], "fixed": []}))
+    monkeypatch.setattr(deploy, "ROOT", tmp_path)
+    monkeypatch.setattr(deploy, "preflight", lambda c, run: None)
+    rc = deploy.main(["--config", str(cfg), "--version", "0.4.0",
+                      "--notes-json", str(notes), "--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0.4.0" in out
+    assert "rsync" in out and "gh release create" in out   # remote plan printed
+    # nothing actually changed:
+    assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()

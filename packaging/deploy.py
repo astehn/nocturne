@@ -3,13 +3,20 @@ call routes through an injectable `run` so tests capture commands without
 executing them. See docs/superpowers/specs/2026-07-25-deploy-skill-design.md."""
 from __future__ import annotations
 
+import argparse
 import datetime
 import glob as _glob
 import html as _html
+import json
 import re
+import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent          # repo root
+SITE = ROOT / "site"
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _PREFIX_RE = re.compile(r"^(\w+)(\([^)]*\))?!?:\s*")   # conventional-commit prefix
@@ -187,3 +194,100 @@ def build_chown_cmd(config: DeployConfig) -> list[str]:
               f"sudo find {p} -type d -exec chmod {config.dir_mode} {{}} + && "
               f"sudo find {p} -type f -exec chmod {config.file_mode} {{}} +")
     return ["ssh", config.ssh_host, remote]
+
+
+def real_run(cmd: list[str], *, capture: bool = False) -> str:
+    r = subprocess.run(cmd, check=True, text=True, capture_output=capture)
+    return (r.stdout or "") if capture else ""
+
+
+def get_last_tag(run=real_run) -> str:
+    return run(["git", "describe", "--tags", "--abbrev=0", "--match", "v*"],
+               capture=True).strip()
+
+
+def get_log_since(tag: str, run=real_run) -> list[str]:
+    out = run(["git", "log", f"{tag}..HEAD", "--pretty=%s"], capture=True)
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def prepend_file(path: Path, block: str, anchor: str) -> None:
+    lines = path.read_text().splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if anchor in ln:
+            lines.insert(i, block + "\n\n")
+            path.write_text("".join(lines))
+            return
+    raise ValueError(f"anchor {anchor!r} not found in {path}")
+
+
+def preflight(config: DeployConfig, run=real_run) -> None:
+    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).strip()
+    if branch != "main":
+        raise SystemExit(f"preflight: not on main (on {branch})")
+    if run(["git", "status", "--porcelain"], capture=True).strip():
+        raise SystemExit("preflight: working tree has uncommitted changes")
+    run(["git", "fetch", "origin", "main"])
+    if run(["git", "rev-list", "HEAD..origin/main", "--count"], capture=True).strip() != "0":
+        raise SystemExit("preflight: behind origin/main — pull first")
+    subprocess.run([".venv/bin/python", "-m", "pytest", "-q"], cwd=ROOT, check=True)
+    run(["gh", "auth", "status"])
+    host = config.ssh_host
+    run(["ssh", "-o", "BatchMode=yes", host, "true"])
+    run(["ssh", host, "sudo", "-n", "true"])
+
+
+def _load_notes(path: Path) -> Notes:
+    d = json.loads(path.read_text())
+    return Notes(headline=d.get("headline", ""), added=d.get("added", []),
+                 changed=d.get("changed", []), fixed=d.get("fixed", []))
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="deploy")
+    ap.add_argument("--config", default=str(ROOT / "packaging" / "deploy.local.toml"))
+    ap.add_argument("--version")
+    ap.add_argument("--notes-json")
+    ap.add_argument("--preflight", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args(argv)
+    config = load_config(Path(args.config))
+
+    preflight(config, real_run)
+    if args.preflight:
+        print("preflight OK")
+        return 0
+
+    version = args.version or next_minor(get_last_tag().lstrip("v"))
+    notes = _load_notes(Path(args.notes_json))
+    today = datetime.date.today()
+    md_block = render_changelog_md(version, today, notes)
+    html_block = render_changelog_html(version, today, notes)
+    asset = release_asset_name(version)
+
+    if args.dry_run:
+        print(f"[dry-run] version -> {version}")
+        print(f"[dry-run] CHANGELOG.md prepend:\n{md_block}\n")
+        print(f"[dry-run] site/changelog.html prepend:\n{html_block}\n")
+        print(f"[dry-run] build: pyinstaller packaging/nocturne.spec -> dist/{asset}")
+        print("[dry-run] remote plan:")
+        print("  " + " ".join(["git", "commit/push", f"v{version}"]))
+        print("  " + f"gh release create v{version} dist/{asset}")
+        print("  " + " ".join(build_rsync_cmd(config, SITE)))
+        print("  " + " ".join(build_chown_cmd(config)))
+        return 0
+
+    # real local mutations
+    set_version_files(ROOT, version)
+    prepend_file(ROOT / "CHANGELOG.md", md_block, anchor="## [")
+    prepend_file(SITE / "changelog.html", html_block, anchor='<article class="release">')
+    _remote_release(config, version, notes, asset, real_run)   # Task 6
+    return 0
+
+
+def _remote_release(config, version, notes, asset, run):
+    raise NotImplementedError("filled in by Task 6")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
