@@ -7,6 +7,11 @@ from nocturne.ui.main_window import MainWindow  # noqa: E402
 from nocturne.core.image import AstroImage  # noqa: E402
 
 
+class _Stub:
+    def exec(self):
+        return 0
+
+
 def _make_fits(tmp_path, filter_card="L"):
     arr = (np.random.rand(3, 24, 24) * 1000).astype(np.uint16)
     p = tmp_path / "stack.fits"
@@ -2257,3 +2262,19 @@ def test_close_project_confirms_when_dirty(qtbot, tmp_path, monkeypatch):
     win._close_project()
     assert win.project is not None                       # close was aborted
     assert win._center_stack.currentWidget() is win.image_view
+
+
+def test_provenance_action_builds_report(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    captured = {}
+    monkeypatch.setattr("nocturne.ui.main_window.ProvenanceDialog",
+                        lambda report, settings, parent=None, source_label=None: (captured.setdefault("r", report), _Stub())[1])
+    win._show_provenance()
+    assert "# Nocturne processing report" in captured["r"]
+    assert "- Camera: Sony IMX585" in captured["r"]   # capture header rendered from the opened FITS
+
+
+def test_provenance_action_noop_without_project(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._show_provenance()   # no project → must not raise
