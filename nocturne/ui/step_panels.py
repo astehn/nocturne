@@ -81,6 +81,7 @@ def build_panel(
             btn.clicked.connect(lambda: on_open())
         lay.addWidget(btn)
         meta = _desc_label("Open a stacked Seestar FITS to begin.")
+        meta.setObjectName("importMeta")   # brighter/larger than stepDesc — the FITS info must be readable
         meta.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(meta)
         w.meta_label = meta

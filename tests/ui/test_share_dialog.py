@@ -53,3 +53,10 @@ def test_copy_uses_injected_clipboard(qtbot):
     d._clipboard_runner = lambda img: grabbed.update(w=img.width())
     d._do_copy()
     assert grabbed["w"] > 0
+
+
+def test_close_button_rejects(qtbot):
+    from PySide6.QtWidgets import QDialog
+    d = _dlg(qtbot)
+    d._close_btn.click()
+    assert d.result() == QDialog.DialogCode.Rejected

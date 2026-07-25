@@ -106,6 +106,9 @@ class UpscaleDialog(QDialog):
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._open_copy_btn)
         buttons.addStretch(1)
+        self._close_btn = QPushButton("Close")
+        self._close_btn.clicked.connect(self.reject)
+        buttons.addWidget(self._close_btn)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self._image_view)
