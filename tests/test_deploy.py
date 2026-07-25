@@ -330,3 +330,77 @@ def test_build_failure_rolls_back_version(tmp_path, monkeypatch):
     assert '0.3.0' in (tmp_path / "pyproject.toml").read_text()          # bump rolled back
     assert '0.4.0' not in (tmp_path / "pyproject.toml").read_text()
     assert '0.3.0' in (tmp_path / "nocturne" / "__init__.py").read_text()
+
+
+def _cfg_with_download(tmp_path):
+    p = tmp_path / "cdl.toml"
+    p.write_text('''
+[github]
+repo = "astehn/nocturne"
+[website]
+ssh_host = "debian@VPS"
+remote_path = "/var/www/nocturne"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.html"]
+exclude = ["config*.php", "db/", "uploads/"]
+download_path = "/var/www/nocturne/download/Nocturne.zip"
+''')
+    return deploy.load_config(p)
+
+
+def test_download_path_optional_in_config(tmp_path):
+    assert _cfg(tmp_path).download_path is None
+    assert _cfg_with_download(tmp_path).download_path == "/var/www/nocturne/download/Nocturne.zip"
+
+
+def test_build_download_cmd_absent_and_present(tmp_path):
+    assert deploy.build_download_cmd(_cfg(tmp_path), "Nocturne-0.4.0.zip") is None
+    cmd = deploy.build_download_cmd(_cfg_with_download(tmp_path), "Nocturne-0.4.0.zip")
+    assert "--rsync-path=sudo rsync" in cmd
+    assert not any(a.startswith("--del") for a in cmd)
+    assert any("Nocturne-0.4.0.zip" in a for a in cmd)
+    assert cmd[-1] == "debian@VPS:/var/www/nocturne/download/Nocturne.zip"
+
+
+def test_remote_release_uploads_binary_before_chown(tmp_path):
+    import unittest.mock as mock
+    (tmp_path / "site").mkdir()
+    r = RecordingRunner()
+    notes = deploy.Notes(headline="h", added=["X"], changed=[], fixed=[])
+    with mock.patch.object(deploy, "SITE", tmp_path / "site"):
+        deploy._remote_release(_cfg_with_download(tmp_path), "0.4.0", notes, "Nocturne-0.4.0.zip", r)
+    flat = [" ".join(c) for c in r.calls]
+    dl_idx = next(i for i, s in enumerate(flat) if "download/Nocturne.zip" in s and "Nocturne-0.4.0.zip" in s)
+    chown_idx = next(i for i, s in enumerate(flat) if "chown" in s)
+    assert dl_idx < chown_idx
+
+
+def test_remote_release_skips_binary_upload_when_unset(tmp_path):
+    import unittest.mock as mock
+    (tmp_path / "site").mkdir()
+    r = RecordingRunner()
+    notes = deploy.Notes(headline="h", added=["X"], changed=[], fixed=[])
+    with mock.patch.object(deploy, "SITE", tmp_path / "site"):
+        deploy._remote_release(_cfg(tmp_path), "0.4.0", notes, "Nocturne-0.4.0.zip", r)
+    assert not any("download/" in " ".join(c) for c in r.calls)
+
+
+def test_download_path_outside_remote_path_rejected(tmp_path):
+    p = tmp_path / "bad.toml"
+    p.write_text('''
+[github]
+repo = "r"
+[website]
+ssh_host = "h"
+remote_path = "/var/www/nocturne"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.html"]
+exclude = ["config*.php", "db/", "uploads/"]
+download_path = "/srv/other/App.zip"
+''')
+    with pytest.raises(ValueError):
+        deploy.load_config(p)

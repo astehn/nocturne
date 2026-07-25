@@ -63,6 +63,7 @@ class DeployConfig:
     file_mode: str
     include: list[str]
     exclude: list[str]
+    download_path: str | None = None   # VPS path of the site's self-hosted download, refreshed each deploy; MUST be inside remote_path (the post-upload chown recurses remote_path only)
 
 
 def load_config(path: Path) -> DeployConfig:
@@ -70,7 +71,7 @@ def load_config(path: Path) -> DeployConfig:
         data = tomllib.load(f)
     try:
         gh, web = data["github"], data["website"]
-        return DeployConfig(
+        cfg = DeployConfig(
             repo=gh["repo"],
             ssh_host=web["ssh_host"],
             remote_path=web["remote_path"],
@@ -79,9 +80,18 @@ def load_config(path: Path) -> DeployConfig:
             file_mode=web["file_mode"],
             include=list(web["include"]),
             exclude=list(web["exclude"]),
+            download_path=web.get("download_path"),
         )
     except KeyError as e:
         raise ValueError(f"deploy config missing required key: {e}") from e
+    if cfg.download_path and not (
+        cfg.download_path == cfg.remote_path
+        or cfg.download_path.startswith(cfg.remote_path.rstrip("/") + "/")
+    ):
+        raise ValueError(
+            f"download_path {cfg.download_path!r} must be inside remote_path "
+            f"{cfg.remote_path!r} so the post-upload chown covers it")
+    return cfg
 
 
 @dataclass
@@ -199,6 +209,15 @@ def build_chown_cmd(config: DeployConfig) -> list[str]:
     return ["ssh", config.ssh_host, remote]
 
 
+def build_download_cmd(config: DeployConfig, asset: str) -> list[str] | None:
+    """rsync the built release zip to the website's self-hosted download slot
+    (as root via sudo), or None when no download_path is configured."""
+    if not config.download_path:
+        return None
+    return ["rsync", "-av", "--rsync-path=sudo rsync",
+            str(DIST / asset), f"{config.ssh_host}:{config.download_path}"]
+
+
 def real_run(cmd: list[str], *, capture: bool = False) -> str:
     r = subprocess.run(cmd, check=True, text=True, capture_output=capture, cwd=ROOT)
     return (r.stdout or "") if capture else ""
@@ -290,6 +309,9 @@ def main(argv: list[str]) -> int:
         print("  " + " ".join(["git", "commit/push", f"v{version}"]))
         print("  " + f"gh release create v{version} dist/{asset}")
         print("  " + " ".join(build_rsync_cmd(config, SITE)))
+        dl = build_download_cmd(config, asset)
+        if dl:
+            print("  " + " ".join(dl))
         print("  " + " ".join(build_chown_cmd(config)))
         return 0
 
@@ -338,8 +360,11 @@ def _remote_release(config, version, notes, asset, run=real_run) -> None:
         ["gh", "release", "create", f"v{version}", str(DIST / asset),
          "--title", f"Nocturne {version}", "--notes-file", notes_path],
         build_rsync_cmd(config, SITE),
-        build_chown_cmd(config),
     ]
+    dl = build_download_cmd(config, asset)
+    if dl:
+        steps.append(dl)
+    steps.append(build_chown_cmd(config))
     i = 0
     try:
         for i, cmd in enumerate(steps):
