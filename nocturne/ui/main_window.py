@@ -359,6 +359,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_save_if_dirty():
             event.ignore()
             return
+        for t in self.findChildren(QTimer):
+            t.stop()   # cancel any pending debounced preview before deleting its snapshots
+        self._clear_cache()   # leave nothing behind on quit
         event.accept()
 
     # --- dirty-state tracking + window title ---
@@ -879,6 +882,7 @@ class MainWindow(QMainWindow):
     def open_image(self, base, label: str) -> None:
         self._source_base = base
         self._source_label = label
+        self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
         self._center_stack.setCurrentWidget(self.image_view)
@@ -2168,6 +2172,23 @@ class MainWindow(QMainWindow):
         self._show_chrome(False)
         self._update_title()
         self._update_info_strip()
+        self._clear_cache()   # the undo history is gone — reclaim the disk
+
+    def _clear_cache(self) -> None:
+        """Delete this session's transient undo snapshots (state_*.npy) from the
+        shared cache dir. Best-effort — a locked or missing file never blocks the
+        app. Saved .nocturne bundles are self-contained, so saved work is untouched."""
+        d = self._cache_dir
+        try:
+            names = os.listdir(d)      # raises if the dir is missing/unreadable — caught: never blocks the app
+        except OSError:
+            return
+        for name in names:
+            if name.startswith("state_") and name.endswith(".npy"):
+                try:
+                    os.remove(os.path.join(d, name))
+                except OSError:
+                    pass
 
     def _show_provenance(self) -> None:
         if self.project is None:
