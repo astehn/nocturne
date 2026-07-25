@@ -1,12 +1,14 @@
-# Copy to packaging/deploy.local.toml (gitignored) and fill in real values.
+# Template — copy to packaging/deploy.local.toml (gitignored) and fill in real
+# values. Keep real hostnames/paths ONLY in deploy.local.toml; this example is
+# committed to the public repo, so it must stay generic.
 [github]
-repo = "astehn/nocturne"
+repo = "you/your-repo"
 
 [website]
-# Keyless SSH login as debian (has passwordless sudo). May be a ~/.ssh/config
-# alias that sets `User debian`.
-ssh_host = "debian@vps-91763a81.vps.ovh.net"
-remote_path = "/var/www/nocturne"
+# Keyless SSH login as a user with passwordless sudo. May be a ~/.ssh/config
+# alias that sets `User <name>`.
+ssh_host = "deploy@your-vps.example.com"
+remote_path = "/var/www/your-site"
 owner = "www-data:www-data"       # applied to remote_path after upload
 dir_mode = "755"
 file_mode = "644"
