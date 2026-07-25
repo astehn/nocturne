@@ -1,8 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Build:  .venv/bin/pyinstaller packaging/nocturne.spec --noconfirm
-# NOTE: matplotlib must be pip-installed at BUILD time (astropy's PyInstaller hook
-#       imports astropy.visualization.wcsaxes, which importorskip's matplotlib).
-#       It is excluded from the bundle below — the app only uses astropy.io.fits.
+# NOTE: matplotlib must be BUNDLED (not excluded). astropy's WCS path (used by
+#       plate-solve) lazily imports it via astropy.visualization; excluding it
+#       left a half-present stub that raised "matplotlib.__spec__ is not set" at
+#       solve time in the packaged app (worked from source where matplotlib is
+#       installed). Keep it bundled so the import resolves cleanly.
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -36,7 +38,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["matplotlib", "tkinter", "PyQt5", "PyQt6"],
+    excludes=["tkinter", "PyQt5", "PyQt6"],   # matplotlib intentionally NOT excluded (see top-of-file note)
     noarchive=False,
 )
 pyz = PYZ(a.pure)
