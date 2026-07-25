@@ -1,0 +1,23 @@
+# Template — copy to packaging/deploy.local.toml (gitignored) and fill in real
+# values. Keep real hostnames/paths ONLY in deploy.local.toml; this example is
+# committed to the public repo, so it must stay generic.
+[github]
+repo = "you/your-repo"
+
+[website]
+# Keyless SSH login as a user with passwordless sudo. May be a ~/.ssh/config
+# alias that sets `User <name>`.
+ssh_host = "deploy@your-vps.example.com"
+remote_path = "/var/www/your-site"
+owner = "www-data:www-data"       # applied to remote_path after upload
+dir_mode = "755"
+file_mode = "644"
+# Static assets to deploy. rsync runs WITHOUT --delete, so server-only files survive.
+include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "img/"]
+# Internal files + server-state paths. Required server-state excludes:
+# config*.php, db/, uploads/ (the script refuses to run without them).
+exclude = [
+  "img/_originals/", "PRODUCT.md", "DESIGN.md", "README.md",
+  "_research_external_tools.md", "tests/",
+  "config*.php", "db/", "uploads/", "*.fits", "*.fit", "admin/",
+]
