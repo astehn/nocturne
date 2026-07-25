@@ -1,10 +1,12 @@
 import json
+import os
 import zipfile
 
 import numpy as np
 import pytest
 
 from nocturne.core.image import AstroImage
+from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from nocturne.history.project import Project
 from nocturne.history.project_store import (
     FORMAT_VERSION,
@@ -204,3 +206,69 @@ def test_numpy_scalar_metadata_survives_round_trip_with_native_type(tmp_path):
     assert meta["frames"] == 3
     assert isinstance(meta["frames"], int)
     assert meta["nested"]["x"] == pytest.approx(1.5)
+
+
+# --- off-thread save: progress reporting, cancellation, atomic write ---
+
+def test_save_project_reports_progress_to_total(tmp_path):
+    proj = _make_project_with_mixed_steps(tmp_path)
+    calls = []
+    save_project(proj, str(tmp_path / "p.nocturne"),
+                 on_progress=lambda done, total: calls.append((done, total)))
+
+    assert len(calls) >= 1
+    totals = {t for _, t in calls}
+    assert len(totals) == 1   # total is constant across calls
+    total = totals.pop()
+    assert total > 0
+    dones = [d for d, _ in calls]
+    assert dones == sorted(dones)          # strictly non-decreasing
+    assert dones[-1] == total              # ends at (total, total)
+
+
+def test_save_project_on_progress_none_is_noop(tmp_path):
+    proj = _make_project_with_mixed_steps(tmp_path)
+    # Must not raise when on_progress is omitted (default None).
+    save_project(proj, str(tmp_path / "p.nocturne"))
+    assert (tmp_path / "p.nocturne").exists()
+
+
+def test_save_project_cancelled_raises_and_leaves_no_output(tmp_path):
+    proj = _make_project_with_mixed_steps(tmp_path)
+    out_path = tmp_path / "cancelled.nocturne"
+
+    tok = CancelToken()
+    tok.cancel()
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            save_project(proj, str(out_path))
+    finally:
+        clear_ambient()
+
+    assert not out_path.exists()
+    # no leftover temp files in the target directory either
+    leftover = [p for p in tmp_path.iterdir() if "cache" not in p.name]
+    assert leftover == []
+
+
+def test_save_project_cancelled_leaves_existing_bundle_intact(tmp_path):
+    proj = _make_project_with_mixed_steps(tmp_path)
+    out_path = tmp_path / "existing.nocturne"
+
+    save_project(proj, str(out_path))  # write a real bundle first
+    original_bytes = out_path.read_bytes()
+
+    tok = CancelToken()
+    tok.cancel()
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            save_project(proj, str(out_path))
+    finally:
+        clear_ambient()
+
+    assert out_path.read_bytes() == original_bytes
+    leftover = [p for p in tmp_path.iterdir() if p.name != "existing.nocturne" and "cache" not in p.name]
+    assert leftover == []
+

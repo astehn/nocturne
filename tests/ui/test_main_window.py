@@ -2172,3 +2172,46 @@ def test_closeevent_clean_project_does_not_prompt(qtbot, tmp_path, monkeypatch):
     assert called == []
 
     assert win._solve is None  # no crash, just nothing to annotate
+
+
+# --- off-thread save: busy-panel progress wiring (core progress/cancel logic
+# is tested at the store level in tests/history/test_project_store.py) ---
+
+def test_save_project_as_drives_progress_and_clears_dirty(qtbot, tmp_path, monkeypatch):
+    """_async_enabled=False -> _run_busy runs synchronously, so the save still
+    round-trips and clears dirty exactly as before; along the way, save_project's
+    on_progress must reach the busy panel via _save_signals -> _set_progress."""
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)   # dirties the project + adds a cached-worthy step
+    assert win._dirty is True
+
+    seen = []
+    orig_set_progress = win._set_progress
+    def spy(phase, done, total):
+        seen.append((phase, done, total))
+        orig_set_progress(phase, done, total)
+    monkeypatch.setattr(win, "_set_progress", spy)
+
+    out = str(tmp_path / "progress.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    assert win._dirty is False
+    assert win._project_path == out
+    assert (tmp_path / "progress.nocturne").exists()
+    assert seen, "save_project's on_progress never reached _set_progress"
+    assert all(phase == "Saving project" for phase, _, _ in seen)
+    last_done, last_total = seen[-1][1], seen[-1][2]
+    assert last_done == last_total > 0
+
+
+def test_save_signals_wired_to_set_progress(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    seen = []
+    win._set_progress = lambda phase, done, total: seen.append((phase, done, total))
+    win._save_signals.progress.emit(3, 9)
+    assert seen == [("Saving project", 3, 9)]

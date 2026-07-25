@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from ..core.image import AstroImage
+from ..core.tasks import current as _current_token
 from ..recipe import _NAME_TO_STAGE, deserialize_option, serialize_option
 from ..settings import Settings
 from ..steps.factory import make_step
@@ -93,40 +96,81 @@ def _array_to_bytes(arr: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def save_project(project, path, *, solve_state=None, source_label: str = "") -> None:
+def save_project(project, path, *, solve_state=None, source_label: str = "",
+                  on_progress=None) -> None:
     """Write `project`'s full undo history (up to its current position) as a
     `.nocturne` zip bundle: the base image, a manifest describing every
     recorded step, and cached npy snapshots for the steps that aren't
-    reproducibly re-runnable from their serialized option alone."""
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
-        base = project.state_at(0)
-        zf.writestr("base.npy", _array_to_bytes(base.data))
+    reproducibly re-runnable from their serialized option alone.
 
-        steps = []
-        for i, (name, option) in enumerate(project.entries()):
-            stage = _stage_for(name)
-            ser = _ensure_serialized(stage, option)
-            cached = not is_reproducible(stage, ser)
-            entry = {"name": name, "stage": stage, "option": ser, "cached": cached, "cache": None}
-            if cached:
-                snapshot = project.state_at(i + 1)
-                cache_name = f"cache/{i:03d}.npy"
-                zf.writestr(cache_name, _array_to_bytes(snapshot.data))
-                entry["cache"] = cache_name
-                entry["is_linear"] = snapshot.is_linear
-                entry["metadata"] = _normalize_metadata(snapshot.metadata)
-            steps.append(entry)
+    Writes to a temp file in the same directory as `path` and atomically
+    `os.replace`s it into place on success, so a slow, cancelled, or failed
+    save can never corrupt (or even touch) an existing bundle at `path`.
 
-        manifest = {
-            "format_version": FORMAT_VERSION,
-            "app_version": _APP_VERSION,
-            "position": project.position,
-            "source_label": source_label,
-            "solve": solve_state,
-            "base": {"is_linear": base.is_linear, "metadata": _normalize_metadata(base.metadata)},
-            "steps": steps,
-        }
-        zf.writestr("manifest.json", json.dumps(manifest, default=str))
+    `on_progress(done, total)`, if given, is called after each zip member is
+    written (base + one per cached step + manifest); `total` is fixed up
+    front. Cancellation is checked (via the ambient `CancelToken`, if any)
+    at the same points — a `Cancelled` raised there aborts the write and
+    cleans up the temp file, leaving any pre-existing `path` untouched."""
+    entries = list(project.entries())
+    serialized = []   # [(stage, ser, cached), ...] computed once, reused for total + the write loop
+    for name, option in entries:
+        stage = _stage_for(name)
+        ser = _ensure_serialized(stage, option)
+        serialized.append((stage, ser, not is_reproducible(stage, ser)))
+    total = 1 + sum(1 for _, _, cached in serialized if cached) + 1   # base + cached steps + manifest
+    done = 0
+
+    def _tick():
+        nonlocal done
+        done += 1
+        if on_progress is not None:
+            on_progress(done, total)
+        tok = _current_token()
+        if tok is not None:
+            tok.check()
+
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".nocturne-save-", dir=directory)
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            base = project.state_at(0)
+            zf.writestr("base.npy", _array_to_bytes(base.data))
+            _tick()
+
+            steps = []
+            for i, (name, option) in enumerate(entries):
+                stage, ser, cached = serialized[i]
+                entry = {"name": name, "stage": stage, "option": ser, "cached": cached, "cache": None}
+                if cached:
+                    snapshot = project.state_at(i + 1)
+                    cache_name = f"cache/{i:03d}.npy"
+                    zf.writestr(cache_name, _array_to_bytes(snapshot.data))
+                    entry["cache"] = cache_name
+                    entry["is_linear"] = snapshot.is_linear
+                    entry["metadata"] = _normalize_metadata(snapshot.metadata)
+                    _tick()
+                steps.append(entry)
+
+            manifest = {
+                "format_version": FORMAT_VERSION,
+                "app_version": _APP_VERSION,
+                "position": project.position,
+                "source_label": source_label,
+                "solve": solve_state,
+                "base": {"is_linear": base.is_linear, "metadata": _normalize_metadata(base.metadata)},
+                "steps": steps,
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, default=str))
+            _tick()
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _bytes_to_array(data: bytes) -> np.ndarray:

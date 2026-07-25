@@ -103,6 +103,13 @@ class _AutoEnhanceSignals(QObject):
     progress = Signal(int, int, str)
 
 
+class _SaveSignals(QObject):
+    """Marshals save_project's on_progress callback (fired from the worker
+    thread when async is enabled) back onto the GUI thread via a queued
+    connection — mirrors _AutoEnhanceSignals."""
+    progress = Signal(int, int)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str) -> None:
         super().__init__()
@@ -125,6 +132,9 @@ class MainWindow(QMainWindow):
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
+        self._save_signals = _SaveSignals()
+        self._save_signals.progress.connect(
+            lambda d, t: self._set_progress("Saving project", d, t))
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -881,13 +891,7 @@ class MainWindow(QMainWindow):
         if self._project_path is None:
             self._save_project_as()
             return
-        save_project(self.project, self._project_path,
-                     solve_state=self._solve_state_dict(), source_label=self._source_label)
-        add_recent_project(self.settings, self._project_path)
-        save_settings(self.settings, self._settings_path)
-        self._dirty = False
-        self._update_title()
-        self._show_output(f"Saved project: {os.path.basename(self._project_path)}")
+        self._do_save_project(self._project_path)
 
     def _save_project_as(self) -> None:
         if self.project is None:
@@ -899,15 +903,30 @@ class MainWindow(QMainWindow):
             return
         if not path.lower().endswith(".nocturne"):
             path += ".nocturne"
-        self._project_path = path
-        save_project(self.project, path,
-                     solve_state=self._solve_state_dict(), source_label=self._source_label)
         self.settings.last_project_dir = os.path.dirname(path)
-        add_recent_project(self.settings, path)
-        save_settings(self.settings, self._settings_path)
-        self._dirty = False
-        self._update_title()
-        self._show_output(f"Saved project: {os.path.basename(path)}")
+        self._do_save_project(path)
+
+    def _do_save_project(self, path: str) -> None:
+        """Write the project to `path` off the UI thread (busy panel + cancel),
+        atomically (temp file + rename — a slow/cancelled save can't corrupt an
+        existing bundle at `path`). Solve state and source label are captured
+        here, on the UI thread, before the worker starts."""
+        solve_state = self._solve_state_dict()
+        source_label = self._source_label
+
+        def work():
+            save_project(self.project, path, solve_state=solve_state, source_label=source_label,
+                         on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
+
+        def on_result(_result) -> None:
+            self._project_path = path
+            self._dirty = False
+            self._update_title()
+            add_recent_project(self.settings, path)
+            save_settings(self.settings, self._settings_path)
+            self._show_output(f"Saved project: {os.path.basename(path)}")
+
+        self._run_busy(work, on_result, "Saving project…", "Save failed")
 
     def _open_project(self, path: str | None = None) -> None:
         if self._busy:
