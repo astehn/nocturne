@@ -75,6 +75,8 @@ class _Body(QGraphicsRectItem):
         self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
     def itemChange(self, change, value):
+        if change == self.GraphicsItemChange.ItemPositionChange:
+            value = self._overlay._clamp_body_pos(self, value)
         if change == self.GraphicsItemChange.ItemPositionHasChanged:
             self._overlay._geometry_changed()
         return super().itemChange(change, value)
@@ -391,31 +393,56 @@ class ImageView(QGraphicsView):
             x, y = pts[name]
             h.setPos(x, y)
 
+    def _image_wh(self) -> tuple[float, float]:
+        pm = self._item.pixmap()
+        return float(pm.width()), float(pm.height())
+
+    def _clamp_body_pos(self, body, pos: QPointF) -> QPointF:
+        """Constrain a proposed body position so the box's scene rect stays inside
+        the image — slides the box back in, preserving its size. A box larger than
+        the image (shouldn't happen) pins to the top-left."""
+        W, H = self._image_wh()
+        r = body.rect()                       # item-local rect: carries left/top + size
+        lo_x, hi_x = -r.left(), W - r.right()   # keep [left+x, right+x] within [0, W]
+        lo_y, hi_y = -r.top(), H - r.bottom()
+        if hi_x < lo_x:
+            hi_x = lo_x
+        if hi_y < lo_y:
+            hi_y = lo_y
+        return QPointF(min(max(pos.x(), lo_x), hi_x), min(max(pos.y(), lo_y), hi_y))
+
     def _resize_to(self, name: str, scene_pos) -> None:
+        W, H = self._image_wh()
         r = self._scene_rect()
         x0, y0, x1, y1 = r.left(), r.top(), r.right(), r.bottom()
+        px = min(max(scene_pos.x(), 0.0), W)          # clamp the drag point to the image
+        py = min(max(scene_pos.y(), 0.0), H)
         if "l" in name:
-            x0 = scene_pos.x()
+            x0 = px
         if "r" in name:
-            x1 = scene_pos.x()
+            x1 = px
         if "t" in name:
-            y0 = scene_pos.y()
+            y0 = py
         if "b" in name:
-            y1 = scene_pos.y()
+            y1 = py
         x0, x1 = sorted((x0, x1))
         y0, y1 = sorted((y0, y1))
-        w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
         if self._aspect:
-            if name in ("t", "b"):  # height-driven
-                w = h * self._aspect
-                x1 = x0 + w
-            else:  # width-driven (corners, left/right)
-                h = w / self._aspect
-                y1 = y0 + h
+            # Grow the aspect-locked box from the un-dragged anchor edge toward the
+            # drag, capped so it stays inside the image (preserves ratio + bounds).
+            anchor_x = x1 if "l" in name else x0
+            anchor_y = y1 if "t" in name else y0
+            avail_w = anchor_x if "l" in name else (W - anchor_x)
+            avail_h = anchor_y if "t" in name else (H - anchor_y)
+            drive_h = (y1 - y0) if name in ("t", "b") else (x1 - x0) / self._aspect
+            h = max(1.0, min(drive_h, avail_h, avail_w / self._aspect))
+            w = h * self._aspect
+            x0, x1 = (anchor_x - w, anchor_x) if "l" in name else (anchor_x, anchor_x + w)
+            y0, y1 = (anchor_y - h, anchor_y) if "t" in name else (anchor_y, anchor_y + h)
         self._body.setPos(0, 0)
         self._body.setRect(QRectF(x0, y0, max(1.0, x1 - x0), max(1.0, y1 - y0)))
         self._position_handles()
-        self._emit_bounds()
+        self._geometry_changed()
 
     def _geometry_changed(self) -> None:
         self._position_handles()

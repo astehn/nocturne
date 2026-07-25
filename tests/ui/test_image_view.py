@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QPointF  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from nocturne.ui.image_view import ImageView  # noqa: E402
 
@@ -226,3 +227,90 @@ def test_zoom_pill_hidden_during_crop(qtbot):
     assert view._zoom_pill.isHidden() is True    # hidden so it can't block a crop handle
     view.set_crop_overlay(False)
     assert view._zoom_pill.isHidden() is False    # restored when cropping ends
+
+
+def _cropped_view(qtbot, w=200, h=100, bounds=(10, 90, 20, 180)):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(w, h))
+    view.set_crop_overlay(True, content_bounds=bounds)
+    view.show_crop_box()
+    return view
+
+
+def _in_bounds(r, W, H, eps=0.01):
+    return (r.left() >= -eps and r.top() >= -eps
+            and r.right() <= W + eps and r.bottom() <= H + eps)
+
+
+def test_resize_clamps_free_crop_inside_image(qtbot):
+    view = _cropped_view(qtbot)
+    view._resize_to("br", QPointF(500, 500))     # drag bottom-right far outside
+    assert _in_bounds(view._scene_rect(), 200, 100)
+
+
+def test_resize_clamps_top_left_past_origin(qtbot):
+    view = _cropped_view(qtbot)
+    view._resize_to("tl", QPointF(-300, -300))   # drag top-left past (0,0)
+    assert _in_bounds(view._scene_rect(), 200, 100)
+
+
+def test_resize_aspect_stays_in_bounds_and_keeps_ratio(qtbot):
+    view = _cropped_view(qtbot)
+    view.set_aspect(2.0)                           # width = 2 x height
+    view._resize_to("br", QPointF(500, 500))
+    r = view._scene_rect()
+    assert _in_bounds(r, 200, 100)
+    assert abs(r.width() / r.height() - 2.0) < 0.05   # ratio preserved
+
+
+def test_resize_inside_is_unaffected(qtbot):
+    view = _cropped_view(qtbot)
+    view._resize_to("br", QPointF(150, 80))        # fully inside
+    r = view._scene_rect()
+    assert abs(r.left() - 20) < 0.01 and abs(r.top() - 10) < 0.01
+    assert abs(r.right() - 150) < 0.01 and abs(r.bottom() - 80) < 0.01
+
+
+def test_resize_aspect_top_left_anchors_bottom_right(qtbot):
+    # A top-left aspect drag must keep the OPPOSITE corner (bottom-right) fixed,
+    # stay in bounds, and preserve the ratio. (Old code re-derived the bottom edge
+    # from the dragged top-y and could even leave the image; new code anchors right.)
+    view = _cropped_view(qtbot)
+    view.set_aspect(2.0)
+    r0 = view._scene_rect()
+    br = (r0.right(), r0.bottom())
+    view._resize_to("tl", QPointF(60, 40))
+    r = view._scene_rect()
+    assert _in_bounds(r, 200, 100)
+    assert abs(r.width() / r.height() - 2.0) < 0.05
+    assert abs(r.right() - br[0]) < 0.01 and abs(r.bottom() - br[1]) < 0.01
+
+
+def test_resize_aspect_top_right_anchors_bottom_left(qtbot):
+    view = _cropped_view(qtbot)
+    view.set_aspect(2.0)
+    r0 = view._scene_rect()
+    bl = (r0.left(), r0.bottom())
+    view._resize_to("tr", QPointF(140, 40))
+    r = view._scene_rect()
+    assert _in_bounds(r, 200, 100)
+    assert abs(r.width() / r.height() - 2.0) < 0.05
+    assert abs(r.left() - bl[0]) < 0.01 and abs(r.bottom() - bl[1]) < 0.01
+
+
+def test_move_clamps_box_inside_keeping_size(qtbot):
+    view = _cropped_view(qtbot, bounds=(10, 60, 20, 120))   # box 100 wide x 50 tall
+    before = view._scene_rect()
+    view._body.setPos(QPointF(500, 500))                    # shove it far out
+    after = view._scene_rect()
+    assert _in_bounds(after, 200, 100)
+    assert abs(after.width() - before.width()) < 0.01       # slid, not shrunk
+    assert abs(after.height() - before.height()) < 0.01
+
+
+def test_move_inside_is_unaffected(qtbot):
+    view = _cropped_view(qtbot, bounds=(10, 60, 20, 120))
+    view._body.setPos(QPointF(15, 5))                       # small in-bounds nudge
+    r = view._scene_rect()
+    assert abs(r.left() - 35) < 0.01 and abs(r.top() - 15) < 0.01   # 20+15, 10+5
