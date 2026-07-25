@@ -3,10 +3,15 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
-from ..recipe import _NAME_TO_STAGE, serialize_option
+from ..core.image import AstroImage
+from ..recipe import _NAME_TO_STAGE, deserialize_option, serialize_option
+from ..settings import Settings
+from ..steps.factory import make_step
 
 try:
     from .. import __version__ as _APP_VERSION
@@ -14,6 +19,18 @@ except ImportError:                    # pragma: no cover - defensive only
     _APP_VERSION = None
 
 FORMAT_VERSION = 1
+
+
+class NewerVersionError(Exception):
+    """Raised when a `.nocturne` bundle's manifest format_version is newer than
+    this build of Nocturne understands how to read."""
+
+
+@dataclass
+class LoadedProject:
+    project: Any            # nocturne.history.project.Project
+    solve_state: Any
+    source_label: str
 
 _REPRODUCIBLE_STAGES = {
     "stretch", "levels", "curves", "recover_core",
@@ -52,6 +69,24 @@ def _stage_for(name: str) -> str:
     return _NAME_TO_STAGE.get(name, name)
 
 
+def _normalize_metadata(value):
+    """Recursively coerce numpy scalar/array values in a metadata dict to plain
+    JSON-safe Python types (float/int/list/...), so a value that happens to be a
+    numpy type (e.g. computed by a processing step) survives save/load as the
+    same type instead of falling back to `json.dumps(..., default=str)` and
+    coming back as a string. Applied wherever metadata is written into the
+    manifest (base + cached steps); non-numpy values pass through unchanged."""
+    if isinstance(value, dict):
+        return {k: _normalize_metadata(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_metadata(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
+
+
 def _array_to_bytes(arr: np.ndarray) -> bytes:
     buf = io.BytesIO()
     np.save(buf, arr)
@@ -79,7 +114,7 @@ def save_project(project, path, *, solve_state=None, source_label: str = "") -> 
                 zf.writestr(cache_name, _array_to_bytes(snapshot.data))
                 entry["cache"] = cache_name
                 entry["is_linear"] = snapshot.is_linear
-                entry["metadata"] = snapshot.metadata
+                entry["metadata"] = _normalize_metadata(snapshot.metadata)
             steps.append(entry)
 
         manifest = {
@@ -88,7 +123,55 @@ def save_project(project, path, *, solve_state=None, source_label: str = "") -> 
             "position": project.position,
             "source_label": source_label,
             "solve": solve_state,
-            "base": {"is_linear": base.is_linear, "metadata": base.metadata},
+            "base": {"is_linear": base.is_linear, "metadata": _normalize_metadata(base.metadata)},
             "steps": steps,
         }
         zf.writestr("manifest.json", json.dumps(manifest, default=str))
+
+
+def _bytes_to_array(data: bytes) -> np.ndarray:
+    return np.load(io.BytesIO(data))
+
+
+def load_project(path: str, cache_dir: str) -> LoadedProject:
+    """Read a `.nocturne` bundle and rebuild a live `Project`: the base image
+    is loaded straight from its embedded npy, then each recorded step is
+    either replayed (deterministic stages, re-run through `make_step` /
+    `run_step` from the serialized option) or restored from its cached npy
+    snapshot (`record_precomputed`) — reproducing every history position
+    pixel-for-pixel."""
+    from .project import Project  # local import: avoids a history/project_store <-> project cycle
+
+    with zipfile.ZipFile(path) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+
+        format_version = manifest.get("format_version", 1)
+        if format_version > FORMAT_VERSION:
+            raise NewerVersionError(
+                f"bundle format_version {format_version} is newer than this build "
+                f"supports (max {FORMAT_VERSION})"
+            )
+
+        base_data = _bytes_to_array(zf.read("base.npy"))
+        base_info = manifest["base"]
+        base = AstroImage(base_data, is_linear=base_info["is_linear"], metadata=base_info["metadata"])
+        project = Project(base, cache_dir)
+
+        settings = Settings()
+        for step in manifest["steps"]:
+            if step["cached"]:
+                data = _bytes_to_array(zf.read(step["cache"]))
+                img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
+                project.record_precomputed(step["name"], step["option"], img)
+            else:
+                native = deserialize_option(step["stage"], step["option"])
+                step_obj = make_step(step["stage"], settings)
+                project.run_step(step_obj, native)
+
+        project.jump_back(manifest["position"])
+
+    return LoadedProject(
+        project=project,
+        solve_state=manifest.get("solve"),
+        source_label=manifest.get("source_label", ""),
+    )
