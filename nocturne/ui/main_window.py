@@ -4,7 +4,7 @@ import datetime
 import os
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
@@ -31,12 +31,13 @@ from ..steps.load import load_fits
 from ..tools.base import run_cli, ToolError
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
+from ..core.update_check import DOWNLOAD_URL, is_newer, latest_release_version
 from .histogram_view import HistogramView
 from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
 from .provenance_dialog import ProvenanceDialog
-from .theme import ACCENT
+from .theme import ACCENT, WARNING
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, OutputPanel, format_log_entry
@@ -114,7 +115,7 @@ class _SaveSignals(QObject):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, settings_path: str) -> None:
+    def __init__(self, settings_path: str, check_updates: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self._settings_path = settings_path
@@ -346,6 +347,9 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
 
+        if check_updates:
+            run_async(self._pool, latest_release_version, self._on_update_check)
+
     def _show_chrome(self, visible: bool) -> None:
         """Show/hide the stepper + right panel so the welcome screen is a clean
         full-bleed empty state (no redundant Import panel/stepper before load)."""
@@ -509,6 +513,18 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         self._make_about_dialog().exec()
+
+    def _on_update_check(self, latest) -> None:
+        """Worker result (UI thread): reveal the toolbar item if a newer release
+        is out. Never raises — `latest` is None on any check failure."""
+        if latest and is_newer(latest, __version__):
+            self._update_act.setToolTip(
+                f"Nocturne {latest.lstrip('vV')} is available — click to download")
+            self._update_act.setVisible(True)
+
+    def _open_download(self) -> None:
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL))
 
     # --- recipes / batch ---
     def _save_recipe(self) -> None:
@@ -796,6 +812,9 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
         self._about_btn_act = tb.addAction(load_icon("about"), "About", self._show_about)
+        self._update_act = tb.addAction(load_icon("update", WARNING),
+                                        "Update available", self._open_download)
+        self._update_act.setVisible(False)   # revealed only when a newer release exists
         self._tools_label = QLabel("")
         tb.addWidget(self._tools_label)
         self._update_tools_label()
