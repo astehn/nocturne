@@ -82,3 +82,8 @@ def test_unserializable_option_is_isolated(monkeypatch):
     assert "- (parameters unavailable)" in r
     assert "4. Stretch" not in r                  # only 2 steps
     assert "2. Stretch — 0.5" in r
+
+
+def test_target_with_markdown_is_escaped():
+    r = provenance.build_report([], {"target": "M31 *fake* [x]"}, app_version="0.4.0", date=D)
+    assert "- Target: M31 \\*fake\\* \\[x\\]" in r

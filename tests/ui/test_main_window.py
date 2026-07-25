@@ -2269,7 +2269,7 @@ def test_provenance_action_builds_report(qtbot, tmp_path, monkeypatch):
     win.open_fits(_make_fits(tmp_path))
     captured = {}
     monkeypatch.setattr("nocturne.ui.main_window.ProvenanceDialog",
-                        lambda report, settings, parent=None: (captured.setdefault("r", report), _Stub())[1])
+                        lambda report, settings, parent=None, source_label=None: (captured.setdefault("r", report), _Stub())[1])
     win._show_provenance()
     assert "# Nocturne processing report" in captured["r"]
     assert "- Camera: Sony IMX585" in captured["r"]   # capture header rendered from the opened FITS

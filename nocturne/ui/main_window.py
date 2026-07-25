@@ -2174,7 +2174,7 @@ class MainWindow(QMainWindow):
             return
         report = build_report(self.project.entries(), self.project.current().metadata,
                               app_version=__version__, date=datetime.date.today())
-        ProvenanceDialog(report, self.settings, parent=self).exec()
+        ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:
         self._set_peek(False)   # a rebuilt view always shows the current image

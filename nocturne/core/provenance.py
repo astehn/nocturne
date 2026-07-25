@@ -5,6 +5,7 @@ never re-parses step options."""
 from __future__ import annotations
 
 import datetime
+import re
 
 from ..recipe import _NAME_TO_STAGE, serialize_option
 from .fits_io import format_integration, resolve_integration
@@ -58,11 +59,20 @@ def _human_date(date: datetime.date) -> str:
     return f"{date.day} {date:%B %Y}"
 
 
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]<>])")
+
+
+def _md_escape(s) -> str:
+    """Escape Markdown/inline specials in free-text metadata (e.g. a FITS OBJECT
+    name typed by the user) so it can't corrupt the report's structure."""
+    return _MD_SPECIAL.sub(r"\\\1", str(s).replace("\n", " ").replace("\r", " "))
+
+
 def _capture_lines(metadata: dict) -> list[str]:
     out: list[str] = []
     target = metadata.get("target") or metadata.get("target_solved")
     if target:
-        out.append(f"- Target: {target}")
+        out.append(f"- Target: {_md_escape(target)}")
     integ = resolve_integration(metadata)
     if integ is not None and integ.total_s is not None:
         s = format_integration(integ.total_s)
@@ -71,9 +81,9 @@ def _capture_lines(metadata: dict) -> list[str]:
         out.append(f"- Total integration: {s}")
     out.append(f"- Camera: {SEESTAR_S30_PRO.sensor}")   # always known from the profile
     if metadata.get("date"):
-        out.append(f"- Captured: {str(metadata['date']).split('T')[0]}")
+        out.append(f"- Captured: {_md_escape(str(metadata['date']).split('T')[0])}")
     if metadata.get("target_solved"):
-        out.append(f"- Plate solve: {metadata['target_solved']} (solved)")
+        out.append(f"- Plate solve: {_md_escape(metadata['target_solved'])} (solved)")
     return out
 
 

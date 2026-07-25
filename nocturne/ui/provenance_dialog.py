@@ -23,13 +23,14 @@ class ProvenanceDialog(QDialog):
     """Read-only rendered-Markdown view of a processing provenance report, with
     Save (raw .md) and Copy-to-clipboard."""
 
-    def __init__(self, report: str, settings, *, parent=None,
+    def __init__(self, report: str, settings, *, parent=None, source_label=None,
                  save_runner=_default_save, clipboard_runner=_default_clipboard) -> None:
         super().__init__(parent)
         self.setWindowTitle("Provenance report")
         self.setMinimumSize(640, 560)
         self._report = report
         self._settings = settings
+        self._source_label = source_label
         self._save_runner = save_runner
         self._clipboard_runner = clipboard_runner
 
@@ -57,7 +58,9 @@ class ProvenanceDialog(QDialog):
         root.addLayout(buttons)
 
     def _save(self) -> None:
-        default = os.path.join(start_dir(self._settings.base_dir), "provenance.md")
+        stem = os.path.splitext(os.path.basename(self._source_label))[0] if self._source_label else ""
+        name = f"{stem}-provenance.md" if stem else "provenance.md"
+        default = os.path.join(start_dir(self._settings.base_dir), name)
         path, _ = QFileDialog.getSaveFileName(self, "Save provenance report", default,
                                               "Markdown (*.md);;Text (*.txt)")
         if path:

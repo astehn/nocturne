@@ -38,3 +38,14 @@ def test_close_rejects(qtbot, monkeypatch):
     d = _dialog(qtbot, monkeypatch, [], [])
     d._close_btn.click()
     assert d.result() == QDialog.DialogCode.Rejected
+
+
+def test_save_default_name_uses_source_label(qtbot, monkeypatch, tmp_path):
+    d = ProvenanceDialog("# R", _Settings(), source_label="ngc7000_stack.fits",
+                         save_runner=lambda t, p: None, clipboard_runner=lambda t: None)
+    qtbot.addWidget(d)
+    seen = {}
+    monkeypatch.setattr("nocturne.ui.provenance_dialog.QFileDialog.getSaveFileName",
+                        staticmethod(lambda parent, caption, default, filt: (seen.update(default=default) or ("", ""))))
+    d._save_btn.click()
+    assert seen["default"].endswith("ngc7000_stack-provenance.md")
