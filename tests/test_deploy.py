@@ -117,3 +117,60 @@ def test_render_changelog_html_is_escaped_article():
     assert '<p class="when">25 July 2026</p>' in html
     assert "<li>a &lt; b</li>" in html
     assert html.rstrip().endswith("</article>")
+
+
+def _cfg(tmp_path):
+    return deploy.load_config(_write_config(tmp_path))
+
+
+def test_release_asset_name():
+    assert deploy.release_asset_name("0.4.0") == "Nocturne-0.4.0.zip"
+
+
+def test_build_rsync_cmd_is_safe(tmp_path):
+    site = tmp_path / "site"
+    (site / "img" / "_originals").mkdir(parents=True)
+    for f in ("index.html", "styles.css", "main.js", "config.php"):
+        (site / f).write_text("x")
+    (site / "img" / "shot.jpg").write_text("x")
+    cmd = deploy.build_rsync_cmd(_cfg(tmp_path), site)
+    assert "--delete" not in cmd
+    assert "--rsync-path=sudo rsync" in cmd
+    # every configured exclude is present
+    for e in _cfg(tmp_path).exclude:
+        assert f"--exclude={e}" in cmd
+    # allowlisted assets are sources; server state is not
+    joined = " ".join(cmd)
+    assert "index.html" in joined and "styles.css" in joined
+    assert f"{str(site / 'img')}" in joined       # img dir synced
+    assert "config.php" not in joined             # server state never a source
+    assert cmd[-1] == "debian@vps-91763a81.vps.ovh.net:/var/www/nocturne/"
+
+
+def test_build_rsync_cmd_refuses_without_required_exclude(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('''
+[github]
+repo = "r"
+[website]
+ssh_host = "h"
+remote_path = "/p"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.html"]
+exclude = ["img/_originals/"]
+''')  # missing db/, uploads/, config*.php
+    with pytest.raises(ValueError):
+        deploy.build_rsync_cmd(deploy.load_config(p), tmp_path)
+
+
+def test_build_chown_cmd(tmp_path):
+    cmd = deploy.build_chown_cmd(_cfg(tmp_path))
+    assert cmd[0] == "ssh"
+    assert cmd[1] == "debian@vps-91763a81.vps.ovh.net"
+    remote = cmd[2]
+    assert "sudo chown -R www-data:www-data /var/www/nocturne" in remote
+    assert "-type d -exec chmod 755" in remote
+    assert "-type f -exec chmod 644" in remote
+    assert "/var/www/nocturne" in remote and remote.count("/var/www/nocturne") == 3

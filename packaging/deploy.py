@@ -4,6 +4,7 @@ executing them. See docs/superpowers/specs/2026-07-25-deploy-skill-design.md."""
 from __future__ import annotations
 
 import datetime
+import glob as _glob
 import html as _html
 import re
 import tomllib
@@ -135,3 +136,41 @@ def render_changelog_html(version: str, date: datetime.date, notes: Notes) -> st
             lines.append("  </ul>")
     lines.append("</article>")
     return "\n".join(lines)
+
+
+REQUIRED_EXCLUDES = ("config*.php", "db/", "uploads/")
+
+
+def release_asset_name(version: str) -> str:
+    return f"Nocturne-{version}.zip"
+
+
+def _resolve_includes(config: DeployConfig, site_dir: Path) -> list[str]:
+    sources: list[str] = []
+    for pat in config.include:
+        if pat.endswith("/"):                      # a directory: sync it recursively
+            d = site_dir / pat.rstrip("/")
+            if d.exists():
+                sources.append(str(d))
+        else:                                       # a file glob
+            sources += sorted(_glob.glob(str(site_dir / pat)))
+    return sources
+
+
+def build_rsync_cmd(config: DeployConfig, site_dir: Path) -> list[str]:
+    missing = [e for e in REQUIRED_EXCLUDES if e not in config.exclude]
+    if missing:
+        raise ValueError(f"deploy config exclude is missing server-state guards: {missing}")
+    cmd = ["rsync", "-av", "--rsync-path=sudo rsync"]
+    cmd += [f"--exclude={e}" for e in config.exclude]
+    cmd += _resolve_includes(config, site_dir)
+    cmd.append(f"{config.ssh_host}:{config.remote_path}/")
+    return cmd
+
+
+def build_chown_cmd(config: DeployConfig) -> list[str]:
+    p = config.remote_path
+    remote = (f"sudo chown -R {config.owner} {p} && "
+              f"sudo find {p} -type d -exec chmod {config.dir_mode} {{}} + && "
+              f"sudo find {p} -type f -exec chmod {config.file_mode} {{}} +")
+    return ["ssh", config.ssh_host, remote]
