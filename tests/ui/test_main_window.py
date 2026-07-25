@@ -1899,3 +1899,103 @@ def test_toolbar_tool_icons_all_load(qtbot):
     for n in ["haoiii", "star-spikes", "narrowband", "auto-enhance",
               "plate-solve", "share", "upscale"]:
         assert not load_icon(n, "#ffffff").isNull(), f"icon missing/invalid: {n}"
+
+
+# --- saved projects: Save/Save As/Open Project/Recent + solve-state persistence ---
+
+def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)  # slider amount -> records a Stretch step
+    position_before = win.project.position
+    data_before = win.project.current().data.copy()
+
+    out = str(tmp_path / "proj.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert win._project_path == out
+    assert (tmp_path / "proj.nocturne").exists()
+
+    win.project = None  # reset in-memory state to prove the reload is real
+    win._open_project(out)
+
+    assert win.project is not None
+    assert win.project.position == position_before
+    np.testing.assert_array_equal(win.project.current().data, data_before)
+
+
+def test_open_project_newer_version_shows_warning(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    def fake_load(path, cache_dir):
+        raise mw.NewerVersionError("bundle is newer than this build supports")
+
+    monkeypatch.setattr(mw, "load_project", fake_load)
+    win._open_project(str(tmp_path / "future.nocturne"))  # must not raise
+
+    assert win.project is not None  # the old project is left untouched
+    assert "newer version" in win._warning.text().lower()
+
+
+def test_open_project_adds_to_recent(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = str(tmp_path / "proj2.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win._open_project(out)
+
+    assert win.settings.recent_projects[0] == out
+    # persisted to disk too, not just the in-memory Settings object
+    from nocturne.settings import load_settings
+    assert out in load_settings(win._settings_path).recent_projects
+
+
+def test_solve_state_round_trips_through_save_and_open(qtbot, tmp_path, monkeypatch):
+    from astropy.wcs import WCS
+    from PySide6.QtWidgets import QFileDialog
+    from nocturne.tools.astap import SolveResult
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
+
+    out = str(tmp_path / "solved.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win.project = None
+    win._solve = None
+    win._open_project(out)
+
+    assert win._solve is not None
+    _sig, res, objs = win._solve
+    assert res.solved is True
+    assert res.wcs is not None
+    assert round(res.center_ra_deg, 3) == 100.0
+
+
+def test_open_project_without_solve_leaves_unsolved(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._solve is None
+    out = str(tmp_path / "unsolved.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win.project = None
+    win._open_project(out)
+
+    assert win._solve is None  # no crash, just nothing to annotate

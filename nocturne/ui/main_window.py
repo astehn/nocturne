@@ -17,10 +17,11 @@ from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import import_summary
 from ..history.project import Project
+from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
 from ..settings import (
-    astap_valid, graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
-    start_dir,
+    add_recent_project, astap_valid, graxpert_valid, load_settings, rcastro_valid,
+    resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
@@ -109,6 +110,7 @@ class MainWindow(QMainWindow):
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
+        self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
         self._stages = path_stages()
@@ -349,9 +351,27 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _build_menu(self) -> None:
+        project_menu = self.menuBar().addMenu("Project")
+        project_menu.addAction("Open Project…", lambda: self._open_project())
+        self._save_project_menu_act = project_menu.addAction(
+            "Save Project", self._save_project)
+        project_menu.addAction("Save Project As…", self._save_project_as)
+        self._recent_menu = project_menu.addMenu("Recent Projects")
+        self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
+
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
+
+    def _populate_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        recent = self.settings.recent_projects
+        if not recent:
+            act = self._recent_menu.addAction("(no recent projects)")
+            act.setEnabled(False)
+            return
+        for path in recent:
+            self._recent_menu.addAction(os.path.basename(path), lambda p=path: self._open_project(p))
 
     def _show_help(self) -> None:
         self._open_help("getting-started")
@@ -663,6 +683,16 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
         tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
+        # Projects (a saved bundle: image + full edit history + solve state) — a
+        # distinct concept from Open FITS (a source) and Save Recipe (steps only),
+        # tinted with the accent so the two project actions read as a pair.
+        self._open_project_act = tb.addAction(
+            load_icon("open", ACCENT), "Open Project", lambda: self._open_project())
+        self._open_project_act.setToolTip("Open a saved .nocturne project")
+        self._save_project_act = tb.addAction(
+            load_icon("save-recipe", ACCENT), "Save Project", self._save_project)
+        self._save_project_act.setToolTip("Save the current project (image + full edit history)")
+        self._save_project_act.setEnabled(False)  # enabled by _refresh once an image is loaded
         tb.addAction(load_icon("settings"), "Settings", self._open_settings)
         tb.addSeparator()
         # Tools (primary features tinted with the accent)
@@ -790,6 +820,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_warning(f"Could not open file: {exc}")
             return
+        self._project_path = None  # a freshly-opened FITS is not tied to any prior bundle
         self.open_image(base, os.path.basename(path))
 
     def open_image(self, base, label: str) -> None:
@@ -809,6 +840,110 @@ class MainWindow(QMainWindow):
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._refresh()
+
+    # --- saved projects (.nocturne bundles: image + full edit history + solve state) ---
+    def _save_project(self) -> None:
+        if self.project is None:
+            return
+        if self._project_path is None:
+            self._save_project_as()
+            return
+        save_project(self.project, self._project_path,
+                     solve_state=self._solve_state_dict(), source_label=self._source_label)
+        add_recent_project(self.settings, self._project_path)
+        save_settings(self.settings, self._settings_path)
+        self._show_output(f"Saved project: {os.path.basename(self._project_path)}")
+
+    def _save_project_as(self) -> None:
+        if self.project is None:
+            return
+        start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save project", start, "Nocturne project (*.nocturne)")
+        if not path:
+            return
+        if not path.lower().endswith(".nocturne"):
+            path += ".nocturne"
+        self._project_path = path
+        save_project(self.project, path,
+                     solve_state=self._solve_state_dict(), source_label=self._source_label)
+        self.settings.last_project_dir = os.path.dirname(path)
+        add_recent_project(self.settings, path)
+        save_settings(self.settings, self._settings_path)
+        self._show_output(f"Saved project: {os.path.basename(path)}")
+
+    def _open_project(self, path: str | None = None) -> None:
+        if self._busy:
+            return
+        if path is None:
+            start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open Project", start, "Nocturne project (*.nocturne)")
+            if not path:
+                return
+        try:
+            loaded = load_project(path, self._cache_dir)
+        except NewerVersionError:
+            self._show_warning(
+                "This project was made by a newer version of Nocturne — update the app to open it.")
+            return
+        except Exception as exc:
+            self._show_warning(f"Could not open project: {exc}")
+            return
+        self.project = loaded.project
+        self._source_label = loaded.source_label
+        self._project_path = path
+        self._restore_solve_state(loaded.solve_state)
+        self._center_stack.setCurrentWidget(self.image_view)
+        self._show_chrome(True)  # reveal stepper + panel now there's an image
+        self._clear_warning()
+        self.log_panel.clear_log()   # fresh project → fresh message channels
+        self.output_panel.clear()
+        h, w = self.project.current().data.shape[:2]
+        self.log_panel.append_entry(
+            format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
+        )
+        entries = self.project.entries()
+        self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
+        self._rebuild_panel()
+        self._refresh()
+        self.settings.last_project_dir = os.path.dirname(path)
+        add_recent_project(self.settings, path)
+        save_settings(self.settings, self._settings_path)
+
+    def _solve_state_dict(self) -> dict | None:
+        """Serialize the current plate-solve (if any) to JSON-safe data: the WCS
+        header as a plain dict, plus the catalogue objects found in-frame. None
+        if unsolved — nothing to persist."""
+        if not self._solve:
+            return None
+        _sig, res, objs = self._solve
+        from dataclasses import asdict
+        return {
+            "wcs": dict(res.wcs.to_header()) if res.wcs is not None else None,
+            "objects": [asdict(o) for o in objs],
+        }
+
+    def _restore_solve_state(self, d: dict | None) -> None:
+        """Best-effort rebuild of self._solve from a saved solve-state dict. Kept
+        deliberately contained: any failure here just leaves the project without
+        a live solve (re-solve to re-annotate) — it must never break opening the
+        project's image itself."""
+        self._solve = None
+        if not d or not d.get("wcs"):
+            return
+        try:
+            from astropy.io import fits
+            from ..core.catalog import CatalogObject
+            from ..tools.astap import ASTAP
+            header = fits.Header(d["wcs"])
+            res = ASTAP._build(header)   # rebuilds WCS + solved fields from the header
+            if res is None:
+                return
+            objs = [CatalogObject(**o) for o in (d.get("objects") or [])]
+            self._solve = (self._solve_sig(), res, objs)
+        except Exception:
+            self._solve = None   # degrade to "re-solve to re-annotate" — never raise
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
@@ -1931,6 +2066,7 @@ class MainWindow(QMainWindow):
         self._reset_act.setEnabled(self.project is not None)
         self._share_act.setEnabled(self.project is not None)
         self._upscale_act.setEnabled(self.project is not None)
+        self._save_project_act.setEnabled(self.project is not None)
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
