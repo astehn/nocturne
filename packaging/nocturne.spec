@@ -11,6 +11,11 @@ SCRIPT = os.path.join(SPECPATH, "nocturne_app.py")
 ASSETS = os.path.join(ROOT, "nocturne", "assets")
 ICON = os.path.join(SPECPATH, "nocturne.icns")
 
+import re as _re
+_init_src = open(os.path.join(ROOT, "nocturne", "__init__.py")).read()
+_vm = _re.search(r'^__version__ = "([^"]+)"', _init_src, _re.M)
+APP_VERSION = _vm.group(1) if _vm else "0.0.0"
+
 datas = [(ASSETS, "nocturne/assets")]            # bundle icons/svg/splash/contributors
 binaries = []
 hiddenimports = ["PySide6.QtSvg"]                # SVG icon rendering
@@ -46,8 +51,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Nocturne",
         "CFBundleDisplayName": "Nocturne",
-        "CFBundleShortVersionString": "0.3.0",
-        "CFBundleVersion": "0.3.0",
+        "CFBundleShortVersionString": APP_VERSION,
+        "CFBundleVersion": APP_VERSION,
         "NSHighResolutionCapable": True,
     },
 )
