@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+packaging/deploy.local.toml
 .DS_Store
 scratch/
 *.log

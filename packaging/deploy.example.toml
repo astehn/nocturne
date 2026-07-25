@@ -1,0 +1,21 @@
+# Copy to packaging/deploy.local.toml (gitignored) and fill in real values.
+[github]
+repo = "astehn/nocturne"
+
+[website]
+# Keyless SSH login as debian (has passwordless sudo). May be a ~/.ssh/config
+# alias that sets `User debian`.
+ssh_host = "debian@vps-91763a81.vps.ovh.net"
+remote_path = "/var/www/nocturne"
+owner = "www-data:www-data"       # applied to remote_path after upload
+dir_mode = "755"
+file_mode = "644"
+# Static assets to deploy. rsync runs WITHOUT --delete, so server-only files survive.
+include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "img/"]
+# Internal files + server-state paths. Required server-state excludes:
+# config*.php, db/, uploads/ (the script refuses to run without them).
+exclude = [
+  "img/_originals/", "PRODUCT.md", "DESIGN.md", "README.md",
+  "_research_external_tools.md", "tests/",
+  "config*.php", "db/", "uploads/", "*.fits", "*.fit", "admin/",
+]
