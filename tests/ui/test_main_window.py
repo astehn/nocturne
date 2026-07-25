@@ -2278,3 +2278,48 @@ def test_provenance_action_builds_report(qtbot, tmp_path, monkeypatch):
 def test_provenance_action_noop_without_project(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._show_provenance()   # no project → must not raise
+
+
+def test_clear_cache_removes_only_snapshots(qtbot, tmp_path):
+    import os
+    win = _window(qtbot, tmp_path)
+    os.makedirs(win._cache_dir, exist_ok=True)
+    open(os.path.join(win._cache_dir, "state_0.npy"), "w").close()
+    open(os.path.join(win._cache_dir, "state_9.npy"), "w").close()
+    open(os.path.join(win._cache_dir, "keep.txt"), "w").close()
+    win._clear_cache()
+    left = sorted(os.listdir(win._cache_dir))
+    assert left == ["keep.txt"]                      # snapshots gone, other files kept
+
+
+def test_open_image_clears_stale_snapshots(qtbot, tmp_path):
+    import os
+    win = _window(qtbot, tmp_path)
+    os.makedirs(win._cache_dir, exist_ok=True)
+    open(os.path.join(win._cache_dir, "state_9.npy"), "w").close()   # leftover from a longer prior session
+    win.open_fits(_make_fits(tmp_path))
+    assert not os.path.exists(os.path.join(win._cache_dir, "state_9.npy"))
+
+
+def test_close_project_clears_cache(qtbot, tmp_path):
+    import os
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert any(n.startswith("state_") for n in os.listdir(win._cache_dir))   # snapshots exist while open
+    win._close_project()
+    assert not any(n.startswith("state_") for n in os.listdir(win._cache_dir))
+
+
+def test_close_event_clears_cache_on_quit(qtbot, tmp_path):
+    import os
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    class _Evt:
+        def __init__(self): self.accepted = False
+        def accept(self): self.accepted = True
+        def ignore(self): pass
+    ev = _Evt()
+    win.closeEvent(ev)   # not dirty after open, so the save-guard passes
+    assert ev.accepted
+    assert not any(n.startswith("state_") for n in os.listdir(win._cache_dir))
