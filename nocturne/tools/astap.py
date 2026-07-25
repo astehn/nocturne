@@ -107,37 +107,50 @@ class ASTAP:
                 args += ["-ra", str(round(float(ra_hours), 4)),
                          "-spd", str(round(float(dec_deg) + 90.0, 4))]  # south pole distance
             runner(args, tmp)
+            self._last_errors = []
             res = self._read_solution(tmp, base, in_fits)
             if res is not None:
                 return res
-            return SolveResult(False, None, 0.0, 0.0, 0.0,
-                               message=(self._output(tmp) + " | produced: "
-                                        + self._listing(tmp)).strip(" |"))
+            msg = (self._output(tmp) + " | produced: " + self._listing(tmp)).strip(" |")
+            if self._last_errors:
+                msg += "\nparse error: " + "; ".join(self._last_errors)
+            return SolveResult(False, None, 0.0, 0.0, 0.0, message=msg)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
     def _read_solution(self, tmp: str, base: str, in_fits: str):
         """Find ASTAP's solution wherever it landed: a `.wcs` sidecar (FITS
         cards), the `.ini` solution file (KEY=value), or the input FITS header
-        ASTAP updates in place. Returns a solved SolveResult, or None."""
+        ASTAP updates in place. Returns a solved SolveResult, or None (recording
+        why each candidate failed in self._last_errors)."""
         import glob
+        errors: list[str] = []
+
+        def _try(header, label):
+            try:
+                return self._build(header)
+            except Exception as e:                     # surface, don't swallow
+                errors.append(f"{label}: {type(e).__name__}: {e}")
+                return None
+
         for path in [base + ".wcs"] + sorted(glob.glob(os.path.join(tmp, "*.wcs"))):
             if os.path.isfile(path):
-                r = self._build(self._read_wcs_header(path))
+                r = _try(self._read_wcs_header(path), os.path.basename(path))
                 if r is not None:
                     return r
         for path in [base + ".ini"] + sorted(glob.glob(os.path.join(tmp, "*.ini"))):
             if os.path.isfile(path):
-                r = self._build(self._read_ini_header(path))
+                r = _try(self._read_ini_header(path), os.path.basename(path))
                 if r is not None:
                     return r
         try:
             from astropy.io import fits
-            r = self._build(fits.getheader(in_fits))
+            r = _try(fits.getheader(in_fits), "in-fits header")
             if r is not None:
                 return r
         except Exception:
             pass
+        self._last_errors = errors
         return None
 
     @staticmethod
@@ -213,7 +226,8 @@ class ASTAP:
     def _build(header) -> "SolveResult | None":
         """Build a solved SolveResult from a parsed header (from any source), or
         None if it has no usable astrometric solution. Injects CTYPE if the source
-        (e.g. an .ini) omitted it; never raises."""
+        (e.g. an .ini) omitted it; raises if the WCS can't be built — callers
+        record the reason."""
         if header is None or "CRVAL1" not in header or "CRVAL2" not in header:
             return None
         if str(header.get("PLTSOLVD", "T")).strip().upper() in ("F", "FALSE"):
@@ -221,17 +235,17 @@ class ASTAP:
         if "CTYPE1" not in header:            # .ini solutions omit CTYPE
             header["CTYPE1"] = "RA---TAN"
             header["CTYPE2"] = "DEC--TAN"
-        try:
-            from astropy.wcs import WCS
-            wcs = WCS(header)
-            cd = wcs.pixel_scale_matrix       # deg/px 2x2
-            pixscale = float(np.sqrt(abs(cd[0, 0] * cd[1, 1] - cd[0, 1] * cd[1, 0])) * 3600.0)
-            return SolveResult(True, wcs, float(header["CRVAL1"]),
-                               float(header["CRVAL2"]), pixscale)
-        except Exception:
-            return None                        # never crash the UI on a bad header
+        from astropy.wcs import WCS
+        wcs = WCS(header)
+        cd = wcs.pixel_scale_matrix           # deg/px 2x2
+        pixscale = float(np.sqrt(abs(cd[0, 0] * cd[1, 1] - cd[0, 1] * cd[1, 0])) * 3600.0)
+        return SolveResult(True, wcs, float(header["CRVAL1"]),
+                           float(header["CRVAL2"]), pixscale)
 
     def _parse(self, wcs_path: str) -> SolveResult:
         """Parse a `.wcs` sidecar into a SolveResult (used by tests + the reader)."""
-        r = self._build(self._read_wcs_header(wcs_path))
+        try:
+            r = self._build(self._read_wcs_header(wcs_path))
+        except Exception:
+            r = None
         return r if r is not None else SolveResult(False, None, 0.0, 0.0, 0.0)

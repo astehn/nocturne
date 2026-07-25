@@ -198,3 +198,21 @@ def test_solve_failure_message_lists_produced_files():
     res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
     assert res.solved is False
     assert "produced:" in res.message                       # diagnostic lists what ASTAP wrote
+
+
+def test_solve_surfaces_swallowed_parse_error(monkeypatch):
+    # A valid .wcs is produced, but building the WCS raises (as it apparently does
+    # in the packaged app). The failure message must NAME the real exception.
+    monkeypatch.setattr("astropy.wcs.WCS",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("wcslib exploded")))
+
+    def fake_runner(args, cwd):
+        base = args[args.index("-o") + 1]
+        with open(base + ".wcs", "w") as f:
+            f.write(_WCS_TEXT)
+        return 0
+
+    res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
+    assert res.solved is False
+    assert "RuntimeError" in res.message
+    assert "wcslib exploded" in res.message
