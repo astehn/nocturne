@@ -57,3 +57,10 @@ def test_open_as_copy_closes_the_dialog(qtbot):
     d._do_open_copy()
     assert opened.get("ok") is True
     assert d.result() == QDialog.DialogCode.Accepted   # dialog closed -> main window (with the copy) is revealed
+
+
+def test_close_button_rejects(qtbot):
+    from PySide6.QtWidgets import QDialog
+    d = _dlg(qtbot)
+    d._close_btn.click()
+    assert d.result() == QDialog.DialogCode.Rejected

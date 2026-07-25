@@ -86,6 +86,7 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
+QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
 QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
