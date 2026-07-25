@@ -200,7 +200,7 @@ def build_chown_cmd(config: DeployConfig) -> list[str]:
 
 
 def real_run(cmd: list[str], *, capture: bool = False) -> str:
-    r = subprocess.run(cmd, check=True, text=True, capture_output=capture)
+    r = subprocess.run(cmd, check=True, text=True, capture_output=capture, cwd=ROOT)
     return (r.stdout or "") if capture else ""
 
 
@@ -272,6 +272,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     version = args.version or next_minor(get_last_tag().lstrip("v"))
+    parse_version(version)   # reject a malformed --version before any build or mutation
     notes = _load_notes(Path(args.notes_json))
     today = datetime.date.today()
     md_block = render_changelog_md(version, today, notes)
@@ -290,11 +291,15 @@ def main(argv: list[str]) -> int:
         print("  " + " ".join(build_chown_cmd(config)))
         return 0
 
-    # real pipeline: build first so a failed build leaves zero file changes
-    build_app(real_run)
-    verify_build()
-    zip_app(version, real_run)
+    # real pipeline: bump version first so the build embeds it; roll back on build failure
     set_version_files(ROOT, version)
+    try:
+        build_app(real_run)
+        verify_build()
+        zip_app(version, real_run)
+    except BaseException:
+        real_run(["git", "checkout", "--", "pyproject.toml", "nocturne/__init__.py"])
+        raise
     prepend_file(ROOT / "CHANGELOG.md", md_block, anchor="## [")
     prepend_file(SITE / "changelog.html", html_block, anchor='<article class="release">')
     _remote_release(config, version, notes, asset, real_run)
@@ -322,19 +327,32 @@ def _remote_release(config, version, notes, asset, run=real_run) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
         f.write(render_release_notes(notes))
         notes_path = f.name
+    steps = [
+        ["git", "add", "pyproject.toml", "nocturne/__init__.py", "CHANGELOG.md", "README.md"],
+        ["git", "commit", "-m", f"release: v{version}"],
+        ["git", "push", "origin", "main"],
+        ["git", "tag", f"v{version}"],
+        ["git", "push", "origin", f"v{version}"],
+        ["gh", "release", "create", f"v{version}", str(DIST / asset),
+         "--title", f"Nocturne {version}", "--notes-file", notes_path],
+        build_rsync_cmd(config, SITE),
+        build_chown_cmd(config),
+    ]
+    i = 0
     try:
-        run(["git", "add", "pyproject.toml", "nocturne/__init__.py",
-             "CHANGELOG.md", "README.md"])
-        run(["git", "commit", "-m", f"release: v{version}"])
-        run(["git", "push", "origin", "main"])
-        run(["git", "tag", f"v{version}"])
-        run(["git", "push", "origin", f"v{version}"])
-        run(["gh", "release", "create", f"v{version}", str(DIST / asset),
-             "--title", f"Nocturne {version}", "--notes-file", notes_path])
-        run(build_rsync_cmd(config, SITE))
-        run(build_chown_cmd(config))
-    finally:
-        os.unlink(notes_path)
+        for i, cmd in enumerate(steps):
+            print(f"[{i + 1}/{len(steps)}] {' '.join(cmd)}")
+            run(cmd)
+    except BaseException:
+        print(f"\n!! remote release FAILED at step {i + 1}/{len(steps)}: {' '.join(steps[i])}")
+        print(f"!! {i} of {len(steps)} step(s) already completed and CANNOT be auto-undone.")
+        print("!! Do NOT blindly re-run deploy — it is not idempotent (changelogs would double-prepend).")
+        print("!! Finish the remaining steps by hand:")
+        for cmd in steps[i:]:
+            print("    " + " ".join(cmd))
+        print(f"!! (release notes preserved at {notes_path})")
+        raise
+    os.unlink(notes_path)
 
 
 if __name__ == "__main__":

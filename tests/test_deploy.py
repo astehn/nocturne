@@ -301,17 +301,23 @@ def test_remote_release_order_and_commands(tmp_path):
     assert idx("git push origin v0.4.0") < idx("gh release create v0.4.0")
     assert idx("gh release create v0.4.0") < idx("rsync")
     assert idx("rsync") < idx("ssh")   # chown is the final ssh
+    assert idx("git add") < idx("git commit")
     # never commits site/
     assert not any("site/" in s and "git add" in s for s in flat)
     # gh uploads the asset
     assert any("Nocturne-0.4.0.zip" in s for s in flat)
 
 
-def test_build_failure_leaves_no_mutations(tmp_path, monkeypatch):
+def test_build_failure_rolls_back_version(tmp_path, monkeypatch):
+    import subprocess as sp
     (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n')
     (tmp_path / "nocturne").mkdir()
     (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n")
+    sp.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    sp.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
+           cwd=tmp_path, check=True)
     monkeypatch.setattr(deploy, "ROOT", tmp_path)
     monkeypatch.setattr(deploy, "preflight", lambda c, run: None)
     monkeypatch.setattr(deploy, "build_app",
@@ -321,7 +327,6 @@ def test_build_failure_leaves_no_mutations(tmp_path, monkeypatch):
     notes.write_text('{"headline":"h","added":["X"],"changed":[],"fixed":[]}')
     with pytest.raises(SystemExit):
         deploy.main(["--config", str(cfg), "--version", "0.4.0", "--notes-json", str(notes)])
-    assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()  # unchanged
-    assert '__version__ = "0.3.0"' in (tmp_path / "nocturne" / "__init__.py").read_text()
-    assert "[0.3.0]" in (tmp_path / "CHANGELOG.md").read_text()
-    assert "[0.4.0]" not in (tmp_path / "CHANGELOG.md").read_text()
+    assert '0.3.0' in (tmp_path / "pyproject.toml").read_text()          # bump rolled back
+    assert '0.4.0' not in (tmp_path / "pyproject.toml").read_text()
+    assert '0.3.0' in (tmp_path / "nocturne" / "__init__.py").read_text()
