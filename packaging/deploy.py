@@ -8,6 +8,7 @@ import datetime
 import glob as _glob
 import html as _html
 import json
+import os
 import re
 import subprocess
 import sys
@@ -321,16 +322,19 @@ def _remote_release(config, version, notes, asset, run=real_run) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
         f.write(render_release_notes(notes))
         notes_path = f.name
-    run(["git", "add", "pyproject.toml", "nocturne/__init__.py",
-         "CHANGELOG.md", "README.md"])
-    run(["git", "commit", "-m", f"release: v{version}"])
-    run(["git", "push", "origin", "main"])
-    run(["git", "tag", f"v{version}"])
-    run(["git", "push", "origin", f"v{version}"])
-    run(["gh", "release", "create", f"v{version}", str(DIST / asset),
-         "--title", f"Nocturne {version}", "--notes-file", notes_path])
-    run(build_rsync_cmd(config, SITE))
-    run(build_chown_cmd(config))
+    try:
+        run(["git", "add", "pyproject.toml", "nocturne/__init__.py",
+             "CHANGELOG.md", "README.md"])
+        run(["git", "commit", "-m", f"release: v{version}"])
+        run(["git", "push", "origin", "main"])
+        run(["git", "tag", f"v{version}"])
+        run(["git", "push", "origin", f"v{version}"])
+        run(["gh", "release", "create", f"v{version}", str(DIST / asset),
+             "--title", f"Nocturne {version}", "--notes-file", notes_path])
+        run(build_rsync_cmd(config, SITE))
+        run(build_chown_cmd(config))
+    finally:
+        os.unlink(notes_path)
 
 
 if __name__ == "__main__":

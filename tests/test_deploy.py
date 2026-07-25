@@ -322,3 +322,6 @@ def test_build_failure_leaves_no_mutations(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         deploy.main(["--config", str(cfg), "--version", "0.4.0", "--notes-json", str(notes)])
     assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()  # unchanged
+    assert '__version__ = "0.3.0"' in (tmp_path / "nocturne" / "__init__.py").read_text()
+    assert "[0.3.0]" in (tmp_path / "CHANGELOG.md").read_text()
+    assert "[0.4.0]" not in (tmp_path / "CHANGELOG.md").read_text()
