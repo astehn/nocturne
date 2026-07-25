@@ -2,6 +2,15 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.4.1] — 2026-07-25
+
+Plate-solving fixed in the app build
+
+### Fixed
+- Plate Solve now works in the downloaded app — a packaging issue had it failing to solve or annotate (it had always worked when run from source).
+- macOS "Get Info" now reports the correct app version.
+- A plate-solve that can't complete now explains why, instead of showing a generic message.
+
 ## [0.4.0] — 2026-07-25
 
 Saved projects, one-tap Auto Enhance, and shareable exports
