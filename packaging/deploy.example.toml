@@ -14,7 +14,7 @@ dir_mode = "755"
 file_mode = "644"
 # download_path = "/var/www/your-site/download/App.zip"   # if the site serves its own binary, the deploy refreshes it; MUST be inside remote_path
 # Static assets to deploy. rsync runs WITHOUT --delete, so server-only files survive.
-include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "img/"]
+include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "get.php", "img/"]
 # Internal files + server-state paths. Required server-state excludes:
 # config*.php, db/, uploads/ (the script refuses to run without them).
 exclude = [
