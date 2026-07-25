@@ -1899,3 +1899,319 @@ def test_toolbar_tool_icons_all_load(qtbot):
     for n in ["haoiii", "star-spikes", "narrowband", "auto-enhance",
               "plate-solve", "share", "upscale"]:
         assert not load_icon(n, "#ffffff").isNull(), f"icon missing/invalid: {n}"
+
+
+# --- saved projects: Save/Save As/Open Project/Recent + solve-state persistence ---
+
+def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)  # slider amount -> records a Stretch step
+    position_before = win.project.position
+    data_before = win.project.current().data.copy()
+
+    out = str(tmp_path / "proj.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert win._project_path == out
+    assert (tmp_path / "proj.nocturne").exists()
+
+    win.project = None  # reset in-memory state to prove the reload is real
+    win._open_project(out)
+
+    assert win.project is not None
+    assert win.project.position == position_before
+    np.testing.assert_array_equal(win.project.current().data, data_before)
+
+
+def test_open_project_newer_version_shows_warning(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    def fake_load(path, cache_dir):
+        raise mw.NewerVersionError("bundle is newer than this build supports")
+
+    monkeypatch.setattr(mw, "load_project", fake_load)
+    win._open_project(str(tmp_path / "future.nocturne"))  # must not raise
+
+    assert win.project is not None  # the old project is left untouched
+    assert "newer version" in win._warning.text().lower()
+
+
+def test_open_project_adds_to_recent(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = str(tmp_path / "proj2.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win._open_project(out)
+
+    assert win.settings.recent_projects[0] == out
+    # persisted to disk too, not just the in-memory Settings object
+    from nocturne.settings import load_settings
+    assert out in load_settings(win._settings_path).recent_projects
+
+
+def test_solve_state_round_trips_through_save_and_open(qtbot, tmp_path, monkeypatch):
+    from astropy.wcs import WCS
+    from PySide6.QtWidgets import QFileDialog
+    from nocturne.tools.astap import SolveResult
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
+
+    out = str(tmp_path / "solved.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win.project = None
+    win._solve = None
+    win._open_project(out)
+
+    assert win._solve is not None
+    _sig, res, objs = win._solve
+    assert res.solved is True
+    assert res.wcs is not None
+    assert round(res.center_ra_deg, 3) == 100.0
+
+
+def test_open_project_without_solve_leaves_unsolved(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._solve is None
+    out = str(tmp_path / "unsolved.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win.project = None
+    win._open_project(out)
+
+
+# --- dirty-state tracking, window title, save-before-close/open guard ---
+
+def test_dirty_false_after_open(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._dirty is False
+
+
+def test_dirty_true_after_edit(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._dirty is True
+
+
+def test_dirty_false_after_save_project_as(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._dirty is True
+    out = str(tmp_path / "dirty.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert win._dirty is False
+
+
+def test_window_title_reflects_name_and_dirty_marker(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    assert win.windowTitle() == "Nocturne"   # no image yet
+    win.open_fits(_make_fits(tmp_path))
+    assert "stack" in win.windowTitle()
+    assert "•" not in win.windowTitle()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "•" in win.windowTitle()
+    out = str(tmp_path / "titled.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    assert "titled" in win.windowTitle()
+    assert "•" not in win.windowTitle()
+
+
+def test_confirm_save_if_dirty_cancel_aborts(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    assert win._confirm_save_if_dirty() is False
+    assert win._dirty is True   # nothing changed
+
+
+def test_confirm_save_if_dirty_discard_returns_true(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    assert win._confirm_save_if_dirty() is True
+    assert win._dirty is True   # discard doesn't save; caller proceeds to replace the project
+
+
+def test_confirm_save_if_dirty_save_runs_save_project(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = str(tmp_path / "confirmed.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    assert win._confirm_save_if_dirty() is True
+    assert win._dirty is False
+    assert win._project_path == out
+
+
+def test_confirm_save_if_dirty_save_dialog_cancelled_returns_false(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))   # user dismisses Save As
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    assert win._confirm_save_if_dirty() is False
+    assert win._dirty is True
+
+
+def test_confirm_save_if_dirty_clean_project_no_prompt(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    called = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: called.append(1) or QMessageBox.StandardButton.Cancel)
+    assert win._confirm_save_if_dirty() is True
+    assert called == []
+
+
+def test_open_project_guarded_by_confirm_save_if_dirty(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    project_before = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    win._open_project(str(tmp_path / "nonexistent.nocturne"))
+    assert win.project is project_before   # aborted, nothing replaced
+
+
+def test_open_fits_guarded_by_confirm_save_if_dirty(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    project_before = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    other_dir = tmp_path / "second"
+    other_dir.mkdir()
+    win.open_fits(_make_fits(other_dir, filter_card="R"))
+    assert win.project is project_before   # aborted
+
+
+def test_closeevent_dirty_offers_save(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = str(tmp_path / "closesave.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    assert ev.isAccepted()
+    assert (tmp_path / "closesave.nocturne").exists()
+
+
+def test_closeevent_clean_project_does_not_prompt(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    called = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: called.append(1) or QMessageBox.StandardButton.Cancel)
+    ev = QCloseEvent()
+    win.closeEvent(ev)
+    assert ev.isAccepted()
+    assert called == []
+
+    assert win._solve is None  # no crash, just nothing to annotate
+
+
+# --- off-thread save: busy-panel progress wiring (core progress/cancel logic
+# is tested at the store level in tests/history/test_project_store.py) ---
+
+def test_save_project_as_drives_progress_and_clears_dirty(qtbot, tmp_path, monkeypatch):
+    """_async_enabled=False -> _run_busy runs synchronously, so the save still
+    round-trips and clears dirty exactly as before; along the way, save_project's
+    on_progress must reach the busy panel via _save_signals -> _set_progress."""
+    from PySide6.QtWidgets import QFileDialog
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)   # dirties the project + adds a cached-worthy step
+    assert win._dirty is True
+
+    seen = []
+    orig_set_progress = win._set_progress
+    def spy(phase, done, total):
+        seen.append((phase, done, total))
+        orig_set_progress(phase, done, total)
+    monkeypatch.setattr(win, "_set_progress", spy)
+
+    out = str(tmp_path / "progress.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    assert win._dirty is False
+    assert win._project_path == out
+    assert (tmp_path / "progress.nocturne").exists()
+    assert seen, "save_project's on_progress never reached _set_progress"
+    assert all(phase == "Saving project" for phase, _, _ in seen)
+    last_done, last_total = seen[-1][1], seen[-1][2]
+    assert last_done == last_total > 0
+
+
+def test_save_signals_wired_to_set_progress(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    seen = []
+    win._set_progress = lambda phase, done, total: seen.append((phase, done, total))
+    win._save_signals.progress.emit(3, 9)
+    assert seen == [("Saving project", 3, 9)]

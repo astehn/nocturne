@@ -19,6 +19,10 @@ class Project:
         self._position = 0
         self._save(0, base)
 
+    @property
+    def position(self) -> int:
+        return self._position
+
     def _path(self, index: int) -> str:
         return os.path.join(self._dir, f"state_{index}.npy")
 

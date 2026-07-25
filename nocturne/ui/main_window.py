@@ -17,10 +17,11 @@ from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import import_summary
 from ..history.project import Project
+from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
 from ..settings import (
-    astap_valid, graxpert_valid, load_settings, rcastro_valid, resolve_binary, save_settings,
-    start_dir,
+    add_recent_project, astap_valid, graxpert_valid, load_settings, rcastro_valid,
+    resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..steps.factory import make_step
@@ -102,6 +103,13 @@ class _AutoEnhanceSignals(QObject):
     progress = Signal(int, int, str)
 
 
+class _SaveSignals(QObject):
+    """Marshals save_project's on_progress callback (fired from the worker
+    thread when async is enabled) back onto the GUI thread via a queued
+    connection — mirrors _AutoEnhanceSignals."""
+    progress = Signal(int, int)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str) -> None:
         super().__init__()
@@ -109,6 +117,8 @@ class MainWindow(QMainWindow):
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
+        self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
+        self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
         self._stages = path_stages()
@@ -122,6 +132,9 @@ class MainWindow(QMainWindow):
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
+        self._save_signals = _SaveSignals()
+        self._save_signals.progress.connect(
+            lambda d, t: self._set_progress("Saving project", d, t))
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -335,23 +348,64 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        """Warn before discarding an edited (un-exported) project on quit."""
-        if self.project is not None and self.project.entries():
-            resp = QMessageBox.question(
-                self, "Quit Nocturne",
-                "You have unsaved edits — quit anyway? Your work will be lost.",
-                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Discard,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if resp != QMessageBox.StandardButton.Discard:
-                event.ignore()
-                return
+        """Offer to save before discarding an edited (un-saved) project on quit."""
+        if not self._confirm_save_if_dirty():
+            event.ignore()
+            return
         event.accept()
 
+    # --- dirty-state tracking + window title ---
+    def _mark_dirty(self) -> None:
+        self._dirty = True
+        self._update_title()
+
+    def _update_title(self) -> None:
+        name = (os.path.splitext(os.path.basename(self._project_path))[0]
+                if self._project_path else (self._source_label or None))
+        if name is None:
+            self.setWindowTitle(APP_NAME)
+        else:
+            self.setWindowTitle(f"{APP_NAME} — {name}{' •' if self._dirty else ''}")
+
+    def _confirm_save_if_dirty(self) -> bool:
+        """Guard for actions that discard the current project (open/close). Returns
+        True when it's safe to proceed. If dirty, offers Save / Discard / Cancel."""
+        if not self._dirty or self.project is None:
+            return True
+        resp = QMessageBox.question(
+            self, f"{APP_NAME} — Unsaved Changes",
+            "This project has unsaved edits. Save before continuing?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if resp == QMessageBox.StandardButton.Save:
+            self._save_project()
+            return not self._dirty   # False if the Save/Save-As was itself cancelled
+        return resp == QMessageBox.StandardButton.Discard
+
     def _build_menu(self) -> None:
+        project_menu = self.menuBar().addMenu("Project")
+        project_menu.addAction("Open Project…", lambda: self._open_project())
+        self._save_project_menu_act = project_menu.addAction(
+            "Save Project", self._save_project)
+        project_menu.addAction("Save Project As…", self._save_project_as)
+        self._recent_menu = project_menu.addMenu("Recent Projects")
+        self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
+
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
+
+    def _populate_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        recent = self.settings.recent_projects
+        if not recent:
+            act = self._recent_menu.addAction("(no recent projects)")
+            act.setEnabled(False)
+            return
+        for path in recent:
+            self._recent_menu.addAction(os.path.basename(path), lambda p=path: self._open_project(p))
 
     def _show_help(self) -> None:
         self._open_help("getting-started")
@@ -500,6 +554,7 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         self.project.run_step(_PrecomputedStep("Star Spikes", result), "")
+        self._mark_dirty()
         self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
         self._clear_warning()
         self._refresh()
@@ -522,6 +577,7 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         self.project.run_step(_PrecomputedStep("Narrowband", result), params)
+        self._mark_dirty()
         self.log_panel.append_entry(format_log_entry("Narrowband", params.palette, None))
         self._clear_warning()
         self._refresh()
@@ -563,6 +619,8 @@ class MainWindow(QMainWindow):
         def on_result(results) -> None:
             for name, option, img in results:
                 self.project.record_precomputed(name, option, img)
+            if results:
+                self._mark_dirty()
             self._rebuild_panel()
             self._refresh()
             msg = f"Auto-enhanced — {len(results)} steps"
@@ -663,6 +721,16 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
         tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
+        # Projects (a saved bundle: image + full edit history + solve state) — a
+        # distinct concept from Open FITS (a source) and Save Recipe (steps only),
+        # tinted with the accent so the two project actions read as a pair.
+        self._open_project_act = tb.addAction(
+            load_icon("open", ACCENT), "Open Project", lambda: self._open_project())
+        self._open_project_act.setToolTip("Open a saved .nocturne project")
+        self._save_project_act = tb.addAction(
+            load_icon("save-recipe", ACCENT), "Save Project", self._save_project)
+        self._save_project_act.setToolTip("Save the current project (image + full edit history)")
+        self._save_project_act.setEnabled(False)  # enabled by _refresh once an image is loaded
         tb.addAction(load_icon("settings"), "Settings", self._open_settings)
         tb.addSeparator()
         # Tools (primary features tinted with the accent)
@@ -754,6 +822,7 @@ class MainWindow(QMainWindow):
         base = self.project.current()
         result = self._step_for("stretch").apply(base, "")   # "" -> default amount 0.5
         self.project.run_step(_PrecomputedStep("Stretch", result), "")
+        self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))
 
@@ -785,11 +854,14 @@ class MainWindow(QMainWindow):
             self.open_fits(path)
 
     def open_fits(self, path: str) -> None:
+        if not self._confirm_save_if_dirty():
+            return
         try:
             base = load_fits(path)
         except Exception as exc:
             self._show_warning(f"Could not open file: {exc}")
             return
+        self._project_path = None  # a freshly-opened FITS is not tied to any prior bundle
         self.open_image(base, os.path.basename(path))
 
     def open_image(self, base, label: str) -> None:
@@ -808,7 +880,130 @@ class MainWindow(QMainWindow):
         )
         self._go_to_id("load")  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
+        self._dirty = False
+        self._update_title()
         self._refresh()
+
+    # --- saved projects (.nocturne bundles: image + full edit history + solve state) ---
+    def _save_project(self) -> None:
+        if self.project is None:
+            return
+        if self._project_path is None:
+            self._save_project_as()
+            return
+        self._do_save_project(self._project_path)
+
+    def _save_project_as(self) -> None:
+        if self.project is None:
+            return
+        start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save project", start, "Nocturne project (*.nocturne)")
+        if not path:
+            return
+        if not path.lower().endswith(".nocturne"):
+            path += ".nocturne"
+        self.settings.last_project_dir = os.path.dirname(path)
+        self._do_save_project(path)
+
+    def _do_save_project(self, path: str) -> None:
+        """Write the project to `path` off the UI thread (busy panel + cancel),
+        atomically (temp file + rename — a slow/cancelled save can't corrupt an
+        existing bundle at `path`). Solve state and source label are captured
+        here, on the UI thread, before the worker starts."""
+        solve_state = self._solve_state_dict()
+        source_label = self._source_label
+
+        def work():
+            save_project(self.project, path, solve_state=solve_state, source_label=source_label,
+                         on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
+
+        def on_result(_result) -> None:
+            self._project_path = path
+            self._dirty = False
+            self._update_title()
+            add_recent_project(self.settings, path)
+            save_settings(self.settings, self._settings_path)
+            self._show_output(f"Saved project: {os.path.basename(path)}")
+
+        self._run_busy(work, on_result, "Saving project…", "Save failed")
+
+    def _open_project(self, path: str | None = None) -> None:
+        if self._busy:
+            return
+        if not self._confirm_save_if_dirty():
+            return
+        if path is None:
+            start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Open Project", start, "Nocturne project (*.nocturne)")
+            if not path:
+                return
+        try:
+            loaded = load_project(path, self._cache_dir)
+        except NewerVersionError:
+            self._show_warning(
+                "This project was made by a newer version of Nocturne — update the app to open it.")
+            return
+        except Exception as exc:
+            self._show_warning(f"Could not open project: {exc}")
+            return
+        self.project = loaded.project
+        self._source_label = loaded.source_label
+        self._project_path = path
+        self._dirty = False
+        self._update_title()
+        self._restore_solve_state(loaded.solve_state)
+        self._center_stack.setCurrentWidget(self.image_view)
+        self._show_chrome(True)  # reveal stepper + panel now there's an image
+        self._clear_warning()
+        self.log_panel.clear_log()   # fresh project → fresh message channels
+        self.output_panel.clear()
+        h, w = self.project.current().data.shape[:2]
+        self.log_panel.append_entry(
+            format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
+        )
+        entries = self.project.entries()
+        self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
+        self._rebuild_panel()
+        self._refresh()
+        self.settings.last_project_dir = os.path.dirname(path)
+        add_recent_project(self.settings, path)
+        save_settings(self.settings, self._settings_path)
+
+    def _solve_state_dict(self) -> dict | None:
+        """Serialize the current plate-solve (if any) to JSON-safe data: the WCS
+        header as a plain dict, plus the catalogue objects found in-frame. None
+        if unsolved — nothing to persist."""
+        if not self._solve:
+            return None
+        _sig, res, objs = self._solve
+        from dataclasses import asdict
+        return {
+            "wcs": dict(res.wcs.to_header()) if res.wcs is not None else None,
+            "objects": [asdict(o) for o in objs],
+        }
+
+    def _restore_solve_state(self, d: dict | None) -> None:
+        """Best-effort rebuild of self._solve from a saved solve-state dict. Kept
+        deliberately contained: any failure here just leaves the project without
+        a live solve (re-solve to re-annotate) — it must never break opening the
+        project's image itself."""
+        self._solve = None
+        if not d or not d.get("wcs"):
+            return
+        try:
+            from astropy.io import fits
+            from ..core.catalog import CatalogObject
+            from ..tools.astap import ASTAP
+            header = fits.Header(d["wcs"])
+            res = ASTAP._build(header)   # rebuilds WCS + solved fields from the header
+            if res is None:
+                return
+            objs = [CatalogObject(**o) for o in (d.get("objects") or [])]
+            self._solve = (self._solve_sig(), res, objs)
+        except Exception:
+            self._solve = None   # degrade to "re-solve to re-annotate" — never raise
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
@@ -868,6 +1063,7 @@ class MainWindow(QMainWindow):
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
+            self._mark_dirty()
             self._log_step(stage_id, option, base, result)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
@@ -1094,6 +1290,7 @@ class MainWindow(QMainWindow):
             return
         result = _ENHANCE_FN[op](self.project.current())
         self.project.run_step(_PrecomputedStep(op, result), "")
+        self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(op, "", None))
         self._clear_warning()
         self._refresh()
@@ -1104,6 +1301,7 @@ class MainWindow(QMainWindow):
         self.project.jump_back(self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES)))
         result = self._step_for("crop").apply(self.project.current(), params)
         self.project.run_step(_PrecomputedStep(name, result), "")
+        self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(name, "", None))
         self._clear_warning()
         self._refresh()
@@ -1130,6 +1328,7 @@ class MainWindow(QMainWindow):
         base = self.project.current()
         result = self._step_for("remove_green").apply(base, strength)
         self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
+        self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
         self._clear_warning()
@@ -1319,6 +1518,7 @@ class MainWindow(QMainWindow):
         base = self.project.current()
         result = self._sat_result(base, amount, nebula)
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
+        self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
         self._clear_warning()
@@ -1474,6 +1674,7 @@ class MainWindow(QMainWindow):
             self._leading_kept(self.project.entries(), self._fringe_preceding()))
         result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
+        self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
         self._clear_warning()
@@ -1591,6 +1792,7 @@ class MainWindow(QMainWindow):
         _, starless, stars = self._sr_layers
         result = reduce_stars(starless, stars, float(amount))
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
+        self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
         self._clear_warning()
@@ -1643,6 +1845,7 @@ class MainWindow(QMainWindow):
         entries = self.project.entries()
         affected = entries[-1][0] if entries else None   # step being reverted
         self.project.undo()
+        self._mark_dirty()
         self.log_panel.append_entry("Undo")
         self._navigate_to_step(affected)
 
@@ -1650,6 +1853,7 @@ class MainWindow(QMainWindow):
         if not (self.project and self.project.can_redo()):
             return
         self.project.redo()
+        self._mark_dirty()
         entries = self.project.entries()
         affected = entries[-1][0] if entries else None   # step just re-applied
         self.log_panel.append_entry("Redo")
@@ -1931,6 +2135,7 @@ class MainWindow(QMainWindow):
         self._reset_act.setEnabled(self.project is not None)
         self._share_act.setEnabled(self.project is not None)
         self._upscale_act.setEnabled(self.project is not None)
+        self._save_project_act.setEnabled(self.project is not None)
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:

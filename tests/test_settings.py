@@ -107,3 +107,49 @@ def test_handle_field_roundtrips(tmp_path):
 def test_handle_defaults_blank(tmp_path):
     from nocturne.settings import load_settings
     assert load_settings(str(tmp_path / "missing.json")).handle == ""
+
+
+def test_recent_projects_and_last_project_dir_round_trip(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings
+    p = tmp_path / "s.json"
+    s = Settings(recent_projects=["/a/one", "/a/two"], last_project_dir="/a")
+    save_settings(s, str(p))
+    loaded = load_settings(str(p))
+    assert loaded.recent_projects == ["/a/one", "/a/two"]
+    assert loaded.last_project_dir == "/a"
+
+
+def test_recent_projects_and_last_project_dir_default_blank():
+    from nocturne.settings import Settings
+    s = Settings()
+    assert s.recent_projects == []
+    assert s.last_project_dir == ""
+
+
+def test_recent_projects_absent_in_old_file_defaults_blank(tmp_path):
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"base_dir": "/x"}))  # pre-feature settings.json
+    loaded = load_settings(str(p))
+    assert loaded.recent_projects == []
+    assert loaded.last_project_dir == ""
+
+
+def test_add_recent_project_dedups_prepends_and_caps():
+    from nocturne.settings import Settings, add_recent_project
+    s = Settings()
+    for i in range(10):
+        add_recent_project(s, f"/proj/{i}")
+    assert len(s.recent_projects) == 8
+    # most-recent-first: last added is at front
+    assert s.recent_projects == [
+        "/proj/9", "/proj/8", "/proj/7", "/proj/6",
+        "/proj/5", "/proj/4", "/proj/3", "/proj/2",
+    ]
+
+    # re-adding an existing path moves it to front without duplicating
+    add_recent_project(s, "/proj/5")
+    assert s.recent_projects[0] == "/proj/5"
+    assert s.recent_projects.count("/proj/5") == 1
+    assert len(s.recent_projects) == 8
