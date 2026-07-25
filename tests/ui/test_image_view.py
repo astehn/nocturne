@@ -270,3 +270,30 @@ def test_resize_inside_is_unaffected(qtbot):
     r = view._scene_rect()
     assert abs(r.left() - 20) < 0.01 and abs(r.top() - 10) < 0.01
     assert abs(r.right() - 150) < 0.01 and abs(r.bottom() - 80) < 0.01
+
+
+def test_resize_aspect_top_left_anchors_bottom_right(qtbot):
+    # A top-left aspect drag must keep the OPPOSITE corner (bottom-right) fixed,
+    # stay in bounds, and preserve the ratio. (Old code re-derived the bottom edge
+    # from the dragged top-y and could even leave the image; new code anchors right.)
+    view = _cropped_view(qtbot)
+    view.set_aspect(2.0)
+    r0 = view._scene_rect()
+    br = (r0.right(), r0.bottom())
+    view._resize_to("tl", QPointF(60, 40))
+    r = view._scene_rect()
+    assert _in_bounds(r, 200, 100)
+    assert abs(r.width() / r.height() - 2.0) < 0.05
+    assert abs(r.right() - br[0]) < 0.01 and abs(r.bottom() - br[1]) < 0.01
+
+
+def test_resize_aspect_top_right_anchors_bottom_left(qtbot):
+    view = _cropped_view(qtbot)
+    view.set_aspect(2.0)
+    r0 = view._scene_rect()
+    bl = (r0.left(), r0.bottom())
+    view._resize_to("tr", QPointF(140, 40))
+    r = view._scene_rect()
+    assert _in_bounds(r, 200, 100)
+    assert abs(r.width() / r.height() - 2.0) < 0.05
+    assert abs(r.left() - bl[0]) < 0.01 and abs(r.bottom() - bl[1]) < 0.01
