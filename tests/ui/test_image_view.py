@@ -297,3 +297,20 @@ def test_resize_aspect_top_right_anchors_bottom_left(qtbot):
     assert _in_bounds(r, 200, 100)
     assert abs(r.width() / r.height() - 2.0) < 0.05
     assert abs(r.left() - bl[0]) < 0.01 and abs(r.bottom() - bl[1]) < 0.01
+
+
+def test_move_clamps_box_inside_keeping_size(qtbot):
+    view = _cropped_view(qtbot, bounds=(10, 60, 20, 120))   # box 100 wide x 50 tall
+    before = view._scene_rect()
+    view._body.setPos(QPointF(500, 500))                    # shove it far out
+    after = view._scene_rect()
+    assert _in_bounds(after, 200, 100)
+    assert abs(after.width() - before.width()) < 0.01       # slid, not shrunk
+    assert abs(after.height() - before.height()) < 0.01
+
+
+def test_move_inside_is_unaffected(qtbot):
+    view = _cropped_view(qtbot, bounds=(10, 60, 20, 120))
+    view._body.setPos(QPointF(15, 5))                       # small in-bounds nudge
+    r = view._scene_rect()
+    assert abs(r.left() - 35) < 0.01 and abs(r.top() - 15) < 0.01   # 20+15, 10+5

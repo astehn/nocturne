@@ -75,6 +75,8 @@ class _Body(QGraphicsRectItem):
         self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
 
     def itemChange(self, change, value):
+        if change == self.GraphicsItemChange.ItemPositionChange:
+            value = self._overlay._clamp_body_pos(self, value)
         if change == self.GraphicsItemChange.ItemPositionHasChanged:
             self._overlay._geometry_changed()
         return super().itemChange(change, value)
@@ -394,6 +396,20 @@ class ImageView(QGraphicsView):
     def _image_wh(self) -> tuple[float, float]:
         pm = self._item.pixmap()
         return float(pm.width()), float(pm.height())
+
+    def _clamp_body_pos(self, body, pos: QPointF) -> QPointF:
+        """Constrain a proposed body position so the box's scene rect stays inside
+        the image — slides the box back in, preserving its size. A box larger than
+        the image (shouldn't happen) pins to the top-left."""
+        W, H = self._image_wh()
+        r = body.rect()                       # item-local rect: carries left/top + size
+        lo_x, hi_x = -r.left(), W - r.right()   # keep [left+x, right+x] within [0, W]
+        lo_y, hi_y = -r.top(), H - r.bottom()
+        if hi_x < lo_x:
+            hi_x = lo_x
+        if hi_y < lo_y:
+            hi_y = lo_y
+        return QPointF(min(max(pos.x(), lo_x), hi_x), min(max(pos.y(), lo_y), hi_y))
 
     def _resize_to(self, name: str, scene_pos) -> None:
         W, H = self._image_wh()
