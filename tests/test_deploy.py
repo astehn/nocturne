@@ -385,3 +385,22 @@ def test_remote_release_skips_binary_upload_when_unset(tmp_path):
     with mock.patch.object(deploy, "SITE", tmp_path / "site"):
         deploy._remote_release(_cfg(tmp_path), "0.4.0", notes, "Nocturne-0.4.0.zip", r)
     assert not any("download/" in " ".join(c) for c in r.calls)
+
+
+def test_download_path_outside_remote_path_rejected(tmp_path):
+    p = tmp_path / "bad.toml"
+    p.write_text('''
+[github]
+repo = "r"
+[website]
+ssh_host = "h"
+remote_path = "/var/www/nocturne"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.html"]
+exclude = ["config*.php", "db/", "uploads/"]
+download_path = "/srv/other/App.zip"
+''')
+    with pytest.raises(ValueError):
+        deploy.load_config(p)

@@ -63,7 +63,7 @@ class DeployConfig:
     file_mode: str
     include: list[str]
     exclude: list[str]
-    download_path: str | None = None   # VPS path of the site's self-hosted download; refreshed each deploy if set
+    download_path: str | None = None   # VPS path of the site's self-hosted download, refreshed each deploy; MUST be inside remote_path (the post-upload chown recurses remote_path only)
 
 
 def load_config(path: Path) -> DeployConfig:
@@ -71,7 +71,7 @@ def load_config(path: Path) -> DeployConfig:
         data = tomllib.load(f)
     try:
         gh, web = data["github"], data["website"]
-        return DeployConfig(
+        cfg = DeployConfig(
             repo=gh["repo"],
             ssh_host=web["ssh_host"],
             remote_path=web["remote_path"],
@@ -84,6 +84,14 @@ def load_config(path: Path) -> DeployConfig:
         )
     except KeyError as e:
         raise ValueError(f"deploy config missing required key: {e}") from e
+    if cfg.download_path and not (
+        cfg.download_path == cfg.remote_path
+        or cfg.download_path.startswith(cfg.remote_path.rstrip("/") + "/")
+    ):
+        raise ValueError(
+            f"download_path {cfg.download_path!r} must be inside remote_path "
+            f"{cfg.remote_path!r} so the post-upload chown covers it")
+    return cfg
 
 
 @dataclass
