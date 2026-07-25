@@ -1627,7 +1627,12 @@ def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
     win._show_warning("Stretch the image first — a long wrapping message " * 3)
     qtbot.wait(10)
     y1 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
-    assert y1 == y0                                            # buttons never move
+    # The warning grows upward into the stretch's slack, so the nav must not be
+    # shoved down by a text line's height (~15-20px). Allow ±1px: absorbing the
+    # warning's multi-line growth into a single QSpacerItem is integer division,
+    # so the redistributed spacer rounds by up to a pixel depending on how much
+    # fixed content sits above it in the column.
+    assert abs(y1 - y0) <= 1                                   # buttons never visibly move
 
 
 def test_warning_channel_and_clear(qtbot, tmp_path):
@@ -2215,3 +2220,40 @@ def test_save_signals_wired_to_set_progress(qtbot, tmp_path):
     win._set_progress = lambda phase, done, total: seen.append((phase, done, total))
     win._save_signals.progress.emit(3, 9)
     assert seen == [("Saving project", 3, 9)]
+
+
+def test_info_strip_shows_resolution(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert "24 × 24" in win._info_strip.text()
+
+
+def test_info_strip_reflects_current_crop(qtbot, tmp_path):
+    # resolution tracks the current image, so a geometry crop shrinks it
+    from nocturne.core.crop import CropParams
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))
+    assert "16 × 16" in win._info_strip.text()
+
+
+def test_close_project_returns_to_welcome(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win.project is not None
+    win._close_project()
+    assert win.project is None
+    assert win._center_stack.currentWidget() is win._welcome
+    assert win._info_strip.text() == ""
+
+
+def test_close_project_confirms_when_dirty(qtbot, tmp_path, monkeypatch):
+    # a dirty project must not be discarded silently — the save guard runs, and
+    # declining it (returning False) aborts the close
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr(win, "_confirm_save_if_dirty", lambda: False)
+    win._close_project()
+    assert win.project is not None                       # close was aborted
+    assert win._center_stack.currentWidget() is win.image_view

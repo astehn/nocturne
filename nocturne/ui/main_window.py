@@ -15,7 +15,7 @@ from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.crop import CropParams, detect_content_bounds
 from ..core.enhance import boost_hue, darken_sky, lighten_sky
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
-from ..core.fits_io import import_summary
+from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -239,6 +239,10 @@ class MainWindow(QMainWindow):
         self._right_layout = QVBoxLayout(right)
         self.histogram_view = HistogramView()
         self._right_layout.addWidget(self.histogram_view)
+        self._info_strip = QLabel("")               # resolution · integration · object, under the histogram
+        self._info_strip.setObjectName("importMeta")   # readable style
+        self._info_strip.setWordWrap(True)
+        self._right_layout.addWidget(self._info_strip)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -392,6 +396,9 @@ class MainWindow(QMainWindow):
         project_menu.addAction("Save Project As…", self._save_project_as)
         self._recent_menu = project_menu.addMenu("Recent Projects")
         self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
+        project_menu.addSeparator()
+        self._close_project_act = project_menu.addAction(
+            "Close Project", self._close_project)   # back to the welcome screen
 
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
@@ -2119,6 +2126,44 @@ class MainWindow(QMainWindow):
             self._setup_saturation()
         self._update_explainer()
 
+    def _update_info_strip(self) -> None:
+        """One-line capture readout under the histogram: resolution · total
+        integration · target. Resolution reflects the *current* image (so a
+        crop updates it); integration/target come from stable capture
+        metadata. Cleared when no project is open."""
+        if self.project is None:
+            self._info_strip.setText("")
+            return
+        img = self.project.current()
+        meta = img.metadata
+        parts: list[str] = []
+        h, w = img.data.shape[:2]
+        parts.append(f"{w} × {h}")
+        integ = resolve_integration(meta)
+        if integ is not None and integ.total_s is not None:
+            parts.append(format_integration(integ.total_s))
+        target = meta.get("target") or meta.get("target_solved")
+        if target:
+            parts.append(str(target))
+        self._info_strip.setText("  ·  ".join(parts))
+
+    def _close_project(self) -> None:
+        """Return to the welcome screen, discarding the current workspace (after
+        the standard save-if-dirty guard). Gives the user a clean 'start over'
+        that matches the first-launch state — nothing lingering from the old
+        image."""
+        if not self._confirm_save_if_dirty():
+            return
+        self.project = None
+        self._project_path = None
+        self._source_label = None
+        self._solve = None
+        self._dirty = False
+        self._center_stack.setCurrentWidget(self._welcome)
+        self._show_chrome(False)
+        self._update_title()
+        self._update_info_strip()
+
     def _refresh(self) -> None:
         self._set_peek(False)   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
@@ -2128,6 +2173,7 @@ class MainWindow(QMainWindow):
             self.image_view.set_image(to_qimage(img))
             self.histogram_view.set_image(img)
             self._displayed = img
+        self._update_info_strip()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))

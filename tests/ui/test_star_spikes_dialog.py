@@ -49,6 +49,24 @@ def test_slider_change_renders_preview(qtbot):
     assert not np.allclose(changed, d._base.data)
 
 
+def test_show_event_refits_preview_once(qtbot):
+    # The preview is first fitted in __init__ against a tiny, not-yet-laid-out
+    # viewport, so it opens zoomed out to "looks empty". showEvent must re-fit
+    # once the dialog has its real size — but only once, so a later re-show
+    # doesn't fight a zoom the user has since applied.
+    from PySide6.QtGui import QShowEvent
+    d = StarSpikesDialog(_img())
+    qtbot.addWidget(d)
+    calls = []
+    d.preview.view.fit = lambda: calls.append(1)
+    assert not getattr(d, "_did_fit", False)
+    d.showEvent(QShowEvent())
+    assert d._did_fit is True
+    assert len(calls) == 1
+    d.showEvent(QShowEvent())          # re-show must not re-fit
+    assert len(calls) == 1
+
+
 def test_apply_calls_back_with_result(qtbot):
     got = []
     d = StarSpikesDialog(_img(), on_apply=got.append)
