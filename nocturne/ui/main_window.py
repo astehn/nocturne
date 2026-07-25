@@ -2179,9 +2179,11 @@ class MainWindow(QMainWindow):
         shared cache dir. Best-effort — a locked or missing file never blocks the
         app. Saved .nocturne bundles are self-contained, so saved work is untouched."""
         d = self._cache_dir
-        if not os.path.isdir(d):
+        try:
+            names = os.listdir(d)      # raises if the dir is missing/unreadable — caught: never blocks the app
+        except OSError:
             return
-        for name in os.listdir(d):
+        for name in names:
             if name.startswith("state_") and name.endswith(".npy"):
                 try:
                     os.remove(os.path.join(d, name))

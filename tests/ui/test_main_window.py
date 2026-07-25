@@ -2292,6 +2292,11 @@ def test_clear_cache_removes_only_snapshots(qtbot, tmp_path):
     assert left == ["keep.txt"]                      # snapshots gone, other files kept
 
 
+def test_clear_cache_never_raises_on_missing_dir(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)   # no image opened → _cache_dir doesn't exist yet
+    win._clear_cache()               # must be a clean no-op, never raise
+
+
 def test_open_image_clears_stale_snapshots(qtbot, tmp_path):
     import os
     win = _window(qtbot, tmp_path)
