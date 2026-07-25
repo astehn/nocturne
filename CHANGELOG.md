@@ -2,6 +2,26 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.4.0] — 2026-07-25
+
+Saved projects, one-tap Auto Enhance, and shareable exports
+
+### Added
+- Saved Projects — save your whole editing session as a .nocturne file and reopen it exactly, pixel for pixel.
+- Auto Enhance — one adaptive tap that detects dual-band vs broadband data and processes accordingly.
+- Share — reframe and caption an image for social, then export or copy to the clipboard.
+- Upscale Crop — a 2× layered upscale of any crop, exported or opened as a copy.
+- Provenance report — a readable record of every step applied to an image, from the Project menu (Save or Copy).
+- Cancel, live progress and failure diagnostics for long operations (stacking, grading, Auto Enhance, external tools).
+- A histogram info strip (resolution · integration · target), Close Project, recent projects, and refreshed toolbar icons.
+
+### Changed
+- Auto Enhance reworked to always use photometric colour with a gentler stretch.
+- The right panel no longer shifts as status messages update, and the message panels clear when a new image is opened.
+
+### Fixed
+- Readable FITS import details, a Close button on every dialog, and the Star Spikes preview now opens fitted to the image.
+
 ## [0.3.0] — 2026-07-23
 
 The big feature build-out since the initial public release.
