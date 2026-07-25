@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 
 def resolve_settings_path(home: str | None = None) -> str:
@@ -32,6 +32,8 @@ class Settings:
     astap_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
     handle: str = ""                # user's @handle, burned onto shared images
+    recent_projects: list[str] = field(default_factory=list)  # most-recent-first, capped
+    last_project_dir: str = ""      # directory a "new project" file picker should open in
 
 
 def load_settings(path: str) -> Settings:
@@ -47,12 +49,26 @@ def load_settings(path: str) -> Settings:
         astap_path=data.get("astap_path", ""),
         help_expanded=data.get("help_expanded", True),
         handle=data.get("handle", ""),
+        recent_projects=data.get("recent_projects", []),
+        last_project_dir=data.get("last_project_dir", ""),
     )
 
 
 def save_settings(s: Settings, path: str) -> None:
     with open(path, "w") as f:
         json.dump(asdict(s), f, indent=2)
+
+
+MAX_RECENT_PROJECTS = 8
+
+
+def add_recent_project(settings: Settings, path: str) -> None:
+    """Record `path` as the most-recently-used project: dedup (moving an existing
+    entry to the front rather than duplicating it), prepend, and cap the list at
+    MAX_RECENT_PROJECTS. Mutates settings.recent_projects in place."""
+    recent = [p for p in settings.recent_projects if p != path]
+    recent.insert(0, path)
+    settings.recent_projects = recent[:MAX_RECENT_PROJECTS]
 
 
 def start_dir(base_dir: str) -> str:
