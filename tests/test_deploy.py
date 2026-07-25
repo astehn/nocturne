@@ -282,3 +282,43 @@ def test_preflight_aborts_on_gh_auth_failure(tmp_path, monkeypatch):
         return ""
     with pytest.raises(SystemExit):
         deploy.preflight(_cfg(tmp_path), run=fake_run)
+
+
+def test_remote_release_order_and_commands(tmp_path):
+    cfg = _cfg(tmp_path)
+    (tmp_path / "site").mkdir()
+    r = RecordingRunner()
+    notes = deploy.Notes(headline="h", added=["X"], changed=[], fixed=[])
+    import unittest.mock as mock
+    with mock.patch.object(deploy, "SITE", tmp_path / "site"):
+        deploy._remote_release(cfg, "0.4.0", notes, "Nocturne-0.4.0.zip", r)
+    flat = [" ".join(c) for c in r.calls]
+    # order: commit -> push -> tag -> push tag -> gh release -> rsync -> chown
+    idx = lambda frag: next(i for i, s in enumerate(flat) if frag in s)
+    assert idx("git commit") < idx("git push origin main")
+    assert idx("git push origin main") < idx("git tag v0.4.0")
+    assert idx("git tag v0.4.0") < idx("git push origin v0.4.0")
+    assert idx("git push origin v0.4.0") < idx("gh release create v0.4.0")
+    assert idx("gh release create v0.4.0") < idx("rsync")
+    assert idx("rsync") < idx("ssh")   # chown is the final ssh
+    # never commits site/
+    assert not any("site/" in s and "git add" in s for s in flat)
+    # gh uploads the asset
+    assert any("Nocturne-0.4.0.zip" in s for s in flat)
+
+
+def test_build_failure_leaves_no_mutations(tmp_path, monkeypatch):
+    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n')
+    (tmp_path / "nocturne").mkdir()
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n")
+    monkeypatch.setattr(deploy, "ROOT", tmp_path)
+    monkeypatch.setattr(deploy, "preflight", lambda c, run: None)
+    monkeypatch.setattr(deploy, "build_app",
+                        lambda run=None: (_ for _ in ()).throw(SystemExit("boom")))
+    cfg = _write_config(tmp_path)
+    notes = tmp_path / "n.json"
+    notes.write_text('{"headline":"h","added":["X"],"changed":[],"fixed":[]}')
+    with pytest.raises(SystemExit):
+        deploy.main(["--config", str(cfg), "--version", "0.4.0", "--notes-json", str(notes)])
+    assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()  # unchanged

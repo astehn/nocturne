@@ -11,12 +11,14 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # repo root
 SITE = ROOT / "site"
+DIST = ROOT / "dist"
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _PREFIX_RE = re.compile(r"^(\w+)(\([^)]*\))?!?:\s*")   # conventional-commit prefix
@@ -287,16 +289,48 @@ def main(argv: list[str]) -> int:
         print("  " + " ".join(build_chown_cmd(config)))
         return 0
 
-    # real local mutations
+    # real pipeline: build first so a failed build leaves zero file changes
+    build_app(real_run)
+    verify_build()
+    zip_app(version, real_run)
     set_version_files(ROOT, version)
     prepend_file(ROOT / "CHANGELOG.md", md_block, anchor="## [")
     prepend_file(SITE / "changelog.html", html_block, anchor='<article class="release">')
-    _remote_release(config, version, notes, asset, real_run)   # Task 6
+    _remote_release(config, version, notes, asset, real_run)
     return 0
 
 
-def _remote_release(config, version, notes, asset, run):
-    raise NotImplementedError("filled in by Task 6")
+def build_app(run=real_run) -> None:
+    run([".venv/bin/pyinstaller", "packaging/nocturne.spec", "--noconfirm",
+         "--workpath", "build/pyi", "--distpath", "dist"])
+
+
+def verify_build() -> None:
+    exe = DIST / "Nocturne.app" / "Contents" / "MacOS" / "Nocturne"
+    if not exe.exists() or exe.stat().st_size < 1_000_000:
+        raise SystemExit("build verify: Nocturne.app executable missing or too small")
+
+
+def zip_app(version: str, run=real_run) -> Path:
+    out = DIST / release_asset_name(version)
+    run(["ditto", "-c", "-k", "--keepParent", str(DIST / "Nocturne.app"), str(out)])
+    return out
+
+
+def _remote_release(config, version, notes, asset, run=real_run) -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(render_release_notes(notes))
+        notes_path = f.name
+    run(["git", "add", "pyproject.toml", "nocturne/__init__.py",
+         "CHANGELOG.md", "README.md"])
+    run(["git", "commit", "-m", f"release: v{version}"])
+    run(["git", "push", "origin", "main"])
+    run(["git", "tag", f"v{version}"])
+    run(["git", "push", "origin", f"v{version}"])
+    run(["gh", "release", "create", f"v{version}", str(DIST / asset),
+         "--title", f"Nocturne {version}", "--notes-file", notes_path])
+    run(build_rsync_cmd(config, SITE))
+    run(build_chown_cmd(config))
 
 
 if __name__ == "__main__":
