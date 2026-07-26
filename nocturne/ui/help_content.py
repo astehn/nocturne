@@ -71,7 +71,8 @@ _TOPIC_LIST = (
        "<h4>How to use it</h4>"
        "<ol>"
        "<li>Open <b>Settings</b> and point Nocturne at your <b>GraXpert</b> program (required) "
-       "and, if you have it, <b>RC-Astro</b> (optional). Use <b>Test</b> to confirm each works.</li>"
+       "and, if you have them, <b>RC-Astro</b> and <b>ASTAP</b> (both optional — ASTAP powers "
+       "<b>Plate Solve</b>). Use <b>Test</b> to confirm each works.</li>"
        "<li>Click <b>Open FITS</b> and pick a stacked master (or use <b>Stack</b> to build one "
        "from a folder of subs).</li>"
        "<li>Work left-to-right through the steps in the sidebar — or click any step to jump to "
@@ -182,14 +183,18 @@ _TOPIC_LIST = (
        "itself (not the whole frame), so red or teal nebulosity is preserved rather than washed "
        "out. Optional green removal (SCNR) is there if a green tinge remains.</p>"
        "<h4>How to use it</h4>"
-       "<p>Just apply — it's automatic. You'll usually <i>not</i> need <b>Remove Green</b> now; "
-       "use it only if stars or background still take on a green tinge. Remove Green has a "
-       "<b>strength</b> dial with a live preview — start gentle (the default) and drag up only as "
-       "far as the green needs; full strength can flatten real nebula colour, so a light touch "
-       "usually wins.</p>"
+       "<p>Pick a <b>Method</b> and apply. <b>Sky balance</b> (the default) neutralises the sky "
+       "cast automatically. <b>Photometric (SPCC)</b> instead calibrates colour against real "
+       "star measurements — it identifies stars in the field and balances the channels to their "
+       "catalogue colours, for a more scientifically-accurate white balance (best on a plate-"
+       "solvable field). You'll usually <i>not</i> need <b>Remove Green</b>; use it only if stars "
+       "or background still take on a green tinge. Remove Green has a <b>strength</b> dial with a "
+       "live preview — start gentle (the default) and drag up only as far as the green needs; "
+       "full strength can flatten real nebula colour, so a light touch usually wins.</p>"
        "<h4>Tips</h4>"
        "<p>This is the step that cleans up the colour left over after Background extraction. It's "
-       "mainly for broadband/OSC data.</p>"),
+       "mainly for broadband/OSC data. Photometric (SPCC) needs enough stars to match, so it "
+       "suits star-rich fields.</p>"),
 
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",
@@ -369,19 +374,29 @@ _TOPIC_LIST = (
        "Cranfield (PixInsight NarrowbandNormalization).</p>"),
 
     _t("enhancements", "Enhancements",
-       "Targeted finishing: boost specific colours and adjust the sky.",
+       "Targeted, tap-to-stack finishing moves for colour, stars, dust, and glow.",
        "<h4>What it does</h4>"
-       "<p>Seven quick, targeted finishing moves: <b>Boost Red</b> (Ha), <b>Boost Cyan</b> (OIII), "
-       "<b>Boost Blue</b>, <b>Boost Gold</b>, <b>Darken Sky</b>, <b>Lighten Sky</b>, and "
-       "<b>Dark Structure</b>.</p>"
+       "<p>A bank of ten gentle finishing taps, grouped by what they touch:</p>"
+       "<ul>"
+       "<li><b>Colour boosts</b> — <b>Boost Red</b> (Ha), <b>Boost Cyan</b> (OIII), "
+       "<b>Boost Blue</b>, <b>Boost Gold</b>: hue-selective saturation lifts.</li>"
+       "<li><b>Vibrance</b> — a smart, oversaturation-resistant pop that lifts the muted colours "
+       "more than the already-vivid ones.</li>"
+       "<li><b>Star Colour</b> — brings out the natural colour of stars (blue-white through gold) "
+       "using a star/starless split, so only the stars gain colour, not the nebula.</li>"
+       "<li><b>Darken Sky</b> / <b>Lighten Sky</b> — shadow-masked background adjustments.</li>"
+       "<li><b>Dark Structure</b> — adds definition to dust lanes and dark nebulae.</li>"
+       "<li><b>Soft Glow</b> — a dreamy Orton-style bloom over the bright signal.</li>"
+       "</ul>"
        "<h4>How to use it</h4>"
        "<p>Tap a button to apply one gentle nudge; tap again to stack more. Each tap is its own "
        "undoable step, so you can dial the effect in and back it off precisely.</p>"
        "<h4>Tips</h4>"
        "<p>The colour boosts are hue-selective — Boost Red only deepens red areas and leaves teal "
        "alone, and Boost Gold warms golden-brown dust lanes. The sky moves are shadow-masked, so "
-       "they only touch the dark background and leave nebula and stars untouched. Dark Structure "
-       "deepens dust lanes and dark nebulae without crushing the surrounding signal.</p>"),
+       "they only touch the dark background and leave nebula and stars untouched. Star Colour "
+       "takes a moment on its first tap while it separates the stars. Dark Structure and Soft Glow "
+       "are subtle by design — stack a few taps to taste.</p>"),
 
     _t("export", "Export",
        "Save your finished image.",
@@ -398,19 +413,106 @@ _TOPIC_LIST = (
        "a clean base to finish in another tool.</p>"),
 
     # ---- Tools ----
-    _t("tools", "Tools: GraXpert & RC-Astro",
-       "GraXpert is free and required; RC-Astro is optional and adds pro-grade steps.",
+    _t("tools", "External tools: GraXpert, RC-Astro & ASTAP",
+       "GraXpert is free and required; RC-Astro and ASTAP are optional and add extra power.",
        "<h4>GraXpert (free, required)</h4>"
-       "<p>Powers <b>Background extraction</b>. It's free — download it, then set its path in "
-       "<b>Settings</b> and press <b>Test</b>.</p>"
+       "<p>Powers <b>Background extraction</b> (and, optionally, Noise Reduction). It's free — "
+       "download it, then set its path in <b>Settings</b> and press <b>Test</b>.</p>"
        "<h4>RC-Astro (paid, optional)</h4>"
        "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise), and "
-       "<b>StarXTerminator</b> (star removal/reduction). "
+       "<b>StarXTerminator</b> (the star/starless split behind Star Reduction, Star Colour, the "
+       "nebula saturation boost, Remove Green Fringe, and the starless+stars export). "
        "Set its path in Settings and Test it.</p>"
-       "<h4>Do I need RC-Astro?</h4>"
+       "<h4>ASTAP (free, optional)</h4>"
+       "<p>A free plate-solver that powers <b>Plate Solve</b> — identifying the field and "
+       "annotating it with catalogue objects, named stars, a compass, and a scale bar. It also "
+       "helps the Photometric (SPCC) colour method. Download ASTAP and its star database, then "
+       "set its path in Settings and Test it.</p>"
+       "<h4>Do I need the optional tools?</h4>"
        "<p>No — every RC-Astro step has a built-in free fallback, so the whole app works without "
-       "it. RC-Astro simply makes those steps noticeably better. Nocturne isn't affiliated with "
-       "either tool.</p>"),
+       "it; RC-Astro simply makes those steps noticeably better. ASTAP is only needed for plate "
+       "solving/annotation. Nocturne isn't affiliated with any of these tools.</p>"),
+
+    _t("auto-enhance", "Auto Enhance",
+       "One tap from a raw master to a finished picture.",
+       "<h4>What it does</h4>"
+       "<p>Runs a complete, sensible processing plan for you — background, colour, stretch, and "
+       "finishing polish — straight from the imported master, in a single click. A great starting "
+       "point, or a quick finished result when you don't want to work through every step.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Click <b>Auto Enhance</b> in the toolbar. It works from your <i>original</i> import, "
+       "not your current edits, so it asks first before replacing what you've done.</p>"
+       "<h4>Tips</h4>"
+       "<p>You can keep editing from the result, or <b>Undo</b> straight back to where you were. "
+       "It always aims for natural, photometric-style colour — for narrowband looks, use the "
+       "Narrowband tool instead.</p>"),
+
+    _t("plate-solve", "Plate Solve & Annotate",
+       "Identify the field and label what's in it.",
+       "<h4>What it does</h4>"
+       "<p>Works out exactly where your image is pointing by matching it against the sky, then "
+       "overlays what's there — catalogue objects (nebulae, galaxies, clusters), named bright "
+       "stars, a north compass, and a scale bar.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Set up <b>ASTAP</b> in Settings first (it does the solving). Then toggle <b>Plate "
+       "Solve</b> in the toolbar to show or hide the overlay — the first solve takes a moment, "
+       "after which it's remembered. At <b>Export</b> you can burn the labels into a PNG.</p>"
+       "<h4>Tips</h4>"
+       "<p>The solution is cached per framing, so cropping, rotating, or flipping re-solves. "
+       "Great for confirming what you captured and for making annotated shares.</p>"),
+
+    _t("share", "Share",
+       "Reframe and caption a copy for social, without touching your master.",
+       "<h4>What it does</h4>"
+       "<p>Makes a social-ready version of your image — cropped to a common aspect ratio, with an "
+       "optional caption band carrying your handle — while leaving your edited master untouched.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Click <b>Share</b>, pick an aspect ratio, toggle the caption if you want one, then "
+       "<b>Export</b> a JPEG or <b>Copy to clipboard</b>. Set your <b>@handle</b> in Settings.</p>"
+       "<h4>Tips</h4>"
+       "<p>It's non-destructive: only the shared copy is reframed, so you can go straight back to "
+       "finishing your full image afterwards.</p>"),
+
+    _t("upscale", "Upscale Crop",
+       "Enlarge a cropped region 2× for a closer view.",
+       "<h4>What it does</h4>"
+       "<p>Takes a cropped region and scales it up 2×, for a larger, tighter view of your "
+       "subject.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Click <b>Upscale Crop</b>, adjust the crop box, then <b>Upscale</b>. <b>Compare</b> "
+       "shows before/after at the same size. <b>Export</b> the result, or <b>Open as copy</b> to "
+       "keep editing it as a new project.</p>"
+       "<h4>Tips</h4>"
+       "<p>Upscaling can't invent detail that isn't there — it's best for reframing tight on a "
+       "subject. A small text file recording the crop and scale is saved next to each export.</p>"),
+
+    # ---- Projects & records ----
+    _t("saved-projects", "Saved Projects",
+       "Save and reopen your whole editing session.",
+       "<h4>What it does</h4>"
+       "<p>Saves everything about your session — the image, your complete edit history, and any "
+       "plate solve — into a single <b>.nocturne</b> file, so you can close Nocturne and later "
+       "pick up exactly where you left off, with undo/redo intact.</p>"
+       "<h4>How to use it</h4>"
+       "<p><b>Save Project</b> (or <b>Save Project As…</b>) writes the file; <b>Open Project</b> "
+       "reloads one; <b>Recent Projects</b> lists the last few. <b>Close Project</b> returns to "
+       "the welcome screen.</p>"
+       "<h4>Tips</h4>"
+       "<p>Unlike Export — which writes a flat, finished picture — a project keeps every step "
+       "editable. Saving runs in the background, so the app stays responsive.</p>"),
+
+    _t("provenance", "Provenance report",
+       "Export a readable record of everything you did.",
+       "<h4>What it does</h4>"
+       "<p>Writes a plain, readable <b>Markdown</b> record of your whole edit — every step and its "
+       "settings, plus the capture details and the app version — so you, or anyone, can see "
+       "exactly how the image was made.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Open the <b>Project</b> menu ▸ <b>Provenance report…</b>, then <b>Save…</b> the report "
+       "or <b>Copy to clipboard</b>.</p>"
+       "<h4>Tips</h4>"
+       "<p>Handy for reproducibility, sharing your process with others, or just remembering what "
+       "worked on a particular target.</p>"),
 
     # ---- Stacking & Ha/OIII ----
     _t("stacking", "Stacking",
@@ -480,7 +582,8 @@ SECTIONS: tuple[HelpSection, ...] = (
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
-    HelpSection("Tools", ("tools", "star_spikes", "narrowband")),
+    HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband")),
+    HelpSection("Sharing & Projects", ("share", "upscale", "saved-projects", "provenance")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),
     HelpSection("Troubleshooting", ("troubleshooting",)),
