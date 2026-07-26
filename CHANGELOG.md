@@ -2,6 +2,21 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.4.2] — 2026-07-26
+
+Five new one-tap Enhancements, plus recipe/batch capture and an in-app update check.
+
+### Added
+- Five new Enhancements taps — Star Colour (recover stars' natural colour via a star/starless split), Vibrance (oversaturation-resistant colour pop), Boost Gold (warm hue boost for dust and star fields), Dark Structure (definition in dust lanes and dark nebulae), and Soft Glow (dreamy Orton-style bloom).
+- Enhancements taps are now captured in Recipes and replayed in Batch, so finishing survives folder processing.
+- In-app "Update available" indicator — a fail-silent GitHub check on launch (no telemetry).
+
+### Changed
+- Refreshed in-app help, README, and testers' guide to cover the newer tools (Auto Enhance, Plate Solve, Share, Upscale Crop, Saved Projects, Provenance, Photometric/SPCC colour, ASTAP).
+
+### Fixed
+- The crop overlay now stays within the image — resizing or moving the box clamps to the bounds.
+
 ## [0.4.1] — 2026-07-25
 
 Plate-solving fixed in the app build
