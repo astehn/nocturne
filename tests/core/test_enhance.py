@@ -54,12 +54,14 @@ def test_sky_ops_handle_mono():
     assert lighten_sky(mono).data.ndim == 2 and lighten_sky(mono).data.max() > 0.1
 
 
-def test_soft_glow_brightens_highlights_not_background():
-    data = np.zeros((16, 16, 3), np.float32)
-    data[6:10, 6:10] = 0.8                                   # a bright central blob
-    out = soft_glow(AstroImage(data, is_linear=False), amount=0.5, radius=3.0, threshold=0.3).data
-    assert out[7, 7].mean() > data[7, 7].mean()             # highlight brightened
-    assert out[0, 0].mean() < 0.02                          # dark corner ~untouched
+def test_soft_glow_blooms_around_highlights():
+    data = np.zeros((20, 20, 3), np.float32)
+    data[8:12, 8:12] = 0.7                                   # bright central blob
+    out = soft_glow(AstroImage(data, is_linear=False), amount=0.4, radius=3.0, threshold=0.2).data
+    assert out[9, 9].mean() > data[9, 9].mean()             # blob brightens
+    assert out[7, 9].mean() > 0.004                         # glow bleeds OUTSIDE the blob edge (was pure black)
+    assert out[7, 9].mean() > out[5, 9].mean()              # ...and decays with distance (a real bloom)
+    assert out[0, 0].mean() < 0.03                          # far corner still dark
 
 
 def test_soft_glow_works_on_mono():

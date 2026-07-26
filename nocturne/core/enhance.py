@@ -50,14 +50,15 @@ def _smoothstep(x: np.ndarray, a: float, b: float) -> np.ndarray:
     return t * t * (3.0 - 2.0 * t)
 
 
-def soft_glow(img: AstroImage, amount: float = 0.2, radius: float = 8.0,
-              threshold: float = 0.35) -> AstroImage:
-    """Orton-style bloom gated to the brighter signal: blur a copy and screen it
-    back over the highlights, leaving the dark background clean. Works on mono too."""
+def soft_glow(img: AstroImage, amount: float = 0.3, radius: float = 10.0,
+              threshold: float = 0.15) -> AstroImage:
+    """Orton-style bloom: blur a copy and screen it back, gated by a BLURRED
+    highlight mask so the glow bleeds outward into the surrounding sky (a real
+    dreamy bloom, not just brightening the highlights). Works on mono too."""
     from scipy.ndimage import gaussian_filter
     data = np.clip(img.data, 0.0, 1.0)
     lum = data.mean(axis=2) if img.is_color else data
-    hi = _smoothstep(lum, threshold, 1.0)
+    hi = gaussian_filter(_smoothstep(lum, threshold, 1.0), radius)   # spread -> bloom bleeds out
     if img.is_color:
         blurred = np.stack([gaussian_filter(data[..., c], radius)
                             for c in range(data.shape[2])], axis=2)
@@ -70,7 +71,7 @@ def soft_glow(img: AstroImage, amount: float = 0.2, radius: float = 8.0,
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
-def vibrance(img: AstroImage, amount: float = 0.2) -> AstroImage:
+def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
     """Saturation boost weighted by (1 - saturation) so under-saturated colour
     lifts more and saturated colour is protected; shadow-protected. Mono unchanged."""
     if not img.is_color:
@@ -87,15 +88,19 @@ def vibrance(img: AstroImage, amount: float = 0.2) -> AstroImage:
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
-def star_colour(img: AstroImage, mask: np.ndarray, amount: float = 0.5) -> AstroImage:
-    """Boost saturation only where the feathered star `mask` (0..1, HxW) is high.
-    Mono unchanged. Pure — the caller supplies the mask (see main_window)."""
+def star_colour(img: AstroImage, mask: np.ndarray, amount: float = 0.6) -> AstroImage:
+    """Lift saturation additively where the feathered star `mask` (0..1, HxW) is
+    high — additive because stars are near-white (low saturation) and a
+    multiplicative boost barely moves them. A tiny neutral gate keeps truly-white
+    star cores from tinting. Mono unchanged; caller supplies the mask."""
     if not img.is_color:
         return img.copy()
     from skimage.color import hsv2rgb, rgb2hsv
     data = np.clip(img.data, 0.0, 1.0)
     hsv = rgb2hsv(data)
+    s = hsv[..., 1]
     m = np.clip(mask, 0.0, 1.0)
-    hsv[..., 1] = np.clip(hsv[..., 1] * (1.0 + amount * m), 0.0, 1.0)
+    neutral_gate = _smoothstep(s, 0.0, 0.02)         # don't tint pure-white cores (s~0)
+    hsv[..., 1] = np.clip(s + amount * m * (1.0 - s) * neutral_gate, 0.0, 1.0)
     return AstroImage(np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32),
                       is_linear=img.is_linear, metadata=dict(img.metadata))
