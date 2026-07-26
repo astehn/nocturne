@@ -15,7 +15,7 @@ from .. import APP_NAME, __version__
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds
-from ..core.enhance import boost_hue, dark_structure, darken_sky, lighten_sky, soft_glow, star_colour_layers, vibrance
+from ..core.enhance import ENHANCE_OPS, star_colour_layers
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..history.project import Project
@@ -72,19 +72,6 @@ BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show no
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
-
-_ENHANCE_FN = {
-    "Boost Red": lambda i: boost_hue(i, 0.0),
-    "Boost Cyan": lambda i: boost_hue(i, 0.5),
-    "Boost Blue": lambda i: boost_hue(i, 0.667),
-    "Darken Sky": darken_sky,
-    "Lighten Sky": lighten_sky,
-    "Vibrance": lambda i: vibrance(i),
-    "Soft Glow": lambda i: soft_glow(i),
-    "Boost Gold": lambda i: boost_hue(i, 0.11),
-    "Dark Structure": lambda i: dark_structure(i),
-}
-
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -1330,7 +1317,7 @@ class MainWindow(QMainWindow):
         if op == "Star Colour":
             self._enhance_star_colour()
             return
-        result = _ENHANCE_FN[op](self.project.current())
+        result = ENHANCE_OPS[op](self.project.current())
         self.project.run_step(_PrecomputedStep(op, result), "")
         self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(op, "", None))

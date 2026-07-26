@@ -134,3 +134,17 @@ def star_colour_layers(starless: AstroImage, stars: AstroImage,
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))
+
+
+ENHANCE_OPS = {
+    "Boost Red": lambda i: boost_hue(i, 0.0),
+    "Boost Cyan": lambda i: boost_hue(i, 0.5),
+    "Boost Blue": lambda i: boost_hue(i, 0.667),
+    "Boost Gold": lambda i: boost_hue(i, 0.11),
+    "Vibrance": lambda i: vibrance(i),
+    "Darken Sky": darken_sky,
+    "Lighten Sky": lighten_sky,
+    "Dark Structure": lambda i: dark_structure(i),
+    "Soft Glow": lambda i: soft_glow(i),
+}
+# "Star Colour" is intentionally excluded — it needs a star split; callers handle it.
