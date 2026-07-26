@@ -1706,15 +1706,30 @@ def test_peek_label_clears_when_leaving_peek(qtbot, tmp_path):
 
 # --- Auto Enhance ---
 
+def _crop(win):
+    """Apply a user crop — Auto Enhance is gated on (and respects) this."""
+    from nocturne.core.crop import CropParams
+    win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))
+
+
 def test_auto_enhance_action_exists_on_toolbar(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     assert hasattr(win, "_auto_enhance")
     assert win._auto_enhance_act.text() == "Auto Enhance"
 
 
+def test_auto_enhance_gated_on_crop(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert not win._auto_enhance_act.isEnabled()   # no crop yet -> disabled
+    _crop(win)
+    assert win._auto_enhance_act.isEnabled()        # cropped -> enabled
+
+
 def test_auto_enhance_populates_editable_history(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))              # default filter_card="L" -> broadband
+    _crop(win)
     assert hasattr(win, "_auto_enhance")
     win._auto_enhance()
     names = [n for n, _o in win.project.entries()]
@@ -1722,22 +1737,26 @@ def test_auto_enhance_populates_editable_history(qtbot, tmp_path):
     assert "Stretch" in names or "Color" in names
 
 
-def test_auto_enhance_starts_from_linear_base(qtbot, tmp_path, monkeypatch):
-    """A prior manual step is discarded — auto-enhance resets to the linear
-    base (jump_back(0)) rather than stacking on top of it."""
+def test_auto_enhance_respects_the_users_crop(qtbot, tmp_path, monkeypatch):
+    """Auto Enhance runs from the user's cropped frame: it keeps that crop, adds
+    no auto-crop of its own, and discards the intervening processing — rather
+    than resetting to the uncropped linear base."""
     import nocturne.ui.main_window as mw
     from PySide6.QtWidgets import QMessageBox
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    cropped_h = win.project.current().data.shape[0]
     win._go_to_id("stretch")
-    win.apply_current(0.5)                            # manual step first
-    assert win.project.entries()[-1][0] == "Stretch"
-    monkeypatch.setattr(mw.QMessageBox, "question",  # discard-edits confirm -> Yes
+    win.apply_current(0.5)                            # manual processing to discard
+    monkeypatch.setattr(mw.QMessageBox, "question",  # discard-processing confirm -> Yes
                         lambda *a, **k: QMessageBox.StandardButton.Yes)
     win._auto_enhance()
     names = [n for n, _o in win.project.entries()]
-    assert names[0] == "Crop"                          # auto plan's first stage, not "Stretch"
+    assert names[0] == "Crop"                          # the user's crop, kept first
+    assert names.count("Crop") == 1                     # no extra auto-crop was added
     assert names.count("Stretch") == 1                  # not stacked on the manual Stretch
+    assert win.project.current().data.shape[0] == cropped_h   # output honours the crop
 
 
 def test_auto_enhance_uses_same_path_for_dualband_filter(qtbot, tmp_path):
@@ -1746,6 +1765,7 @@ def test_auto_enhance_uses_same_path_for_dualband_filter(qtbot, tmp_path):
     # else; there's no more data-type prompt or Narrowband stage.
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path, filter_card="LP"))
+    _crop(win)
     win._auto_enhance()
     names = [n for n, _o in win.project.entries()]
     assert "Narrowband" not in names
@@ -1760,16 +1780,16 @@ def test_auto_enhance_no_project_cancelled_dialog_does_nothing(qtbot, tmp_path, 
     assert win._warning.text() == ""
 
 
-def test_auto_enhance_no_project_opens_dialog_and_enhances_chosen_file(qtbot, tmp_path, monkeypatch):
+def test_auto_enhance_no_project_opens_dialog_then_needs_crop(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     path = _make_fits(tmp_path)
-
-    def fake_choose_fits():
-        win.open_fits(path)
-
-    monkeypatch.setattr(win, "_choose_fits", fake_choose_fits)
+    monkeypatch.setattr(win, "_choose_fits", lambda: win.open_fits(path))
     win._auto_enhance()
-    assert win.project is not None
+    assert win.project is not None                     # the file was opened
+    assert not win.project.entries()                   # but with no crop it doesn't enhance
+    assert "Crop" in win._warning.text()               # it tells the user to crop first
+    _crop(win)
+    win._auto_enhance()                                # now it runs
     names = [n for n, _o in win.project.entries()]
     assert len(names) >= 3
     assert "Stretch" in names or "Color" in names
@@ -1778,6 +1798,7 @@ def test_auto_enhance_no_project_opens_dialog_and_enhances_chosen_file(qtbot, tm
 def test_auto_enhance_reports_step_count_and_nudges(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    _crop(win)
     win._auto_enhance()
     out = win.output_panel.toPlainText()
     assert "Auto-enhanced" in out
@@ -1897,21 +1918,22 @@ def test_status_text_does_not_widen_right_panel(qtbot, tmp_path):
     assert win._right_panel.minimumSizeHint().width() == short   # wrapped -> text doesn't drive width
 
 
-def test_auto_enhance_confirms_only_when_edits_exist(qtbot, tmp_path, monkeypatch):
+def test_auto_enhance_confirms_only_when_processing_exists(qtbot, tmp_path, monkeypatch):
     import nocturne.ui.main_window as mw
     from PySide6.QtWidgets import QMessageBox
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    _crop(win)
     calls = {"n": 0}
     def fake_q(*a, **k):
         calls["n"] += 1
         return QMessageBox.StandardButton.Cancel
     monkeypatch.setattr(mw.QMessageBox, "question", fake_q)
-    win._auto_enhance()                       # fresh import, no entries -> NO prompt, runs
+    win._auto_enhance()                       # only a crop, nothing to discard -> NO prompt, runs
     assert calls["n"] == 0
     assert win.project.entries()              # auto-enhance recorded steps
     before = list(win.project.entries())
-    win._auto_enhance()                       # now has edits -> prompt -> Cancel
+    win._auto_enhance()                       # now has processing to discard -> prompt -> Cancel
     assert calls["n"] == 1
     assert list(win.project.entries()) == before   # cancelled: nothing reset/re-run
 
