@@ -87,6 +87,17 @@ def test_vibrance_protects_shadows_and_mono():
     assert np.allclose(vibrance(mono).data, mono.data)       # mono unchanged
 
 
+def test_enhance_ops_registry_matches_enhance_names():
+    # Every recipe-captured tap except Star Colour (which needs a star split and
+    # is special-cased by callers) must have a replay function in ENHANCE_OPS —
+    # otherwise batch replay of that tap KeyErrors at runtime. Drift-guard: if a
+    # future tap is added to ENHANCE_NAMES but forgotten in ENHANCE_OPS, this
+    # fails structurally instead of only at batch time.
+    from nocturne.ui.pipeline import ENHANCE_NAMES
+    from nocturne.core.enhance import ENHANCE_OPS
+    assert set(ENHANCE_NAMES) - {"Star Colour"} == set(ENHANCE_OPS)
+
+
 def _plain_recombine(base_val, stars):
     return 1.0 - (1.0 - base_val) * (1.0 - stars)
 
