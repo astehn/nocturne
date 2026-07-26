@@ -828,6 +828,15 @@ def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
     assert "Boost Blue" not in names                  # trailing enhancement truncated
 
 
+def test_boost_gold_and_dark_structure_taps_add_steps(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.position
+    win._enhance("Boost Gold")
+    win._enhance("Dark Structure")
+    assert win.project.position == before + 2
+
+
 def test_run_busy_clears_busy_when_on_result_raises(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
     win.open_fits(_make_fits(tmp_path))
