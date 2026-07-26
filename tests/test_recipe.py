@@ -87,8 +87,8 @@ def test_mixed_geometry_recipe_keeps_order():
 
 def test_uncaptured_step_names():
     from nocturne.recipe import uncaptured_step_names
-    entries = [("Stretch", 0.5), ("Boost Red", ""), ("Darken Sky", ""), ("Boost Red", "")]
-    assert uncaptured_step_names(entries) == ["Boost Red", "Darken Sky"]
+    entries = [("Stretch", 0.5), ("Unknown Step", ""), ("Other Step", ""), ("Unknown Step", "")]
+    assert uncaptured_step_names(entries) == ["Unknown Step", "Other Step"]
     assert uncaptured_step_names([("Stretch", 0.5), ("Levels", (0, 1, 1))]) == []
 
 
@@ -123,3 +123,17 @@ def test_color_option_round_trips_method():
     # default/legacy (no method key) -> "sky"
     assert deserialize_option("color", {"neutralize_background": True,
                                         "remove_green": False}).method == "sky"
+
+
+def test_enhance_taps_are_captured():
+    entries = [("Stretch", 0.5), ("Boost Red", None), ("Star Colour", None)]
+    steps = recipe_from_entries(entries).steps
+    enh = [s for s in steps if s["stage"] == "enhance"]
+    assert {s["option"] for s in enh} == {"Boost Red", "Star Colour"}
+    assert deserialize_option("enhance", "Boost Red") == "Boost Red"
+
+
+def test_uncaptured_excludes_enhance_taps():
+    from nocturne.recipe import uncaptured_step_names
+    entries = [("Boost Red", None), ("Soft Glow", None)]
+    assert uncaptured_step_names(entries) == []

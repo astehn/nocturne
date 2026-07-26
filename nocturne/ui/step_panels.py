@@ -206,10 +206,12 @@ def build_panel(
             ("boost_red_btn", "Boost Red (Ha)", "Boost Red"),
             ("boost_cyan_btn", "Boost Cyan (OIII)", "Boost Cyan"),
             ("boost_blue_btn", "Boost Blue", "Boost Blue"),
+            ("boost_gold_btn", "Boost Gold", "Boost Gold"),
             ("vibrance_btn", "Vibrance", "Vibrance"),
             ("darken_sky_btn", "Darken Sky", "Darken Sky"),
             ("lighten_sky_btn", "Lighten Sky", "Lighten Sky"),
             ("star_colour_btn", "Star Colour", "Star Colour"),
+            ("dark_structure_btn", "Dark Structure", "Dark Structure"),
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
         ]
         for attr, label, op in _specs:

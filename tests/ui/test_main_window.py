@@ -828,6 +828,15 @@ def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
     assert "Boost Blue" not in names                  # trailing enhancement truncated
 
 
+def test_boost_gold_and_dark_structure_taps_add_steps(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.position
+    win._enhance("Boost Gold")
+    win._enhance("Dark Structure")
+    assert win.project.position == before + 2
+
+
 def test_run_busy_clears_busy_when_on_result_raises(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
     win.open_fits(_make_fits(tmp_path))
@@ -977,9 +986,11 @@ def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatc
     from nocturne.history.project import Project
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    # apply a real Stretch, then an append-only Enhancement (uncaptured)
     win._go_to_id("stretch"); win.apply_current(0.5)
-    win._go_to_id("enhancements"); win._enhance("Boost Red")
+    # Enhancements taps are now captured, so force a genuinely uncaptured
+    # step to exercise the warn+cancel path.
+    monkeypatch.setattr("nocturne.ui.main_window.uncaptured_step_names",
+                        lambda entries: ["Some Tool Step"])
     calls = {"dialog": 0}
     monkeypatch.setattr(QMessageBox, "warning",
                         staticmethod(lambda *a, **k: (calls.__setitem__("dialog", calls["dialog"] + 1)
@@ -1005,9 +1016,11 @@ def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatc
     monkeypatch.setattr(QFileDialog, "getSaveFileName",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_recipe()
-    # Saved the captured subset (Stretch), dropped the uncaptured Boost Red.
+    # No forced warning needed: Enhancements taps are captured, not dropped.
     stages = [s["stage"] for s in load_recipe(out).steps]
     assert "stretch" in stages
+    enhance_steps = [s for s in load_recipe(out).steps if s["stage"] == "enhance"]
+    assert {"stage": "enhance", "option": "Boost Red"} in enhance_steps
 
 
 def test_closeevent_no_edits_accepts(qtbot, tmp_path):

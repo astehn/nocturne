@@ -56,7 +56,7 @@ PROCESSING_ORDER = [
 ]
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky",
-                 "Vibrance", "Star Colour", "Soft Glow")
+                 "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure")
 
 # Finishing steps that operate in display space and require a stretched image.
 # These are the in-app tail stages minus "export" (exporting a linear file is

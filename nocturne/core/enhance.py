@@ -88,6 +88,28 @@ def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
+def dark_structure(img: AstroImage, amount: float = 0.4, radius: float = 10.0) -> AstroImage:
+    """Add local contrast to dark structures (dust lanes, dark nebulae) for
+    definition — a symmetric local-contrast (unsharp) pass gated to a mid-dark
+    luminance band. Sharpens dust detail BOTH ways (a local-dark pixel darkens, a
+    local-bright one brightens), so it is brightness-neutral and doesn't mud/darken
+    the whole frame the way a deepen-only pull would. The band gate protects the
+    background noise floor (very dark) and bright signal (nebula/stars).
+    Hue-preserving (luminance gain applied to RGB). Mono supported."""
+    from scipy.ndimage import gaussian_filter
+    data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
+    lum = data.mean(axis=2) if img.is_color else data
+    detail = lum - gaussian_filter(lum, radius)            # signed local contrast
+    band = _smoothstep(lum, 0.04, 0.10) * (1.0 - _smoothstep(lum, 0.40, 0.60))
+    lum_out = np.clip(lum + amount * band * detail, 0.0, 1.0)
+    if img.is_color:
+        out = data * (lum_out / np.maximum(lum, 1e-4))[..., None]   # hue-preserving gain
+    else:
+        out = lum_out
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
 def star_colour_layers(starless: AstroImage, stars: AstroImage,
                        amount: float = 0.2) -> AstroImage:
     """Lift saturation on the STARS layer of a star/starless split, then screen
@@ -115,3 +137,17 @@ def star_colour_layers(starless: AstroImage, stars: AstroImage,
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))
+
+
+ENHANCE_OPS = {
+    "Boost Red": lambda i: boost_hue(i, 0.0),
+    "Boost Cyan": lambda i: boost_hue(i, 0.5),
+    "Boost Blue": lambda i: boost_hue(i, 0.667),
+    "Boost Gold": lambda i: boost_hue(i, 0.11),
+    "Vibrance": lambda i: vibrance(i),
+    "Darken Sky": darken_sky,
+    "Lighten Sky": lighten_sky,
+    "Dark Structure": lambda i: dark_structure(i),
+    "Soft Glow": lambda i: soft_glow(i),
+}
+# "Star Colour" is intentionally excluded — it needs a star split; callers handle it.

@@ -1,6 +1,6 @@
 import numpy as np
 from nocturne.core.image import AstroImage
-from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers
+from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers, dark_structure
 from skimage.color import rgb2hsv
 
 
@@ -87,6 +87,17 @@ def test_vibrance_protects_shadows_and_mono():
     assert np.allclose(vibrance(mono).data, mono.data)       # mono unchanged
 
 
+def test_enhance_ops_registry_matches_enhance_names():
+    # Every recipe-captured tap except Star Colour (which needs a star split and
+    # is special-cased by callers) must have a replay function in ENHANCE_OPS —
+    # otherwise batch replay of that tap KeyErrors at runtime. Drift-guard: if a
+    # future tap is added to ENHANCE_NAMES but forgotten in ENHANCE_OPS, this
+    # fails structurally instead of only at batch time.
+    from nocturne.ui.pipeline import ENHANCE_NAMES
+    from nocturne.core.enhance import ENHANCE_OPS
+    assert set(ENHANCE_NAMES) - {"Star Colour"} == set(ENHANCE_OPS)
+
+
 def _plain_recombine(base_val, stars):
     return 1.0 - (1.0 - base_val) * (1.0 - stars)
 
@@ -125,3 +136,45 @@ def test_soft_glow_threshold_one_is_finite():
     data = np.ones((4, 4, 3), np.float32)            # lum == 1 everywhere -> b-a == 0 in smoothstep
     out = soft_glow(AstroImage(data, is_linear=False), threshold=1.0).data
     assert np.isfinite(out).all()                    # no divide-by-zero NaN
+
+
+def test_dark_structure_deepens_dark_lane():
+    # mid-brightness field with a darker lane through the middle
+    data = np.full((32, 32, 3), 0.45, np.float32)
+    data[14:18, :] = 0.28                                   # a dark dust lane
+    img = AstroImage(data, is_linear=False)
+    out = dark_structure(img, amount=0.6, radius=6.0).data
+    assert out[16, 16].mean() < data[16, 16].mean() - 0.005   # lane gets darker (more contrast)
+    assert out[16, 16].mean() < out[2, 2].mean()              # lane darker than the surrounding field
+
+
+def test_dark_structure_protects_background_and_bright():
+    data = np.full((16, 16, 3), 0.02, np.float32)          # pure faint background (noise floor)
+    data[8, 8] = 0.9                                        # a bright point
+    out = dark_structure(AstroImage(data, is_linear=False), amount=0.6).data
+    assert abs(out[0, 0].mean() - 0.02) < 5e-3             # background ~untouched (no noise crunch)
+    assert abs(out[8, 8].mean() - 0.9) < 5e-3             # bright signal ~untouched
+
+
+def test_dark_structure_zero_amount_and_mono():
+    data = np.full((16, 16, 3), 0.4, np.float32); data[8, 8] = 0.2
+    assert np.allclose(dark_structure(AstroImage(data, is_linear=False), amount=0.0).data, data, atol=1e-5)
+    mono = np.full((16, 16), 0.4, np.float32); mono[8, 8] = 0.2
+    out = dark_structure(AstroImage(mono, is_linear=False), amount=0.6).data   # mono supported, no crash
+    assert out.shape == mono.shape
+
+
+def test_dark_structure_is_brightness_neutral():
+    # A symmetric local-contrast pass must not net-darken (net-darkening was the
+    # old muddy/washed behaviour): the frame mean stays ~unchanged while local
+    # contrast in the dark band rises.
+    rng = np.random.RandomState(0)
+    yy, xx = np.mgrid[0:64, 0:64]
+    lum = (0.20 + 0.08 * np.sin(xx / 6.0) * np.cos(yy / 5.0)).astype(np.float32)   # dusty mid-dark texture
+    data = np.stack([lum] * 3, axis=2)
+    out = dark_structure(AstroImage(data, is_linear=False), amount=0.5, radius=8.0).data
+    assert abs(out.mean() - data.mean()) < 2e-3                       # brightness-neutral (no muddy darkening)
+    from scipy.ndimage import gaussian_filter
+    hp_in = lum - gaussian_filter(lum, 8.0)
+    hp_out = out[..., 0] - gaussian_filter(out[..., 0], 8.0)
+    assert hp_out.std() > hp_in.std()                                # local contrast increased (definition)

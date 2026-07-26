@@ -91,3 +91,34 @@ def test_run_batch_progress_callback(tmp_path):
               [str(a)], str(outdir), "TIFF", Settings(),
               on_progress=lambda i, n, p: seen.append((i, n)))
     assert seen == [(1, 1)]
+
+
+def _enhance_img():
+    rng = np.random.RandomState(0)
+    return AstroImage(rng.uniform(0.1, 0.6, (24, 24, 3)).astype(np.float32), is_linear=False)
+
+
+def test_apply_recipe_replays_pure_enhance_tap():
+    from nocturne.core.enhance import ENHANCE_OPS
+    base = _enhance_img()
+    rec = Recipe(steps=[{"stage": "enhance", "option": "Boost Red"}])
+    out = apply_recipe(base, rec, Settings()).data
+    expected = ENHANCE_OPS["Boost Red"](base).data
+    assert np.allclose(out, expected, atol=1e-6)
+
+
+def test_apply_recipe_replays_star_colour_via_free_split():
+    from nocturne.core.enhance import star_colour_layers
+    from nocturne.core.starless import split_stars
+    base = _enhance_img()
+    rec = Recipe(steps=[{"stage": "enhance", "option": "Star Colour"}])
+    out = apply_recipe(base, rec, Settings()).data
+    starless, stars = split_stars(base)
+    expected = star_colour_layers(starless, stars).data
+    assert np.allclose(out, expected, atol=1e-6)
+
+
+def test_legacy_recipe_without_enhance_still_runs():
+    base = _enhance_img()
+    out = apply_recipe(base, Recipe(steps=[]), Settings())
+    assert np.allclose(out.data, base.data)

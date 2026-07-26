@@ -371,15 +371,17 @@ _TOPIC_LIST = (
     _t("enhancements", "Enhancements",
        "Targeted finishing: boost specific colours and adjust the sky.",
        "<h4>What it does</h4>"
-       "<p>Five quick, targeted finishing moves: <b>Boost Red</b> (Ha), <b>Boost Cyan</b> (OIII), "
-       "<b>Boost Blue</b>, <b>Darken Sky</b>, and <b>Lighten Sky</b>.</p>"
+       "<p>Seven quick, targeted finishing moves: <b>Boost Red</b> (Ha), <b>Boost Cyan</b> (OIII), "
+       "<b>Boost Blue</b>, <b>Boost Gold</b>, <b>Darken Sky</b>, <b>Lighten Sky</b>, and "
+       "<b>Dark Structure</b>.</p>"
        "<h4>How to use it</h4>"
        "<p>Tap a button to apply one gentle nudge; tap again to stack more. Each tap is its own "
        "undoable step, so you can dial the effect in and back it off precisely.</p>"
        "<h4>Tips</h4>"
        "<p>The colour boosts are hue-selective — Boost Red only deepens red areas and leaves teal "
-       "alone. The sky moves are shadow-masked, so they only touch the dark background and leave "
-       "nebula and stars untouched.</p>"),
+       "alone, and Boost Gold warms golden-brown dust lanes. The sky moves are shadow-masked, so "
+       "they only touch the dark background and leave nebula and stars untouched. Dark Structure "
+       "deepens dust lanes and dark nebulae without crushing the surrounding signal.</p>"),
 
     _t("export", "Export",
        "Save your finished image.",
@@ -445,8 +447,8 @@ _TOPIC_LIST = (
        "<p>Process an image, then <b>Save Recipe</b>. Later, use <b>Batch</b> to point a saved "
        "recipe at a folder and process everything in one go.</p>"
        "<h4>Tips</h4>"
-       "<p>Great for a night of the same target shot in sessions. Note: a few steps "
-       "(the Enhancements taps) aren't captured in recipes yet.</p>"),
+       "<p>Great for a night of the same target shot in sessions. The Enhancements taps "
+       "are captured in recipes and replayed in Batch too.</p>"),
 
     # ---- Troubleshooting ----
     _t("troubleshooting", "Troubleshooting & FAQ",

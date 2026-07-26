@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from .core.color import ColorSettings
 from .core.crop import CropParams
-from .ui.pipeline import STEP_NAME
+from .ui.pipeline import STEP_NAME, ENHANCE_NAMES
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
 _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
@@ -60,6 +60,8 @@ def serialize_option(stage_id, option):
 
 
 def deserialize_option(stage_id, value):
+    if stage_id == "enhance":
+        return value
     if stage_id == "crop":
         return CropParams(bounds=None, aspect=value["aspect"], rotate=value["rotate"],
                           flip_h=value["flip_h"], flip_v=value["flip_v"])
@@ -92,6 +94,9 @@ def deserialize_option(stage_id, value):
 def recipe_from_entries(entries) -> Recipe:
     steps = []
     for name, option in entries:
+        if name in ENHANCE_NAMES:
+            steps.append({"stage": "enhance", "option": name})
+            continue
         sid = _NAME_TO_STAGE.get(name)
         if sid is None:
             continue
@@ -105,7 +110,8 @@ def uncaptured_step_names(entries) -> list[str]:
     user applied is representable in a recipe."""
     seen: list[str] = []
     for name, _ in entries:
-        if _NAME_TO_STAGE.get(name) is None and name not in seen:
+        if (_NAME_TO_STAGE.get(name) is None and name not in ENHANCE_NAMES
+                and name not in seen):
             seen.append(name)
     return seen
 
