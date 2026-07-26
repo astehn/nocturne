@@ -447,8 +447,8 @@ _TOPIC_LIST = (
        "<p>Process an image, then <b>Save Recipe</b>. Later, use <b>Batch</b> to point a saved "
        "recipe at a folder and process everything in one go.</p>"
        "<h4>Tips</h4>"
-       "<p>Great for a night of the same target shot in sessions. Note: a few steps "
-       "(the Enhancements taps) aren't captured in recipes yet.</p>"),
+       "<p>Great for a night of the same target shot in sessions. The Enhancements taps "
+       "are captured in recipes and replayed in Batch too.</p>"),
 
     # ---- Troubleshooting ----
     _t("troubleshooting", "Troubleshooting & FAQ",

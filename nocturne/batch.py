@@ -19,6 +19,16 @@ def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner
     for step in recipe.steps:
         sid = step["stage"]
         option = deserialize_option(sid, step["option"])
+        if sid == "enhance":
+            from .core.enhance import ENHANCE_OPS, star_colour_layers
+            op = option
+            if op == "Star Colour":
+                from .core.starless import split_stars
+                starless, stars = split_stars(img)     # free split in batch (per spec)
+                img = star_colour_layers(starless, stars)
+            else:
+                img = ENHANCE_OPS[op](img)
+            continue
         st = make_step(sid, settings, bg_runner=bg_runner, rc_runner=rc_runner)
         if sid == "crop":
             option.bounds = detect_content_bounds(img)
