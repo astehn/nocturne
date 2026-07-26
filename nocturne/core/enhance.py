@@ -88,21 +88,24 @@ def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
-def dark_structure(img: AstroImage, amount: float = 0.5, radius: float = 16.0) -> AstroImage:
-    """Deepen dark structures (dust lanes, dark nebulae) for definition, without
-    lifting the background noise floor or crunching bright signal. Darkens pixels
-    that are darker than their large-scale surroundings, gated to a mid-dark
-    luminance band. Hue-preserving (multiplicative gain). Mono supported."""
+def dark_structure(img: AstroImage, amount: float = 0.4, radius: float = 10.0) -> AstroImage:
+    """Add local contrast to dark structures (dust lanes, dark nebulae) for
+    definition — a symmetric local-contrast (unsharp) pass gated to a mid-dark
+    luminance band. Sharpens dust detail BOTH ways (a local-dark pixel darkens, a
+    local-bright one brightens), so it is brightness-neutral and doesn't mud/darken
+    the whole frame the way a deepen-only pull would. The band gate protects the
+    background noise floor (very dark) and bright signal (nebula/stars).
+    Hue-preserving (luminance gain applied to RGB). Mono supported."""
     from scipy.ndimage import gaussian_filter
     data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
     lum = data.mean(axis=2) if img.is_color else data
-    large = gaussian_filter(lum, radius)
-    dark_detail = np.clip(large - lum, 0.0, None)          # >0 where darker than surroundings
-    scale = max(float(np.percentile(dark_detail, 99.0)), 1e-4)
-    d = np.clip(dark_detail / scale, 0.0, 1.0)
+    detail = lum - gaussian_filter(lum, radius)            # signed local contrast
     band = _smoothstep(lum, 0.04, 0.10) * (1.0 - _smoothstep(lum, 0.40, 0.60))
-    gain = 1.0 - amount * band * d
-    out = data * (gain[..., None] if img.is_color else gain)
+    lum_out = np.clip(lum + amount * band * detail, 0.0, 1.0)
+    if img.is_color:
+        out = data * (lum_out / np.maximum(lum, 1e-4))[..., None]   # hue-preserving gain
+    else:
+        out = lum_out
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 

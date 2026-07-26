@@ -162,3 +162,19 @@ def test_dark_structure_zero_amount_and_mono():
     mono = np.full((16, 16), 0.4, np.float32); mono[8, 8] = 0.2
     out = dark_structure(AstroImage(mono, is_linear=False), amount=0.6).data   # mono supported, no crash
     assert out.shape == mono.shape
+
+
+def test_dark_structure_is_brightness_neutral():
+    # A symmetric local-contrast pass must not net-darken (net-darkening was the
+    # old muddy/washed behaviour): the frame mean stays ~unchanged while local
+    # contrast in the dark band rises.
+    rng = np.random.RandomState(0)
+    yy, xx = np.mgrid[0:64, 0:64]
+    lum = (0.20 + 0.08 * np.sin(xx / 6.0) * np.cos(yy / 5.0)).astype(np.float32)   # dusty mid-dark texture
+    data = np.stack([lum] * 3, axis=2)
+    out = dark_structure(AstroImage(data, is_linear=False), amount=0.5, radius=8.0).data
+    assert abs(out.mean() - data.mean()) < 2e-3                       # brightness-neutral (no muddy darkening)
+    from scipy.ndimage import gaussian_filter
+    hp_in = lum - gaussian_filter(lum, 8.0)
+    hp_out = out[..., 0] - gaussian_filter(out[..., 0], 8.0)
+    assert hp_out.std() > hp_in.std()                                # local contrast increased (definition)
