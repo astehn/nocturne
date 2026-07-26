@@ -1,6 +1,6 @@
 import numpy as np
 from nocturne.core.image import AstroImage
-from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers
+from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers, dark_structure
 from skimage.color import rgb2hsv
 
 
@@ -125,3 +125,29 @@ def test_soft_glow_threshold_one_is_finite():
     data = np.ones((4, 4, 3), np.float32)            # lum == 1 everywhere -> b-a == 0 in smoothstep
     out = soft_glow(AstroImage(data, is_linear=False), threshold=1.0).data
     assert np.isfinite(out).all()                    # no divide-by-zero NaN
+
+
+def test_dark_structure_deepens_dark_lane():
+    # mid-brightness field with a darker lane through the middle
+    data = np.full((32, 32, 3), 0.45, np.float32)
+    data[14:18, :] = 0.28                                   # a dark dust lane
+    img = AstroImage(data, is_linear=False)
+    out = dark_structure(img, amount=0.6, radius=6.0).data
+    assert out[16, 16].mean() < data[16, 16].mean() - 0.005   # lane gets darker (more contrast)
+    assert out[16, 16].mean() < out[2, 2].mean()              # lane darker than the surrounding field
+
+
+def test_dark_structure_protects_background_and_bright():
+    data = np.full((16, 16, 3), 0.02, np.float32)          # pure faint background (noise floor)
+    data[8, 8] = 0.9                                        # a bright point
+    out = dark_structure(AstroImage(data, is_linear=False), amount=0.6).data
+    assert abs(out[0, 0].mean() - 0.02) < 5e-3             # background ~untouched (no noise crunch)
+    assert abs(out[8, 8].mean() - 0.9) < 5e-3             # bright signal ~untouched
+
+
+def test_dark_structure_zero_amount_and_mono():
+    data = np.full((16, 16, 3), 0.4, np.float32); data[8, 8] = 0.2
+    assert np.allclose(dark_structure(AstroImage(data, is_linear=False), amount=0.0).data, data, atol=1e-5)
+    mono = np.full((16, 16), 0.4, np.float32); mono[8, 8] = 0.2
+    out = dark_structure(AstroImage(mono, is_linear=False), amount=0.6).data   # mono supported, no crash
+    assert out.shape == mono.shape

@@ -88,6 +88,25 @@ def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
+def dark_structure(img: AstroImage, amount: float = 0.5, radius: float = 16.0) -> AstroImage:
+    """Deepen dark structures (dust lanes, dark nebulae) for definition, without
+    lifting the background noise floor or crunching bright signal. Darkens pixels
+    that are darker than their large-scale surroundings, gated to a mid-dark
+    luminance band. Hue-preserving (multiplicative gain). Mono supported."""
+    from scipy.ndimage import gaussian_filter
+    data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
+    lum = data.mean(axis=2) if img.is_color else data
+    large = gaussian_filter(lum, radius)
+    dark_detail = np.clip(large - lum, 0.0, None)          # >0 where darker than surroundings
+    scale = max(float(np.percentile(dark_detail, 99.0)), 1e-4)
+    d = np.clip(dark_detail / scale, 0.0, 1.0)
+    band = _smoothstep(lum, 0.04, 0.10) * (1.0 - _smoothstep(lum, 0.40, 0.60))
+    gain = 1.0 - amount * band * d
+    out = data * (gain[..., None] if img.is_color else gain)
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
 def star_colour_layers(starless: AstroImage, stars: AstroImage,
                        amount: float = 0.2) -> AstroImage:
     """Lift saturation on the STARS layer of a star/starless split, then screen
