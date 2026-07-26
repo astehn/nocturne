@@ -73,6 +73,7 @@ _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
 
+
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
 
