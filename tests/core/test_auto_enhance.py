@@ -55,6 +55,16 @@ def test_plan_shape_without_graxpert():
     assert "curves" not in s and "recover_core" not in s
 
 
+def test_plan_can_omit_crop():
+    # Auto Enhance passes include_crop=False so it respects the user's own crop
+    # instead of re-detecting a border-trim crop of its own.
+    img = _broadband_stack()
+    assert _stages(build_auto_plan(img, Settings()))[0] == "crop"          # default: crop first
+    no_crop = _stages(build_auto_plan(img, Settings(), include_crop=False))
+    assert "crop" not in no_crop
+    assert no_crop[0] == "color"                                            # rest of the plan intact
+
+
 def test_plan_shape_with_graxpert(tmp_path):
     graxpert = tmp_path / "graxpert"
     graxpert.write_text("#!/bin/sh\n")

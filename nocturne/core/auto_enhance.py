@@ -69,10 +69,14 @@ def _auto_denoise_option(settings: Settings) -> dict:
     return {"engine": engine, "level": AUTO_DENOISE_STRONG}
 
 
-def build_auto_plan(img, settings: Settings) -> list[tuple[str, object]]:
+def build_auto_plan(img, settings: Settings, include_crop: bool = True) -> list[tuple[str, object]]:
     """Build (do not apply) the ordered one-tap enhance plan: a list of
     (stage_id, native_option) pairs matching steps/factory.py's stage_ids and
     recipe.py::serialize_option's native option types for each stage.
+
+    When `include_crop` is False the auto-crop stage is omitted — used when the
+    caller has already applied the user's own crop and Auto Enhance must respect
+    it rather than re-detecting a border-trim crop of its own.
 
     Adaptive to the image (crop bounds) and to which external tools are
     installed (settings.*_valid). Never raises, even with a bare
@@ -84,7 +88,9 @@ def build_auto_plan(img, settings: Settings) -> list[tuple[str, object]]:
     excludes the more aggressive stages (deconvolution, star_reduction,
     recover_core, curves) for a balanced, natural default; local_contrast
     and green_fringe are included as safe finishing steps."""
-    plan: list[tuple[str, object]] = [("crop", _auto_crop_option(img))]
+    plan: list[tuple[str, object]] = []
+    if include_crop:
+        plan.append(("crop", _auto_crop_option(img)))
 
     if graxpert_valid(settings):
         plan.append(("background", AUTO_BACKGROUND_STRENGTH))

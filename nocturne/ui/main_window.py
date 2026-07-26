@@ -611,6 +611,20 @@ class MainWindow(QMainWindow):
             self._busy_label.setText(self._busy_label_text)
         self._set_progress(name, i, n)
 
+    def _has_crop(self) -> bool:
+        """True when a Crop sits in the leading geometry run — i.e. the user has
+        cropped and that crop survives a jump_back to the leading geometry. Auto
+        Enhance is gated on this so it always runs from (and respects) the user's
+        cropped frame."""
+        if self.project is None:
+            return False
+        for name, _ in self.project.entries():
+            if name == "Crop":
+                return True
+            if name not in GEOMETRY_NAMES:
+                break   # a non-geometry step precedes the crop -> it wouldn't be preserved
+        return False
+
     def _auto_enhance(self) -> None:
         if self.project is None:
             self._choose_fits()      # open the file dialog; loads synchronously if a file is picked
@@ -618,18 +632,23 @@ class MainWindow(QMainWindow):
                 return
         if self._busy:
             return
-        if self.project.entries():   # only confirm when there are edits to discard (not a fresh import)
+        if not self._has_crop():
+            self._show_warning("Crop your image first — Auto Enhance works from your cropped frame.")
+            return
+        entries = self.project.entries()
+        kept = self._leading_kept(entries, set(GEOMETRY_NAMES))   # keep the crop (+ any rotate/flip)
+        if len(entries) > kept:   # there is processing beyond geometry to discard
             resp = QMessageBox.question(
                 self, "Auto Enhance",
-                "This discards your current edits and runs Auto Enhance from the "
-                "original image. Continue?",
+                "This discards your current processing and re-runs Auto Enhance "
+                "from your cropped image. Your crop is kept. Continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel)
             if resp != QMessageBox.StandardButton.Yes:
                 return
-        self.project.jump_back(0)   # reset to the linear base (import state)
+        self.project.jump_back(kept)   # keep the user's crop/geometry, drop the processing
         base = self.project.current()
-        plan = build_auto_plan(base, self.settings)
+        plan = build_auto_plan(base, self.settings, include_crop=False)   # respect the user's crop
         self._clear_warning()
 
         def work():
@@ -777,6 +796,7 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
         self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]), "Auto Enhance",
                                               self._auto_enhance)
+        self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
@@ -2251,6 +2271,10 @@ class MainWindow(QMainWindow):
         self._share_act.setEnabled(self.project is not None)
         self._upscale_act.setEnabled(self.project is not None)
         self._save_project_act.setEnabled(self.project is not None)
+        has_crop = self._has_crop()
+        self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
+        self._auto_enhance_act.setToolTip(
+            "Auto Enhance" if has_crop else "Auto Enhance — crop your image first")
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
