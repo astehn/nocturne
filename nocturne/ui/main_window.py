@@ -15,7 +15,7 @@ from .. import APP_NAME, __version__
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds
-from ..core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance
+from ..core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, star_colour, vibrance
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..history.project import Project
@@ -1325,12 +1325,32 @@ class MainWindow(QMainWindow):
     def _enhance(self, op: str) -> None:
         if self.project is None or self._busy:
             return
+        if op == "Star Colour":
+            self._enhance_star_colour()
+            return
         result = _ENHANCE_FN[op](self.project.current())
         self.project.run_step(_PrecomputedStep(op, result), "")
         self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(op, "", None))
         self._clear_warning()
         self._refresh()
+
+    def _enhance_star_colour(self) -> None:
+        """Star Colour needs a sep-based star mask, so it runs off the UI thread
+        (recomputed each tap; see plan). A brief busy indicator; never freezes."""
+        base = self.project.current()
+
+        def work():
+            return star_colour(base, star_mask(base))
+
+        def on_result(result) -> None:
+            self.project.run_step(_PrecomputedStep("Star Colour", result), "")
+            self._mark_dirty()
+            self.log_panel.append_entry(format_log_entry("Star Colour", "", None))
+            self._clear_warning()
+            self._refresh()
+
+        self._run_busy(work, on_result, "Enhancing star colour…", "Star colour failed")
 
     def _apply_geometry(self, name: str, params) -> None:
         if self.project is None or self._busy:

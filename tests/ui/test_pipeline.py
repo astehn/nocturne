@@ -64,7 +64,8 @@ def test_deconvolution_stage_and_order():
 
 def test_enhancements_stage_and_names():
     from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, path_stages
-    assert ENHANCE_NAMES == ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky")
+    assert ENHANCE_NAMES == ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky",
+                             "Vibrance", "Star Colour", "Soft Glow")
     ids = [s.id for s in path_stages()]
     assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
     assert "enhancements" not in PROCESSING_ORDER   # append-only, not a truncating position

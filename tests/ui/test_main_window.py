@@ -2354,3 +2354,15 @@ def test_soft_glow_and_vibrance_taps_add_steps(qtbot, tmp_path):
     win._enhance("Soft Glow")
     win._enhance("Vibrance")
     assert win.project.position == before + 2      # two undoable Enhancements steps
+
+
+def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
+    import numpy as np
+    win = _window(qtbot, tmp_path)     # _async_enabled False -> _run_busy runs inline
+    win.open_fits(_make_fits(tmp_path))
+    # avoid the real sep star-detection on synthetic test data
+    monkeypatch.setattr("nocturne.ui.main_window.star_mask",
+                        lambda img, **k: np.zeros(img.data.shape[:2], np.float32))
+    before = win.project.position
+    win._enhance("Star Colour")
+    assert win.project.position == before + 1        # one undoable step added

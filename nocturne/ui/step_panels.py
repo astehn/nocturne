@@ -209,6 +209,7 @@ def build_panel(
             ("vibrance_btn", "Vibrance", "Vibrance"),
             ("darken_sky_btn", "Darken Sky", "Darken Sky"),
             ("lighten_sky_btn", "Lighten Sky", "Lighten Sky"),
+            ("star_colour_btn", "Star Colour", "Star Colour"),
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
         ]
         for attr, label, op in _specs:
