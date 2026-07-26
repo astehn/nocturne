@@ -206,8 +206,10 @@ def build_panel(
             ("boost_red_btn", "Boost Red (Ha)", "Boost Red"),
             ("boost_cyan_btn", "Boost Cyan (OIII)", "Boost Cyan"),
             ("boost_blue_btn", "Boost Blue", "Boost Blue"),
+            ("vibrance_btn", "Vibrance", "Vibrance"),
             ("darken_sky_btn", "Darken Sky", "Darken Sky"),
             ("lighten_sky_btn", "Lighten Sky", "Lighten Sky"),
+            ("soft_glow_btn", "Soft Glow", "Soft Glow"),
         ]
         for attr, label, op in _specs:
             btn = QPushButton(label)

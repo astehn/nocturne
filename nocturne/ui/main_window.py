@@ -15,7 +15,7 @@ from .. import APP_NAME, __version__
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds
-from ..core.enhance import boost_hue, darken_sky, lighten_sky
+from ..core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..history.project import Project
@@ -79,6 +79,8 @@ _ENHANCE_FN = {
     "Boost Blue": lambda i: boost_hue(i, 0.667),
     "Darken Sky": darken_sky,
     "Lighten Sky": lighten_sky,
+    "Vibrance": lambda i: vibrance(i),
+    "Soft Glow": lambda i: soft_glow(i),
 }
 
 
