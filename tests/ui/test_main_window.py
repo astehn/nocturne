@@ -2345,3 +2345,27 @@ def test_update_indicator_hidden_when_current_or_none(qtbot, tmp_path):
     assert not win._update_act.isVisible()
     win._on_update_check(None)                       # check failed / offline
     assert not win._update_act.isVisible()
+
+
+def test_soft_glow_and_vibrance_taps_add_steps(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.position
+    win._enhance("Soft Glow")
+    win._enhance("Vibrance")
+    assert win.project.position == before + 2      # two undoable Enhancements steps
+
+
+def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    win = _window(qtbot, tmp_path)     # _async_enabled False -> _run_busy runs inline
+    win.open_fits(_make_fits(tmp_path))
+    # stub the (slow) star/starless split so the tap doesn't hit real StarX/sep
+    def _fake_split(img):
+        zeros = np.zeros_like(np.asarray(img.data, np.float32))
+        return img, AstroImage(zeros, is_linear=img.is_linear)
+    monkeypatch.setattr(win, "_remove_stars", _fake_split)
+    before = win.project.position
+    win._enhance("Star Colour")
+    assert win.project.position == before + 1        # one undoable step added
