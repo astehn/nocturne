@@ -46,7 +46,7 @@ def lighten_sky(img: AstroImage, amount: float = 0.08) -> AstroImage:
 
 
 def _smoothstep(x: np.ndarray, a: float, b: float) -> np.ndarray:
-    t = np.clip((x - a) / (b - a), 0.0, 1.0)
+    t = np.clip((x - a) / max(b - a, 1e-6), 0.0, 1.0)
     return t * t * (3.0 - 2.0 * t)
 
 
@@ -81,7 +81,8 @@ def vibrance(img: AstroImage, amount: float = 0.2) -> AstroImage:
     s = hsv[..., 1]
     lum = data.mean(axis=2)
     shadow_protect = np.clip((lum - 0.12) / 0.18, 0.0, 1.0)     # mirrors saturation.saturate
-    hsv[..., 1] = np.clip(s + amount * (1.0 - s) * shadow_protect, 0.0, 1.0)
+    neutral_gate = _smoothstep(s, 0.0, 0.05)   # leave true neutrals (s~0, no real hue) alone
+    hsv[..., 1] = np.clip(s + amount * (1.0 - s) * shadow_protect * neutral_gate, 0.0, 1.0)
     return AstroImage(np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32),
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 

@@ -103,3 +103,15 @@ def test_star_colour_zero_amount_and_mono():
     assert np.allclose(star_colour(img, mask, amount=0.0).data, data, atol=1e-4)   # no-op
     mono = AstroImage(np.full((4, 4), 0.3, np.float32), is_linear=False)
     assert np.allclose(star_colour(mono, mask).data, mono.data)                    # mono unchanged
+
+
+def test_vibrance_does_not_tint_true_neutral():
+    grey = np.full((1, 1, 3), 0.6, np.float32)      # bright r=g=b neutral
+    out = vibrance(AstroImage(grey, is_linear=False), amount=0.5).data
+    assert np.allclose(out, grey, atol=2e-3)         # stays neutral — no red cast
+
+
+def test_soft_glow_threshold_one_is_finite():
+    data = np.ones((4, 4, 3), np.float32)            # lum == 1 everywhere -> b-a == 0 in smoothstep
+    out = soft_glow(AstroImage(data, is_linear=False), threshold=1.0).data
+    assert np.isfinite(out).all()                    # no divide-by-zero NaN
