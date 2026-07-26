@@ -18,7 +18,8 @@
   ],
   "works_with": [
     { "name": "GraXpert", "what": "background extraction (free)" },
-    { "name": "RC-Astro", "what": "BlurX / NoiseX / StarX (optional)" }
+    { "name": "RC-Astro", "what": "BlurX / NoiseX / StarX (optional)" },
+    { "name": "ASTAP", "what": "plate solving & annotation (optional)" }
   ],
   "photon_donors": []
 }

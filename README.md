@@ -36,15 +36,20 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 ## Features
 
 - 🪄 **Guided, non-destructive flow** — Crop → Background → Color → Deconvolution → Stretch → Recover Core → Levels → Curves → Saturation → Remove Green → Noise Reduction → Local Contrast → Star Reduction → Enhancements → Export. Each step has simple choices, a live before/after, and full undo / jump-back. Nothing is destructive until you export.
+- 📁 **Saved Projects** — save and reopen a full editing session as a single `.nocturne` file: image, complete edit history and plate-solve state included.
 - 🎯 **Plate Solve & Annotate** — solve a frame with **ASTAP** to identify exactly what you shot, then overlay deep-sky object labels, named stars, a compass and a scale bar (they burn into your export).
 - 🌡️ **Photometric colour (SPCC)** — calibrate colour against real Gaia catalogue stars in the frame, so the sky is neutral and star colours are true, with an automatic fall-back to sky balance.
 - 🌈 **Narrowband, one press** — turn a dualband Ha/OIII master into a finished two-gas colour image (stars removed, nebula colour-mapped, stars screened back), or use the guided Narrowband tool for multiple palettes with a live preview. Ha/OIII channel extraction too.
 - 🧱 **Smart stacking & frame grading** — point it at a folder of subs; it grades every frame (flagging clouds and soft stars), rejects the duds, registers (handles alt-az field rotation) and integrates a clean master.
 - 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
 - ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves, auto Levels with clipping preview, and HDR core recovery — each with a live preview.
-- ✨ **Targeted Enhancements** — tap-to-stack colour boosts (Ha / OIII / blue) and sky darken/lighten, each individually undoable.
-- ♻️ **Recipes & batch** — save your steps and apply them to a whole folder.
+- ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure and soft glow — ten taps, each individually undoable.
+- ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically.
+- 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
+- 📤 **Share** — reframe to a social aspect ratio with an optional caption, then export or copy a JPEG.
+- ♻️ **Recipes & batch** — save your steps (Enhancements taps included) and apply them to a whole folder.
 - 💾 **Export** — 16-bit TIFF / PNG / FITS (WCS preserved), or a starless + stars pair.
+- 📋 **Provenance report** — export a readable Markdown record of every processing step applied.
 - ❓ **Beginner-friendly** — a copyable log/output area, a browsable Help window and a per-step explainer you can collapse once you know the ropes.
 
 ## Requirements
