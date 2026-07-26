@@ -89,7 +89,7 @@ def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
 
 
 def star_colour_layers(starless: AstroImage, stars: AstroImage,
-                       amount: float = 0.3) -> AstroImage:
+                       amount: float = 0.2) -> AstroImage:
     """Lift saturation on the STARS layer of a star/starless split, then screen
     the untouched starless layer back on top — so only stars gain colour and
     nebulosity/sky are never affected. Mirrors `saturation.nebula_saturate` but
