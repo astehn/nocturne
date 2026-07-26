@@ -1,6 +1,6 @@
 import numpy as np
 from nocturne.core.image import AstroImage
-from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour
+from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers
 from skimage.color import rgb2hsv
 
 
@@ -87,24 +87,32 @@ def test_vibrance_protects_shadows_and_mono():
     assert np.allclose(vibrance(mono).data, mono.data)       # mono unchanged
 
 
-def test_star_colour_boosts_only_masked_region():
-    data = np.zeros((4, 4, 3), np.float32)
-    data[..., 0], data[..., 1], data[..., 2] = 0.6, 0.4, 0.4  # uniform slightly-red
-    img = AstroImage(data, is_linear=False)
-    mask = np.zeros((4, 4), np.float32); mask[1, 1] = 1.0
-    out = star_colour(img, mask, amount=0.8).data
-    s_in, s_out = rgb2hsv(data)[..., 1], rgb2hsv(np.clip(out, 0, 1))[..., 1]
-    assert s_out[1, 1] > s_in[1, 1]                          # masked pixel: saturation up
-    assert abs(s_out[0, 0] - s_in[0, 0]) < 1e-4             # unmasked pixel: unchanged
+def _plain_recombine(base_val, stars):
+    return 1.0 - (1.0 - base_val) * (1.0 - stars)
 
 
-def test_star_colour_zero_amount_and_mono():
-    data = np.zeros((4, 4, 3), np.float32); data[..., 0] = 0.6; data[..., 1] = 0.3; data[..., 2] = 0.3
-    img = AstroImage(data, is_linear=False)
-    mask = np.ones((4, 4), np.float32)
-    assert np.allclose(star_colour(img, mask, amount=0.0).data, data, atol=1e-4)   # no-op
-    mono = AstroImage(np.full((4, 4), 0.3, np.float32), is_linear=False)
-    assert np.allclose(star_colour(mono, mask).data, mono.data)                    # mono unchanged
+def test_star_colour_layers_colours_only_stars():
+    # starless nebula (uniform dim) + a stars layer that is black except one
+    # faint-gold star. Boosting must colour the star and leave nebula untouched.
+    starless = AstroImage(np.full((8, 8, 3), 0.2, np.float32), is_linear=False)
+    stars = np.zeros((8, 8, 3), np.float32); stars[4, 4] = (0.30, 0.24, 0.18)  # low-sat gold
+    out = star_colour_layers(starless, AstroImage(stars, is_linear=False), amount=0.6).data
+    plain = _plain_recombine(0.2, stars)
+    s_out = rgb2hsv(np.clip(out, 0, 1))[..., 1]
+    s_plain = rgb2hsv(np.clip(plain, 0, 1))[..., 1]
+    assert s_out[4, 4] > s_plain[4, 4] + 0.02              # star gains saturation vs plain recombine
+    assert np.allclose(out[0, 0], plain[0, 0], atol=1e-4)  # off-star pixel: identical to plain recombine
+
+
+def test_star_colour_layers_zero_amount_and_mono():
+    starless = AstroImage(np.full((6, 6, 3), 0.15, np.float32), is_linear=False)
+    stars = np.zeros((6, 6, 3), np.float32); stars[3, 3] = (0.4, 0.3, 0.2)
+    out0 = star_colour_layers(starless, AstroImage(stars, is_linear=False), amount=0.0).data
+    assert np.allclose(out0, _plain_recombine(0.15, stars), atol=1e-5)   # amount 0 = plain recombine
+    mono_less = AstroImage(np.full((6, 6), 0.15, np.float32), is_linear=False)
+    mono_st = np.zeros((6, 6), np.float32); mono_st[3, 3] = 0.5
+    out_m = star_colour_layers(mono_less, AstroImage(mono_st, is_linear=False), amount=0.6).data
+    assert np.allclose(out_m, _plain_recombine(0.15, mono_st), atol=1e-5)  # mono: no chroma, unchanged
 
 
 def test_vibrance_does_not_tint_true_neutral():

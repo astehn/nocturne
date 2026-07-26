@@ -88,19 +88,30 @@ def vibrance(img: AstroImage, amount: float = 0.1) -> AstroImage:
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
-def star_colour(img: AstroImage, mask: np.ndarray, amount: float = 0.6) -> AstroImage:
-    """Lift saturation additively where the feathered star `mask` (0..1, HxW) is
-    high — additive because stars are near-white (low saturation) and a
-    multiplicative boost barely moves them. A tiny neutral gate keeps truly-white
-    star cores from tinting. Mono unchanged; caller supplies the mask."""
-    if not img.is_color:
-        return img.copy()
-    from skimage.color import hsv2rgb, rgb2hsv
-    data = np.clip(img.data, 0.0, 1.0)
-    hsv = rgb2hsv(data)
-    s = hsv[..., 1]
-    m = np.clip(mask, 0.0, 1.0)
-    neutral_gate = _smoothstep(s, 0.0, 0.02)         # don't tint pure-white cores (s~0)
-    hsv[..., 1] = np.clip(s + amount * m * (1.0 - s) * neutral_gate, 0.0, 1.0)
-    return AstroImage(np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32),
-                      is_linear=img.is_linear, metadata=dict(img.metadata))
+def star_colour_layers(starless: AstroImage, stars: AstroImage,
+                       amount: float = 0.5) -> AstroImage:
+    """Lift saturation on the STARS layer of a star/starless split, then screen
+    the untouched starless layer back on top — so only stars gain colour and
+    nebulosity/sky are never affected. Mirrors `saturation.nebula_saturate` but
+    targets the opposite layer.
+
+    The split (StarXTerminator when RC-Astro is available, else the free
+    sep-based `split_stars`) is done by the caller, so this stays pure. Boosting
+    the stars layer is self-masking: it is ~black off the stars, and lifting the
+    saturation of a black pixel (value≈0) produces no colour, so nebula can't
+    tint even where the split left faint residual. The lift is additive because
+    stars are near-white (low saturation); a tiny neutral gate keeps pure-white
+    blown cores from taking a hue. `amount=0` is a plain recombine. Mono stars
+    (no chroma to boost) recombine unchanged."""
+    base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
+    st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
+    if st.ndim == 3 and amount > 0.0:
+        from skimage.color import hsv2rgb, rgb2hsv
+        hsv = rgb2hsv(st)
+        s = hsv[..., 1]
+        neutral_gate = _smoothstep(s, 0.0, 0.02)     # don't tint pure-white cores (s~0)
+        hsv[..., 1] = np.clip(s + amount * (1.0 - s) * neutral_gate, 0.0, 1.0)
+        st = np.clip(hsv2rgb(hsv), 0.0, 1.0).astype(np.float32)
+    out = 1.0 - (1.0 - base) * (1.0 - st)
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=starless.is_linear, metadata=dict(starless.metadata))
