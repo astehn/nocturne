@@ -1064,22 +1064,77 @@ def test_levels_auto_sets_sliders(qtbot, tmp_path):
     assert abs(win._panel.black_slider.value() / 100 - b) < 0.02
 
 
-def test_levels_clipping_preview_paints(qtbot, tmp_path):
+def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img.is_linear is True
+    assert win._clip_line.isHidden()
+    assert win._clip_check.isHidden()
+
+
+def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    win._go_to_id("levels")
-    win._on_levels_clipping(True)
-    win._on_levels_change(0.4, 1.0, 0.6)   # aggressive clip
-    win._render_levels_preview()
-    # the rendered qimage should contain the shadow-blue overlay somewhere
-    qi = win.image_view._item.pixmap().toImage()
+    assert win._canvas_img.is_linear is False
+    assert not win._clip_line.isHidden()
+    assert "highlights" in win._clip_line.text()
+    assert "shadows" in win._clip_line.text()
+
+
+def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))   # everything crushed
+    assert "100.0% shadows" in win._clip_line.text()
+
+
+def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.ones((24, 24, 3), np.float32))
+    assert "100.0% highlights" in win._clip_line.text()
+
+
+def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
+    # The capability that does not exist today: clipping feedback on Curves.
+    import numpy as np
     from PySide6.QtGui import qRed, qBlue
-    found = any(
-        qBlue(qi.pixel(x, y)) > 200 and qRed(qi.pixel(x, y)) < 120
-        for y in range(0, qi.height(), 7) for x in range(0, qi.width(), 7))
-    assert found
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win._on_show_clipping(True)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))   # all shadow-clipped
+    qi = win.image_view._item.pixmap().toImage()
+    assert qBlue(qi.pixel(5, 5)) > 200 and qRed(qi.pixel(5, 5)) < 120
+
+
+def test_clipping_overlay_off_leaves_the_pixels_alone(qtbot, tmp_path):
+    import numpy as np
+    from PySide6.QtGui import qBlue
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))
+    qi = win.image_view._item.pixmap().toImage()
+    assert qBlue(qi.pixel(5, 5)) == 0
+
+
+def test_histogram_view_exposes_its_counts(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    h = win.histogram_view.hist()
+    assert set(h) == {"r", "g", "b"}
 
 
 def test_saturation_preview_renders(qtbot, tmp_path):

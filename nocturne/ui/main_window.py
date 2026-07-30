@@ -6,7 +6,7 @@ import os
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
@@ -37,12 +37,12 @@ from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
 from .provenance_dialog import ProvenanceDialog
-from .theme import ACCENT, WARNING
+from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
-from ..core.levels import apply_levels, auto_levels, clipping_masks
+from ..core.levels import apply_levels, auto_levels
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
@@ -56,7 +56,7 @@ from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
-from ..core.inspect import clip_masks
+from ..core.inspect import clip_masks, clipping_from_histogram
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .upscale_dialog import UpscaleDialog
@@ -69,6 +69,9 @@ from .worker import run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
+
+_CLIP_AMBER_HI = 0.005     # 0.5% of highlights — provisional, calibrate on real data
+_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows  — provisional, calibrate on real data
 
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
@@ -156,7 +159,6 @@ class MainWindow(QMainWindow):
         self._elapsed_timer.setInterval(1000)   # 1s tick while busy visuals are shown
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
         # Levels live-preview: a debounced (90 ms) non-committing render.
-        self._levels_show_clipping = False
         self._levels_pending = None
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
@@ -242,6 +244,15 @@ class MainWindow(QMainWindow):
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
         self._right_layout.addWidget(self._info_strip)
+        self._clip_line = QLabel("")            # clipped-pixel summary, hidden while linear
+        self._clip_line.setObjectName("importMeta")
+        self._clip_line.setWordWrap(True)
+        self._clip_line.hide()
+        self._right_layout.addWidget(self._clip_line)
+        self._clip_check = QCheckBox("Show clipping")
+        self._clip_check.toggled.connect(self._on_show_clipping)
+        self._clip_check.hide()
+        self._right_layout.addWidget(self._clip_check)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -1426,6 +1437,7 @@ class MainWindow(QMainWindow):
         self._displayed = result
         self._set_canvas(result)
         self.histogram_view.set_image(result)
+        self._update_clipping_line()
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
@@ -1454,10 +1466,6 @@ class MainWindow(QMainWindow):
         self._panel.black_slider.setValue(round(b * 100))
         self._panel.gamma_slider.setValue(round(g * 100))
         self._panel.white_slider.setValue(round(w * 100))
-        self._render_levels_preview()
-
-    def _on_levels_clipping(self, checked: bool) -> None:
-        self._levels_show_clipping = bool(checked)
         self._render_levels_preview()
 
     def _preview_base(self, stage_id: str):
@@ -1493,10 +1501,10 @@ class MainWindow(QMainWindow):
         self._displayed = AstroImage(out, is_linear=False)
         self._set_canvas(self._displayed)
         self.histogram_view.set_image(self._displayed)
+        self._update_clipping_line()
 
     def _render_levels_preview(self) -> None:
-        """Non-committing live preview of the current Levels settings, with an
-        optional shadow/highlight clipping overlay."""
+        """Non-committing live preview of the current Levels settings."""
         if self.project is None or self.current_stage_id() != "levels":
             return
         if self._levels_pending is not None:
@@ -1506,16 +1514,7 @@ class MainWindow(QMainWindow):
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
         img = self._preview_base("levels")
-        out = np.clip(apply_levels(img, b, g, w).data, 0, 1)
-        rgb = (out * 255 + 0.5).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        rgb = np.ascontiguousarray(rgb)
-        if self._levels_show_clipping:
-            sh, hi = clipping_masks(img.data, b, w)
-            rgb[sh] = (40, 120, 255)
-            rgb[hi] = (255, 60, 40)
-        self._show_preview(out)
+        self._show_preview(np.clip(apply_levels(img, b, g, w).data, 0, 1))
 
     # --- stretch live preview ---
     def _on_stretch_change(self, amount: float) -> None:
@@ -2001,6 +2000,7 @@ class MainWindow(QMainWindow):
         img = self._peek_before() if self._peek_active else self._displayed
         self._set_canvas(img)
         self.histogram_view.set_image(img)
+        self._update_clipping_line()
 
     def _peek_before(self):
         """The image entering the current step — the same pre-step base a commit
@@ -2126,7 +2126,6 @@ class MainWindow(QMainWindow):
         if stage.id == "stretch":
             self._stretch_pending = None
         if stage.id == "levels":
-            self._levels_show_clipping = False  # each visit starts with clipping off
             self._levels_pending = None
         if stage.id == "saturation":
             self._sat_pending = None
@@ -2165,7 +2164,6 @@ class MainWindow(QMainWindow):
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
-            on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_sat_apply=self._apply_saturation,
             on_lc_change=self._on_lc_change,
@@ -2203,6 +2201,37 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+
+    def _on_show_clipping(self, checked: bool) -> None:
+        """Toggle the clipped-pixel overlay. Global, not per-step: clipping is
+        caused on every step from Stretch on, most often mid-slider-drag."""
+        self._show_clipping = bool(checked)
+        if self._canvas_img is not None:
+            self._set_canvas(self._canvas_img)
+
+    def _update_clipping_line(self) -> None:
+        """Clipped-pixel summary under the info strip. Hidden while the image is
+        linear: before Stretch, 'clipped' can only mean sensor-saturated at
+        capture, which no edit caused and none can fix — showing it there would
+        train the user to ignore the warning that matters."""
+        img = self._canvas_img
+        if img is None or img.is_linear:
+            self._clip_line.hide()
+            self._clip_check.hide()
+            return
+        self._clip_line.show()
+        self._clip_check.show()
+        c = clipping_from_histogram(self.histogram_view.hist())
+        hi = f"{c.hi_frac * 100:.1f}% highlights"
+        lo = f"{c.lo_frac * 100:.1f}% shadows"
+        if c.hi_frac > 0 and c.hi_channel:
+            hi += f" ({c.hi_channel})"
+        if c.lo_frac > 0 and c.lo_channel:
+            lo += f" ({c.lo_channel})"
+        alarm = c.hi_frac >= _CLIP_AMBER_HI or c.lo_frac >= _CLIP_AMBER_LO
+        colour = WARNING if alarm else TEXT_DIM
+        self._clip_line.setStyleSheet(f"color: {colour};")
+        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{hi}  ·  {lo} clipped")
 
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total
@@ -2277,6 +2306,7 @@ class MainWindow(QMainWindow):
             self.histogram_view.set_image(img)
             self._displayed = img
         self._update_info_strip()
+        self._update_clipping_line()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))

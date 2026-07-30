@@ -50,7 +50,6 @@ def build_panel(
     on_stretch_change=None,
     on_levels_change=None,
     on_levels_auto=None,
-    on_levels_clipping=None,
     on_sat_change=None,
     on_sat_apply=None,
     on_fringe_change=None,
@@ -355,11 +354,6 @@ def build_panel(
         lay.addLayout(white_row)
         lay.addWidget(white)
 
-        clip_check = QCheckBox("Show clipping")
-        if on_levels_clipping is not None:
-            clip_check.toggled.connect(lambda c: on_levels_clipping(c))
-        lay.addWidget(clip_check)
-
         lay.addWidget(apply_btn)
         w.auto_btn = auto_btn
         w.black_slider = black
@@ -368,7 +362,6 @@ def build_panel(
         w.black_val = black_val
         w.gamma_val = gamma_val
         w.white_val = white_val
-        w.clip_check = clip_check
         w.apply_btn = apply_btn
 
     elif stage.kind == "curves":

@@ -36,6 +36,11 @@ class HistogramView(QWidget):
         self._hist = histogram(img, bins=256)
         self.update()
 
+    def hist(self) -> dict | None:
+        """The counts behind the drawn curves, so the clipping summary can read
+        the top and bottom bins instead of recomputing them."""
+        return self._hist
+
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
