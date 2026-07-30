@@ -45,37 +45,36 @@ _NO_CLIPPING = Clipping(0.0, "", 0.0, "")
 def clipping_from_histogram(hist) -> Clipping:
     """Clipped fractions read straight off the 256-bin histogram the canvas
     already computes — the top and bottom bins ARE the clipped pixels, so this
-    costs nothing. Reports the worst channel rather than merging them. Each
-    channel's fraction is computed against its own histogram sum, not a borrowed
-    denominator, because NaN values in one channel don't affect others."""
+    costs nothing. Reports the worst channel (highest fraction) rather than
+    merging them. Each channel's fraction is computed against its own histogram
+    sum, not a borrowed denominator, because NaN values in one channel don't
+    affect others."""
     if not hist:
         return _NO_CLIPPING
 
-    # Collect per-channel data: (count, sum, channel)
-    hi_candidates = []
-    lo_candidates = []
+    # Compute per-channel fractions: (fraction, channel, count, sum)
+    hi_fractions = []
+    lo_fractions = []
 
     for k, v in hist.items():
         channel_sum = int(v.sum())
-        hi_count = int(v[-1])
-        lo_count = int(v[0])
-        hi_candidates.append((hi_count, channel_sum, k.upper()))
-        lo_candidates.append((lo_count, channel_sum, k.upper()))
+        if channel_sum <= 0:
+            # A channel with sum 0 (all NaN) contributes 0.0 fraction
+            hi_fractions.append((0.0, k.upper(), 0, 0))
+            lo_fractions.append((0.0, k.upper(), 0, 0))
+        else:
+            hi_count = int(v[-1])
+            lo_count = int(v[0])
+            hi_fractions.append((hi_count / channel_sum, k.upper(), hi_count, channel_sum))
+            lo_fractions.append((lo_count / channel_sum, k.upper(), lo_count, channel_sum))
 
-    if not hi_candidates:
+    # If all fractions are 0, return _NO_CLIPPING (all zeros or empty case)
+    if all(frac == 0.0 for frac, _, _, _ in hi_fractions):
         return _NO_CLIPPING
 
-    # Select worst channels by count (preserving original semantics)
-    hi_count, hi_sum, hi_channel = max(hi_candidates, key=lambda x: x[0])
-    lo_count, lo_sum, lo_channel = max(lo_candidates, key=lambda x: x[0])
-
-    # If all channel sums are 0, return _NO_CLIPPING (all zeros case)
-    if all(channel_sum == 0 for _, channel_sum, _ in hi_candidates):
-        return _NO_CLIPPING
-
-    # Compute fractions with per-channel denominators, guarding against division by zero
-    hi_frac = hi_count / hi_sum if hi_sum > 0 else 0.0
-    lo_frac = lo_count / lo_sum if lo_sum > 0 else 0.0
+    # Select worst channels by highest fraction (not raw count)
+    hi_frac, hi_channel, _, _ = max(hi_fractions, key=lambda x: x[0])
+    lo_frac, lo_channel, _, _ = max(lo_fractions, key=lambda x: x[0])
 
     return Clipping(hi_frac, hi_channel, lo_frac, lo_channel)
 

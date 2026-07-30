@@ -116,33 +116,28 @@ def test_clip_masks_return_2d_boolean_arrays():
     assert hi.shape == (3, 5) and hi.dtype == bool
 
 
-def test_clipping_uses_per_channel_histogram_sums():
-    """Fractions are computed against each channel's own sum, not a borrowed
-    denominator. Simulates NaN in one channel (lower histogram sum)."""
-    hist = {}
-    # R: 30 clipped out of 900 (NaN simulated by lower total)
-    counts_r = np.zeros(256, np.int64)
-    counts_r[255] = 30
-    counts_r[128] = 870
-    hist["r"] = counts_r  # total = 900
+def test_clipping_selects_worst_by_fraction_not_count():
+    """The channel with the worst (highest) clipped FRACTION is reported, even
+    if another channel has a higher raw clipped COUNT. This is the core fix for
+    per-channel sums: 40/100 (40% clipped) is worse than 41/1,000,000 (0.0041%
+    clipped) despite 41 > 40 in absolute count."""
+    hist = {
+        "r": np.zeros(256, np.int64),
+        "g": np.zeros(256, np.int64),
+    }
+    hist["r"][255] = 40
+    hist["r"][128] = 60
+    # R: 40 clipped out of 100 → 40% → 0.4 fraction
 
-    # G: 20 clipped out of 1000
-    counts_g = np.zeros(256, np.int64)
-    counts_g[255] = 20
-    counts_g[128] = 980
-    hist["g"] = counts_g  # total = 1000
-
-    # B: negligible
-    counts_b = np.zeros(256, np.int64)
-    counts_b[255] = 1
-    counts_b[128] = 999
-    hist["b"] = counts_b  # total = 1000
+    hist["g"][255] = 41
+    hist["g"][128] = 999959
+    # G: 41 clipped out of 1,000,000 → 0.0041% → 0.000041 fraction
 
     c = clipping_from_histogram(hist)
-    # R has highest count (30), but fraction = 30/900 ≈ 0.0333
-    # G has 20/1000 = 0.02, B has 1/1000 = 0.001
+    # R's fraction (0.4) is vastly worse than G's (0.000041)
+    # Must select R despite G having higher count (41 > 40)
     assert c.hi_channel == "R"
-    assert c.hi_frac == pytest.approx(30.0 / 900.0)
+    assert c.hi_frac == pytest.approx(0.4)
 
 
 def test_clipping_not_suppressed_when_one_channel_sum_is_zero():
