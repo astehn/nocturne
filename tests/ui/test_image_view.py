@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QPointF  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from nocturne.ui.image_view import ImageView  # noqa: E402
 
@@ -410,3 +410,213 @@ def test_readout_pill_hides_when_crop_mode_turns_on(qtbot):
     view.readout_pill.show_text("something")
     view.set_crop_overlay(True)
     assert view.readout_pill.isHidden()
+
+
+def test_image_pixel_at_returns_the_pixel_under_a_scene_position(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(5.7, 9.2)) == (5, 9)
+
+
+def test_image_pixel_at_floors_rather_than_truncating(qtbot):
+    # int() truncates toward zero, so a scene x in (-1, 0) would become pixel 0 —
+    # reporting a value for a position that is off the image. See commit 6e97aa3.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(-0.4, 5.0)) is None
+    assert view._image_pixel_at(QPointF(5.0, -0.4)) is None
+
+
+def test_image_pixel_at_is_none_outside_the_image(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(40.0, 5.0)) is None
+    assert view._image_pixel_at(QPointF(5.0, 30.0)) is None
+    assert view._image_pixel_at(QPointF(39.9, 29.9)) == (39, 29)
+
+
+def test_image_pixel_at_is_none_with_no_image(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    assert view._image_pixel_at(QPointF(1.0, 1.0)) is None
+
+
+def test_image_pixel_at_is_none_in_crop_mode(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True)
+    assert view._image_pixel_at(QPointF(5.0, 5.0)) is None
+
+
+def test_pixel_cursor_is_off_by_default(qtbot):
+    # This is the whole guarantee for every surface that embeds ImageView without
+    # opting into the gate — a crosshair there would promise a pixel reading that
+    # does not exist, so the cursor must be left untouched, not merely "not a
+    # crosshair": a future change could write some other shape over it and a
+    # `!= CrossCursor` assertion would stay green. Capture the pre-hover shape and
+    # assert it is unchanged, mirroring the fix to test_crop_mode_leaves_the_cursor_alone
+    # in f1e3aa3.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    before = view.viewport().cursor().shape()
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() == before
+
+
+def test_crosshair_shows_over_image_pixels(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_open_hand_shows_over_the_letterbox_margin(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))       # on the image first
+    view._emit_hover_at_scene_pos(QPointF(-20.0, -20.0))   # then the margin
+    assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+
+def test_crop_mode_leaves_the_cursor_alone(qtbot):
+    # Crop mode's cursor (arrow/handles) must be untouched; if someone later
+    # deleted the self._crop_mode guard from _apply_hover_cursor, thinking
+    # _image_pixel_at already covers it, this test must fail by catching an
+    # unwanted cursor write. Weak assertion (shape != CrossCursor) would pass
+    # if the write changed it to OpenHandCursor instead.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True)
+    before = view.viewport().cursor().shape()
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() == before
+
+
+def test_panning_keeps_the_closed_hand(qtbot):
+    # Qt sets ClosedHandCursor on press; a crosshair applied mid-drag would wipe
+    # out the only feedback that a pan is in progress.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0), panning=True)
+    assert view.viewport().cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+
+def test_move_event_wiring_keeps_the_closed_hand_while_panning(qtbot):
+    # test_panning_keeps_the_closed_hand calls _emit_hover_at_scene_pos(panning=True)
+    # directly, which bypasses mouseMoveEvent's own `panning=bool(event.buttons())`
+    # wiring entirely — a change to that call (e.g. narrowing it to
+    # `== Qt.MouseButton.LeftButton`, or dropping the argument) would leave that
+    # test green while every real pan flickered to a crosshair. Drive the real
+    # mouseMoveEvent with a real button mask instead. Deliberately NOT
+    # qtbot.mouseMove: the two tests above that use it are known-flaky (pass only
+    # in full-suite ordering) — constructing and sending the event ourselves is
+    # reliable.
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+
+    pt = view.viewport().rect().center()
+    assert view._image_pixel_at(view.mapToScene(pt)) is not None, (
+        "test point must be over image pixels, not the letterbox margin")
+
+    def send_move(buttons_held):
+        ev = QMouseEvent(QEvent.Type.MouseMove, QPointF(pt),
+                         view.viewport().mapToGlobal(pt),
+                         Qt.MouseButton.NoButton, buttons_held,
+                         Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(view.viewport(), ev)
+
+    # Stand in for Qt's own press handler, which sets this on button-down.
+    view.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    send_move(Qt.MouseButton.LeftButton)  # move during a drag
+    assert view.viewport().cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+    # Proves the setup above is capable of changing the cursor at all, so the
+    # ClosedHandCursor assertion isn't passing vacuously.
+    send_move(Qt.MouseButton.NoButton)  # move with nothing held
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_release_over_the_image_restores_the_crosshair(qtbot):
+    # Qt's release handler sets OpenHandCursor; without the override the user is
+    # left on an open hand over the image until they nudge the mouse.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    centre = view.viewport().rect().center()
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=centre)
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_redundant_cursor_writes_are_skipped(qtbot):
+    # _apply_hover_cursor runs on every mouse-move event; setting an unchanged
+    # shape thousands of times a second is pure waste.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    calls = []
+    original = view.viewport().setCursor
+    view.viewport().setCursor = lambda shape: (calls.append(shape), original(shape))[1]
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    view._emit_hover_at_scene_pos(QPointF(6.0, 6.0))
+    view._emit_hover_at_scene_pos(QPointF(7.0, 7.0))
+    view.viewport().setCursor = original
+    assert len(calls) == 1
+
+
+def test_crosshair_shows_exactly_when_the_readout_pill_does(qtbot):
+    # The invariant the design rests on: the crosshair means "there is a value for
+    # this pixel", so it must appear precisely when the pill is showing one.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+
+    def hovering(scene_pos):
+        """Hover, mirroring what main_window does with the signals."""
+        shown = []
+        view.hovered.connect(lambda x, y, side: shown.append(True))
+        view.hoverLeft.connect(lambda: shown.append(False))
+        view._emit_hover_at_scene_pos(scene_pos)
+        view.hovered.disconnect()
+        view.hoverLeft.disconnect()
+        assert shown, f"no hover signal at {scene_pos}"
+        if shown[-1]:
+            view.readout_pill.show_text("5, 5")
+        else:
+            view.readout_pill.hide()
+        crosshair = view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+        return not view.readout_pill.isHidden(), crosshair
+
+    for pos in (QPointF(5.0, 5.0), QPointF(-20.0, -20.0), QPointF(39.9, 29.9),
+                QPointF(40.0, 5.0), QPointF(-0.4, 5.0)):
+        pill_visible, crosshair = hovering(pos)
+        assert pill_visible == crosshair, f"disagreement at {pos}"
