@@ -410,3 +410,43 @@ def test_readout_pill_hides_when_crop_mode_turns_on(qtbot):
     view.readout_pill.show_text("something")
     view.set_crop_overlay(True)
     assert view.readout_pill.isHidden()
+
+
+def test_image_pixel_at_returns_the_pixel_under_a_scene_position(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(5.7, 9.2)) == (5, 9)
+
+
+def test_image_pixel_at_floors_rather_than_truncating(qtbot):
+    # int() truncates toward zero, so a scene x in (-1, 0) would become pixel 0 —
+    # reporting a value for a position that is off the image. See commit 6e97aa3.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(-0.4, 5.0)) is None
+    assert view._image_pixel_at(QPointF(5.0, -0.4)) is None
+
+
+def test_image_pixel_at_is_none_outside_the_image(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._image_pixel_at(QPointF(40.0, 5.0)) is None
+    assert view._image_pixel_at(QPointF(5.0, 30.0)) is None
+    assert view._image_pixel_at(QPointF(39.9, 29.9)) == (39, 29)
+
+
+def test_image_pixel_at_is_none_with_no_image(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    assert view._image_pixel_at(QPointF(1.0, 1.0)) is None
+
+
+def test_image_pixel_at_is_none_in_crop_mode(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True)
+    assert view._image_pixel_at(QPointF(5.0, 5.0)) is None

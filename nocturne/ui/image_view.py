@@ -277,24 +277,33 @@ class ImageView(QGraphicsView):
         super().leaveEvent(event)
         self.hoverLeft.emit()
 
-    def _emit_hover_at_scene_pos(self, scene_pos) -> None:
-        """Scene coordinates ARE image pixel coordinates — the scene rect is the
-        pixmap item's bounding rect with the item at the origin. Reports which
-        side of the before/after divider the cursor is on so the caller samples
-        the image the user is actually looking at."""
+    def _image_pixel_at(self, scene_pos) -> tuple[int, int] | None:
+        """The image pixel under `scene_pos`, or None if there isn't one — crop
+        mode, no image, or outside the frame. Scene coordinates ARE image pixel
+        coordinates: the scene rect is the pixmap item's bounding rect with the
+        item at the origin.
+
+        floor(), not int(): int() truncates toward zero, which would map scene
+        coordinates in (-1, 0) to pixel 0 instead of off-image."""
         if self._crop_mode or self._item.pixmap().isNull():
-            self.hoverLeft.emit()
-            return
-        # floor(), not int(): int() truncates toward zero, which would map
-        # scene coordinates in (-1, 0) to pixel 0 instead of off-image.
+            return None
         x, y = math.floor(scene_pos.x()), math.floor(scene_pos.y())
         pm = self._item.pixmap()
         if not (0 <= x < pm.width() and 0 <= y < pm.height()):
+            return None
+        return x, y
+
+    def _emit_hover_at_scene_pos(self, scene_pos) -> None:
+        """Report the pixel under the cursor, naming which side of the
+        before/after divider it is on so the caller samples the image the user is
+        actually looking at."""
+        pixel = self._image_pixel_at(scene_pos)
+        if pixel is None:
             self.hoverLeft.emit()
             return
         side = "compare" if (self._compare_item is not None
                              and scene_pos.x() < self._split_x) else "main"
-        self.hovered.emit(x, y, side)
+        self.hovered.emit(pixel[0], pixel[1], side)
 
     # --- crop overlay ---
     def set_crop_overlay(self, enabled: bool, content_bounds=None,
