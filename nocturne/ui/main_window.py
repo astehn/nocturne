@@ -56,7 +56,7 @@ from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
-from ..core.inspect import clip_masks, clipping_from_histogram
+from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .upscale_dialog import UpscaleDialog
@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         self._peek_active = False
         self._displayed = None   # the AstroImage currently on the canvas (peek 'after')
         self._canvas_img = None  # the AstroImage actually on the canvas (peek-aware)
+        self._compare_img = None  # the AstroImage shown left of the before/after divider
         self._show_clipping = False
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
@@ -228,6 +229,8 @@ class MainWindow(QMainWindow):
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
+        self.image_view.hovered.connect(self._on_hover)
+        self.image_view.hoverLeft.connect(self._on_hover_left)
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0
@@ -897,6 +900,7 @@ class MainWindow(QMainWindow):
         self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
             self._ba_act.setChecked(False)
+            self._compare_img = None
             self.image_view.set_compare(None)
         self._rebuild_panel()
         self._refresh()
@@ -2019,8 +2023,10 @@ class MainWindow(QMainWindow):
             return
         if self._ba_act.isChecked():
             before, _ = self.project.before_after()
+            self._compare_img = before
             self.image_view.set_compare(to_qimage(before))
         else:
+            self._compare_img = None
             self.image_view.set_compare(None)
 
     def _toggle_log(self) -> None:
@@ -2209,6 +2215,42 @@ class MainWindow(QMainWindow):
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
 
+    def _readout_text(self, img, x: int, y: int) -> str:
+        """One line describing the pixel at (x, y). Pre-stretch the canvas shows
+        an autostretched *display* image while the data sits near 0.003, so those
+        values get four decimals and a 'linear' label — the number and the
+        brightness on screen are genuinely different things there."""
+        s = sample(img.data, x, y)
+        if s is None:
+            return ""
+        places = 4 if img.is_linear else 2
+        labels = ("R", "G", "B") if len(s.channels) == 3 else ("V",)
+        vals = "  ".join(f"{lab} {v:.{places}f}" for lab, v in zip(labels, s.channels))
+        parts = [f"{x}, {y}", vals]
+        if s.luminance is not None:
+            parts.append(f"L {s.luminance:.{places}f}")
+        if img.is_linear:
+            parts.append("linear")
+        return "  ·  ".join(parts)
+
+    def _on_hover(self, x: int, y: int, side: str) -> None:
+        """Report the pixel under the cursor, sampling whichever image is actually
+        on screen at that point — the compare original left of the divider, the
+        peeked 'before' while Space is held, the live preview otherwise."""
+        img = self._compare_img if side == "compare" else self._canvas_img
+        if img is None:
+            self.image_view.readout_pill.hide()
+            return
+        text = self._readout_text(img, x, y)
+        if not text:
+            self.image_view.readout_pill.hide()
+            return
+        self.image_view.readout_pill.show_text(text)
+        self.image_view._position_readout_pill()
+
+    def _on_hover_left(self) -> None:
+        self.image_view.readout_pill.hide()
+
     def _update_clipping_line(self) -> None:
         """Clipped-pixel summary under the info strip. Hidden while the image is
         linear: before Stretch, 'clipped' can only mean sensor-saturated at
@@ -2263,6 +2305,7 @@ class MainWindow(QMainWindow):
             return
         self.project = None
         self._canvas_img = None
+        self._compare_img = None
         self._project_path = None
         self._source_label = None
         self._solve = None

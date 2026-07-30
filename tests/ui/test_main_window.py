@@ -2528,3 +2528,91 @@ def test_to_rgb8_expands_mono_to_three_channels(qtbot):
     from nocturne.ui.preview import to_rgb8
     rgb = to_rgb8(AstroImage(np.full((3, 3), 1.0, np.float32), is_linear=False))
     assert rgb.shape == (3, 3, 3) and (rgb == 255).all()
+
+
+def test_hover_shows_the_pixel_values_in_the_pill(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    data = np.zeros((24, 24, 3), np.float32)
+    data[7, 5] = (0.8, 0.6, 0.4)
+    win._show_preview(data)
+    win._on_hover(5, 7, "main")
+    text = win.image_view.readout_pill.text()
+    assert "5, 7" in text
+    assert "R 0.80" in text and "G 0.60" in text and "B 0.40" in text
+    assert "L 0.60" in text
+    assert "linear" not in text
+    assert not win.image_view.readout_pill.isHidden()
+
+
+def test_hover_before_stretch_labels_linear_and_uses_four_decimals(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img.is_linear is True
+    win._on_hover(3, 3, "main")
+    text = win.image_view.readout_pill.text()
+    assert text.endswith("linear")
+    assert len(text.split("R ")[1].split()[0]) == 6      # 0.0031 -> four decimals
+
+
+def test_hover_leaving_the_image_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._on_hover(3, 3, "main")
+    assert not win.image_view.readout_pill.isHidden()
+    win._on_hover_left()
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_outside_the_array_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._on_hover(9999, 9999, "main")
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_with_no_project_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._on_hover(1, 1, "main")
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_follows_peek(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win._show_preview(np.ones((24, 24, 3), np.float32))
+    win._on_hover(5, 5, "main")
+    after = win.image_view.readout_pill.text()
+    win._toggle_peek()
+    win._on_hover(5, 5, "main")
+    assert win.image_view.readout_pill.text() != after
+
+
+def test_hover_on_the_compare_side_samples_the_original(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._ba_act.setChecked(True)
+    win._toggle_before_after()
+    win._on_hover(5, 5, "main")
+    main_text = win.image_view.readout_pill.text()
+    win._on_hover(5, 5, "compare")
+    assert win.image_view.readout_pill.text() != main_text
+
+
+def test_readout_text_for_a_mono_image_has_no_luminance(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    img = AstroImage(np.full((8, 8), 0.42, np.float32), is_linear=False)
+    text = win._readout_text(img, 2, 2)
+    assert "V 0.42" in text
+    assert " L " not in text
