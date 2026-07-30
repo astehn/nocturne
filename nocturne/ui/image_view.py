@@ -111,6 +111,7 @@ class ImageView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._has_image = False
         self._crop_mode = False               # crop stage active (box may still be hidden)
+        self._pixel_cursor = False            # crosshair over image pixels (opt-in)
         self._content_bounds = None           # detected content edges for the next show
         self._guides = "none"                 # composition guides: none | thirds | center
         self._box_modified = False            # user adjusted the box since it was shown
@@ -139,6 +140,24 @@ class ImageView(QGraphicsView):
     def _position_readout_pill(self) -> None:
         m = 12
         self.readout_pill.move(m, self.height() - self.readout_pill.height() - m)
+
+    def set_pixel_cursor(self, enabled: bool) -> None:
+        """Opt into the crosshair cursor over image pixels. Off by default: the
+        crosshair means 'there is a value for this pixel', so only a view with a
+        readout wired up should show one."""
+        self._pixel_cursor = bool(enabled)
+
+    def _apply_hover_cursor(self, on_image: bool) -> None:
+        """Crosshair over image pixels, open hand over the letterbox margin — the
+        same predicate that shows and hides the readout pill, so the two can never
+        disagree. Left alone entirely in crop mode, where NoDrag's arrow and the
+        crop handles own the cursor."""
+        if not self._pixel_cursor or self._crop_mode:
+            return
+        want = (Qt.CursorShape.CrossCursor if on_image
+                else Qt.CursorShape.OpenHandCursor)
+        if self.viewport().cursor().shape() != want:
+            self.viewport().setCursor(want)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -271,7 +290,16 @@ class ImageView(QGraphicsView):
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)
-        self._emit_hover_at_scene_pos(self.mapToScene(event.position().toPoint()))
+        self._emit_hover_at_scene_pos(self.mapToScene(event.position().toPoint()),
+                                      panning=bool(event.buttons()))
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Qt's ScrollHandDrag release handler resets the viewport to the open
+        hand; re-apply ours or the user sits on an open hand over the image until
+        they nudge the mouse."""
+        super().mouseReleaseEvent(event)
+        pos = self.mapToScene(event.position().toPoint())
+        self._apply_hover_cursor(self._image_pixel_at(pos) is not None)
 
     def leaveEvent(self, event) -> None:
         super().leaveEvent(event)
@@ -293,11 +321,14 @@ class ImageView(QGraphicsView):
             return None
         return x, y
 
-    def _emit_hover_at_scene_pos(self, scene_pos) -> None:
+    def _emit_hover_at_scene_pos(self, scene_pos, panning: bool = False) -> None:
         """Report the pixel under the cursor, naming which side of the
         before/after divider it is on so the caller samples the image the user is
-        actually looking at."""
+        actually looking at, and match the cursor to it. While a button is held
+        the cursor is left alone so Qt's closed 'grabbing' hand survives the pan."""
         pixel = self._image_pixel_at(scene_pos)
+        if not panning:
+            self._apply_hover_cursor(pixel is not None)
         if pixel is None:
             self.hoverLeft.emit()
             return

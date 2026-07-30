@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QPointF  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from nocturne.ui.image_view import ImageView  # noqa: E402
 
@@ -450,3 +450,87 @@ def test_image_pixel_at_is_none_in_crop_mode(qtbot):
     view.set_image(_qimage(40, 30))
     view.set_crop_overlay(True)
     assert view._image_pixel_at(QPointF(5.0, 5.0)) is None
+
+
+def test_pixel_cursor_is_off_by_default(qtbot):
+    # The Share/Upscale/Star-Spikes previews embed ImageView but wire up no
+    # readout, so a crosshair there would promise a reading that does not exist.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() != Qt.CursorShape.CrossCursor
+
+
+def test_crosshair_shows_over_image_pixels(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_open_hand_shows_over_the_letterbox_margin(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))       # on the image first
+    view._emit_hover_at_scene_pos(QPointF(-20.0, -20.0))   # then the margin
+    assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
+
+
+def test_crop_mode_leaves_the_cursor_alone(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.set_crop_overlay(True)
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert view.viewport().cursor().shape() != Qt.CursorShape.CrossCursor
+
+
+def test_panning_keeps_the_closed_hand(qtbot):
+    # Qt sets ClosedHandCursor on press; a crosshair applied mid-drag would wipe
+    # out the only feedback that a pan is in progress.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0), panning=True)
+    assert view.viewport().cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+
+def test_release_over_the_image_restores_the_crosshair(qtbot):
+    # Qt's release handler sets OpenHandCursor; without the override the user is
+    # left on an open hand over the image until they nudge the mouse.
+    from PySide6.QtCore import QPoint
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    centre = view.viewport().rect().center()
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=centre)
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_redundant_cursor_writes_are_skipped(qtbot):
+    # _apply_hover_cursor runs on every mouse-move event; setting an unchanged
+    # shape thousands of times a second is pure waste.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    calls = []
+    original = view.viewport().setCursor
+    view.viewport().setCursor = lambda shape: (calls.append(shape), original(shape))[1]
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    view._emit_hover_at_scene_pos(QPointF(6.0, 6.0))
+    view._emit_hover_at_scene_pos(QPointF(7.0, 7.0))
+    view.viewport().setCursor = original
+    assert len(calls) == 1
