@@ -70,8 +70,17 @@ from .worker import run_async
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
 
-_CLIP_AMBER_HI = 0.005     # 0.5% of highlights — provisional, calibrate on real data
-_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows  — provisional, calibrate on real data
+# Amber trip points, calibrated 2026-07-30 on the NGC 7000 master (161x20s, 5.1 MP).
+# Straight out of Stretch, with no deliberate clipping, that frame sits at 0.00002%
+# highlights (1-2 pixels) and 0.00055% shadows (28 pixels in R) — the star cores do
+# NOT saturate, so the floor is far lower than assumed. Highlights trip at 0.1%
+# (~5,000 px here, reached around a 0.88 white point); that is ~60x the worst floor
+# measured across three frames, leaving room for a star-dense field's saturated cores
+# without going quiet on a real mistake. Shadows trip at 0.05% (~2,500 px, around a
+# 0.065 black point) — 91x its floor, and tighter than highlights on purpose, since
+# crushed background destroys faint nebulosity that cannot be recovered.
+_CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
+_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."

@@ -1103,6 +1103,51 @@ def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
     assert "100.0% highlights" in win._clip_line.text()
 
 
+def _preview_with_clipped(win, black=0, white=0, side=200):
+    """A mid-grey preview with exactly `black` crushed and `white` blown pixels,
+    so a known clipped fraction reaches the amber logic. 200x200 = 40,000 px, so
+    one pixel is 0.0025% — fine enough to sit either side of both trip points."""
+    import numpy as np
+    data = np.full((side, side, 3), 0.5, np.float32)
+    flat = data.reshape(-1, 3)
+    flat[:black] = 0.0
+    flat[black:black + white] = 1.0
+    win._show_preview(data)
+    return win._clip_line.text()
+
+
+def test_floor_level_clipping_stays_quiet(qtbot, tmp_path):
+    # The measured no-fault floor on a real NGC 7000 master: 1-2 blown pixels and
+    # ~28 crushed ones out of 5.1 M. Scaled here to one pixel each of 40,000
+    # (0.0025%) — both trip points must sit above that or the warning cries wolf
+    # on every image and the user learns to ignore it.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" not in _preview_with_clipped(win, black=1, white=1)
+
+
+def test_real_shadow_clipping_raises_the_amber_warning(qtbot, tmp_path):
+    # 25 of 40,000 = 0.0625%, just past the 0.05% shadow trip point.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" in _preview_with_clipped(win, black=25)
+
+
+def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
+    # 0.05% blown is quiet (saturated star cores are not a mistake) while the same
+    # fraction crushed is not. Highlights trip only at 0.1%.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" not in _preview_with_clipped(win, white=20)     # 0.05%
+    assert "⚠" in _preview_with_clipped(win, white=45)         # 0.1125%
+
+
 def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
     # The capability that does not exist today: clipping feedback on Curves.
     import numpy as np
