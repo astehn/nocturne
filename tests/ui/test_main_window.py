@@ -1929,9 +1929,44 @@ def test_share_action_disabled_until_image(qtbot, tmp_path):
     assert win._share_act.isEnabled() is True
 
 
-def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
+def _stretched_window(qtbot, tmp_path):
+    """A window whose current image has been through Stretch, so it is no longer
+    linear. Share and Upscale both refuse a linear image."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win.project.current().is_linear is False
+    return win
+
+
+def test_share_refuses_a_linear_image(qtbot, tmp_path, monkeypatch):
+    # 8-bit conversion of linear data (~0.003) is a near-black image; the old
+    # behaviour opened the dialog on it and produced an unusable share.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win.project.current().is_linear is True
+    opened = []
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw, "ShareDialog", lambda *a, **k: opened.append(True))
+    win._share()
+    assert not opened
+    assert "Stretch" in win._warning.text()
+
+
+def test_upscale_refuses_a_linear_image(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    opened = []
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw, "UpscaleDialog", lambda *a, **k: opened.append(True))
+    win._upscale()
+    assert not opened
+    assert "Stretch" in win._warning.text()
+
+
+def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
+    win = _stretched_window(qtbot, tmp_path)
     captured = {}
     import nocturne.ui.main_window as mw
     class _Fake:
@@ -1952,8 +1987,7 @@ def test_upscale_action_disabled_until_image(qtbot, tmp_path):
 
 
 def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
+    win = _stretched_window(qtbot, tmp_path)
     seen = {}
     import nocturne.ui.main_window as mw
     class _Fake:
