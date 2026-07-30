@@ -149,6 +149,37 @@ _TOPIC_LIST = (
        "<p>Because nothing is destructive, experiment freely — you can always step back. Data is "
        "only written to disk when you <b>Export</b>.</p>"),
 
+    _t("readout", "Hover readout & clipping warning",
+       "A pixel readout under your cursor, plus a warning when tones are clipping.",
+       "<h4>What it does</h4>"
+       "<p>Hover anywhere over the image and a small pill in the bottom-left corner reports the "
+       "pixel underneath: its position, its <b>R G B</b> values (a single <b>V</b> for a mono "
+       "image), and — for colour images — its <b>L</b> (luminance, the brightness the eye actually "
+       "perceives). It hides itself during <b>Crop</b>, where you're framing rather than judging "
+       "tone, and reappears on every step from there on.</p>"
+       "<h4>Why the numbers look tiny before Stretch</h4>"
+       "<p>Before the <b>Stretch</b> step your data is still <b>linear</b> — almost all the signal "
+       "sits around 0.003 out of 1.0 (see the Linear vs. stretched topic). Nocturne's preview always "
+       "auto-stretches the image just so you can see it, but the pill reports the real number "
+       "underneath, not the brightened pixel on screen — so pre-Stretch it shows four decimal places "
+       "and tags the reading <b>linear</b>, a reminder that the value and the brightness you're "
+       "looking at are two different things there. From Stretch onward the data itself matches what "
+       "you see, so the tag disappears and two decimals are enough.</p>"
+       "<h4>The clipping summary and overlay</h4>"
+       "<p>From <b>Stretch</b> onward, the panel under the histogram also reports how much of the "
+       "image is <b>clipped</b> — pushed all the way to pure black or pure white in the 8-bit image "
+       "an export would produce — as a percentage of highlights and shadows, naming whichever "
+       "channel is worst. Past a threshold the line turns amber as a warning. Tick <b>Show "
+       "clipping</b> to paint the clipped pixels directly on the canvas — shadows in blue, "
+       "highlights in red — live, even while you're dragging a Levels or Curves slider.</p>"
+       "<h4>Tips</h4>"
+       "<p>A scatter of red dots on stars is almost always their <b>saturated cores</b> — blown at "
+       "capture, not something an edit did or can fix — so don't chase it away. A solid "
+       "<b>region</b> turning red or blue, on the other hand, means a real edit (a Levels white "
+       "point pulled too far in, say) is crushing detail, and is worth backing off. The overlay and "
+       "summary work on every step from Stretch on, so you can leave it ticked and watch it react "
+       "as you work.</p>"),
+
     # ---- The steps ----
     _t("crop", "Crop, rotate & flip",
        "Trim the ragged stacking edges and frame your target.",
@@ -579,7 +610,7 @@ TOPICS: dict[str, HelpTopic] = {t.id: t for t in _TOPIC_LIST}
 
 SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started",)),
-    HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history")),
+    HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history", "readout")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
