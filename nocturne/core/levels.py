@@ -26,9 +26,3 @@ def auto_levels(data: np.ndarray) -> tuple[float, float, float]:
     x = float(np.clip((med - black) / max(white - black, 1e-4), 1e-3, 0.999))
     gamma = float(np.clip(np.log(x) / np.log(0.35), 0.4, 2.5))
     return black, gamma, white
-
-
-def clipping_masks(data: np.ndarray, black: float, white: float):
-    """Boolean (shadow_clipped, highlight_clipped) per pixel."""
-    lum = data.mean(axis=2) if data.ndim == 3 else data
-    return lum <= black, lum >= white

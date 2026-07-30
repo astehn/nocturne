@@ -1064,22 +1064,122 @@ def test_levels_auto_sets_sliders(qtbot, tmp_path):
     assert abs(win._panel.black_slider.value() / 100 - b) < 0.02
 
 
-def test_levels_clipping_preview_paints(qtbot, tmp_path):
+def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img.is_linear is True
+    assert win._clip_line.isHidden()
+    assert win._clip_check.isHidden()
+
+
+def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    win._go_to_id("levels")
-    win._on_levels_clipping(True)
-    win._on_levels_change(0.4, 1.0, 0.6)   # aggressive clip
-    win._render_levels_preview()
-    # the rendered qimage should contain the shadow-blue overlay somewhere
-    qi = win.image_view._item.pixmap().toImage()
+    assert win._canvas_img.is_linear is False
+    assert not win._clip_line.isHidden()
+    assert "highlights" in win._clip_line.text()
+    assert "shadows" in win._clip_line.text()
+
+
+def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))   # everything crushed
+    assert "100.0% shadows" in win._clip_line.text()
+
+
+def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.ones((24, 24, 3), np.float32))
+    assert "100.0% highlights" in win._clip_line.text()
+
+
+def _preview_with_clipped(win, black=0, white=0, side=200):
+    """A mid-grey preview with exactly `black` crushed and `white` blown pixels,
+    so a known clipped fraction reaches the amber logic. 200x200 = 40,000 px, so
+    one pixel is 0.0025% — fine enough to sit either side of both trip points."""
+    import numpy as np
+    data = np.full((side, side, 3), 0.5, np.float32)
+    flat = data.reshape(-1, 3)
+    flat[:black] = 0.0
+    flat[black:black + white] = 1.0
+    win._show_preview(data)
+    return win._clip_line.text()
+
+
+def test_floor_level_clipping_stays_quiet(qtbot, tmp_path):
+    # The measured no-fault floor on a real NGC 7000 master: 1-2 blown pixels and
+    # ~28 crushed ones out of 5.1 M. Scaled here to one pixel each of 40,000
+    # (0.0025%) — both trip points must sit above that or the warning cries wolf
+    # on every image and the user learns to ignore it.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" not in _preview_with_clipped(win, black=1, white=1)
+
+
+def test_real_shadow_clipping_raises_the_amber_warning(qtbot, tmp_path):
+    # 25 of 40,000 = 0.0625%, just past the 0.05% shadow trip point.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" in _preview_with_clipped(win, black=25)
+
+
+def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
+    # 0.05% blown is quiet (saturated star cores are not a mistake) while the same
+    # fraction crushed is not. Highlights trip only at 0.1%.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert "⚠" not in _preview_with_clipped(win, white=20)     # 0.05%
+    assert "⚠" in _preview_with_clipped(win, white=45)         # 0.1125%
+
+
+def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
+    # The capability that does not exist today: clipping feedback on Curves.
+    import numpy as np
     from PySide6.QtGui import qRed, qBlue
-    found = any(
-        qBlue(qi.pixel(x, y)) > 200 and qRed(qi.pixel(x, y)) < 120
-        for y in range(0, qi.height(), 7) for x in range(0, qi.width(), 7))
-    assert found
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win._on_show_clipping(True)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))   # all shadow-clipped
+    qi = win.image_view._item.pixmap().toImage()
+    assert qBlue(qi.pixel(5, 5)) > 200 and qRed(qi.pixel(5, 5)) < 120
+
+
+def test_clipping_overlay_off_leaves_the_pixels_alone(qtbot, tmp_path):
+    import numpy as np
+    from PySide6.QtGui import qBlue
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))
+    qi = win.image_view._item.pixmap().toImage()
+    assert qBlue(qi.pixel(5, 5)) == 0
+
+
+def test_histogram_view_exposes_its_counts(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    h = win.histogram_view.hist()
+    assert set(h) == {"r", "g", "b"}
 
 
 def test_saturation_preview_renders(qtbot, tmp_path):
@@ -2404,3 +2504,160 @@ def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
     before = win.project.position
     win._enhance("Star Colour")
     assert win.project.position == before + 1        # one undoable step added
+
+
+def test_canvas_img_tracks_the_committed_image(qtbot, tmp_path):
+    # Project.current() reloads a fresh AstroImage from disk on every call, so it
+    # can never be `is` a second call's result (and AstroImage's dataclass `__eq__`
+    # raises on its ndarray field, so `==` isn't available either). _canvas_img is
+    # therefore checked against _displayed, the reference _refresh actually set it
+    # from -- the same invariant the other _canvas_img tests below check.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img is win._displayed
+
+
+def test_canvas_img_follows_peek_rather_than_the_after_image(qtbot, tmp_path):
+    # During peek the canvas shows 'before' while _displayed still holds 'after'.
+    # The readout samples _canvas_img, so it must swap too.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    after = win._canvas_img
+    win._toggle_peek()
+    assert win._peek_active is True
+    assert win._canvas_img is not after
+    win._toggle_peek()
+    assert win._canvas_img is win._displayed
+
+
+def test_canvas_img_tracks_a_live_preview(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win._render_levels_preview()
+    assert win._canvas_img is win._displayed
+    assert win._canvas_img.is_linear is False
+
+
+def test_canvas_img_tracks_the_removegreen_live_preview(qtbot, tmp_path):
+    # Color is a pre-Stretch (linear) step whose preview bypasses _show_preview
+    # (which assumes display-space data), so it must still funnel through
+    # _set_canvas rather than writing the canvas directly.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win._on_removegreen_change(0.5)
+    win._render_removegreen_preview()
+    assert win._canvas_img is win._displayed
+    assert win._canvas_img.is_linear is True
+
+
+def test_to_rgb8_matches_to_qimage_dimensions(qtbot):
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8, to_qimage
+    img = AstroImage(np.full((4, 6, 3), 0.5, np.float32), is_linear=False)
+    rgb = to_rgb8(img)
+    assert rgb.shape == (4, 6, 3) and rgb.dtype == np.uint8
+    assert (rgb == 128).all()
+    assert to_qimage(img).width() == 6
+
+
+def test_to_rgb8_expands_mono_to_three_channels(qtbot):
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8
+    rgb = to_rgb8(AstroImage(np.full((3, 3), 1.0, np.float32), is_linear=False))
+    assert rgb.shape == (3, 3, 3) and (rgb == 255).all()
+
+
+def test_hover_shows_the_pixel_values_in_the_pill(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    data = np.zeros((24, 24, 3), np.float32)
+    data[7, 5] = (0.8, 0.6, 0.4)
+    win._show_preview(data)
+    win._on_hover(5, 7, "main")
+    text = win.image_view.readout_pill.text()
+    assert "5, 7" in text
+    assert "R 0.80" in text and "G 0.60" in text and "B 0.40" in text
+    assert "L 0.60" in text
+    assert "linear" not in text
+    assert not win.image_view.readout_pill.isHidden()
+
+
+def test_hover_before_stretch_labels_linear_and_uses_four_decimals(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img.is_linear is True
+    win._on_hover(3, 3, "main")
+    text = win.image_view.readout_pill.text()
+    assert text.endswith("linear")
+    assert len(text.split("R ")[1].split()[0]) == 6      # 0.0031 -> four decimals
+
+
+def test_hover_leaving_the_image_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._on_hover(3, 3, "main")
+    assert not win.image_view.readout_pill.isHidden()
+    win._on_hover_left()
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_outside_the_array_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._on_hover(9999, 9999, "main")
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_with_no_project_hides_the_pill(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._on_hover(1, 1, "main")
+    assert win.image_view.readout_pill.isHidden()
+
+
+def test_hover_follows_peek(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win._show_preview(np.ones((24, 24, 3), np.float32))
+    win._on_hover(5, 5, "main")
+    after = win.image_view.readout_pill.text()
+    win._toggle_peek()
+    win._on_hover(5, 5, "main")
+    assert win.image_view.readout_pill.text() != after
+
+
+def test_hover_on_the_compare_side_samples_the_original(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._ba_act.setChecked(True)
+    win._toggle_before_after()
+    win._on_hover(5, 5, "main")
+    main_text = win.image_view.readout_pill.text()
+    win._on_hover(5, 5, "compare")
+    assert win.image_view.readout_pill.text() != main_text
+
+
+def test_readout_text_for_a_mono_image_has_no_luminance(qtbot, tmp_path):
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    img = AstroImage(np.full((8, 8), 0.42, np.float32), is_linear=False)
+    text = win._readout_text(img, 2, 2)
+    assert "V 0.42" in text
+    assert " L " not in text

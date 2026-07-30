@@ -6,7 +6,7 @@ import os
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
@@ -37,12 +37,12 @@ from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
 from .provenance_dialog import ProvenanceDialog
-from .theme import ACCENT, WARNING
+from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
-from ..core.levels import apply_levels, auto_levels, clipping_masks
+from ..core.levels import apply_levels, auto_levels
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
@@ -55,7 +55,8 @@ from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
-from .preview import rgb_to_qimage, to_qimage
+from .preview import rgb_to_qimage, to_qimage, to_rgb8
+from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .upscale_dialog import UpscaleDialog
@@ -68,6 +69,18 @@ from .worker import run_async
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
+
+# Amber trip points, calibrated 2026-07-30 on the NGC 7000 master (161x20s, 5.1 MP).
+# Straight out of Stretch, with no deliberate clipping, that frame sits at 0.00002%
+# highlights (1-2 pixels) and 0.00055% shadows (28 pixels in R) — the star cores do
+# NOT saturate, so the floor is far lower than assumed. Highlights trip at 0.1%
+# (~5,000 px here, reached around a 0.88 white point); that is ~60x the worst floor
+# measured across three frames, leaving room for a star-dense field's saturated cores
+# without going quiet on a real mistake. Shadows trip at 0.05% (~2,500 px, around a
+# 0.065 black point) — 91x its floor, and tighter than highlights on purpose, since
+# crushed background destroys faint nebulosity that cannot be recovered.
+_CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
+_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
@@ -136,6 +149,9 @@ class MainWindow(QMainWindow):
         # filter so Space works regardless of focus (except in text inputs).
         self._peek_active = False
         self._displayed = None   # the AstroImage currently on the canvas (peek 'after')
+        self._canvas_img = None  # the AstroImage actually on the canvas (peek-aware)
+        self._compare_img = None  # the AstroImage shown left of the before/after divider
+        self._show_clipping = False
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -153,7 +169,6 @@ class MainWindow(QMainWindow):
         self._elapsed_timer.setInterval(1000)   # 1s tick while busy visuals are shown
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
         # Levels live-preview: a debounced (90 ms) non-committing render.
-        self._levels_show_clipping = False
         self._levels_pending = None
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
@@ -223,6 +238,8 @@ class MainWindow(QMainWindow):
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
+        self.image_view.hovered.connect(self._on_hover)
+        self.image_view.hoverLeft.connect(self._on_hover_left)
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0
@@ -239,6 +256,15 @@ class MainWindow(QMainWindow):
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
         self._right_layout.addWidget(self._info_strip)
+        self._clip_line = QLabel("")            # clipped-pixel summary, hidden while linear
+        self._clip_line.setObjectName("importMeta")
+        self._clip_line.setWordWrap(True)
+        self._clip_line.hide()
+        self._right_layout.addWidget(self._clip_line)
+        self._clip_check = QCheckBox("Show clipping")
+        self._clip_check.toggled.connect(self._on_show_clipping)
+        self._clip_check.hide()
+        self._right_layout.addWidget(self._clip_check)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -883,6 +909,7 @@ class MainWindow(QMainWindow):
         self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
             self._ba_act.setChecked(False)
+            self._compare_img = None
             self.image_view.set_compare(None)
         self._rebuild_panel()
         self._refresh()
@@ -1416,13 +1443,14 @@ class MainWindow(QMainWindow):
         if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
             return
         # Color is a PRE-stretch step, so the image is linear — display it through
-        # to_qimage (which auto-stretches), not _show_preview (which assumes
-        # display-space data and would render linear values as near-black).
+        # _set_canvas (which auto-stretches via to_rgb8), not _show_preview (which
+        # assumes display-space data and would render linear values as near-black).
         result = remove_green(self._preview_base("remove_green"), self._rg_pending)
         self._set_peek(False)
         self._displayed = result
-        self.image_view.set_image(to_qimage(result))
+        self._set_canvas(result)
         self.histogram_view.set_image(result)
+        self._update_clipping_line()
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
@@ -1453,10 +1481,6 @@ class MainWindow(QMainWindow):
         self._panel.white_slider.setValue(round(w * 100))
         self._render_levels_preview()
 
-    def _on_levels_clipping(self, checked: bool) -> None:
-        self._levels_show_clipping = bool(checked)
-        self._render_levels_preview()
-
     def _preview_base(self, stage_id: str):
         """The pre-<stage> image the commit also operates on, so a live preview
         equals what Apply will produce (WYSIWYG)."""
@@ -1467,23 +1491,33 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
-    def _show_preview(self, out, rgb=None) -> None:
+    _CLIP_SHADOW = (40, 120, 255)
+    _CLIP_HIGHLIGHT = (255, 60, 40)
+
+    def _set_canvas(self, img) -> None:
+        """The ONE path to the canvas. Paints the clipping overlay when it is on
+        and records what is on screen, so the hover readout can never disagree
+        with the pixels the user is looking at."""
+        rgb = to_rgb8(img)
+        if self._show_clipping and not img.is_linear:
+            sh, hi = clip_masks(rgb)
+            rgb[sh] = self._CLIP_SHADOW
+            rgb[hi] = self._CLIP_HIGHLIGHT
+        self._canvas_img = img
+        self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+
+    def _show_preview(self, out) -> None:
         """Push a previewed float array to BOTH the canvas and the histogram, so
-        the histogram tracks the slider live. `rgb` overrides the canvas pixels
-        (e.g. the Levels clipping overlay); the histogram always uses clean `out`."""
+        the histogram tracks the slider live."""
         out = np.clip(out, 0.0, 1.0).astype(np.float32)
-        if rgb is None:
-            rgb = (out * 255 + 0.5).astype(np.uint8)
-            if rgb.ndim == 2:
-                rgb = np.repeat(rgb[:, :, None], 3, axis=2)
         self._set_peek(False)   # a fresh preview repaint always shows the 'after'
         self._displayed = AstroImage(out, is_linear=False)
-        self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+        self._set_canvas(self._displayed)
         self.histogram_view.set_image(self._displayed)
+        self._update_clipping_line()
 
     def _render_levels_preview(self) -> None:
-        """Non-committing live preview of the current Levels settings, with an
-        optional shadow/highlight clipping overlay."""
+        """Non-committing live preview of the current Levels settings."""
         if self.project is None or self.current_stage_id() != "levels":
             return
         if self._levels_pending is not None:
@@ -1493,16 +1527,7 @@ class MainWindow(QMainWindow):
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
         img = self._preview_base("levels")
-        out = np.clip(apply_levels(img, b, g, w).data, 0, 1)
-        rgb = (out * 255 + 0.5).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[:, :, None], 3, axis=2)
-        rgb = np.ascontiguousarray(rgb)
-        if self._levels_show_clipping:
-            sh, hi = clipping_masks(img.data, b, w)
-            rgb[sh] = (40, 120, 255)
-            rgb[hi] = (255, 60, 40)
-        self._show_preview(out, rgb)
+        self._show_preview(np.clip(apply_levels(img, b, g, w).data, 0, 1))
 
     # --- stretch live preview ---
     def _on_stretch_change(self, amount: float) -> None:
@@ -1986,8 +2011,9 @@ class MainWindow(QMainWindow):
             return
         self._set_peek(not self._peek_active)
         img = self._peek_before() if self._peek_active else self._displayed
-        self.image_view.set_image(to_qimage(img))
+        self._set_canvas(img)
         self.histogram_view.set_image(img)
+        self._update_clipping_line()
 
     def _peek_before(self):
         """The image entering the current step — the same pre-step base a commit
@@ -2006,8 +2032,10 @@ class MainWindow(QMainWindow):
             return
         if self._ba_act.isChecked():
             before, _ = self.project.before_after()
+            self._compare_img = before
             self.image_view.set_compare(to_qimage(before))
         else:
+            self._compare_img = None
             self.image_view.set_compare(None)
 
     def _toggle_log(self) -> None:
@@ -2113,7 +2141,6 @@ class MainWindow(QMainWindow):
         if stage.id == "stretch":
             self._stretch_pending = None
         if stage.id == "levels":
-            self._levels_show_clipping = False  # each visit starts with clipping off
             self._levels_pending = None
         if stage.id == "saturation":
             self._sat_pending = None
@@ -2152,7 +2179,6 @@ class MainWindow(QMainWindow):
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
-            on_levels_clipping=self._on_levels_clipping,
             on_sat_change=self._on_sat_change,
             on_sat_apply=self._apply_saturation,
             on_lc_change=self._on_lc_change,
@@ -2191,6 +2217,73 @@ class MainWindow(QMainWindow):
             self._setup_saturation()
         self._update_explainer()
 
+    def _on_show_clipping(self, checked: bool) -> None:
+        """Toggle the clipped-pixel overlay. Global, not per-step: clipping is
+        caused on every step from Stretch on, most often mid-slider-drag."""
+        self._show_clipping = bool(checked)
+        if self._canvas_img is not None:
+            self._set_canvas(self._canvas_img)
+
+    def _readout_text(self, img, x: int, y: int) -> str:
+        """One line describing the pixel at (x, y). Pre-stretch the canvas shows
+        an autostretched *display* image while the data sits near 0.003, so those
+        values get four decimals and a 'linear' label — the number and the
+        brightness on screen are genuinely different things there."""
+        s = sample(img.data, x, y)
+        if s is None:
+            return ""
+        places = 4 if img.is_linear else 2
+        labels = ("R", "G", "B") if len(s.channels) == 3 else ("V",)
+        vals = "  ".join(f"{lab} {v:.{places}f}" for lab, v in zip(labels, s.channels))
+        parts = [f"{x}, {y}", vals]
+        if s.luminance is not None:
+            parts.append(f"L {s.luminance:.{places}f}")
+        if img.is_linear:
+            parts.append("linear")
+        return "  ·  ".join(parts)
+
+    def _on_hover(self, x: int, y: int, side: str) -> None:
+        """Report the pixel under the cursor, sampling whichever image is actually
+        on screen at that point — the compare original left of the divider, the
+        peeked 'before' while Space is held, the live preview otherwise."""
+        img = self._compare_img if side == "compare" else self._canvas_img
+        if img is None:
+            self.image_view.readout_pill.hide()
+            return
+        text = self._readout_text(img, x, y)
+        if not text:
+            self.image_view.readout_pill.hide()
+            return
+        self.image_view.readout_pill.show_text(text)
+        self.image_view._position_readout_pill()
+
+    def _on_hover_left(self) -> None:
+        self.image_view.readout_pill.hide()
+
+    def _update_clipping_line(self) -> None:
+        """Clipped-pixel summary under the info strip. Hidden while the image is
+        linear: before Stretch, 'clipped' can only mean sensor-saturated at
+        capture, which no edit caused and none can fix — showing it there would
+        train the user to ignore the warning that matters."""
+        img = self._canvas_img
+        if img is None or img.is_linear:
+            self._clip_line.hide()
+            self._clip_check.hide()
+            return
+        self._clip_line.show()
+        self._clip_check.show()
+        c = clipping_from_histogram(self.histogram_view.hist())
+        hi = f"{c.hi_frac * 100:.1f}% highlights"
+        lo = f"{c.lo_frac * 100:.1f}% shadows"
+        if c.hi_frac > 0 and c.hi_channel:
+            hi += f" ({c.hi_channel})"
+        if c.lo_frac > 0 and c.lo_channel:
+            lo += f" ({c.lo_channel})"
+        alarm = c.hi_frac >= _CLIP_AMBER_HI or c.lo_frac >= _CLIP_AMBER_LO
+        colour = WARNING if alarm else TEXT_DIM
+        self._clip_line.setStyleSheet(f"color: {colour};")
+        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{hi}  ·  {lo} clipped")
+
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total
         integration · target. Resolution reflects the *current* image (so a
@@ -2220,6 +2313,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_save_if_dirty():
             return
         self.project = None
+        self._canvas_img = None
+        self._compare_img = None
         self._project_path = None
         self._source_label = None
         self._solve = None
@@ -2259,10 +2354,11 @@ class MainWindow(QMainWindow):
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
             img = self.project.current()
-            self.image_view.set_image(to_qimage(img))
+            self._set_canvas(img)
             self.histogram_view.set_image(img)
             self._displayed = img
         self._update_info_strip()
+        self._update_clipping_line()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
