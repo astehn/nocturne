@@ -240,6 +240,7 @@ class MainWindow(QMainWindow):
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
         self.image_view.hovered.connect(self._on_hover)
         self.image_view.hoverLeft.connect(self._on_hover_left)
+        self.image_view.set_pixel_cursor(True)   # crosshair where the readout reads
         self._center_stack = QStackedWidget()
         self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
         self._center_stack.addWidget(self._welcome)   # page 0

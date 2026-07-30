@@ -2661,3 +2661,11 @@ def test_readout_text_for_a_mono_image_has_no_luminance(qtbot, tmp_path):
     text = win._readout_text(img, 2, 2)
     assert "V 0.42" in text
     assert " L " not in text
+
+
+def test_main_canvas_opts_into_the_pixel_cursor(qtbot, tmp_path):
+    from PySide6.QtCore import QPointF, Qt
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.image_view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert win.image_view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
