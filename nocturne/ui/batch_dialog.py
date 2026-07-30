@@ -103,6 +103,11 @@ class BatchDialog(QDialog):
         return sorted(files)
 
     def run(self) -> None:
+        # Guard here, not only via the disabled button: two runs would write the
+        # same output filenames. A disabled QPushButton stops clicks, but not a
+        # shortcut, a duplicate connect, or a programmatic call.
+        if self._active_token is not None:
+            return
         recipe_path = self.recipe_edit.text().strip()
         if not recipe_path or not self.output_edit.text().strip():
             self.status.setText("Pick a recipe and an output folder.")
@@ -141,7 +146,11 @@ class BatchDialog(QDialog):
         tok = self._active_token
         if tok is not None:
             tok.cancel()
-            self.status.setText("Cancelling — finishing the current file…")
+            # Not "finishing the current file": cancel() SIGTERMs any external
+            # tool bound to the token (run_cli binds GraXpert/RC-Astro), so a
+            # file mid-way through such a step is abandoned, not completed. No
+            # partial export results either way — the kill lands before export.
+            self.status.setText("Cancelling…")
 
     def _on_progress(self, i: int, n: int) -> None:
         self.progress.setMaximum(max(1, n))

@@ -57,22 +57,31 @@ def test_cancel_button_is_hidden_until_a_run_starts(qtbot, tmp_path):
 
 
 def test_run_shows_cancel_and_blocks_a_second_run(qtbot, tmp_path):
-    # Two concurrent runs would write the same output filenames.
+    # Two concurrent runs would write the same output filenames. Calling run()
+    # again is the real test — a disabled QPushButton stops clicks, but not a
+    # shortcut, a duplicate connect, or a programmatic call.
     dlg = BatchDialog(Settings())
     qtbot.addWidget(dlg)
     _ready(dlg, tmp_path)
     release = threading.Event()
+    starts = []
 
     def fake_runner(recipe, paths, outdir, fmt, settings, on_progress=None, **kw):
+        starts.append(True)
         release.wait(timeout=5)
         return []
 
     dlg._batch_runner = fake_runner
     dlg.run()
-    qtbot.waitUntil(lambda: not dlg.cancel_btn.isHidden(), timeout=2000)
+    qtbot.waitUntil(lambda: len(starts) == 1, timeout=2000)
+    assert not dlg.cancel_btn.isHidden()
     assert dlg.run_btn.isEnabled() is False
+
+    dlg.run()                      # second run, bypassing the button entirely
+    dlg.run()
     release.set()
     qtbot.waitUntil(lambda: dlg.run_btn.isEnabled(), timeout=2000)
+    assert len(starts) == 1, "a second worker started while one was in flight"
     assert dlg.cancel_btn.isHidden()
 
 
