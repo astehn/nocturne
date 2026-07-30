@@ -114,3 +114,57 @@ def test_clip_masks_return_2d_boolean_arrays():
     sh, hi = clip_masks(np.zeros((3, 5, 3), np.uint8))
     assert sh.shape == (3, 5) and sh.dtype == bool
     assert hi.shape == (3, 5) and hi.dtype == bool
+
+
+def test_clipping_uses_per_channel_histogram_sums():
+    """Fractions are computed against each channel's own sum, not a borrowed
+    denominator. Simulates NaN in one channel (lower histogram sum)."""
+    hist = {}
+    # R: 30 clipped out of 900 (NaN simulated by lower total)
+    counts_r = np.zeros(256, np.int64)
+    counts_r[255] = 30
+    counts_r[128] = 870
+    hist["r"] = counts_r  # total = 900
+
+    # G: 20 clipped out of 1000
+    counts_g = np.zeros(256, np.int64)
+    counts_g[255] = 20
+    counts_g[128] = 980
+    hist["g"] = counts_g  # total = 1000
+
+    # B: negligible
+    counts_b = np.zeros(256, np.int64)
+    counts_b[255] = 1
+    counts_b[128] = 999
+    hist["b"] = counts_b  # total = 1000
+
+    c = clipping_from_histogram(hist)
+    # R has highest count (30), but fraction = 30/900 ≈ 0.0333
+    # G has 20/1000 = 0.02, B has 1/1000 = 0.001
+    assert c.hi_channel == "R"
+    assert c.hi_frac == pytest.approx(30.0 / 900.0)
+
+
+def test_clipping_not_suppressed_when_one_channel_sum_is_zero():
+    """When one channel's histogram sums to 0 (all values were NaN),
+    real clipping in other channels must not be suppressed."""
+    hist = {}
+    # R: all pixels were NaN, dropped by np.histogram
+    hist["r"] = np.zeros(256, np.int64)  # sum = 0
+
+    # G and B: normal histograms with real clipping
+    counts_g = np.zeros(256, np.int64)
+    counts_g[255] = 100
+    counts_g[128] = 900
+    hist["g"] = counts_g  # sum = 1000, hi_frac = 0.1
+
+    counts_b = np.zeros(256, np.int64)
+    counts_b[255] = 50
+    counts_b[128] = 950
+    hist["b"] = counts_b  # sum = 1000, hi_frac = 0.05
+
+    c = clipping_from_histogram(hist)
+    # R has count 0, G has count 100 (worst), B has count 50
+    # G should be selected even though R's sum is 0
+    assert c.hi_channel == "G"
+    assert c.hi_frac == pytest.approx(0.1)

@@ -45,17 +45,39 @@ _NO_CLIPPING = Clipping(0.0, "", 0.0, "")
 def clipping_from_histogram(hist) -> Clipping:
     """Clipped fractions read straight off the 256-bin histogram the canvas
     already computes — the top and bottom bins ARE the clipped pixels, so this
-    costs nothing. Reports the worst channel rather than merging them."""
+    costs nothing. Reports the worst channel rather than merging them. Each
+    channel's fraction is computed against its own histogram sum, not a borrowed
+    denominator, because NaN values in one channel don't affect others."""
     if not hist:
         return _NO_CLIPPING
-    total = int(next(iter(hist.values())).sum())
-    if total <= 0:
+
+    # Collect per-channel data: (count, sum, channel)
+    hi_candidates = []
+    lo_candidates = []
+
+    for k, v in hist.items():
+        channel_sum = int(v.sum())
+        hi_count = int(v[-1])
+        lo_count = int(v[0])
+        hi_candidates.append((hi_count, channel_sum, k.upper()))
+        lo_candidates.append((lo_count, channel_sum, k.upper()))
+
+    if not hi_candidates:
         return _NO_CLIPPING
-    hi_channel, hi_count = max(
-        ((k.upper(), int(v[-1])) for k, v in hist.items()), key=lambda kv: kv[1])
-    lo_channel, lo_count = max(
-        ((k.upper(), int(v[0])) for k, v in hist.items()), key=lambda kv: kv[1])
-    return Clipping(hi_count / total, hi_channel, lo_count / total, lo_channel)
+
+    # Select worst channels by count (preserving original semantics)
+    hi_count, hi_sum, hi_channel = max(hi_candidates, key=lambda x: x[0])
+    lo_count, lo_sum, lo_channel = max(lo_candidates, key=lambda x: x[0])
+
+    # If all channel sums are 0, return _NO_CLIPPING (all zeros case)
+    if all(channel_sum == 0 for _, channel_sum, _ in hi_candidates):
+        return _NO_CLIPPING
+
+    # Compute fractions with per-channel denominators, guarding against division by zero
+    hi_frac = hi_count / hi_sum if hi_sum > 0 else 0.0
+    lo_frac = lo_count / lo_sum if lo_sum > 0 else 0.0
+
+    return Clipping(hi_frac, hi_channel, lo_frac, lo_channel)
 
 
 def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
