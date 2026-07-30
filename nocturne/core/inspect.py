@@ -68,13 +68,15 @@ def clipping_from_histogram(hist) -> Clipping:
             hi_fractions.append((hi_count / channel_sum, k.upper(), hi_count, channel_sum))
             lo_fractions.append((lo_count / channel_sum, k.upper(), lo_count, channel_sum))
 
-    # If all fractions are 0, return _NO_CLIPPING (all zeros or empty case)
-    if all(frac == 0.0 for frac, _, _, _ in hi_fractions):
-        return _NO_CLIPPING
-
     # Select worst channels by highest fraction (not raw count)
     hi_frac, hi_channel, _, _ = max(hi_fractions, key=lambda x: x[0])
     lo_frac, lo_channel, _, _ = max(lo_fractions, key=lambda x: x[0])
+
+    # Zero-valued clipping types get empty channel names
+    if hi_frac == 0.0:
+        hi_channel = ""
+    if lo_frac == 0.0:
+        lo_channel = ""
 
     return Clipping(hi_frac, hi_channel, lo_frac, lo_channel)
 

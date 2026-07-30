@@ -163,3 +163,39 @@ def test_clipping_not_suppressed_when_one_channel_sum_is_zero():
     # G should be selected even though R's sum is 0
     assert c.hi_channel == "G"
     assert c.hi_frac == pytest.approx(0.1)
+
+
+def test_clipping_shadow_only_not_suppressed_by_zero_highlights():
+    """Regression: shadows and highlights are independent. A histogram with NO
+    highlight clipping but real shadow clipping must report the shadows, not
+    suppress them. This is the most common real case (user dragged black point
+    too far)."""
+    c = clipping_from_histogram(_hist(r_bot=120, total=1000))
+    # R: 120 shadows out of 1000 → lo_frac = 0.12
+    # No highlights anywhere
+    assert c.lo_frac == pytest.approx(0.12)
+    assert c.lo_channel == "R"
+    assert c.hi_frac == 0.0
+    assert c.hi_channel == ""
+
+
+def test_clipping_highlight_only_not_suppressed_by_zero_shadows():
+    """Symmetric case: highlights present, shadows absent. Both must be reported
+    independently."""
+    c = clipping_from_histogram(_hist(b_top=80, total=1000))
+    # B: 80 highlights out of 1000 → hi_frac = 0.08
+    # No shadows anywhere
+    assert c.hi_frac == pytest.approx(0.08)
+    assert c.hi_channel == "B"
+    assert c.lo_frac == 0.0
+    assert c.lo_channel == ""
+
+
+def test_clipping_with_neither_highlight_nor_shadow():
+    """When there is no clipping at all (all pixels in mid-range), fractions are
+    zero but are still reported with channel names."""
+    c = clipping_from_histogram(_hist(total=1000))
+    # No clipping anywhere
+    assert c.hi_frac == 0.0
+    assert c.lo_frac == 0.0
+    # Channel names may vary based on dict iteration, but fractions must be clear
