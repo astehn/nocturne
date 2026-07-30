@@ -2445,6 +2445,19 @@ def test_canvas_img_tracks_a_live_preview(qtbot, tmp_path):
     assert win._canvas_img.is_linear is False
 
 
+def test_canvas_img_tracks_the_removegreen_live_preview(qtbot, tmp_path):
+    # Color is a pre-Stretch (linear) step whose preview bypasses _show_preview
+    # (which assumes display-space data), so it must still funnel through
+    # _set_canvas rather than writing the canvas directly.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win._on_removegreen_change(0.5)
+    win._render_removegreen_preview()
+    assert win._canvas_img is win._displayed
+    assert win._canvas_img.is_linear is True
+
+
 def test_to_rgb8_matches_to_qimage_dimensions(qtbot):
     import numpy as np
     from nocturne.ui.preview import to_rgb8, to_qimage
