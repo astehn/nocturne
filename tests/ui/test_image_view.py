@@ -482,13 +482,19 @@ def test_open_hand_shows_over_the_letterbox_margin(qtbot):
 
 
 def test_crop_mode_leaves_the_cursor_alone(qtbot):
+    # Crop mode's cursor (arrow/handles) must be untouched; if someone later
+    # deleted the self._crop_mode guard from _apply_hover_cursor, thinking
+    # _image_pixel_at already covers it, this test must fail by catching an
+    # unwanted cursor write. Weak assertion (shape != CrossCursor) would pass
+    # if the write changed it to OpenHandCursor instead.
     view = ImageView()
     qtbot.addWidget(view)
     view.set_pixel_cursor(True)
     view.set_image(_qimage(40, 30))
     view.set_crop_overlay(True)
+    before = view.viewport().cursor().shape()
     view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
-    assert view.viewport().cursor().shape() != Qt.CursorShape.CrossCursor
+    assert view.viewport().cursor().shape() == before
 
 
 def test_panning_keeps_the_closed_hand(qtbot):

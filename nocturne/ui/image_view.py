@@ -149,9 +149,10 @@ class ImageView(QGraphicsView):
 
     def _apply_hover_cursor(self, on_image: bool) -> None:
         """Crosshair over image pixels, open hand over the letterbox margin — the
-        same predicate that shows and hides the readout pill, so the two can never
-        disagree. Left alone entirely in crop mode, where NoDrag's arrow and the
-        crop handles own the cursor."""
+        same predicate driving hovered/hoverLeft signals, so cursor and pill stay
+        in step unless the pill hides itself when it has no value for the pixel.
+        Left alone entirely in crop mode, where NoDrag's arrow and the crop handles
+        own the cursor."""
         if not self._pixel_cursor or self._crop_mode:
             return
         want = (Qt.CursorShape.CrossCursor if on_image
