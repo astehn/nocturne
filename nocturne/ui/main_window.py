@@ -55,7 +55,8 @@ from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
-from .preview import rgb_to_qimage, to_qimage
+from .preview import rgb_to_qimage, to_qimage, to_rgb8
+from ..core.inspect import clip_masks
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .upscale_dialog import UpscaleDialog
@@ -136,6 +137,8 @@ class MainWindow(QMainWindow):
         # filter so Space works regardless of focus (except in text inputs).
         self._peek_active = False
         self._displayed = None   # the AstroImage currently on the canvas (peek 'after')
+        self._canvas_img = None  # the AstroImage actually on the canvas (peek-aware)
+        self._show_clipping = False
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -1467,18 +1470,28 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
-    def _show_preview(self, out, rgb=None) -> None:
+    _CLIP_SHADOW = (40, 120, 255)
+    _CLIP_HIGHLIGHT = (255, 60, 40)
+
+    def _set_canvas(self, img) -> None:
+        """The ONE path to the canvas. Paints the clipping overlay when it is on
+        and records what is on screen, so the hover readout can never disagree
+        with the pixels the user is looking at."""
+        rgb = to_rgb8(img)
+        if self._show_clipping and not img.is_linear:
+            sh, hi = clip_masks(rgb)
+            rgb[sh] = self._CLIP_SHADOW
+            rgb[hi] = self._CLIP_HIGHLIGHT
+        self._canvas_img = img
+        self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+
+    def _show_preview(self, out) -> None:
         """Push a previewed float array to BOTH the canvas and the histogram, so
-        the histogram tracks the slider live. `rgb` overrides the canvas pixels
-        (e.g. the Levels clipping overlay); the histogram always uses clean `out`."""
+        the histogram tracks the slider live."""
         out = np.clip(out, 0.0, 1.0).astype(np.float32)
-        if rgb is None:
-            rgb = (out * 255 + 0.5).astype(np.uint8)
-            if rgb.ndim == 2:
-                rgb = np.repeat(rgb[:, :, None], 3, axis=2)
         self._set_peek(False)   # a fresh preview repaint always shows the 'after'
         self._displayed = AstroImage(out, is_linear=False)
-        self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+        self._set_canvas(self._displayed)
         self.histogram_view.set_image(self._displayed)
 
     def _render_levels_preview(self) -> None:
@@ -1502,7 +1515,7 @@ class MainWindow(QMainWindow):
             sh, hi = clipping_masks(img.data, b, w)
             rgb[sh] = (40, 120, 255)
             rgb[hi] = (255, 60, 40)
-        self._show_preview(out, rgb)
+        self._show_preview(out)
 
     # --- stretch live preview ---
     def _on_stretch_change(self, amount: float) -> None:
@@ -1986,7 +1999,7 @@ class MainWindow(QMainWindow):
             return
         self._set_peek(not self._peek_active)
         img = self._peek_before() if self._peek_active else self._displayed
-        self.image_view.set_image(to_qimage(img))
+        self._set_canvas(img)
         self.histogram_view.set_image(img)
 
     def _peek_before(self):
@@ -2220,6 +2233,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_save_if_dirty():
             return
         self.project = None
+        self._canvas_img = None
         self._project_path = None
         self._source_label = None
         self._solve = None
@@ -2259,7 +2273,7 @@ class MainWindow(QMainWindow):
         self.stepper.mark_done(self._done_ids())
         if self.project is not None:
             img = self.project.current()
-            self.image_view.set_image(to_qimage(img))
+            self._set_canvas(img)
             self.histogram_view.set_image(img)
             self._displayed = img
         self._update_info_strip()

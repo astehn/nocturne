@@ -3,7 +3,7 @@ import pytest
 from nocturne.core.image import AstroImage
 
 pytest.importorskip("PySide6")
-from nocturne.ui.preview import to_qimage  # noqa: E402
+from nocturne.ui.preview import to_qimage, to_rgb8  # noqa: E402
 
 
 def test_to_qimage_dimensions(qapp):
@@ -41,3 +41,15 @@ def test_preview_neutralizes_tint_on_linear(qapp):
     # renders with a near-neutral background — no single channel is crushed.
     spread = np.ptp(_channel_medians(to_qimage(_tinted_linear())))
     assert spread < 20.0  # channel medians close together (0..255 scale)
+
+
+def test_to_rgb8_treats_nan_as_zero_without_warning(qapp, recwarn):
+    # fits_io._normalize() can leave NaN untouched (when arr.max() is NaN), so
+    # the canvas must not blow up or warn on the uint8 cast — it should render
+    # NaN pixels as 0, matching histogram._counts_256's convention.
+    data = np.full((4, 5, 3), 0.5, np.float32)
+    data[0, 0, 0] = np.nan
+    img = AstroImage(data, is_linear=False)
+    rgb = to_rgb8(img)
+    assert rgb[0, 0, 0] == 0
+    assert not any(issubclass(w.category, RuntimeWarning) for w in recwarn.list)

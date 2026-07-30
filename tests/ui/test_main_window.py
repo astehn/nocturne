@@ -2404,3 +2404,59 @@ def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
     before = win.project.position
     win._enhance("Star Colour")
     assert win.project.position == before + 1        # one undoable step added
+
+
+def test_canvas_img_tracks_the_committed_image(qtbot, tmp_path):
+    # Project.current() reloads a fresh AstroImage from disk on every call, so it
+    # can never be `is` a second call's result (and AstroImage's dataclass `__eq__`
+    # raises on its ndarray field, so `==` isn't available either). _canvas_img is
+    # therefore checked against _displayed, the reference _refresh actually set it
+    # from -- the same invariant the other _canvas_img tests below check.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._canvas_img is win._displayed
+
+
+def test_canvas_img_follows_peek_rather_than_the_after_image(qtbot, tmp_path):
+    # During peek the canvas shows 'before' while _displayed still holds 'after'.
+    # The readout samples _canvas_img, so it must swap too.
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    after = win._canvas_img
+    win._toggle_peek()
+    assert win._peek_active is True
+    assert win._canvas_img is not after
+    win._toggle_peek()
+    assert win._canvas_img is win._displayed
+
+
+def test_canvas_img_tracks_a_live_preview(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win._render_levels_preview()
+    assert win._canvas_img is win._displayed
+    assert win._canvas_img.is_linear is False
+
+
+def test_to_rgb8_matches_to_qimage_dimensions(qtbot):
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8, to_qimage
+    img = AstroImage(np.full((4, 6, 3), 0.5, np.float32), is_linear=False)
+    rgb = to_rgb8(img)
+    assert rgb.shape == (4, 6, 3) and rgb.dtype == np.uint8
+    assert (rgb == 128).all()
+    assert to_qimage(img).width() == 6
+
+
+def test_to_rgb8_expands_mono_to_three_channels(qtbot):
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8
+    rgb = to_rgb8(AstroImage(np.full((3, 3), 1.0, np.float32), is_linear=False))
+    assert rgb.shape == (3, 3, 3) and (rgb == 255).all()
