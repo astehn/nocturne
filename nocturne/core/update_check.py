@@ -9,7 +9,7 @@ import urllib.request
 from .. import __version__
 
 RELEASES_API_URL = "https://api.github.com/repos/astehn/nocturne/releases/latest"
-DOWNLOAD_URL = "http://nocturne.stehn.com/"
+DOWNLOAD_URL = "https://nocturne.stehn.com/"
 
 
 def _parse(v: str) -> tuple[int, int, int] | None:
