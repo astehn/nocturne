@@ -314,3 +314,78 @@ def test_move_inside_is_unaffected(qtbot):
     view._body.setPos(QPointF(15, 5))                       # small in-bounds nudge
     r = view._scene_rect()
     assert abs(r.left() - 35) < 0.01 and abs(r.top() - 15) < 0.01   # 20+15, 10+5
+
+
+def test_mouse_move_emits_image_pixel_coordinates(qtbot):
+    from PySide6.QtCore import QPoint
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    seen = []
+    view.hovered.connect(lambda x, y, side: seen.append((x, y, side)))
+    centre = view.viewport().rect().center()
+    qtbot.mouseMove(view.viewport(), centre)
+    assert seen, "moving over the image should emit hovered"
+    x, y, side = seen[-1]
+    assert 0 <= x < 40 and 0 <= y < 30
+    assert side == "main"
+
+
+def test_mouse_move_outside_the_image_emits_hover_left(qtbot):
+    from PySide6.QtCore import QPoint
+    view = ImageView()
+    qtbot.addWidget(view)
+    # Resize/show/expose *before* set_image: fit() reads the viewport's current
+    # size, and QAbstractScrollArea only applies a resize() to the viewport
+    # lazily once the widget is actually shown — calling set_image() first would
+    # fit against the stale pre-show viewport size and defeat the letterboxing
+    # this test relies on.
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_image(_qimage(10, 10))
+    left = []
+    view.hoverLeft.connect(lambda: left.append(True))
+    qtbot.mouseMove(view.viewport(), QPoint(2, 2))   # letterboxed margin, off-image
+    assert left
+
+
+def test_hover_reports_the_compare_side_left_of_the_divider(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.set_compare(_qimage(40, 30))
+    sides = []
+    view.hovered.connect(lambda x, y, side: sides.append(side))
+    # The divider defaults to the horizontal midpoint (x = 20).
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    view._emit_hover_at_scene_pos(QPointF(35.0, 5.0))
+    assert sides == ["compare", "main"]
+
+
+def test_hover_side_is_main_when_compare_is_off(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    sides = []
+    view.hovered.connect(lambda x, y, side: sides.append(side))
+    view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
+    assert sides == ["main"]
+
+
+def test_view_owns_a_readout_pill_hidden_by_default(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    assert view.readout_pill.isHidden()
+
+
+def test_readout_pill_hides_when_crop_mode_turns_on(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    view.readout_pill.show_text("something")
+    view.set_crop_overlay(True)
+    assert view.readout_pill.isHidden()

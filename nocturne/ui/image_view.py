@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene, QGraphicsView,
 )
 
+from .readout_pill import ReadoutPill
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
 
@@ -86,6 +87,8 @@ class ImageView(QGraphicsView):
     cropBoxChanged = Signal(int, int, int, int)
     cropBoxShown = Signal()
     cropDismissRequested = Signal()
+    hovered = Signal(int, int, str)     # image x, image y, "main" | "compare"
+    hoverLeft = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -120,6 +123,10 @@ class ImageView(QGraphicsView):
         self._zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
         self._zoom_pill.raise_()
         self._position_zoom_pill()
+        self.readout_pill = ReadoutPill(self)
+        self._position_readout_pill()
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
 
     def _position_zoom_pill(self) -> None:
         pill = self._zoom_pill
@@ -127,9 +134,14 @@ class ImageView(QGraphicsView):
         m = 12
         pill.move(self.width() - pill.width() - m, self.height() - pill.height() - m)
 
+    def _position_readout_pill(self) -> None:
+        m = 12
+        self.readout_pill.move(m, self.height() - self.readout_pill.height() - m)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._position_zoom_pill()
+        self._position_readout_pill()
 
     # --- before/after compare ---
     def set_compare(self, qimage) -> None:
@@ -255,6 +267,31 @@ class ImageView(QGraphicsView):
         else:
             self.zoom_out()
 
+    def mouseMoveEvent(self, event) -> None:
+        super().mouseMoveEvent(event)
+        self._emit_hover_at_scene_pos(self.mapToScene(event.position().toPoint()))
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self.hoverLeft.emit()
+
+    def _emit_hover_at_scene_pos(self, scene_pos) -> None:
+        """Scene coordinates ARE image pixel coordinates — the scene rect is the
+        pixmap item's bounding rect with the item at the origin. Reports which
+        side of the before/after divider the cursor is on so the caller samples
+        the image the user is actually looking at."""
+        if self._crop_mode or self._item.pixmap().isNull():
+            self.hoverLeft.emit()
+            return
+        x, y = int(scene_pos.x()), int(scene_pos.y())
+        pm = self._item.pixmap()
+        if not (0 <= x < pm.width() and 0 <= y < pm.height()):
+            self.hoverLeft.emit()
+            return
+        side = "compare" if (self._compare_item is not None
+                             and scene_pos.x() < self._split_x) else "main"
+        self.hovered.emit(x, y, side)
+
     # --- crop overlay ---
     def set_crop_overlay(self, enabled: bool, content_bounds=None,
                          aspect_ratio=None) -> None:
@@ -267,6 +304,8 @@ class ImageView(QGraphicsView):
         # Hide the floating zoom pill while cropping so it can't sit over a
         # bottom-right crop handle and swallow its drags.
         self._zoom_pill.setVisible(not enabled)
+        if enabled:
+            self.readout_pill.hide()
         if not enabled:
             self._teardown_overlay()
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
