@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPen, QPixmap, QRadialGradient,
@@ -283,7 +285,9 @@ class ImageView(QGraphicsView):
         if self._crop_mode or self._item.pixmap().isNull():
             self.hoverLeft.emit()
             return
-        x, y = int(scene_pos.x()), int(scene_pos.y())
+        # floor(), not int(): int() truncates toward zero, which would map
+        # scene coordinates in (-1, 0) to pixel 0 instead of off-image.
+        x, y = math.floor(scene_pos.x()), math.floor(scene_pos.y())
         pm = self._item.pixmap()
         if not (0 <= x < pm.width() and 0 <= y < pm.height()):
             self.hoverLeft.emit()

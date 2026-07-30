@@ -349,7 +349,10 @@ def test_mouse_move_outside_the_image_emits_hover_left(qtbot):
     view.set_image(_qimage(10, 10))
     left = []
     view.hoverLeft.connect(lambda: left.append(True))
-    qtbot.mouseMove(view.viewport(), QPoint(2, 2))   # letterboxed margin, off-image
+    # With the corrected order above, fit() sizes the 10x10 image to the real
+    # 400x300 viewport, leaving a genuine letterboxed margin outside it —
+    # (2, 2) falls in that margin (off-image).
+    qtbot.mouseMove(view.viewport(), QPoint(2, 2))
     assert left
 
 
@@ -374,6 +377,24 @@ def test_hover_side_is_main_when_compare_is_off(qtbot):
     view.hovered.connect(lambda x, y, side: sides.append(side))
     view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
     assert sides == ["main"]
+
+
+def test_hover_sub_pixel_negative_band_emits_hover_left(qtbot):
+    # int() truncates toward zero, so scene coordinates in (-1, 0) would
+    # falsely floor to pixel 0 instead of being treated as off-image. A true
+    # floor is required: (-0.5, 5.0) is left of the image, (5.0, -0.5) is
+    # above it — both must report hoverLeft, never a clamped hovered(0, ...).
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    seen = []
+    left = []
+    view.hovered.connect(lambda x, y, side: seen.append((x, y, side)))
+    view.hoverLeft.connect(lambda: left.append(True))
+    view._emit_hover_at_scene_pos(QPointF(-0.5, 5.0))
+    view._emit_hover_at_scene_pos(QPointF(5.0, -0.5))
+    assert left == [True, True]
+    assert seen == []
 
 
 def test_view_owns_a_readout_pill_hidden_by_default(qtbot):
