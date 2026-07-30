@@ -453,13 +453,19 @@ def test_image_pixel_at_is_none_in_crop_mode(qtbot):
 
 
 def test_pixel_cursor_is_off_by_default(qtbot):
-    # The Share/Upscale/Star-Spikes previews embed ImageView but wire up no
-    # readout, so a crosshair there would promise a reading that does not exist.
+    # This is the whole guarantee for every surface that embeds ImageView without
+    # opting into the gate — a crosshair there would promise a pixel reading that
+    # does not exist, so the cursor must be left untouched, not merely "not a
+    # crosshair": a future change could write some other shape over it and a
+    # `!= CrossCursor` assertion would stay green. Capture the pre-hover shape and
+    # assert it is unchanged, mirroring the fix to test_crop_mode_leaves_the_cursor_alone
+    # in f1e3aa3.
     view = ImageView()
     qtbot.addWidget(view)
     view.set_image(_qimage(40, 30))
+    before = view.viewport().cursor().shape()
     view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
-    assert view.viewport().cursor().shape() != Qt.CursorShape.CrossCursor
+    assert view.viewport().cursor().shape() == before
 
 
 def test_crosshair_shows_over_image_pixels(qtbot):
@@ -509,10 +515,54 @@ def test_panning_keeps_the_closed_hand(qtbot):
     assert view.viewport().cursor().shape() == Qt.CursorShape.ClosedHandCursor
 
 
+def test_move_event_wiring_keeps_the_closed_hand_while_panning(qtbot):
+    # test_panning_keeps_the_closed_hand calls _emit_hover_at_scene_pos(panning=True)
+    # directly, which bypasses mouseMoveEvent's own `panning=bool(event.buttons())`
+    # wiring entirely — a change to that call (e.g. narrowing it to
+    # `== Qt.MouseButton.LeftButton`, or dropping the argument) would leave that
+    # test green while every real pan flickered to a crosshair. Drive the real
+    # mouseMoveEvent with a real button mask instead. Deliberately NOT
+    # qtbot.mouseMove: the two tests above that use it are known-flaky (pass only
+    # in full-suite ordering) — constructing and sending the event ourselves is
+    # reliable.
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+
+    pt = view.viewport().rect().center()
+    assert view._image_pixel_at(view.mapToScene(pt)) is not None, (
+        "test point must be over image pixels, not the letterbox margin")
+
+    def send_move(buttons_held):
+        ev = QMouseEvent(QEvent.Type.MouseMove, QPointF(pt),
+                         view.viewport().mapToGlobal(pt),
+                         Qt.MouseButton.NoButton, buttons_held,
+                         Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(view.viewport(), ev)
+
+    # Stand in for Qt's own press handler, which sets this on button-down.
+    view.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    send_move(Qt.MouseButton.LeftButton)  # move during a drag
+    assert view.viewport().cursor().shape() == Qt.CursorShape.ClosedHandCursor
+
+    # Proves the setup above is capable of changing the cursor at all, so the
+    # ClosedHandCursor assertion isn't passing vacuously.
+    send_move(Qt.MouseButton.NoButton)  # move with nothing held
+    assert view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
 def test_release_over_the_image_restores_the_crosshair(qtbot):
     # Qt's release handler sets OpenHandCursor; without the override the user is
     # left on an open hand over the image until they nudge the mouse.
-    from PySide6.QtCore import QPoint
     view = ImageView()
     qtbot.addWidget(view)
     view.set_pixel_cursor(True)
@@ -558,7 +608,8 @@ def test_crosshair_shows_exactly_when_the_readout_pill_does(qtbot):
         view._emit_hover_at_scene_pos(scene_pos)
         view.hovered.disconnect()
         view.hoverLeft.disconnect()
-        if shown and shown[-1]:
+        assert shown, f"no hover signal at {scene_pos}"
+        if shown[-1]:
             view.readout_pill.show_text("5, 5")
         else:
             view.readout_pill.hide()
