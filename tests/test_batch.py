@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from astropy.io import fits
 from nocturne.core.image import AstroImage
 from nocturne.recipe import Recipe
@@ -91,6 +92,44 @@ def test_run_batch_progress_callback(tmp_path):
               [str(a)], str(outdir), "TIFF", Settings(),
               on_progress=lambda i, n, p: seen.append((i, n)))
     assert seen == [(1, 1)]
+
+
+def test_run_batch_stops_at_the_next_file_when_cancelled(tmp_path):
+    # Cancellation lands between files, never mid-file: a half-written export is
+    # worse than finishing the frame in flight.
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    a, b = tmp_path / "a.fits", tmp_path / "b.fits"
+    _fits(a)
+    _fits(b)
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    token = CancelToken()
+    recipe = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
+
+    def on_progress(i, n, path):
+        token.cancel()          # cancel after the first file completes
+
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_batch(recipe, [str(a), str(b)], str(outdir), "TIFF", Settings(),
+                      on_progress=on_progress)
+    finally:
+        clear_ambient()
+    written = sorted(p.name for p in outdir.iterdir())
+    assert written == ["a.tiff"], "the in-flight file finishes, the next never starts"
+
+
+def test_run_batch_without_a_token_is_unaffected(tmp_path):
+    from nocturne.core.tasks import clear_ambient
+    clear_ambient()
+    a = tmp_path / "a.fits"
+    _fits(a)
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    results = run_batch(Recipe(steps=[{"stage": "stretch", "option": 0.5}]),
+                        [str(a)], str(outdir), "TIFF", Settings())
+    assert results[0]["ok"] is True
 
 
 def _enhance_img():

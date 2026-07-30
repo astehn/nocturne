@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..batch import run_batch
+from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..recipe import load_recipe
 from ..settings import start_dir
 from .worker import run_async
@@ -37,6 +38,7 @@ class BatchDialog(QDialog):
         self.setMinimumWidth(460)
         self._settings = settings
         self._batch_runner = run_batch  # injectable for tests
+        self._active_token: CancelToken | None = None
         self._pool = QThreadPool.globalInstance()
         self._signals = _ProgressSignals()
         self._signals.progress.connect(self._on_progress)
@@ -56,13 +58,18 @@ class BatchDialog(QDialog):
         form.addRow("Output folder", _picker_row(self.output_edit, self._browse_output))
         form.addRow("Format", self.format_box)
 
-        run_btn = QPushButton("Run")
-        run_btn.setObjectName("primary")
-        run_btn.clicked.connect(self.run)
+        self.run_btn = QPushButton("Run")
+        self.run_btn.setObjectName("primary")
+        self.run_btn.clicked.connect(self.run)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self._cancel_active)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.hide()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
-        buttons.addWidget(run_btn)
+        buttons.addWidget(self.run_btn)
+        buttons.addWidget(self.cancel_btn)
         buttons.addWidget(close_btn)
 
         root = QVBoxLayout(self)
@@ -110,19 +117,56 @@ class BatchDialog(QDialog):
         self.progress.setValue(0)
         self.status.setText("Processing…")
 
+        token = CancelToken()
+        self._active_token = token
+        self._set_busy(True)
+
         def work():
-            return runner(recipe, paths, outdir, fmt, settings,
-                          on_progress=lambda i, n, p: self._signals.progress.emit(i, n))
+            set_ambient(token)
+            try:
+                return runner(recipe, paths, outdir, fmt, settings,
+                              on_progress=lambda i, n, p: self._signals.progress.emit(i, n))
+            finally:
+                clear_ambient()
 
         run_async(self._pool, work, self._on_done, self._on_error)
+
+    def _set_busy(self, busy: bool) -> None:
+        """Block re-entrant runs so two workers can't write the same output file."""
+        self.run_btn.setEnabled(not busy)
+        self.cancel_btn.setEnabled(busy)
+        self.cancel_btn.setVisible(busy)
+
+    def _cancel_active(self) -> None:
+        tok = self._active_token
+        if tok is not None:
+            tok.cancel()
+            self.status.setText("Cancelling — finishing the current file…")
 
     def _on_progress(self, i: int, n: int) -> None:
         self.progress.setMaximum(max(1, n))
         self.progress.setValue(i)
 
     def _on_done(self, results) -> None:
-        ok = sum(1 for r in results if r.get("ok"))
-        self.status.setText(f"Done — {ok}/{len(results)} succeeded.")
+        """Name the files that failed and why. run_batch already returns a
+        per-file verdict; reporting only the count hid every reason."""
+        self._active_token = None
+        self._set_busy(False)
+        failed = [r for r in results if not r.get("ok")]
+        ok = len(results) - len(failed)
+        summary = f"Done — {ok}/{len(results)} succeeded."
+        if failed:
+            lines = "\n".join(
+                f"• {os.path.basename(r['path'])} — {r.get('message') or 'unknown error'}"
+                for r in failed)
+            summary = f"{summary}\n{len(failed)} failed:\n{lines}"
+        self.status.setText(summary)
 
     def _on_error(self, exc) -> None:
+        self._active_token = None
+        self._set_busy(False)
+        if isinstance(exc, Cancelled):
+            done = self.progress.value()
+            self.status.setText(f"Cancelled — {done} file(s) written before stopping.")
+            return
         self.status.setText(f"Failed: {exc}")
