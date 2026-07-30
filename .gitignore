@@ -28,3 +28,7 @@ docs/superpowers/plans/*-report.md
 /docs/UPSCALING_APPROACH.md
 /PIPELINE_SPEC.md
 /TODO.md
+
+# Claude working notes (local-only, like TODO.md)
+CLAUDE.md
+.claude.local.md
