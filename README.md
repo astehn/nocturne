@@ -48,7 +48,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
 - 📤 **Share** — reframe to a social aspect ratio with an optional caption, then export or copy a JPEG.
 - ♻️ **Recipes & batch** — save your steps (Enhancements taps included) and apply them to a whole folder.
-- 💾 **Export** — 16-bit TIFF / PNG / FITS (WCS preserved), or a starless + stars pair.
+- 💾 **Export** — 16-bit TIFF, 32-bit float FITS (WCS preserved), 8-bit PNG/JPEG, or a starless + stars pair.
 - 📋 **Provenance report** — export a readable Markdown record of every processing step applied.
 - ❓ **Beginner-friendly** — a copyable log/output area, a browsable Help window and a per-step explainer you can collapse once you know the ropes.
 

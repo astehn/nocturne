@@ -4,6 +4,7 @@ import os
 
 from .core.crop import detect_content_bounds
 from .core.export import save_fits, save_png, save_tiff
+from .core.tasks import current as current_token
 from .recipe import Recipe, deserialize_option
 from .steps.factory import make_step
 from .steps.load import load_fits
@@ -42,6 +43,12 @@ def run_batch(recipe, input_paths, output_dir, fmt, settings, *,
     results = []
     n = len(input_paths)
     for i, path in enumerate(input_paths):
+        # Between files, not inside one: a half-written export is worse than
+        # finishing the frame in flight. Cancelled is a BaseException, so it
+        # passes straight through the per-file `except Exception` below.
+        token = current_token()
+        if token is not None:
+            token.check()
         try:
             out = apply_recipe(load_fits(path), recipe, settings,
                                bg_runner=bg_runner, rc_runner=rc_runner)

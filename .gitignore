@@ -32,3 +32,6 @@ docs/superpowers/plans/*-report.md
 # Claude working notes (local-only, like TODO.md)
 CLAUDE.md
 .claude.local.md
+
+# Large local model files (EDSR is shelved; never commit a 146 MB blob)
+nocturne/assets/models/

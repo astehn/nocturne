@@ -1960,6 +1960,13 @@ class MainWindow(QMainWindow):
     def _share(self) -> None:
         if self.project is None or self._busy:
             return
+        if self.project.current().is_linear:
+            # Linear data sits around 0.003, so a straight 8-bit conversion is a
+            # near-black image. Refuse rather than export something unusable.
+            self._show_warning("Stretch the image first — Share exports what you "
+                               "see, and a linear image would come out black.")
+            return
+        self._clear_warning()
         data = self.project.current().data
         rgb8 = _to_uint(data, 8)
         if rgb8.ndim == 2:
@@ -1971,6 +1978,13 @@ class MainWindow(QMainWindow):
     def _upscale(self) -> None:
         if self.project is None or self._busy:
             return
+        if self.project.current().is_linear:
+            # The upscale splits stars from starless and writes 8-bit intermediates
+            # for the external engine; on linear data both come out black.
+            self._show_warning("Stretch the image first — Upscale works on the "
+                               "stretched image.")
+            return
+        self._clear_warning()
         snap = self.project.current()
         meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
