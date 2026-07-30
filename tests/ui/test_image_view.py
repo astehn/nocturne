@@ -540,3 +540,32 @@ def test_redundant_cursor_writes_are_skipped(qtbot):
     view._emit_hover_at_scene_pos(QPointF(7.0, 7.0))
     view.viewport().setCursor = original
     assert len(calls) == 1
+
+
+def test_crosshair_shows_exactly_when_the_readout_pill_does(qtbot):
+    # The invariant the design rests on: the crosshair means "there is a value for
+    # this pixel", so it must appear precisely when the pill is showing one.
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_pixel_cursor(True)
+    view.set_image(_qimage(40, 30))
+
+    def hovering(scene_pos):
+        """Hover, mirroring what main_window does with the signals."""
+        shown = []
+        view.hovered.connect(lambda x, y, side: shown.append(True))
+        view.hoverLeft.connect(lambda: shown.append(False))
+        view._emit_hover_at_scene_pos(scene_pos)
+        view.hovered.disconnect()
+        view.hoverLeft.disconnect()
+        if shown and shown[-1]:
+            view.readout_pill.show_text("5, 5")
+        else:
+            view.readout_pill.hide()
+        crosshair = view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+        return not view.readout_pill.isHidden(), crosshair
+
+    for pos in (QPointF(5.0, 5.0), QPointF(-20.0, -20.0), QPointF(39.9, 29.9),
+                QPointF(40.0, 5.0), QPointF(-0.4, 5.0)):
+        pill_visible, crosshair = hovering(pos)
+        assert pill_visible == crosshair, f"disagreement at {pos}"
