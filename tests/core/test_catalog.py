@@ -76,6 +76,24 @@ def test_bundled_named_stars_has_known_stars():
     assert abs(ra - 310.36) < 0.1 and abs(dec - 45.28) < 0.1     # sanity: real coords
 
 
+def test_catalog_rows_expose_object_type():
+    from nocturne.core.catalog import load_catalog
+    rows = load_catalog()
+    assert rows, "bundled catalogue must load"
+    assert any(r[5] for r in rows), "at least some rows must carry a type"
+
+
+def test_catalog_rows_expose_messier_number_via_a_separate_column():
+    # The `name` field stays the OpenNGC designation (never renamed to "M 31")
+    # so target metadata / provenance reports keep a stable identity; Messier
+    # membership lives in its own column instead.
+    from nocturne.core.catalog import load_catalog
+    rows = load_catalog()
+    row = next(r for r in rows if r[0] == "NGC0224")
+    assert row[0] == "NGC0224"
+    assert row[8] == "31"
+
+
 def test_data_paths_are_resolved_without_dotdot():
     # In the PyInstaller bundle, nocturne/core/ is not a real directory (code
     # lives in the PYZ archive), so an un-normalized "core/../data/..." path

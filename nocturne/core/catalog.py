@@ -35,6 +35,10 @@ class CatalogObject:
     centered: bool = True       # True if the object's CENTRE lands inside the frame
     cx: float = 0.0             # TRUE projected centre; may be outside the frame
     cy: float = 0.0             # (x/y above are the label anchor, clamped inside)
+    obj_type: str = ""          # OpenNGC classification, e.g. "G", "HII", "PN"
+    minor_arcmin: float = 0.0   # angular minor axis; 0.0 if unknown
+    pos_angle: float = 0.0      # position angle in degrees; 0.0 if unknown
+    messier: str = ""           # Messier number as a string ("31"), empty if none
 
 
 @dataclass
@@ -63,7 +67,9 @@ def load_catalog(path: str = _DATA):
         for r in csv.DictReader(f):
             try:
                 rows.append((r["name"], r.get("common", ""), float(r["ra_deg"]),
-                             float(r["dec_deg"]), float(r.get("major_arcmin") or 0.0)))
+                             float(r["dec_deg"]), float(r.get("major_arcmin") or 0.0),
+                             r.get("type", ""), float(r.get("minor_arcmin") or 0.0),
+                             float(r.get("pos_angle") or 0.0), r.get("messier", "")))
             except (ValueError, KeyError):
                 continue
     return rows
@@ -88,7 +94,14 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
     from astropy.coordinates import SkyCoord
     import astropy.units as u
     out = []
-    for name, common, ra, dec, major in rows:
+    for row in rows:
+        # Rows are 5-tuples in older call sites / tests, 9-tuples (with type,
+        # minor axis, position angle, Messier number) from the bundled catalog.
+        name, common, ra, dec, major = row[0], row[1], row[2], row[3], row[4]
+        obj_type = row[5] if len(row) > 5 else ""
+        minor = row[6] if len(row) > 6 else 0.0
+        pos_angle = row[7] if len(row) > 7 else 0.0
+        messier = row[8] if len(row) > 8 else ""
         try:
             x, y = wcs.world_to_pixel(SkyCoord(ra * u.deg, dec * u.deg))
         except Exception:
@@ -104,7 +117,9 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
         lx = min(max(x, _LABEL_MARGIN), w - _LABEL_MARGIN)   # clamp label into the frame
         ly = min(max(y, _LABEL_MARGIN), h - _LABEL_MARGIN)
         out.append(CatalogObject(_pretty_name(name), common, ra, dec, major,
-                                 lx, ly, centered, x, y))
+                                 lx, ly, centered, x, y,
+                                 obj_type=obj_type, minor_arcmin=minor,
+                                 pos_angle=pos_angle, messier=messier))
     return out
 
 

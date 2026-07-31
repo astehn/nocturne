@@ -71,7 +71,41 @@ _LABEL_GAP = 9.0                 # px between an object and its label
 
 
 def _is_messier(obj) -> bool:
-    return obj.name.upper().startswith("M ")
+    """Driven by the catalogue's `messier` column, not a name convention — the
+    bundled OpenNGC data keeps `name` as the NGC/IC designation (e.g. "NGC0224"),
+    never an "M "-prefixed alias, so identity in target metadata / provenance
+    reports stays stable. Objects that lack the field (e.g. constructed by
+    older call sites) are simply not Messier, not an error."""
+    return bool(getattr(obj, "messier", ""))
+
+
+_TYPE_COLOURS = {
+    "messier": "#b38cff",   # violet
+    "emission": "#ff7a94",  # red-pink: HII, EmN, RfN, Cl+N, SNR, clusters
+    "dark": "#e9edf5",      # white: dark nebulae
+    "planetary": "#67e58b", # green
+    "galaxy": "#ffab5e",    # orange
+    "star": "#ffd75e",      # yellow
+    "unknown": "#b9c2d0",   # grey
+}
+_TYPE_FAMILY = {
+    "HII": "emission", "EmN": "emission", "RfN": "emission", "Cl+N": "emission",
+    "SNR": "emission", "Neb": "emission", "OCl": "emission", "GCl": "emission",
+    "DrkN": "dark", "PN": "planetary",
+    "G": "galaxy", "GPair": "galaxy", "GTrpl": "galaxy", "GGroup": "galaxy",
+    "Star": "star", "*Ass": "star",
+}
+
+
+def colour_for(obj, by_type: bool = False) -> str:
+    """Default is the single green. By type, follows the palette astronomers see
+    in Aladin/Astrometry.net renders, so it reads as familiar rather than novel."""
+    if not by_type:
+        return DEFAULT_COLOUR
+    if _is_messier(obj):
+        return _TYPE_COLOURS["messier"]
+    fam = _TYPE_FAMILY.get(getattr(obj, "obj_type", "") or "", "unknown")
+    return _TYPE_COLOURS[fam]
 
 
 def priority_of(obj) -> int:
@@ -121,7 +155,12 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
     h, w = shape
     placed, labels, leaders = [], [], []
     for it in sorted(items, key=priority_of, reverse=True):
-        text = f"{it.name}  {it.common}".strip() if getattr(it, "common", "") else it.name
+        # Prefer the Messier designation ("M 31") when the object has one —
+        # that's how the user's reference images label these targets — else
+        # fall back to the catalogue name; the common name is always appended.
+        messier = getattr(it, "messier", "")
+        designation = f"M {messier}" if messier else it.name
+        text = f"{designation}  {it.common}".strip() if getattr(it, "common", "") else designation
         size = "primary" if priority_of(it) >= 40 else "secondary"
         tw, th = measure(text, size)
         ax, ay = getattr(it, "x", it.cx), getattr(it, "y", it.cy)

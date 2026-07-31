@@ -8,13 +8,14 @@ from astropy.wcs import WCS
 import astropy.units as u
 
 from nocturne.core.annotation_layout import (
-    Circle, circle_for, filter_by_density, grid_lines, place_labels, priority_of,
+    Circle, circle_for, colour_for, filter_by_density, grid_lines, place_labels, priority_of,
     star_marker, _fmt_ra)
 from nocturne.core.catalog import CatalogObject, NamedStar
 
 
-def _obj(major_arcmin, cx=100.0, cy=120.0, name="NGC 7000", common=""):
-    return CatalogObject(name, common, 0.0, 0.0, major_arcmin, cx, cy, True, cx, cy)
+def _obj(major_arcmin, cx=100.0, cy=120.0, name="NGC 7000", common="", messier="", obj_type=""):
+    return CatalogObject(name, common, 0.0, 0.0, major_arcmin, cx, cy, True, cx, cy,
+                          obj_type=obj_type, messier=messier)
 
 
 def _measure(text, size):
@@ -70,6 +71,50 @@ def test_messier_outranks_a_plain_catalogue_object():
 def test_named_objects_outrank_anonymous_ones():
     assert priority_of(_obj(10.0, name="NGC 7000", common="North America")) > \
            priority_of(_obj(10.0, name="LDN 935", common=""))
+
+
+def test_messier_priority_is_driven_by_the_messier_column_not_a_name_prefix():
+    # Regression: the bundled OpenNGC data never renames `name` to "M 31" (it
+    # keeps the NGC/IC designation), so an "M "-prefixed name alone must NOT
+    # earn the Messier priority tier -- only a populated `messier` column does.
+    assert priority_of(_obj(1.0, name="M 999")) == 20
+    assert priority_of(_obj(1.0, name="NGC 224", messier="31")) == 40
+
+
+def test_colour_is_the_default_green_when_type_colouring_is_off():
+    assert colour_for(_obj(1.0, name="NGC 224", messier="31"), by_type=False) == "#5cff5c"
+
+
+def test_messier_objects_are_violet_when_colouring_by_type():
+    c = colour_for(_obj(1.0, name="NGC 224", common="Andromeda", messier="31"), by_type=True)
+    assert c.lower() != "#5cff5c"
+    assert c.lower() == "#b38cff"
+
+
+def test_each_type_family_gets_its_own_colour():
+    fams = {}
+    for t in ("HII", "DrkN", "PN", "G", "OCl"):
+        o = _obj(1.0, name="NGC 1", obj_type=t)
+        fams[t] = colour_for(o, by_type=True)
+    assert len(set(fams.values())) >= 4, fams
+
+
+def test_unknown_type_falls_back_to_a_neutral_colour_not_a_crash():
+    o = _obj(1.0, name="NGC 1", obj_type="")
+    assert colour_for(o, by_type=True)
+
+
+def test_place_labels_prefers_the_messier_designation_when_present():
+    obj = _obj(1.0, cx=100.0, cy=100.0, name="NGC 224", common="Andromeda Galaxy", messier="31")
+    labels, _ = place_labels([obj], (600, 800), _measure)
+    assert labels[0].text.startswith("M 31"), labels[0].text
+    assert "Andromeda Galaxy" in labels[0].text
+
+
+def test_place_labels_falls_back_to_catalogue_name_without_a_messier_number():
+    obj = _obj(1.0, cx=100.0, cy=100.0, name="NGC 7000", common="North America Nebula")
+    labels, _ = place_labels([obj], (600, 800), _measure)
+    assert labels[0].text.startswith("NGC 7000"), labels[0].text
 
 
 def test_balanced_density_drops_objects_below_the_size_threshold():
