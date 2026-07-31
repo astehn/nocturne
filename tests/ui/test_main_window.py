@@ -1709,6 +1709,112 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is False               # and unchecks the button
 
 
+def test_solve_panel_present_in_right_column(qtbot, tmp_path):
+    """The SolvePanel lives in the right column, below the clipping controls
+    and above the per-stage step panel — the positional contract Task 8 was
+    given (clipping line/checkbox as the reference point)."""
+    win = _window(qtbot, tmp_path)
+    assert win.solve_panel.parent() is win._right_panel
+    idx_clip_check = win._right_layout.indexOf(win._clip_check)
+    idx_solve_panel = win._right_layout.indexOf(win.solve_panel)
+    idx_step_panel = win._right_layout.indexOf(win._panel)
+    assert idx_clip_check != -1 and idx_solve_panel != -1 and idx_step_panel != -1
+    assert idx_clip_check < idx_solve_panel < idx_step_panel
+
+
+def _solved_win(qtbot, tmp_path, monkeypatch):
+    """A window with a fresh, live plate-solve already showing, plus a list
+    tracking every `_solve_current` (i.e. real ASTAP) invocation -- shared
+    setup for the SolvePanel wiring tests below, which must prove certain
+    panel interactions never grow this list."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    calls = []
+
+    def fake_solve(img):
+        calls.append(img)
+        return (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)])
+
+    monkeypatch.setattr(win, "_solve_current", fake_solve)
+    win._open_plate_solve()
+    assert win.image_view._annotations is not None
+    assert len(calls) == 1                    # the setup solve itself
+    return win, calls
+
+
+def test_layer_toggle_rebuilds_overlay_without_resolving(qtbot, tmp_path, monkeypatch):
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    before = win.image_view._annotations
+    win.solve_panel.layer_checks["stars"].setChecked(False)
+    after = win.image_view._annotations
+    assert after is not None
+    assert after is not before                     # overlay rebuilt (new group)
+    assert len(calls) == n_calls                    # no re-solve
+    assert win.solve_panel.layers()["stars"] is False
+
+
+def test_density_change_rebuilds_overlay_without_resolving(qtbot, tmp_path, monkeypatch):
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    before = win.image_view._annotations
+    idx = win.solve_panel.density_box.findData("minimal")
+    win.solve_panel.density_box.setCurrentIndex(idx)
+    after = win.image_view._annotations
+    assert after is not None
+    assert after is not before
+    assert len(calls) == n_calls
+    assert win.solve_panel.density() == "minimal"
+
+
+def test_annotation_toggles_persist_to_settings(qtbot, tmp_path, monkeypatch):
+    win, _calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    win.solve_panel.layer_checks["grid"].setChecked(True)
+    idx = win.solve_panel.density_box.findData("all")
+    win.solve_panel.density_box.setCurrentIndex(idx)
+    assert win.settings.annotation_layers["grid"] is True
+    assert win.settings.annotation_density == "all"
+
+    from nocturne.settings import load_settings
+    reloaded = load_settings(win._settings_path)
+    assert reloaded.annotation_layers["grid"] is True
+    assert reloaded.annotation_density == "all"
+
+
+def test_solve_state_cached_when_reused_after_tonal_edit(qtbot, tmp_path, monkeypatch):
+    from nocturne.ui.solve_panel import STATE_LABELS
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['solved']}")
+
+    win._open_plate_solve()                                  # hide the overlay
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                                   # a tonal step -- doesn't move stars
+    win._open_plate_solve()                                  # show again -- reused from cache
+
+    assert win.image_view._annotations is not None
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['cached']}")
+    assert len(calls) == n_calls                              # never re-solved
+
+
+def test_resolve_button_forces_fresh_solve(qtbot, tmp_path, monkeypatch):
+    from nocturne.ui.solve_panel import STATE_LABELS
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+
+    win.solve_panel.resolve_btn.click()                       # cached solution exists, sig unchanged
+
+    assert len(calls) == n_calls + 1                          # forced a fresh solve regardless
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['solved']}")
+
+
 def _render_annotated(win, res, layers, path):
     """Burns a PNG with `_save_png_with_annotations`, but with the layer
     dict swapped out for the call so a test can isolate a single layer's

@@ -132,12 +132,34 @@ class SolvePanel(QWidget):
     def layers(self) -> dict:
         return dict(self._layers)
 
+    def set_layers(self, layers: dict) -> None:
+        """Programmatic hydration from persisted settings (called once at
+        startup, and whenever main_window needs to re-sync the panel to a
+        settings value it didn't originate). Deliberately does NOT emit
+        layersChanged -- that signal means "the user just changed something,
+        rebuild the overlay", which would be redundant/wrong immediately
+        after applying the very state the overlay is about to be built from."""
+        self._layers = dict(layers)
+        for key, box in self.layer_checks.items():
+            box.blockSignals(True)
+            box.setChecked(self._layers.get(key, False))
+            box.blockSignals(False)
+
     def _on_density_changed(self, index: int) -> None:
         self._density = self.density_box.itemData(index)
         self.densityChanged.emit(self._density)
 
     def density(self) -> str:
         return self._density
+
+    def set_density(self, density: str) -> None:
+        """Programmatic hydration, mirrors set_layers -- no densityChanged."""
+        self._density = density
+        keys = [k for k, _ in _DENSITY_LABELS]
+        idx = keys.index(density) if density in keys else keys.index(DEFAULT_ANNOTATION_DENSITY)
+        self.density_box.blockSignals(True)
+        self.density_box.setCurrentIndex(idx)
+        self.density_box.blockSignals(False)
 
     # --- state / result ---------------------------------------------------
 

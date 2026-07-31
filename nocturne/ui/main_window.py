@@ -59,6 +59,7 @@ from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
+from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
 from .step_panels import build_panel
 from .icons import load_icon
@@ -85,17 +86,6 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
-
-# Plate-solve annotation layer/density defaults. No panel exists yet to drive
-# these (that's Task 7) — everything routes through _annotation_layers() /
-# _annotation_density() below rather than reading these constants directly,
-# so Task 7 only has to change those two methods, not every call site.
-_DEFAULT_ANNOTATION_LAYERS = {
-    "objects": True, "stars": True, "grid": False, "compass": True,
-    "scale": True, "by_type": False,
-}
-_DEFAULT_ANNOTATION_DENSITY = "balanced"
-
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -139,6 +129,12 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        self._solve_freshness = None  # "solved" | "cached" | None -- drives SolvePanel's
+                                       # badge alongside "not_solved"/"stale", which are
+                                       # recomputed generically (see _sync_solve_panel)
+        self._solve_elapsed = 0.0     # seconds the last FRESH solve took; carried through
+                                       # cache reuse so the result card can still say how
+                                       # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
         self._stages = path_stages()
         self._stage = 0
@@ -276,6 +272,13 @@ class MainWindow(QMainWindow):
         self._clip_check.toggled.connect(self._on_show_clipping)
         self._clip_check.hide()
         self._right_layout.addWidget(self._clip_check)
+        self.solve_panel = SolvePanel()
+        self.solve_panel.set_layers(dict(self.settings.annotation_layers))
+        self.solve_panel.set_density(self.settings.annotation_density)
+        self.solve_panel.layersChanged.connect(self._on_annotation_layers_changed)
+        self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
+        self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
+        self._right_layout.addWidget(self.solve_panel)
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -746,13 +749,36 @@ class MainWindow(QMainWindow):
             return
         sig = self._solve_sig()
         if self._solve and self._solve[0] == sig:           # cached solution: just show it
+            self._solve_freshness = "cached"
+            self.solve_panel.set_state("cached")
             self._show_annotations(*self._solve[1:])
+            self._update_solve_result_card(*self._solve[1:], cached=True)
             self._solve_act.setChecked(True)
             return
+        self._start_solve(sig)
+
+    def _start_solve(self, sig) -> None:
+        """Kicks off a blocking (off-thread) solve and drives the panel into
+        the `solving` state while it runs. Shared by `_open_plate_solve`
+        (solve-if-uncached) and `_on_resolve_requested` (always forces one,
+        bypassing any cached solution)."""
+        self.solve_panel.set_state("solving")
         self._show_output("Plate-solving…")
         self._run_busy(lambda: self._solve_current(self.project.current()),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
+
+    def _on_resolve_requested(self) -> None:
+        """SolvePanel's Re-solve button: always forces a FRESH solve, even if
+        a cached solution for this exact framing exists — the user explicitly
+        asked for it (e.g. they suspect the cached solve is wrong)."""
+        if self.project is None or self._busy:
+            return
+        if not astap_valid(self.settings):
+            self._show_warning("Set the ASTAP path in Settings to plate-solve.")
+            return
+        self._clear_warning()
+        self._start_solve(self._solve_sig())
 
     def _on_solved(self, sig, res, objs):
         if not res.solved:
@@ -765,6 +791,8 @@ class MainWindow(QMainWindow):
             self._solve_act.setChecked(False)
             return   # framing changed (crop/rotate/flip) while solving — discard
         self._solve = (sig, res, objs)
+        self._solve_elapsed = self.elapsed_seconds()
+        self._solve_freshness = "solved"
         from ..core.catalog import identify_target
         h, w = self.project.current().data.shape[:2]
         name = identify_target(objs, (h, w))
@@ -775,19 +803,78 @@ class MainWindow(QMainWindow):
             self.project.set_current_metadata("target_solved", name)
         self._clear_warning()
         self._show_annotations(res, objs)
+        self.solve_panel.set_state("solved")
+        self._update_solve_result_card(res, objs, cached=False)
         self._solve_act.setChecked(True)
         self._rebuild_panel()                               # refresh Target line
 
+    def _update_solve_result_card(self, res, objs, cached: bool) -> None:
+        """Fills SolvePanel's result card with the real solve values."""
+        if self.project is None:
+            return
+        from ..core.catalog import identify_target
+        h, w = self.project.current().data.shape[:2]
+        target = identify_target(objs, (h, w)) or ""
+        self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
+                                    self._solve_elapsed, cached)
+
+    def _sync_solve_panel(self) -> None:
+        """Keeps SolvePanel's status badge honest outside the explicit
+        solving/solved/cached transitions driven by _start_solve/_on_solved/
+        _open_plate_solve: `not_solved` once there is no solve at all, and
+        `stale` once the framing signature (crop/rotate/flip) no longer
+        matches it. Never invents `solved`/`cached` here — those are only
+        ever set at the exact point a solution was produced or reused, so a
+        `stale` cache that later matches again (e.g. an undo) is correctly
+        reported as `cached`, not silently upgraded to `solved`."""
+        if self._busy:
+            return   # an op (possibly a solve itself) is in flight
+        if self.project is None or self._solve is None:
+            self.solve_panel.set_state("not_solved")
+            return
+        if self._solve[0] != self._solve_sig():
+            self.solve_panel.set_state("stale")
+            return
+        self.solve_panel.set_state(self._solve_freshness or "cached")
+
     def _annotation_layers(self) -> dict:
-        """Layer visibility toggles for plate-solve annotations. Fixed for
-        now; Task 7 replaces this with the real panel's live settings — keep
-        going through this method rather than the module default directly."""
-        return dict(_DEFAULT_ANNOTATION_LAYERS)
+        """Layer visibility toggles for plate-solve annotations, live from
+        the SolvePanel (kept in sync with self.settings.annotation_layers by
+        _on_annotation_layers_changed)."""
+        return self.solve_panel.layers()
 
     def _annotation_density(self) -> str:
-        """Catalogue/star density for plate-solve annotations. Fixed for
-        now; Task 7 replaces this with the real panel's live setting."""
-        return _DEFAULT_ANNOTATION_DENSITY
+        """Catalogue/star density for plate-solve annotations, live from the
+        SolvePanel (kept in sync with self.settings.annotation_density)."""
+        return self.solve_panel.density()
+
+    def _on_annotation_layers_changed(self, layers: dict) -> None:
+        """SolvePanel layer toggle: a global preference (persisted), and a
+        pure re-draw of the cached solve — never triggers a re-solve."""
+        self.settings.annotation_layers = dict(layers)
+        save_settings(self.settings, self._settings_path)
+        self._rebuild_overlay_from_cache()
+
+    def _on_annotation_density_changed(self, density: str) -> None:
+        """SolvePanel density change: same contract as layers — persisted,
+        overlay-only rebuild, no re-solve."""
+        self.settings.annotation_density = density
+        save_settings(self.settings, self._settings_path)
+        self._rebuild_overlay_from_cache()
+
+    def _rebuild_overlay_from_cache(self) -> None:
+        """Layer/density changes only affect WHAT the overlay draws, not the
+        WCS it's drawn from — rebuild from the cached solve without
+        re-solving. No-op if there's no solve, the overlay isn't currently
+        shown, or the cached solve no longer matches the current framing."""
+        if self.project is None or self._solve is None:
+            return
+        if self.image_view._annotations is None:
+            return
+        if self._solve[0] != self._solve_sig():
+            return
+        _sig, res, objs = self._solve
+        self._show_annotations(res, objs)
 
     def _annotation_primitives(self, res, objs, shape, ui_scale: float = 1.0) -> list:
         """The ONE call both the live overlay and the burned PNG export make
@@ -802,13 +889,20 @@ class MainWindow(QMainWindow):
         `annotation_render.scale_for`). Passing the right scale here is what
         makes `place_labels`' collision avoidance valid for whichever
         adapter actually draws the result — the export gets its own layout
-        PASS at its own scale, not just a repaint of the live layout."""
+        PASS at its own scale, not just a repaint of the live layout.
+
+        `measure` is a REAL QFontMetricsF-based text measurement (see
+        `annotation_overlay.make_measure`), built at the same `ui_scale`, so
+        label collision avoidance reserves the box the consuming adapter is
+        actually going to paint into rather than the Qt-free character-count
+        approximation `build_layout_for` falls back to headlessly."""
         from ..core.annotation_layout import build_layout_for
         from ..core.catalog import named_stars_in_field
+        from .annotation_overlay import make_measure
         stars = named_stars_in_field(res.wcs, shape)
         return build_layout_for(objs, stars, res.wcs, shape, res.pixscale_arcsec,
                                  self._annotation_layers(), self._annotation_density(),
-                                 ui_scale=ui_scale)
+                                 measure=make_measure(ui_scale), ui_scale=ui_scale)
 
     def _show_annotations(self, res, objs):
         from .annotation_overlay import build_annotation_group
@@ -1102,6 +1196,8 @@ class MainWindow(QMainWindow):
         a live solve (re-solve to re-annotate) — it must never break opening the
         project's image itself."""
         self._solve = None
+        self._solve_freshness = None
+        self._solve_elapsed = 0.0
         if not d or not d.get("wcs"):
             return
         try:
@@ -1114,8 +1210,10 @@ class MainWindow(QMainWindow):
                 return
             objs = [CatalogObject(**o) for o in (d.get("objects") or [])]
             self._solve = (self._solve_sig(), res, objs)
+            self._solve_freshness = "cached"   # a restored solution, not a fresh solve
         except Exception:
             self._solve = None   # degrade to "re-solve to re-annotate" — never raise
+            self._solve_freshness = None
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
@@ -1278,6 +1376,7 @@ class MainWindow(QMainWindow):
         else:
             self._busy_timer.stop()
             self._hide_busy_visuals()               # no-op if visuals never showed
+            self._sync_solve_panel()   # catches an aborted/failed solve stuck at "solving"
         self._back_btn.setDisabled(busy)            # gating stays immediate
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
@@ -2359,6 +2458,8 @@ class MainWindow(QMainWindow):
         self._project_path = None
         self._source_label = None
         self._solve = None
+        self._solve_freshness = None
+        self._solve_elapsed = 0.0
         self._dirty = False
         self._center_stack.setCurrentWidget(self._welcome)
         self._show_chrome(False)
@@ -2417,6 +2518,7 @@ class MainWindow(QMainWindow):
             if not self._solve or self._solve[0] != sig:
                 self.image_view.set_annotations(None)
                 self._solve_act.setChecked(False)
+        self._sync_solve_panel()   # catches framing changes (crop/rotate/flip) -> "stale"
 
     def _done_ids(self) -> set:
         done = set()

@@ -21,7 +21,7 @@ real angular extent once you zoom. The split:
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainterPath, QPen
 from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
                                QGraphicsLineItem, QGraphicsPathItem, QGraphicsSimpleTextItem)
 
@@ -33,6 +33,48 @@ _SIZE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.
 _DEFAULT_PT = _SIZE_PT["secondary"]
 _BOLD_SIZES = {"compass"}          # the "N" is the only bold label; a dedicated size
                                     # class keeps Label's schema unchanged (no bold field)
+_MIN_MEASURE_PT = 4.0              # mirrors annotation_render._MIN_PT -- the export's
+                                    # painted floor, so a tiny export's reserved label
+                                    # boxes match what it actually draws (see make_measure)
+
+
+def make_measure(ui_scale: float = 1.0):
+    """Builds a real QFontMetricsF-based `measure(text, size)` callable for
+    `core.annotation_layout.build_layout_for`/`place_labels`, replacing the
+    character-count approximation (`_default_measure`) with the font metrics
+    an adapter actually renders with -- label collision avoidance is only as
+    good as what it measures against.
+
+    `ui_scale` must be the SAME value the caller hands to `build_layout_for`:
+    1.0 (the default) for the live overlay, which renders at
+    `annotation_overlay._SIZE_PT`'s constant on-screen sizes, or
+    `annotation_render.scale_for(shape)` for the burned export, which scales
+    those same point sizes to the exported image's resolution. This function
+    mirrors both call sites' point-size table (`_SIZE_PT`/`_BOLD_SIZES`
+    above, identical to `annotation_render`'s) AND `annotation_render`'s
+    `_MIN_PT` floor, so a measure built for the export ui_scale reserves
+    exactly the box that export will later paint into -- getting this out of
+    sync is exactly the PS-07 class of bug (reserved space narrower than
+    what gets drawn) one level up, at label-placement time rather than
+    paint time.
+
+    One QFontMetricsF per size class, built lazily and cached for the
+    lifetime of the returned callable -- constructing a QFontMetricsF isn't
+    free, and a single layout pass measures many labels."""
+    cache: dict[str, QFontMetricsF] = {}
+
+    def measure(text: str, size: str) -> tuple[float, float]:
+        fm = cache.get(size)
+        if fm is None:
+            font = QFont()
+            font.setPointSizeF(max(_SIZE_PT.get(size, _DEFAULT_PT) * ui_scale, _MIN_MEASURE_PT))
+            font.setBold(size in _BOLD_SIZES)
+            fm = QFontMetricsF(font)
+            cache[size] = fm
+        rect = fm.boundingRect(text)
+        return float(rect.width()), float(fm.height())
+
+    return measure
 
 
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
