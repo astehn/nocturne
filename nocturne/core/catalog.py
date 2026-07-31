@@ -158,9 +158,24 @@ def named_stars_in_field(wcs, shape, rows=None) -> list[NamedStar]:
 
 
 def identify_target(objects: list[CatalogObject], shape) -> str:
+    """The object the frame is most plausibly OF.
+
+    Not simply the largest: once Sharpless and Lynds entries joined the
+    catalogue, an NGC 7000 frame reported 'Sh 2109' — a 18-degree diffuse
+    complex that merely overlaps the field. Rank by significance instead —
+    a Messier or common-named object beats an anonymous survey designation —
+    and only then by size and centrality."""
     if not objects:
         return ""
     h, w = shape
     cx, cy = w / 2, h / 2
-    best = max(objects, key=lambda o: (o.major_arcmin, -((o.x - cx) ** 2 + (o.y - cy) ** 2)))
+
+    def rank(o):
+        centred = 0 <= o.x < w and 0 <= o.y < h
+        # An object far larger than the frame says little about what was imaged.
+        sane_size = o.major_arcmin if o.major_arcmin <= 3.0 * (h * w) ** 0.5 else 0.0
+        return (bool(getattr(o, "messier", "")), bool(o.common), centred,
+                sane_size, -((o.x - cx) ** 2 + (o.y - cy) ** 2))
+
+    best = max(objects, key=rank)
     return f"{best.name} · {best.common}" if best.common else best.name

@@ -163,9 +163,18 @@ def test_minimal_density_keeps_only_messier_and_named():
 def test_density_filters_stars_by_magnitude():
     from nocturne.core.catalog import NamedStar
     bright = NamedStar("Deneb", 0, 0, 1.25, 10, 10)
-    faint = NamedStar("Faint", 0, 0, 5.9, 20, 20)
+    faint = NamedStar("Faint", 0, 0, 8.5, 20, 20)      # past the naked-eye limit
     _, stars = filter_by_density([], [bright, faint], 2.0, "balanced")
     assert bright in stars and faint not in stars
+
+
+def test_balanced_density_keeps_a_naked_eye_star():
+    # A 2-3 degree field holds very few bright stars: NGC 7000's has exactly one
+    # (57 Cyg, mag 4.78). A tighter cut made the "Named stars" toggle look broken.
+    from nocturne.core.catalog import NamedStar
+    _, stars = filter_by_density([], [NamedStar("57 Cyg", 0, 0, 4.78, 10, 10)],
+                                 2.0, "balanced")
+    assert stars, "the default density must show a naked-eye named star"
 
 
 def test_placed_labels_never_overlap():

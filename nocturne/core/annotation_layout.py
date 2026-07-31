@@ -8,6 +8,7 @@ import math
 from typing import NamedTuple
 
 MIN_RADIUS_PX = 6.0          # below this a true-size circle is unreadable
+_MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 DEFAULT_COLOUR = "#5cff5c"   # green: rare in astro images, so it never blends in
 
 
@@ -69,9 +70,14 @@ def star_marker(star, colour: str = DEFAULT_COLOUR) -> Marker:
     return Marker(star.x, star.y, "star", colour, size)
 
 
+# Star magnitude cuts, loosened after real-frame testing: a 2-3 degree field
+# holds very few bright stars, so the original 4.5 limit meant "Named stars"
+# showed nothing at the default density even where a designation existed
+# (NGC 7000's field has exactly one, 57 Cyg at mag 4.78). 6.0 is roughly the
+# naked-eye limit and is what makes the toggle do something.
 _DENSITY = {                     # (min circle radius px, max star magnitude)
-    "minimal": (None, 3.0),      # None = "named/Messier only", size ignored
-    "balanced": (8.0, 4.5),
+    "minimal": (None, 4.5),      # None = "named/Messier only", size ignored
+    "balanced": (8.0, 6.0),
     "all": (0.0, 99.0),
 }
 _LABEL_GAP = 9.0                 # px between an object and its label
@@ -411,8 +417,16 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
     prims: list = []
 
     obj_colour = {id(o): colour_for(o, by_type=by_type) for o in kept_objs}
+    # A circle far larger than the frame marks nothing useful — Sh2-109's
+    # catalogued 18 degrees on a 3-degree field is an arc across the whole
+    # image. Keep the object's LABEL (it is genuinely in the field) and drop
+    # the ring beyond this multiple of the frame diagonal.
+    h_, w_ = shape
+    max_r = _MAX_CIRCLE_FRAMES * (h_ ** 2 + w_ ** 2) ** 0.5
     for o in kept_objs:
-        prims.append(circle_for(o, pixscale, obj_colour[id(o)]))
+        c = circle_for(o, pixscale, obj_colour[id(o)])
+        if c.r <= max_r:
+            prims.append(c)
 
     star_colour = _TYPE_COLOURS["star"] if by_type else DEFAULT_COLOUR
     for s in kept_stars:

@@ -78,20 +78,34 @@ def make_measure(ui_scale: float = 1.0):
 
 
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
-    """A constant-size text item with a THIN dark outline so the bright fill
-    stays legible over both stars and dark sky (a heavy outline reads as black)."""
-    t = QGraphicsSimpleTextItem(s)
+    """Constant-size text with a TRUE halo: two stacked items, a wide dark one
+    behind and the coloured fill in front.
+
+    One item with pen+brush strokes the outline CENTRED on the glyph, so half
+    the stroke eats into the letterform — which is why a thin outline was the
+    only workable option before, and why labels vanished against bright
+    nebulosity. Stacking keeps the letter intact at any halo width."""
+    group = QGraphicsItemGroup()
     f = QFont()
     f.setPointSizeF(size)
     f.setBold(bold)
-    t.setFont(f)
-    t.setBrush(QColor(fill))                        # the fill is the colour you read
-    pen = QPen(QColor(outline))
-    pen.setWidthF(1.1)                              # subtle halo, does not swamp the fill
-    pen.setCosmetic(True)
-    t.setPen(pen)
-    t.setFlag(_IGNORE, True)
-    return t
+    for is_halo in (True, False):
+        t = QGraphicsSimpleTextItem(s)
+        t.setFont(f)
+        if is_halo:
+            pen = QPen(QColor(outline))
+            pen.setWidthF(3.0)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen.setCosmetic(True)
+            t.setPen(pen)
+            t.setBrush(QColor(outline))
+        else:
+            t.setPen(QPen(Qt.PenStyle.NoPen))
+            t.setBrush(QColor(fill))                # the fill is the colour you read
+        t.setFlag(_IGNORE, True)
+        group.addToGroup(t)
+    group.setFlag(_IGNORE, True)
+    return group
 
 
 def _circle_item(p: Circle) -> QGraphicsEllipseItem:

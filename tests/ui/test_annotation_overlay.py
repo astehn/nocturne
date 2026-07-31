@@ -76,8 +76,21 @@ def test_circle_item_rect_matches_its_true_radius_in_scene_units(qtbot):
 
 
 def test_compass_label_renders_bold(qtbot):
+    # A label is now a GROUP of two stacked text items (dark halo behind, colour
+    # in front), so reach through to whichever child carries the font.
     g = build_annotation_group([Label("N", 10, 10, "#6aa8f2", "compass")], (600, 800))
-    assert g.childItems()[0].font().bold()
+    fonts = [c.font() for c in g.childItems()[0].childItems() if hasattr(c, "font")]
+    assert fonts and all(f.bold() for f in fonts)
+
+
+def test_a_label_is_drawn_as_a_halo_behind_a_fill(qtbot):
+    # Two stacked items, not one pen+brush item: a centred stroke eats into the
+    # glyph and turns small text black against bright nebulosity.
+    g = build_annotation_group([Label("NGC 7000", 10, 10, "#5cff5c")], (600, 800))
+    parts = g.childItems()[0].childItems()
+    assert len(parts) == 2, "expected a halo item and a fill item"
+    brushes = {p.brush().color().name() for p in parts}
+    assert "#5cff5c" in brushes and len(brushes) == 2
 
 
 def test_an_empty_primitive_list_yields_an_empty_group(qtbot):

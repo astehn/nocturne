@@ -279,6 +279,7 @@ class MainWindow(QMainWindow):
         self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self._right_layout.addWidget(self.solve_panel)
+        self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -741,6 +742,7 @@ class MainWindow(QMainWindow):
         if self.image_view._annotations is not None:        # currently shown -> hide
             self.image_view.set_annotations(None)
             self._solve_act.setChecked(False)
+            self.solve_panel.setVisible(False)   # the panel is part of the tool, not the image
             return
         if self.project is None or not astap_valid(self.settings):
             self._solve_act.setChecked(False)
@@ -905,6 +907,7 @@ class MainWindow(QMainWindow):
                                  measure=make_measure(ui_scale), ui_scale=ui_scale)
 
     def _show_annotations(self, res, objs):
+        self.solve_panel.setVisible(True)   # the panel accompanies the overlay
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
         prims = self._annotation_primitives(res, objs, (h, w))

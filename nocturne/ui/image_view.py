@@ -447,13 +447,23 @@ class ImageView(QGraphicsView):
 
     # --- annotation overlay (DSO labels + compass + scale bar) ---
     def set_annotations(self, group) -> None:
+        """Annotations are CLIPPED to the image. A big nebula's true-size circle
+        legitimately runs past the frame edge, but without a clip it also paints
+        across the empty canvas around the image, which reads as a broken
+        overlay rather than an object larger than the field."""
         if self._annotations is not None:
             self._scene.removeItem(self._annotations)
             self._annotations = None
-        if group is not None:
-            group.setZValue(8)
-            self._scene.addItem(group)
-            self._annotations = group
+        if group is None:
+            return
+        pm = self._item.pixmap()
+        clip = QGraphicsRectItem(0, 0, pm.width(), pm.height())
+        clip.setPen(QPen(Qt.PenStyle.NoPen))
+        clip.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+        clip.setZValue(8)
+        group.setParentItem(clip)
+        self._scene.addItem(clip)
+        self._annotations = clip
 
     def _set_bounds(self, bounds) -> None:
         top, bottom, left, right = bounds
