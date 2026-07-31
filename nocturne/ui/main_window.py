@@ -59,6 +59,7 @@ from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
+from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
 from .step_panels import build_panel
 from .icons import load_icon
@@ -85,7 +86,6 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
-
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -129,6 +129,12 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        self._solve_freshness = None  # "solved" | "cached" | None -- drives SolvePanel's
+                                       # badge alongside "not_solved"/"stale", which are
+                                       # recomputed generically (see _sync_solve_panel)
+        self._solve_elapsed = 0.0     # seconds the last FRESH solve took; carried through
+                                       # cache reuse so the result card can still say how
+                                       # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
         self._stages = path_stages()
         self._stage = 0
@@ -238,6 +244,7 @@ class MainWindow(QMainWindow):
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
+        self.image_view.annotationsToggled.connect(self._on_annotations_toggled)
         self.image_view.hovered.connect(self._on_hover)
         self.image_view.hoverLeft.connect(self._on_hover_left)
         self.image_view.set_pixel_cursor(True)   # crosshair where the readout reads
@@ -266,6 +273,14 @@ class MainWindow(QMainWindow):
         self._clip_check.toggled.connect(self._on_show_clipping)
         self._clip_check.hide()
         self._right_layout.addWidget(self._clip_check)
+        self.solve_panel = SolvePanel()
+        self.solve_panel.set_layers(dict(self.settings.annotation_layers))
+        self.solve_panel.set_density(self.settings.annotation_density)
+        self.solve_panel.layersChanged.connect(self._on_annotation_layers_changed)
+        self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
+        self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
+        self._right_layout.addWidget(self.solve_panel)
+        self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
         self._panel = QWidget()
         self._right_layout.addWidget(self._panel)
         self._right_layout.addStretch(1)
@@ -721,12 +736,17 @@ class MainWindow(QMainWindow):
         return res, objs
 
     def _open_plate_solve(self):
-        """Toggle the annotation overlay. If it's showing, hide it. Otherwise
-        show it — reusing the cached solution for this framing, or solving once
-        if there isn't one. The toolbar action's checked state mirrors whether
-        the overlay is visible."""
-        if self.image_view._annotations is not None:        # currently shown -> hide
-            self.image_view.set_annotations(None)
+        """Open or close the Plate Solve TOOL. It does not solve, and it does
+        not hide the overlay.
+
+        Solving and viewing are separate concerns: you solve once, then keep
+        working through the pipeline with the annotations up. So the toolbar
+        button owns the tool panel, the canvas pill owns overlay visibility,
+        and closing the tool leaves both the solution and the overlay alone.
+        Nothing runs until the panel's Solve button is pressed — a solve takes
+        seconds and spawns ASTAP, so it should never start by surprise."""
+        if not self.solve_panel.isHidden():                  # open -> close the tool
+            self.solve_panel.setVisible(False)
             self._solve_act.setChecked(False)
             return
         if self.project is None or not astap_valid(self.settings):
@@ -734,15 +754,49 @@ class MainWindow(QMainWindow):
             if self.project is not None:
                 self._show_warning("Set the ASTAP path in Settings to plate-solve.")
             return
+        self.solve_panel.setVisible(True)
+        self._solve_act.setChecked(True)
         sig = self._solve_sig()
-        if self._solve and self._solve[0] == sig:           # cached solution: just show it
+        if self._solve and self._solve[0] == sig:            # cached: show what we have
+            self._solve_freshness = "cached"
+            self.solve_panel.set_state("cached")
             self._show_annotations(*self._solve[1:])
-            self._solve_act.setChecked(True)
-            return
+            self._update_solve_result_card(*self._solve[1:], cached=True)
+        else:
+            self.solve_panel.set_state("not_solved")
+
+    def _on_annotations_toggled(self, shown: bool) -> None:
+        """The canvas pill only changes VISIBILITY. The solution stays cached, so
+        toggling back is instant and never re-runs ASTAP — and the panel must say
+        so, otherwise it keeps reporting 'Solved' for a solve it is reusing."""
+        if shown and self.image_view._annotations is None and self._solve:
+            self._solve_freshness = "cached"
+            self.solve_panel.set_state("cached")
+            self._show_annotations(*self._solve[1:])
+            self._update_solve_result_card(*self._solve[1:], cached=True)
+
+    def _start_solve(self, sig) -> None:
+        """Kicks off a blocking (off-thread) solve and drives the panel into
+        the `solving` state while it runs. Shared by `_open_plate_solve`
+        (solve-if-uncached) and `_on_resolve_requested` (always forces one,
+        bypassing any cached solution)."""
+        self.solve_panel.set_state("solving")
         self._show_output("Plate-solving…")
         self._run_busy(lambda: self._solve_current(self.project.current()),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
+
+    def _on_resolve_requested(self) -> None:
+        """SolvePanel's Re-solve button: always forces a FRESH solve, even if
+        a cached solution for this exact framing exists — the user explicitly
+        asked for it (e.g. they suspect the cached solve is wrong)."""
+        if self.project is None or self._busy:
+            return
+        if not astap_valid(self.settings):
+            self._show_warning("Set the ASTAP path in Settings to plate-solve.")
+            return
+        self._clear_warning()
+        self._start_solve(self._solve_sig())
 
     def _on_solved(self, sig, res, objs):
         if not res.solved:
@@ -755,6 +809,8 @@ class MainWindow(QMainWindow):
             self._solve_act.setChecked(False)
             return   # framing changed (crop/rotate/flip) while solving — discard
         self._solve = (sig, res, objs)
+        self._solve_elapsed = self.elapsed_seconds()
+        self._solve_freshness = "solved"
         from ..core.catalog import identify_target
         h, w = self.project.current().data.shape[:2]
         name = identify_target(objs, (h, w))
@@ -765,19 +821,125 @@ class MainWindow(QMainWindow):
             self.project.set_current_metadata("target_solved", name)
         self._clear_warning()
         self._show_annotations(res, objs)
+        self.solve_panel.set_state("solved")
+        self._update_solve_result_card(res, objs, cached=False)
         self._solve_act.setChecked(True)
         self._rebuild_panel()                               # refresh Target line
 
-    def _show_annotations(self, res, objs):
-        from ..core.annotate import compass_angles, scale_bar
+    def _update_solve_result_card(self, res, objs, cached: bool) -> None:
+        """Fills SolvePanel's result card with the real solve values."""
+        if self.project is None:
+            return
+        from ..core.catalog import identify_target
+        h, w = self.project.current().data.shape[:2]
+        target = identify_target(objs, (h, w)) or ""
+        self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
+                                    self._solve_elapsed, cached)
+
+    def _sync_solve_panel(self) -> None:
+        """Keeps SolvePanel's status badge honest outside the explicit
+        solving/solved/cached transitions driven by _start_solve/_on_solved/
+        _open_plate_solve: `not_solved` once there is no solve at all, and
+        `stale` once the framing signature (crop/rotate/flip) no longer
+        matches it. Never invents `solved`/`cached` here — those are only
+        ever set at the exact point a solution was produced or reused, so a
+        `stale` cache that later matches again (e.g. an undo) is correctly
+        reported as `cached`, not silently upgraded to `solved`."""
+        if self._busy:
+            return   # an op (possibly a solve itself) is in flight
+        if self.project is None or self._solve is None:
+            self.solve_panel.set_state("not_solved")
+            return
+        if self._solve[0] != self._solve_sig():
+            self.solve_panel.set_state("stale")
+            return
+        self.solve_panel.set_state(self._solve_freshness or "cached")
+
+    def _annotation_layers(self) -> dict:
+        """Layer visibility toggles for plate-solve annotations, live from
+        the SolvePanel (kept in sync with self.settings.annotation_layers by
+        _on_annotation_layers_changed)."""
+        return self.solve_panel.layers()
+
+    def _annotation_density(self) -> str:
+        """Catalogue/star density for plate-solve annotations, live from the
+        SolvePanel (kept in sync with self.settings.annotation_density)."""
+        return self.solve_panel.density()
+
+    def _on_annotation_layers_changed(self, layers: dict) -> None:
+        """SolvePanel layer toggle: a global preference (persisted), and a
+        pure re-draw of the cached solve — never triggers a re-solve."""
+        self.settings.annotation_layers = dict(layers)
+        save_settings(self.settings, self._settings_path)
+        self._rebuild_overlay_from_cache()
+
+    def _on_annotation_density_changed(self, density: str) -> None:
+        """SolvePanel density change: same contract as layers — persisted,
+        overlay-only rebuild, no re-solve."""
+        self.settings.annotation_density = density
+        save_settings(self.settings, self._settings_path)
+        self._rebuild_overlay_from_cache()
+
+    def _rebuild_overlay_from_cache(self) -> None:
+        """Layer/density changes only affect WHAT the overlay draws, not the
+        WCS it's drawn from — rebuild from the cached solve without
+        re-solving. No-op if there's no solve, the overlay isn't currently
+        shown, or the cached solve no longer matches the current framing."""
+        if self.project is None or self._solve is None:
+            return
+        if self.image_view._annotations is None:
+            return
+        if self._solve[0] != self._solve_sig():
+            return
+        _sig, res, objs = self._solve
+        self._show_annotations(res, objs)
+
+    def _annotation_primitives(self, res, objs, shape, ui_scale: float = 1.0) -> list:
+        """The ONE call both the live overlay and the burned PNG export make
+        to build their primitives (closes PS-07: they used to build these
+        independently, and the export silently dropped named stars the live
+        overlay showed). Neither call site may call build_layout_for itself.
+
+        `ui_scale` must match what the CONSUMING adapter will actually
+        render text/glyphs at: the live overlay renders at the adapter's
+        constant on-screen sizes (`ui_scale=1.0`, the default), while the
+        export renders proportionally to the image (see
+        `annotation_render.scale_for`). Passing the right scale here is what
+        makes `place_labels`' collision avoidance valid for whichever
+        adapter actually draws the result — the export gets its own layout
+        PASS at its own scale, not just a repaint of the live layout.
+
+        `measure` is a REAL QFontMetricsF-based text measurement (see
+        `annotation_overlay.make_measure`), built at the same `ui_scale`, so
+        label collision avoidance reserves the box the consuming adapter is
+        actually going to paint into rather than the Qt-free character-count
+        approximation `build_layout_for` falls back to headlessly."""
+        from ..core.annotation_layout import build_layout_for
         from ..core.catalog import named_stars_in_field
+        from .annotation_overlay import make_measure
+        stars = named_stars_in_field(res.wcs, shape)
+        return build_layout_for(objs, stars, res.wcs, shape, res.pixscale_arcsec,
+                                 self._annotation_layers(), self._annotation_density(),
+                                 measure=make_measure(ui_scale), ui_scale=ui_scale)
+
+    def _show_annotations(self, res, objs):
+        """The ONE path that puts annotations on the canvas — and the one place
+        staleness is enforced.
+
+        A solution is only valid for the framing it was solved against. Drawing a
+        pre-flip solve on a flipped image mirrors every position: large nebula
+        circles still look roughly plausible, while stars land visibly wrong,
+        which is exactly how this was found. Individual call sites kept
+        forgetting the check (the canvas pill's re-show did), so the funnel
+        refuses instead of trusting each caller to remember."""
+        if self._solve and self._solve[0] != self._solve_sig():
+            self.image_view.set_annotations(None)
+            self.solve_panel.set_state("stale")
+            return
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
-        north, _east = compass_angles(res.wcs, (h, w))
-        length, label = scale_bar(res.pixscale_arcsec, w)
-        stars = named_stars_in_field(res.wcs, (h, w))
-        self.image_view.set_annotations(
-            build_annotation_group(objs, north, length, label, (h, w), "dark", stars=stars))
+        prims = self._annotation_primitives(res, objs, (h, w))
+        self.image_view.set_annotations(build_annotation_group(prims, (h, w)))
 
     def _remove_stars(self, img):
         if rcastro_valid(self.settings):
@@ -826,8 +988,9 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
                                        self._open_plate_solve)
-        self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
-        self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
+        self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
+                                              # canvas pill owns overlay visibility)
+        self._solve_act.setToolTip("Open the Plate Solve tool")
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -1065,6 +1228,8 @@ class MainWindow(QMainWindow):
         a live solve (re-solve to re-annotate) — it must never break opening the
         project's image itself."""
         self._solve = None
+        self._solve_freshness = None
+        self._solve_elapsed = 0.0
         if not d or not d.get("wcs"):
             return
         try:
@@ -1077,8 +1242,10 @@ class MainWindow(QMainWindow):
                 return
             objs = [CatalogObject(**o) for o in (d.get("objects") or [])]
             self._solve = (self._solve_sig(), res, objs)
+            self._solve_freshness = "cached"   # a restored solution, not a fresh solve
         except Exception:
             self._solve = None   # degrade to "re-solve to re-annotate" — never raise
+            self._solve_freshness = None
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):
@@ -1241,6 +1408,7 @@ class MainWindow(QMainWindow):
         else:
             self._busy_timer.stop()
             self._hide_busy_visuals()               # no-op if visuals never showed
+            self._sync_solve_panel()   # catches an aborted/failed solve stuck at "solving"
         self._back_btn.setDisabled(busy)            # gating stays immediate
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
@@ -2120,23 +2288,12 @@ class MainWindow(QMainWindow):
                        "Exporting…", "Export failed")
 
     def _save_png_with_annotations(self, img, path, res) -> None:
-        from PySide6.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
-        from PySide6.QtGui import QImage, QPixmap, QPainter
-        from ..core.annotate import compass_angles, scale_bar
-        from .annotation_overlay import build_annotation_group
+        from .annotation_render import paint_annotations, scale_for
         h, w = img.data.shape[:2]
-        north, _east = compass_angles(res.wcs, (h, w))
-        length, label = scale_bar(res.pixscale_arcsec, w)
         _sig, _res, objs = self._solve
-        group = build_annotation_group(objs, north, length, label, (h, w), "dark")
-        base = to_qimage(img)
-        scene = QGraphicsScene()
-        scene.addItem(QGraphicsPixmapItem(QPixmap.fromImage(base)))
-        scene.addItem(group)
-        out = QImage(base.size(), QImage.Format.Format_ARGB32)
-        painter = QPainter(out)
-        scene.render(painter, target=out.rect(), source=scene.itemsBoundingRect())
-        painter.end()
+        prims = self._annotation_primitives(res, objs, (h, w), ui_scale=scale_for((h, w)))
+        out = to_qimage(img)
+        paint_annotations(out, prims, (h, w))
         out.save(path)
 
     # --- settings ---
@@ -2333,6 +2490,8 @@ class MainWindow(QMainWindow):
         self._project_path = None
         self._source_label = None
         self._solve = None
+        self._solve_freshness = None
+        self._solve_elapsed = 0.0
         self._dirty = False
         self._center_stack.setCurrentWidget(self._welcome)
         self._show_chrome(False)
@@ -2389,8 +2548,8 @@ class MainWindow(QMainWindow):
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
-                self.image_view.set_annotations(None)
-                self._solve_act.setChecked(False)
+                self.image_view.set_annotations(None)   # the tool stays open; only the overlay goes
+        self._sync_solve_panel()   # catches framing changes (crop/rotate/flip) -> "stale"
 
     def _done_ids(self) -> set:
         done = set()

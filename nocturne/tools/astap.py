@@ -17,10 +17,23 @@ import numpy as np
 
 from ..core.image import AstroImage
 
-# ASTAP's solved WCS follows the FITS bottom-up pixel convention; Nocturne display
-# arrays are top-row-first. Projection (core/catalog) flips y when this is True.
-# CONFIRM against a real ASTAP solve (see the verification spike).
-FITS_Y_DOWN = True
+# Whether projection (core/catalog, core/annotate) must flip y when turning a
+# solved WCS position into a display-array row.
+#
+# CONFIRMED FALSE against a real ASTAP solve, 2026-07-31. It shipped True on the
+# assumption that ASTAP returns bottom-up FITS rows while Nocturne's arrays are
+# top-row-first — but astropy's world_to_pixel already returns rows in the same
+# order as the array we hand it, so the extra flip mirrored EVERY annotation
+# vertically.
+#
+# Why it survived so long: every test built its WCS synthetically, and a
+# synthetic WCS is self-consistent under either convention, so the suite could
+# never see it. And a mirrored overlay still looks plausible — a 2-degree nebula
+# circle lands roughly over its nebula either way. It was caught only when a user
+# measured two named stars' pixel positions in the running app (57 Cyg at
+# 1086,1274 and 56 Cyg at 1713,1148) and every projected object turned out to sit
+# at h - y instead of y.
+FITS_Y_DOWN = False
 
 
 @dataclass

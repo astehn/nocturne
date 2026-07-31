@@ -1584,6 +1584,27 @@ def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
     assert "colour" in win._warning.text().lower()
 
 
+def _solve_now(win):
+    """Open the Plate Solve tool AND run a solve.
+
+    The toolbar button now only opens the tool — solving is the panel's Solve
+    button — so a test that wants annotations must do both.
+    """
+    win._open_plate_solve()
+    win._on_resolve_requested()
+
+
+def _show_overlay(win):
+    """Re-show the overlay the way the canvas pill does: from cache, no re-solve."""
+    win.image_view._on_annotation_toggled(True)
+
+
+def _hide_overlay(win):
+    """Hide the overlay the way the canvas pill does, leaving the solve cached."""
+    win.image_view._on_annotation_toggled(False)
+    win.image_view.set_annotations(None)
+
+
 def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -1598,7 +1619,7 @@ def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.project.current().metadata.get("target_solved", "").startswith("NGC 7000")
     assert win.image_view._annotations is not None            # overlay shown
 
@@ -1607,7 +1628,7 @@ def test_plate_solve_not_configured_shows_hint(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     # No astap_path configured — astap_valid(win.settings) should be False.
-    win._open_plate_solve()
+    _solve_now(win)
     assert win._solve is None
     assert win._warning.text() != ""
 
@@ -1620,7 +1641,7 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
     from nocturne.tools.astap import SolveResult
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(False, None, 0.0, 0.0, 0.0), []))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win._warning.text() != ""
     assert win.image_view._annotations is None
     assert win._solve is None
@@ -1639,14 +1660,14 @@ def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatc
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.image_view._annotations is not None            # overlay shown
 
-    win._open_plate_solve()                                   # second call, unchanged image
-    assert win.image_view._annotations is None                # toggled off
+    _hide_overlay(win)                                        # pill off
+    assert win.image_view._annotations is None
 
-    win._open_plate_solve()                                   # third call
-    assert win.image_view._annotations is not None             # toggled back on
+    _show_overlay(win)                                        # pill on, from cache
+    assert win.image_view._annotations is not None
 
 
 def test_solve_sig_stable_under_tonal_steps_changes_on_geometry(qtbot, tmp_path):
@@ -1678,7 +1699,7 @@ def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.image_view._annotations is not None            # overlay shown
 
     win._flip_h()                                              # geometry change: mirror-wrong overlay must clear
@@ -1698,15 +1719,283 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                      [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    # The toolbar button owns the TOOL PANEL; the canvas pill owns the overlay.
+    # Hiding the overlay must NOT close the tool, and closing the tool must NOT
+    # discard the overlay -- that separation is the whole point of the split.
     assert win._solve_act.isChecked() is False
-    win._open_plate_solve()                                  # solve + show
-    assert win._solve_act.isChecked() is True                # button reflects overlay ON
-    win._open_plate_solve()                                  # hide
-    assert win._solve_act.isChecked() is False               # button reflects overlay OFF
-    win._open_plate_solve()                                  # show again (cached)
-    assert win._solve_act.isChecked() is True
-    win._flip_h(); win._refresh()                            # framing change clears overlay
-    assert win._solve_act.isChecked() is False               # and unchecks the button
+    _solve_now(win)                                          # opens the tool and solves
+    assert win._solve_act.isChecked() is True                # tool open
+    assert win.solve_panel.isHidden() is False
+    assert win.image_view._annotations is not None
+
+    _hide_overlay(win)                                       # pill only
+    assert win._solve_act.isChecked() is True, "hiding the overlay must not close the tool"
+    assert win.solve_panel.isHidden() is False
+
+    _show_overlay(win)                                       # pill again, from cache
+    assert win.image_view._annotations is not None
+
+    win._open_plate_solve()                                  # close the tool
+    assert win._solve_act.isChecked() is False
+    assert win.solve_panel.isHidden() is True
+    assert win.image_view._annotations is not None, "closing the tool must keep the overlay"
+
+
+def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeypatch):
+    """A solution is only valid for the framing it was solved against.
+
+    Drawing a pre-flip solve on a flipped image mirrors every position — large
+    nebula circles still look plausible while stars land visibly wrong, which is
+    how this was found in the running app. The canvas pill's re-show path
+    originally skipped the check, so the guard now lives in the single funnel.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                     [CatalogObject("NGC 7000", "North America",
+                                                    100.0, 0.0, 120.0, 12, 12)]))
+    _solve_now(win)
+    assert win.image_view._annotations is not None
+
+    win._flip_v()                       # framing changed; the solve no longer applies
+    assert win.image_view._annotations is None, "a flip must drop the overlay"
+
+    from nocturne.ui.solve_panel import STATE_LABELS
+    _show_overlay(win)                  # the pill tries to bring it back from cache
+    assert win.image_view._annotations is None, \
+        "a stale solve must never be redrawn, whichever path asks for it"
+    assert win.solve_panel.header_btn.text().startswith(
+        f"Plate solve · {STATE_LABELS['stale']}")
+
+
+def test_solve_panel_present_in_right_column(qtbot, tmp_path):
+    """The SolvePanel lives in the right column, below the clipping controls
+    and above the per-stage step panel — the positional contract Task 8 was
+    given (clipping line/checkbox as the reference point)."""
+    win = _window(qtbot, tmp_path)
+    assert win.solve_panel.parent() is win._right_panel
+    idx_clip_check = win._right_layout.indexOf(win._clip_check)
+    idx_solve_panel = win._right_layout.indexOf(win.solve_panel)
+    idx_step_panel = win._right_layout.indexOf(win._panel)
+    assert idx_clip_check != -1 and idx_solve_panel != -1 and idx_step_panel != -1
+    assert idx_clip_check < idx_solve_panel < idx_step_panel
+
+
+def _solved_win(qtbot, tmp_path, monkeypatch):
+    """A window with a fresh, live plate-solve already showing, plus a list
+    tracking every `_solve_current` (i.e. real ASTAP) invocation -- shared
+    setup for the SolvePanel wiring tests below, which must prove certain
+    panel interactions never grow this list."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    calls = []
+
+    def fake_solve(img):
+        calls.append(img)
+        return (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)])
+
+    monkeypatch.setattr(win, "_solve_current", fake_solve)
+    _solve_now(win)
+    assert win.image_view._annotations is not None
+    assert len(calls) == 1                    # the setup solve itself
+    return win, calls
+
+
+def test_layer_toggle_rebuilds_overlay_without_resolving(qtbot, tmp_path, monkeypatch):
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    before = win.image_view._annotations
+    win.solve_panel.layer_checks["stars"].setChecked(False)
+    after = win.image_view._annotations
+    assert after is not None
+    assert after is not before                     # overlay rebuilt (new group)
+    assert len(calls) == n_calls                    # no re-solve
+    assert win.solve_panel.layers()["stars"] is False
+
+
+def test_density_change_rebuilds_overlay_without_resolving(qtbot, tmp_path, monkeypatch):
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    before = win.image_view._annotations
+    idx = win.solve_panel.density_box.findData("minimal")
+    win.solve_panel.density_box.setCurrentIndex(idx)
+    after = win.image_view._annotations
+    assert after is not None
+    assert after is not before
+    assert len(calls) == n_calls
+    assert win.solve_panel.density() == "minimal"
+
+
+def test_annotation_toggles_persist_to_settings(qtbot, tmp_path, monkeypatch):
+    win, _calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    win.solve_panel.layer_checks["grid"].setChecked(True)
+    idx = win.solve_panel.density_box.findData("all")
+    win.solve_panel.density_box.setCurrentIndex(idx)
+    assert win.settings.annotation_layers["grid"] is True
+    assert win.settings.annotation_density == "all"
+
+    from nocturne.settings import load_settings
+    reloaded = load_settings(win._settings_path)
+    assert reloaded.annotation_layers["grid"] is True
+    assert reloaded.annotation_density == "all"
+
+
+def test_solve_state_cached_when_reused_after_tonal_edit(qtbot, tmp_path, monkeypatch):
+    from nocturne.ui.solve_panel import STATE_LABELS
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['solved']}")
+
+    _hide_overlay(win)                              # pill hides, solve stays cached
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                                   # a tonal step -- doesn't move stars
+    _show_overlay(win)                               # pill re-shows from cache
+
+    assert win.image_view._annotations is not None
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['cached']}")
+    assert len(calls) == n_calls                              # never re-solved
+
+
+def test_resolve_button_forces_fresh_solve(qtbot, tmp_path, monkeypatch):
+    from nocturne.ui.solve_panel import STATE_LABELS
+    win, calls = _solved_win(qtbot, tmp_path, monkeypatch)
+    n_calls = len(calls)
+
+    win.solve_panel.resolve_btn.click()                       # cached solution exists, sig unchanged
+
+    assert len(calls) == n_calls + 1                          # forced a fresh solve regardless
+    assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['solved']}")
+
+
+def _render_annotated(win, res, layers, path):
+    """Burns a PNG with `_save_png_with_annotations`, but with the layer
+    dict swapped out for the call so a test can isolate a single layer's
+    contribution -- restores win's real _annotation_layers afterwards."""
+    orig = win._annotation_layers
+    win._annotation_layers = lambda: layers
+    try:
+        win._save_png_with_annotations(win.project.current(), path, res)
+    finally:
+        win._annotation_layers = orig
+
+
+def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path, monkeypatch):
+    """PS-07 regression: the live overlay drew named stars, but the burned
+    PNG export used to build its primitives independently and silently
+    dropped them. Both paths now go through the same _annotation_primitives.
+
+    The star contribution is isolated rather than inferred from a mixed
+    scene: with EVERY layer but stars off, the export must differ from a
+    plain (un-annotated) render only once stars are the one thing switched
+    on, and must match it exactly when stars are the one thing switched
+    off -- so a bug that regresses star PAINTING specifically (not just the
+    primitive list) cannot hide behind the DSO circle, compass or scale
+    bar also being drawn."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject, NamedStar
+    from nocturne.core.annotation_layout import Marker
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                 [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    star = NamedStar("Deneb", 100.0, 0.0, 1.25, 10.0, 10.0)
+    monkeypatch.setattr("nocturne.core.catalog.named_stars_in_field",
+                        lambda wcs, shape: [star])
+
+    _solve_now(win)                                  # solve + show the live overlay
+    assert win.image_view._annotations is not None
+
+    sig, res, objs = win._solve
+    h, w = win.project.current().data.shape[:2]
+    prims = win._annotation_primitives(res, objs, (h, w))
+    assert any(isinstance(p, Marker) and p.kind == "star" for p in prims), \
+        "the export path must carry the same named-star markers the live overlay shows"
+
+    from PySide6.QtGui import QImage
+    from nocturne.ui.preview import to_qimage
+    # A "plain" baseline through the SAME base-pixel pipeline the burned
+    # export uses (to_qimage), not core.export.save_png (which skips the
+    # display autostretch) -- otherwise the two would differ for reasons
+    # having nothing to do with annotations at all.
+    plain_path = str(tmp_path / "plain.png")
+    to_qimage(win.project.current()).save(plain_path)
+    plain = QImage(plain_path)
+
+    no_layers = {"objects": False, "stars": False, "grid": False,
+                "compass": False, "scale": False, "by_type": False}
+    stars_only = dict(no_layers, stars=True)
+
+    stars_path = str(tmp_path / "stars_only.png")
+    _render_annotated(win, res, stars_only, stars_path)
+    stars_only_img = QImage(stars_path)
+    assert not stars_only_img.isNull()
+    assert stars_only_img != plain, \
+        "the star layer alone must visibly change the burned export"
+
+    off_path = str(tmp_path / "stars_off.png")
+    _render_annotated(win, res, no_layers, off_path)
+    stars_off_img = QImage(off_path)
+    assert stars_off_img == plain, \
+        "with every layer off (including stars) the export must match a plain render exactly"
+
+
+def test_star_marker_painting_specifically_reaches_the_burned_export(qtbot, tmp_path):
+    """Tighter than the layer-toggle test above: `build_layout_for` always
+    gives a named star BOTH a Marker (the flanking ticks) AND a Label (its
+    name) -- so comparing a "stars only" layer render against plain does
+    NOT isolate the marker's paint code specifically, a Label-only bug
+    would satisfy that assertion just as well. This test drives
+    `_save_png_with_annotations` with a primitive list containing ONLY a
+    star Marker (via monkeypatching `_annotation_primitives`, the shared
+    seam both call sites go through), so the only thing that can make the
+    burned PNG differ from plain is `annotation_render._paint_marker`'s
+    "star" branch itself."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._solve = ("sig", None, [])   # _save_png_with_annotations unpacks self._solve unconditionally
+
+    from PySide6.QtGui import QImage
+    from nocturne.ui.preview import to_qimage
+    from nocturne.core.annotation_layout import Marker
+
+    plain_path = str(tmp_path / "plain.png")
+    to_qimage(win.project.current()).save(plain_path)
+    plain = QImage(plain_path)
+
+    star_marker = Marker(10.0, 10.0, "star", "#5cff5c")
+    win._annotation_primitives = lambda *a, **k: [star_marker]
+    star_path = str(tmp_path / "star_marker_only.png")
+    win._save_png_with_annotations(win.project.current(), star_path, res=None)
+    star_img = QImage(star_path)
+    assert not star_img.isNull()
+    assert star_img != plain, \
+        "a star Marker on its own must visibly change the burned export"
+
+    win._annotation_primitives = lambda *a, **k: []
+    empty_path = str(tmp_path / "no_primitives.png")
+    win._save_png_with_annotations(win.project.current(), empty_path, res=None)
+    assert QImage(empty_path) == plain, \
+        "with no primitives at all the export must match a plain render exactly"
 
 
 def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):

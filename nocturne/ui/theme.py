@@ -98,6 +98,11 @@ QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
 QLabel#readoutPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 12px;
     color: {TEXT}; font-size: 12px; padding: 4px 10px; }}
+QPushButton#solveHeader {{ background: transparent; border: none; text-align: left;
+    font-weight: 600; padding: 6px 2px; }}
+QPushButton#solveHeader:hover {{ color: {ACCENT}; background: transparent; }}
+QPushButton#solveHeader:pressed {{ background: transparent; }}
+QLabel#solveResultCard {{ color: {TEXT_DIM}; font-size: 12px; padding: 4px 0 8px 0; }}
 QLabel#aboutWordmark {{ font-size: 34px; font-weight: 700; color: #ffffff; padding: 10px; }}
 QLabel#aboutBody {{ font-size: 13px; color: {TEXT}; padding: 4px 12px; }}
 QScrollArea {{ border: none; background: {BG_1}; }}

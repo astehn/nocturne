@@ -490,12 +490,27 @@ _TOPIC_LIST = (
        "overlays what's there — catalogue objects (nebulae, galaxies, clusters), named bright "
        "stars, a north compass, and a scale bar.</p>"
        "<h4>How to use it</h4>"
-       "<p>Set up <b>ASTAP</b> in Settings first (it does the solving). Then toggle <b>Plate "
-       "Solve</b> in the toolbar to show or hide the overlay — the first solve takes a moment, "
-       "after which it's remembered. At <b>Export</b> you can burn the labels into a PNG.</p>"
+       "<p>Set up <b>ASTAP</b> in Settings first — it does the solving. Then press <b>Plate "
+       "Solve</b> in the toolbar to open the tool in the right-hand panel, and press "
+       "<b>Solve</b> there. It takes a few seconds, after which the solution is remembered.</p>"
+       "<p>Pressing <b>Plate Solve</b> again closes the tool but <i>keeps</i> the overlay — "
+       "the <b>Annotations</b> button on the image shows and hides it, so you can carry on "
+       "editing with the labels up. At <b>Export</b> the labels burn into a PNG exactly as "
+       "you see them.</p>"
+       "<h4>Choosing what to show</h4>"
+       "<p>The tool has a checkbox per layer — <b>Objects</b>, <b>Named stars</b>, an "
+       "<b>RA/Dec grid</b>, the <b>Compass</b> and <b>Scale bar</b> — plus <b>Colour by "
+       "type</b>, which tints each object by what it is (violet Messier, white dark nebulae, "
+       "cyan planetaries, yellow stars) instead of a single colour. <b>Density</b> controls "
+       "how crowded it gets: <i>Minimal</i> for the headline objects, <i>Balanced</i> for "
+       "everyday use, <i>All</i> for everything the catalogues know about.</p>"
        "<h4>Tips</h4>"
-       "<p>The solution is cached per framing, so cropping, rotating, or flipping re-solves. "
-       "Great for confirming what you captured and for making annotated shares.</p>"),
+       "<p>Circles are drawn at each object's real size on the sky, so a big nebula's ring can "
+       "run past the frame edge — that's telling you the object is larger than your field. A "
+       "dashed ring means the catalogue doesn't record a size.</p>"
+       "<p>The solution belongs to the framing it was made for, so cropping, rotating or "
+       "flipping clears the overlay and the tool asks you to solve again. That's deliberate: a "
+       "solution from a different framing would put every label in the wrong place.</p>"),
 
     _t("share", "Share",
        "Reframe and caption a copy for social, without touching your master.",

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsScene, QGraphicsView,
 )
 
+from .annotation_pill import AnnotationPill
 from .readout_pill import ReadoutPill
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
@@ -91,6 +92,7 @@ class ImageView(QGraphicsView):
     cropDismissRequested = Signal()
     hovered = Signal(int, int, str)     # image x, image y, "main" | "compare"
     hoverLeft = Signal()
+    annotationsToggled = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -128,6 +130,8 @@ class ImageView(QGraphicsView):
         self._position_zoom_pill()
         self.readout_pill = ReadoutPill(self)
         self._position_readout_pill()
+        self.annotation_pill = AnnotationPill(self._on_annotation_toggled, self)
+        self._position_annotation_pill()
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
@@ -160,10 +164,22 @@ class ImageView(QGraphicsView):
         if self.viewport().cursor().shape() != want:
             self.viewport().setCursor(want)
 
+    def _position_annotation_pill(self) -> None:
+        pill = self.annotation_pill
+        pill.adjustSize()
+        m = 12
+        pill.move(self.width() - pill.width() - m, m)      # top-right, clear of the zoom pill
+
+    def _on_annotation_toggled(self, shown: bool) -> None:
+        if self._annotations is not None:
+            self._annotations.setVisible(shown)
+        self.annotationsToggled.emit(shown)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._position_zoom_pill()
         self._position_readout_pill()
+        self._position_annotation_pill()
 
     # --- before/after compare ---
     def set_compare(self, qimage) -> None:
@@ -447,13 +463,27 @@ class ImageView(QGraphicsView):
 
     # --- annotation overlay (DSO labels + compass + scale bar) ---
     def set_annotations(self, group) -> None:
+        """Annotations are CLIPPED to the image. A big nebula's true-size circle
+        legitimately runs past the frame edge, but without a clip it also paints
+        across the empty canvas around the image, which reads as a broken
+        overlay rather than an object larger than the field."""
         if self._annotations is not None:
             self._scene.removeItem(self._annotations)
             self._annotations = None
-        if group is not None:
-            group.setZValue(8)
-            self._scene.addItem(group)
-            self._annotations = group
+        if group is None:
+            self.annotation_pill.hide()
+            return
+        self.annotation_pill.set_shown(True)
+        self.annotation_pill.show()
+        self.annotation_pill.raise_()
+        pm = self._item.pixmap()
+        clip = QGraphicsRectItem(0, 0, pm.width(), pm.height())
+        clip.setPen(QPen(Qt.PenStyle.NoPen))
+        clip.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
+        clip.setZValue(8)
+        group.setParentItem(clip)
+        self._scene.addItem(clip)
+        self._annotations = clip
 
     def _set_bounds(self, bounds) -> None:
         top, bottom, left, right = bounds

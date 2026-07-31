@@ -153,3 +153,49 @@ def test_add_recent_project_dedups_prepends_and_caps():
     assert s.recent_projects[0] == "/proj/5"
     assert s.recent_projects.count("/proj/5") == 1
     assert len(s.recent_projects) == 8
+
+
+def test_annotation_settings_default():
+    from nocturne.settings import Settings
+    s = Settings()
+    assert s.annotation_layers == {
+        "objects": True, "stars": True, "grid": False,
+        "compass": True, "scale": True, "by_type": False,
+    }
+    assert s.annotation_density == "balanced"
+
+
+def test_annotation_settings_default_dict_is_not_a_shared_mutable():
+    # field(default_factory=...) is required here -- a mutable dict default
+    # would be shared across every Settings() instance.
+    from nocturne.settings import Settings
+    a, b = Settings(), Settings()
+    a.annotation_layers["grid"] = True
+    assert b.annotation_layers["grid"] is False
+
+
+def test_annotation_settings_round_trip(tmp_path):
+    # load_settings lists every field explicitly (no **data), so a field only
+    # added to the dataclass would save via asdict but silently never load
+    # back -- this test fails loudly if that trap is hit.
+    from nocturne.settings import Settings, save_settings, load_settings
+    p = tmp_path / "s.json"
+    layers = {"objects": False, "stars": False, "grid": True,
+              "compass": False, "scale": True, "by_type": True}
+    save_settings(Settings(annotation_layers=layers, annotation_density="all"), str(p))
+    loaded = load_settings(str(p))
+    assert loaded.annotation_layers == layers
+    assert loaded.annotation_density == "all"
+
+
+def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"base_dir": "/x"}))  # pre-feature settings.json
+    loaded = load_settings(str(p))
+    assert loaded.annotation_layers == {
+        "objects": True, "stars": True, "grid": False,
+        "compass": True, "scale": True, "by_type": False,
+    }
+    assert loaded.annotation_density == "balanced"

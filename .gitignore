@@ -35,3 +35,6 @@ CLAUDE.md
 
 # Large local model files (EDSR is shelved; never commit a 146 MB blob)
 nocturne/assets/models/
+
+# Internal audits (local-only, like docs/audit and docs/superpowers)
+/docs/*_AUDIT_*.md
