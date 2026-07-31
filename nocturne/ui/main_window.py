@@ -824,14 +824,18 @@ class MainWindow(QMainWindow):
         self._start_solve(self._solve_sig())
 
     def _on_solved(self, sig, res, objs):
+        # A failed or discarded solve leaves the TOOL open: the user is standing in
+        # front of it and the next thing they want is to try again. Unchecking the
+        # toolbar action here used to hide the overlay; since the tool and the
+        # overlay were separated it would close the panel out from under them.
         if not res.solved:
             hint = f" (ASTAP: {res.message.splitlines()[-1]})" if res.message else ""
             self._show_warning("Couldn't plate-solve this image — try after Stretch, "
                                  "or check the field isn't mostly empty." + hint)
-            self._solve_act.setChecked(False)
+            self.solve_panel.set_state("not_solved")
             return
         if self._solve_sig() != sig:
-            self._solve_act.setChecked(False)
+            self.solve_panel.set_state("stale")
             return   # framing changed (crop/rotate/flip) while solving — discard
         self._solve = (sig, res, objs)
         self._solve_elapsed = self.elapsed_seconds()

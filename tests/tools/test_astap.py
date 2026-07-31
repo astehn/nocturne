@@ -1,3 +1,4 @@
+import pytest
 import os
 import numpy as np
 from nocturne.core.image import AstroImage
@@ -236,3 +237,46 @@ def test_hint_infers_ra_units_rather_than_assuming_hours():
 
     assert hint_from_metadata({"ra": "", "dec": ""}) is None
     assert hint_from_metadata({"ra": "rubbish", "dec": "rubbish"}) is None
+
+
+def test_solve_is_cancellable_and_binds_the_process():
+    """The Cancel button set the token, the UI said "Cancelling...", and ASTAP
+    ran to completion regardless: the runner used subprocess.run, which cannot
+    be interrupted. It now binds the child to the ambient token like every other
+    external tool."""
+    import subprocess
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.tools.astap import _run_astap
+
+    token = CancelToken()
+    bound = []
+    real_popen = subprocess.Popen
+
+    class _Spy(real_popen):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+
+    def _bind(proc):
+        bound.append(proc)
+        CancelToken.bind_process(token, proc)
+
+    token.bind_process = _bind          # observe that the child is registered
+    set_ambient(token)
+    try:
+        token.cancel()                  # already cancelled before the run starts
+        with pytest.raises(Cancelled):
+            _run_astap(["/bin/sleep", "5"], cwd=".", timeout=30)
+    finally:
+        clear_ambient()
+    assert bound, "the solver process must be bound to the cancel token"
+
+
+def test_solve_times_out_rather_than_hanging_forever(tmp_path):
+    """A solver still grinding after minutes has effectively failed, and leaving
+    it running holds the worker thread forever."""
+    from nocturne.tools.astap import _run_astap
+    from nocturne.tools.base import ToolError
+
+    with pytest.raises(ToolError) as e:
+        _run_astap(["/bin/sleep", "10"], cwd=str(tmp_path), timeout=0.5)
+    assert "did not finish" in str(e.value) or "0 s" in str(e.value)

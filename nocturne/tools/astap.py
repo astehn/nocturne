@@ -11,11 +11,14 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 
 import numpy as np
 
 from ..core.image import AstroImage
+from ..core.tasks import Cancelled, current, kill_process
+from .base import ToolError
 
 # Whether projection (core/catalog, core/annotate) must flip y when turning a
 # solved WCS position into a display-array row.
@@ -49,14 +52,46 @@ class SolveResult:
 _OUT_FILE = "_astap_out.txt"
 
 
-def _run_astap(args: list[str], cwd: str) -> int:
-    p = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+SOLVE_TIMEOUT_S = 180.0     # a solve that has run this long is not going to finish
+
+
+def _run_astap(args: list[str], cwd: str, timeout: float = SOLVE_TIMEOUT_S) -> int:
+    """Run ASTAP, cancellably and with a timeout, returning its exit code.
+
+    Popen rather than subprocess.run because a solve is the one long external
+    operation the app runs, and `run` cannot be interrupted: the Cancel button
+    set the token, the UI reported "Cancelling…", and ASTAP carried on to
+    completion regardless. Bound to the ambient CancelToken like every other
+    external tool, in its own session so the whole process group dies.
+
+    Raises Cancelled if the user cancelled, or ToolError on timeout — a solver
+    still grinding after several minutes has effectively failed, and leaving it
+    to run holds the worker thread forever."""
+    token = current()
+    start = time.monotonic()
+    proc = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, start_new_session=True)
+    if token is not None:
+        token.bind_process(proc)          # a later cancel() kills the group
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        kill_process(proc)
+        out, err = proc.communicate()
+        timed_out = True
     try:                          # stash ASTAP's own words so a failure explains itself
         with open(os.path.join(cwd, _OUT_FILE), "w") as f:
-            f.write((p.stdout or "") + "\n" + (p.stderr or ""))
+            f.write((out or "") + "\n" + (err or ""))
     except OSError:
         pass
-    return p.returncode
+    if token is not None and token.cancelled:
+        raise Cancelled()
+    if timed_out:
+        raise ToolError(args, proc.returncode or -1, out or "",
+                        f"ASTAP did not finish within {timeout:.0f} s.",
+                        time.monotonic() - start)
+    return proc.returncode
 
 
 def _write_solve_fits(img: AstroImage, path: str, header_cards: dict | None) -> None:
