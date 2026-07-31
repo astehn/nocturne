@@ -182,7 +182,7 @@ def test_result_card_shows_north_orientation_when_wcs_present(qtbot):
     qtbot.addWidget(panel)
     res = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs())
     panel.set_result(res, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False)
-    assert "N +0.0°" in panel.result_label.text()
+    assert "N -180.0°" in panel.result_label.text()   # see FITS_Y_DOWN correction
 
 
 def test_result_card_flags_mirrored_orientation_only_when_actually_mirrored(qtbot):

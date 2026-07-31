@@ -83,14 +83,17 @@ def is_mirrored(wcs, shape) -> bool:
     sense of compass_angles' two outputs, which already bakes in the
     FITS_Y_DOWN screen convention, so no separate flip logic is needed here.
 
-    Standard: East sits ~90 deg clockwise of North (east - north wraps to
-    ~270). Mirrored: East sits ~90 deg counter-clockwise of North (wraps to
-    ~90). This is rotation-invariant -- only the frame's chirality matters,
-    not its position angle -- verified against a synthetic WCS rotated 45 deg
-    in tests/core/test_annotate.py, where the wrapped difference is unchanged
-    by rotation and only flips between mirrored/non-mirrored WCS matrices."""
+    Standard sky: East sits ~90 deg counter-clockwise of North on screen, so
+    the wrapped difference lands near 180. Mirrored: it lands near 0/360.
+    Rotation-invariant -- only the frame's chirality matters, not its position
+    angle -- verified against a synthetic WCS rotated 45 deg in
+    tests/core/test_annotate.py.
+
+    The sense here follows FITS_Y_DOWN: that constant was corrected to False on
+    2026-07-31 after a real solve showed every annotation was being mirrored
+    vertically, which also inverted what this function reported."""
     north, east = compass_angles(wcs, shape)
-    return ((east - north) % 360.0) < 180.0
+    return ((east - north) % 360.0) >= 180.0
 
 
 def scale_bar(pixscale_arcsec: float, width_px: int) -> tuple[int, str]:

@@ -294,8 +294,13 @@ def test_grid_dec_line_position_matches_fits_y_down_convention():
     # inverted FITS_Y_DOWN sign would place it ~299 px away instead.
     w, h = 800, 600
     wcs = _asymmetric_grid_wcs(w, h)
+    from nocturne.tools.astap import FITS_Y_DOWN
     raw_x, raw_y = wcs.world_to_pixel(SkyCoord(310.0 * u.deg, 44.0 * u.deg))
-    expected_y = h - 1 - float(raw_y)          # FITS_Y_DOWN convention
+    # Derived from the constant rather than hard-coding a flip: this test exists
+    # to prove the GRID agrees with core/catalog's object projection, whichever
+    # convention that is. Hard-coding it made the test restate the bug when the
+    # constant turned out to be wrong (corrected 2026-07-31 against a real solve).
+    expected_y = (h - 1 - float(raw_y)) if FITS_Y_DOWN else float(raw_y)
 
     lines = grid_lines(wcs, (h, w), "#888888")
     dec_44 = next(l for l in lines if l.label == "+44°")

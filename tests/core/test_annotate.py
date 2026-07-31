@@ -24,10 +24,13 @@ def _wcs(w=1920, h=1080, scale=0.0005556, mirrored=False, rotate_deg=0.0):
 
 
 def test_compass_north_points_up_for_standard_wcs():
-    # Standard astro orientation (N up, E left) with FITS_Y_DOWN flip -> on a
-    # top-row-first display, North points UP (screen angle ~ -90 / 270).
+    # A standard-orientation WCS (Dec increasing with pixel row) drawn on a
+    # top-row-first display puts North DOWN the screen (~90 deg), because row 0
+    # is the top. FITS_Y_DOWN was False-corrected on 2026-07-31 after a real
+    # solve showed the old True flipped every annotation; the compass follows the
+    # same _screen_xy as the positions, so it moved with them.
     n, e = compass_angles(_wcs(), (1080, 1920))
-    assert abs(((n % 360) - 270) % 360) < 15 or abs((n % 360) - 270) < 15
+    assert abs((n % 360) - 90) < 15, n
     # East is ~90 deg from North
     assert abs(((e - n) % 360) - 90) < 20 or abs(((n - e) % 360) - 90) < 20
 
