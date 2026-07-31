@@ -300,8 +300,8 @@ _GRID_COLOUR = "#6a7688"      # muted slate: visible without competing with obje
 _COMPASS_COLOUR = "#6aa8f2"   # bright blue, matches the pre-existing compass accent
 _SCALE_COLOUR = "#e7ecf4"     # near-white, reads on both light and dark frame content
 
-_MEASURE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0,
-               "grid": 11.0, "compass": 17.0}
+_MEASURE_PT = {"primary": 22.0, "secondary": 18.0, "star": 15.0, "star_bright": 17.0,
+               "grid": 13.0, "compass": 20.0}
 
 
 def _default_measure(text: str, size: str, ui_scale: float = 1.0) -> tuple[float, float]:

@@ -46,8 +46,8 @@ from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
 
 # Mirrors annotation_overlay._SIZE_PT exactly -- the two must start from the
 # same numbers so the export "reads like" the live overlay once scaled.
-_SIZE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0,
-            "grid": 11.0, "compass": 17.0}
+_SIZE_PT = {"primary": 22.0, "secondary": 18.0, "star": 15.0, "star_bright": 17.0,
+            "grid": 13.0, "compass": 20.0}
 _DEFAULT_PT = _SIZE_PT["secondary"]
 _BOLD_SIZES = {"compass"}
 _OUTLINE_COLOUR = "#0a0f18"
@@ -117,9 +117,17 @@ def _paint_text(painter: QPainter, text: str, x: float, y: float, colour: str,
     fm = QFontMetricsF(font)
     path = QPainterPath()
     path.addText(QPointF(x, y + fm.ascent()), font, text)
-    pen = QPen(QColor(_OUTLINE_COLOUR))
-    pen.setWidthF(max(1.1 * scale, 0.6))
-    painter.setPen(pen)
+    # Two passes, not one stroked-and-filled pass. A centred stroke eats half its
+    # width INTO the glyph, so a dark outline turns small text black. Stroking a
+    # wide dark halo first and filling the colour over it keeps the letterform
+    # intact while still separating it from bright nebulosity.
+    halo = QPen(QColor(_OUTLINE_COLOUR))
+    halo.setWidthF(max(3.0 * scale, 2.0))
+    halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(halo)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPath(path)
+    painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(colour))
     painter.drawPath(path)
     painter.setBrush(Qt.BrushStyle.NoBrush)

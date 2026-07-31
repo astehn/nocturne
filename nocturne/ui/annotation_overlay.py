@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsIte
 from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
 
 _IGNORE = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
-_SIZE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0,
-            "grid": 11.0, "compass": 17.0}
+_SIZE_PT = {"primary": 22.0, "secondary": 18.0, "star": 15.0, "star_bright": 17.0,
+            "grid": 13.0, "compass": 20.0}
 _DEFAULT_PT = _SIZE_PT["secondary"]
 _BOLD_SIZES = {"compass"}          # the "N" is the only bold label; a dedicated size
                                     # class keeps Label's schema unchanged (no bold field)
