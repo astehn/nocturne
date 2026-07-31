@@ -2,8 +2,11 @@ import math
 
 import pytest
 
+from astropy.wcs import WCS
+
 from nocturne.core.annotation_layout import (
-    Circle, circle_for, filter_by_density, place_labels, priority_of, star_marker)
+    Circle, circle_for, filter_by_density, grid_lines, place_labels, priority_of,
+    star_marker)
 from nocturne.core.catalog import CatalogObject, NamedStar
 
 
@@ -162,3 +165,36 @@ def test_label_search_finds_free_space_beyond_an_occupied_diagonal():
     small_labels = [l for l in labels if l.text == "LDN 1"]
     assert small_labels, "free space exists around the occupied rectangle; label must not be dropped"
     assert leaders, "a label pushed off its primary anchors must be connected by a leader"
+
+
+def _grid_wcs(ra=310.0, dec=44.0, scale_deg=0.001, w=800, h=600):
+    k = WCS(naxis=2)
+    k.wcs.crpix = [w / 2, h / 2]
+    k.wcs.crval = [ra, dec]
+    k.wcs.cdelt = [-scale_deg, scale_deg]
+    k.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    return k
+
+
+def test_grid_produces_lines_across_the_frame():
+    lines = grid_lines(_grid_wcs(), (600, 800), "#888888")
+    assert lines, "a solved frame should yield grid lines"
+    assert all(len(l.points) >= 2 for l in lines)
+
+
+def test_grid_lines_carry_a_readable_label():
+    lines = grid_lines(_grid_wcs(), (600, 800), "#888888")
+    assert any(l.label for l in lines)
+    for l in lines:
+        if l.label:
+            assert any(mark in l.label for mark in ("h", "°", "′")), l.label
+
+
+def test_grid_points_lie_inside_the_frame():
+    for l in grid_lines(_grid_wcs(), (600, 800), "#888888"):
+        for x, y in l.points:
+            assert -1 <= x <= 801 and -1 <= y <= 601
+
+
+def test_grid_of_an_unusable_wcs_is_empty_not_an_exception():
+    assert grid_lines(None, (600, 800), "#888888") == []

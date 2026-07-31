@@ -6,7 +6,7 @@ import numpy as np
 
 from ..tools.astap import FITS_Y_DOWN
 
-_NICE_ARCMIN = [1, 2, 5, 10, 15, 30, 60, 120]
+_NICE_ARCSEC = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000]
 
 
 def _screen_xy(wcs, ra, dec, h):
@@ -30,8 +30,19 @@ def compass_angles(wcs, shape) -> tuple[float, float]:
 
 
 def scale_bar(pixscale_arcsec: float, width_px: int) -> tuple[int, str]:
-    target_arcmin = (width_px * 0.20 * pixscale_arcsec) / 60.0
-    nice = min(_NICE_ARCMIN, key=lambda a: abs(a - target_arcmin))
-    length_px = int(round(nice * 60.0 / pixscale_arcsec))
-    label = f"{nice // 60}°" if nice >= 60 and nice % 60 == 0 else f"{nice}′"
+    """A bar covering roughly a fifth of the frame, rounded to a readable
+    angular length. Chosen from the actual frame width so it works on both a
+    tiny high-resolution crop and a many-degree field, and returns nothing at
+    all rather than dividing by zero on an unsolved/invalid scale."""
+    if pixscale_arcsec <= 0 or width_px <= 0:
+        return 0, ""
+    target = width_px * 0.20 * pixscale_arcsec              # arcsec
+    nice = min(_NICE_ARCSEC, key=lambda a: abs(a - target))
+    length_px = int(round(nice / pixscale_arcsec))
+    if nice >= 3600:
+        label = f"{nice // 3600}°"
+    elif nice >= 60:
+        label = f"{nice // 60}′"
+    else:
+        label = f"{nice}″"
     return length_px, label

@@ -151,3 +151,76 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
         if displaced:
             leaders.append(Leader(ax, ay, lx, ly + th / 2, colour))
     return labels, leaders
+
+
+class GridLine(NamedTuple):
+    points: list
+    colour: str
+    label: str = ""
+
+
+_GRID_STEPS_DEG = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
+
+
+def _fmt_ra(ra_deg: float) -> str:
+    hours = (ra_deg % 360.0) / 15.0
+    h = int(hours)
+    m = int(round((hours - h) * 60))
+    if m == 60:
+        h, m = h + 1, 0
+    return f"{h}h{m:02d}m"
+
+
+def _fmt_dec(dec_deg: float) -> str:
+    sign = "-" if dec_deg < 0 else "+"
+    d = abs(dec_deg)
+    deg = int(d)
+    minutes = int(round((d - deg) * 60))
+    if minutes == 60:
+        deg, minutes = deg + 1, 0
+    return f"{sign}{deg}°{minutes:02d}′" if minutes else f"{sign}{deg}°"
+
+
+def grid_lines(wcs, shape, colour: str) -> list:
+    """Constant-RA and constant-Dec polylines clipped to the frame. Sampled
+    rather than drawn straight, so the curvature of the projection shows."""
+    if wcs is None:
+        return []
+    import numpy as np
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+    from ..tools.astap import FITS_Y_DOWN
+
+    h, w = shape
+    try:
+        corners = wcs.pixel_to_world(np.array([0, w - 1, 0, w - 1]),
+                                     np.array([0, 0, h - 1, h - 1]))
+        ras, decs = corners.ra.deg, corners.dec.deg
+    except Exception:
+        return []
+    span = max(float(np.ptp(decs)), 0.01)
+    step = min(_GRID_STEPS_DEG, key=lambda s: abs(s - span / 3.0))
+
+    def project(ra_arr, dec_arr):
+        x, y = wcs.world_to_pixel(SkyCoord(ra_arr * u.deg, dec_arr * u.deg))
+        y = (h - 1 - y) if FITS_Y_DOWN else y
+        return np.atleast_1d(x), np.atleast_1d(y)
+
+    out = []
+    dec_lo, dec_hi = float(np.min(decs)), float(np.max(decs))
+    ra_lo, ra_hi = float(np.min(ras)), float(np.max(ras))
+    for dec in np.arange(np.floor(dec_lo / step) * step, dec_hi + step, step):
+        ra_s = np.linspace(ra_lo, ra_hi, 20)
+        xs, ys = project(ra_s, np.full_like(ra_s, dec))
+        pts = [(float(a), float(b)) for a, b in zip(xs, ys)
+               if -1 <= a <= w and -1 <= b <= h]
+        if len(pts) >= 2:
+            out.append(GridLine(pts, colour, _fmt_dec(float(dec))))
+    for ra in np.arange(np.floor(ra_lo / step) * step, ra_hi + step, step):
+        dec_s = np.linspace(dec_lo, dec_hi, 20)
+        xs, ys = project(np.full_like(dec_s, ra), dec_s)
+        pts = [(float(a), float(b)) for a, b in zip(xs, ys)
+               if -1 <= a <= w and -1 <= b <= h]
+        if len(pts) >= 2:
+            out.append(GridLine(pts, colour, _fmt_ra(float(ra))))
+    return out

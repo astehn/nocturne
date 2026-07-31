@@ -25,3 +25,23 @@ def test_scale_bar_picks_round_length():
     # ~20% of 1920 = 384 px = ~12.8 arcmin -> nearest nice = 15 arcmin -> 450 px
     assert label in ("15′", "10′")
     assert 250 < length_px < 500
+
+
+def test_scale_bar_targets_about_a_fifth_of_the_frame():
+    length_px, _ = scale_bar(2.0, 1000)
+    assert 120 <= length_px <= 320, length_px
+
+
+def test_scale_bar_handles_a_very_wide_field_in_degrees():
+    _, label = scale_bar(60.0, 1000)          # 60"/px -> a many-degree frame
+    assert "°" in label
+
+
+def test_scale_bar_handles_a_tiny_high_resolution_crop():
+    length_px, label = scale_bar(0.2, 400)
+    assert length_px > 0 and label
+
+
+def test_scale_bar_survives_an_invalid_pixel_scale():
+    length_px, label = scale_bar(0.0, 1000)
+    assert length_px == 0 and label == ""
