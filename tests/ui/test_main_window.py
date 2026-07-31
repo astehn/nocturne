@@ -3105,13 +3105,14 @@ def test_object_list_lists_what_the_solve_found(qtbot, tmp_path, monkeypatch):
     objs = [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12),
             CatalogObject("LDN 935", "", 100.0, 0.0, 0.0, 8, 8)]
     win = _solved_with_objects(qtbot, tmp_path, monkeypatch, objs)
-    names = [win.solve_panel.object_list.item(i).text()
-             for i in range(win.solve_panel.object_list.count())]
+    panel = win.image_view.object_panel        # the list lives on the canvas now
+    names = [panel.list.item(i).text() for i in range(panel.count())]
     assert any("NGC 7000" in n for n in names)
     assert any("LDN 935" in n for n in names)
     # Ordered by the same priority the overlay places labels in, so the list and
     # the image read as one ranking rather than two.
     assert "NGC 7000" in names[0]
+    assert "(2)" in win.solve_panel.objects_toggle.text()   # count reaches the control
 
 
 def test_picking_an_object_focuses_its_TRUE_centre(qtbot, tmp_path, monkeypatch):

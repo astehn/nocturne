@@ -620,3 +620,41 @@ def test_crosshair_shows_exactly_when_the_readout_pill_does(qtbot):
                 QPointF(40.0, 5.0), QPointF(-0.4, 5.0)):
         pill_visible, crosshair = hovering(pos)
         assert pill_visible == crosshair, f"disagreement at {pos}"
+
+
+def test_object_list_panel_is_hidden_until_asked_for(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    assert view.object_panel.isHidden()
+    view.show_object_list(True)
+    assert not view.object_panel.isHidden()
+    view.show_object_list(False)
+    assert view.object_panel.isHidden()
+
+
+def test_object_list_panel_is_tall_enough_to_be_useful(qtbot):
+    """It moved out of the right column precisely because 180 px there showed
+    two rows. On the canvas it must actually use the height available."""
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(1200, 900)
+    view.show_object_list(True)
+    assert view.object_panel.height() >= 400, view.object_panel.height()
+    # anchored top-right, below the Annotations pill
+    assert view.object_panel.x() + view.object_panel.width() <= 1200
+    assert view.object_panel.y() >= view.annotation_pill.y()
+
+
+def test_object_list_rows_carry_the_catalogue_name(qtbot):
+    from nocturne.core.catalog import CatalogObject
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.object_panel.set_objects(
+        [CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1),
+         CatalogObject("LDN 935", "", 0, 0, 0.0, 2, 2)])
+    assert view.object_panel.count() == 2
+    assert "(2)" in view.object_panel.title.text()
+    seen = []
+    view.object_panel.objectActivated.connect(seen.append)
+    view.object_panel._picked(view.object_panel.list.item(0))
+    assert seen == ["NGC 7000"], "rows must carry the catalogue name, not display text"

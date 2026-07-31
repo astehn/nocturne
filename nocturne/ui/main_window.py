@@ -308,7 +308,8 @@ class MainWindow(QMainWindow):
         self.solve_panel.layersChanged.connect(self._on_annotation_layers_changed)
         self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
-        self.solve_panel.objectActivated.connect(self._on_object_activated)
+        self.solve_panel.objectListToggled.connect(self.image_view.show_object_list)
+        self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
         self._right_layout.addWidget(self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
         self._panel = QWidget()
@@ -879,7 +880,8 @@ class MainWindow(QMainWindow):
         self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
                                     self._solve_elapsed, cached,
                                     scale_source=getattr(self, "_hint_source", "header"))
-        self.solve_panel.set_objects(objs)
+        self.image_view.object_panel.set_objects(objs)
+        self.solve_panel.set_object_count(len(objs))
 
     def _sync_solve_panel(self) -> None:
         """Keeps SolvePanel's status badge honest outside the explicit

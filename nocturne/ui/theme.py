@@ -96,6 +96,17 @@ QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {T
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
+QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
+    border-radius: 10px; }}
+QLabel#objectListTitle {{ color: {TEXT}; font-size: 12px; font-weight: 600; }}
+QPushButton#objectListClose {{ color: {TEXT_DIM}; border: none; background: transparent;
+    font-size: 13px; }}
+QPushButton#objectListClose:hover {{ color: {TEXT}; }}
+QListWidget#objectList {{ background: transparent; color: {TEXT}; font-size: 12px;
+    border: none; outline: none; }}
+QListWidget#objectList::item {{ padding: 4px 10px; border-radius: 4px; }}
+QListWidget#objectList::item:hover {{ background: {BG_2}; }}
+QListWidget#objectList::item:selected {{ background: {BORDER}; color: {TEXT}; }}
 QLabel#readoutPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 12px;
     color: {TEXT}; font-size: 12px; padding: 4px 10px; }}
 QPushButton#solveHeader {{ background: transparent; border: none; text-align: left;

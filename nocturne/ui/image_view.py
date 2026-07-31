@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from .annotation_pill import AnnotationPill
+from .object_list_panel import ObjectListPanel
 from .readout_pill import ReadoutPill
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
@@ -132,6 +133,9 @@ class ImageView(QGraphicsView):
         self._position_readout_pill()
         self.annotation_pill = AnnotationPill(self._on_annotation_toggled, self)
         self._position_annotation_pill()
+        self.object_panel = ObjectListPanel(self)
+        self.object_panel.closeRequested.connect(lambda: self.show_object_list(False))
+        self._position_object_panel()
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
 
@@ -175,11 +179,29 @@ class ImageView(QGraphicsView):
             self._annotations.setVisible(shown)
         self.annotationsToggled.emit(shown)
 
+    def _position_object_panel(self) -> None:
+        """Under the Annotations pill, tall enough to be a real list — the whole
+        reason it is here rather than in the right column."""
+        m = 12
+        pill_bottom = self.annotation_pill.y() + self.annotation_pill.height()
+        w = 260
+        h = max(160, int(self.height() * 0.55))
+        h = min(h, max(160, self.height() - pill_bottom - 2 * m))
+        self.object_panel.setFixedSize(w, h)
+        self.object_panel.move(self.width() - w - m, pill_bottom + 8)
+
+    def show_object_list(self, shown: bool) -> None:
+        self.object_panel.setVisible(bool(shown))
+        if shown:
+            self._position_object_panel()
+            self.object_panel.raise_()
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._position_zoom_pill()
         self._position_readout_pill()
         self._position_annotation_pill()
+        self._position_object_panel()
 
     # --- before/after compare ---
     def set_compare(self, qimage) -> None:

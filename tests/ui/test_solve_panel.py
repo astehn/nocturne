@@ -223,30 +223,18 @@ def test_result_card_stays_quiet_when_the_header_supplied_the_scale(qtbot):
     assert "assumed" not in panel.result_label.text().lower()
 
 
-def test_object_list_is_collapsed_until_asked_for(qtbot):
-    """The panel is already tall; the list must not add height uninvited."""
+
+def test_objects_button_reports_the_count_and_asks_the_canvas(qtbot):
+    """The list itself lives on the canvas — the right column is too narrow and
+    contended to hold one. This stays as the control that opens it."""
     panel = SolvePanel()
     qtbot.addWidget(panel)
-    assert panel.object_list.isHidden()
+    panel.set_object_count(0)
+    assert panel.objects_toggle.isEnabled() is False, "nothing found -> nothing to open"
+    panel.set_object_count(12)
+    assert "(12)" in panel.objects_toggle.text() and panel.objects_toggle.isEnabled()
+
+    asked = []
+    panel.objectListToggled.connect(asked.append)
     panel.objects_toggle.setChecked(True)
-    assert not panel.object_list.isHidden()
-
-
-def test_object_list_header_reports_how_many_were_found(qtbot):
-    from nocturne.core.catalog import CatalogObject
-    panel = SolvePanel()
-    qtbot.addWidget(panel)
-    panel.set_objects([CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1),
-                       CatalogObject("LDN 935", "", 0, 0, 0.0, 2, 2)])
-    assert "(2)" in panel.objects_toggle.text()
-
-
-def test_picking_a_row_emits_the_catalogue_name(qtbot):
-    from nocturne.core.catalog import CatalogObject
-    panel = SolvePanel()
-    qtbot.addWidget(panel)
-    panel.set_objects([CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1)])
-    seen = []
-    panel.objectActivated.connect(seen.append)
-    panel._on_object_picked(panel.object_list.item(0))
-    assert seen == ["NGC 7000"], "the row must carry the catalogue name, not its display text"
+    assert asked == [True]
