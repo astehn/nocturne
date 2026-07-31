@@ -988,8 +988,9 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
                                        self._open_plate_solve)
-        self._solve_act.setCheckable(True)   # checked = annotations shown; click toggles
-        self._solve_act.setToolTip("Plate-solve and show/hide the annotation overlay")
+        self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
+                                              # canvas pill owns overlay visibility)
+        self._solve_act.setToolTip("Open the Plate Solve tool")
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
