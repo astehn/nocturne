@@ -2141,7 +2141,31 @@ class MainWindow(QMainWindow):
             rgb8 = np.stack([rgb8] * 3, axis=2)
         meta = dict(self.project.current().metadata)
         meta["source_label"] = self._source_label
-        ShareDialog(rgb8, meta, self.settings, parent=self).exec()
+        ShareDialog(rgb8, meta, self.settings, parent=self,
+                    annotated_rgb8=self._annotated_rgb8(rgb8),
+                    annotations_on=self.image_view._annotations is not None).exec()
+
+    def _annotated_rgb8(self, rgb8):
+        """`rgb8` with the plate-solve overlay burned in, or None when there is no
+        solution valid for this framing.
+
+        Share previously received raw pixels, so the only way to publish an
+        annotated image was a PNG export — which skips the reframing and caption
+        that Share exists for. Uses the same primitives and painter as the burned
+        export, so a shared image carries exactly the layers the canvas shows."""
+        if not self._solve or self._solve[0] != self._solve_sig():
+            return None
+        from .annotation_render import paint_annotations, scale_for
+        from .preview import rgb_to_qimage
+        import numpy as np
+        h, w = rgb8.shape[:2]
+        _sig, res, objs = self._solve
+        qi = rgb_to_qimage(np.ascontiguousarray(rgb8))
+        paint_annotations(qi, self._annotation_primitives(res, objs, (h, w),
+                                                          ui_scale=scale_for((h, w))), (h, w))
+        ptr = qi.constBits()
+        out = np.frombuffer(ptr, dtype=np.uint8, count=qi.sizeInBytes())
+        return out.reshape(qi.height(), qi.bytesPerLine() // 3, 3)[:, :w].copy()
 
     def _upscale(self) -> None:
         if self.project is None or self._busy:

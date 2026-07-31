@@ -2259,13 +2259,86 @@ def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
     captured = {}
     import nocturne.ui.main_window as mw
     class _Fake:
-        def __init__(self, rgb8, metadata, settings, parent=None):
+        def __init__(self, rgb8, metadata, settings, parent=None,
+                     annotated_rgb8=None, annotations_on=True):
             captured["shape"] = rgb8.shape; captured["target_key"] = "source_label" in metadata
+            captured["annotated"] = annotated_rgb8
         def exec(self): captured["shown"] = True
     monkeypatch.setattr(mw, "ShareDialog", _Fake)
     win._share()
     assert captured["shown"] and captured["target_key"]
     assert captured["shape"][2] == 3            # RGB 8-bit handed to the dialog
+    assert captured["annotated"] is None, "no solve -> nothing to burn in"
+
+
+def test_share_receives_the_annotated_frame_when_solved(qtbot, tmp_path, monkeypatch):
+    """Share could not publish an annotated image at all: it was handed raw
+    pixels, so labels could only reach a PNG export — which skips the reframing
+    and caption Share exists for. This was the user's first-named use case."""
+    win = _stretched_window(qtbot, tmp_path)
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                     [CatalogObject("NGC 7000", "North America",
+                                                    100.0, 0.0, 120.0, 12, 12)]))
+    _solve_now(win)
+
+    captured = {}
+    import nocturne.ui.main_window as mw
+    class _Fake:
+        def __init__(self, rgb8, metadata, settings, parent=None,
+                     annotated_rgb8=None, annotations_on=True):
+            captured["clean"] = rgb8
+            captured["annotated"] = annotated_rgb8
+            captured["on"] = annotations_on
+        def exec(self): pass
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    win._share()
+
+    import numpy as np
+    assert captured["annotated"] is not None, "a solved frame must reach Share annotated"
+    assert captured["annotated"].shape == captured["clean"].shape
+    assert not np.array_equal(captured["annotated"], captured["clean"]), \
+        "the annotated frame must actually differ from the clean one"
+    assert captured["on"] is True, "overlay visible on canvas -> on by default in Share"
+
+
+def test_share_gets_no_annotations_when_the_solve_is_stale(qtbot, tmp_path, monkeypatch):
+    """A solution belongs to the framing it was made for; burning a stale one
+    into a shared image would publish labels in the wrong places."""
+    win = _stretched_window(qtbot, tmp_path)
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                     [CatalogObject("NGC 7000", "North America",
+                                                    100.0, 0.0, 120.0, 12, 12)]))
+    _solve_now(win)
+    win._flip_v()                                  # framing changed -> solve is stale
+    # A geometry op truncates history back to the geometry stage, so re-stretch:
+    # Share refuses a linear image, and we want to reach the annotation decision.
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+
+    captured = {}
+    import nocturne.ui.main_window as mw
+    class _Fake:
+        def __init__(self, rgb8, metadata, settings, parent=None,
+                     annotated_rgb8=None, annotations_on=True):
+            captured["annotated"] = annotated_rgb8
+        def exec(self): pass
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    win._share()
+    assert captured["annotated"] is None
 
 
 def test_upscale_action_disabled_until_image(qtbot, tmp_path):

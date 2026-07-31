@@ -28,12 +28,21 @@ def _qimage_from_rgb8(rgb8: np.ndarray) -> QImage:
 
 
 class ShareDialog(QDialog):
-    def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None) -> None:
+    def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
+                 annotated_rgb8: np.ndarray | None = None,
+                 annotations_on: bool = True) -> None:
+        """`annotated_rgb8` is the same frame with the plate-solve overlay burned
+        in, supplied only when a valid solution exists. Sharing an annotated
+        image was previously impossible — Share received raw pixels, so the one
+        way to publish labels was a PNG export, which skips the reframing and
+        caption this dialog exists for."""
         super().__init__(parent)
         self.setWindowTitle("Share")
         self.setMinimumSize(800, 500)
         self.resize(1000, 640)
         self._rgb8 = rgb8
+        self._annotated_rgb8 = annotated_rgb8
+        self._annotations_on = bool(annotated_rgb8 is not None and annotations_on)
         self._metadata = metadata
         self._settings = settings
         self._aspect: float | None = None
@@ -44,7 +53,7 @@ class ShareDialog(QDialog):
 
         self._image_view = ImageView()
         self._image_view.setMinimumSize(360, 320)
-        self._image_view.set_image(_qimage_from_rgb8(self._rgb8))
+        self._image_view.set_image(_qimage_from_rgb8(self._source()))
         self._image_view.set_crop_overlay(True, aspect_ratio=None)
         self._image_view.cropBoxChanged.connect(lambda *_: self._refresh_preview())
         self._image_view.cropBoxShown.connect(self._refresh_preview)
@@ -61,7 +70,14 @@ class ShareDialog(QDialog):
         self._caption_check = QCheckBox("Caption")
         self._caption_check.setChecked(True)
         self._caption_check.toggled.connect(self._set_caption)
+        # Only offered when a solution exists — a dead checkbox would imply the
+        # feature is broken rather than unavailable.
+        self._annot_check = QCheckBox("Annotations")
+        self._annot_check.setChecked(self._annotations_on)
+        self._annot_check.setVisible(annotated_rgb8 is not None)
+        self._annot_check.toggled.connect(self._set_annotations)
         aspect_row.addStretch(1)
+        aspect_row.addWidget(self._annot_check)
         aspect_row.addWidget(self._caption_check)
         aspect_wrap = QWidget()
         aspect_wrap.setLayout(aspect_row)
@@ -97,6 +113,22 @@ class ShareDialog(QDialog):
         self._refresh_preview()
 
     # --- aspect / caption ---
+    def _source(self) -> np.ndarray:
+        """The pixels every downstream step works from — clean or annotated."""
+        if self._annotations_on and self._annotated_rgb8 is not None:
+            return self._annotated_rgb8
+        return self._rgb8
+
+    def _set_annotations(self, on) -> None:
+        self._annotations_on = bool(on)
+        # Re-set the canvas so the crop box keeps its geometry while the pixels
+        # underneath it change.
+        box = self._image_view.crop_box() if hasattr(self._image_view, "crop_box") else None
+        self._image_view.set_image(_qimage_from_rgb8(self._source()))
+        if box is not None and hasattr(self._image_view, "show_crop_box"):
+            self._image_view.show_crop_box()
+        self._refresh_preview()
+
     def _select_aspect(self, aspect, label: str) -> None:
         self._aspect = aspect
         self._aspect_label = label
@@ -122,7 +154,7 @@ class ShareDialog(QDialog):
 
     # --- crop / compose ---
     def _current_crop(self):
-        h, w = self._rgb8.shape[:2]
+        h, w = self._source().shape[:2]
         if self._image_view.crop_box_visible():
             top, bottom, left, right = self._image_view.crop_bounds()
             if bottom - top > 0 and right - left > 0:
@@ -130,7 +162,7 @@ class ShareDialog(QDialog):
         return centered_crop(w, h, self._aspect)
 
     def _compose_current(self) -> QImage:
-        return compose_share(self._rgb8, self._current_crop(), self._current_caption())
+        return compose_share(self._source(), self._current_crop(), self._current_caption())
 
     def _refresh_preview(self) -> None:
         image = self._compose_current()
