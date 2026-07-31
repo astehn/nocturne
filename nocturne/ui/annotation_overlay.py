@@ -3,12 +3,21 @@ a QGraphicsItemGroup, in image-pixel (scene) coordinates. All the WHAT/WHERE/
 colour decisions already happened in `build_layout_for` -- this file only
 knows how to turn a Circle/Marker/Label/Leader/GridLine into Qt items.
 
-Every item except a grid line's own path keeps ItemIgnoresTransformations so
-it stays a constant, readable size under zoom/pan. A grid line's polyline is
-the one exception: it traces the WCS-projected curvature of a constant-RA/Dec
-line across the whole frame, so it has to scale and pan with the image the
-same way the pixmap underneath it does; its label, though, still gets the
-constant-size treatment so it stays readable."""
+ItemIgnoresTransformations makes an item render at a CONSTANT DEVICE-PIXEL
+size regardless of zoom. That's correct for text and point glyphs, but wrong
+for anything that represents a measured size or position in the image -- a
+true-size ring frozen to a fixed device size no longer marks the object's
+real angular extent once you zoom. The split:
+
+  - Scale WITH the image (no flag): Circle (a true angular extent), a plain
+    Leader (connects two real image positions -- a label back to its object,
+    or the scale bar's line, whose length encodes the value on its label),
+    and a GridLine's path (traces real WCS curvature across the frame).
+  - Stay a CONSTANT screen size (flag set): every Label (including grid,
+    compass and scale-bar captions), star tick marks (a star is a point
+    source -- the glyph is an annotation, not a measurement), the compass
+    dot, and the compass arrow specifically (`Leader.screen_fixed=True`) --
+    it's a cosmetic HUD indicator, not a measured line."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -19,8 +28,11 @@ from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsIte
 from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
 
 _IGNORE = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
-_SIZE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0, "grid": 11.0}
+_SIZE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0,
+            "grid": 11.0, "compass": 17.0}
 _DEFAULT_PT = _SIZE_PT["secondary"]
+_BOLD_SIZES = {"compass"}          # the "N" is the only bold label; a dedicated size
+                                    # class keeps Label's schema unchanged (no bold field)
 
 
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
@@ -41,6 +53,9 @@ def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
 
 
 def _circle_item(p: Circle) -> QGraphicsEllipseItem:
+    # No _IGNORE: this is a TRUE-size ring (angular extent / pixel scale), so
+    # its radius must scale with the image under zoom like the pixels it
+    # marks. Only the stroke stays a legible constant width (setCosmetic).
     r = p.r
     item = QGraphicsEllipseItem(-r, -r, 2 * r, 2 * r)
     item.setPos(p.x, p.y)
@@ -50,7 +65,6 @@ def _circle_item(p: Circle) -> QGraphicsEllipseItem:
     pen.setCosmetic(True)
     item.setPen(pen)
     item.setBrush(Qt.BrushStyle.NoBrush)
-    item.setFlag(_IGNORE, True)
     return item
 
 
@@ -85,14 +99,20 @@ def _compass_dot(p: Marker) -> QGraphicsEllipseItem:
 def _leader_item(p: Leader) -> QGraphicsLineItem:
     # Anchor at the FIRST point (setPos) and draw the local line relative to
     # it, rather than embedding both absolute endpoints as local geometry --
-    # that keeps the anchor end correctly tracking pan/zoom instead of
-    # drifting from the item's implicit (0, 0) scene position.
+    # that keeps the anchor end correctly tracking pan/zoom regardless of
+    # whether the item itself also scales with the view.
+    #
+    # No _IGNORE by default: a leader connects two REAL image positions (a
+    # label back to its object, or the scale bar's true angular length) and
+    # must scale/pan with the image. `screen_fixed` is the one exception --
+    # the compass arrow is a cosmetic HUD indicator, not a measurement.
     item = QGraphicsLineItem(0.0, 0.0, p.x2 - p.x1, p.y2 - p.y1)
     item.setPos(p.x1, p.y1)
     pen = QPen(QColor(p.colour), 1.2)
     pen.setCosmetic(True)
     item.setPen(pen)
-    item.setFlag(_IGNORE, True)
+    if p.screen_fixed:
+        item.setFlag(_IGNORE, True)
     return item
 
 
@@ -131,7 +151,8 @@ def build_annotation_group(primitives, shape) -> QGraphicsItemGroup:
             else:                                    # "compass" (and any future non-star kind)
                 g.addToGroup(_compass_dot(p))
         elif isinstance(p, Label):
-            label = _text(p.text, p.colour, size=_SIZE_PT.get(p.size, _DEFAULT_PT))
+            label = _text(p.text, p.colour, size=_SIZE_PT.get(p.size, _DEFAULT_PT),
+                         bold=p.size in _BOLD_SIZES)
             label.setPos(p.x, p.y)
             g.addToGroup(label)
         elif isinstance(p, Leader):

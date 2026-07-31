@@ -42,6 +42,12 @@ class Leader(NamedTuple):
     x2: float
     y2: float
     colour: str
+    screen_fixed: bool = False   # True only for a cosmetic overlay line (the compass
+                                  # arrow) that must stay a constant on-screen length;
+                                  # default False -- a leader connects two REAL image
+                                  # positions (an object to its label, or the scale
+                                  # bar's true angular length) and must scale/pan with
+                                  # the image like any other measured geometry.
 
 
 def circle_for(obj, pixscale_arcsec: float, colour: str = DEFAULT_COLOUR) -> Circle:
@@ -170,7 +176,11 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
         text = f"{designation}  {it.common}".strip() if getattr(it, "common", "") else designation
         size = "primary" if priority_of(it) >= 40 else "secondary"
         tw, th = measure(text, size)
-        ax, ay = getattr(it, "x", it.cx), getattr(it, "y", it.cy)
+        # NOT `getattr(it, "x", it.cx)`: Python evaluates the default eagerly,
+        # so `it.cx` would raise on a NamedStar (has x/y but no cx/cy) even
+        # though "x" exists and the default is never used.
+        ax = it.x if hasattr(it, "x") else it.cx
+        ay = it.y if hasattr(it, "y") else it.cy
         candidates = [(ax + _LABEL_GAP, ay - th / 2), (ax - _LABEL_GAP - tw, ay - th / 2),
                       (ax - tw / 2, ay - _LABEL_GAP - th), (ax - tw / 2, ay + _LABEL_GAP)]
         for step in range(1, 9):                     # then search outward, all directions
@@ -281,7 +291,8 @@ _GRID_COLOUR = "#6a7688"      # muted slate: visible without competing with obje
 _COMPASS_COLOUR = "#6aa8f2"   # bright blue, matches the pre-existing compass accent
 _SCALE_COLOUR = "#e7ecf4"     # near-white, reads on both light and dark frame content
 
-_MEASURE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0, "grid": 11.0}
+_MEASURE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0,
+               "grid": 11.0, "compass": 17.0}
 
 
 def _default_measure(text: str, size: str) -> tuple[float, float]:
@@ -302,8 +313,8 @@ def _compass_primitives(wcs, shape) -> list:
     lx, ly = ax + 74.0 * math.cos(rad) - 6.0, ay + 74.0 * math.sin(rad) - 7.0
     return [
         Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
-        Leader(ax, ay, tx, ty, _COMPASS_COLOUR),
-        Label("N", lx, ly, _COMPASS_COLOUR, "primary"),
+        Leader(ax, ay, tx, ty, _COMPASS_COLOUR, screen_fixed=True),   # cosmetic HUD arrow
+        Label("N", lx, ly, _COMPASS_COLOUR, "compass"),
     ]
 
 
@@ -337,7 +348,15 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, meas
 
     Each object's colour is resolved individually via `colour_for(obj,
     by_type=...)` and carried through to its circle, label AND leader -- a
-    single shared colour would make by-type colouring invisible on the labels."""
+    single shared colour would make by-type colouring invisible on the labels.
+    Named stars get the type palette's `"star"` (yellow) colour under the same
+    toggle, on their marker AND their name label; both fall back to the plain
+    default colour when `by_type` is off.
+
+    Object and star labels are placed through a SINGLE `place_labels` call so
+    a star's name competes for space (and gets a leader when displaced) in
+    the same collision-avoidance pass as every DSO label, rather than being
+    positioned independently and risking an overlap."""
     measure = measure or _default_measure
     by_type = layers.get("by_type", False)
 
@@ -353,13 +372,16 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, meas
     for o in kept_objs:
         prims.append(circle_for(o, pixscale, obj_colour[id(o)]))
 
-    labels, leaders = place_labels(kept_objs, shape, measure,
-                                    colour=lambda o: obj_colour[id(o)])
+    star_colour = _TYPE_COLOURS["star"] if by_type else DEFAULT_COLOUR
+    for s in kept_stars:
+        prims.append(star_marker(s, star_colour))
+
+    item_colour = dict(obj_colour)
+    item_colour.update({id(s): star_colour for s in kept_stars})
+    labels, leaders = place_labels(kept_objs + kept_stars, shape, measure,
+                                    colour=lambda it: item_colour[id(it)])
     prims.extend(labels)
     prims.extend(leaders)
-
-    for s in kept_stars:
-        prims.append(star_marker(s))
 
     if layers.get("grid", False):
         prims.extend(grid_lines(wcs, shape, _GRID_COLOUR))

@@ -363,6 +363,31 @@ def test_build_layout_for_stars_layer_off_yields_no_star_marker():
     assert not any(isinstance(p, Marker) for p in prims)
 
 
+def test_build_layout_for_gives_a_named_star_a_label():
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 50.0, 60.0)
+    prims = build_layout_for([], [star], None, (600, 800), 2.0,
+                              _layers(stars=True), "all", measure=_measure)
+    assert any(isinstance(p, Label) and p.text == "Deneb" for p in prims)
+
+
+def test_by_type_gives_a_named_star_the_star_palette_colour():
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 50.0, 60.0)
+    prims = build_layout_for([], [star], None, (600, 800), 2.0,
+                              _layers(stars=True, by_type=True), "all", measure=_measure)
+    marker = next(p for p in prims if isinstance(p, Marker))
+    label = next(p for p in prims if isinstance(p, Label) and p.text == "Deneb")
+    assert marker.colour == label.colour == "#ffd75e"
+
+
+def test_by_type_off_keeps_the_default_colour_for_a_named_star():
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 50.0, 60.0)
+    prims = build_layout_for([], [star], None, (600, 800), 2.0,
+                              _layers(stars=True, by_type=False), "all", measure=_measure)
+    marker = next(p for p in prims if isinstance(p, Marker))
+    label = next(p for p in prims if isinstance(p, Label) and p.text == "Deneb")
+    assert marker.colour == label.colour == "#5cff5c"
+
+
 def test_build_layout_for_grid_layer_on_includes_grid_lines():
     prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
                               _layers(grid=True), "all", measure=_measure)
@@ -383,6 +408,22 @@ def test_build_layout_for_compass_and_scale_layers_add_their_own_primitives():
         "scale bar needs a length label"
     assert any(isinstance(p, Leader) for p in prims), \
         "compass arrow and scale bar are both drawn as Leader lines"
+
+
+def test_compass_arrow_leader_is_screen_fixed():
+    prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
+                              _layers(compass=True), "all", measure=_measure)
+    leaders = [p for p in prims if isinstance(p, Leader)]
+    assert leaders and any(l.screen_fixed for l in leaders), \
+        "the compass arrow is a cosmetic HUD indicator, not a measured line"
+
+
+def test_scale_bar_leader_is_not_screen_fixed():
+    prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
+                              _layers(scale=True), "all", measure=_measure)
+    leaders = [p for p in prims if isinstance(p, Leader)]
+    assert leaders and all(not l.screen_fixed for l in leaders), \
+        "the scale bar's length is truthful and must scale with zoom like any measured line"
 
 
 def test_by_type_colouring_gives_different_label_colours_per_object_type():
