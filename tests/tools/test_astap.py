@@ -216,3 +216,23 @@ def test_solve_surfaces_swallowed_parse_error(monkeypatch):
     assert res.solved is False
     assert "RuntimeError" in res.message
     assert "wcslib exploded" in res.message
+
+
+def test_hint_infers_ra_units_rather_than_assuming_hours():
+    """fits_io fills "ra" from OBJCTRA *or* RA, and they differ: OBJCTRA is
+    sexagesimal hours, a bare RA card is decimal degrees. Parsing a Seestar's
+    RA = 314.125 as hours gave 314 "hours" — a nonsense search centre. Dormant
+    only because those files also carry pointing in solve_cards.
+    """
+    from nocturne.tools.astap import hint_from_metadata
+
+    # NGC 7000 is RA 20.94 h == 314.1 deg; every spelling must agree.
+    deg = hint_from_metadata({"ra": 314.125005, "dec": 43.9825})
+    sexagesimal = hint_from_metadata({"ra": "20 56 30", "dec": "+44 20 00"})
+    hours = hint_from_metadata({"ra": 20.94, "dec": 44.33})
+    for got in (deg, sexagesimal, hours):
+        assert got is not None
+        assert 20.8 < got[0] < 21.1, got
+
+    assert hint_from_metadata({"ra": "", "dec": ""}) is None
+    assert hint_from_metadata({"ra": "rubbish", "dec": "rubbish"}) is None

@@ -78,15 +78,35 @@ def _write_solve_fits(img: AstroImage, path: str, header_cards: dict | None) -> 
 
 
 def hint_from_metadata(meta: dict) -> tuple[float, float] | None:
-    """(ra_hours, dec_deg) from a FITS OBJCTRA/OBJCTDEC-style metadata pair, or
-    None if absent/unparseable. Accepts sexagesimal or decimal strings."""
+    """(ra_hours, dec_deg) from FITS pointing metadata, or None if absent or
+    unparseable.
+
+    The units are ambiguous by convention and must be inferred, not assumed.
+    `fits_io` fills "ra" from OBJCTRA *or* RA, and those differ: OBJCTRA is
+    sexagesimal HOURS ("20 56 30"), while a bare RA card is decimal DEGREES.
+    Parsing a Seestar's `RA = 314.125` as hours yields 314 "hours" — a nonsense
+    hint. It stayed dormant because those files also carry pointing in
+    solve_cards, so the value never reached ASTAP; a file with RA but no usable
+    solve_cards would have been handed a garbage search centre.
+
+    Rule: a plain decimal above 24 can only be degrees. A sexagesimal string is
+    hours, per the OBJCTRA convention."""
     ra, dec = meta.get("ra"), meta.get("dec")
-    if not ra or not dec:
+    if ra in (None, "") or dec in (None, ""):
         return None
     try:
         from astropy.coordinates import Angle
         import astropy.units as u
-        ra_h = Angle(str(ra), unit=u.hourangle).hour
+        text = str(ra).strip()
+        try:
+            decimal = float(text)
+        except ValueError:
+            decimal = None
+        if decimal is not None:
+            # Decimal: degrees if it cannot be an hour angle, else trust hours.
+            ra_h = decimal / 15.0 if abs(decimal) > 24.0 else decimal
+        else:
+            ra_h = Angle(text, unit=u.hourangle).hour
         dec_d = Angle(str(dec), unit=u.deg).deg
         return float(ra_h), float(dec_d)
     except Exception:

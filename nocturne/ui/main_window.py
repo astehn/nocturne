@@ -119,6 +119,34 @@ class _SaveSignals(QObject):
     progress = Signal(int, int)
 
 
+def _fov_hint(meta: dict, height_px: int) -> tuple[float | None, str]:
+    """A field-of-view hint for the solver, and where it came from.
+
+    ASTAP solves far more reliably given an approximate scale, and blind solving
+    a few-degree field often fails outright. Headers are the best source, but a
+    stacked master exported from another tool routinely arrives with none —
+    the user's own NGC 7000 master carries seven header cards and no optics at
+    all. Nocturne knows what a Seestar is, so fall back to the instrument
+    profile rather than solving blind: a crop preserves pixel scale, so the
+    profile stays valid for a cropped frame even though its DIMENSIONS change.
+
+    Returns (fov_degrees or None, source) where source is one of
+    "header", "profile" or "none" — the panel reports which, because a solve
+    that leaned on an assumed scale should say so.
+    """
+    fl, px = meta.get("focal_length"), meta.get("pixel_size")
+    try:
+        if fl and px and float(fl) > 0 and float(px) > 0:
+            return (206.265 * float(px) / float(fl)) * height_px / 3600.0, "header"
+    except (TypeError, ValueError):
+        pass
+    from ..core.instrument import SEESTAR_S30_PRO
+    scale = SEESTAR_S30_PRO.pixel_scale_arcsec
+    if scale > 0 and height_px > 0:
+        return scale * height_px / 3600.0, "profile"
+    return None, "none"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str, check_updates: bool = True) -> None:
         super().__init__()
@@ -129,6 +157,7 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        self._hint_source = "header"  # where the solver's scale hint came from
         self._solve_freshness = None  # "solved" | "cached" | None -- drives SolvePanel's
                                        # badge alongside "not_solved"/"stale", which are
                                        # recomputed generically (see _sync_solve_panel)
@@ -722,11 +751,7 @@ class MainWindow(QMainWindow):
         from ..core.catalog import objects_in_field
         meta = img.metadata
         h, w = img.data.shape[:2]
-        # FOV from focal length + pixel size if known.
-        fov = None
-        fl, px = meta.get("focal_length"), meta.get("pixel_size")
-        if fl and px:
-            fov = (206.265 * float(px) / float(fl)) * h / 3600.0
+        fov, self._hint_source = _fov_hint(meta, h)
         hint = hint_from_metadata(meta)
         ra_h, dec_d = hint if hint else (None, None)
         res = ASTAP(resolve_binary(self.settings.astap_path)).solve(
@@ -834,7 +859,8 @@ class MainWindow(QMainWindow):
         h, w = self.project.current().data.shape[:2]
         target = identify_target(objs, (h, w)) or ""
         self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
-                                    self._solve_elapsed, cached)
+                                    self._solve_elapsed, cached,
+                                    scale_source=getattr(self, "_hint_source", "header"))
 
     def _sync_solve_panel(self) -> None:
         """Keeps SolvePanel's status badge honest outside the explicit

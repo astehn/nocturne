@@ -182,7 +182,7 @@ class SolvePanel(QWidget):
         self._update_resolve_button()
 
     def set_result(self, res, target: str, shape, pixscale: float,
-                   elapsed: float, cached: bool) -> None:
+                   elapsed: float, cached: bool, scale_source: str = "header") -> None:
         """Fills the result card. `res` is a nocturne.tools.astap.SolveResult
         (or any object exposing center_ra_deg/center_dec_deg/wcs); `shape` is
         (h, w) in pixels; `pixscale` is arcsec/px. Deliberately carries NO
@@ -215,6 +215,13 @@ class SolvePanel(QWidget):
                      f"{pixscale:.2f}″/px{orientation}")
 
         cache_phrase = "reused from cache" if cached else "freshly solved"
-        lines.append(f"{_SOLVER_NAME} · solved in {elapsed:.1f} s · {cache_phrase}")
+        solver_line = f"{_SOLVER_NAME} · solved in {elapsed:.1f} s · {cache_phrase}"
+        if scale_source == "profile":
+            # The file carried no optics, so the scale hint came from the Seestar
+            # profile rather than the header. Say so: a solve that leaned on an
+            # assumed scale is still a good solve, but the user should know the
+            # assumption was made — especially on data from another instrument.
+            solver_line += " · scale assumed from Seestar profile"
+        lines.append(solver_line)
 
         self.result_label.setText("\n".join(lines))

@@ -3065,3 +3065,23 @@ def test_main_canvas_opts_into_the_pixel_cursor(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win.image_view._emit_hover_at_scene_pos(QPointF(5.0, 5.0))
     assert win.image_view.viewport().cursor().shape() == Qt.CursorShape.CrossCursor
+
+
+def test_fov_hint_falls_back_to_the_instrument_profile():
+    """A stacked master exported from another tool routinely carries no optics —
+    the user's own NGC 7000 file has seven header cards and none of them scale.
+    Solving blind on a few-degree field usually fails, and Nocturne knows what a
+    Seestar is, so the profile is a far better hint than nothing.
+    """
+    from nocturne.ui.main_window import _fov_hint
+    fov, src = _fov_hint({"focal_length": 160, "pixel_size": 2.9}, 2160)
+    assert src == "header" and fov > 0
+
+    fov, src = _fov_hint({}, 2160)
+    assert src == "profile" and fov > 0, "no header optics must not mean no hint"
+
+    fov, src = _fov_hint({"focal_length": "", "pixel_size": None}, 2160)
+    assert src == "profile", "unusable header values must fall back, not crash"
+
+    fov, src = _fov_hint({}, 0)
+    assert src == "none" and fov is None

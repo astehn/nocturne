@@ -200,3 +200,24 @@ def test_result_card_never_claims_parity(qtbot):
     panel.set_result(res, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False)
     assert "mirrored" not in panel.result_label.text().lower()
 
+
+
+def test_result_card_says_when_the_scale_was_assumed(qtbot):
+    """A file with no optics in its header still solves, using the Seestar
+    profile's plate scale — but the card must admit the assumption, because on
+    data from another instrument that assumption is wrong."""
+    panel = SolvePanel()
+    qtbot.addWidget(panel)
+    res = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs())
+    panel.set_result(res, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False,
+                     scale_source="profile")
+    assert "assumed" in panel.result_label.text().lower()
+
+
+def test_result_card_stays_quiet_when_the_header_supplied_the_scale(qtbot):
+    panel = SolvePanel()
+    qtbot.addWidget(panel)
+    res = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs())
+    panel.set_result(res, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False,
+                     scale_source="header")
+    assert "assumed" not in panel.result_label.text().lower()
