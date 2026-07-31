@@ -4,6 +4,7 @@ the live Qt canvas and the burned export — so both draw identical content by
 construction rather than by remembering to pass the same arguments."""
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 MIN_RADIUS_PX = 6.0          # below this a true-size circle is unreadable
@@ -151,7 +152,13 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
     then below; if all collide, the label is pushed outward — in all eight
     compass directions at increasing distance — until it finds free space, and
     a Leader connects it back to its object. `measure` is injected so this
-    stays Qt-free — the Qt adapter passes a real font metric."""
+    stays Qt-free — the Qt adapter passes a real font metric.
+
+    `colour` is either a single colour string applied to every label (the
+    original behaviour, still the default), or a callable `colour(item) ->
+    str` so by-type colouring reaches the label and its leader too, not just
+    the object's ring."""
+    resolve_colour = colour if callable(colour) else (lambda _it: colour)
     h, w = shape
     placed, labels, leaders = [], [], []
     for it in sorted(items, key=priority_of, reverse=True):
@@ -186,9 +193,10 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
             continue                                  # no room: drop, never overlap
         lx, ly = chosen
         placed.append(_rect(lx, ly, tw, th))
-        labels.append(Label(text, lx, ly, colour, size, priority_of(it)))
+        c = resolve_colour(it)
+        labels.append(Label(text, lx, ly, c, size, priority_of(it)))
         if displaced:
-            leaders.append(Leader(ax, ay, lx, ly + th / 2, colour))
+            leaders.append(Leader(ax, ay, lx, ly + th / 2, c))
     return labels, leaders
 
 
@@ -264,3 +272,102 @@ def grid_lines(wcs, shape, colour: str) -> list:
         if len(pts) >= 2:
             out.append(GridLine(pts, colour, _fmt_ra(float(ra))))
     return out
+
+
+# Colours for the frame furniture (grid/compass/scale) are fixed, independent
+# of `by_type` -- that toggle is about telling catalogue object TYPES apart,
+# not the reference overlay drawn on top of them.
+_GRID_COLOUR = "#6a7688"      # muted slate: visible without competing with object colours
+_COMPASS_COLOUR = "#6aa8f2"   # bright blue, matches the pre-existing compass accent
+_SCALE_COLOUR = "#e7ecf4"     # near-white, reads on both light and dark frame content
+
+_MEASURE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 14.0, "grid": 11.0}
+
+
+def _default_measure(text: str, size: str) -> tuple[float, float]:
+    """A pure (Qt-free) fallback text-size estimate, used only when a caller
+    doesn't inject a real one. Good enough for headless/test use; a live Qt
+    caller should pass actual font metrics for pixel-exact label placement."""
+    pt = _MEASURE_PT.get(size, _MEASURE_PT["secondary"])
+    return len(text) * pt * 0.62, pt * 1.3
+
+
+def _compass_primitives(wcs, shape) -> list:
+    from .annotate import compass_angles
+    north, _east = compass_angles(wcs, shape)
+    h, w = shape
+    ax, ay = w - 120.0, 120.0
+    rad = math.radians(north)
+    tx, ty = ax + 60.0 * math.cos(rad), ay + 60.0 * math.sin(rad)
+    lx, ly = ax + 74.0 * math.cos(rad) - 6.0, ay + 74.0 * math.sin(rad) - 7.0
+    return [
+        Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
+        Leader(ax, ay, tx, ty, _COMPASS_COLOUR),
+        Label("N", lx, ly, _COMPASS_COLOUR, "primary"),
+    ]
+
+
+def _scale_bar_primitives(pixscale_arcsec: float, shape) -> list:
+    from .annotate import scale_bar
+    h, w = shape
+    length_px, text = scale_bar(pixscale_arcsec, w)
+    if length_px <= 0:
+        return []
+    bx, by = 90.0, h - 90.0
+    return [
+        Leader(bx, by, bx + length_px, by, _SCALE_COLOUR),
+        Label(text, bx, by - 24.0, _SCALE_COLOUR, "secondary"),
+    ]
+
+
+def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, measure=None) -> list:
+    """Assembles the FULL primitive list the overlay draws: circles + labels +
+    leaders for catalogue objects, flanking-tick markers for named stars, grid
+    lines, and the compass/scale bar -- all as plain Circle/Marker/Label/
+    Leader/GridLine values in image-pixel coordinates. Pure: no Qt.
+
+    Both the live Qt canvas and the burned export consume this SAME list, so
+    they draw identical content by construction rather than by remembering to
+    pass the same arguments twice.
+
+    `layers` is a dict of booleans keyed "objects", "stars", "grid", "compass",
+    "scale", "by_type" -- missing keys default to off. `measure` is forwarded
+    to `place_labels`; pass real font metrics for pixel-exact placement, or
+    leave it as the pure fallback for headless/test use.
+
+    Each object's colour is resolved individually via `colour_for(obj,
+    by_type=...)` and carried through to its circle, label AND leader -- a
+    single shared colour would make by-type colouring invisible on the labels."""
+    measure = measure or _default_measure
+    by_type = layers.get("by_type", False)
+
+    kept_objs, kept_stars = filter_by_density(objects, stars, pixscale, density)
+    if not layers.get("objects", False):
+        kept_objs = []
+    if not layers.get("stars", False):
+        kept_stars = []
+
+    prims: list = []
+
+    obj_colour = {id(o): colour_for(o, by_type=by_type) for o in kept_objs}
+    for o in kept_objs:
+        prims.append(circle_for(o, pixscale, obj_colour[id(o)]))
+
+    labels, leaders = place_labels(kept_objs, shape, measure,
+                                    colour=lambda o: obj_colour[id(o)])
+    prims.extend(labels)
+    prims.extend(leaders)
+
+    for s in kept_stars:
+        prims.append(star_marker(s))
+
+    if layers.get("grid", False):
+        prims.extend(grid_lines(wcs, shape, _GRID_COLOUR))
+
+    if layers.get("compass", False) and wcs is not None:
+        prims.extend(_compass_primitives(wcs, shape))
+
+    if layers.get("scale", False) and pixscale > 0:
+        prims.extend(_scale_bar_primitives(pixscale, shape))
+
+    return prims

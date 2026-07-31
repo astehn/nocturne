@@ -8,8 +8,8 @@ from astropy.wcs import WCS
 import astropy.units as u
 
 from nocturne.core.annotation_layout import (
-    Circle, circle_for, colour_for, filter_by_density, grid_lines, place_labels, priority_of,
-    star_marker, _fmt_ra, _is_messier)
+    Circle, GridLine, Label, Leader, Marker, build_layout_for, circle_for, colour_for,
+    filter_by_density, grid_lines, place_labels, priority_of, star_marker, _fmt_ra, _is_messier)
 from nocturne.core.catalog import CatalogObject, NamedStar, load_catalog
 
 
@@ -324,3 +324,94 @@ def test_fmt_ra_wraps_the_hour_not_just_the_minute():
     assert _fmt_ra(359.99) == "0h00m", "a minute-carry at 23h60m must wrap to 0h"
     assert _fmt_ra(-0.001) == "0h00m"
     assert _fmt_ra(180.0) == "12h00m"
+
+
+def _layers(**over):
+    base = {"objects": False, "stars": False, "grid": False, "compass": False,
+            "scale": False, "by_type": False}
+    base.update(over)
+    return base
+
+
+def test_build_layout_for_produces_a_circle_and_label_per_kept_object():
+    obj = _obj(30.0, cx=100.0, cy=100.0, name="NGC 7000", common="North America")
+    prims = build_layout_for([obj], [], None, (600, 800), 2.0,
+                              _layers(objects=True), "all", measure=_measure)
+    assert any(isinstance(p, Circle) for p in prims)
+    assert any(isinstance(p, Label) and "NGC 7000" in p.text for p in prims)
+
+
+def test_build_layout_for_objects_layer_off_drops_circles_and_object_labels():
+    obj = _obj(30.0, cx=100.0, cy=100.0, name="NGC 7000", common="North America")
+    prims = build_layout_for([obj], [], None, (600, 800), 2.0,
+                              _layers(objects=False), "all", measure=_measure)
+    assert not any(isinstance(p, (Circle, Label)) for p in prims)
+
+
+def test_build_layout_for_stars_layer_on_yields_a_star_marker():
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 50.0, 60.0)
+    prims = build_layout_for([], [star], None, (600, 800), 2.0,
+                              _layers(stars=True), "all", measure=_measure)
+    markers = [p for p in prims if isinstance(p, Marker) and p.kind == "star"]
+    assert markers and (markers[0].x, markers[0].y) == (50.0, 60.0)
+
+
+def test_build_layout_for_stars_layer_off_yields_no_star_marker():
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 50.0, 60.0)
+    prims = build_layout_for([], [star], None, (600, 800), 2.0,
+                              _layers(stars=False), "all", measure=_measure)
+    assert not any(isinstance(p, Marker) for p in prims)
+
+
+def test_build_layout_for_grid_layer_on_includes_grid_lines():
+    prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
+                              _layers(grid=True), "all", measure=_measure)
+    assert any(isinstance(p, GridLine) for p in prims)
+
+
+def test_build_layout_for_grid_layer_off_yields_no_grid_lines():
+    prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
+                              _layers(grid=False), "all", measure=_measure)
+    assert not any(isinstance(p, GridLine) for p in prims)
+
+
+def test_build_layout_for_compass_and_scale_layers_add_their_own_primitives():
+    prims = build_layout_for([], [], _grid_wcs(), (600, 800), 2.0,
+                              _layers(compass=True, scale=True), "all", measure=_measure)
+    assert any(isinstance(p, Label) and p.text == "N" for p in prims), "compass needs its N label"
+    assert any(isinstance(p, Label) and p.text not in ("N", "") for p in prims), \
+        "scale bar needs a length label"
+    assert any(isinstance(p, Leader) for p in prims), \
+        "compass arrow and scale bar are both drawn as Leader lines"
+
+
+def test_by_type_colouring_gives_different_label_colours_per_object_type():
+    messier = _obj(10.0, cx=100.0, cy=100.0, name="NGC 224", common="Andromeda", messier="31")
+    hii = _obj(10.0, cx=400.0, cy=400.0, name="NGC 7000", common="North America", obj_type="HII")
+    prims = build_layout_for([messier, hii], [], None, (600, 800), 2.0,
+                              _layers(objects=True, by_type=True), "all", measure=_measure)
+    labels = [p for p in prims if isinstance(p, Label)]
+    messier_label = next(l for l in labels if "M 31" in l.text)
+    hii_label = next(l for l in labels if "NGC 7000" in l.text)
+    assert messier_label.colour != hii_label.colour, "by-type colouring must reach the label text"
+
+
+def test_by_type_colouring_off_gives_every_label_the_same_colour():
+    messier = _obj(10.0, cx=100.0, cy=100.0, name="NGC 224", common="Andromeda", messier="31")
+    hii = _obj(10.0, cx=400.0, cy=400.0, name="NGC 7000", common="North America", obj_type="HII")
+    prims = build_layout_for([messier, hii], [], None, (600, 800), 2.0,
+                              _layers(objects=True, by_type=False), "all", measure=_measure)
+    labels = [p for p in prims if isinstance(p, Label)]
+    messier_label = next(l for l in labels if "M 31" in l.text)
+    hii_label = next(l for l in labels if "NGC 7000" in l.text)
+    assert messier_label.colour == hii_label.colour == "#5cff5c"
+
+
+def test_by_type_colouring_also_reaches_the_circle_not_just_the_label():
+    messier = _obj(10.0, cx=100.0, cy=100.0, name="NGC 224", common="Andromeda", messier="31")
+    hii = _obj(10.0, cx=400.0, cy=400.0, name="NGC 7000", common="North America", obj_type="HII")
+    prims = build_layout_for([messier, hii], [], None, (600, 800), 2.0,
+                              _layers(objects=True, by_type=True), "all", measure=_measure)
+    circles = [p for p in prims if isinstance(p, Circle)]
+    assert len(circles) == 2
+    assert {c.colour for c in circles} == {"#b38cff", "#ff7a94"}
