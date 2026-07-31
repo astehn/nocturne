@@ -2,6 +2,32 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.6.0] — 2026-07-31
+
+Plate solving grows up — and a fix that has been mislabelling your images since 0.3.0.
+
+### Added
+- Object circles are drawn at each object's real size on the sky instead of a fixed dot, so a large nebula's ring shows how far it extends — past the frame edge if the object is bigger than your field. A dashed ring means the catalogue records no size.
+- A Plate Solve tool panel with a checkbox per layer (objects, named stars, RA/Dec grid, compass, scale bar), a Density control for how crowded the labels get, and a result card showing the field centre, size, scale, orientation, solver and elapsed time.
+- Colour by type: violet Messier objects, white dark nebulae, cyan planetary nebulae, orange galaxies, yellow named stars.
+- An RA/Dec coordinate grid, drawn as true curved lines with edge labels.
+- Far more to find in your frames. The deep-sky catalogue grew from 13,962 NGC/IC objects to 15,890 by adding Sharpless HII regions, Lynds and Barnard dark nebulae and van den Bergh reflection nebulae — so the dark lane inside the North America Nebula is now labelled LDN 935. Named stars grew from 371 to 2,831 by adding Bayer and Flamsteed designations.
+- An Annotations button on the image toggles the overlay without closing the tool, so you can keep the labels up while you carry on editing.
+
+### Changed
+- The Plate Solve toolbar button now opens the tool rather than solving immediately — solving starts when you press Solve, so a several-second run never begins by surprise.
+- Labels are placed to avoid overlapping each other, in order of significance, with a leader line when a label has to sit away from its object.
+- Labels are larger and carry a proper dark halo, so they stay readable over bright nebulosity as well as dark sky.
+- Annotations are clipped to the image, and a solution is cleared when you crop, rotate or flip, since it belongs to the framing it was made for.
+- The result card reports no confidence score and no mirrored/not-mirrored flag. Neither can be established reliably from what the solver returns, and a wrong claim on the panel that exists to tell you the solve is trustworthy is worse than a missing one.
+
+### Fixed
+- Every annotation was mirrored vertically. Object labels, stars, the grid and the compass have all been placed on the wrong side of the image since plate solving shipped in 0.3.0 — most visible on named stars, where a label sat in empty sky while the star was elsewhere in the frame. Large nebula circles disguised it because they landed roughly over their nebula either way.
+- Photometric colour (SPCC) matched Gaia stars against the same mirrored positions, so its matches were coincidental rather than real. It now matches around 1,500 stars on a typical frame.
+- Annotated PNG exports silently dropped named stars — the exported image no longer matches what the overlay showed.
+- Sharpless objects were labelled with designations that do not exist (Sh 2117 instead of Sh 2-117), and drew a second ring and label over objects already catalogued, including on the North America and Orion nebulae.
+- The identified target could be a huge diffuse complex that merely overlaps the frame rather than the object you photographed.
+
 ## [0.5.0] — 2026-07-31
 
 Know exactly what you're looking at — pixel readout, clipping warnings, and a precise cursor.
