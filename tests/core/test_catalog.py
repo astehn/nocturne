@@ -105,3 +105,71 @@ def test_data_paths_are_resolved_without_dotdot():
     assert ".." not in catalog._STARS
     assert os.path.exists(catalog._DATA)
     assert os.path.exists(catalog._STARS)
+
+
+# --- ground truth from a real ASTAP solve -------------------------------------
+# Every other plate-solve test builds its WCS synthetically, and a synthetic WCS
+# is SELF-CONSISTENT under either vertical convention: the test projects with the
+# same flip it asserts against, so it passes whichever value FITS_Y_DOWN holds.
+# That is exactly how a mirrored overlay shipped from 0.3.0 to 0.5.0 past a
+# 1130-test suite. These constants come from an actual ASTAP solution of an
+# NGC 7000 frame (saved project, 2026-07-31) and the expected pixels are the
+# positions the corrected app draws, verified by eye against the real stars.
+_REAL_ASTAP_WCS = {
+    "WCSAXES": 2, "CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN",
+    "CRVAL1": 313.73419145078, "CRVAL2": 43.980673202631,
+    "CRPIX1": 792.5, "CRPIX2": 1232.0, "CDELT1": 1.0, "CDELT2": 1.0,
+    "CUNIT1": "deg", "CUNIT2": "deg",
+    "PC1_1": -0.00072664976972844, "PC1_2": 0.00071098142641278,
+    "PC2_1": -0.00071098508198742, "PC2_2": -0.00072675805361948,
+    "LONPOLE": 180.0, "LATPOLE": 43.980673202631, "RADESYS": "ICRS",
+}
+_REAL_SHAPE = (3544, 1584)          # h, w of the solved frame
+_REAL_EXPECTED = {                   # name -> (cx, cy) the corrected app draws
+    "IC5067": (1408.7, 76.8),
+    "IC5070": (992.1, 449.9),
+    "NGC6989": (27.2, 246.4),
+    "NGC6997": (128.0, 983.5),
+}
+_REAL_ROWS = [                       # exact bundled-catalogue coordinates
+    ("IC5067", "", 311.959083, 44.366972, 0.0),
+    ("IC5070", "", 312.753, 44.4015, 60.0),
+    ("NGC6989", "", 313.528833, 45.239278, 5.4),
+    ("NGC6997", "", 314.164375, 44.6315, 6.9),
+]
+
+
+def test_projection_matches_a_real_astap_solve():
+    """Pins the vertical convention against a REAL solver output.
+
+    Flipping FITS_Y_DOWN back to True moves every object by roughly the frame
+    height and fails this — which no synthetic-WCS test in the suite can do.
+    """
+    from astropy.wcs import WCS
+    from nocturne.core.catalog import objects_in_field
+
+    wcs = WCS(_REAL_ASTAP_WCS)
+    got = {o.name.replace(" ", ""): (o.cx, o.cy)
+           for o in objects_in_field(wcs, _REAL_SHAPE, rows=_REAL_ROWS)}
+    for name, (ex, ey) in _REAL_EXPECTED.items():
+        assert name in got, f"{name} should project into the solved frame"
+        gx, gy = got[name]
+        assert abs(gx - ex) < 1.5, f"{name} x: {gx:.1f} vs {ex}"
+        assert abs(gy - ey) < 1.5, f"{name} y: {gy:.1f} vs {ey} — vertical convention wrong?"
+
+
+def test_named_stars_use_the_same_convention_as_objects():
+    """A star and an object at the SAME sky position must land on the same pixel.
+
+    They travel different code paths (per-object vs vectorised), so a convention
+    fixed in one and not the other would put stars in the wrong place while
+    nebula circles still looked plausible — the failure the user actually saw.
+    """
+    from astropy.wcs import WCS
+    from nocturne.core.catalog import named_stars_in_field, objects_in_field
+
+    wcs = WCS(_REAL_ASTAP_WCS)
+    ra, dec = 312.753, 44.4015
+    obj = objects_in_field(wcs, _REAL_SHAPE, rows=[("X", "", ra, dec, 0.0)])[0]
+    star = named_stars_in_field(wcs, _REAL_SHAPE, rows=[("X", ra, dec, 4.0)])[0]
+    assert abs(star.x - obj.cx) < 0.01 and abs(star.y - obj.cy) < 0.01
