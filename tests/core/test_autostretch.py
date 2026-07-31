@@ -84,3 +84,78 @@ def test_unlinked_stretch_constant_nonzero_channel_is_finite():
     out = unlinked_stretch(img)
     assert np.isfinite(out).all()
     assert abs(float(np.median(out[..., 2])) - _TARGET_BG) < 0.02
+
+
+# --- non-finite robustness -------------------------------------------------
+# One NaN pixel used to make the median AND the MAD NaN, so every pixel in that
+# channel stretched to NaN and the canvas painted the whole channel black.
+
+def test_one_nan_pixel_does_not_blank_the_channel():
+    rng = np.random.default_rng(0)
+    clean = (rng.random((20, 20, 3)) * 0.1).astype(np.float32)
+    dirty = clean.copy()
+    dirty[5, 5, 1] = np.nan
+
+    out = unlinked_stretch(dirty)
+    good = np.ones((20, 20), bool)
+    good[5, 5] = False
+    assert np.isfinite(out[..., 1][good]).all(), \
+        "the 399 good pixels of the poisoned channel must survive one bad one"
+    assert np.isfinite(out[..., 0]).all() and np.isfinite(out[..., 2]).all()
+
+
+def test_a_nan_pixel_barely_perturbs_every_other_pixel():
+    """The strong form: not merely 'finite', but essentially UNCHANGED. An
+    implementation that dropped NaN by rescaling the channel would pass the
+    finiteness check above while quietly altering all 399 other pixels.
+
+    Not bit-identical, and it should not be: excluding the NaN sample shifts the
+    median by one rank out of 400, so the derived transfer moves a hair.
+
+    Tolerance measured, not guessed: this seed's delta is 9.4e-05, and the worst
+    over 30 seeds is 2.0e-03 — so 2e-3 (the obvious round number) sits exactly ON
+    the worst case and would flake the moment the seed changed. 5e-3 is that
+    measured worst case with headroom. Anything approaching it means the good
+    pixels are being altered, which is the failure this test exists to catch."""
+    rng = np.random.default_rng(1)
+    clean = (rng.random((20, 20, 3)) * 0.1).astype(np.float32)
+    dirty = clean.copy()
+    dirty[5, 5, 1] = np.nan
+
+    before = unlinked_stretch(clean)
+    after = unlinked_stretch(dirty)
+    good = np.ones((20, 20), bool)
+    good[5, 5] = False
+    assert np.allclose(before[..., 1][good], after[..., 1][good], atol=5e-3)
+    assert np.array_equal(before[..., 0], after[..., 0]), "other channels untouched"
+    assert np.array_equal(before[..., 2], after[..., 2]), "other channels untouched"
+
+
+def test_linked_stretch_survives_a_nan_in_one_channel():
+    """linked_stretch derives ONE transfer from mean-across-channels luminance,
+    so a NaN in any single channel used to poison all three."""
+    rng = np.random.default_rng(2)
+    data = (rng.random((16, 16, 3)) * 0.1).astype(np.float32)
+    data[3, 3, 0] = np.nan
+    out = linked_stretch(data, 0.25)
+    good = np.ones((16, 16), bool)
+    good[3, 3] = False
+    for ch in range(3):
+        assert np.isfinite(out[..., ch][good]).all(), f"channel {ch} was poisoned"
+
+
+def test_an_all_nan_channel_yields_no_nan_parameters():
+    """Nothing to measure. It must not raise, warn, or return NaN parameters.
+
+    Mutation this must fail against: dropping the `isfinite(c).any()` early
+    return while keeping np.nanmedian — nanmedian on an all-NaN slice warns
+    ("All-NaN slice encountered") and returns NaN. Verified to fail without it.
+    It does NOT catch a revert to plain np.median (that returns NaN silently);
+    the three tests above cover that."""
+    import warnings
+    data = np.full((8, 8, 3), 0.1, np.float32)
+    data[..., 1] = np.nan
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        out = unlinked_stretch(data)
+    assert np.isfinite(out[..., 0]).all() and np.isfinite(out[..., 2]).all()

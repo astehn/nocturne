@@ -21,12 +21,30 @@ def _mtf(m: float, x: np.ndarray) -> np.ndarray:
 
 def _stretch_params(c: np.ndarray, target: float = _TARGET_BG) -> tuple[float, float]:
     """Derive (shadow clip, midtones m) from one channel's statistics so its
-    median maps to `target`."""
-    med = float(np.median(c))
-    mad = float(np.median(np.abs(c - med))) or 1e-6
+    median maps to `target`.
+
+    NaN-aware because these are two scalars derived from the WHOLE channel: with
+    plain np.median a single NaN sample made both of them NaN, and every pixel
+    then stretched to NaN — one bad pixel blanked 400 of 400, verified. Import
+    now zeroes non-finite data (fits_io._normalize), but NaN can still arise
+    mid-pipeline from a division or an external tool's output, and a statistic
+    that collapses on one bad sample is a bad statistic regardless of who feeds
+    it.
+
+    NaN specifically, not Inf: a median is robust to Inf (it is just the largest
+    sample, so it shifts the result by one rank), and np.nanmedian ignores NaN
+    only. An Inf that reached here would survive _apply_params' clip as 1.0 and
+    display white rather than the black the no-data convention gives NaN — an
+    inconsistency left alone deliberately, since import zeroes Inf and no
+    in-pipeline source of it is known. Revisit if one turns up.
+    """
+    if not np.isfinite(c).any():
+        return 0.0, 0.5          # no statistics to derive from; leave it alone
+    med = float(np.nanmedian(c))
+    mad = float(np.nanmedian(np.abs(c - med))) or 1e-6
     shadow = max(0.0, med - _SIGMA * mad)
     clipped = np.clip((c - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
-    med2 = float(np.median(clipped)) or 1e-6
+    med2 = float(np.nanmedian(clipped)) or 1e-6
     return shadow, _mtf_midtones(med2, target)
 
 

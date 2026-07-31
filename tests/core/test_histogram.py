@@ -59,3 +59,29 @@ def test_histogram_nan_pixels_land_in_bottom_bin_without_warning():
         h = histogram(AstroImage(data))
     assert int(h["r"][0]) == 1
     assert int(h["r"].sum()) == 4  # NaN pixel is counted, not dropped
+
+
+def test_one_nan_pixel_no_longer_blanks_a_displayed_channel():
+    """End-to-end reproduction of the reported symptom: a single non-finite
+    pixel in a LINEAR image (the autostretched display path) turned an entire
+    channel black on the canvas. 400 of 400 pixels, verified before the fix.
+
+    Asserts the good pixels are UNCHANGED against the clean render, not merely
+    'not black' — a fix that dimmed the channel would pass the weaker check."""
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.preview import to_rgb8
+    rng = np.random.default_rng(7)
+    clean = (rng.random((20, 20, 3)) * 0.1).astype(np.float32)
+    dirty = clean.copy()
+    dirty[5, 5, 1] = np.nan
+
+    ref = to_rgb8(AstroImage(clean, is_linear=True))
+    out = to_rgb8(AstroImage(dirty, is_linear=True))
+    good = np.ones((20, 20), bool)
+    good[5, 5] = False
+
+    assert out[..., 1][good].max() > 0, "the channel must not be uniformly black"
+    assert np.abs(out[..., 1][good].astype(int)
+                  - ref[..., 1][good].astype(int)).max() <= 1, \
+        "the 399 good pixels must render as they do without the bad one"
+    assert out[5, 5, 1] == 0, "the bad pixel itself reads as no-data black"

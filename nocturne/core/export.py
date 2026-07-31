@@ -5,12 +5,16 @@ import tifffile
 from astropy.io import fits
 from PIL import Image
 
-from .image import AstroImage
+from .image import AstroImage, finite_or_zero
 
 
 def _to_uint(data: np.ndarray, bits: int) -> np.ndarray:
+    # finite_or_zero BEFORE the clip: np.clip leaves NaN as NaN, and casting NaN
+    # to an unsigned integer is undefined -- it produced whatever that platform's
+    # float->uint conversion happened to yield, while the canvas (which does
+    # guard) showed black. The preview must equal the export.
     maxval = (2 ** bits) - 1
-    clipped = np.clip(data, 0.0, 1.0)
+    clipped = np.clip(finite_or_zero(data), 0.0, 1.0)
     dtype = np.uint16 if bits == 16 else np.uint8
     return (clipped * maxval + 0.5).astype(dtype)
 

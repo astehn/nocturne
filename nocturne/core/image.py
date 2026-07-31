@@ -5,6 +5,25 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+def finite_or_zero(arr: np.ndarray) -> np.ndarray:
+    """Non-finite samples replaced by 0.0 — the app's one definition of what a
+    NaN/Inf pixel means: no data, i.e. black.
+
+    Four surfaces need this and each had grown its own copy (or, in export's
+    case, forgotten to): import normalisation, the display cast, the histogram
+    and the export cast. Divergence between them is a WYSIWYG bug by
+    construction — the canvas showed black where export wrote whatever the
+    undefined float→uint cast happened to produce on that platform.
+
+    Deliberately NOT enforced in `AstroImage.__post_init__`: that runs on every
+    step and every copy, and silently rewriting data on construction would mask
+    the arrival of NaN rather than expose it. The invariant is established once
+    at the import boundary and re-asserted only where pixels leave for a screen
+    or a file.
+    """
+    return np.where(np.isfinite(arr), arr, 0.0).astype(arr.dtype, copy=False)
+
+
 @dataclass
 class AstroImage:
     data: np.ndarray

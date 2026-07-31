@@ -206,3 +206,37 @@ def test_solve_cards_from_header_extracts_pointing_and_scale():
     assert sc["OBJCTRA"] == "20 59 15" and float(sc["FOCALLEN"]) == 160.0
     assert "OBJECT" not in sc                                # OBJECT isn't a solve card
     assert solve_cards_from_header(fits.Header()) == {}
+
+
+# --- non-finite handling at the import boundary -----------------------------
+
+def test_normalize_scales_even_when_the_array_holds_nan():
+    """The old guard read `peak = float(arr.max()); if peak > 0` — with a NaN
+    present max() is NaN and `NaN > 0` is False, so the array came back
+    COMPLETELY UNSCALED, keeping 16-bit values while every later step assumes
+    [0, 1]. Assert the scaling that must happen, not merely 'not NaN'."""
+    from nocturne.core.fits_io import _normalize
+    arr = np.array([[np.nan, 30000.0, 60000.0]], np.float32)
+    out = _normalize(arr)
+    assert np.isfinite(out).all(), "no non-finite value may survive import"
+    assert out.max() == pytest.approx(1.0), "must be scaled to [0, 1]"
+    assert out[0, 2] == pytest.approx(1.0)
+    assert out[0, 1] == pytest.approx(0.5)
+    assert out[0, 0] == 0.0, "a no-data sample reads as black"
+
+
+def test_normalize_measures_the_peak_over_real_data_only():
+    """Zeroing must happen BEFORE the peak is taken. If +inf reached the max()
+    the whole frame would divide by inf and come back black."""
+    from nocturne.core.fits_io import _normalize
+    out = _normalize(np.array([[np.inf, 100.0, 50.0]], np.float32))
+    assert out[0, 1] == pytest.approx(1.0), "100 is the real peak, not inf"
+    assert out[0, 2] == pytest.approx(0.5)
+    assert out[0, 0] == 0.0
+
+
+def test_normalize_leaves_clean_data_untouched():
+    """The guard must not perturb the ordinary path."""
+    from nocturne.core.fits_io import _normalize
+    arr = np.array([[0.0, 30000.0, 65535.0]], np.float32)
+    assert np.allclose(_normalize(arr), [[0.0, 30000.0 / 65535.0, 1.0]])

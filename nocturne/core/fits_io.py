@@ -9,12 +9,29 @@ import tifffile
 from astropy.io import fits
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
-from .image import AstroImage
+from .image import AstroImage, finite_or_zero
 from .instrument import SEESTAR_S30_PRO
 
 
 def _normalize(arr: np.ndarray) -> np.ndarray:
-    arr = arr.astype(np.float32)
+    """Scale to [0, 1] by the peak, with non-finite samples zeroed FIRST.
+
+    NaN arrives from real files: a registration that rotates for alt-az field
+    rotation leaves no-data corners, and stacking software commonly writes NaN
+    there rather than zero.
+
+    The order matters, and the old guard got it wrong in a way that failed
+    silently twice over. It read `peak = float(arr.max()); if peak > 0` — with
+    one NaN present `max()` returns NaN and `NaN > 0` is False, so the array was
+    returned COMPLETELY UNSCALED: a 16-bit frame kept values up to 65535 while
+    every later step assumes [0, 1]. The surviving NaN then blanked an entire
+    channel in the display autostretch, because a single NaN poisons the median
+    that derives the stretch parameters.
+
+    Zeroing before the peak fixes both: the peak is measured over real data, and
+    nothing downstream has to cope with a value that has no meaning.
+    """
+    arr = finite_or_zero(arr.astype(np.float32))
     peak = float(arr.max())
     if peak > 0:
         arr = arr / peak
@@ -264,10 +281,10 @@ def load_master(path: str) -> AstroImage:
                 raise ValueError("expected a colour (RGB) master, not a mono image")
         return load_fits(path)
     if ext in (".tif", ".tiff"):
-        arr = np.asarray(tifffile.imread(path)).astype(np.float32)
-        peak = float(arr.max())
-        if peak > 0:
-            arr = arr / peak
+        # _normalize, not a second hand-rolled copy: this branch carried the same
+        # `peak > 0` guard and therefore the same NaN hole (a float TIFF can hold
+        # NaN even though a 16-bit one cannot).
+        arr = _normalize(np.asarray(tifffile.imread(path)))
         h, w = arr.shape[:2]
         return AstroImage(np.clip(arr, 0.0, 1.0), is_linear=True,
                           metadata={"width": w, "height": h})
