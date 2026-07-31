@@ -825,6 +825,16 @@ class MainWindow(QMainWindow):
             if o.name == name:
                 self.image_view.focus_on(o.cx, o.cy)
                 return
+        # Named stars are listed too, and are point sources: x/y IS the centre.
+        from ..core.catalog import named_stars_in_field
+        res = self._solve[1]
+        if self.project is None or getattr(res, "wcs", None) is None:
+            return
+        h, w = self.project.current().data.shape[:2]
+        for s in named_stars_in_field(res.wcs, (h, w)):
+            if s.name == name:
+                self.image_view.focus_on(s.x, s.y)
+                return
 
     def _on_resolve_requested(self) -> None:
         """SolvePanel's Re-solve button: always forces a FRESH solve, even if
@@ -880,8 +890,21 @@ class MainWindow(QMainWindow):
         self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
                                     self._solve_elapsed, cached,
                                     scale_source=getattr(self, "_hint_source", "header"))
-        self.image_view.object_panel.set_objects(objs)
-        self.solve_panel.set_object_count(len(objs))
+        self._refresh_object_list(res, objs)
+
+    def _refresh_object_list(self, res, objs) -> None:
+        """Fills the canvas object list from a solve, honouring the layer
+        toggles. Called both when a solve lands and when a layer is toggled —
+        unchecking "Named stars" must empty them from the list as well as the
+        image, or the two disagree about what is being shown."""
+        from ..core.catalog import named_stars_in_field
+        layers = self._annotation_layers()
+        h, w = self.project.current().data.shape[:2]
+        objects = objs if layers.get("objects", True) else []
+        stars = (named_stars_in_field(res.wcs, (h, w))
+                 if layers.get("stars", True) else [])
+        self.image_view.object_panel.set_contents(objects, stars)
+        self.solve_panel.set_object_count(len(objects) + len(stars))
 
     def _sync_solve_panel(self) -> None:
         """Keeps SolvePanel's status badge honest outside the explicit
@@ -919,6 +942,8 @@ class MainWindow(QMainWindow):
         self.settings.annotation_layers = dict(layers)
         save_settings(self.settings, self._settings_path)
         self._rebuild_overlay_from_cache()
+        if self._solve and self.project is not None:
+            self._refresh_object_list(self._solve[1], self._solve[2])
 
     def _on_annotation_density_changed(self, density: str) -> None:
         """SolvePanel density change: same contract as layers — persisted,

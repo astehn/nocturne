@@ -63,11 +63,42 @@ class ObjectListPanel(QFrame):
         if name:
             self.objectActivated.emit(name)
 
-    def set_objects(self, objects) -> None:
-        """Fill from the solve's catalogue objects, ordered the way the overlay
-        ranks labels — so the list and the image read as one ranking, not two."""
+    def _add_heading(self, text: str) -> None:
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)   # not selectable, never activates
+        item.setData(Qt.ItemDataRole.UserRole, None)
+        f = item.font()
+        f.setBold(True)
+        f.setPointSizeF(max(1.0, f.pointSizeF() - 1))
+        item.setFont(f)
+        self.list.addItem(item)
+
+    def set_contents(self, objects, stars=()) -> None:
+        """Fill from the solve: deep-sky objects first, then named stars.
+
+        Both go in because the list answers "what is in my frame", and a star the
+        overlay labels but the list omits is a dead end — you can read 57 Cyg off
+        the image and have nowhere to click. They stay in separate groups, stars
+        last, so a wide field full of Bayer designations can never bury the
+        handful of objects that are the actual subject.
+
+        Deep-sky objects keep the overlay's own label ranking, so list and image
+        read as one ranking rather than two; stars go brightest first, which is
+        the only ordering a magnitude affords.
+
+        Deliberately NOT filtered by density. Density governs how crowded the
+        *image* gets, and the objects it drops are exactly the ones worth having
+        somewhere clickable. It IS filtered by the layer toggles, which are about
+        what you care about rather than about crowding.
+        """
         from ..core.annotation_layout import priority_of
         self.list.clear()
+        objects = list(objects)
+        stars = list(stars)
+        grouped = objects and stars     # headings earn their row only when both exist
+
+        if grouped:
+            self._add_heading("DEEP SKY")
         for o in sorted(objects, key=lambda x: (priority_of(x), x.major_arcmin),
                         reverse=True):
             label = f"{o.name}  {o.common}".strip() if o.common else o.name
@@ -79,7 +110,17 @@ class ObjectListPanel(QFrame):
                 item.setToolTip((item.toolTip() + " · " if item.toolTip() else "")
                                 + "centre lies outside the frame")
             self.list.addItem(item)
-        self.title.setText(f"Objects in field ({len(objects)})")
+
+        if grouped:
+            self._add_heading("NAMED STARS")
+        for s in sorted(stars, key=lambda x: x.mag):
+            item = QListWidgetItem(f"{s.name}   mag {s.mag:.1f}")
+            item.setData(Qt.ItemDataRole.UserRole, s.name)
+            self.list.addItem(item)
+
+        self.title.setText(f"Objects in field ({len(objects) + len(stars)})")
 
     def count(self) -> int:
-        return self.list.count()
+        """Selectable rows only — group headings are not objects."""
+        return sum(1 for i in range(self.list.count())
+                   if self.list.item(i).data(Qt.ItemDataRole.UserRole) is not None)

@@ -649,7 +649,7 @@ def test_object_list_rows_carry_the_catalogue_name(qtbot):
     from nocturne.core.catalog import CatalogObject
     view = ImageView()
     qtbot.addWidget(view)
-    view.object_panel.set_objects(
+    view.object_panel.set_contents(
         [CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1),
          CatalogObject("LDN 935", "", 0, 0, 0.0, 2, 2)])
     assert view.object_panel.count() == 2
@@ -658,3 +658,68 @@ def test_object_list_rows_carry_the_catalogue_name(qtbot):
     view.object_panel.objectActivated.connect(seen.append)
     view.object_panel._picked(view.object_panel.list.item(0))
     assert seen == ["NGC 7000"], "rows must carry the catalogue name, not display text"
+
+
+def _star(name, mag, x=5.0, y=6.0):
+    from nocturne.core.catalog import NamedStar
+    return NamedStar(name, 0.0, 0.0, mag, x, y)
+
+
+def test_named_stars_are_listed_after_the_deep_sky_objects(qtbot):
+    """A star the overlay labels but the list omits is a dead end: you can read
+    57 Cyg off the image and have nowhere to click."""
+    from nocturne.core.catalog import CatalogObject
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.object_panel.set_contents(
+        [CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1)],
+        [_star("56 Cyg", 5.1), _star("57 Cyg", 4.8)])
+
+    rows = [view.object_panel.list.item(i).text()
+            for i in range(view.object_panel.list.count())]
+    names = [view.object_panel.list.item(i).data(Qt.ItemDataRole.UserRole)
+             for i in range(view.object_panel.list.count())]
+    assert "NGC 7000" in names and "56 Cyg" in names and "57 Cyg" in names
+    # deep sky first, stars last -- a wide field of Bayer designations must never
+    # bury the handful of objects that are the actual subject
+    assert names.index("NGC 7000") < names.index("57 Cyg")
+    # brightest star first (lower magnitude), not catalogue order
+    assert names.index("57 Cyg") < names.index("56 Cyg")
+    assert any("mag 4.8" in r for r in rows), rows
+    assert "(3)" in view.object_panel.title.text()
+
+
+def test_group_headings_are_not_clickable_rows(qtbot):
+    from nocturne.core.catalog import CatalogObject
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.object_panel.set_contents(
+        [CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1)],
+        [_star("56 Cyg", 5.1)])
+    assert view.object_panel.list.count() == 4      # 2 headings + 2 objects
+    assert view.object_panel.count() == 2, "headings are not objects"
+    headings = [view.object_panel.list.item(i)
+                for i in range(view.object_panel.list.count())
+                if view.object_panel.list.item(i).data(Qt.ItemDataRole.UserRole) is None]
+    assert len(headings) == 2
+    for h in headings:
+        assert h.flags() == Qt.ItemFlag.NoItemFlags, "a heading must not be selectable"
+    # ...and picking one emits nothing rather than an empty name
+    seen = []
+    view.object_panel.objectActivated.connect(seen.append)
+    view.object_panel._picked(headings[0])
+    assert seen == []
+
+
+def test_no_headings_when_only_one_group_is_present(qtbot):
+    """Headings earn their row only when they separate something."""
+    from nocturne.core.catalog import CatalogObject
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.object_panel.set_contents(
+        [CatalogObject("NGC 7000", "North America", 0, 0, 120.0, 1, 1)], [])
+    assert view.object_panel.list.count() == 1
+
+    view.object_panel.set_contents([], [_star("56 Cyg", 5.1)])
+    assert view.object_panel.list.count() == 1
+    assert view.object_panel.count() == 1
