@@ -481,4 +481,10 @@ def test_by_type_colouring_also_reaches_the_circle_not_just_the_label():
                               _layers(objects=True, by_type=True), "all", measure=_measure)
     circles = [p for p in prims if isinstance(p, Circle)]
     assert len(circles) == 2
-    assert {c.colour for c in circles} == {"#b38cff", "#ff7a94"}
+    # Assert the WIRING, not the palette's current hues: each circle carries the
+    # colour colour_for resolves for its own object, and the two differ. Pinning
+    # literal hex here made a legitimate palette change fail a test about routing.
+    by_x = {c.x: c.colour for c in circles}
+    assert by_x[100.0] == colour_for(messier, by_type=True)
+    assert by_x[400.0] == colour_for(hii, by_type=True)
+    assert by_x[100.0] != by_x[400.0], "type colouring must actually distinguish types"

@@ -86,11 +86,16 @@ def _is_messier(obj) -> bool:
     return bool(getattr(obj, "messier", ""))
 
 
+# Emission regions are the type most often drawn ON TOP OF red/pink H-alpha
+# nebulosity, so they keep the default green — the one hue that is rare in a
+# finished astro image and therefore never blends into it. The visually
+# distinct hues go to the rarer types, which usually sit against darker sky.
+# (Tried red-pink for emission, as Aladin uses; it disappeared into NGC 7000.)
 _TYPE_COLOURS = {
     "messier": "#b38cff",   # violet
-    "emission": "#ff7a94",  # red-pink: HII, EmN, RfN, Cl+N, SNR, clusters
+    "emission": "#5cff5c",  # green: HII, EmN, RfN, Cl+N, SNR, clusters
     "dark": "#e9edf5",      # white: dark nebulae
-    "planetary": "#67e58b", # green
+    "planetary": "#5ce1ff", # cyan
     "galaxy": "#ffab5e",    # orange
     "star": "#ffd75e",      # yellow
     "unknown": "#b9c2d0",   # grey
