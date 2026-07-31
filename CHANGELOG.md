@@ -2,6 +2,20 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.7.0] — 2026-07-31
+
+Plate solving you can steer — an object list, a Cancel button that works, and annotations on Share.
+
+### Added
+- Objects in field — everything the solve found, as a list beside the image: deep-sky objects in the overlay's own significance order, named stars below with their magnitude. Click a row to jump the view to it. The list shows the whole field, including objects Density leaves off the image, so the ones hardest to spot are the ones easiest to reach.
+- Share can carry your annotations. A checkbox switches the preview between the clean and the annotated frame, so a labelled image gets the social reframing and caption band too — previously the only way to publish a labelled image was a PNG export, which skips both. The checkbox is hidden entirely when there is no solution.
+- Plate solving falls back to the instrument profile for the field-of-view hint when a file carries no optics. A stacked master exported from another tool routinely has neither FOCALLEN nor XPIXSZ, which left ASTAP solving a few-degree field blind and usually failing. The result card says when the scale was assumed rather than read, since on data from another instrument that assumption is wrong.
+
+### Fixed
+- Cancel during a plate solve did nothing. The button set the flag and the interface reported "Cancelling…" while ASTAP carried on to completion. It now genuinely stops the solver, and a solve still grinding after three minutes gives up with a diagnostic rather than holding on indefinitely.
+- A pointing hint taken from a bare RA header card was parsed as hours when it was in degrees, making the search centre meaningless. Latent — those files carry pointing elsewhere too, so the bad value was never actually passed — but a file without that fallback would have been handed nonsense.
+- The changelog on this site listed releases by headline alone, so you could not tell which version you were running. Every entry now names its version, and the newest is marked Latest.
+
 ## [0.6.0] — 2026-07-31
 
 Plate solving grows up — and a fix that has been mislabelling your images since 0.3.0.
