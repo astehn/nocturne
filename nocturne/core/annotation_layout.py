@@ -105,11 +105,19 @@ def _overlaps(a, b) -> bool:
     return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
+# Fallback search directions once the four primary anchors all collide: every
+# compass point, not just "further right and down" — so free space anywhere
+# around the object can be found, not only in one quadrant.
+_FALLBACK_DIRECTIONS = [(1, 0), (-1, 0), (0, -1), (0, 1),
+                         (1, -1), (-1, -1), (1, 1), (-1, 1)]
+
+
 def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
     """Greedy placement in priority order. Anchors are tried right, left, above,
-    then below; if all collide, the label is pushed outward until it finds free
-    space and a Leader connects it back to its object. `measure` is injected so
-    this stays Qt-free — the Qt adapter passes a real font metric."""
+    then below; if all collide, the label is pushed outward — in all eight
+    compass directions at increasing distance — until it finds free space, and
+    a Leader connects it back to its object. `measure` is injected so this
+    stays Qt-free — the Qt adapter passes a real font metric."""
     h, w = shape
     placed, labels, leaders = [], [], []
     for it in sorted(items, key=priority_of, reverse=True):
@@ -119,12 +127,18 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
         ax, ay = getattr(it, "x", it.cx), getattr(it, "y", it.cy)
         candidates = [(ax + _LABEL_GAP, ay - th / 2), (ax - _LABEL_GAP - tw, ay - th / 2),
                       (ax - tw / 2, ay - _LABEL_GAP - th), (ax - tw / 2, ay + _LABEL_GAP)]
-        for step in range(1, 9):                     # then spiral outward
-            candidates.append((ax + _LABEL_GAP + step * 18, ay - th / 2 + step * 14))
+        for step in range(1, 9):                     # then search outward, all directions
+            dist = _LABEL_GAP + step * 18
+            for dx, dy in _FALLBACK_DIRECTIONS:
+                candidates.append((ax - tw / 2 + dx * dist, ay - th / 2 + dy * dist))
         chosen = None
         for i, (lx, ly) in enumerate(candidates):
-            lx = min(max(lx, 0.0), w - tw)
-            ly = min(max(ly, 0.0), h - th)
+            # Clamp into the frame; if the label is wider/taller than the frame
+            # itself, pin to 0 rather than letting the upper bound go negative
+            # — starting inside and overflowing the far edge is the intended
+            # behaviour for a label that genuinely cannot fit.
+            lx = max(0.0, min(lx, max(0.0, w - tw)))
+            ly = max(0.0, min(ly, max(0.0, h - th)))
             r = _rect(lx, ly, tw, th)
             if not any(_overlaps(r, p) for p in placed):
                 chosen, displaced = (lx, ly), i >= 4

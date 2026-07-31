@@ -131,3 +131,34 @@ def test_higher_priority_labels_are_placed_first():
     plain = _obj(1.0, cx=101.0, cy=100.0, name="LDN 935")
     labels, _ = place_labels([plain, m], (600, 800), _measure)
     assert labels[0].text.startswith("M 39"), "priority order, not input order"
+
+
+def test_a_label_wider_than_the_frame_is_pinned_not_pushed_negative():
+    # 60-char name -> 420 px wide via _measure, on a 300x300 frame: wider than
+    # the frame itself. The clamp must pin to 0, never go negative.
+    objs = [_obj(1.0, cx=150.0, cy=150.0, name="A" * 60)]
+    labels, _ = place_labels(objs, (300, 300), _measure)
+    assert labels, "label should still be placed, just pinned to the edge"
+    for l in labels:
+        assert l.x >= 0 and l.y >= 0
+
+
+def test_label_search_finds_free_space_beyond_an_occupied_diagonal():
+    # One big label placed dead centre of an otherwise empty 800x600 frame
+    # occupies exactly (250,270)-(700,420). A second object's four primary
+    # anchors all land inside that occupied rect, so it must fall back to the
+    # outward search — which must look in every direction, not just
+    # right-and-down, to find the free space that surrounds the rectangle.
+    big_name = "M " + "Z" * 20                       # forces priority 40: placed first
+
+    def _measure_big_then_small(text, size):
+        if text == big_name:
+            return (450.0, 150.0)                    # -> rect (250,270)-(700,420)
+        return (7.0 * len(text), 14.0)
+
+    big = _obj(1.0, cx=241.0, cy=345.0, name=big_name)
+    small = _obj(1.0, cx=400.0, cy=300.0, name="LDN 1")  # all 4 primary anchors land inside big's rect
+    labels, leaders = place_labels([small, big], (600, 800), _measure_big_then_small)
+    small_labels = [l for l in labels if l.text == "LDN 1"]
+    assert small_labels, "free space exists around the occupied rectangle; label must not be dropped"
+    assert leaders, "a label pushed off its primary anchors must be connected by a leader"
