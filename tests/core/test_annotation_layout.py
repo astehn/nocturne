@@ -1,12 +1,15 @@
 import math
 
+import numpy as np
 import pytest
 
+from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
+import astropy.units as u
 
 from nocturne.core.annotation_layout import (
     Circle, circle_for, filter_by_density, grid_lines, place_labels, priority_of,
-    star_marker)
+    star_marker, _fmt_ra)
 from nocturne.core.catalog import CatalogObject, NamedStar
 
 
@@ -198,3 +201,64 @@ def test_grid_points_lie_inside_the_frame():
 
 def test_grid_of_an_unusable_wcs_is_empty_not_an_exception():
     assert grid_lines(None, (600, 800), "#888888") == []
+
+
+def _asymmetric_grid_wcs(w=800, h=600):
+    # crpix well off-centre and a crval whose Dec (44 deg) is offset from the
+    # frame centre: a FITS_Y_DOWN sign flip must move the "+44°" line by
+    # ~(h - 1 - 2*raw_y) px, not leave it near where it already was, the way
+    # a centred fixture would (its raw y sits near h/2, so h-1-y ~= y).
+    k = WCS(naxis=2)
+    k.wcs.crpix = [w * 0.25, h * 0.75]
+    k.wcs.crval = [310.0, 44.0]
+    k.wcs.cdelt = [-0.001, 0.001]
+    k.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    return k
+
+
+def test_grid_dec_line_position_matches_fits_y_down_convention():
+    # Independently project the WCS reference point (RA 310, Dec 44) exactly
+    # the way core/catalog.py:97 does, then require the "+44 deg" grid line
+    # (which passes through that Dec) to sit at that same screen y. An
+    # inverted FITS_Y_DOWN sign would place it ~299 px away instead.
+    w, h = 800, 600
+    wcs = _asymmetric_grid_wcs(w, h)
+    raw_x, raw_y = wcs.world_to_pixel(SkyCoord(310.0 * u.deg, 44.0 * u.deg))
+    expected_y = h - 1 - float(raw_y)          # FITS_Y_DOWN convention
+
+    lines = grid_lines(wcs, (h, w), "#888888")
+    dec_44 = next(l for l in lines if l.label == "+44°")
+    ys = [p[1] for p in dec_44.points]
+    assert all(abs(y - expected_y) < 15.0 for y in ys), (ys, expected_y)
+
+
+def test_grid_lines_are_not_axis_transposed():
+    # A constant-Dec line must sweep in x while staying near one y (it is
+    # horizontal-ish); a constant-RA line must sweep in y while staying near
+    # one x (vertical-ish). A transposed sampling loop, or a _fmt_ra/_fmt_dec
+    # mix-up, would blur or invert this and is caught here.
+    w, h = 800, 600
+    wcs = _asymmetric_grid_wcs(w, h)
+    lines = grid_lines(wcs, (h, w), "#888888")
+
+    dec_lines = [l for l in lines if "°" in l.label]
+    ra_lines = [l for l in lines if "h" in l.label]
+    assert dec_lines and ra_lines
+
+    for l in dec_lines:
+        xs = [p[0] for p in l.points]
+        ys = [p[1] for p in l.points]
+        assert max(xs) - min(xs) > 100, "a Dec line should sweep across x"
+        assert max(ys) - min(ys) < 20, "a Dec line should stay near one y"
+
+    for l in ra_lines:
+        xs = [p[0] for p in l.points]
+        ys = [p[1] for p in l.points]
+        assert max(ys) - min(ys) > 100, "an RA line should sweep across y"
+        assert max(xs) - min(xs) < 20, "an RA line should stay near one x"
+
+
+def test_fmt_ra_wraps_the_hour_not_just_the_minute():
+    assert _fmt_ra(359.99) == "0h00m", "a minute-carry at 23h60m must wrap to 0h"
+    assert _fmt_ra(-0.001) == "0h00m"
+    assert _fmt_ra(180.0) == "12h00m"

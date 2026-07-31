@@ -168,6 +168,7 @@ def _fmt_ra(ra_deg: float) -> str:
     m = int(round((hours - h) * 60))
     if m == 60:
         h, m = h + 1, 0
+    h %= 24                          # a minute-carry at 23h60m must wrap to 0h, not 24h
     return f"{h}h{m:02d}m"
 
 
