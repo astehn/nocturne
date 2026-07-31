@@ -1,3 +1,3 @@
-__version__ = "0.4.2"
+__version__ = "0.5.0"
 APP_NAME = "Nocturne"
 APP_TAGLINE = "Guided astrophotography processing for smart-telescope stacks"
