@@ -1741,6 +1741,40 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win.image_view._annotations is not None, "closing the tool must keep the overlay"
 
 
+def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeypatch):
+    """A solution is only valid for the framing it was solved against.
+
+    Drawing a pre-flip solve on a flipped image mirrors every position — large
+    nebula circles still look plausible while stars land visibly wrong, which is
+    how this was found in the running app. The canvas pill's re-show path
+    originally skipped the check, so the guard now lives in the single funnel.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                     [CatalogObject("NGC 7000", "North America",
+                                                    100.0, 0.0, 120.0, 12, 12)]))
+    _solve_now(win)
+    assert win.image_view._annotations is not None
+
+    win._flip_v()                       # framing changed; the solve no longer applies
+    assert win.image_view._annotations is None, "a flip must drop the overlay"
+
+    from nocturne.ui.solve_panel import STATE_LABELS
+    _show_overlay(win)                  # the pill tries to bring it back from cache
+    assert win.image_view._annotations is None, \
+        "a stale solve must never be redrawn, whichever path asks for it"
+    assert win.solve_panel.header_btn.text().startswith(
+        f"Plate solve · {STATE_LABELS['stale']}")
+
+
 def test_solve_panel_present_in_right_column(qtbot, tmp_path):
     """The SolvePanel lives in the right column, below the clipping controls
     and above the per-stage step panel — the positional contract Task 8 was

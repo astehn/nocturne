@@ -923,6 +923,19 @@ class MainWindow(QMainWindow):
                                  measure=make_measure(ui_scale), ui_scale=ui_scale)
 
     def _show_annotations(self, res, objs):
+        """The ONE path that puts annotations on the canvas — and the one place
+        staleness is enforced.
+
+        A solution is only valid for the framing it was solved against. Drawing a
+        pre-flip solve on a flipped image mirrors every position: large nebula
+        circles still look roughly plausible, while stars land visibly wrong,
+        which is exactly how this was found. Individual call sites kept
+        forgetting the check (the canvas pill's re-show did), so the funnel
+        refuses instead of trusting each caller to remember."""
+        if self._solve and self._solve[0] != self._solve_sig():
+            self.image_view.set_annotations(None)
+            self.solve_panel.set_state("stale")
+            return
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
         prims = self._annotation_primitives(res, objs, (h, w))
@@ -2534,8 +2547,7 @@ class MainWindow(QMainWindow):
         if self.image_view._annotations is not None:
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
-                self.image_view.set_annotations(None)
-                self._solve_act.setChecked(False)
+                self.image_view.set_annotations(None)   # the tool stays open; only the overlay goes
         self._sync_solve_panel()   # catches framing changes (crop/rotate/flip) -> "stale"
 
     def _done_ids(self) -> set:
