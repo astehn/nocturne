@@ -239,7 +239,7 @@ def test_hint_infers_ra_units_rather_than_assuming_hours():
     assert hint_from_metadata({"ra": "rubbish", "dec": "rubbish"}) is None
 
 
-def test_solve_is_cancellable_and_binds_the_process():
+def test_solve_is_cancellable_and_binds_the_process(tmp_path):
     """The Cancel button set the token, the UI said "Cancelling...", and ASTAP
     ran to completion regardless: the runner used subprocess.run, which cannot
     be interrupted. It now binds the child to the ambient token like every other
@@ -265,7 +265,9 @@ def test_solve_is_cancellable_and_binds_the_process():
     try:
         token.cancel()                  # already cancelled before the run starts
         with pytest.raises(Cancelled):
-            _run_astap(["/bin/sleep", "5"], cwd=".", timeout=30)
+            # cwd must be a tmp dir, never ".": _run_astap writes _astap_out.txt
+            # into cwd, so "." dropped a stray file in the repo root on every run
+            _run_astap(["/bin/sleep", "5"], cwd=str(tmp_path), timeout=30)
     finally:
         clear_ambient()
     assert bound, "the solver process must be bound to the cancel token"
