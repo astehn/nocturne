@@ -333,6 +333,32 @@ def _layers(**over):
     return base
 
 
+def test_build_layout_for_ui_scale_reserves_labels_at_the_scale_they_render():
+    # PS-07 recurring one level up: place_labels' collision avoidance is only
+    # valid if the box it reserves matches the box the CONSUMING adapter
+    # actually renders. build_layout_for's default measure must scale with
+    # ui_scale exactly the way the export adapter's text size does (1.8x is
+    # roughly what a 3840px-wide Seestar export gets against the 1200px
+    # baseline) -- otherwise labels that "don't overlap" at layout time
+    # overlap once rendered bigger.
+    from nocturne.core.annotation_layout import _default_measure
+    objs = [_obj(1.0, cx=100.0 + i * 6.0, cy=100.0, name=f"NGC {7000 + i}", common=f"Nebula {i}")
+            for i in range(8)]
+    prims = build_layout_for(objs, [], None, (600, 800), 2.0,
+                              _layers(objects=True), "all", ui_scale=1.8)
+    labels = [p for p in prims if isinstance(p, Label)]
+    assert len(labels) >= 2, "the crowded cluster must force the collision-avoidance search"
+    rects = []
+    for l in labels:
+        tw, th = _default_measure(l.text, l.size, 1.8)
+        rects.append((l.x, l.y, l.x + tw, l.y + th))
+    for i, a in enumerate(rects):
+        for b in rects[i + 1:]:
+            overlap = not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+            assert not overlap, \
+                "labels reserved for ui_scale=1.8 must not overlap when measured at that scale"
+
+
 def test_build_layout_for_produces_a_circle_and_label_per_kept_object():
     obj = _obj(30.0, cx=100.0, cy=100.0, name="NGC 7000", common="North America")
     prims = build_layout_for([obj], [], None, (600, 800), 2.0,

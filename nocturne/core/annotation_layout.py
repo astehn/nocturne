@@ -153,7 +153,7 @@ _FALLBACK_DIRECTIONS = [(1, 0), (-1, 0), (0, -1), (0, 1),
                          (1, -1), (-1, -1), (1, 1), (-1, 1)]
 
 
-def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
+def place_labels(items, shape, measure, colour=DEFAULT_COLOUR, ui_scale: float = 1.0):
     """Greedy placement in priority order. Anchors are tried right, left, above,
     then below; if all collide, the label is pushed outward — in all eight
     compass directions at increasing distance — until it finds free space, and
@@ -163,8 +163,17 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
     `colour` is either a single colour string applied to every label (the
     original behaviour, still the default), or a callable `colour(item) ->
     str` so by-type colouring reaches the label and its leader too, not just
-    the object's ring."""
+    the object's ring.
+
+    `ui_scale` scales the fixed pixel spacing (`_LABEL_GAP` and the fallback
+    search step) the same way `measure`'s caller is expected to scale text
+    size -- so the gap between a label and its anchor grows/shrinks with the
+    glyphs actually being reserved for. A mismatch here is exactly the PS-07
+    class of bug: `measure` returning a box sized for text rendered BIGGER
+    than the box reserves lets that bigger text overlap its neighbour even
+    though this function found it a non-overlapping rectangle at build time."""
     resolve_colour = colour if callable(colour) else (lambda _it: colour)
+    gap = _LABEL_GAP * ui_scale
     h, w = shape
     placed, labels, leaders = [], [], []
     for it in sorted(items, key=priority_of, reverse=True):
@@ -181,10 +190,10 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR):
         # though "x" exists and the default is never used.
         ax = it.x if hasattr(it, "x") else it.cx
         ay = it.y if hasattr(it, "y") else it.cy
-        candidates = [(ax + _LABEL_GAP, ay - th / 2), (ax - _LABEL_GAP - tw, ay - th / 2),
-                      (ax - tw / 2, ay - _LABEL_GAP - th), (ax - tw / 2, ay + _LABEL_GAP)]
+        candidates = [(ax + gap, ay - th / 2), (ax - gap - tw, ay - th / 2),
+                      (ax - tw / 2, ay - gap - th), (ax - tw / 2, ay + gap)]
         for step in range(1, 9):                     # then search outward, all directions
-            dist = _LABEL_GAP + step * 18
+            dist = gap + step * 18 * ui_scale
             for dx, dy in _FALLBACK_DIRECTIONS:
                 candidates.append((ax - tw / 2 + dx * dist, ay - th / 2 + dy * dist))
         chosen = None
@@ -295,22 +304,30 @@ _MEASURE_PT = {"primary": 16.0, "secondary": 14.0, "star": 12.0, "star_bright": 
                "grid": 11.0, "compass": 17.0}
 
 
-def _default_measure(text: str, size: str) -> tuple[float, float]:
+def _default_measure(text: str, size: str, ui_scale: float = 1.0) -> tuple[float, float]:
     """A pure (Qt-free) fallback text-size estimate, used only when a caller
     doesn't inject a real one. Good enough for headless/test use; a live Qt
-    caller should pass actual font metrics for pixel-exact label placement."""
-    pt = _MEASURE_PT.get(size, _MEASURE_PT["secondary"])
+    caller should pass actual font metrics for pixel-exact label placement.
+
+    `ui_scale` must match the scale the CONSUMING adapter actually renders
+    text at -- `place_labels` reserves non-overlap rectangles from this
+    return value, so if the export adapter later draws text bigger than what
+    was reserved here, labels overlap in the export even though the live
+    preview (which renders at the unscaled size this defaults to) looks
+    clean. See `build_layout_for`'s `ui_scale` param."""
+    pt = _MEASURE_PT.get(size, _MEASURE_PT["secondary"]) * ui_scale
     return len(text) * pt * 0.62, pt * 1.3
 
 
-def _compass_primitives(wcs, shape) -> list:
+def _compass_primitives(wcs, shape, ui_scale: float = 1.0) -> list:
     from .annotate import compass_angles
     north, _east = compass_angles(wcs, shape)
     h, w = shape
-    ax, ay = w - 120.0, 120.0
+    ax, ay = w - 120.0 * ui_scale, 120.0 * ui_scale
     rad = math.radians(north)
-    tx, ty = ax + 60.0 * math.cos(rad), ay + 60.0 * math.sin(rad)
-    lx, ly = ax + 74.0 * math.cos(rad) - 6.0, ay + 74.0 * math.sin(rad) - 7.0
+    tx, ty = ax + 60.0 * ui_scale * math.cos(rad), ay + 60.0 * ui_scale * math.sin(rad)
+    lx = ax + 74.0 * ui_scale * math.cos(rad) - 6.0 * ui_scale
+    ly = ay + 74.0 * ui_scale * math.sin(rad) - 7.0 * ui_scale
     return [
         Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
         Leader(ax, ay, tx, ty, _COMPASS_COLOUR, screen_fixed=True),   # cosmetic HUD arrow
@@ -318,33 +335,52 @@ def _compass_primitives(wcs, shape) -> list:
     ]
 
 
-def _scale_bar_primitives(pixscale_arcsec: float, shape) -> list:
+def _scale_bar_primitives(pixscale_arcsec: float, shape, ui_scale: float = 1.0) -> list:
     from .annotate import scale_bar
     h, w = shape
-    length_px, text = scale_bar(pixscale_arcsec, w)
+    length_px, text = scale_bar(pixscale_arcsec, w)   # a TRUE measured length -- never scaled
     if length_px <= 0:
         return []
-    bx, by = 90.0, h - 90.0
+    bx, by = 90.0 * ui_scale, h - 90.0 * ui_scale
     return [
         Leader(bx, by, bx + length_px, by, _SCALE_COLOUR),
-        Label(text, bx, by - 24.0, _SCALE_COLOUR, "secondary"),
+        Label(text, bx, by - 24.0 * ui_scale, _SCALE_COLOUR, "secondary"),
     ]
 
 
-def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, measure=None) -> list:
+def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
+                      measure=None, ui_scale: float = 1.0) -> list:
     """Assembles the FULL primitive list the overlay draws: circles + labels +
     leaders for catalogue objects, flanking-tick markers for named stars, grid
     lines, and the compass/scale bar -- all as plain Circle/Marker/Label/
     Leader/GridLine values in image-pixel coordinates. Pure: no Qt.
 
-    Both the live Qt canvas and the burned export consume this SAME list, so
-    they draw identical content by construction rather than by remembering to
-    pass the same arguments twice.
+    Both the live Qt canvas and the burned export consume this SAME function,
+    so they draw identical CONTENT by construction rather than by remembering
+    to pass the same arguments twice. Their PLACEMENT can legitimately
+    differ, via `ui_scale` -- see below -- and that is by design, not a gap:
+    once two adapters render text at different physical sizes, identical
+    pixel positions were never achievable; content parity is the guarantee
+    that matters and is preserved regardless of `ui_scale`.
 
     `layers` is a dict of booleans keyed "objects", "stars", "grid", "compass",
     "scale", "by_type" -- missing keys default to off. `measure` is forwarded
     to `place_labels`; pass real font metrics for pixel-exact placement, or
     leave it as the pure fallback for headless/test use.
+
+    `ui_scale` is the factor the CONSUMING adapter will render text/glyph
+    sizes at, relative to the live adapter's constant on-screen point sizes
+    (the live adapter always passes the default, 1.0). It scales BOTH the
+    default measure's text-box estimate AND every fixed pixel offset that
+    `place_labels`/`_compass_primitives`/`_scale_bar_primitives` use to
+    position things relative to those boxes (`_LABEL_GAP`, the fallback
+    search step, the compass anchor/arrow/label offsets, the scale bar's
+    anchor and label gap -- never a TRUE measured quantity like a Circle's
+    radius or the scale bar's own length, which stay in real image pixels).
+    Skipping this was PS-07 recurring one level up: an export that renders
+    text bigger than what was RESERVED for it at layout time can overlap
+    labels that the (unscaled) live preview shows cleanly separated, even
+    though both consumed the identical primitive list.
 
     Each object's colour is resolved individually via `colour_for(obj,
     by_type=...)` and carried through to its circle, label AND leader -- a
@@ -357,7 +393,8 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, meas
     a star's name competes for space (and gets a leader when displaced) in
     the same collision-avoidance pass as every DSO label, rather than being
     positioned independently and risking an overlap."""
-    measure = measure or _default_measure
+    if measure is None:
+        measure = lambda text, size: _default_measure(text, size, ui_scale)
     by_type = layers.get("by_type", False)
 
     kept_objs, kept_stars = filter_by_density(objects, stars, pixscale, density)
@@ -379,7 +416,7 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, meas
     item_colour = dict(obj_colour)
     item_colour.update({id(s): star_colour for s in kept_stars})
     labels, leaders = place_labels(kept_objs + kept_stars, shape, measure,
-                                    colour=lambda it: item_colour[id(it)])
+                                    colour=lambda it: item_colour[id(it)], ui_scale=ui_scale)
     prims.extend(labels)
     prims.extend(leaders)
 
@@ -387,9 +424,9 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density, meas
         prims.extend(grid_lines(wcs, shape, _GRID_COLOUR))
 
     if layers.get("compass", False) and wcs is not None:
-        prims.extend(_compass_primitives(wcs, shape))
+        prims.extend(_compass_primitives(wcs, shape, ui_scale))
 
     if layers.get("scale", False) and pixscale > 0:
-        prims.extend(_scale_bar_primitives(pixscale, shape))
+        prims.extend(_scale_bar_primitives(pixscale, shape, ui_scale))
 
     return prims

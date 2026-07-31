@@ -1709,12 +1709,30 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is False               # and unchecks the button
 
 
+def _render_annotated(win, res, layers, path):
+    """Burns a PNG with `_save_png_with_annotations`, but with the layer
+    dict swapped out for the call so a test can isolate a single layer's
+    contribution -- restores win's real _annotation_layers afterwards."""
+    orig = win._annotation_layers
+    win._annotation_layers = lambda: layers
+    try:
+        win._save_png_with_annotations(win.project.current(), path, res)
+    finally:
+        win._annotation_layers = orig
+
+
 def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path, monkeypatch):
     """PS-07 regression: the live overlay drew named stars, but the burned
     PNG export used to build its primitives independently and silently
-    dropped them. Both paths now go through the same _annotation_primitives,
-    so this asserts the export's primitive list carries a star marker AND
-    that the burned PNG differs from a plain, un-annotated export."""
+    dropped them. Both paths now go through the same _annotation_primitives.
+
+    The star contribution is isolated rather than inferred from a mixed
+    scene: with EVERY layer but stars off, the export must differ from a
+    plain (un-annotated) render only once stars are the one thing switched
+    on, and must match it exactly when stars are the one thing switched
+    off -- so a bug that regresses star PAINTING specifically (not just the
+    primitive list) cannot hide behind the DSO circle, compass or scale
+    bar also being drawn."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
@@ -1742,16 +1760,70 @@ def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path,
         "the export path must carry the same named-star markers the live overlay shows"
 
     from PySide6.QtGui import QImage
-    from nocturne.core.export import save_png
+    from nocturne.ui.preview import to_qimage
+    # A "plain" baseline through the SAME base-pixel pipeline the burned
+    # export uses (to_qimage), not core.export.save_png (which skips the
+    # display autostretch) -- otherwise the two would differ for reasons
+    # having nothing to do with annotations at all.
     plain_path = str(tmp_path / "plain.png")
-    annotated_path = str(tmp_path / "annotated.png")
-    save_png(win.project.current(), plain_path)
-    win._save_png_with_annotations(win.project.current(), annotated_path, res)
+    to_qimage(win.project.current()).save(plain_path)
     plain = QImage(plain_path)
-    annotated = QImage(annotated_path)
-    assert not annotated.isNull()
-    assert annotated != plain, \
-        "the burned export must differ from a plain export once stars are drawn onto it"
+
+    no_layers = {"objects": False, "stars": False, "grid": False,
+                "compass": False, "scale": False, "by_type": False}
+    stars_only = dict(no_layers, stars=True)
+
+    stars_path = str(tmp_path / "stars_only.png")
+    _render_annotated(win, res, stars_only, stars_path)
+    stars_only_img = QImage(stars_path)
+    assert not stars_only_img.isNull()
+    assert stars_only_img != plain, \
+        "the star layer alone must visibly change the burned export"
+
+    off_path = str(tmp_path / "stars_off.png")
+    _render_annotated(win, res, no_layers, off_path)
+    stars_off_img = QImage(off_path)
+    assert stars_off_img == plain, \
+        "with every layer off (including stars) the export must match a plain render exactly"
+
+
+def test_star_marker_painting_specifically_reaches_the_burned_export(qtbot, tmp_path):
+    """Tighter than the layer-toggle test above: `build_layout_for` always
+    gives a named star BOTH a Marker (the flanking ticks) AND a Label (its
+    name) -- so comparing a "stars only" layer render against plain does
+    NOT isolate the marker's paint code specifically, a Label-only bug
+    would satisfy that assertion just as well. This test drives
+    `_save_png_with_annotations` with a primitive list containing ONLY a
+    star Marker (via monkeypatching `_annotation_primitives`, the shared
+    seam both call sites go through), so the only thing that can make the
+    burned PNG differ from plain is `annotation_render._paint_marker`'s
+    "star" branch itself."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._solve = ("sig", None, [])   # _save_png_with_annotations unpacks self._solve unconditionally
+
+    from PySide6.QtGui import QImage
+    from nocturne.ui.preview import to_qimage
+    from nocturne.core.annotation_layout import Marker
+
+    plain_path = str(tmp_path / "plain.png")
+    to_qimage(win.project.current()).save(plain_path)
+    plain = QImage(plain_path)
+
+    star_marker = Marker(10.0, 10.0, "star", "#5cff5c")
+    win._annotation_primitives = lambda *a, **k: [star_marker]
+    star_path = str(tmp_path / "star_marker_only.png")
+    win._save_png_with_annotations(win.project.current(), star_path, res=None)
+    star_img = QImage(star_path)
+    assert not star_img.isNull()
+    assert star_img != plain, \
+        "a star Marker on its own must visibly change the burned export"
+
+    win._annotation_primitives = lambda *a, **k: []
+    empty_path = str(tmp_path / "no_primitives.png")
+    win._save_png_with_annotations(win.project.current(), empty_path, res=None)
+    assert QImage(empty_path) == plain, \
+        "with no primitives at all the export must match a plain render exactly"
 
 
 def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):

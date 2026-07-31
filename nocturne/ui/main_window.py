@@ -789,17 +789,26 @@ class MainWindow(QMainWindow):
         now; Task 7 replaces this with the real panel's live setting."""
         return _DEFAULT_ANNOTATION_DENSITY
 
-    def _annotation_primitives(self, res, objs, shape) -> list:
-        """The ONE primitive list both the live overlay and the burned PNG
-        export draw from (closes PS-07: they used to build these
+    def _annotation_primitives(self, res, objs, shape, ui_scale: float = 1.0) -> list:
+        """The ONE call both the live overlay and the burned PNG export make
+        to build their primitives (closes PS-07: they used to build these
         independently, and the export silently dropped named stars the live
-        overlay showed). Both call sites must go through this rather than
-        calling build_layout_for themselves."""
+        overlay showed). Neither call site may call build_layout_for itself.
+
+        `ui_scale` must match what the CONSUMING adapter will actually
+        render text/glyphs at: the live overlay renders at the adapter's
+        constant on-screen sizes (`ui_scale=1.0`, the default), while the
+        export renders proportionally to the image (see
+        `annotation_render.scale_for`). Passing the right scale here is what
+        makes `place_labels`' collision avoidance valid for whichever
+        adapter actually draws the result — the export gets its own layout
+        PASS at its own scale, not just a repaint of the live layout."""
         from ..core.annotation_layout import build_layout_for
         from ..core.catalog import named_stars_in_field
         stars = named_stars_in_field(res.wcs, shape)
         return build_layout_for(objs, stars, res.wcs, shape, res.pixscale_arcsec,
-                                 self._annotation_layers(), self._annotation_density())
+                                 self._annotation_layers(), self._annotation_density(),
+                                 ui_scale=ui_scale)
 
     def _show_annotations(self, res, objs):
         from .annotation_overlay import build_annotation_group
@@ -2148,10 +2157,10 @@ class MainWindow(QMainWindow):
                        "Exporting…", "Export failed")
 
     def _save_png_with_annotations(self, img, path, res) -> None:
-        from .annotation_render import paint_annotations
+        from .annotation_render import paint_annotations, scale_for
         h, w = img.data.shape[:2]
         _sig, _res, objs = self._solve
-        prims = self._annotation_primitives(res, objs, (h, w))
+        prims = self._annotation_primitives(res, objs, (h, w), ui_scale=scale_for((h, w)))
         out = to_qimage(img)
         paint_annotations(out, prims, (h, w))
         out.save(path)

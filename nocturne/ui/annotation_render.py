@@ -22,8 +22,21 @@ a floor (`_MIN_PT`) so they never shrink to nothing on a tiny export.
 
 There is no "screen" in an export, so `screen_fixed` on a `Leader` (the
 compass arrow's cosmetic-HUD flag) is not consulted here — every primitive
-is drawn in plain image-space, with only its size CLASS (not its position)
-going through the export size mapping."""
+is drawn in plain image-space.
+
+IMPORTANT: the size mapping is not just a rendering-time detail — it also
+has to reach `core.annotation_layout.build_layout_for`'s `ui_scale`
+parameter, which the caller (`main_window._annotation_primitives`) sets to
+`scale_for(shape)` for the export path. `place_labels` reserves
+non-overlap rectangles from `build_layout_for`'s `measure` callback at
+BUILD time; if this module rendered text bigger than what was reserved for
+it, labels that the (unscaled) live preview shows cleanly separated could
+overlap in the export even though both consumed the identical primitive
+list. Passing the same scale through both stages means the export gets its
+own layout PASS, not just its own paint pass — its label positions
+legitimately differ from the live overlay's (bigger text needs more room),
+and that is correct: content parity, not pixel-identical placement, is the
+guarantee `build_layout_for` makes."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, Qt
@@ -44,7 +57,11 @@ _REF_DIM = 1200.0   # baseline the live adapter's constant point sizes read
 _MIN_PT = 4.0        # floor so text/glyphs never vanish on a tiny export
 
 
-def _scale_for(shape) -> float:
+def scale_for(shape) -> float:
+    """The export `ui_scale`: the image's own smaller dimension against the
+    `_REF_DIM` baseline. Public so `main_window` can pass the SAME number
+    into `build_layout_for`'s `ui_scale` that this module uses to paint —
+    see the module docstring for why those two must agree."""
     h, w = shape
     return max(min(h, w), 1.0) / _REF_DIM
 
@@ -134,7 +151,7 @@ def _paint_grid_line(painter: QPainter, p: GridLine, scale: float) -> None:
         path.lineTo(x, y)
     painter.drawPath(path)
     if p.label:
-        _paint_text(painter, p.label, x0 + 3.0, y0 - 12.0, p.colour, "grid", scale)
+        _paint_text(painter, p.label, x0 + 3.0 * scale, y0 - 12.0 * scale, p.colour, "grid", scale)
 
 
 def paint_annotations(image: QImage, primitives, shape) -> None:
@@ -145,7 +162,7 @@ def paint_annotations(image: QImage, primitives, shape) -> None:
     frame the primitives were laid out for."""
     if not primitives:
         return
-    scale = _scale_for(shape)
+    scale = scale_for(shape)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     try:
