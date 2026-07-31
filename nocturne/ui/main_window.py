@@ -244,6 +244,7 @@ class MainWindow(QMainWindow):
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
+        self.image_view.annotationsToggled.connect(self._on_annotations_toggled)
         self.image_view.hovered.connect(self._on_hover)
         self.image_view.hoverLeft.connect(self._on_hover_left)
         self.image_view.set_pixel_cursor(True)   # crosshair where the readout reads
@@ -735,29 +736,44 @@ class MainWindow(QMainWindow):
         return res, objs
 
     def _open_plate_solve(self):
-        """Toggle the annotation overlay. If it's showing, hide it. Otherwise
-        show it — reusing the cached solution for this framing, or solving once
-        if there isn't one. The toolbar action's checked state mirrors whether
-        the overlay is visible."""
-        if self.image_view._annotations is not None:        # currently shown -> hide
-            self.image_view.set_annotations(None)
+        """Open or close the Plate Solve TOOL. It does not solve, and it does
+        not hide the overlay.
+
+        Solving and viewing are separate concerns: you solve once, then keep
+        working through the pipeline with the annotations up. So the toolbar
+        button owns the tool panel, the canvas pill owns overlay visibility,
+        and closing the tool leaves both the solution and the overlay alone.
+        Nothing runs until the panel's Solve button is pressed — a solve takes
+        seconds and spawns ASTAP, so it should never start by surprise."""
+        if not self.solve_panel.isHidden():                  # open -> close the tool
+            self.solve_panel.setVisible(False)
             self._solve_act.setChecked(False)
-            self.solve_panel.setVisible(False)   # the panel is part of the tool, not the image
             return
         if self.project is None or not astap_valid(self.settings):
             self._solve_act.setChecked(False)
             if self.project is not None:
                 self._show_warning("Set the ASTAP path in Settings to plate-solve.")
             return
+        self.solve_panel.setVisible(True)
+        self._solve_act.setChecked(True)
         sig = self._solve_sig()
-        if self._solve and self._solve[0] == sig:           # cached solution: just show it
+        if self._solve and self._solve[0] == sig:            # cached: show what we have
             self._solve_freshness = "cached"
             self.solve_panel.set_state("cached")
             self._show_annotations(*self._solve[1:])
             self._update_solve_result_card(*self._solve[1:], cached=True)
-            self._solve_act.setChecked(True)
-            return
-        self._start_solve(sig)
+        else:
+            self.solve_panel.set_state("not_solved")
+
+    def _on_annotations_toggled(self, shown: bool) -> None:
+        """The canvas pill only changes VISIBILITY. The solution stays cached, so
+        toggling back is instant and never re-runs ASTAP — and the panel must say
+        so, otherwise it keeps reporting 'Solved' for a solve it is reusing."""
+        if shown and self.image_view._annotations is None and self._solve:
+            self._solve_freshness = "cached"
+            self.solve_panel.set_state("cached")
+            self._show_annotations(*self._solve[1:])
+            self._update_solve_result_card(*self._solve[1:], cached=True)
 
     def _start_solve(self, sig) -> None:
         """Kicks off a blocking (off-thread) solve and drives the panel into
@@ -907,7 +923,6 @@ class MainWindow(QMainWindow):
                                  measure=make_measure(ui_scale), ui_scale=ui_scale)
 
     def _show_annotations(self, res, objs):
-        self.solve_panel.setVisible(True)   # the panel accompanies the overlay
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
         prims = self._annotation_primitives(res, objs, (h, w))

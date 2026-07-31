@@ -1584,6 +1584,27 @@ def test_narrowband_refused_on_mono_image(qtbot, tmp_path):
     assert "colour" in win._warning.text().lower()
 
 
+def _solve_now(win):
+    """Open the Plate Solve tool AND run a solve.
+
+    The toolbar button now only opens the tool — solving is the panel's Solve
+    button — so a test that wants annotations must do both.
+    """
+    win._open_plate_solve()
+    win._on_resolve_requested()
+
+
+def _show_overlay(win):
+    """Re-show the overlay the way the canvas pill does: from cache, no re-solve."""
+    win.image_view._on_annotation_toggled(True)
+
+
+def _hide_overlay(win):
+    """Hide the overlay the way the canvas pill does, leaving the solve cached."""
+    win.image_view._on_annotation_toggled(False)
+    win.image_view.set_annotations(None)
+
+
 def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -1598,7 +1619,7 @@ def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.project.current().metadata.get("target_solved", "").startswith("NGC 7000")
     assert win.image_view._annotations is not None            # overlay shown
 
@@ -1607,7 +1628,7 @@ def test_plate_solve_not_configured_shows_hint(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     # No astap_path configured — astap_valid(win.settings) should be False.
-    win._open_plate_solve()
+    _solve_now(win)
     assert win._solve is None
     assert win._warning.text() != ""
 
@@ -1620,7 +1641,7 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
     from nocturne.tools.astap import SolveResult
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(False, None, 0.0, 0.0, 0.0), []))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win._warning.text() != ""
     assert win.image_view._annotations is None
     assert win._solve is None
@@ -1639,14 +1660,14 @@ def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatc
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.image_view._annotations is not None            # overlay shown
 
-    win._open_plate_solve()                                   # second call, unchanged image
-    assert win.image_view._annotations is None                # toggled off
+    _hide_overlay(win)                                        # pill off
+    assert win.image_view._annotations is None
 
-    win._open_plate_solve()                                   # third call
-    assert win.image_view._annotations is not None             # toggled back on
+    _show_overlay(win)                                        # pill on, from cache
+    assert win.image_view._annotations is not None
 
 
 def test_solve_sig_stable_under_tonal_steps_changes_on_geometry(qtbot, tmp_path):
@@ -1678,7 +1699,7 @@ def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                  [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.image_view._annotations is not None            # overlay shown
 
     win._flip_h()                                              # geometry change: mirror-wrong overlay must clear
@@ -1698,15 +1719,26 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     monkeypatch.setattr(win, "_solve_current",
                         lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
                                      [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    # The toolbar button owns the TOOL PANEL; the canvas pill owns the overlay.
+    # Hiding the overlay must NOT close the tool, and closing the tool must NOT
+    # discard the overlay -- that separation is the whole point of the split.
     assert win._solve_act.isChecked() is False
-    win._open_plate_solve()                                  # solve + show
-    assert win._solve_act.isChecked() is True                # button reflects overlay ON
-    win._open_plate_solve()                                  # hide
-    assert win._solve_act.isChecked() is False               # button reflects overlay OFF
-    win._open_plate_solve()                                  # show again (cached)
-    assert win._solve_act.isChecked() is True
-    win._flip_h(); win._refresh()                            # framing change clears overlay
-    assert win._solve_act.isChecked() is False               # and unchecks the button
+    _solve_now(win)                                          # opens the tool and solves
+    assert win._solve_act.isChecked() is True                # tool open
+    assert win.solve_panel.isHidden() is False
+    assert win.image_view._annotations is not None
+
+    _hide_overlay(win)                                       # pill only
+    assert win._solve_act.isChecked() is True, "hiding the overlay must not close the tool"
+    assert win.solve_panel.isHidden() is False
+
+    _show_overlay(win)                                       # pill again, from cache
+    assert win.image_view._annotations is not None
+
+    win._open_plate_solve()                                  # close the tool
+    assert win._solve_act.isChecked() is False
+    assert win.solve_panel.isHidden() is True
+    assert win.image_view._annotations is not None, "closing the tool must keep the overlay"
 
 
 def test_solve_panel_present_in_right_column(qtbot, tmp_path):
@@ -1743,7 +1775,7 @@ def _solved_win(qtbot, tmp_path, monkeypatch):
                 [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)])
 
     monkeypatch.setattr(win, "_solve_current", fake_solve)
-    win._open_plate_solve()
+    _solve_now(win)
     assert win.image_view._annotations is not None
     assert len(calls) == 1                    # the setup solve itself
     return win, calls
@@ -1794,10 +1826,10 @@ def test_solve_state_cached_when_reused_after_tonal_edit(qtbot, tmp_path, monkey
     n_calls = len(calls)
     assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['solved']}")
 
-    win._open_plate_solve()                                  # hide the overlay
+    _hide_overlay(win)                              # pill hides, solve stays cached
     win._go_to_id("stretch")
     win.apply_current(0.6)                                   # a tonal step -- doesn't move stars
-    win._open_plate_solve()                                  # show again -- reused from cache
+    _show_overlay(win)                               # pill re-shows from cache
 
     assert win.image_view._annotations is not None
     assert win.solve_panel.header_btn.text().startswith(f"Plate solve · {STATE_LABELS['cached']}")
@@ -1856,7 +1888,7 @@ def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path,
     monkeypatch.setattr("nocturne.core.catalog.named_stars_in_field",
                         lambda wcs, shape: [star])
 
-    win._open_plate_solve()                                  # solve + show the live overlay
+    _solve_now(win)                                  # solve + show the live overlay
     assert win.image_view._annotations is not None
 
     sig, res, objs = win._solve
