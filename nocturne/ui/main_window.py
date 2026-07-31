@@ -86,6 +86,16 @@ _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
 
+# Plate-solve annotation layer/density defaults. No panel exists yet to drive
+# these (that's Task 7) — everything routes through _annotation_layers() /
+# _annotation_density() below rather than reading these constants directly,
+# so Task 7 only has to change those two methods, not every call site.
+_DEFAULT_ANNOTATION_LAYERS = {
+    "objects": True, "stars": True, "grid": False, "compass": True,
+    "scale": True, "by_type": False,
+}
+_DEFAULT_ANNOTATION_DENSITY = "balanced"
+
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -768,16 +778,34 @@ class MainWindow(QMainWindow):
         self._solve_act.setChecked(True)
         self._rebuild_panel()                               # refresh Target line
 
-    def _show_annotations(self, res, objs):
-        from ..core.annotate import compass_angles, scale_bar
+    def _annotation_layers(self) -> dict:
+        """Layer visibility toggles for plate-solve annotations. Fixed for
+        now; Task 7 replaces this with the real panel's live settings — keep
+        going through this method rather than the module default directly."""
+        return dict(_DEFAULT_ANNOTATION_LAYERS)
+
+    def _annotation_density(self) -> str:
+        """Catalogue/star density for plate-solve annotations. Fixed for
+        now; Task 7 replaces this with the real panel's live setting."""
+        return _DEFAULT_ANNOTATION_DENSITY
+
+    def _annotation_primitives(self, res, objs, shape) -> list:
+        """The ONE primitive list both the live overlay and the burned PNG
+        export draw from (closes PS-07: they used to build these
+        independently, and the export silently dropped named stars the live
+        overlay showed). Both call sites must go through this rather than
+        calling build_layout_for themselves."""
+        from ..core.annotation_layout import build_layout_for
         from ..core.catalog import named_stars_in_field
+        stars = named_stars_in_field(res.wcs, shape)
+        return build_layout_for(objs, stars, res.wcs, shape, res.pixscale_arcsec,
+                                 self._annotation_layers(), self._annotation_density())
+
+    def _show_annotations(self, res, objs):
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
-        north, _east = compass_angles(res.wcs, (h, w))
-        length, label = scale_bar(res.pixscale_arcsec, w)
-        stars = named_stars_in_field(res.wcs, (h, w))
-        self.image_view.set_annotations(
-            build_annotation_group(objs, north, length, label, (h, w), "dark", stars=stars))
+        prims = self._annotation_primitives(res, objs, (h, w))
+        self.image_view.set_annotations(build_annotation_group(prims, (h, w)))
 
     def _remove_stars(self, img):
         if rcastro_valid(self.settings):
@@ -2120,23 +2148,12 @@ class MainWindow(QMainWindow):
                        "Exporting…", "Export failed")
 
     def _save_png_with_annotations(self, img, path, res) -> None:
-        from PySide6.QtWidgets import QGraphicsScene, QGraphicsPixmapItem
-        from PySide6.QtGui import QImage, QPixmap, QPainter
-        from ..core.annotate import compass_angles, scale_bar
-        from .annotation_overlay import build_annotation_group
+        from .annotation_render import paint_annotations
         h, w = img.data.shape[:2]
-        north, _east = compass_angles(res.wcs, (h, w))
-        length, label = scale_bar(res.pixscale_arcsec, w)
         _sig, _res, objs = self._solve
-        group = build_annotation_group(objs, north, length, label, (h, w), "dark")
-        base = to_qimage(img)
-        scene = QGraphicsScene()
-        scene.addItem(QGraphicsPixmapItem(QPixmap.fromImage(base)))
-        scene.addItem(group)
-        out = QImage(base.size(), QImage.Format.Format_ARGB32)
-        painter = QPainter(out)
-        scene.render(painter, target=out.rect(), source=scene.itemsBoundingRect())
-        painter.end()
+        prims = self._annotation_primitives(res, objs, (h, w))
+        out = to_qimage(img)
+        paint_annotations(out, prims, (h, w))
         out.save(path)
 
     # --- settings ---

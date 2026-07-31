@@ -1709,6 +1709,51 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is False               # and unchecks the button
 
 
+def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path, monkeypatch):
+    """PS-07 regression: the live overlay drew named stars, but the burned
+    PNG export used to build its primitives independently and silently
+    dropped them. Both paths now go through the same _annotation_primitives,
+    so this asserts the export's primitive list carries a star marker AND
+    that the burned PNG differs from a plain, un-annotated export."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject, NamedStar
+    from nocturne.core.annotation_layout import Marker
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6),
+                                 [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    star = NamedStar("Deneb", 100.0, 0.0, 1.25, 10.0, 10.0)
+    monkeypatch.setattr("nocturne.core.catalog.named_stars_in_field",
+                        lambda wcs, shape: [star])
+
+    win._open_plate_solve()                                  # solve + show the live overlay
+    assert win.image_view._annotations is not None
+
+    sig, res, objs = win._solve
+    h, w = win.project.current().data.shape[:2]
+    prims = win._annotation_primitives(res, objs, (h, w))
+    assert any(isinstance(p, Marker) and p.kind == "star" for p in prims), \
+        "the export path must carry the same named-star markers the live overlay shows"
+
+    from PySide6.QtGui import QImage
+    from nocturne.core.export import save_png
+    plain_path = str(tmp_path / "plain.png")
+    annotated_path = str(tmp_path / "annotated.png")
+    save_png(win.project.current(), plain_path)
+    win._save_png_with_annotations(win.project.current(), annotated_path, res)
+    plain = QImage(plain_path)
+    annotated = QImage(annotated_path)
+    assert not annotated.isNull()
+    assert annotated != plain, \
+        "the burned export must differ from a plain export once stars are drawn onto it"
+
+
 def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
     from PySide6.QtWidgets import QPlainTextEdit
     from PySide6.QtCore import Qt
