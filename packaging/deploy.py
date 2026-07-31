@@ -145,7 +145,13 @@ def _human_date(date: datetime.date) -> str:
 
 
 def render_changelog_html(version: str, date: datetime.date, notes: Notes) -> str:
+    # The version is its own line, not a fallback for a missing headline. It read
+    # as one for six releases, so the published page showed only prose headlines
+    # -- two entries dated "31 July 2026" and no way to tell which one you were
+    # running. A changelog whose reader cannot locate their own version in it is
+    # doing half its job.
     lines = ['<article class="release">',
+             f'  <p class="ver">v{_html.escape(version)}</p>',
              f"  <h2>{_html.escape(notes.headline or version)}</h2>",
              f'  <p class="when">{_human_date(date)}</p>']
     for name, items in _sections(notes):

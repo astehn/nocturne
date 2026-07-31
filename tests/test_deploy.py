@@ -119,6 +119,16 @@ def test_render_changelog_html_is_escaped_article():
     assert html.rstrip().endswith("</article>")
 
 
+def test_render_changelog_html_names_the_version_even_when_a_headline_exists():
+    # Regression: the version used to be the `headline or version` fallback, so a
+    # release with a headline -- i.e. every real release -- published without one.
+    n = deploy.Notes(headline="Colour & light", added=["a"], changed=[], fixed=[])
+    html = deploy.render_changelog_html("0.4.0", datetime.date(2026, 7, 25), n)
+    assert '<p class="ver">v0.4.0</p>' in html
+    assert html.index('class="ver"') < html.index("<h2>"), \
+        "the version must lead the entry, not trail the prose"
+
+
 def _cfg(tmp_path):
     return deploy.load_config(_write_config(tmp_path))
 
