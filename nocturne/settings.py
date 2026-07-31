@@ -23,6 +23,16 @@ def resolve_settings_path(home: str | None = None) -> str:
     return new_settings
 
 
+# Plate-solve annotation overlay defaults, shared with nocturne.ui.solve_panel
+# (which imports these rather than redefining them) so the panel's checkbox
+# states and the persisted settings can never drift apart.
+DEFAULT_ANNOTATION_LAYERS = {
+    "objects": True, "stars": True, "grid": False,
+    "compass": True, "scale": True, "by_type": False,
+}
+DEFAULT_ANNOTATION_DENSITY = "balanced"
+
+
 @dataclass
 class Settings:
     graxpert_path: str = ""
@@ -34,6 +44,8 @@ class Settings:
     handle: str = ""                # user's @handle, burned onto shared images
     recent_projects: list[str] = field(default_factory=list)  # most-recent-first, capped
     last_project_dir: str = ""      # directory a "new project" file picker should open in
+    annotation_layers: dict = field(default_factory=lambda: dict(DEFAULT_ANNOTATION_LAYERS))
+    annotation_density: str = DEFAULT_ANNOTATION_DENSITY
 
 
 def load_settings(path: str) -> Settings:
@@ -51,6 +63,8 @@ def load_settings(path: str) -> Settings:
         handle=data.get("handle", ""),
         recent_projects=data.get("recent_projects", []),
         last_project_dir=data.get("last_project_dir", ""),
+        annotation_layers=data.get("annotation_layers", dict(DEFAULT_ANNOTATION_LAYERS)),
+        annotation_density=data.get("annotation_density", DEFAULT_ANNOTATION_DENSITY),
     )
 
 

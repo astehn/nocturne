@@ -29,6 +29,70 @@ def compass_angles(wcs, shape) -> tuple[float, float]:
     return north % 360, east % 360
 
 
+def format_ra_hms(ra_deg: float) -> str:
+    """RA in sexagesimal hours, e.g. '20h 59m 17s'. Wraps into [0, 360) first
+    so a centre a hair over/under the 0/360 seam (or slightly negative from
+    upstream maths) still reads as a sane time rather than '24h' or a bare
+    minus sign."""
+    ra_deg = ra_deg % 360.0
+    total_s = ra_deg / 15.0 * 3600.0        # seconds of time
+    h, rem = divmod(total_s, 3600.0)
+    m, s = divmod(rem, 60.0)
+    h, m, s = int(h), int(m), round(s)
+    if s >= 60:                             # rounding carry: 59.6s -> 60 -> 1m
+        s -= 60
+        m += 1
+    if m >= 60:
+        m -= 60
+        h += 1
+    h %= 24
+    return f"{h:02d}h {m:02d}m {s:02d}s"
+
+
+def format_dec_dms(dec_deg: float) -> str:
+    """Dec in sexagesimal degrees, e.g. '+44° 31′ 44″' or '-0° 30′ 00″'. The
+    sign is pulled off BEFORE abs() so a declination between 0 and -1 deg —
+    where int(dec_deg) alone truncates to 0 and silently loses the minus —
+    still renders negative."""
+    sign = "-" if dec_deg < 0 else "+"
+    total_s = abs(dec_deg) * 3600.0         # arcsec
+    d, rem = divmod(total_s, 3600.0)
+    m, s = divmod(rem, 60.0)
+    d, m, s = int(d), int(m), round(s)
+    if s >= 60:                             # rounding carry
+        s -= 60
+        m += 1
+    if m >= 60:
+        m -= 60
+        d += 1
+    return f"{sign}{d:02d}° {m:02d}′ {s:02d}″"
+
+
+def format_orientation(north_angle_deg: float) -> str:
+    """North's on-screen rotation as e.g. 'N +12.4°': degrees clockwise the
+    frame is turned away from camera-up. compass_angles() returns 270 for
+    'North straight up, no rotation' (screen convention 0=+x, 90=down), so we
+    re-centre on that and wrap to (-180, 180] for the nearest reading."""
+    rot = ((north_angle_deg - 270.0 + 180.0) % 360.0) - 180.0
+    return f"N {rot:+.1f}°"
+
+
+def is_mirrored(wcs, shape) -> bool:
+    """True if the frame is flipped left-right relative to the standard,
+    undistorted sky view (North up, East left) -- derived from the RELATIVE
+    sense of compass_angles' two outputs, which already bakes in the
+    FITS_Y_DOWN screen convention, so no separate flip logic is needed here.
+
+    Standard: East sits ~90 deg clockwise of North (east - north wraps to
+    ~270). Mirrored: East sits ~90 deg counter-clockwise of North (wraps to
+    ~90). This is rotation-invariant -- only the frame's chirality matters,
+    not its position angle -- verified against a synthetic WCS rotated 45 deg
+    in tests/core/test_annotate.py, where the wrapped difference is unchanged
+    by rotation and only flips between mirrored/non-mirrored WCS matrices."""
+    north, east = compass_angles(wcs, shape)
+    return ((east - north) % 360.0) < 180.0
+
+
 def scale_bar(pixscale_arcsec: float, width_px: int) -> tuple[int, str]:
     """A bar covering roughly a fifth of the frame, rounded to a readable
     angular length. Chosen from the actual frame width so it works on both a
