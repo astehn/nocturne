@@ -3085,3 +3085,54 @@ def test_fov_hint_falls_back_to_the_instrument_profile():
 
     fov, src = _fov_hint({}, 0)
     assert src == "none" and fov is None
+
+
+def _solved_with_objects(qtbot, tmp_path, monkeypatch, objects):
+    win = _stretched_window(qtbot, tmp_path)
+    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current",
+                        lambda img: (SolveResult(True, wc, 100.0, 0.0, 3.6), objects))
+    _solve_now(win)
+    return win
+
+
+def test_object_list_lists_what_the_solve_found(qtbot, tmp_path, monkeypatch):
+    from nocturne.core.catalog import CatalogObject
+    objs = [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12),
+            CatalogObject("LDN 935", "", 100.0, 0.0, 0.0, 8, 8)]
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, objs)
+    names = [win.solve_panel.object_list.item(i).text()
+             for i in range(win.solve_panel.object_list.count())]
+    assert any("NGC 7000" in n for n in names)
+    assert any("LDN 935" in n for n in names)
+    # Ordered by the same priority the overlay places labels in, so the list and
+    # the image read as one ranking rather than two.
+    assert "NGC 7000" in names[0]
+
+
+def test_picking_an_object_focuses_its_TRUE_centre(qtbot, tmp_path, monkeypatch):
+    """A large nebula whose centre lies off-frame keeps its label clamped to the
+    edge. Focusing must go to the real centre, not to where the label sits."""
+    from nocturne.core.catalog import CatalogObject
+    off = CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0,
+                        5, 5, True, -300.0, 40.0)      # x,y clamped; cx,cy real
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, [off])
+    focused = []
+    monkeypatch.setattr(win.image_view, "focus_on",
+                        lambda x, y, **kw: focused.append((x, y)))
+    win._on_object_activated("NGC 7000")
+    assert focused == [(-300.0, 40.0)], focused
+
+
+def test_picking_an_unknown_object_is_a_no_op(qtbot, tmp_path, monkeypatch):
+    from nocturne.core.catalog import CatalogObject
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch,
+                               [CatalogObject("NGC 7000", "", 100.0, 0.0, 120.0, 12, 12)])
+    focused = []
+    monkeypatch.setattr(win.image_view, "focus_on", lambda x, y, **kw: focused.append((x, y)))
+    win._on_object_activated("NOT IN FIELD")
+    assert focused == []

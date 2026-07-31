@@ -237,6 +237,20 @@ class ImageView(QGraphicsView):
         if not self._item.pixmap().isNull():
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
 
+    def focus_on(self, x: float, y: float, min_scale: float = 1.0) -> None:
+        """Centre the view on an image pixel, zooming in if currently zoomed out.
+
+        Used by the plate-solve object list: picking an object should take you to
+        it. Zooming only when below `min_scale` means a click never yanks you
+        further out than you already were, and never re-zooms if you have
+        deliberately zoomed in past it."""
+        if self._item.pixmap().isNull():
+            return
+        current = self.transform().m11()
+        if current < min_scale and current > 0:
+            self.scale(min_scale / current, min_scale / current)
+        self.centerOn(float(x), float(y))
+
     def actual_size(self) -> None:
         self.resetTransform()
 

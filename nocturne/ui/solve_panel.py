@@ -4,10 +4,10 @@ wires it into main_window (creating it, calling set_state/set_result, and
 persisting layers()/density() into Settings on change)."""
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..core.annotate import (
@@ -51,6 +51,7 @@ class SolvePanel(QWidget):
     layersChanged = Signal(dict)
     densityChanged = Signal(str)
     resolveRequested = Signal()
+    objectActivated = Signal(str)   # catalogue name of a picked row
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -105,6 +106,22 @@ class SolvePanel(QWidget):
         action_row.addWidget(self.resolve_btn)
         content_lay.addLayout(action_row)
 
+        # The overlay draws what is in frame; the list makes it navigable. A
+        # solved field routinely holds more objects than fit legibly on the
+        # image, and the ones density drops are exactly the ones you might be
+        # hunting for. Collapsed by default: the panel is already tall.
+        self.objects_toggle = QPushButton("Objects in field ▸")
+        self.objects_toggle.setFlat(True)
+        self.objects_toggle.setCheckable(True)
+        self.objects_toggle.toggled.connect(self._on_objects_toggled)
+        content_lay.addWidget(self.objects_toggle)
+        self.object_list = QListWidget()
+        self.object_list.setMaximumHeight(180)
+        self.object_list.hide()
+        self.object_list.itemActivated.connect(self._on_object_picked)
+        self.object_list.itemClicked.connect(self._on_object_picked)
+        content_lay.addWidget(self.object_list)
+
         outer.addWidget(self.content)
 
         self._update_header()
@@ -144,6 +161,36 @@ class SolvePanel(QWidget):
             box.blockSignals(True)
             box.setChecked(self._layers.get(key, False))
             box.blockSignals(False)
+
+    def _on_objects_toggled(self, on: bool) -> None:
+        self.object_list.setVisible(bool(on))
+        self.objects_toggle.setText(f"Objects in field {'▾' if on else '▸'}")
+
+    def _on_object_picked(self, item) -> None:
+        name = item.data(Qt.ItemDataRole.UserRole)
+        if name:
+            self.objectActivated.emit(name)
+
+    def set_objects(self, objects) -> None:
+        """Fill the list from the solve's catalogue objects.
+
+        Ordered by the same priority the overlay uses, so the list reads in the
+        same order of significance the labels are placed in — a user scanning
+        the list and the image is looking at one ranking, not two."""
+        from ..core.annotation_layout import priority_of
+        self.object_list.clear()
+        for o in sorted(objects, key=lambda x: (priority_of(x), x.major_arcmin),
+                        reverse=True):
+            label = f"{o.name}  {o.common}".strip() if o.common else o.name
+            if o.major_arcmin:
+                label += f"   {o.major_arcmin:.0f}′"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, o.name)
+            if not o.centered:
+                item.setToolTip("Centre lies outside the frame")
+            self.object_list.addItem(item)
+        self.objects_toggle.setText(
+            f"Objects in field ({len(objects)}) {'▾' if self.objects_toggle.isChecked() else '▸'}")
 
     def _on_density_changed(self, index: int) -> None:
         self._density = self.density_box.itemData(index)

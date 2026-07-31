@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
         self.solve_panel.layersChanged.connect(self._on_annotation_layers_changed)
         self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
+        self.solve_panel.objectActivated.connect(self._on_object_activated)
         self._right_layout.addWidget(self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
         self._panel = QWidget()
@@ -811,6 +812,19 @@ class MainWindow(QMainWindow):
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
 
+    def _on_object_activated(self, name: str) -> None:
+        """Picking a row takes you to that object on the image.
+
+        Uses the object's TRUE centre, not its clamped label anchor — a large
+        nebula whose centre lies off-frame should still send the view toward it
+        rather than to the frame edge where its label happens to sit."""
+        if not self._solve:
+            return
+        for o in self._solve[2]:
+            if o.name == name:
+                self.image_view.focus_on(o.cx, o.cy)
+                return
+
     def _on_resolve_requested(self) -> None:
         """SolvePanel's Re-solve button: always forces a FRESH solve, even if
         a cached solution for this exact framing exists — the user explicitly
@@ -865,6 +879,7 @@ class MainWindow(QMainWindow):
         self.solve_panel.set_result(res, target, (h, w), res.pixscale_arcsec,
                                     self._solve_elapsed, cached,
                                     scale_source=getattr(self, "_hint_source", "header"))
+        self.solve_panel.set_objects(objs)
 
     def _sync_solve_panel(self) -> None:
         """Keeps SolvePanel's status badge honest outside the explicit
