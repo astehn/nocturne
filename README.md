@@ -42,7 +42,8 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🌈 **Narrowband, one press** — turn a dualband Ha/OIII master into a finished two-gas colour image (stars removed, nebula colour-mapped, stars screened back), or use the guided Narrowband tool for multiple palettes with a live preview. Ha/OIII channel extraction too.
 - 🧱 **Smart stacking & frame grading** — point it at a folder of subs; it grades every frame (flagging clouds and soft stars), rejects the duds, registers (handles alt-az field rotation) and integrates a clean master.
 - 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
-- ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves, auto Levels with clipping preview, and HDR core recovery — each with a live preview.
+- ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves, auto Levels, and HDR core recovery — each with a live preview.
+- 🔬 **Pixel readout & clipping warning** — hover for a pixel's R/G/B and luminance (with a crosshair so you know which one); from Stretch on, a live warning when highlights blow or shadows crush, plus an overlay showing exactly which pixels.
 - ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure and soft glow — ten taps, each individually undoable.
 - ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically.
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
