@@ -185,14 +185,18 @@ def test_result_card_shows_north_orientation_when_wcs_present(qtbot):
     assert "N -180.0°" in panel.result_label.text()   # see FITS_Y_DOWN correction
 
 
-def test_result_card_flags_mirrored_orientation_only_when_actually_mirrored(qtbot):
+def test_result_card_never_claims_parity(qtbot):
+    """Parity is deliberately absent.
+
+    is_mirrored() derives from the same screen convention as the projection, so
+    it inverted when FITS_Y_DOWN was corrected, and it reported "mirrored" on a
+    Seestar frame the user verified against Stellarium as NOT mirrored. This is
+    the panel that tells you whether to trust the solve; an unverified claim
+    there is worse than a missing field.
+    """
     panel = SolvePanel()
     qtbot.addWidget(panel)
+    res = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs())
+    panel.set_result(res, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False)
+    assert "mirrored" not in panel.result_label.text().lower()
 
-    standard = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs(mirrored=False))
-    panel.set_result(standard, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False)
-    assert "mirrored" not in panel.result_label.text()
-
-    flipped = _FakeResult(center_ra_deg=314.82, center_dec_deg=44.53, wcs=_wcs(mirrored=True))
-    panel.set_result(flipped, "", (1080, 1920), pixscale=2.0, elapsed=1.0, cached=False)
-    assert "mirrored" in panel.result_label.text()

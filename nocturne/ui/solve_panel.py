@@ -203,9 +203,14 @@ class SolvePanel(QWidget):
         wcs = getattr(res, "wcs", None)
         if wcs is not None:
             north, _east = compass_angles(wcs, shape)
+            # Parity is NOT reported. is_mirrored() derives from the same screen
+            # convention as the projection, so it inverted when FITS_Y_DOWN was
+            # corrected (2026-07-31) — and it claimed "mirrored" on a Seestar
+            # frame the user confirmed matches Stellarium's view, i.e. not
+            # mirrored. On the one panel whose job is to say whether a solve can
+            # be trusted, an unverified claim is worse than a missing field.
+            # Restore it only with ground truth from a frame of known handedness.
             orientation = "  ·  " + format_orientation(north)
-            if is_mirrored(wcs, shape):
-                orientation += ", mirrored"
         lines.append(f"{fov_w_deg:.1f}° × {fov_h_deg:.1f}°  ·  "
                      f"{pixscale:.2f}″/px{orientation}")
 
