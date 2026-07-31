@@ -33,6 +33,8 @@ class CatalogObject:
     x: float
     y: float
     centered: bool = True       # True if the object's CENTRE lands inside the frame
+    cx: float = 0.0             # TRUE projected centre; may be outside the frame
+    cy: float = 0.0             # (x/y above are the label anchor, clamped inside)
 
 
 @dataclass
@@ -101,7 +103,8 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
         centered = 0 <= x < w and 0 <= y < h
         lx = min(max(x, _LABEL_MARGIN), w - _LABEL_MARGIN)   # clamp label into the frame
         ly = min(max(y, _LABEL_MARGIN), h - _LABEL_MARGIN)
-        out.append(CatalogObject(_pretty_name(name), common, ra, dec, major, lx, ly, centered))
+        out.append(CatalogObject(_pretty_name(name), common, ra, dec, major,
+                                 lx, ly, centered, x, y))
     return out
 
 
