@@ -9,8 +9,8 @@ import astropy.units as u
 
 from nocturne.core.annotation_layout import (
     Circle, circle_for, colour_for, filter_by_density, grid_lines, place_labels, priority_of,
-    star_marker, _fmt_ra)
-from nocturne.core.catalog import CatalogObject, NamedStar
+    star_marker, _fmt_ra, _is_messier)
+from nocturne.core.catalog import CatalogObject, NamedStar, load_catalog
 
 
 def _obj(major_arcmin, cx=100.0, cy=120.0, name="NGC 7000", common="", messier="", obj_type=""):
@@ -81,6 +81,23 @@ def test_messier_priority_is_driven_by_the_messier_column_not_a_name_prefix():
     assert priority_of(_obj(1.0, name="NGC 224", messier="31")) == 40
 
 
+def test_is_messier_detects_a_meaningful_number_of_real_catalogue_objects():
+    # The original _is_messier tested an "M "-prefixed `name`, which matched
+    # ZERO rows in the real bundled catalogue (OpenNGC never renames `name`
+    # to a Messier alias) -- so the Messier priority tier never once fired on
+    # real data, only on synthetic fixtures using a fake "M ..." name. This
+    # pins the behaviour to the actual bundled catalogue, not a test double:
+    # it fails against the old name-prefix logic and passes against the
+    # messier-column logic.
+    rows = load_catalog()
+    messier_rows = [r for r in rows if r[8]]
+    assert len(messier_rows) >= 100, len(messier_rows)
+
+    andromeda = next(r for r in rows if r[0] == "NGC0224")
+    obj = _obj(andromeda[4], name=andromeda[0], common=andromeda[1], messier=andromeda[8])
+    assert _is_messier(obj)
+
+
 def test_colour_is_the_default_green_when_type_colouring_is_off():
     assert colour_for(_obj(1.0, name="NGC 224", messier="31"), by_type=False) == "#5cff5c"
 
@@ -137,7 +154,7 @@ def test_all_density_keeps_everything():
 
 
 def test_minimal_density_keeps_only_messier_and_named():
-    m = _obj(1.0, name="M 39")
+    m = _obj(1.0, name="NGC 7092", messier="39")   # M 39's real OpenNGC designation
     plain = _obj(30.0, name="LDN 935")
     objs, _ = filter_by_density([m, plain], [], 2.0, "minimal")
     assert m in objs and plain not in objs
@@ -178,7 +195,7 @@ def test_a_displaced_label_gets_a_leader_line():
 
 
 def test_higher_priority_labels_are_placed_first():
-    m = _obj(1.0, cx=100.0, cy=100.0, name="M 39")
+    m = _obj(1.0, cx=100.0, cy=100.0, name="NGC 7092", messier="39")   # M 39's real designation
     plain = _obj(1.0, cx=101.0, cy=100.0, name="LDN 935")
     labels, _ = place_labels([plain, m], (600, 800), _measure)
     assert labels[0].text.startswith("M 39"), "priority order, not input order"
@@ -200,14 +217,14 @@ def test_label_search_finds_free_space_beyond_an_occupied_diagonal():
     # anchors all land inside that occupied rect, so it must fall back to the
     # outward search — which must look in every direction, not just
     # right-and-down, to find the free space that surrounds the rectangle.
-    big_name = "M " + "Z" * 20                       # forces priority 40: placed first
+    big_text = "M 1"                                  # M 1 = NGC 1952 (Crab Nebula); forces priority 40: placed first
 
     def _measure_big_then_small(text, size):
-        if text == big_name:
+        if text == big_text:
             return (450.0, 150.0)                    # -> rect (250,270)-(700,420)
         return (7.0 * len(text), 14.0)
 
-    big = _obj(1.0, cx=241.0, cy=345.0, name=big_name)
+    big = _obj(1.0, cx=241.0, cy=345.0, name="NGC 1952", messier="1")
     small = _obj(1.0, cx=400.0, cy=300.0, name="LDN 1")  # all 4 primary anchors land inside big's rect
     labels, leaders = place_labels([small, big], (600, 800), _measure_big_then_small)
     small_labels = [l for l in labels if l.text == "LDN 1"]
