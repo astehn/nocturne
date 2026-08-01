@@ -3699,3 +3699,89 @@ def test_a_trim_does_not_satisfy_auto_enhances_crop_gate(qtbot, tmp_path, monkey
     monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 2, w - 2)))
     win._trim()
     assert not win._has_crop(), "a late trim must not read as an early crop"
+
+
+# --- distraction-free fullscreen ---------------------------------------------
+
+def _keypress(win, key):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+    ev = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+    return win.eventFilter(QApplication.instance(), ev)
+
+
+def test_fullscreen_hides_every_piece_of_chrome(qtbot, tmp_path):
+    """The image and nothing else. The zoom pill stays — it is the one control
+    you want while inspecting, and it is dark-on-dark rather than an accent."""
+    from PySide6.QtCore import Qt
+    win = _stretched_window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    assert win._toolbar.isVisible() and win._bottom_bar.isVisible()
+
+    win._toggle_fullscreen()
+    for name in ("_toolbar", "stepper", "_right_panel", "_bottom_bar"):
+        assert not getattr(win, name).isVisible(), f"{name} still showing"
+    assert not win.image_view._zoom_pill.isHidden(), "the zoom pill should remain"
+
+
+def test_fullscreen_does_not_reset_zoom_or_pan(qtbot, tmp_path):
+    """You enter this to look closely at something; throwing away the view you
+    arrived with would defeat the point."""
+    win = _stretched_window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    win.image_view.zoom_in(); win.image_view.zoom_in()
+    zoomed = win.image_view.transform().m11()
+
+    win._toggle_fullscreen()
+    qtbot.wait(50)
+    assert win.image_view.transform().m11() == pytest.approx(zoomed, rel=0.02)
+
+
+def test_exiting_restores_only_what_was_visible_before(qtbot, tmp_path):
+    """On the welcome screen the chrome is already hidden — exiting fullscreen
+    must not conjure it into existence."""
+    win = _window(qtbot, tmp_path)          # no project: chrome hidden
+    win.show(); qtbot.waitExposed(win)
+    assert not win.stepper.isVisible()
+
+    win._toggle_fullscreen()
+    win._exit_fullscreen()
+    qtbot.wait(50)
+    assert not win.stepper.isVisible(), "chrome appeared that was never there"
+
+
+def test_escape_exits_fullscreen_but_is_left_alone_otherwise(qtbot, tmp_path):
+    """The crop box uses Escape everywhere else; swallowing it globally would
+    break dismissing the box."""
+    from PySide6.QtCore import Qt
+    win = _stretched_window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+
+    assert _keypress(win, Qt.Key.Key_Escape) is not True, \
+        "Escape must pass through when not fullscreen"
+
+    win._toggle_fullscreen()
+    assert _keypress(win, Qt.Key.Key_Escape) is True, "Escape should exit fullscreen"
+
+
+def test_f_does_nothing_while_typing(qtbot, tmp_path, monkeypatch):
+    """Otherwise typing "f" in the caption or a path field throws you fullscreen.
+
+    focusWidget is stubbed rather than driven for real: actual keyboard focus
+    needs an ACTIVE window, which depends on what else the suite has opened, and
+    a test that passes or fails on window activation order tests the harness
+    rather than the code."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QLineEdit
+    win = _stretched_window(qtbot, tmp_path)
+    edit = QLineEdit()
+    qtbot.addWidget(edit)
+    monkeypatch.setattr(QApplication, "focusWidget", staticmethod(lambda: edit))
+
+    assert _keypress(win, Qt.Key.Key_F) is not True, "F must not fire while typing"
+    assert not win.isFullScreen()
+
+    monkeypatch.setattr(QApplication, "focusWidget", staticmethod(lambda: None))
+    assert _keypress(win, Qt.Key.Key_F) is True, "...but must fire otherwise"
+    win._exit_fullscreen()

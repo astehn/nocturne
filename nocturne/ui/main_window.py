@@ -402,6 +402,46 @@ class MainWindow(QMainWindow):
         if check_updates:
             run_async(self._pool, latest_release_version, self._on_update_check)
 
+    def _toggle_fullscreen(self) -> None:
+        """Distraction-free inspection: the image, and nothing else.
+
+        Everything except the canvas goes — toolbar, stepper, right panel, log
+        and output. The zoom pill stays: it is the one control you want while
+        inspecting, and it is already dark-on-dark rather than an accent colour.
+
+        Zoom and pan are deliberately NOT reset. You enter this to look closely
+        at something, so throwing away the view you came in with would defeat it.
+        A view that was FITTED does re-fit to the larger viewport, which is right
+        and falls out of ImageView's resize behaviour for free.
+
+        The menu bar is left alone: on macOS it lives in the system bar, not the
+        window, so hiding it here would do nothing useful.
+        """
+        if self.isFullScreen():
+            self._exit_fullscreen()
+            return
+        # Remember what was actually visible — on the welcome screen the chrome
+        # is already hidden, and exiting must not conjure it into existence.
+        self._pre_fullscreen = {
+            "toolbar": self._toolbar.isVisible(),
+            "stepper": self.stepper.isVisible(),
+            "right": self._right_panel.isVisible(),
+            "bottom": self._bottom_bar.isVisible(),
+        }
+        for w in (self._toolbar, self.stepper, self._right_panel, self._bottom_bar):
+            w.setVisible(False)
+        self.showFullScreen()
+
+    def _exit_fullscreen(self) -> None:
+        if not self.isFullScreen():
+            return
+        prev = getattr(self, "_pre_fullscreen", None) or {}
+        self._toolbar.setVisible(prev.get("toolbar", True))
+        self.stepper.setVisible(prev.get("stepper", True))
+        self._right_panel.setVisible(prev.get("right", True))
+        self._bottom_bar.setVisible(prev.get("bottom", True))
+        self.showNormal()
+
     def _show_chrome(self, visible: bool) -> None:
         """Show/hide the stepper + right panel so the welcome screen is a clean
         full-bleed empty state (no redundant Import panel/stepper before load)."""
@@ -1081,6 +1121,7 @@ class MainWindow(QMainWindow):
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
+        self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
         tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
@@ -2450,6 +2491,21 @@ class MainWindow(QMainWindow):
             if not isinstance(QApplication.focusWidget(),
                               (QLineEdit, QPlainTextEdit, QTextEdit)):
                 self._toggle_peek()
+                return True
+        if (event.type() == QEvent.Type.KeyPress
+                and not event.isAutoRepeat()
+                and QApplication.activeModalWidget() is None):
+            from PySide6.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit
+            typing = isinstance(QApplication.focusWidget(),
+                                (QLineEdit, QPlainTextEdit, QTextEdit))
+            if (event.key() == Qt.Key.Key_F and not typing
+                    and event.modifiers() == Qt.KeyboardModifier.NoModifier):
+                self._toggle_fullscreen()
+                return True
+            # Escape ONLY when fullscreen: the crop box uses it everywhere else,
+            # and swallowing it here would break dismissing the box.
+            if event.key() == Qt.Key.Key_Escape and self.isFullScreen():
+                self._exit_fullscreen()
                 return True
         return super().eventFilter(obj, event)
 
