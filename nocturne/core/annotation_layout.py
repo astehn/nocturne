@@ -83,6 +83,24 @@ _DENSITY = {                     # (min circle radius px, max star magnitude)
 _LABEL_GAP = 9.0                 # px between an object and its label
 
 
+def designation(obj) -> str:
+    """How an object should be NAMED to a human: "M 31", not "NGC 224".
+
+    The one place this is decided. It was previously inline in the overlay's
+    label builder, so the overlay said "M 31  Andromeda Galaxy" while the object
+    list and the solved-target line both said "NGC 224" — three surfaces naming
+    the same object three ways, in the same window. Spotted on a real M 31
+    capture 2026-08-01.
+
+    Messier wins because that is what people call these objects, and what the
+    annotated references we matched use. Everything else keeps its catalogue
+    name. Duck-typed like the rest of this module so it works on a NamedStar
+    (no `messier` attribute) as readily as a CatalogObject.
+    """
+    messier = getattr(obj, "messier", "")
+    return f"M {messier}" if messier else obj.name
+
+
 def _is_messier(obj) -> bool:
     """Driven by the catalogue's `messier` column, not a name convention — the
     bundled OpenNGC data keeps `name` as the NGC/IC designation (e.g. "NGC0224"),
@@ -188,12 +206,8 @@ def place_labels(items, shape, measure, colour=DEFAULT_COLOUR, ui_scale: float =
     h, w = shape
     placed, labels, leaders = [], [], []
     for it in sorted(items, key=priority_of, reverse=True):
-        # Prefer the Messier designation ("M 31") when the object has one —
-        # that's how the user's reference images label these targets — else
-        # fall back to the catalogue name; the common name is always appended.
-        messier = getattr(it, "messier", "")
-        designation = f"M {messier}" if messier else it.name
-        text = f"{designation}  {it.common}".strip() if getattr(it, "common", "") else designation
+        name = designation(it)      # shared: see designation() above
+        text = f"{name}  {it.common}".strip() if getattr(it, "common", "") else name
         size = "primary" if priority_of(it) >= 40 else "secondary"
         tw, th = measure(text, size)
         # NOT `getattr(it, "x", it.cx)`: Python evaluates the default eagerly,

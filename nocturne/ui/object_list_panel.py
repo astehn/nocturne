@@ -91,7 +91,7 @@ class ObjectListPanel(QFrame):
         somewhere clickable. It IS filtered by the layer toggles, which are about
         what you care about rather than about crowding.
         """
-        from ..core.annotation_layout import priority_of
+        from ..core.annotation_layout import designation, priority_of
         self.list.clear()
         objects = list(objects)
         stars = list(stars)
@@ -101,7 +101,8 @@ class ObjectListPanel(QFrame):
             self._add_heading("DEEP SKY")
         for o in sorted(objects, key=lambda x: (priority_of(x), x.major_arcmin),
                         reverse=True):
-            label = f"{o.name}  {o.common}".strip() if o.common else o.name
+            name = designation(o)      # matches the overlay, not the raw catalogue id
+            label = f"{name}  {o.common}".strip() if o.common else name
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, o.name)
             if o.major_arcmin:

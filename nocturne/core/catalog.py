@@ -177,5 +177,7 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
         return (bool(getattr(o, "messier", "")), bool(o.common), centred,
                 sane_size, -((o.x - cx) ** 2 + (o.y - cy) ** 2))
 
+    from .annotation_layout import designation
     best = max(objects, key=rank)
-    return f"{best.name} · {best.common}" if best.common else best.name
+    name = designation(best)        # "M 31", not "NGC 224" — same as the overlay
+    return f"{name} · {best.common}" if best.common else name
