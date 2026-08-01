@@ -3571,3 +3571,43 @@ def test_no_notice_when_there_was_no_solve_to_lose(qtbot, tmp_path):
     win._clear_warning()
     win._rotate()
     assert win._warning.text() == ""
+
+
+# --- Plate Solve is gated on ASTAP being installed ---------------------------
+
+def test_plate_solve_is_greyed_out_without_astap(qtbot, tmp_path):
+    """It used to be permanently clickable and only complain AFTER the press,
+    which puts the requirement behind the action instead of in front of it."""
+    win = _window(qtbot, tmp_path)
+    assert win.settings.astap_path in ("", None), "fixture assumes no ASTAP configured"
+    assert not win._solve_act.isEnabled()
+    tip = win._solve_act.toolTip().lower()
+    assert "astap" in tip and "star database" in tip, tip
+
+
+def test_installing_astap_lights_the_button_up_without_a_restart(qtbot, tmp_path):
+    from nocturne.settings import Settings
+    fake = tmp_path / "astap"
+    fake.write_text("#!/bin/sh\n")
+    win = _window(qtbot, tmp_path)
+    assert not win._solve_act.isEnabled()
+
+    win.settings = Settings(astap_path=str(fake))
+    win._sync_solve_action_enabled()
+    assert win._solve_act.isEnabled()
+    assert win._solve_act.toolTip() == "Open the Plate Solve tool"
+
+
+def test_a_failed_solve_names_the_star_database_first(qtbot, tmp_path):
+    """The one cause the toolbar gate cannot see: astap_valid only checks the
+    binary, and the database is a separate download. The old advice sent people
+    looking in entirely the wrong place."""
+    from nocturne.tools.astap import SolveResult
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._on_solved(win._solve_sig(),
+                   SolveResult(False, None, 0.0, 0.0, 0.0, "no star database found"), [])
+    text = win._warning.text().lower()
+    assert "star database" in text
+    assert text.index("star database") < text.index("stretch"), \
+        "the cause they cannot otherwise discover must come first"

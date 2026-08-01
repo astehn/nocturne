@@ -788,6 +788,30 @@ class MainWindow(QMainWindow):
         objs = objects_in_field(res.wcs, (h, w)) if res.solved else []
         return res, objs
 
+    def _sync_solve_action_enabled(self) -> None:
+        """Plate Solve is greyed out until ASTAP is installed, and says why.
+
+        It used to be permanently clickable and only complained AFTER the press,
+        which puts the requirement behind an action instead of in front of it —
+        the toolbar looked like the feature was available and the failure looked
+        like the feature was broken. Auto Enhance already gates this way on a
+        crop existing; this matches it.
+
+        Re-run whenever Settings change, since installing ASTAP must light the
+        button up without a restart.
+
+        NOTE this only knows whether the BINARY exists. ASTAP's star database is
+        a separate download and nothing here can see it, so a user with the
+        binary and no database still gets an enabled button and a failing solve
+        — see the widened failure message in _on_solved.
+        """
+        ok = astap_valid(self.settings)
+        self._solve_act.setEnabled(ok)
+        self._solve_act.setToolTip(
+            "Open the Plate Solve tool" if ok else
+            "Plate Solve — install ASTAP and its star database, then set the "
+            "path in Settings")
+
     def _open_plate_solve(self):
         """Open or close the Plate Solve TOOL. It does not solve, and it does
         not hide the overlay.
@@ -888,9 +912,18 @@ class MainWindow(QMainWindow):
         # toolbar action here used to hide the overlay; since the tool and the
         # overlay were separated it would close the panel out from under them.
         if not res.solved:
+            # The star database is named FIRST because it is the one cause the
+            # toolbar gate cannot detect: astap_valid only sees the binary, and
+            # the database is a separate download from ASTAP's site. Someone who
+            # installed the binary alone gets an enabled button, a Settings test
+            # that says "Found ASTAP", and a solve that fails every time — and
+            # the old advice ("try after Stretch", "field isn't mostly empty")
+            # sent them looking in entirely the wrong place.
             hint = f" (ASTAP: {res.message.splitlines()[-1]})" if res.message else ""
-            self._show_warning("Couldn't plate-solve this image — try after Stretch, "
-                                 "or check the field isn't mostly empty." + hint)
+            self._show_warning("Couldn't plate-solve this image. Check ASTAP's star "
+                                 "database is installed (it downloads separately from "
+                                 "ASTAP itself), then try after Stretch, or check the "
+                                 "field isn't mostly empty." + hint)
             self.solve_panel.set_state("not_solved")
             return
         if self._solve_sig() != sig:
@@ -1118,7 +1151,7 @@ class MainWindow(QMainWindow):
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
                                               # canvas pill owns overlay visibility)
-        self._solve_act.setToolTip("Open the Plate Solve tool")
+        self._sync_solve_action_enabled()    # gated on ASTAP being installed
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -2535,6 +2568,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
+            self._sync_solve_action_enabled()   # installing ASTAP lights it up now
             self._update_tools_label()
             self._rebuild_panel()
             self._refresh()
