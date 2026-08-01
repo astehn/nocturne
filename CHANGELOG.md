@@ -2,6 +2,18 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.9.0] — 2026-08-01
+
+Plate solving that works beyond the Seestar — and several things that were quietly wrong.
+
+### Added
+- Plate solving no longer gives up when its assumed image scale turns out to be wrong. When a file carries no optical details in its header — which most stacked masters do not — Nocturne assumes the Seestar's image scale, which is right for a Seestar and badly wrong for anything else. If a solve fails with that assumption, it now drops the hint and tries again without one, so frames from other instruments can solve where they previously failed. The result card says when that happened, which is also the clearest available signal that a frame did not come from a Seestar.
+
+### Fixed
+- The same object could be named three different ways in the same window. The overlay labelled the Andromeda Galaxy "M 31" while the object list beside it and the solved-target line both called it "NGC 224". Every surface now uses the name people actually use.
+- Dialogs that show an image — Share, Upscale Crop, Star Spikes — opened with the picture shrunk into the middle of the window, and only corrected themselves once you changed something. The view now re-fits when the window is resized, while leaving a zoom you chose deliberately alone.
+- Sharing an annotated image drew the caption band on top of the annotations, swallowing the coordinate-grid labels and cutting object labels in half. With annotations burned in, the caption now sits below the picture by default, where it cannot cover anything — and you can still move it back onto the image if you prefer.
+
 ## [0.8.0] — 2026-08-01
 
 Share grows up — and a colour fix that was quietly costing you accuracy.
