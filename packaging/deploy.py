@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # repo root
 SITE = ROOT / "site"
+SITE_SRC = SITE / "_src"
 DIST = ROOT / "dist"
 
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -229,6 +230,29 @@ def real_run(cmd: list[str], *, capture: bool = False) -> str:
     return (r.stdout or "") if capture else ""
 
 
+def generate_site(run=real_run) -> None:
+    """Regenerate site/*.html from site/_src/, then the sitemap.
+
+    Folded into deploy on purpose. These are generated artifacts, and a manual
+    step that is only sometimes needed is a step that eventually gets missed —
+    which for the sitemap means silently advertising a stale set of pages.
+    """
+    run([".venv/bin/python", "packaging/build_site.py"])
+    run([".venv/bin/python", "packaging/make_sitemap.py"])
+
+
+def site_is_stale() -> list[str]:
+    """Generated pages that no longer match their source — i.e. someone edited
+    site/*.html by hand and is about to lose the change. Names only, no writes.
+
+    Asks build_site in-process rather than shelling out: this is a query, not an
+    action, so it does not belong on the injectable `run` path — and routing it
+    through subprocess made it collide with tests that stub subprocess.run."""
+    sys.path.insert(0, str(ROOT / "packaging"))
+    import build_site
+    return build_site.build(check=True)
+
+
 def get_last_tag(run=real_run) -> str:
     return run(["git", "describe", "--tags", "--abbrev=0", "--match", "v*"],
                capture=True).strip()
@@ -250,6 +274,13 @@ def prepend_file(path: Path, block: str, anchor: str) -> None:
 
 
 def preflight(config: DeployConfig, run=real_run) -> None:
+    stale = site_is_stale()
+    if stale:
+        # Not fatal: generate_site() will rebuild these correctly a moment later.
+        # But if someone edited site/*.html directly, that edit is about to
+        # vanish, and finding out afterwards is much worse than a warning here.
+        print(f"warning: generated pages differ from site/_src/ ({', '.join(stale)}).")
+        print("         Edit site/_src/, not site/*.html — the latter are generated.")
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture=True).strip()
     if branch != "main":
         raise SystemExit(f"preflight: not on main (on {branch})")
@@ -290,8 +321,24 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--notes-json")
     ap.add_argument("--preflight", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--site-only", action="store_true",
+                    help="regenerate and publish the website, without cutting a release")
     args = ap.parse_args(argv)
     config = load_config(Path(args.config))
+
+    # A site-only publish must NOT run the release preflight: that gate demands a
+    # clean tree and a tag in sync with origin, neither of which is relevant to
+    # pushing a copy edit, and both of which would block it for no reason.
+    if args.site_only:
+        generate_site(real_run)
+        if args.dry_run:
+            print("[dry-run] " + " ".join(build_rsync_cmd(config, SITE)))
+            print("[dry-run] " + " ".join(build_chown_cmd(config)))
+            return 0
+        real_run(build_rsync_cmd(config, SITE))
+        real_run(build_chown_cmd(config))
+        print("site published")
+        return 0
 
     preflight(config, real_run)
     if args.preflight:
@@ -309,7 +356,8 @@ def main(argv: list[str]) -> int:
     if args.dry_run:
         print(f"[dry-run] version -> {version}")
         print(f"[dry-run] CHANGELOG.md prepend:\n{md_block}\n")
-        print(f"[dry-run] site/changelog.html prepend:\n{html_block}\n")
+        print(f"[dry-run] site/_src/changelog.html prepend:\n{html_block}\n")
+        print("[dry-run] regenerate: build_site.py + make_sitemap.py")
         print(f"[dry-run] build: pyinstaller packaging/nocturne.spec -> dist/{asset}")
         print("[dry-run] remote plan:")
         print("  " + " ".join(["git", "commit/push", f"v{version}"]))
@@ -331,7 +379,10 @@ def main(argv: list[str]) -> int:
         real_run(["git", "checkout", "--", "pyproject.toml", "nocturne/__init__.py"])
         raise
     prepend_file(ROOT / "CHANGELOG.md", md_block, anchor="## [")
-    prepend_file(SITE / "changelog.html", html_block, anchor='<article class="release">')
+    # The SOURCE, not site/changelog.html: that file is generated, so writing the
+    # release entry there would be erased by generate_site() moments later.
+    prepend_file(SITE_SRC / "changelog.html", html_block, anchor='<article class="release">')
+    generate_site(real_run)
     _remote_release(config, version, notes, asset, real_run)
     return 0
 

@@ -414,3 +414,55 @@ download_path = "/srv/other/App.zip"
 ''')
     with pytest.raises(ValueError):
         deploy.load_config(p)
+
+
+# --- generated site: the release must write to the SOURCE ---------------------
+
+def test_release_prepends_the_changelog_entry_to_the_source_not_the_output():
+    """site/changelog.html is generated from site/_src/changelog.html. Writing the
+    release entry to the generated file would be erased by generate_site() moments
+    later — the note would vanish silently, and only on a real release."""
+    import inspect
+    src = inspect.getsource(deploy.main)
+    assert 'prepend_file(SITE_SRC / "changelog.html"' in src
+    assert 'prepend_file(SITE / "changelog.html"' not in src
+    # ...and the release path must regenerate AFTER that prepend, not before.
+    # rindex, not index: generate_site() also appears earlier in the --site-only
+    # branch, which is a different code path.
+    assert src.index('prepend_file(SITE_SRC / "changelog.html"') < src.rindex("generate_site(")
+
+
+def test_generate_site_runs_both_generators_through_the_injectable_runner():
+    calls = []
+    deploy.generate_site(run=lambda cmd, **kw: calls.append(cmd))
+    joined = [" ".join(c) for c in calls]
+    assert any("build_site.py" in c for c in joined), joined
+    assert any("make_sitemap.py" in c for c in joined), joined
+    assert joined.index([c for c in joined if "build_site.py" in c][0]) < \
+           joined.index([c for c in joined if "make_sitemap.py" in c][0]), \
+        "the sitemap must be generated from the freshly built pages"
+
+
+def test_site_only_publishes_without_the_release_preflight(tmp_path, monkeypatch):
+    """A copy edit must not be blocked by a dirty tree or an out-of-sync tag —
+    those gates exist for cutting a release, which this is not."""
+    cfg_path = _write_config(tmp_path)
+    ran = []
+    monkeypatch.setattr(deploy, "real_run", lambda cmd, **kw: ran.append(cmd) or "")
+    monkeypatch.setattr(deploy, "generate_site", lambda run=None: ran.append(["GENERATE"]))
+    monkeypatch.setattr(deploy, "preflight",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("preflight ran")))
+    rc = deploy.main(["--config", str(cfg_path), "--site-only"])
+    assert rc == 0
+    assert ["GENERATE"] == ran[0], "generation happens before any upload"
+    assert any("rsync" in c[0] for c in ran[1:]), ran
+
+
+def test_site_only_dry_run_uploads_nothing(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path)
+    ran = []
+    monkeypatch.setattr(deploy, "real_run", lambda cmd, **kw: ran.append(cmd) or "")
+    monkeypatch.setattr(deploy, "generate_site", lambda run=None: None)
+    rc = deploy.main(["--config", str(cfg_path), "--site-only", "--dry-run"])
+    assert rc == 0
+    assert ran == [], "a dry run must not execute rsync"
