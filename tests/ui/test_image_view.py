@@ -744,3 +744,84 @@ def test_no_headings_when_only_one_group_is_present(qtbot):
     view.object_panel.set_contents([], [_star("56 Cyg", 5.1)])
     assert view.object_panel.list.count() == 1
     assert view.object_panel.count() == 1
+
+
+# --- staying fitted across a resize ------------------------------------------
+# fit() ran only from set_image(), so any dialog that set its image during
+# __init__ locked in a fit measured against the pre-layout viewport.
+
+def test_a_fitted_view_refits_when_the_widget_resizes(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(200, 150)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_image(_qimage(400, 300))
+    small = view.transform().m11()
+
+    view.resize(800, 600)                      # the dialog gets its real size
+    qtbot.waitUntil(lambda: view.transform().m11() != small, timeout=1000)
+    assert view.transform().m11() > small, "a bigger viewport must show a bigger image"
+    assert view._fitted
+
+
+def test_a_deliberate_zoom_survives_a_resize(qtbot):
+    """The whole reason this is gated. Resizing the window while zoomed to 100%
+    must not yank the user back out to fit."""
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_image(_qimage(40, 30))
+
+    view.zoom_in()
+    assert not view._fitted
+    zoomed = view.transform().m11()
+
+    view.resize(700, 500)
+    qtbot.wait(50)
+    assert view.transform().m11() == zoomed, "the resize threw away the user's zoom"
+
+
+def test_actual_size_and_zoom_out_also_clear_the_fitted_flag(qtbot):
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.set_image(_qimage(40, 30))
+    assert view._fitted
+    view.actual_size()
+    assert not view._fitted
+
+    view.fit()
+    assert view._fitted
+    view.zoom_out()
+    assert not view._fitted
+
+
+def test_focus_on_clears_fitted_only_when_it_actually_zooms(qtbot):
+    """focus_on centres, and zooms only if below min_scale. Centring alone is not
+    a deliberate zoom, so it must not disable staying-fitted."""
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(400, 300)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_image(_qimage(40, 30))
+    view.fit()
+
+    view.focus_on(20, 15, min_scale=0.0)       # no zoom needed
+    assert view._fitted, "centring without zooming must leave the view fitted"
+
+    view.focus_on(20, 15, min_scale=999.0)     # forces a zoom
+    assert not view._fitted
+
+
+def test_resizing_without_an_image_does_not_raise(qtbot):
+    """_fitted is read in resizeEvent, which Qt delivers during construction —
+    before any image exists."""
+    view = ImageView()
+    qtbot.addWidget(view)
+    view.resize(500, 400)
+    view.show()
+    qtbot.waitExposed(view)
+    view.resize(600, 500)                      # must not raise

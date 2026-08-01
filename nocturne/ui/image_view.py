@@ -113,6 +113,11 @@ class ImageView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._has_image = False
+        # Whether the view is showing the whole image at fit scale. Drives the
+        # re-fit in resizeEvent. Initialised HERE, before anything can lay the
+        # widget out: Qt delivers a resizeEvent during construction, and reading
+        # this attribute before it existed would raise.
+        self._fitted = False
         self._crop_mode = False               # crop stage active (box may still be hidden)
         self._pixel_cursor = False            # crosshair over image pixels (opt-in)
         self._content_bounds = None           # detected content edges for the next show
@@ -198,6 +203,24 @@ class ImageView(QGraphicsView):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        # Stay fitted across a resize — but ONLY if the view is still fitted.
+        # fit() previously ran solely from set_image(), so any dialog that set its
+        # image during __init__ locked in a fit measured against the pre-layout
+        # viewport and opened "zoomed out to looks-empty"; star_spikes_dialog
+        # carried a hand-rolled showEvent workaround for exactly that.
+        #
+        # Gated on _fitted so a deliberate zoom survives. Resizing the window
+        # while zoomed to 100% must not yank you back out.
+        #
+        # CLAUDE.md warns that behaviour shared by a widget used in six places
+        # should be opt-in. That rule earned itself on the crosshair, which is
+        # wrong in a dialog preview. This one is different: "the user has not
+        # zoomed, so keep showing the whole image" is correct on every surface,
+        # and the surfaces that got it wrong were the ones working around its
+        # absence. Safe to reload: scrollbars are ScrollBarAlwaysOff, so
+        # fitInView here cannot toggle a scrollbar and re-enter resizeEvent.
+        if self._fitted:
+            self.fit()
         self._position_zoom_pill()
         self._position_readout_pill()
         self._position_annotation_pill()
@@ -258,6 +281,7 @@ class ImageView(QGraphicsView):
     def fit(self) -> None:
         if not self._item.pixmap().isNull():
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
+            self._fitted = True
 
     def focus_on(self, x: float, y: float, min_scale: float = 1.0) -> None:
         """Centre the view on an image pixel, zooming in if currently zoomed out.
@@ -271,10 +295,12 @@ class ImageView(QGraphicsView):
         current = self.transform().m11()
         if current < min_scale and current > 0:
             self.scale(min_scale / current, min_scale / current)
+            self._fitted = False       # zoomed deliberately; a resize must not undo it
         self.centerOn(float(x), float(y))
 
     def actual_size(self) -> None:
         self.resetTransform()
+        self._fitted = False
 
     def drawBackground(self, painter, rect) -> None:
         vp = self.viewport().rect()
@@ -330,10 +356,12 @@ class ImageView(QGraphicsView):
     def zoom_in(self) -> None:
         if not self._item.pixmap().isNull():
             self.scale(1.25, 1.25)
+            self._fitted = False
 
     def zoom_out(self) -> None:
         if not self._item.pixmap().isNull():
             self.scale(0.8, 0.8)
+            self._fitted = False
 
     def wheelEvent(self, event) -> None:
         if event.angleDelta().y() > 0:

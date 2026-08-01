@@ -77,16 +77,6 @@ class StarSpikesDialog(QDialog):
 
         self._render_preview()
 
-    def showEvent(self, event) -> None:   # noqa: N802 (Qt override)
-        # The preview is first rendered in __init__, before the dialog has been
-        # laid out, so ImageView.set_image fitted against a tiny viewport (and
-        # resizeEvent doesn't re-fit) — leaving the image zoomed out to "looks
-        # empty". Re-fit once now that the preview has its real on-screen size.
-        super().showEvent(event)
-        if not getattr(self, "_did_fit", False):
-            self._did_fit = True
-            self.preview.view.fit()
-
     def _params(self):
         return (self.length_slider.value() / 100.0,
                 self.stars_slider.value(),

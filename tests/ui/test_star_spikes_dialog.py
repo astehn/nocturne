@@ -49,22 +49,29 @@ def test_slider_change_renders_preview(qtbot):
     assert not np.allclose(changed, d._base.data)
 
 
-def test_show_event_refits_preview_once(qtbot):
-    # The preview is first fitted in __init__ against a tiny, not-yet-laid-out
-    # viewport, so it opens zoomed out to "looks empty". showEvent must re-fit
-    # once the dialog has its real size — but only once, so a later re-show
-    # doesn't fight a zoom the user has since applied.
-    from PySide6.QtGui import QShowEvent
+def test_preview_is_fitted_once_the_dialog_has_a_real_size(qtbot):
+    """The preview is first fitted in __init__, against a viewport that has not
+    been laid out yet — it used to open "zoomed out to looks empty".
+
+    This was a showEvent workaround local to this dialog. It now falls out of
+    ImageView re-fitting on resize, so the requirement is asserted here and the
+    mechanism is tested in test_image_view. Deleting the workaround without
+    keeping this would have removed the only check that the dialog opens usable."""
     d = StarSpikesDialog(_img())
     qtbot.addWidget(d)
-    calls = []
-    d.preview.view.fit = lambda: calls.append(1)
-    assert not getattr(d, "_did_fit", False)
-    d.showEvent(QShowEvent())
-    assert d._did_fit is True
-    assert len(calls) == 1
-    d.showEvent(QShowEvent())          # re-show must not re-fit
-    assert len(calls) == 1
+    d.resize(900, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    view = d.preview.view
+    assert view._fitted, "the preview must be fitted once it has a real size"
+    # The image must FILL the viewport in its constraining dimension. Checking
+    # only "the whole image is visible" would pass while it sat tiny in the
+    # middle -- which IS the bug. A correct fit gives min(ratio) ~ 1.0; a fit
+    # measured against the pre-layout viewport leaves both ratios far higher.
+    pm = view._item.pixmap()
+    vis = view.mapToScene(view.viewport().rect()).boundingRect()
+    fill = min(vis.width() / pm.width(), vis.height() / pm.height())
+    assert fill < 1.2, f"preview is only filling 1/{fill:.1f} of the viewport"
 
 
 def test_apply_calls_back_with_result(qtbot):
