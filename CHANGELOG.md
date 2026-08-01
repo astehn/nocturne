@@ -2,6 +2,14 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.7.1] — 2026-08-01
+
+Two correctness fixes — a bad pixel no longer blanks a channel, and a background step can't land on the wrong image.
+
+### Fixed
+- A single bad pixel could turn a whole colour channel black on screen. Frames registered with rotation (alt-az field rotation) often carry NaN "no data" in the corners, and one such pixel was enough to blank an entire channel of the display. Three faults compounded: importing a file containing NaN skipped normalisation entirely, leaving values far outside the range every later step assumes; the display stretch derived its parameters from a statistic that one bad sample destroys; and export cast those pixels differently from the canvas, so a saved file could disagree with what you were shown. Non-finite pixels are now treated the same way everywhere — as no data, drawn black — and the good pixels around them are unaffected.
+- Opening or closing an image while a step was still running could corrupt it or crash. Closing a project mid-step raised an error; opening a different image mid-step silently applied the previous image's result to the new one and recorded it in the wrong history. Saving while opening another image could also write the new project to the old file. A result now only ever lands on the image it was computed for, and Open Project no longer silently does nothing while a step is running.
+
 ## [0.7.0] — 2026-07-31
 
 Plate solving you can steer — an object list, a Cancel button that works, and annotations on Share.
