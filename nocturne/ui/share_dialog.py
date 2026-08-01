@@ -8,13 +8,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
     QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..core.share import (
-    ASPECTS, CAPTION_SIZES, DEFAULT_SIZE, FORMATS, PLACEMENTS, SIZES, caption_line,
-    centered_crop, share_filename,
+    ALIGNMENTS, ASPECTS, CAPTION_SIZES, DEFAULT_SIZE, FORMATS, PLACEMENTS, SIZES,
+    caption_line, centered_crop, share_filename,
 )
 from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
 from ..settings import start_dir
@@ -48,6 +48,8 @@ class ShareDialog(QDialog):
         self._cap_size = getattr(settings, "share_caption_size", 0.028)
         self._cap_colour = getattr(settings, "share_caption_colour", "#ffffff")
         self._cap_placement = getattr(settings, "share_caption_placement", "on")
+        self._cap_align = getattr(settings, "share_caption_align", "left")
+        self._band_opacity = getattr(settings, "share_band_opacity", 0.59)
         self._save_runner = save_share            # injectable for tests
         self._clipboard_runner = to_clipboard    # injectable for tests
 
@@ -146,15 +148,47 @@ class ShareDialog(QDialog):
         self._colour_btn.clicked.connect(self._pick_colour)
         self._paint_colour_btn()
 
-        caption_row = QHBoxLayout()
-        caption_row.addWidget(self._caption_edit, 1)
-        caption_row.addWidget(reset_btn)
-        caption_row.addWidget(self._place_box)
-        caption_row.addWidget(self._cap_size_box)
-        caption_row.addWidget(self._colour_btn)
+        self._align_box = QComboBox()
+        for label, key in ALIGNMENTS:
+            self._align_box.addItem(label, key)
+        keys = [k for _, k in ALIGNMENTS]
+        self._align_box.setCurrentIndex(keys.index(self._cap_align)
+                                        if self._cap_align in keys else 0)
+        self._align_box.currentIndexChanged.connect(self._set_align)
+        self._align_box.setToolTip("Where the caption sits along the band")
+
+        self._opacity = QSlider(Qt.Orientation.Horizontal)
+        self._opacity.setRange(0, 100)
+        self._opacity.setValue(round(self._band_opacity * 100))
+        self._opacity.setFixedWidth(110)
+        self._opacity.valueChanged.connect(self._set_opacity)
+        self._opacity_label = QLabel()
+
+        # Two rows: what the caption SAYS, then how it LOOKS. One row would have
+        # squeezed the text field down to nothing once the styling controls were
+        # added, and the text is the part you actually type into.
+        text_row = QHBoxLayout()
+        text_row.addWidget(self._caption_edit, 1)
+        text_row.addWidget(reset_btn)
+
+        style_row = QHBoxLayout()
+        style_row.addWidget(self._place_box)
+        style_row.addWidget(self._align_box)
+        style_row.addWidget(self._cap_size_box)
+        style_row.addWidget(self._colour_btn)
+        style_row.addWidget(QLabel("Band"))
+        style_row.addWidget(self._opacity)
+        style_row.addWidget(self._opacity_label)
+        style_row.addStretch(1)
+
+        caption_row = QVBoxLayout()
+        caption_row.setContentsMargins(0, 0, 0, 0)
+        caption_row.addLayout(text_row)
+        caption_row.addLayout(style_row)
         self._caption_wrap = QWidget()
         self._caption_wrap.setLayout(caption_row)
         self._caption_wrap.setEnabled(self._caption_on)
+        self._sync_opacity_enabled()
 
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
@@ -250,6 +284,28 @@ class ShareDialog(QDialog):
 
     def _set_placement(self, _i: int) -> None:
         self._cap_placement = self._place_box.currentData()
+        self._sync_opacity_enabled()
+        self._persist_caption_style()
+        self._refresh_preview()
+
+    def _sync_opacity_enabled(self) -> None:
+        """Band opacity is meaningless below the image: that strip sits on canvas
+        that did not exist before, so there is nothing to see through."""
+        on_image = self._cap_placement != "below"
+        self._opacity.setEnabled(on_image)
+        self._opacity_label.setText(f"{self._opacity.value()}%" if on_image else "—")
+        self._opacity.setToolTip(
+            "How much of the picture shows through the caption band"
+            if on_image else "Only applies when the caption is on the image")
+
+    def _set_align(self, _i: int) -> None:
+        self._cap_align = self._align_box.currentData()
+        self._persist_caption_style()
+        self._refresh_preview()
+
+    def _set_opacity(self, value: int) -> None:
+        self._band_opacity = value / 100.0
+        self._opacity_label.setText(f"{value}%")
         self._persist_caption_style()
         self._refresh_preview()
 
@@ -265,6 +321,8 @@ class ShareDialog(QDialog):
         self._settings.share_caption_size = self._cap_size
         self._settings.share_caption_colour = self._cap_colour
         self._settings.share_caption_placement = self._cap_placement
+        self._settings.share_caption_align = self._cap_align
+        self._settings.share_band_opacity = self._band_opacity
         if self._settings_saver:
             self._settings_saver(self._settings)
 
@@ -286,7 +344,8 @@ class ShareDialog(QDialog):
         return compose_share(self._source(), self._current_crop(),
                              self._current_caption(), longest_edge=self._size,
                              size_frac=self._cap_size, colour=self._cap_colour,
-                             placement=self._cap_placement)
+                             placement=self._cap_placement, align=self._cap_align,
+                             band_opacity=self._band_opacity)
 
     def _refresh_preview(self) -> None:
         image = self._compose_current()

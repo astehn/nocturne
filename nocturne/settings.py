@@ -51,6 +51,8 @@ class Settings:
     share_caption_size: float = 0.028
     share_caption_colour: str = "#ffffff"
     share_caption_placement: str = "on"
+    share_caption_align: str = "left"
+    share_band_opacity: float = 0.59
 
 
 def load_settings(path: str) -> Settings:
@@ -73,6 +75,8 @@ def load_settings(path: str) -> Settings:
         share_caption_size=float(data.get("share_caption_size", 0.028)),
         share_caption_colour=data.get("share_caption_colour", "#ffffff"),
         share_caption_placement=data.get("share_caption_placement", "on"),
+        share_caption_align=data.get("share_caption_align", "left"),
+        share_band_opacity=float(data.get("share_band_opacity", 0.59)),
     )
 
 

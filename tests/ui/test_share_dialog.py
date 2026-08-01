@@ -175,3 +175,39 @@ def test_a_saved_style_is_restored_next_time(qtbot):
     assert dlg._cap_colour == "#ff8800"
     assert dlg._place_box.currentData() == "below"
     assert dlg._cap_size_box.currentData() == pytest.approx(0.038)
+
+
+def test_opacity_is_disabled_below_the_image(qtbot):
+    """Nothing to see through when the strip sits on canvas that did not exist."""
+    dlg = _dlg(qtbot)
+    assert dlg._opacity.isEnabled(), "on-image: opacity applies"
+    dlg._place_box.setCurrentIndex(1)                    # Below image
+    assert not dlg._opacity.isEnabled()
+    assert dlg._opacity_label.text() == "—"
+    dlg._place_box.setCurrentIndex(0)                    # back On image
+    assert dlg._opacity.isEnabled()
+    assert "%" in dlg._opacity_label.text()
+
+
+def test_alignment_and_opacity_persist(qtbot):
+    saved = {}
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(handle="me"),
+                      settings_saver=lambda s: saved.update(
+                          align=s.share_caption_align, opacity=s.share_band_opacity))
+    qtbot.addWidget(dlg)
+    dlg._align_box.setCurrentIndex(2)                    # Right
+    assert saved["align"] == "right"
+    dlg._opacity.setValue(25)
+    assert saved["opacity"] == pytest.approx(0.25)
+
+
+def test_a_saved_alignment_and_opacity_come_back(qtbot):
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    s = Settings(share_caption_align="centre", share_band_opacity=0.25)
+    dlg = ShareDialog(_rgb(), {"target": "X"}, s)
+    qtbot.addWidget(dlg)
+    assert dlg._align_box.currentData() == "centre"
+    assert dlg._opacity.value() == 25

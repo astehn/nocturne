@@ -117,3 +117,52 @@ def test_the_band_never_clips_the_glyphs_at_the_largest_size(qapp):
                         placement="below", size_frac=frac)
     band = out.height() - 400
     assert band >= round(400 * frac) * 2, f"band {band} too tight for a {round(400*frac)}px font"
+
+
+def _text_centroid_x(img, y0):
+    """Mean x of the lit pixels below y0 — where the caption actually sits."""
+    xs, tot = 0.0, 0.0
+    for y in range(y0, img.height()):
+        for x in range(img.width()):
+            v = img.pixelColor(x, y).red()
+            if v > 60:
+                xs += x * v; tot += v
+    return xs / tot if tot else None
+
+
+def test_alignment_moves_the_text_across_the_band(qapp):
+    img = _flat(300, 300, v=0)                        # black, text is what shows
+    cents = {}
+    for align in ("left", "centre", "right"):
+        out = compose_share(img, (0, 300, 0, 300), "NGC 7000", longest_edge=300,
+                            placement="below", align=align, size_frac=0.038)
+        cents[align] = _text_centroid_x(out, 300)
+    assert None not in cents.values(), cents
+    assert cents["left"] < cents["centre"] < cents["right"], cents
+
+
+def test_band_opacity_controls_how_much_shows_through(qapp):
+    """0% leaves the picture untouched; 100% is a solid bar."""
+    img = _flat(300, 300, v=200)
+    clear = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                          placement="on", band_opacity=0.0)
+    solid = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                          placement="on", band_opacity=1.0)
+    mid = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                        placement="on", band_opacity=0.5)
+    # sample a band pixel well away from the text
+    y, x = 295, 280
+    assert clear.pixelColor(x, y).red() == 200, "0% must not darken the picture at all"
+    assert solid.pixelColor(x, y).red() == 0, "100% is opaque"
+    assert 0 < mid.pixelColor(x, y).red() < 200
+
+
+def test_opacity_does_not_apply_below_the_image(qapp):
+    """That strip is new canvas — there is nothing behind it to show through."""
+    img = _flat(300, 300, v=200)
+    a = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                      placement="below", band_opacity=0.0)
+    b = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                      placement="below", band_opacity=1.0)
+    assert a.height() == b.height()
+    assert a.pixelColor(280, a.height() - 5).red() == b.pixelColor(280, b.height() - 5).red()

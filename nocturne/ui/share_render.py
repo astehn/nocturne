@@ -19,8 +19,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
 from ..core.share import (
-    DEFAULT_CAPTION_COLOUR, DEFAULT_CAPTION_SIZE, DEFAULT_PLACEMENT, DEFAULT_SIZE,
+    DEFAULT_ALIGNMENT, DEFAULT_BAND_OPACITY, DEFAULT_CAPTION_COLOUR,
+    DEFAULT_CAPTION_SIZE, DEFAULT_PLACEMENT, DEFAULT_SIZE,
 )
+
+_ALIGN_FLAGS = {
+    "left": Qt.AlignmentFlag.AlignLeft,
+    "centre": Qt.AlignmentFlag.AlignHCenter,
+    "right": Qt.AlignmentFlag.AlignRight,
+}
 
 BAND_FRAC = 0.07     # caption band height as a fraction of composited height
 FONT_FRAC = 0.028    # caption font size as a fraction of composited height (kept light, not heavy)
@@ -39,7 +46,9 @@ def compose_share(rgb8: np.ndarray, crop, caption: str,
                   longest_edge: int | None = DEFAULT_SIZE,
                   *, size_frac: float = DEFAULT_CAPTION_SIZE,
                   colour: str = DEFAULT_CAPTION_COLOUR,
-                  placement: str = DEFAULT_PLACEMENT) -> QImage:
+                  placement: str = DEFAULT_PLACEMENT,
+                  align: str = DEFAULT_ALIGNMENT,
+                  band_opacity: float = DEFAULT_BAND_OPACITY) -> QImage:
     """`longest_edge=None` keeps the cropped resolution. Downscale only — a share
     is never upscaled, which would add pixels without adding detail.
 
@@ -58,15 +67,18 @@ def compose_share(rgb8: np.ndarray, crop, caption: str,
             round(w * longest_edge / longest), round(h * longest_edge / longest),
             Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     if caption:
-        image = _burn_caption(image, caption, size_frac=size_frac,
-                              colour=colour, placement=placement)
+        image = _burn_caption(image, caption, size_frac=size_frac, colour=colour,
+                              placement=placement, align=align,
+                              band_opacity=band_opacity)
     return image
 
 
 def _burn_caption(image: QImage, caption: str, *,
                   size_frac: float = DEFAULT_CAPTION_SIZE,
                   colour: str = DEFAULT_CAPTION_COLOUR,
-                  placement: str = DEFAULT_PLACEMENT) -> QImage:
+                  placement: str = DEFAULT_PLACEMENT,
+                  align: str = DEFAULT_ALIGNMENT,
+                  band_opacity: float = DEFAULT_BAND_OPACITY) -> QImage:
     """Draw the caption on, or below, the picture.
 
     "below" extends the canvas rather than painting over it, so nothing you
@@ -95,14 +107,16 @@ def _burn_caption(image: QImage, caption: str, *,
 
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     if placement != "below":
-        p.fillRect(0, band_top, w, band, QColor(0, 0, 0, 150))   # translucent band
+        alpha = max(0, min(255, round(band_opacity * 255)))
+        p.fillRect(0, band_top, w, band, QColor(0, 0, 0, alpha))
     font = QFont()
     font.setPixelSize(px)
     p.setFont(font)
     p.setPen(QColor(colour))
     text = QFontMetrics(font).elidedText(caption, Qt.TextElideMode.ElideRight, w - 2 * pad)
+    flag = _ALIGN_FLAGS.get(align, Qt.AlignmentFlag.AlignLeft)
     p.drawText(pad, band_top, w - 2 * pad, band,
-               int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text)
+               int(Qt.AlignmentFlag.AlignVCenter | flag), text)
     p.end()
     return out
 

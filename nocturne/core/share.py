@@ -39,6 +39,16 @@ PLACEMENTS: list[tuple[str, str]] = [("On image", "on"), ("Below image", "below"
 DEFAULT_PLACEMENT = "on"
 DEFAULT_CAPTION_COLOUR = "#ffffff"
 
+ALIGNMENTS: list[tuple[str, str]] = [
+    ("Left", "left"), ("Centre", "centre"), ("Right", "right"),
+]
+DEFAULT_ALIGNMENT = "left"
+
+# Alpha of the band painted over the picture, 0–1. 0.59 is 150/255, the value
+# that was hardcoded. Applies to the "on image" placement only: a "below" strip
+# sits on canvas that did not exist before, so there is nothing to see through.
+DEFAULT_BAND_OPACITY = 0.59
+
 
 def caption_line(metadata: dict, handle: str) -> str:
     """One-line caption: target · integration · frames×sub · date · @handle.
