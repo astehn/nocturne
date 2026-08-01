@@ -544,6 +544,20 @@ class MainWindow(QMainWindow):
 
     def _show_warning(self, text: str) -> None:
         """Blocking guidance / errors → prominent right-pane label near the buttons."""
+        self._warning.setStyleSheet("color: #ff6b6b;")
+        self._warning.setText(text)
+
+    def _show_notice(self, text: str) -> None:
+        """Same prominent slot as a warning, amber rather than red: something the
+        user must NOTICE but which is not an error.
+
+        The two need separating because the only prominent channel was red, and
+        red on a consequence of the user's own deliberate action reads as "you
+        broke something". That is the cry-wolf failure again — the label people
+        learn to ignore is the one that cries at normal behaviour. The other two
+        channels do not fit either: the log is a record you scroll back through,
+        and the output area is easy to miss at the moment the thing happens."""
+        self._warning.setStyleSheet(f"color: {WARNING};")
         self._warning.setText(text)
 
     def _clear_warning(self) -> None:
@@ -2815,6 +2829,17 @@ class MainWindow(QMainWindow):
             sig = self._solve_sig() if self.project is not None else None
             if not self._solve or self._solve[0] != sig:
                 self.image_view.set_annotations(None)   # the tool stays open; only the overlay goes
+                # Say so. The overlay used to vanish in silence: crop/rotate/flip
+                # and the labels were simply gone, with the only clue in the
+                # Plate Solve panel — which is collapsible and routinely shut,
+                # since the whole point of the canvas pill is that you can keep
+                # working with the tool closed. This fires exactly once, because
+                # the branch it sits in is false immediately afterwards.
+                if self._solve:
+                    self._show_notice(
+                        "Cropping, rotating or flipping changes the framing, so the "
+                        "plate solve no longer lines up — its annotations have been "
+                        "hidden. Re-solve to get them back.")
         self._sync_solve_panel()   # catches framing changes (crop/rotate/flip) -> "stale"
 
     def _done_ids(self) -> set:

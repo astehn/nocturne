@@ -3502,3 +3502,72 @@ def test_dismissing_the_list_does_not_require_turning_annotations_off(qtbot, tmp
 def test_a_solve_that_finds_nothing_shows_no_empty_panel(qtbot, tmp_path, monkeypatch):
     win = _solved_with_objects(qtbot, tmp_path, monkeypatch, [])
     assert win.image_view.object_panel.isHidden()
+
+
+# --- geometry retires the solve, and SAYS so ---------------------------------
+
+def _solved_then(win, tmp_path):
+    """Put a solve + overlay on screen for the current framing."""
+    from nocturne.core.catalog import CatalogObject
+    from nocturne.ui.annotation_overlay import build_annotation_group
+    from nocturne.core.annotation_layout import Label
+    win._solve = (win._solve_sig(), object(),
+                  [CatalogObject("NGC 7000", "NA", 0, 0, 120.0, 5, 5)])
+    win.image_view.set_annotations(
+        build_annotation_group([Label("NGC 7000", 5, 5, "#5cff5c")], (24, 24)))
+
+
+def test_rotating_says_why_the_annotations_disappeared(qtbot, tmp_path):
+    """They used to vanish in silence. The only clue was the Plate Solve panel,
+    which is collapsible and routinely shut — the canvas pill exists precisely so
+    you can keep working with the tool closed."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _solved_then(win, tmp_path)
+    win._clear_warning()
+
+    win._rotate()
+    assert win.image_view._annotations is None, "the stale overlay still comes off"
+    text = win._warning.text()
+    assert text, "the user must be told why their labels went"
+    assert "re-solve" in text.lower(), "and what to do about it"
+
+
+def test_that_notice_is_amber_not_red(qtbot, tmp_path):
+    """Rotating is a deliberate, normal action. Red says 'you broke something',
+    which is how a prominent label gets trained into background noise."""
+    from nocturne.ui.theme import WARNING
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _solved_then(win, tmp_path)
+
+    win._rotate()
+    assert WARNING in win._warning.styleSheet()
+    assert "#ff6b6b" not in win._warning.styleSheet()
+
+    # ...and a real error still reads as one
+    win._show_warning("Could not open file: boom")
+    assert "#ff6b6b" in win._warning.styleSheet()
+
+
+def test_the_notice_does_not_re_fire_on_every_refresh(qtbot, tmp_path):
+    """_refresh runs constantly; a message that re-appeared each time could never
+    be dismissed."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _solved_then(win, tmp_path)
+    win._rotate()
+    assert win._warning.text()
+
+    win._clear_warning()
+    win._refresh()
+    win._refresh()
+    assert win._warning.text() == "", "said once, not on every repaint"
+
+
+def test_no_notice_when_there_was_no_solve_to_lose(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._clear_warning()
+    win._rotate()
+    assert win._warning.text() == ""
