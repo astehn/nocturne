@@ -213,3 +213,70 @@ def test_a_saved_alignment_and_opacity_come_back(qtbot):
     qtbot.addWidget(dlg)
     assert dlg._align_box.currentData() == "centre"
     assert dlg._opacity.value() == 25
+
+
+# --- caption vs burned annotations -------------------------------------------
+
+def _annotated_dlg(qtbot, placement="on"):
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    d = ShareDialog(_rgb(), {"target": "NGC 7000"},
+                    Settings(handle="me", share_caption_placement=placement),
+                    annotated_rgb8=_rgb(), annotations_on=True)
+    qtbot.addWidget(d)
+    return d
+
+
+def test_annotations_default_the_caption_below_the_image(qtbot):
+    """On-image, the band is painted over whatever the overlay drew at the bottom.
+    On a real NGC 7000 export it swallowed the RA grid labels and cut the B 358
+    label in half."""
+    d = _annotated_dlg(qtbot, placement="on")     # saved style says on-image
+    assert d._cap_placement == "below"
+    assert d._place_box.currentData() == "below"
+
+
+def test_without_annotations_the_saved_placement_is_respected(qtbot):
+    """The default belongs to "this share has annotations", not to the user."""
+    d = _dlg(qtbot)                                # no annotated frame supplied
+    assert d._cap_placement == "on"
+
+
+def test_the_user_can_still_choose_on_image(qtbot):
+    """A default, not a lock — and once chosen it must stick."""
+    d = _annotated_dlg(qtbot)
+    assert d._cap_placement == "below"
+    on_idx = next(i for i in range(d._place_box.count())
+                  if d._place_box.itemData(i) == "on")
+    d._place_box.setCurrentIndex(on_idx)
+    assert d._cap_placement == "on"
+    assert d._placement_touched
+    # toggling annotations must not override the explicit choice
+    d._set_annotations(False)
+    d._set_annotations(True)
+    assert d._cap_placement == "on", "an explicit choice was overridden by the default"
+
+
+def test_turning_annotations_on_mid_session_moves_an_untouched_caption(qtbot):
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    d = ShareDialog(_rgb(), {"target": "X"}, Settings(share_caption_placement="on"),
+                    annotated_rgb8=_rgb(), annotations_on=False)
+    qtbot.addWidget(d)
+    assert d._cap_placement == "on"
+    d._set_annotations(True)
+    assert d._cap_placement == "below", "the collision should have been pre-empted"
+    assert not d._placement_touched, "a default must not count as a user choice"
+
+
+def test_the_annotation_default_is_not_persisted(qtbot):
+    """It belongs to this share, not to the user's house style."""
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    saved = {}
+    d = ShareDialog(_rgb(), {"target": "X"}, Settings(share_caption_placement="on"),
+                    annotated_rgb8=_rgb(), annotations_on=True,
+                    settings_saver=lambda s: saved.update(p=s.share_caption_placement))
+    qtbot.addWidget(d)
+    assert d._cap_placement == "below"
+    assert saved == {}, "opening the dialog must not rewrite the saved placement"

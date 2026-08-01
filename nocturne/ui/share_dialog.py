@@ -48,6 +48,9 @@ class ShareDialog(QDialog):
         self._cap_size = getattr(settings, "share_caption_size", 0.028)
         self._cap_colour = getattr(settings, "share_caption_colour", "#ffffff")
         self._cap_placement = getattr(settings, "share_caption_placement", "on")
+        # Has the USER chosen a placement this session? Until they do, annotations
+        # get to pick the safe one for them; afterwards their choice stands.
+        self._placement_touched = False
         self._cap_align = getattr(settings, "share_caption_align", "left")
         self._band_opacity = getattr(settings, "share_band_opacity", 0.59)
         self._save_runner = save_share            # injectable for tests
@@ -124,6 +127,7 @@ class ShareDialog(QDialog):
         reset_btn.setToolTip("Restore the caption generated from this image's data")
         reset_btn.clicked.connect(self._reset_caption)
 
+        self._apply_annotation_placement_default()
         self._place_box = QComboBox()
         for label, key in PLACEMENTS:
             self._place_box.addItem(label, key)
@@ -230,6 +234,13 @@ class ShareDialog(QDialog):
 
     def _set_annotations(self, on) -> None:
         self._annotations_on = bool(on)
+        before = self._cap_placement
+        self._apply_annotation_placement_default()
+        if self._cap_placement != before:
+            self._place_box.blockSignals(True)     # a default must not read as a user choice
+            self._place_box.setCurrentIndex([k for _, k in PLACEMENTS].index(self._cap_placement))
+            self._place_box.blockSignals(False)
+            self._sync_opacity_enabled()
         # Re-set the canvas so the crop box keeps its geometry while the pixels
         # underneath it change.
         box = self._image_view.crop_box() if hasattr(self._image_view, "crop_box") else None
@@ -282,7 +293,26 @@ class ShareDialog(QDialog):
             self._persist_caption_style()
             self._refresh_preview()
 
+    def _apply_annotation_placement_default(self) -> None:
+        """With annotations burned in, put the caption BELOW the image by default.
+
+        On-image, the band is painted over the bottom of the picture — and with
+        an overlay present, that is whatever the overlay drew there. On a real
+        NGC 7000 export it swallowed the RA grid labels and cut the B 358 object
+        label in half. The two features were built independently and neither knew
+        about the other; below-image extends the canvas instead, so a collision
+        is not possible rather than merely unlikely.
+
+        A DEFAULT, not a lock: the dropdown still offers on-image, and once the
+        user picks a placement themselves that choice is respected for the rest
+        of the session. Deliberately not persisted either — it belongs to "this
+        share has annotations", not to the user's house style.
+        """
+        if self._annotations_on and not self._placement_touched:
+            self._cap_placement = "below"
+
     def _set_placement(self, _i: int) -> None:
+        self._placement_touched = True
         self._cap_placement = self._place_box.currentData()
         self._sync_opacity_enabled()
         self._persist_caption_style()
