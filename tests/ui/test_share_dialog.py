@@ -60,3 +60,66 @@ def test_close_button_rejects(qtbot):
     d = _dlg(qtbot)
     d._close_btn.click()
     assert d.result() == QDialog.DialogCode.Rejected
+
+
+def test_the_selected_aspect_is_visible(qtbot):
+    """Six plain push-buttons showed no state at all: after clicking around, the
+    only way to know what you would get was to read the preview's shape."""
+    dlg = _dlg(qtbot)
+    checked = [lbl for lbl, b in dlg._aspect_buttons.items() if b.isChecked()]
+    assert checked == ["Original"], "the starting aspect must be shown as active"
+
+    dlg._aspect_buttons["4:5"].click()
+    checked = [lbl for lbl, b in dlg._aspect_buttons.items() if b.isChecked()]
+    assert checked == ["4:5"], "exactly one aspect is active at a time"
+    assert dlg._aspect_label == "4:5"
+
+
+def test_selecting_an_aspect_in_code_updates_the_buttons(qtbot):
+    """The row must not go stale when the aspect is set other than by a click."""
+    dlg = _dlg(qtbot)
+    dlg._select_aspect(1.0, "1:1")
+    assert dlg._aspect_buttons["1:1"].isChecked()
+    assert not dlg._aspect_buttons["Original"].isChecked()
+
+
+def test_size_choice_changes_the_composed_output(qtbot):
+    """2048 was hardcoded. A tool whose whole purpose is producing a file for
+    somewhere else must let you say how big it is."""
+    dlg = _dlg(qtbot, meta={"target": "X", "source_label": "x.fits"})
+    dlg._size = 1080
+    small = dlg._compose_current()
+    dlg._size = None                       # "Full size"
+    full = dlg._compose_current()
+    assert max(small.width(), small.height()) <= 1080
+    assert max(full.width(), full.height()) >= max(small.width(), small.height())
+
+
+def test_share_is_never_upscaled(qtbot):
+    """A 400x300 source asked for 4096 must stay 400x300 — adding pixels without
+    adding detail is not a service."""
+    dlg = _dlg(qtbot)
+    dlg._size = 4096
+    img = dlg._compose_current()
+    assert max(img.width(), img.height()) == 400
+
+
+def test_format_choice_drives_the_filename_and_writer(qtbot):
+    from nocturne.core.share import share_filename
+    dlg = _dlg(qtbot)
+    assert share_filename("ngc7000.fits", "4:5", "png") == "ngc7000_4x5.png"
+    assert share_filename("ngc7000.fits", "4:5", "jpg") == "ngc7000_4x5.jpg"
+
+    written = {}
+    dlg._save_runner = lambda img, path: written.setdefault("path", path)
+    dlg._do_export("/tmp/out.png")
+    assert written["path"].endswith(".png")
+
+
+def test_export_reports_the_pixel_size(qtbot):
+    """"Saved name.jpg" never answered the question you actually have before
+    posting: how big is it?"""
+    dlg = _dlg(qtbot)
+    dlg._save_runner = lambda img, path: None
+    dlg._do_export("/tmp/out.jpg")
+    assert "×" in dlg.status.text() and "400" in dlg.status.text()

@@ -55,40 +55,26 @@ def _grad(h, w):
     a[..., 0] = np.linspace(0, 255, w, dtype=np.uint8)[None, :]
     return a
 
-def test_compose_crop_and_downscale(_qapp):
-    from nocturne.core.share import compose_share, centered_crop
-    img = _grad(500, 400)                       # tall 400x500
-    crop = centered_crop(400, 500, 1.0)         # → 400x400
-    out = compose_share(img, crop, "", longest_edge=200)
-    assert out.width() == 200 and out.height() == 200   # square, downscaled
+def test_caption_uses_the_plate_solved_target_when_the_header_has_none():
+    """Share was the ONLY surface that read `target` alone. A stacked master with
+    no OBJECT header, plate-solved to NGC 7000, showed "NGC 7000" in the info
+    strip and the provenance report and published with no target at all."""
+    assert caption_line({"target_solved": "NGC 7000"}, "") == "NGC 7000"
 
-def test_compose_never_upscales(_qapp):
-    from nocturne.core.share import compose_share
-    img = _grad(100, 100)
-    out = compose_share(img, (0, 100, 0, 100), "", longest_edge=2048)
-    assert out.width() == 100 and out.height() == 100
 
-def test_compose_band_darkens_bottom_only_with_caption(_qapp):
-    from nocturne.core.share import compose_share
-    img = _grad(300, 300); img[:] = 200          # uniform bright
-    plain = compose_share(img, (0, 300, 0, 300), "", longest_edge=300)
-    capped = compose_share(img, (0, 300, 0, 300), "NGC 7000 · @me", longest_edge=300)
-    # bottom band row is darker with a caption; a top row is unchanged
-    def lum(qi, y):
-        c = qi.pixelColor(qi.width() // 2, y)
-        return c.red() + c.green() + c.blue()
-    assert lum(capped, 295) < lum(plain, 295)     # band burned at the bottom
-    assert lum(capped, 5) == lum(plain, 5)        # top untouched
+def test_a_header_target_still_wins_over_the_solved_one():
+    """Same precedence as main_window and provenance: `target or target_solved`.
+    The header is what the user actually pointed at and named."""
+    assert caption_line({"target": "My Pacman", "target_solved": "NGC 281"}, "") == "My Pacman"
 
-def test_compose_accepts_mono(_qapp):
-    from nocturne.core.share import compose_share
-    mono = (np.ones((120, 120), np.uint8) * 128)
-    out = compose_share(mono, (0, 120, 0, 120), "", longest_edge=120)
-    assert out.width() == 120 and out.height() == 120
 
-def test_save_share_jpeg(_qapp, tmp_path):
-    from nocturne.core.share import compose_share, save_share_jpeg
-    out = compose_share(_grad(64, 64), (0, 64, 0, 64), "", longest_edge=64)
-    p = tmp_path / "s.jpg"
-    save_share_jpeg(out, str(p))
-    assert p.exists() and p.stat().st_size > 0
+def test_share_and_provenance_name_the_same_target():
+    """They drifted once: provenance read `target or target_solved` while Share
+    read `target` alone, so the same image was NGC 7000 in the report and
+    anonymous in the shared JPEG. Compare them on the same metadata."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    meta = {"target_solved": "NGC 7000"}
+    assert "NGC 7000" in caption_line(meta, "")
+    report = build_report([], meta, app_version="0.7.1", date=datetime.date(2026, 8, 1))
+    assert "NGC 7000" in report

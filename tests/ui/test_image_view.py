@@ -316,6 +316,24 @@ def test_move_inside_is_unaffected(qtbot):
     assert abs(r.left() - 35) < 0.01 and abs(r.top() - 15) < 0.01   # 20+15, 10+5
 
 
+def _send_move(view, pos):
+    """Deliver a mouse-move to the viewport deterministically.
+
+    qtbot.mouseMove is unreliable in this suite (see CLAUDE.md): whether the
+    synthetic event arrives depends on exposure and on test ordering. Building
+    the QMouseEvent and sending it removes both variables. The 4th argument is
+    the button that CAUSED the event, the 5th is what is HELD."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    local = QPointF(pos)
+    glob = QPointF(view.viewport().mapToGlobal(pos))
+    ev = QMouseEvent(QEvent.Type.MouseMove, local, glob,
+                     Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                     Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(view.viewport(), ev)
+
+
 def test_mouse_move_emits_image_pixel_coordinates(qtbot):
     from PySide6.QtCore import QPoint
     view = ImageView()
@@ -326,8 +344,11 @@ def test_mouse_move_emits_image_pixel_coordinates(qtbot):
     qtbot.waitExposed(view)
     seen = []
     view.hovered.connect(lambda x, y, side: seen.append((x, y, side)))
-    centre = view.viewport().rect().center()
-    qtbot.mouseMove(view.viewport(), centre)
+    # Built and sent directly, not via qtbot.mouseMove: that only delivered the
+    # synthetic move under one particular full-suite ordering, so this test and
+    # its sibling below passed or failed depending on what ran before them.
+    # Adding an unrelated test file was enough to flip both.
+    _send_move(view, view.viewport().rect().center())
     assert seen, "moving over the image should emit hovered"
     x, y, side = seen[-1]
     assert 0 <= x < 40 and 0 <= y < 30
@@ -352,7 +373,7 @@ def test_mouse_move_outside_the_image_emits_hover_left(qtbot):
     # With the corrected order above, fit() sizes the 10x10 image to the real
     # 400x300 viewport, leaving a genuine letterboxed margin outside it —
     # (2, 2) falls in that margin (off-image).
-    qtbot.mouseMove(view.viewport(), QPoint(2, 2))
+    _send_move(view, QPoint(2, 2))
     assert left
 
 
