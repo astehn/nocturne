@@ -95,8 +95,13 @@ def _burn_caption(image: QImage, caption: str, *,
     pad = max(1, round(h * PAD_FRAC))
 
     if placement == "below":
+        # The slider means the same thing in both modes: how DARK the band is.
+        # It used to be alpha-over-the-picture only, which left it inert here and
+        # so it was disabled — a control that visibly does nothing reads as
+        # broken. 1.0 is black, 0.0 is white.
+        level = max(0, min(255, round((1.0 - band_opacity) * 255)))
         out = QImage(w, h + band, QImage.Format.Format_RGB888)
-        out.fill(QColor(0, 0, 0))
+        out.fill(QColor(level, level, level))
         p = QPainter(out)
         p.drawImage(0, 0, image)
         band_top = h

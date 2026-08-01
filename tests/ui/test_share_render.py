@@ -97,7 +97,8 @@ def test_caption_colour_is_applied(qapp):
     """Text is drawn in the requested colour, not always white."""
     img = _flat(300, 300, v=0)                  # black, so the text is what shows
     red = compose_share(img, (0, 300, 0, 300), "IIIIIIIIIIIIIIII", longest_edge=300,
-                        placement="below", colour="#ff0000", size_frac=0.038)
+                        placement="below", colour="#ff0000", size_frac=0.038,
+                        band_opacity=1.0)          # black strip: the text is what shows
     reds = greens = 0
     for y in range(300, red.height()):
         for x in range(0, 200, 2):
@@ -157,12 +158,23 @@ def test_band_opacity_controls_how_much_shows_through(qapp):
     assert 0 < mid.pixelColor(x, y).red() < 200
 
 
-def test_opacity_does_not_apply_below_the_image(qapp):
-    """That strip is new canvas — there is nothing behind it to show through."""
+def test_the_band_slider_darkens_the_strip_below_the_image_too(qapp):
+    """It used to be inert here, so it was disabled — and a slider that cannot be
+    moved reads as broken rather than as unavailable. It now means "how dark the
+    band is" in both modes. 1.0 black, 0.0 white."""
     img = _flat(300, 300, v=200)
-    a = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
-                      placement="below", band_opacity=0.0)
-    b = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
-                      placement="below", band_opacity=1.0)
-    assert a.height() == b.height()
-    assert a.pixelColor(280, a.height() - 5).red() == b.pixelColor(280, b.height() - 5).red()
+    # a caption is required for a band to exist at all; keep it short and
+    # left-aligned so x=280 samples the strip rather than the text
+    dark = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                         placement="below", band_opacity=1.0)
+    light = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                          placement="below", band_opacity=0.0)
+    mid = compose_share(img, (0, 300, 0, 300), "x", longest_edge=300,
+                        placement="below", band_opacity=0.5)
+    y = dark.height() - 5
+    assert dark.pixelColor(280, y).red() == 0
+    assert light.pixelColor(280, y).red() == 255
+    assert 100 < mid.pixelColor(280, y).red() < 155
+    # and the picture above is untouched at every setting
+    for img_ in (dark, light, mid):
+        assert img_.pixelColor(150, 299).red() == 200

@@ -177,16 +177,18 @@ def test_a_saved_style_is_restored_next_time(qtbot):
     assert dlg._cap_size_box.currentData() == pytest.approx(0.038)
 
 
-def test_opacity_is_disabled_below_the_image(qtbot):
-    """Nothing to see through when the strip sits on canvas that did not exist."""
+def test_the_band_slider_stays_live_in_both_placements(qtbot):
+    """Reported 2026-08-01: "i cant change that at all". The user had "Below
+    image" saved, where the slider was deliberately disabled — but a control that
+    cannot be moved reads as broken, and the reason lived in a tooltip nobody
+    hovers. It is now live in both modes."""
     dlg = _dlg(qtbot)
-    assert dlg._opacity.isEnabled(), "on-image: opacity applies"
-    dlg._place_box.setCurrentIndex(1)                    # Below image
-    assert not dlg._opacity.isEnabled()
-    assert dlg._opacity_label.text() == "—"
-    dlg._place_box.setCurrentIndex(0)                    # back On image
     assert dlg._opacity.isEnabled()
-    assert "%" in dlg._opacity_label.text()
+    dlg._place_box.setCurrentIndex(1)                    # Below image
+    assert dlg._opacity.isEnabled(), "must stay draggable below the image"
+    assert "%" in dlg._opacity_label.text(), "and keep showing a real value"
+    dlg._opacity.setValue(30)
+    assert dlg._band_opacity == pytest.approx(0.30)
 
 
 def test_alignment_and_opacity_persist(qtbot):

@@ -289,14 +289,18 @@ class ShareDialog(QDialog):
         self._refresh_preview()
 
     def _sync_opacity_enabled(self) -> None:
-        """Band opacity is meaningless below the image: that strip sits on canvas
-        that did not exist before, so there is nothing to see through."""
+        """The band slider is always live. It was disabled for "Below image" on
+        the reasoning that a strip on fresh canvas has nothing to see through —
+        correct about alpha, wrong as a control. Disabling it left the user with
+        a slider that could not be moved and a tooltip nobody hovers, which reads
+        as broken rather than as unavailable. It now means "how dark the band is"
+        in both modes, so it always does something visible."""
         on_image = self._cap_placement != "below"
-        self._opacity.setEnabled(on_image)
-        self._opacity_label.setText(f"{self._opacity.value()}%" if on_image else "—")
+        self._opacity.setEnabled(True)
+        self._opacity_label.setText(f"{self._opacity.value()}%")
         self._opacity.setToolTip(
-            "How much of the picture shows through the caption band"
-            if on_image else "Only applies when the caption is on the image")
+            "How much of the picture shows through the band" if on_image
+            else "How dark the strip under the image is (100% = black)")
 
     def _set_align(self, _i: int) -> None:
         self._cap_align = self._align_box.currentData()
