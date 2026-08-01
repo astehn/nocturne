@@ -173,6 +173,11 @@ class MainWindow(QMainWindow):
         self._async_enabled = True  # tests set False for deterministic apply
         self._active_token = None       # CancelToken for the running op, if any
         self._busy_start = 0.0          # time.monotonic() when the current op started
+        # Bumped every time the workspace is replaced (new image, opened bundle,
+        # Close Project). A background op captures it at launch and its callbacks
+        # refuse to touch a workspace that is no longer the one they started on.
+        # See _swap_workspace.
+        self._project_gen = 0
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
@@ -809,7 +814,11 @@ class MainWindow(QMainWindow):
         bypassing any cached solution)."""
         self.solve_panel.set_state("solving")
         self._show_output("Plate-solving…")
-        self._run_busy(lambda: self._solve_current(self.project.current()),
+        # Capture the image HERE, on the UI thread. `lambda: ...self.project...`
+        # read it on the worker instead, so a swap mid-solve either handed ASTAP
+        # the new image or raised AttributeError on None inside the worker.
+        current = self.project.current()
+        self._run_busy(lambda: self._solve_current(current),
                        lambda r: self._on_solved(sig, *r),
                        "Plate-solving…", "Plate-solve failed")
 
@@ -1174,6 +1183,10 @@ class MainWindow(QMainWindow):
         self.open_image(base, os.path.basename(path))
 
     def open_image(self, base, label: str) -> None:
+        # Retire the outgoing workspace FIRST: _clear_cache below deletes the
+        # snapshots an in-flight step may be about to write into, and the new
+        # Project must not receive a callback belonging to the old one.
+        self._swap_workspace()
         self._source_base = base
         self._source_label = label
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
@@ -1219,13 +1232,19 @@ class MainWindow(QMainWindow):
     def _do_save_project(self, path: str) -> None:
         """Write the project to `path` off the UI thread (busy panel + cancel),
         atomically (temp file + rename — a slow/cancelled save can't corrupt an
-        existing bundle at `path`). Solve state and source label are captured
-        here, on the UI thread, before the worker starts."""
+        existing bundle at `path`). The project, its solve state and the source
+        label are ALL captured here, on the UI thread, before the worker starts —
+        anything the worker reads from `self` is read at an unknown later moment,
+        by which time the workspace may have been replaced."""
         solve_state = self._solve_state_dict()
         source_label = self._source_label
+        project = self.project      # capture too: `self.project` inside work()
+                                    # was read on the WORKER, so opening another
+                                    # image mid-save serialised the NEW project
+                                    # to the OLD path
 
         def work():
-            save_project(self.project, path, solve_state=solve_state, source_label=source_label,
+            save_project(project, path, solve_state=solve_state, source_label=source_label,
                          on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
 
         def on_result(_result) -> None:
@@ -1239,8 +1258,12 @@ class MainWindow(QMainWindow):
         self._run_busy(work, on_result, "Saving project…", "Save failed")
 
     def _open_project(self, path: str | None = None) -> None:
-        if self._busy:
-            return
+        # No `if self._busy: return` here any more. It was a SILENT no-op — the
+        # Open Project menu item simply did nothing while a step ran, with no
+        # message — and it made the two open paths behave differently, since
+        # open_fits was never guarded at all. Both now swap the workspace at
+        # their point of commitment and let the generation guard in _run_busy
+        # discard the outgoing op's callback.
         if not self._confirm_save_if_dirty():
             return
         if path is None:
@@ -1258,6 +1281,9 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_warning(f"Could not open project: {exc}")
             return
+        # Only now — every early return above (dialog cancelled, newer-version,
+        # load failed) must leave an in-flight op running and untouched.
+        self._swap_workspace()
         self.project = loaded.project
         self._source_label = loaded.source_label
         self._project_path = path
@@ -1425,6 +1451,7 @@ class MainWindow(QMainWindow):
         self._active_token = token
         self._busy_start = _time.monotonic()
         self._set_busy(True, label)
+        gen = self._project_gen        # the workspace this result will belong to
 
         def wrapped():
             set_ambient(token)
@@ -1433,15 +1460,29 @@ class MainWindow(QMainWindow):
             finally:
                 clear_ambient()
 
-        def done(result):
-            try:
-                on_result(result)
-            finally:
+        def _release():
+            # Only if THIS op is still the active one. A stale callback landing
+            # after a newer op has started must not clear the newer op's busy
+            # state -- that would leave the UI idle-looking while work runs.
+            if self._active_token is token:
                 self._active_token = None
                 self._set_busy(False)
 
+        def _superseded() -> bool:
+            return self._project_gen != gen
+
+        def done(result):
+            try:
+                if _superseded():
+                    return      # the workspace this belonged to is gone; drop it
+                on_result(result)
+            finally:
+                _release()
+
         def err(exc):
             try:
+                if _superseded():
+                    return      # no warning either: the user replaced the workspace
                 if isinstance(exc, Cancelled):
                     self._show_output("Cancelled.")     # neutral channel, not a warning
                 elif isinstance(exc, ToolError):
@@ -1449,8 +1490,7 @@ class MainWindow(QMainWindow):
                 else:
                     self._show_warning(f"{err_prefix}: {exc}")
             finally:
-                self._active_token = None
-                self._set_busy(False)
+                _release()
 
         if self._async_enabled:
             run_async(self._pool, wrapped, done, err)
@@ -1467,6 +1507,31 @@ class MainWindow(QMainWindow):
         tok = self._active_token
         if tok is not None:
             tok.cancel()
+
+    def _swap_workspace(self) -> None:
+        """Call BEFORE replacing self.project — from open_image, _open_project
+        and _close_project. The ONE place that retires the outgoing workspace.
+
+        Cancelling is not enough on its own and must not be mistaken for the
+        fix. Only ops that poll the token can honour it (ASTAP does; a plain
+        NumPy step.apply never looks), so a step launched a moment ago will run
+        to completion and call back regardless. What makes that harmless is the
+        generation bump: _run_busy captures the generation at launch and its
+        callbacks refuse to act on a stale one.
+
+        Before this, the callback ran unconditionally against whatever
+        self.project happened to be by then:
+          - Close during a step -> on_result does self.project.run_step(...) on
+            None -> AttributeError.
+          - Open during a step  -> the OLD step's result is written onto the NEW
+            project and _log_step records it against the wrong lineage. No
+            exception, so it is the worse of the two.
+
+        The cancel is still worth doing: it stops an external tool burning
+        minutes of CPU on a result nobody will read.
+        """
+        self._cancel_active()
+        self._project_gen += 1
 
     def elapsed_seconds(self) -> float:
         """Seconds since the current busy op started; 0.0 when idle."""
@@ -2580,6 +2645,7 @@ class MainWindow(QMainWindow):
         image."""
         if not self._confirm_save_if_dirty():
             return
+        self._swap_workspace()
         self.project = None
         self._canvas_img = None
         self._compare_img = None

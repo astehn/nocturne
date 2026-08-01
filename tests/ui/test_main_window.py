@@ -3137,3 +3137,174 @@ def test_picking_an_unknown_object_is_a_no_op(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win.image_view, "focus_on", lambda x, y, **kw: focused.append((x, y)))
     win._on_object_activated("NOT IN FIELD")
     assert focused == []
+
+
+# --- background op vs workspace swap (the _busy race) ------------------------
+# _run_busy's callbacks used to fire unconditionally against whatever
+# self.project had become. Closing mid-step crashed; opening mid-step wrote the
+# old step's result onto the NEW project, silently.
+
+def _deferred_busy(win):
+    """Start a background op and return its callbacks, so a test can land the
+    result LATER — after a workspace swap. Mirrors the async path without
+    threads: run_async would deliver `done` at an uncontrollable moment."""
+    captured = {}
+    win._async_enabled = True
+
+    def fake_run_async(pool, work, done, err):
+        captured["done"], captured["err"] = done, err   # never actually run
+
+    import nocturne.ui.main_window as mw
+    real = mw.run_async
+    mw.run_async = fake_run_async
+    try:
+        yield_result = {}
+        win._run_busy(lambda: "RESULT",
+                      lambda r: yield_result.setdefault("applied", r),
+                      "Working…", "Failed")
+        captured["applied"] = yield_result
+    finally:
+        mw.run_async = real
+        win._async_enabled = False
+    return captured
+
+
+def test_closing_the_project_mid_step_does_not_crash_on_the_callback(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    cb = _deferred_busy(win)
+
+    win._close_project()                     # workspace retired while "running"
+    assert win.project is None
+    cb["done"]("RESULT")                     # the worker finishes afterwards
+    assert cb["applied"] == {}, "a result from a retired workspace must be dropped"
+
+
+def test_opening_a_new_image_mid_step_does_not_apply_the_old_result(qtbot, tmp_path):
+    """The silent one: the old step's result written onto the NEW project."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    cb = _deferred_busy(win)
+
+    second = tmp_path / "second"
+    second.mkdir()
+    win.open_fits(str(_make_fits(second, filter_card="R")))     # new workspace
+    fresh = win.project
+    assert fresh is not None
+    before = fresh.position if hasattr(fresh, "position") else len(fresh.entries())
+
+    cb["done"]("RESULT")
+    assert cb["applied"] == {}, "the old callback must not touch the new project"
+    assert win.project is fresh, "the new project must still be the live one"
+    after = fresh.position if hasattr(fresh, "position") else len(fresh.entries())
+    assert after == before, "the new project's history must be UNCHANGED"
+
+
+def test_an_error_from_a_retired_workspace_does_not_warn_the_user(qtbot, tmp_path):
+    """The user replaced the workspace on purpose; a warning about the work they
+    walked away from is noise pointing at an image no longer on screen."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    cb = _deferred_busy(win)
+
+    win._close_project()
+    win._clear_warning()
+    cb["err"](RuntimeError("boom"))
+    assert not win._warning.text(), "no warning for a workspace already gone"
+
+
+def test_a_result_for_the_CURRENT_workspace_is_still_applied(qtbot, tmp_path):
+    """The guard must not swallow ordinary results — without this, a fix that
+    dropped everything would pass all three tests above."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    cb = _deferred_busy(win)
+
+    cb["done"]("RESULT")                     # no swap in between
+    assert cb["applied"] == {"applied": "RESULT"}
+
+
+def test_a_stale_callback_does_not_clear_a_newer_ops_busy_state(qtbot, tmp_path):
+    """Second race: the stale op's `finally` used to clear _active_token and
+    busy unconditionally, leaving the UI looking idle while the NEW op ran."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    old = _deferred_busy(win)
+    win._close_project()
+    new = _deferred_busy(win)                # a second op starts
+
+    assert win._busy, "the new op is running"
+    old["done"]("RESULT")                    # the FIRST op finally lands
+    assert win._busy, "the newer op's busy state must survive"
+    assert win._active_token is not None
+
+
+def test_close_during_a_real_step_apply_does_not_raise(qtbot, tmp_path):
+    """End-to-end proof through the REAL apply path, not a synthetic callback.
+    The reported crash was `on_result` calling self.project.run_step(...) after
+    _close_project set self.project = None -> AttributeError."""
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(_make_fits(tmp_path)))
+    win._go_to_id("stretch")
+
+    captured = {}
+
+    def fake_run_async(pool, work, done, err):
+        captured["done"] = done
+        captured["result"] = work()          # the worker really does the work
+
+    win._async_enabled = True
+    real = mw.run_async
+    mw.run_async = fake_run_async
+    try:
+        win.apply_current(0.6)   # stretch amount, as the other apply tests do
+    finally:
+        mw.run_async = real
+        win._async_enabled = False
+
+    assert "done" in captured, "the step must actually have gone through _run_busy"
+    win._close_project()
+    assert win.project is None
+    captured["done"](captured["result"])     # raised AttributeError before the fix
+
+
+def test_every_project_reassignment_goes_through_swap_workspace():
+    """Structural guard on the funnel, not a behaviour test.
+
+    _swap_workspace is only a funnel if nothing bypasses it. A fourth place that
+    does `self.project = ...` without it would silently reopen the race this
+    file's other tests cover, and no behavioural test would notice until someone
+    hit it in the app. Uses the AST rather than line proximity so it survives the
+    code moving around.
+
+    If this fails because you added a legitimate new assignment: call
+    self._swap_workspace() before it, don't relax the test."""
+    import ast, inspect
+    import nocturne.ui.main_window as mw
+
+    tree = ast.parse(inspect.getsource(mw))
+    offenders = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        assigns = [
+            n for n in ast.walk(fn)
+            if isinstance(n, ast.Assign)
+            for t in n.targets
+            if isinstance(t, ast.Attribute) and t.attr == "project"
+            and isinstance(t.value, ast.Name) and t.value.id == "self"
+        ]
+        if not assigns:
+            continue
+        swaps = any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "_swap_workspace"
+            for n in ast.walk(fn)
+        )
+        if not swaps:
+            offenders.append(fn.name)
+
+    assert not offenders, (
+        f"these assign self.project without _swap_workspace(): {offenders} — "
+        "a background op's callback could then land on the wrong workspace")
