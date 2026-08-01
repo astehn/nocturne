@@ -228,6 +228,12 @@ class SolvePanel(QWidget):
             # assumed scale is still a good solve, but the user should know the
             # assumption was made — especially on data from another instrument.
             solver_line += " · scale assumed from Seestar profile"
+        elif scale_source == "blind":
+            # The assumed Seestar scale did not fit, so it was dropped and solved
+            # without one. Worth saying plainly: it is the clearest signal the
+            # frame came from something other than a Seestar, and it explains why
+            # the solve took noticeably longer.
+            solver_line += " · solved without a scale hint (not a Seestar scale)"
         lines.append(solver_line)
 
         self.result_label.setText("\n".join(lines))

@@ -317,3 +317,44 @@ class ASTAP:
         except Exception:
             r = None
         return r if r is not None else SolveResult(False, None, 0.0, 0.0, 0.0)
+
+
+def solve_with_scale_fallback(astap, img, meta: dict, height_px: int):
+    """Solve with the best scale hint available, retrying blind if that hint was
+    a GUESS and the guess failed. Returns (SolveResult, scale_source).
+
+    ASTAP solves far more reliably given an approximate scale, so a stacked
+    master with no optics in its header gets one from the Seestar instrument
+    profile rather than solving blind (see core.instrument.fov_hint). That is
+    right for the instrument Nocturne is built around and WRONG for anything
+    else: a rig at 0.05"/px handed the Seestar's 3.66"/px searches at a scale 70x
+    off and fails, where a blind solve would have been slow but might have
+    worked. The fallback would then have converted slow successes into fast
+    failures on other people's data.
+
+    So: if the hint was assumed and the solve failed, drop the scale and try
+    once more. It costs a second attempt only on a path that already failed, it
+    needs no instrument detection, and it is self-correcting for any rig.
+
+    NOT retried when the scale came from the header — that value is measured,
+    not guessed, so a failure means something else is wrong and a blind retry
+    would only waste seconds.
+
+    `scale_source` is "header", "profile", "blind" or "none", and the panel
+    reports it: a solve that leaned on an assumed scale should say so, and one
+    that had to fall back to blind says the assumption did not fit.
+    """
+    from ..core.instrument import fov_hint
+    fov, source = fov_hint(meta, height_px)
+    hint = hint_from_metadata(meta)
+    ra_h, dec_d = hint if hint else (None, None)
+    cards = meta.get("solve_cards")
+
+    res = astap.solve(img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
+                      header_cards=cards)
+    if res.solved or source != "profile":
+        return res, source
+
+    blind = astap.solve(img, fov_deg=None, ra_hours=ra_h, dec_deg=dec_d,
+                        header_cards=cards)
+    return (blind, "blind") if blind.solved else (res, source)

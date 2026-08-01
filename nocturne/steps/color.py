@@ -34,7 +34,6 @@ class ColorStep(Step):
     def _photometric(self, img: AstroImage):
         """Solve -> query Gaia -> gains -> apply. Returns the calibrated image, or
         None (and sets self.last_message) on any failure so apply() falls back."""
-        from ..tools.astap import hint_from_metadata
         from ..tools.gaia import GaiaError
         from ..core.spcc import photometric_gains, apply_gains
         if self._astap is None or self._gaia_query is None:
@@ -42,17 +41,13 @@ class ColorStep(Step):
             return None
         meta = img.metadata
         h, w = img.data.shape[:2]
-        # The SAME hint the Plate Solve tool uses. This used to be an inline
-        # header-only copy, so a master with no optics in its header left fov as
-        # None, ASTAP solved blind and failed, and colour silently degraded to
-        # sky balance -- on files the tool itself solves in seconds.
-        from ..core.instrument import fov_hint
-        fov, _src = fov_hint(meta, h)
-        hint = hint_from_metadata(meta)
-        ra_h, dec_d = hint if hint else (None, None)
+        # The SAME solve the Plate Solve tool performs, retry and all. This was
+        # an inline header-only hint, so a master with no optics left fov as None,
+        # ASTAP solved blind and failed, and colour silently degraded to sky
+        # balance -- on files the tool itself solves in seconds.
+        from ..tools.astap import solve_with_scale_fallback
         try:
-            res = self._astap.solve(img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
-                                    header_cards=meta.get("solve_cards"))
+            res, _src = solve_with_scale_fallback(self._astap, img, meta, h)
         except Exception:
             res = None
         if res is None or not res.solved:
@@ -64,7 +59,11 @@ class ColorStep(Step):
         # a dense field just makes the VizieR query slow AND (even nearest-first) reaches
         # past the frame — 1.2deg of nearest stars densely covers the centre, which is
         # all SPCC needs. (gaia sorts nearest-first so the cap keeps these.)
-        radius = min((fov or 2.0) * 0.5 * (1.0 + (w / h) ** 2) ** 0.5, 1.2)
+        # From the SOLVE, not the hint: the hint was a guess (and may have been
+        # dropped entirely on the blind retry), while res.pixscale_arcsec is
+        # measured from the solution itself.
+        fov = res.pixscale_arcsec * h / 3600.0 if res.pixscale_arcsec else 2.0
+        radius = min(fov * 0.5 * (1.0 + (w / h) ** 2) ** 0.5, 1.2)
         try:
             gaia = self._gaia_query(res.center_ra_deg, res.center_dec_deg, radius)
         except GaiaError:

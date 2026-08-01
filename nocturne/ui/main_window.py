@@ -57,7 +57,6 @@ from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
-from ..core.instrument import fov_hint as _fov_hint
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -750,16 +749,12 @@ class MainWindow(QMainWindow):
 
     def _solve_current(self, img):
         """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""
-        from ..tools.astap import ASTAP, hint_from_metadata
+        from ..tools.astap import ASTAP, solve_with_scale_fallback
         from ..core.catalog import objects_in_field
         meta = img.metadata
         h, w = img.data.shape[:2]
-        fov, self._hint_source = _fov_hint(meta, h)
-        hint = hint_from_metadata(meta)
-        ra_h, dec_d = hint if hint else (None, None)
-        res = ASTAP(resolve_binary(self.settings.astap_path)).solve(
-            img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
-            header_cards=meta.get("solve_cards"))
+        astap = ASTAP(resolve_binary(self.settings.astap_path))
+        res, self._hint_source = solve_with_scale_fallback(astap, img, meta, h)
         objs = objects_in_field(res.wcs, (h, w)) if res.solved else []
         return res, objs
 

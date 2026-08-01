@@ -282,3 +282,66 @@ def test_solve_times_out_rather_than_hanging_forever(tmp_path):
     with pytest.raises(ToolError) as e:
         _run_astap(["/bin/sleep", "10"], cwd=str(tmp_path), timeout=0.5)
     assert "did not finish" in str(e.value) or "0 s" in str(e.value)
+
+
+# --- scale-hint fallback -----------------------------------------------------
+
+class _Recorder:
+    """Records every solve attempt; succeeds only when told to."""
+    def __init__(self, succeed_on=None):
+        self.calls = []
+        self._succeed_on = succeed_on          # index of the call that solves
+    def solve(self, img, fov_deg=None, ra_hours=None, dec_deg=None, header_cards=None):
+        self.calls.append(fov_deg)
+        ok = self._succeed_on is not None and len(self.calls) - 1 == self._succeed_on
+        return SolveResult(ok, object() if ok else None, 0.0, 0.0, 3.6)
+
+
+_SEESTAR_META = {}                              # no optics -> profile fallback
+_HEADER_META = {"focal_length": 400.0, "pixel_size": 3.76}
+
+
+def test_a_header_scale_is_used_and_never_retried_blind():
+    """A measured scale is not a guess. Failing with it means something else is
+    wrong, so a blind retry would only waste seconds."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    rec = _Recorder(succeed_on=None)            # never solves
+    res, source = solve_with_scale_fallback(rec, _img(), _HEADER_META, 2000)
+    assert not res.solved
+    assert source == "header"
+    assert len(rec.calls) == 1, "no retry when the scale came from the header"
+    assert rec.calls[0] is not None
+
+
+def test_an_assumed_scale_that_fails_is_dropped_and_retried_blind():
+    """The Seestar profile is right for a Seestar and wrong for anything else —
+    a rig at 0.05\"/px handed 3.66\"/px searches 70x off and fails. Without this
+    the fallback turns slow successes into fast failures on other people's data."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    rec = _Recorder(succeed_on=1)               # fails with a hint, solves without
+    res, source = solve_with_scale_fallback(rec, _img(), _SEESTAR_META, 2000)
+    assert res.solved
+    assert source == "blind"
+    assert len(rec.calls) == 2
+    assert rec.calls[0] is not None, "first attempt uses the profile scale"
+    assert rec.calls[1] is None, "the retry drops the scale entirely"
+
+
+def test_an_assumed_scale_that_works_does_not_retry():
+    """The common case — a Seestar master. One attempt, and it says so."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    rec = _Recorder(succeed_on=0)
+    res, source = solve_with_scale_fallback(rec, _img(), _SEESTAR_META, 2000)
+    assert res.solved and source == "profile"
+    assert len(rec.calls) == 1
+
+
+def test_both_attempts_failing_reports_the_original_result():
+    """Not the blind one: the first attempt's ASTAP message is the more useful
+    diagnostic, and 'profile' is what was actually assumed."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    rec = _Recorder(succeed_on=None)
+    res, source = solve_with_scale_fallback(rec, _img(), _SEESTAR_META, 2000)
+    assert not res.solved
+    assert source == "profile"
+    assert len(rec.calls) == 2, "it still tried blind before giving up"

@@ -3073,7 +3073,7 @@ def test_fov_hint_falls_back_to_the_instrument_profile():
     Solving blind on a few-degree field usually fails, and Nocturne knows what a
     Seestar is, so the profile is a far better hint than nothing.
     """
-    from nocturne.ui.main_window import _fov_hint
+    from nocturne.core.instrument import fov_hint as _fov_hint
     fov, src = _fov_hint({"focal_length": 160, "pixel_size": 2.9}, 2160)
     assert src == "header" and fov > 0
 
