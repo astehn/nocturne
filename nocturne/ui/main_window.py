@@ -60,6 +60,7 @@ from ..core.histogram import histogram
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
+from .trim_dialog import TrimDialog
 from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
 from .step_panels import build_panel
@@ -1122,6 +1123,8 @@ class MainWindow(QMainWindow):
         self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
                                               # canvas pill owns overlay visibility)
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
+        self._trim_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Trim", self._trim)
+        self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -2337,6 +2340,40 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry("Redo")
         self._navigate_to_step(affected)
 
+    def _trim(self) -> None:
+        """Cut the edges off the finished image, keeping the whole edit.
+
+        APPENDS rather than reaching back. _apply_geometry would jump_back to the
+        leading geometry run and discard every processing step after it — which is
+        precisely the problem Trim exists to avoid. run_step at the current
+        position simply adds one more step, so undo, provenance and the saved
+        bundle all keep working.
+
+        Late geometry is not a hack here: _leading_kept's own docstring notes that
+        "geometry ops can append after processing ops" — the history model was
+        written to allow it.
+        """
+        if self.project is None or self._busy:
+            return
+        if self.project.current().is_linear:
+            self._show_warning("Stretch the image first — Trim works on the "
+                                "finished picture.")
+            return
+        self._clear_warning()
+        dlg = TrimDialog(self.project.current(), parent=self)
+        if not dlg.exec():
+            return
+        bounds = dlg.bounds()
+        if not bounds:
+            return
+        result = self._step_for("crop").apply(self.project.current(),
+                                               CropParams(bounds=bounds))
+        self.project.run_step(_PrecomputedStep("Trim", result), "")
+        self._mark_dirty()
+        h, w = result.data.shape[:2]
+        self.log_panel.append_entry(format_log_entry("Trim", "", None, dims=(w, h)))
+        self._refresh()
+
     def _share(self) -> None:
         if self.project is None or self._busy:
             return
@@ -2826,6 +2863,17 @@ class MainWindow(QMainWindow):
         self._share_act.setEnabled(self.project is not None)
         self._upscale_act.setEnabled(self.project is not None)
         self._save_project_act.setEnabled(self.project is not None)
+        # Trim is gated on the image being NON-LINEAR, not on reaching a stage.
+        # Navigation is not state: you can click to a late stage on a linear image
+        # having done nothing. Before Stretch there is no finished picture to trim,
+        # and the pipeline's own Crop is the better tool anyway. Share uses the
+        # same rule, so it is one users meet once.
+        stretched = (self.project is not None
+                     and not self.project.current().is_linear)
+        self._trim_act.setEnabled(stretched)
+        self._trim_act.setToolTip(
+            "Trim the edges of the finished image" if stretched else
+            "Trim — available once you've stretched the image")
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

@@ -3611,3 +3611,91 @@ def test_a_failed_solve_names_the_star_database_first(qtbot, tmp_path):
     assert "star database" in text
     assert text.index("star database") < text.index("stretch"), \
         "the cause they cannot otherwise discover must come first"
+
+
+# --- Trim: a finishing crop that keeps the edit -------------------------------
+
+def _trimmable(qtbot, tmp_path):
+    """A window with a stretched image and several processing steps applied."""
+    win = _stretched_window(qtbot, tmp_path)
+    win._go_to_id("saturation")
+    win.apply_current(0.5)
+    return win
+
+
+def test_trim_is_gated_until_the_image_is_stretched(qtbot, tmp_path):
+    """A state gate, not a position gate: navigation cannot fool it, and before
+    Stretch the pipeline's own Crop is the better tool anyway."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert not win._trim_act.isEnabled(), "linear image — nothing finished to trim"
+    assert "stretch" in win._trim_act.toolTip().lower()
+
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._trim_act.isEnabled()
+
+
+def test_trim_appends_and_keeps_every_processing_step(qtbot, tmp_path, monkeypatch):
+    """THE point of the feature. Going back to the Crop step truncates forward
+    history, destroying the edit; Trim must not."""
+    win = _trimmable(qtbot, tmp_path)
+    before = [n for n, _ in win.project.entries()]
+    assert "Stretch" in before and "Saturation" in before
+
+    import nocturne.ui.main_window as mw
+    h, w = win.project.current().data.shape[:2]
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 3, w - 3)))
+    win._trim()
+
+    after = [n for n, _ in win.project.entries()]
+    assert after[-1] == "Trim", "the trim is appended at the end"
+    assert after[:-1] == before, "every earlier step survived"
+    nh, nw = win.project.current().data.shape[:2]
+    assert (nh, nw) == (h - 4, w - 6)
+
+
+class _FakeTrim:
+    def __init__(self, bounds): self._b = bounds
+    def exec(self): return 1
+    def bounds(self): return self._b
+
+
+def test_a_cancelled_trim_changes_nothing(qtbot, tmp_path, monkeypatch):
+    win = _trimmable(qtbot, tmp_path)
+    before = [n for n, _ in win.project.entries()]
+    shape = win.project.current().data.shape
+
+    import nocturne.ui.main_window as mw
+    class _Cancelled(_FakeTrim):
+        def exec(self): return 0
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _Cancelled((1, 2, 3, 4)))
+    win._trim()
+    assert [n for n, _ in win.project.entries()] == before
+    assert win.project.current().data.shape == shape
+
+
+def test_a_trim_marks_the_plate_solve_stale(qtbot, tmp_path, monkeypatch):
+    """The framing changed, so a solve made for the old framing no longer lines
+    up — same as a crop. That is why "Trim" is in GEOMETRY_NAMES."""
+    win = _trimmable(qtbot, tmp_path)
+    sig_before = win._solve_sig()
+
+    import nocturne.ui.main_window as mw
+    h, w = win.project.current().data.shape[:2]
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 2, w - 2)))
+    win._trim()
+    assert win._solve_sig() != sig_before
+
+
+def test_a_trim_does_not_satisfy_auto_enhances_crop_gate(qtbot, tmp_path, monkeypatch):
+    """Auto Enhance requires a crop BEFORE processing, so its statistics are
+    measured on the kept region. A late trim is a different thing entirely."""
+    win = _trimmable(qtbot, tmp_path)
+    assert not win._has_crop()
+
+    import nocturne.ui.main_window as mw
+    h, w = win.project.current().data.shape[:2]
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 2, w - 2)))
+    win._trim()
+    assert not win._has_crop(), "a late trim must not read as an early crop"

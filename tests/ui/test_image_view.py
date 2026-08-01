@@ -781,7 +781,12 @@ def test_a_deliberate_zoom_survives_a_resize(qtbot):
 
     view.resize(700, 500)
     qtbot.wait(50)
-    assert view.transform().m11() == zoomed, "the resize threw away the user's zoom"
+    # The requirement is "the zoom was not thrown away", not "the float is
+    # bit-identical". Exact equality on a transform after a resize made this
+    # order-dependent in the full suite; re-fitting a 40x30 image into a 700x500
+    # viewport would land near 12x, nowhere near this tolerance.
+    assert view.transform().m11() == pytest.approx(zoomed, rel=0.02), \
+        "the resize threw away the user's zoom"
 
 
 def test_actual_size_and_zoom_out_also_clear_the_fitted_flag(qtbot):

@@ -39,8 +39,12 @@ def test_step_name_and_order():
 
 
 def test_geometry_names():
+    """These names are what "the framing changed" means: any of them invalidates
+    a plate solve. "Trim" is the late, finishing crop (see trim_dialog) and
+    belongs here for exactly that reason — deliberately not called "Crop", so
+    _has_crop keeps meaning "cropped BEFORE processing"."""
     from nocturne.ui.pipeline import GEOMETRY_NAMES
-    assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V")
+    assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
 
 
 def test_remove_green_positioned_after_color():

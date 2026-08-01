@@ -54,7 +54,12 @@ PROCESSING_ORDER = [
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
-GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V")
+# "Trim" is a late, finishing crop appended AFTER processing (see trim_dialog).
+# It belongs here because these names are what "the framing changed" means: a
+# trim must invalidate a plate solve exactly as a crop does. It is deliberately
+# NOT named "Crop" so the provenance report can tell the two apart, and so
+# _has_crop keeps meaning "the user cropped before processing".
+GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky",
                  "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure")
 
