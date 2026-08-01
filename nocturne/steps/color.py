@@ -42,10 +42,12 @@ class ColorStep(Step):
             return None
         meta = img.metadata
         h, w = img.data.shape[:2]
-        fov = None
-        fl, px = meta.get("focal_length"), meta.get("pixel_size")
-        if fl and px:
-            fov = (206.265 * float(px) / float(fl)) * h / 3600.0
+        # The SAME hint the Plate Solve tool uses. This used to be an inline
+        # header-only copy, so a master with no optics in its header left fov as
+        # None, ASTAP solved blind and failed, and colour silently degraded to
+        # sky balance -- on files the tool itself solves in seconds.
+        from ..core.instrument import fov_hint
+        fov, _src = fov_hint(meta, h)
         hint = hint_from_metadata(meta)
         ra_h, dec_d = hint if hint else (None, None)
         try:

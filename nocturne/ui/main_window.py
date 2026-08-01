@@ -57,6 +57,7 @@ from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
+from ..core.instrument import fov_hint as _fov_hint
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -120,32 +121,6 @@ class _SaveSignals(QObject):
     progress = Signal(int, int)
 
 
-def _fov_hint(meta: dict, height_px: int) -> tuple[float | None, str]:
-    """A field-of-view hint for the solver, and where it came from.
-
-    ASTAP solves far more reliably given an approximate scale, and blind solving
-    a few-degree field often fails outright. Headers are the best source, but a
-    stacked master exported from another tool routinely arrives with none —
-    the user's own NGC 7000 master carries seven header cards and no optics at
-    all. Nocturne knows what a Seestar is, so fall back to the instrument
-    profile rather than solving blind: a crop preserves pixel scale, so the
-    profile stays valid for a cropped frame even though its DIMENSIONS change.
-
-    Returns (fov_degrees or None, source) where source is one of
-    "header", "profile" or "none" — the panel reports which, because a solve
-    that leaned on an assumed scale should say so.
-    """
-    fl, px = meta.get("focal_length"), meta.get("pixel_size")
-    try:
-        if fl and px and float(fl) > 0 and float(px) > 0:
-            return (206.265 * float(px) / float(fl)) * height_px / 3600.0, "header"
-    except (TypeError, ValueError):
-        pass
-    from ..core.instrument import SEESTAR_S30_PRO
-    scale = SEESTAR_S30_PRO.pixel_scale_arcsec
-    if scale > 0 and height_px > 0:
-        return scale * height_px / 3600.0, "profile"
-    return None, "none"
 
 
 class MainWindow(QMainWindow):
