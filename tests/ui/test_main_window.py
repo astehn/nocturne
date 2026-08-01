@@ -2260,7 +2260,7 @@ def test_share_opens_dialog(qtbot, tmp_path, monkeypatch):
     import nocturne.ui.main_window as mw
     class _Fake:
         def __init__(self, rgb8, metadata, settings, parent=None,
-                     annotated_rgb8=None, annotations_on=True):
+                     annotated_rgb8=None, annotations_on=True, **kw):
             captured["shape"] = rgb8.shape; captured["target_key"] = "source_label" in metadata
             captured["annotated"] = annotated_rgb8
         def exec(self): captured["shown"] = True
@@ -2292,7 +2292,7 @@ def test_share_receives_the_annotated_frame_when_solved(qtbot, tmp_path, monkeyp
     import nocturne.ui.main_window as mw
     class _Fake:
         def __init__(self, rgb8, metadata, settings, parent=None,
-                     annotated_rgb8=None, annotations_on=True):
+                     annotated_rgb8=None, annotations_on=True, **kw):
             captured["clean"] = rgb8
             captured["annotated"] = annotated_rgb8
             captured["on"] = annotations_on
@@ -2333,7 +2333,7 @@ def test_share_gets_no_annotations_when_the_solve_is_stale(qtbot, tmp_path, monk
     import nocturne.ui.main_window as mw
     class _Fake:
         def __init__(self, rgb8, metadata, settings, parent=None,
-                     annotated_rgb8=None, annotations_on=True):
+                     annotated_rgb8=None, annotations_on=True, **kw):
             captured["annotated"] = annotated_rgb8
         def exec(self): pass
     monkeypatch.setattr(mw, "ShareDialog", _Fake)

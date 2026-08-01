@@ -123,3 +123,55 @@ def test_export_reports_the_pixel_size(qtbot):
     dlg._save_runner = lambda img, path: None
     dlg._do_export("/tmp/out.jpg")
     assert "×" in dlg.status.text() and "400" in dlg.status.text()
+
+
+def test_caption_is_free_text_prefilled_from_the_image(qtbot):
+    """Free text rather than a checkbox per field: deleting a field is deleting
+    words, and you also get "first light with the S30", which no set of toggles
+    can express."""
+    dlg = _dlg(qtbot)
+    assert "NGC 7000" in dlg._caption_edit.text(), "prefilled from the metadata"
+
+    dlg._caption_edit.setText("first light with the S30")
+    assert dlg._current_caption() == "first light with the S30"
+
+    dlg._reset_caption()
+    assert "NGC 7000" in dlg._caption_edit.text(), "reset restores the generated line"
+
+
+def test_caption_style_is_persisted_but_the_text_is_not(qtbot):
+    """Style is a house style; the text belongs to this one image."""
+    saved = {}
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    dlg = ShareDialog(_rgb(), {"target": "NGC 7000"}, Settings(handle="me"),
+                      settings_saver=lambda s: saved.update(
+                          size=s.share_caption_size, colour=s.share_caption_colour,
+                          placement=s.share_caption_placement))
+    qtbot.addWidget(dlg)
+
+    dlg._caption_edit.setText("do not save me")
+    dlg._place_box.setCurrentIndex(1)          # "Below image"
+    assert saved["placement"] == "below"
+    assert "text" not in saved and "caption" not in saved
+
+
+def test_caption_controls_disable_with_the_caption_checkbox(qtbot):
+    dlg = _dlg(qtbot)
+    assert dlg._caption_wrap.isEnabled()
+    dlg._caption_check.setChecked(False)
+    assert not dlg._caption_wrap.isEnabled(), "no point styling a caption that is off"
+    assert dlg._current_caption() == ""
+
+
+def test_a_saved_style_is_restored_next_time(qtbot):
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    s = Settings(handle="me", share_caption_placement="below",
+                 share_caption_colour="#ff8800", share_caption_size=0.038)
+    dlg = ShareDialog(_rgb(), {"target": "X"}, s)
+    qtbot.addWidget(dlg)
+    assert dlg._cap_placement == "below"
+    assert dlg._cap_colour == "#ff8800"
+    assert dlg._place_box.currentData() == "below"
+    assert dlg._cap_size_box.currentData() == pytest.approx(0.038)

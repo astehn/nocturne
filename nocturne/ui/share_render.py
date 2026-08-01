@@ -18,7 +18,9 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
-from ..core.share import DEFAULT_SIZE
+from ..core.share import (
+    DEFAULT_CAPTION_COLOUR, DEFAULT_CAPTION_SIZE, DEFAULT_PLACEMENT, DEFAULT_SIZE,
+)
 
 BAND_FRAC = 0.07     # caption band height as a fraction of composited height
 FONT_FRAC = 0.028    # caption font size as a fraction of composited height (kept light, not heavy)
@@ -34,9 +36,16 @@ def qimage_from_rgb8(rgb8: np.ndarray) -> QImage:
 
 
 def compose_share(rgb8: np.ndarray, crop, caption: str,
-                  longest_edge: int | None = DEFAULT_SIZE) -> QImage:
+                  longest_edge: int | None = DEFAULT_SIZE,
+                  *, size_frac: float = DEFAULT_CAPTION_SIZE,
+                  colour: str = DEFAULT_CAPTION_COLOUR,
+                  placement: str = DEFAULT_PLACEMENT) -> QImage:
     """`longest_edge=None` keeps the cropped resolution. Downscale only — a share
-    is never upscaled, which would add pixels without adding detail."""
+    is never upscaled, which would add pixels without adding detail.
+
+    Caption styling is applied AFTER the downscale, so the band and text are
+    sized against the pixels actually being written. Doing it before would make
+    the caption shrink with the image and land at the wrong size."""
     top, bottom, left, right = crop
     if rgb8.ndim == 2:
         rgb8 = np.stack([rgb8] * 3, axis=2)
@@ -49,27 +58,53 @@ def compose_share(rgb8: np.ndarray, crop, caption: str,
             round(w * longest_edge / longest), round(h * longest_edge / longest),
             Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
     if caption:
-        image = _burn_caption(image, caption)
+        image = _burn_caption(image, caption, size_frac=size_frac,
+                              colour=colour, placement=placement)
     return image
 
 
-def _burn_caption(image: QImage, caption: str) -> QImage:
+def _burn_caption(image: QImage, caption: str, *,
+                  size_frac: float = DEFAULT_CAPTION_SIZE,
+                  colour: str = DEFAULT_CAPTION_COLOUR,
+                  placement: str = DEFAULT_PLACEMENT) -> QImage:
+    """Draw the caption on, or below, the picture.
+
+    "below" extends the canvas rather than painting over it, so nothing you
+    photographed is ever covered — the band height is derived from the IMAGE
+    height so the strip is the same proportion either way.
+
+    Band height follows the font, not a fixed fraction: at Large the old fixed
+    7% band clipped the glyphs' descenders.
+    """
     image = image.convertToFormat(QImage.Format.Format_RGB888)
     w, h = image.width(), image.height()
-    band = max(1, round(h * BAND_FRAC))
+    px = max(8, round(h * size_frac))
+    band = max(px * 2, round(h * BAND_FRAC))
     pad = max(1, round(h * PAD_FRAC))
-    p = QPainter(image)
+
+    if placement == "below":
+        out = QImage(w, h + band, QImage.Format.Format_RGB888)
+        out.fill(QColor(0, 0, 0))
+        p = QPainter(out)
+        p.drawImage(0, 0, image)
+        band_top = h
+    else:
+        out = image
+        p = QPainter(out)
+        band_top = h - band
+
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.fillRect(0, h - band, w, band, QColor(0, 0, 0, 150))     # translucent band
+    if placement != "below":
+        p.fillRect(0, band_top, w, band, QColor(0, 0, 0, 150))   # translucent band
     font = QFont()
-    font.setPixelSize(max(8, round(h * FONT_FRAC)))
+    font.setPixelSize(px)
     p.setFont(font)
-    p.setPen(QColor(255, 255, 255))
+    p.setPen(QColor(colour))
     text = QFontMetrics(font).elidedText(caption, Qt.TextElideMode.ElideRight, w - 2 * pad)
-    p.drawText(pad, h - band, w - 2 * pad, band,
+    p.drawText(pad, band_top, w - 2 * pad, band,
                int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text)
     p.end()
-    return image
+    return out
 
 
 def save_share_jpeg(image: QImage, path: str, quality: int = 92) -> None:

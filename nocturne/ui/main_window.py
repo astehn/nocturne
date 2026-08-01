@@ -2360,7 +2360,8 @@ class MainWindow(QMainWindow):
         meta["source_label"] = self._source_label
         ShareDialog(rgb8, meta, self.settings, parent=self,
                     annotated_rgb8=self._annotated_rgb8(rgb8),
-                    annotations_on=self.image_view._annotations is not None).exec()
+                    annotations_on=self.image_view._annotations is not None,
+                    settings_saver=lambda s: save_settings(s, self._settings_path)).exec()
 
     def _annotated_rgb8(self, rgb8):
         """`rgb8` with the plate-solve overlay burned in, or None when there is no

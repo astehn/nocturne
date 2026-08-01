@@ -5,16 +5,16 @@ import os
 import numpy as np
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
-    QPushButton,
+    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..core.share import (
-    ASPECTS, DEFAULT_SIZE, FORMATS, SIZES, caption_line, centered_crop,
-    share_filename,
+    ASPECTS, CAPTION_SIZES, DEFAULT_SIZE, FORMATS, PLACEMENTS, SIZES, caption_line,
+    centered_crop, share_filename,
 )
 from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
 from ..settings import start_dir
@@ -24,7 +24,7 @@ from .image_view import ImageView
 class ShareDialog(QDialog):
     def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
                  annotated_rgb8: np.ndarray | None = None,
-                 annotations_on: bool = True) -> None:
+                 annotations_on: bool = True, settings_saver=None) -> None:
         """`annotated_rgb8` is the same frame with the plate-solve overlay burned
         in, supplied only when a valid solution exists. Sharing an annotated
         image was previously impossible — Share received raw pixels, so the one
@@ -39,11 +39,15 @@ class ShareDialog(QDialog):
         self._annotations_on = bool(annotated_rgb8 is not None and annotations_on)
         self._metadata = metadata
         self._settings = settings
+        self._settings_saver = settings_saver
         self._aspect: float | None = None
         self._aspect_label = "Original"
         self._caption_on = True
         self._size = DEFAULT_SIZE
         self._ext = "jpg"
+        self._cap_size = getattr(settings, "share_caption_size", 0.028)
+        self._cap_colour = getattr(settings, "share_caption_colour", "#ffffff")
+        self._cap_placement = getattr(settings, "share_caption_placement", "on")
         self._save_runner = save_share            # injectable for tests
         self._clipboard_runner = to_clipboard    # injectable for tests
 
@@ -107,6 +111,51 @@ class ShareDialog(QDialog):
         aspect_wrap = QWidget()
         aspect_wrap.setLayout(aspect_row)
 
+        # Free text rather than a checkbox per field. Deleting a field is just
+        # deleting words, and you also get "first light with the S30", which no
+        # set of toggles can express. Reset restores the generated line.
+        self._caption_edit = QLineEdit(caption_line(self._metadata, self._settings.handle))
+        self._caption_edit.setPlaceholderText("Caption — anything you like")
+        self._caption_edit.textChanged.connect(lambda _t: self._refresh_preview())
+        reset_btn = QPushButton("↺")
+        reset_btn.setFixedWidth(30)
+        reset_btn.setToolTip("Restore the caption generated from this image's data")
+        reset_btn.clicked.connect(self._reset_caption)
+
+        self._place_box = QComboBox()
+        for label, key in PLACEMENTS:
+            self._place_box.addItem(label, key)
+        self._place_box.setCurrentIndex([k for _, k in PLACEMENTS].index(self._cap_placement)
+                                        if self._cap_placement in [k for _, k in PLACEMENTS] else 0)
+        self._place_box.currentIndexChanged.connect(self._set_placement)
+        self._place_box.setToolTip("Below the image never covers any of the picture")
+
+        self._cap_size_box = QComboBox()
+        for label, frac in CAPTION_SIZES:
+            self._cap_size_box.addItem(label, frac)
+        fracs = [f for _, f in CAPTION_SIZES]
+        self._cap_size_box.setCurrentIndex(
+            min(range(len(fracs)), key=lambda i: abs(fracs[i] - self._cap_size)))
+        self._cap_size_box.currentIndexChanged.connect(self._set_cap_size)
+        self._cap_size_box.setToolTip(
+            "Relative to the image, so it stays right at every export size")
+
+        self._colour_btn = QPushButton()
+        self._colour_btn.setFixedWidth(34)
+        self._colour_btn.setToolTip("Caption colour")
+        self._colour_btn.clicked.connect(self._pick_colour)
+        self._paint_colour_btn()
+
+        caption_row = QHBoxLayout()
+        caption_row.addWidget(self._caption_edit, 1)
+        caption_row.addWidget(reset_btn)
+        caption_row.addWidget(self._place_box)
+        caption_row.addWidget(self._cap_size_box)
+        caption_row.addWidget(self._colour_btn)
+        self._caption_wrap = QWidget()
+        self._caption_wrap.setLayout(caption_row)
+        self._caption_wrap.setEnabled(self._caption_on)
+
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._copy_btn = QPushButton("Copy to clipboard")
@@ -131,6 +180,7 @@ class ShareDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.addWidget(aspect_wrap)
+        root.addWidget(self._caption_wrap)
         root.addWidget(self.splitter, 1)
         root.addWidget(self.status)
         root.addLayout(buttons)
@@ -180,12 +230,48 @@ class ShareDialog(QDialog):
 
     def _set_caption(self, on) -> None:
         self._caption_on = bool(on)
+        self._caption_wrap.setEnabled(self._caption_on)
         self._refresh_preview()
+
+    def _reset_caption(self) -> None:
+        self._caption_edit.setText(caption_line(self._metadata, self._settings.handle))
+
+    def _paint_colour_btn(self) -> None:
+        self._colour_btn.setStyleSheet(
+            f"background:{self._cap_colour}; border:1px solid #666;")
+
+    def _pick_colour(self) -> None:
+        c = QColorDialog.getColor(QColor(self._cap_colour), self, "Caption colour")
+        if c.isValid():
+            self._cap_colour = c.name()
+            self._paint_colour_btn()
+            self._persist_caption_style()
+            self._refresh_preview()
+
+    def _set_placement(self, _i: int) -> None:
+        self._cap_placement = self._place_box.currentData()
+        self._persist_caption_style()
+        self._refresh_preview()
+
+    def _set_cap_size(self, _i: int) -> None:
+        self._cap_size = self._cap_size_box.currentData()
+        self._persist_caption_style()
+        self._refresh_preview()
+
+    def _persist_caption_style(self) -> None:
+        """Style is a personal house style, not a per-image choice — re-picking
+        it on every share would be absurd. The TEXT is deliberately not saved:
+        it belongs to this image."""
+        self._settings.share_caption_size = self._cap_size
+        self._settings.share_caption_colour = self._cap_colour
+        self._settings.share_caption_placement = self._cap_placement
+        if self._settings_saver:
+            self._settings_saver(self._settings)
 
     def _current_caption(self) -> str:
         if not self._caption_on:
             return ""
-        return caption_line(self._metadata, self._settings.handle)
+        return self._caption_edit.text()
 
     # --- crop / compose ---
     def _current_crop(self):
@@ -198,7 +284,9 @@ class ShareDialog(QDialog):
 
     def _compose_current(self) -> QImage:
         return compose_share(self._source(), self._current_crop(),
-                             self._current_caption(), longest_edge=self._size)
+                             self._current_caption(), longest_edge=self._size,
+                             size_frac=self._cap_size, colour=self._cap_colour,
+                             placement=self._cap_placement)
 
     def _refresh_preview(self) -> None:
         image = self._compose_current()

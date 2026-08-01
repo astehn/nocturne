@@ -46,6 +46,11 @@ class Settings:
     last_project_dir: str = ""      # directory a "new project" file picker should open in
     annotation_layers: dict = field(default_factory=lambda: dict(DEFAULT_ANNOTATION_LAYERS))
     annotation_density: str = DEFAULT_ANNOTATION_DENSITY
+    # Share caption styling. Persisted because these are a personal house style,
+    # not a per-image decision — re-picking them on every share would be absurd.
+    share_caption_size: float = 0.028
+    share_caption_colour: str = "#ffffff"
+    share_caption_placement: str = "on"
 
 
 def load_settings(path: str) -> Settings:
@@ -65,6 +70,9 @@ def load_settings(path: str) -> Settings:
         last_project_dir=data.get("last_project_dir", ""),
         annotation_layers=data.get("annotation_layers", dict(DEFAULT_ANNOTATION_LAYERS)),
         annotation_density=data.get("annotation_density", DEFAULT_ANNOTATION_DENSITY),
+        share_caption_size=float(data.get("share_caption_size", 0.028)),
+        share_caption_colour=data.get("share_caption_colour", "#ffffff"),
+        share_caption_placement=data.get("share_caption_placement", "on"),
     )
 
 

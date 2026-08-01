@@ -22,6 +22,23 @@ DEFAULT_SIZE = 2048
 # band have hard edges that JPEG smears at low quality).
 FORMATS: list[tuple[str, str]] = [("JPEG", "jpg"), ("PNG", "png")]
 
+# Caption sizes are FRACTIONS of the composited height, never pixel sizes. The
+# band scales with the output, so an absolute "18 px" means something different
+# at 1080 than at 4096 — pick one, export both, and one of them is unreadable.
+# A fraction stays correct at every size.
+CAPTION_SIZES: list[tuple[str, float]] = [
+    ("Small", 0.022), ("Medium", 0.028), ("Large", 0.038),
+]
+DEFAULT_CAPTION_SIZE = 0.028        # the value that was hardcoded as FONT_FRAC
+
+# "on"    — translucent band over the bottom of the picture (the original, and
+#           what you want for a full-bleed post).
+# "below" — the canvas is extended and the caption sits underneath, so it never
+#           covers any of the image.
+PLACEMENTS: list[tuple[str, str]] = [("On image", "on"), ("Below image", "below")]
+DEFAULT_PLACEMENT = "on"
+DEFAULT_CAPTION_COLOUR = "#ffffff"
+
 
 def caption_line(metadata: dict, handle: str) -> str:
     """One-line caption: target · integration · frames×sub · date · @handle.
