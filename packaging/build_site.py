@@ -142,6 +142,18 @@ def head_html(name: str, meta: dict) -> str:
     ld = None
     if name == "index.html":
         ld = SOFTWARE_APP
+    elif meta.get("article"):
+        # No datePublished/dateModified: they can only come from file mtimes here,
+        # which change on every checkout. A wrong date is worse than none.
+        ld = {
+            "@context": "https://schema.org", "@type": "Article",
+            "headline": meta["article"],
+            "description": desc,
+            "image": image,
+            "author": {"@type": "Person", "name": "Andreas Stehn"},
+            "publisher": {"@type": "Person", "name": "Andreas Stehn"},
+            "mainEntityOfPage": {"@type": "WebPage", "@id": url},
+        }
     elif meta.get("crumb"):
         ld = {
             "@context": "https://schema.org", "@type": "BreadcrumbList",
