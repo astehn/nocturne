@@ -34,6 +34,11 @@ class LoadedProject:
     project: Any            # nocturne.history.project.Project
     solve_state: Any
     source_label: str
+    # (hi_frac, lo_frac) already clipped when the image was first imported, or
+    # None for a raw linear import. Purely a readout baseline -- see
+    # MainWindow._capture_clip_baseline. Optional in the manifest, so a bundle
+    # written before it existed simply loads as None.
+    clip_baseline: Any = None
 
 _REPRODUCIBLE_STAGES = {
     "stretch", "levels", "curves", "recover_core",
@@ -97,7 +102,7 @@ def _array_to_bytes(arr: np.ndarray) -> bytes:
 
 
 def save_project(project, path, *, solve_state=None, source_label: str = "",
-                  on_progress=None) -> None:
+                  clip_baseline=None, on_progress=None) -> None:
     """Write `project`'s full undo history (up to its current position) as a
     `.nocturne` zip bundle: the base image, a manifest describing every
     recorded step, and cached npy snapshots for the steps that aren't
@@ -159,6 +164,11 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
                 "position": project.position,
                 "source_label": source_label,
                 "solve": solve_state,
+                # Additive and optional -- deliberately NOT a FORMAT_VERSION
+                # bump. Bumping would make every new bundle unopenable by 0.7.1
+                # and earlier, which is far too high a price for a readout
+                # baseline that older builds simply ignore.
+                "clip_baseline": list(clip_baseline) if clip_baseline else None,
                 "base": {"is_linear": base.is_linear, "metadata": _normalize_metadata(base.metadata)},
                 "steps": steps,
             }
@@ -218,4 +228,5 @@ def load_project(path: str, cache_dir: str) -> LoadedProject:
         project=project,
         solve_state=manifest.get("solve"),
         source_label=manifest.get("source_label", ""),
+        clip_baseline=(tuple(cb) if (cb := manifest.get("clip_baseline")) else None),
     )

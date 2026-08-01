@@ -56,6 +56,7 @@ from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
+from ..core.histogram import histogram
 from ..core.inspect import clip_masks, clipping_from_histogram, sample
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -178,6 +179,9 @@ class MainWindow(QMainWindow):
         # refuse to touch a workspace that is no longer the one they started on.
         # See _swap_workspace.
         self._project_gen = 0
+        # (hi_frac, lo_frac) already clipped when this image was imported, or
+        # None for a raw linear import. See _capture_clip_baseline.
+        self._clip_baseline = None
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
@@ -1189,6 +1193,7 @@ class MainWindow(QMainWindow):
         self._swap_workspace()
         self._source_base = base
         self._source_label = label
+        self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
@@ -1243,8 +1248,11 @@ class MainWindow(QMainWindow):
                                     # image mid-save serialised the NEW project
                                     # to the OLD path
 
+        clip_baseline = self._clip_baseline
+
         def work():
             save_project(project, path, solve_state=solve_state, source_label=source_label,
+                         clip_baseline=clip_baseline,
                          on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
 
         def on_result(_result) -> None:
@@ -1286,6 +1294,10 @@ class MainWindow(QMainWindow):
         self._swap_workspace()
         self.project = loaded.project
         self._source_label = loaded.source_label
+        # Restored, not recomputed: the current state is mid-edit, so measuring
+        # it now would bake this session's own clipping into the baseline and
+        # permanently silence the warning.
+        self._clip_baseline = loaded.clip_baseline
         self._project_path = path
         self._dirty = False
         self._update_title()
@@ -2593,6 +2605,33 @@ class MainWindow(QMainWindow):
     def _on_hover_left(self) -> None:
         self.image_view.readout_pill.hide()
 
+    def _capture_clip_baseline(self, base) -> None:
+        """How much of this image was ALREADY clipped when it arrived.
+
+        The amber thresholds are calibrated for a raw stacked master, where a
+        normal Stretch crushes ~0.0005% of shadows. Images that arrive already
+        processed blow straight past that with nothing the user did: a
+        re-imported export measured 0.92% shadows and an already-stretched
+        narrowband starless 2.81% — 18x and 56x over. Amber from the first
+        Stretch, un-clearable, which is exactly the cry-wolf failure the feature
+        was designed to avoid. Recording the arrival state lets the line colour
+        by what THIS session added while still reporting the true total.
+
+        Only for a non-linear import. On linear data the measurement is
+        meaningless rather than merely inconvenient: the 256-bin histogram
+        quantises value*255, and linear astro pixels sit around 0.003, so
+        essentially the whole frame lands in bin 0 and would read as ~100%
+        'crushed'. That is also why the line itself is hidden until Stretch. A
+        raw master therefore gets no baseline, which is correct — from Stretch
+        onward everything clipped really was caused by the session, and the
+        thresholds already assume exactly that.
+        """
+        if base is None or base.is_linear:
+            self._clip_baseline = None
+            return
+        c = clipping_from_histogram(histogram(base))
+        self._clip_baseline = (c.hi_frac, c.lo_frac)
+
     def _update_clipping_line(self) -> None:
         """Clipped-pixel summary under the info strip. Hidden while the image is
         linear: before Stretch, 'clipped' can only mean sensor-saturated at
@@ -2612,10 +2651,31 @@ class MainWindow(QMainWindow):
             hi += f" ({c.hi_channel})"
         if c.lo_frac > 0 and c.lo_channel:
             lo += f" ({c.lo_channel})"
-        alarm = c.hi_frac >= _CLIP_AMBER_HI or c.lo_frac >= _CLIP_AMBER_LO
+        text = f"{hi}  ·  {lo} clipped"
+
+        # The TOTAL is always what's reported — those shadows really are gone,
+        # and hiding that from someone editing an already-crushed file would be
+        # its own lie. Only the ALARM is judged on what this session added, so
+        # an image that arrived damaged doesn't sit amber from the first Stretch
+        # with no action that could ever clear it.
+        base_hi, base_lo = self._clip_baseline or (0.0, 0.0)
+        added_hi = max(0.0, c.hi_frac - base_hi)
+        added_lo = max(0.0, c.lo_frac - base_lo)
+        # Name the dimension rather than printing a bare number: with different
+        # highlight and shadow baselines, "(2.8% on import)" sitting beside two
+        # percentages says nothing about which one it belongs to.
+        was = []
+        if base_hi > 0:
+            was.append(f"{base_hi * 100:.1f}% highlights")
+        if base_lo > 0:
+            was.append(f"{base_lo * 100:.1f}% shadows")
+        if was:
+            text += f"  ({', '.join(was)} on import)"
+
+        alarm = added_hi >= _CLIP_AMBER_HI or added_lo >= _CLIP_AMBER_LO
         colour = WARNING if alarm else TEXT_DIM
         self._clip_line.setStyleSheet(f"color: {colour};")
-        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{hi}  ·  {lo} clipped")
+        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{text}")
 
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total
@@ -2647,6 +2707,7 @@ class MainWindow(QMainWindow):
             return
         self._swap_workspace()
         self.project = None
+        self._clip_baseline = None
         self._canvas_img = None
         self._compare_img = None
         self._project_path = None

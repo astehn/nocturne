@@ -3308,3 +3308,98 @@ def test_every_project_reassignment_goes_through_swap_workspace():
     assert not offenders, (
         f"these assign self.project without _swap_workspace(): {offenders} — "
         "a background op's callback could then land on the wrong workspace")
+
+
+# --- clipping baseline: an already-crushed import must not sit amber ---------
+
+from nocturne.ui.theme import WARNING  # noqa: E402
+
+
+def _crushed_image(frac_black=0.30):
+    """A NON-LINEAR image arriving already clipped, as a re-imported export or
+    an Upscale Crop result does."""
+    a = np.full((20, 20, 3), 0.5, np.float32)
+    n = int(round(20 * 20 * frac_black))
+    a.reshape(-1, 3)[:n] = 0.0
+    return AstroImage(a, is_linear=False)
+
+
+def test_an_already_crushed_import_does_not_start_amber(qtbot, tmp_path):
+    """The cry-wolf case. A processed file arrives 30% crushed; the user has
+    done nothing, so the line must be calm — and must still say 30%."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(), "processed.tif")
+    win._update_clipping_line()
+
+    assert "30.0% shadows" in win._clip_line.text(), "the true total is still reported"
+    assert "on import" in win._clip_line.text(), "and it says the damage predates you"
+    assert "⚠" not in win._clip_line.text(), "nothing the user did — no alarm"
+    assert WARNING not in win._clip_line.styleSheet()
+
+
+def test_the_alarm_still_fires_for_damage_the_session_adds(qtbot, tmp_path):
+    """The anti-overcorrection control: a baseline must not disable the warning.
+    Without this, 'never alarm' would pass the test above."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win._show_preview(np.zeros((20, 20, 3), np.float32))   # user crushes the rest
+
+    assert "⚠" in win._clip_line.text(), "30% -> 100% is the user's doing"
+    assert WARNING in win._clip_line.styleSheet()
+    assert "100.0% shadows" in win._clip_line.text()
+
+
+def test_a_raw_linear_import_gets_no_baseline(qtbot, tmp_path):
+    """Linear pixels sit near 0.003, so the 256-bin histogram would read almost
+    the whole frame as 'crushed'. Measuring one would silence the warning
+    forever on exactly the workflow it was calibrated for."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert win._clip_baseline is None
+
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._show_preview(np.zeros((24, 24, 3), np.float32))
+    assert "⚠" in win._clip_line.text(), "raw workflow must still alarm"
+    assert "on import" not in win._clip_line.text()
+
+
+def test_the_baseline_survives_a_save_and_reopen(qtbot, tmp_path):
+    """A reopened project must not re-measure: the current state is mid-edit, so
+    recomputing would bake the session's own clipping into the baseline and
+    silence the warning permanently."""
+    from nocturne.history.project_store import save_project, load_project
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    baseline = win._clip_baseline
+    assert baseline is not None
+
+    p = str(tmp_path / "b.nocturne")
+    save_project(win.project, p, clip_baseline=baseline)
+    loaded = load_project(p, str(tmp_path / "cache2"))
+    assert loaded.clip_baseline == baseline
+
+
+def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
+    """Backward compatibility: bundles written before this existed have no such
+    key, and must load as 'no baseline' rather than raising."""
+    from nocturne.history.project_store import save_project, load_project
+    import json, zipfile, shutil
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    p = str(tmp_path / "old.nocturne")
+    save_project(win.project, p, clip_baseline=win._clip_baseline)
+
+    # rewrite the manifest without the key, as an older build would have written it
+    stripped = str(tmp_path / "stripped.nocturne")
+    with zipfile.ZipFile(p) as zin, zipfile.ZipFile(stripped, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "manifest.json":
+                m = json.loads(data)
+                del m["clip_baseline"]
+                data = json.dumps(m).encode()
+            zout.writestr(item, data)
+
+    loaded = load_project(stripped, str(tmp_path / "cache3"))
+    assert loaded.clip_baseline is None
