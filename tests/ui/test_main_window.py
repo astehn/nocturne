@@ -3403,3 +3403,50 @@ def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
 
     loaded = load_project(stripped, str(tmp_path / "cache3"))
     assert loaded.clip_baseline is None
+
+
+def test_opening_a_new_image_clears_the_previous_solve_and_its_overlay(qtbot, tmp_path):
+    """Reported 2026-08-01: solve an image, open another, and the first image's
+    annotation pill and object list were still on screen — object names from a
+    field you are no longer looking at."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    # stand in for a landed solve: overlay + pill + populated object list
+    from nocturne.core.catalog import CatalogObject
+    from nocturne.ui.annotation_overlay import build_annotation_group
+    from nocturne.core.annotation_layout import Label
+    win._solve = ("sig", object(), [CatalogObject("NGC 7000", "NA Neb", 0, 0, 120.0, 1, 1)])
+    win.image_view.set_annotations(build_annotation_group([Label("NGC 7000", 5, 5, "#5cff5c")], (24, 24)))
+    win.image_view.object_panel.set_contents(
+        [CatalogObject("NGC 7000", "NA Neb", 0, 0, 120.0, 1, 1)], [])
+    win.image_view.show_object_list(True)
+    win.solve_panel.set_state("solved")
+    assert not win.image_view.annotation_pill.isHidden()
+    assert win.image_view.object_panel.count() == 1
+
+    second = tmp_path / "second"
+    second.mkdir()
+    win.open_fits(_make_fits(second, filter_card="R"))
+
+    assert win._solve is None, "the previous image's solution must not survive"
+    assert win.image_view.annotation_pill.isHidden(), "the pill belonged to the old image"
+    assert win.image_view.object_panel.isHidden()
+    assert win.image_view.object_panel.count() == 0, "no stale object names"
+    assert win.solve_panel._state == "not_solved"
+    assert win.solve_panel.result_label.text() == ""
+
+
+def test_reopening_a_saved_project_still_restores_its_solve(qtbot, tmp_path):
+    """Anti-overcorrection: the teardown runs inside _swap_workspace, which
+    _open_project also calls — so it must clear BEFORE the restore, not after."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    p = str(tmp_path / "p.nocturne")
+    win._do_save_project(p)
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+
+    win._open_project(p)
+    assert win.project is not None, "the project itself must still open"

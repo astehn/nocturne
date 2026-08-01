@@ -1541,9 +1541,26 @@ class MainWindow(QMainWindow):
 
         The cancel is still worth doing: it stops an external tool burning
         minutes of CPU on a result nobody will read.
+
+        It also retires the plate solve and everything drawn from it. That was
+        missing: _close_project cleared the solve, open_image never did, so
+        opening a second image left the FIRST image's annotation pill, overlay
+        and object list on screen — object names from a field you are no longer
+        looking at. A solution belongs to the framing it was made for, and
+        nothing survives that framing being replaced. _open_project re-
+        establishes its own via _restore_solve_state after this runs.
         """
         self._cancel_active()
         self._project_gen += 1
+        self._solve = None
+        self._solve_freshness = None
+        self._solve_elapsed = 0.0
+        self.image_view.set_annotations(None)     # also hides the pill
+        self.image_view.show_object_list(False)
+        self.image_view.object_panel.set_contents([], [])
+        self.solve_panel.set_state("not_solved")
+        self.solve_panel.set_object_count(0)
+        self.solve_panel.result_label.setText("")
 
     def elapsed_seconds(self) -> float:
         """Seconds since the current busy op started; 0.0 when idle."""
@@ -2712,10 +2729,7 @@ class MainWindow(QMainWindow):
         self._compare_img = None
         self._project_path = None
         self._source_label = None
-        self._solve = None
-        self._solve_freshness = None
-        self._solve_elapsed = 0.0
-        self._dirty = False
+        self._dirty = False        # solve state is retired by _swap_workspace above
         self._center_stack.setCurrentWidget(self._welcome)
         self._show_chrome(False)
         self._update_title()
