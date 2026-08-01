@@ -3112,7 +3112,7 @@ def test_object_list_lists_what_the_solve_found(qtbot, tmp_path, monkeypatch):
     # Ordered by the same priority the overlay places labels in, so the list and
     # the image read as one ranking rather than two.
     assert "NGC 7000" in names[0]
-    assert "(2)" in win.solve_panel.objects_toggle.text()   # count reaches the control
+    assert "(2)" in panel.title.text()      # the list's own title carries the count
 
 
 def test_picking_an_object_focuses_its_TRUE_centre(qtbot, tmp_path, monkeypatch):
@@ -3450,3 +3450,55 @@ def test_reopening_a_saved_project_still_restores_its_solve(qtbot, tmp_path):
 
     win._open_project(p)
     assert win.project is not None, "the project itself must still open"
+
+
+# --- the object list shows itself; no button ---------------------------------
+
+def test_the_object_list_appears_by_itself_once_a_solve_lands(qtbot, tmp_path, monkeypatch):
+    """No button to find: after a solve, seeing what is in the field IS the point."""
+    from nocturne.core.catalog import CatalogObject
+    objs = [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, objs)
+    assert not win.image_view.object_panel.isHidden()
+
+
+def test_turning_annotations_off_takes_the_list_with_them(qtbot, tmp_path, monkeypatch):
+    """The list is part of what the overlay is telling you, so it follows the pill."""
+    from nocturne.core.catalog import CatalogObject
+    objs = [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, objs)
+
+    win.image_view.annotation_pill.button.setChecked(False)
+    assert win.image_view.object_panel.isHidden()
+    win.image_view.annotation_pill.button.setChecked(True)
+    assert not win.image_view.object_panel.isHidden(), "and comes back with them"
+
+
+def test_dismissing_the_list_does_not_require_turning_annotations_off(qtbot, tmp_path, monkeypatch):
+    """The panel is 260 px of canvas and covers the right of a landscape frame.
+    Wanting labels ON the image but no list over it must not force the overlay
+    off — that would couple two separate wishes."""
+    from nocturne.core.catalog import CatalogObject
+    objs = [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, objs)
+
+    win.image_view.object_panel.closeRequested.emit()          # the panel's X
+    assert win.image_view.object_panel.isHidden()
+    assert win.image_view.annotation_pill.is_shown(), "the overlay stays up"
+    assert win.image_view._annotations is not None
+
+    # It must STAY dismissed through a rebuild. Toggling a layer re-runs
+    # _refresh_object_list -> _sync_object_list_visibility; if that ignored the
+    # dismissal the panel would silently reappear over the picture.
+    win._on_annotation_layers_changed(dict(win.solve_panel.layers()))
+    assert win.image_view.object_panel.isHidden(), "a layer change must not revive it"
+
+    # ...and the dismissal is retired by an explicit statement about the overlay
+    win.image_view.annotation_pill.button.setChecked(False)
+    win.image_view.annotation_pill.button.setChecked(True)
+    assert not win.image_view.object_panel.isHidden()
+
+
+def test_a_solve_that_finds_nothing_shows_no_empty_panel(qtbot, tmp_path, monkeypatch):
+    win = _solved_with_objects(qtbot, tmp_path, monkeypatch, [])
+    assert win.image_view.object_panel.isHidden()

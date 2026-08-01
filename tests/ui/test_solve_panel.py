@@ -224,17 +224,12 @@ def test_result_card_stays_quiet_when_the_header_supplied_the_scale(qtbot):
 
 
 
-def test_objects_button_reports_the_count_and_asks_the_canvas(qtbot):
-    """The list itself lives on the canvas — the right column is too narrow and
-    contended to hold one. This stays as the control that opens it."""
+def test_the_panel_has_no_object_list_control(qtbot):
+    """The list shows itself on the canvas once a solve lands and follows the
+    Annotations pill. A button here was a second switch for something the pill
+    already governs, sitting a long way from the thing it controlled."""
     panel = SolvePanel()
     qtbot.addWidget(panel)
-    panel.set_object_count(0)
-    assert panel.objects_toggle.isEnabled() is False, "nothing found -> nothing to open"
-    panel.set_object_count(12)
-    assert "(12)" in panel.objects_toggle.text() and panel.objects_toggle.isEnabled()
-
-    asked = []
-    panel.objectListToggled.connect(asked.append)
-    panel.objects_toggle.setChecked(True)
-    assert asked == [True]
+    assert not hasattr(panel, "objects_toggle")
+    assert not hasattr(panel, "set_object_count")
+    assert not hasattr(panel, "objectListToggled")

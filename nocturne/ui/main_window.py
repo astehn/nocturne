@@ -182,6 +182,9 @@ class MainWindow(QMainWindow):
         # (hi_frac, lo_frac) already clipped when this image was imported, or
         # None for a raw linear import. See _capture_clip_baseline.
         self._clip_baseline = None
+        # Set by the object list's X; cleared whenever annotations are toggled
+        # or a fresh solve lands. See _sync_object_list_visibility.
+        self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
@@ -317,7 +320,7 @@ class MainWindow(QMainWindow):
         self.solve_panel.layersChanged.connect(self._on_annotation_layers_changed)
         self.solve_panel.densityChanged.connect(self._on_annotation_density_changed)
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
-        self.solve_panel.objectListToggled.connect(self.image_view.show_object_list)
+        self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
         self._right_layout.addWidget(self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
@@ -810,6 +813,10 @@ class MainWindow(QMainWindow):
             self.solve_panel.set_state("cached")
             self._show_annotations(*self._solve[1:])
             self._update_solve_result_card(*self._solve[1:], cached=True)
+        # Toggling the pill is an explicit statement about the overlay, so it
+        # also retires an earlier dismissal of the list.
+        self._object_list_dismissed = False
+        self._sync_object_list_visibility()
 
     def _start_solve(self, sig) -> None:
         """Kicks off a blocking (off-thread) solve and drives the panel into
@@ -917,7 +924,29 @@ class MainWindow(QMainWindow):
         stars = (named_stars_in_field(res.wcs, (h, w))
                  if layers.get("stars", True) else [])
         self.image_view.object_panel.set_contents(objects, stars)
-        self.solve_panel.set_object_count(len(objects) + len(stars))
+        self._sync_object_list_visibility()
+
+    def _sync_object_list_visibility(self) -> None:
+        """The list shows itself once there is something to show. No button:
+        after a solve, seeing what is in the field IS the point, and making the
+        user find a switch in the right-hand column to reveal it put the control
+        a long way from the thing it controlled.
+
+        Three things can hide it, in order: nothing found, annotations off (the
+        list is part of what the overlay is telling you), or the user dismissing
+        it with the panel's own X. That dismissal matters -- the panel is 260 px
+        of canvas and on a landscape frame it covers the right of the picture,
+        so someone who wants labels ON the image but not a list over it must be
+        able to say so without switching annotations off. It lasts until
+        annotations are toggled again or a new solve lands."""
+        has_objects = self.image_view.object_panel.count() > 0
+        annotations_on = self.image_view.annotation_pill.is_shown()
+        self.image_view.show_object_list(
+            has_objects and annotations_on and not self._object_list_dismissed)
+
+    def _on_object_list_dismissed(self) -> None:
+        self._object_list_dismissed = True
+        self.image_view.show_object_list(False)
 
     def _sync_solve_panel(self) -> None:
         """Keeps SolvePanel's status badge honest outside the explicit
@@ -1558,8 +1587,8 @@ class MainWindow(QMainWindow):
         self.image_view.set_annotations(None)     # also hides the pill
         self.image_view.show_object_list(False)
         self.image_view.object_panel.set_contents([], [])
+        self._object_list_dismissed = False
         self.solve_panel.set_state("not_solved")
-        self.solve_panel.set_object_count(0)
         self.solve_panel.result_label.setText("")
 
     def elapsed_seconds(self) -> float:

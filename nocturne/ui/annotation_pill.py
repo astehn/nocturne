@@ -35,3 +35,8 @@ class AnnotationPill(QWidget):
         was = self.button.blockSignals(True)
         self.button.setChecked(shown)
         self.button.blockSignals(was)
+
+    def is_shown(self) -> bool:
+        """Whether the overlay is currently on. Read by anything that follows the
+        overlay rather than duplicating its switch — the object list does."""
+        return self.button.isChecked()

@@ -51,7 +51,6 @@ class SolvePanel(QWidget):
     layersChanged = Signal(dict)
     densityChanged = Signal(str)
     resolveRequested = Signal()
-    objectListToggled = Signal(bool)   # asks the canvas to show/hide the list
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -106,17 +105,11 @@ class SolvePanel(QWidget):
         action_row.addWidget(self.resolve_btn)
         content_lay.addLayout(action_row)
 
-        # The overlay draws what is in frame; the list makes it navigable. A
-        # solved field routinely holds more objects than fit legibly on the
-        # image, and the ones density drops are exactly the ones you might be
-        # hunting for. Collapsed by default: the panel is already tall.
-        # The list itself lives on the CANVAS (see ObjectListPanel): the right
-        # column is narrow, contended and scrolls, which made an inline list a
-        # two-row peephole. This stays as the control that opens it.
-        self.objects_toggle = QPushButton("Objects in field")
-        self.objects_toggle.setCheckable(True)
-        self.objects_toggle.toggled.connect(self._on_objects_toggled)
-        content_lay.addWidget(self.objects_toggle)
+        # No "Objects in field" button here. The list appears on the canvas by
+        # itself once a solve lands, and follows the Annotations toggle -- one
+        # idea, one control. A button in this column was a second switch for
+        # something the pill already governs, and it put the control a long way
+        # from the thing it controlled. The list's own title carries the count.
 
         outer.addWidget(self.content)
 
@@ -157,13 +150,6 @@ class SolvePanel(QWidget):
             box.blockSignals(True)
             box.setChecked(self._layers.get(key, False))
             box.blockSignals(False)
-
-    def _on_objects_toggled(self, on: bool) -> None:
-        self.objectListToggled.emit(bool(on))
-
-    def set_object_count(self, n: int) -> None:
-        self.objects_toggle.setText(f"Objects in field ({n})" if n else "Objects in field")
-        self.objects_toggle.setEnabled(n > 0)
 
     def _on_density_changed(self, index: int) -> None:
         self._density = self.density_box.itemData(index)
