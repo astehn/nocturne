@@ -2,6 +2,27 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.8.0] — 2026-08-01
+
+Share grows up — and a colour fix that was quietly costing you accuracy.
+
+### Added
+- The Share caption is yours. Nocturne still writes a first draft from the image's own data — target, integration, frame count — but it is now an ordinary text field you can rewrite, trim, or replace with something the metadata never knew. Put it on the image or below it (below extends the canvas, so nothing you photographed is covered), left, centred or right, at three sizes, in any colour, with a slider for how dark the band behind it is. The styling is remembered between shares; the text starts fresh for each image.
+- Share now lets you choose the output: 1080, 2048 or 4096 px, or full size, as JPEG or PNG. PNG is the better choice when the image carries annotations or a caption, since labels and text are hard edges and JPEG softens exactly those. Exports only ever scale down, and the status line reports the pixel size actually produced.
+- The objects the plate solve found now appear beside the image by themselves, and follow the Annotations button rather than needing a separate control. Click a row to jump the view to that object; close it with its own ✕ if you would rather see the whole picture.
+- Plate Solve is greyed out until ASTAP is configured, and says what to install rather than waiting for you to press it and then complaining.
+
+### Changed
+- The clipping warning now judges what your editing session actually caused, while still reporting the true total. An image that arrives already crushed — a re-imported export, or an upscaled copy — used to show amber from the first Stretch with nothing you could do about it, which is precisely the cry-wolf failure the warning was built to avoid. It now reads, for example, "0.9% shadows clipped (0.9% shadows on import)" and stays calm until you add to it.
+- Share's aspect buttons show which one is selected. Previously nothing indicated the current choice, so the only way to know what you would get was to read the shape of the preview.
+- Cropping, rotating or flipping a solved image now tells you the plate solve no longer lines up and its annotations have been hidden, instead of removing them in silence.
+
+### Fixed
+- Photometric colour (SPCC) silently fell back to sky balance on any master whose header carried no optical details — which is most stacked masters exported from another tool. The plate-solve tool already handled this by falling back to the Seestar's known image scale, but the colour step did not, so it solved blind, failed, and quietly used the lesser method. On a test capture this took it from no solution at all to 1,718 matched stars.
+- A shared image ignored the plate-solved target. If your file's header never named what you photographed but Nocturne identified it, the caption left the target out entirely — while the info strip and the provenance report both showed it.
+- Opening a new image left the previous image's annotation pill and object list on screen, describing a field you were no longer looking at.
+- The plate-solve screenshot on this site and in the project README dated from before the annotation-mirroring fix, so both were illustrating the bug rather than the feature. Replaced with a current capture.
+
 ## [0.7.1] — 2026-08-01
 
 Two correctness fixes — a bad pixel no longer blanks a channel, and a background step can't land on the wrong image.
