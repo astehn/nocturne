@@ -777,16 +777,17 @@ def test_a_deliberate_zoom_survives_a_resize(qtbot):
 
     view.zoom_in()
     assert not view._fitted
-    zoomed = view.transform().m11()
 
+    # Assert the DECISION, not a float measured through a live window. Comparing
+    # transforms after a real resize depends on when Qt delivers the event and on
+    # what else the suite has shown, and flaked twice in full-suite ordering even
+    # with a tolerance. What the code actually promises is "resizeEvent does not
+    # re-fit unless the view is fitted" — so spy on fit() and check exactly that.
+    called = []
+    view.fit = lambda: called.append(1)
     view.resize(700, 500)
-    qtbot.wait(50)
-    # The requirement is "the zoom was not thrown away", not "the float is
-    # bit-identical". Exact equality on a transform after a resize made this
-    # order-dependent in the full suite; re-fitting a 40x30 image into a 700x500
-    # viewport would land near 12x, nowhere near this tolerance.
-    assert view.transform().m11() == pytest.approx(zoomed, rel=0.02), \
-        "the resize threw away the user's zoom"
+    qtbot.wait(30)
+    assert called == [], "the resize re-fitted and threw away the user's zoom"
 
 
 def test_actual_size_and_zoom_out_also_clear_the_fitted_flag(qtbot):
