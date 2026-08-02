@@ -2,6 +2,21 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.10.0] — 2026-08-02
+
+Trim without losing your edit, a distraction-free view, and labels that stop colliding.
+
+### Added
+- Trim — cut the edges off a finished image without losing the edit. Ragged stacking borders and smeared corners are often invisible in the linear data you cropped at the start and only appear once you have stretched, at which point going back to the Crop step would discard every step you had done since. Trim adds a final step instead of reaching back, so the whole edit survives and undo still works. Available once the image is stretched.
+- Press F for the image and nothing else — toolbar, step list, panels and the log all step aside so you can judge noise, star shapes and faint detail without the interface competing for attention. Escape returns, and your zoom and position are kept.
+- Names for objects that had none. The deep-sky catalogues added recently arrived as bare designations, so the Elephant's Trunk appeared as "vdB 142". Eighteen of the best-known now carry the names people actually use — which also means a frame is more often identified as the thing you pointed at rather than as the largest catalogued region that happens to overlap it.
+
+### Changed
+- The in-app help now covers Trim, the full-screen view, the objects-in-field list, the Density control, Re-solve, the clipping line's "on import" reading, and Share's caption and output controls. It also says plainly that plate solving needs ASTAP's star database — a separate download from ASTAP itself, and much the most common reason a solve fails.
+
+### Fixed
+- Annotation labels could print on top of one another on a crowded field, rendering "LDN 1109" and "LDN 1110" as a single unreadable smear. Labels stay a fixed size on screen while their spacing was being worked out in image pixels, so at anything below 100% zoom they were larger than the space reserved for them. They now re-place themselves as you zoom. Burned exports were never affected.
+
 ## [0.9.0] — 2026-08-01
 
 Plate solving that works beyond the Seestar — and several things that were quietly wrong.
