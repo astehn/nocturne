@@ -502,3 +502,66 @@ def test_by_type_colouring_also_reaches_the_circle_not_just_the_label():
     assert by_x[100.0] == colour_for(messier, by_type=True)
     assert by_x[400.0] == colour_for(hii, by_type=True)
     assert by_x[100.0] != by_x[400.0], "type colouring must actually distinguish types"
+
+
+# --- reserved boxes must match what is actually drawn -------------------------
+
+class _Obj:
+    def __init__(self, name, x, y):
+        self.name, self.x, self.y = name, x, y
+        self.common = ""; self.major_arcmin = 0.0; self.messier = ""
+        self.cx, self.cy = x, y
+
+
+def _screen_overlaps(labels, measure, zoom):
+    """Overlapping pairs in SCREEN space — what the user actually sees. Labels are
+    positioned in image coordinates but rendered at a constant screen size."""
+    boxes = []
+    for L in labels:
+        tw, th = measure(L.text, L.size)
+        boxes.append((L.x * zoom, L.y * zoom, L.x * zoom + tw, L.y * zoom + th))
+    n = 0
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            a, b = boxes[i], boxes[j]
+            if not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]):
+                n += 1
+    return n
+
+
+def test_labels_do_not_overlap_on_screen_when_the_image_is_zoomed_out():
+    """Found on a real IC 1396A frame: 39 objects at fit zoom (~0.31) printed
+    straight through each other — "LDN 1109" and "LDN 1110" rendered as
+    "LDND1N1110" — despite place_labels' "no room: drop, never overlap" rule.
+
+    The rule was sound; it was guarding the wrong rectangle. Collision detection
+    runs in IMAGE coordinates while labels render at a constant SCREEN size, so
+    at zoom Z a label covers tw/Z image px against a box reserving tw. Passing
+    ui_scale=1/Z converts screen sizes into the space the placement runs in.
+    """
+    import random
+    random.seed(3)
+    objs = [_Obj(f"LDN {1085+i}", random.uniform(200, 1960), random.uniform(300, 3540))
+            for i in range(39)]
+    shape = (3840, 2160)
+    zoom = 0.31
+    base = _measure                      # module-level test measure, screen px
+
+    wrong, _ = place_labels(objs, shape, base, ui_scale=1.0)
+    right, _ = place_labels(
+        objs, shape,
+        lambda t, s: tuple(v / zoom for v in base(t, s)), ui_scale=1.0 / zoom)
+
+    assert _screen_overlaps(wrong, base, zoom) > 0, \
+        "fixture no longer reproduces the bug — it must overlap at ui_scale=1.0"
+    assert _screen_overlaps(right, base, zoom) == 0, \
+        "reserved boxes still do not match what is drawn"
+
+
+def test_at_100_percent_zoom_the_two_agree():
+    """The bug only exists below 1:1 — the sanity check that the fix is a
+    coordinate conversion, not a fudge factor."""
+    objs = [_Obj("LDN 1109", 100, 100), _Obj("LDN 1110", 180, 110)]
+    a, _ = place_labels(objs, (400, 400), _measure, ui_scale=1.0)
+    b, _ = place_labels(objs, (400, 400), _measure, ui_scale=1.0)
+    assert [(l.x, l.y) for l in a] == [(l.x, l.y) for l in b]

@@ -3785,3 +3785,65 @@ def test_f_does_nothing_while_typing(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(QApplication, "focusWidget", staticmethod(lambda: None))
     assert _keypress(win, Qt.Key.Key_F) is True, "...but must fire otherwise"
     win._exit_fullscreen()
+
+
+# --- label placement must follow the zoom ------------------------------------
+
+def test_live_label_scale_is_the_inverse_of_the_display_zoom(qtbot, tmp_path):
+    """Labels are screen-fixed but placed in image coordinates. 1/zoom is what
+    converts a screen-sized box into the space the placement runs in."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.image_view.fit()
+    z = win.image_view.zoom()
+    assert win._live_label_scale() == pytest.approx(1.0 / z)
+
+    win.image_view.actual_size()          # 1:1
+    assert win._live_label_scale() == pytest.approx(1.0)
+
+
+def test_live_label_scale_survives_a_zero_zoom(qtbot, tmp_path):
+    """transform().m11() is 0 before any image exists; 1/0 would raise."""
+    win = _window(qtbot, tmp_path)
+    assert win._live_label_scale() == 1.0
+
+
+def test_zooming_schedules_a_relayout(qtbot, tmp_path):
+    """The layout is only correct for the zoom it was computed at, so a scale
+    change has to re-place the labels. Debounced — a wheel gesture emits many
+    steps and only the last one matters."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.image_view.fit()
+    win._zoom_relayout.stop()      # opening the image already fitted, which
+                                    # legitimately scheduled one
+    win.image_view.zoom_in()
+    assert win._zoom_relayout.isActive(), "a zoom must schedule a re-place"
+
+    # ...and repeated steps coalesce rather than queueing N rebuilds
+    win.image_view.zoom_in()
+    win.image_view.zoom_in()
+    assert win._zoom_relayout.isActive()
+
+
+def test_a_tiny_zoom_change_does_not_thrash_the_layout(qtbot, tmp_path):
+    """The 2% threshold: a drag-resize must not fire a rebuild per pixel."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.image_view.fit()
+    win._zoom_relayout.stop()
+    fired = []
+    win.image_view.zoomChanged.connect(fired.append)
+
+    win.image_view.scale(1.001, 1.001)    # 0.1% — below the threshold
+    win.image_view._note_zoom()
+    assert fired == [], "a sub-threshold change should not trigger a rebuild"
+
+
+def test_the_burned_export_does_not_use_the_live_scale(qtbot, tmp_path, monkeypatch):
+    """The export renders text genuinely larger, so scale_for is its matching
+    factor. Using the live 1/zoom there would size labels for the screen."""
+    import inspect
+    src = inspect.getsource(MainWindow._annotated_rgb8)
+    assert "scale_for" in src
+    assert "_live_label_scale" not in src

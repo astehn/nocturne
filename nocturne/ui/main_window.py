@@ -261,6 +261,14 @@ class MainWindow(QMainWindow):
         self.image_view.cropBoxChanged.connect(self._update_crop_readout)
         self.image_view.cropDismissRequested.connect(self._on_crop_dismiss)
         self.image_view.annotationsToggled.connect(self._on_annotations_toggled)
+        # Label placement is only correct for the zoom it was computed at, so the
+        # overlay is rebuilt when the scale changes. Debounced: a wheel gesture
+        # emits many steps and only the final one matters.
+        self._zoom_relayout = QTimer(self)
+        self._zoom_relayout.setSingleShot(True)
+        self._zoom_relayout.setInterval(120)
+        self._zoom_relayout.timeout.connect(self._relayout_annotations)
+        self.image_view.zoomChanged.connect(lambda _z: self._zoom_relayout.start())
         self.image_view.hovered.connect(self._on_hover)
         self.image_view.hoverLeft.connect(self._on_hover_left)
         self.image_view.set_pixel_cursor(True)   # crosshair where the readout reads
@@ -1052,6 +1060,12 @@ class MainWindow(QMainWindow):
         save_settings(self.settings, self._settings_path)
         self._rebuild_overlay_from_cache()
 
+    def _relayout_annotations(self) -> None:
+        """Re-place the labels for the current zoom. Cheap: no re-solve, no
+        catalogue query — just the layout pass over the cached solution."""
+        if self._solve and self.image_view._annotations is not None:
+            self._show_annotations(*self._solve[1:])
+
     def _rebuild_overlay_from_cache(self) -> None:
         """Layer/density changes only affect WHAT the overlay draws, not the
         WCS it's drawn from — rebuild from the cached solve without
@@ -1094,6 +1108,29 @@ class MainWindow(QMainWindow):
                                  self._annotation_layers(), self._annotation_density(),
                                  measure=make_measure(ui_scale), ui_scale=ui_scale)
 
+    def _live_label_scale(self) -> float:
+        """The factor that makes a reserved label box match what is actually
+        drawn, for the LIVE canvas.
+
+        Labels are screen-fixed (ItemIgnoresTransformations) so they stay
+        readable at any zoom, but place_labels does collision detection in IMAGE
+        coordinates. At display scale Z a label 95 px wide on screen occupies
+        95/Z image pixels, while the box reserved for it was 95 — so at fit zoom
+        on a large frame every label is several times wider than its reservation
+        and they overlap despite the "no room: drop, never overlap" rule. Seen on
+        a real IC 1396A frame (39 objects, zoom ~0.31): labels printed straight
+        through each other, "LDN 1109" and "LDN 1110" rendering as "LDND1N1110".
+
+        1/Z converts screen sizes into the image space the placement runs in.
+        The same factor is right for the gap and the compass/scale-bar offsets,
+        which are also meant to be constant on screen.
+
+        The burned export does NOT use this: there the text really is rendered
+        larger, and annotation_render.scale_for is the matching factor.
+        """
+        z = self.image_view.zoom()
+        return 1.0 / z if z > 0 else 1.0
+
     def _show_annotations(self, res, objs):
         """The ONE path that puts annotations on the canvas — and the one place
         staleness is enforced.
@@ -1110,7 +1147,8 @@ class MainWindow(QMainWindow):
             return
         from .annotation_overlay import build_annotation_group
         h, w = self.project.current().data.shape[:2]
-        prims = self._annotation_primitives(res, objs, (h, w))
+        prims = self._annotation_primitives(res, objs, (h, w),
+                                            ui_scale=self._live_label_scale())
         self.image_view.set_annotations(build_annotation_group(prims, (h, w)))
 
     def _remove_stars(self, img):

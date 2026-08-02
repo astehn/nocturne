@@ -94,6 +94,10 @@ class ImageView(QGraphicsView):
     hovered = Signal(int, int, str)     # image x, image y, "main" | "compare"
     hoverLeft = Signal()
     annotationsToggled = Signal(bool)
+    # Emitted when the display scale changes materially. The annotation overlay
+    # listens: its labels are screen-fixed but its collision avoidance runs in
+    # IMAGE coordinates, so the reserved boxes are only correct for one zoom.
+    zoomChanged = Signal(float)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -278,10 +282,27 @@ class ImageView(QGraphicsView):
             self._has_image = True
             self.fit()
 
+    def _note_zoom(self) -> None:
+        """Announce a materially changed display scale.
+
+        The 2% threshold keeps a drag-resize from firing a rebuild per pixel;
+        the overlay rebuild is cheap but not free, and nothing visible changes
+        below that."""
+        z = self.transform().m11()
+        prev = getattr(self, "_last_zoom", 0.0)
+        if z > 0 and (prev <= 0 or abs(z - prev) / max(prev, 1e-9) > 0.02):
+            self._last_zoom = z
+            self.zoomChanged.emit(z)
+
+    def zoom(self) -> float:
+        """Current display scale: image pixels -> view pixels."""
+        return self.transform().m11()
+
     def fit(self) -> None:
         if not self._item.pixmap().isNull():
             self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
             self._fitted = True
+            self._note_zoom()
 
     def focus_on(self, x: float, y: float, min_scale: float = 1.0) -> None:
         """Centre the view on an image pixel, zooming in if currently zoomed out.
@@ -295,12 +316,14 @@ class ImageView(QGraphicsView):
         current = self.transform().m11()
         if current < min_scale and current > 0:
             self.scale(min_scale / current, min_scale / current)
-            self._fitted = False       # zoomed deliberately; a resize must not undo it
+            self._fitted = False
+            self._note_zoom()       # zoomed deliberately; a resize must not undo it
         self.centerOn(float(x), float(y))
 
     def actual_size(self) -> None:
         self.resetTransform()
         self._fitted = False
+        self._note_zoom()
 
     def drawBackground(self, painter, rect) -> None:
         vp = self.viewport().rect()
@@ -357,11 +380,13 @@ class ImageView(QGraphicsView):
         if not self._item.pixmap().isNull():
             self.scale(1.25, 1.25)
             self._fitted = False
+            self._note_zoom()
 
     def zoom_out(self) -> None:
         if not self._item.pixmap().isNull():
             self.scale(0.8, 0.8)
             self._fitted = False
+            self._note_zoom()
 
     def wheelEvent(self, event) -> None:
         if event.angleDelta().y() > 0:
