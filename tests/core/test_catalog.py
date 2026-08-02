@@ -173,3 +173,53 @@ def test_named_stars_use_the_same_convention_as_objects():
     obj = objects_in_field(wcs, _REAL_SHAPE, rows=[("X", "", ra, dec, 0.0)])[0]
     star = named_stars_in_field(wcs, _REAL_SHAPE, rows=[("X", ra, dec, 4.0)])[0]
     assert abs(star.x - obj.cx) < 0.01 and abs(star.y - obj.cy) < 0.01
+
+
+# --- curated common names -----------------------------------------------------
+
+def test_curated_names_fill_only_blanks_never_override_the_catalogue():
+    """A name the source catalogue supplies must always win — the curated file is
+    a fallback for catalogues that carry none, not an editorial layer."""
+    from nocturne.core.catalog import _curated_names
+    names = _curated_names()
+    assert names, "curated file failed to load"
+    import csv
+    for r in csv.DictReader(open("nocturne/data/openngc.csv")):
+        d = r["name"].replace(" ", "")
+        if d in names and r.get("common", "").strip():
+            pytest.fail(f"{d} has a catalogue name AND a curated one — remove the curated row")
+
+
+def test_every_curated_designation_exists_in_the_catalogue():
+    """A dead row is silently useless: it never matches, so the name never
+    appears and nothing complains. An earlier draft had four."""
+    import csv
+    from nocturne.core.catalog import _curated_names
+    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv"))}
+    dead = [d for d in _curated_names() if d not in have]
+    assert not dead, f"curated names for objects not in the catalogue: {dead}"
+
+
+def test_a_named_small_object_can_win_the_target_over_a_large_anonymous_one():
+    """Reported on a real IC 1396A frame: the target read "Sh 2-131" — the whole
+    170' region — rather than the Elephant's Trunk the user actually pointed at.
+    The trunk (vdB 142) was found, but anonymous and 0' across, so size decided
+    it. A common name outranks size, which is what a curated name restores."""
+    from nocturne.core.catalog import CatalogObject, identify_target
+    shape = (3840, 2160)
+    big = CatalogObject("Sh 2-131", "", 323.9, 57.4, 170.0, 1080, 1900, True, 1080, 1900)
+    anon = CatalogObject("vdB 142", "", 324.7, 57.5, 0.0, 900, 1750, True, 900, 1750)
+    named = CatalogObject("vdB 142", "Elephant's Trunk Nebula", 324.7, 57.5, 0.0,
+                          900, 1750, True, 900, 1750)
+    assert identify_target([big, anon], shape) == "Sh 2-131"
+    assert identify_target([big, named], shape) == "vdB 142 · Elephant's Trunk Nebula"
+
+
+def test_the_elephants_trunk_is_named_on_vdb142_not_on_the_whole_region():
+    """Sh2-131 is the 170' IC 1396 region; the trunk is vdB 142 inside it. An
+    earlier draft of the curated file put the name on Sh2-131, which would have
+    made the reported problem worse rather than better."""
+    from nocturne.core.catalog import _curated_names
+    names = _curated_names()
+    assert names.get("vdB142") == "Elephant's Trunk Nebula"
+    assert "Sh2-131" not in names

@@ -18,6 +18,7 @@ from ..tools.astap import FITS_Y_DOWN
 # the OS can't traverse in the PyInstaller bundle — nocturne/core/ isn't a real
 # directory there (the code lives in the PYZ archive) — so open() raised ENOENT.
 _DATA = str(Path(__file__).resolve().parent.parent / "data" / "openngc.csv")
+_NAMES = Path(__file__).resolve().parent.parent / "data" / "common_names.csv"
 _STARS = str(Path(__file__).resolve().parent.parent / "data" / "named_stars.csv")
 _LABEL_MARGIN = 8               # keep a clamped label this many px inside the frame
 _NAME_RE = re.compile(r"^([A-Za-z]+)0*(\d+)(.*)$")
@@ -61,12 +62,36 @@ def _pretty_name(name: str) -> str:
 
 
 @lru_cache(maxsize=1)
+@lru_cache(maxsize=1)
+def _curated_names() -> dict:
+    """Colloquial names for objects whose catalogues carry none.
+
+    Kept OUT of openngc.csv on purpose. That file is regenerated wholesale by
+    scripts/build_catalog.py + fetch_extra_catalogs.py, so anything hand-written
+    into it is lost on the next rebuild. Applied here instead, where it survives.
+
+    Only fills a BLANK common name — a name the source catalogue supplies always
+    wins, so this can never override real data."""
+    out = {}
+    if not _NAMES.exists():
+        return out
+    with open(_NAMES, newline="") as f:
+        for r in csv.DictReader(line for line in f if not line.startswith("#")):
+            d, c = (r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip()
+            if d and c:
+                out[d] = c
+    return out
+
+
 def load_catalog(path: str = _DATA):
+    curated = _curated_names()
     rows = []
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             try:
-                rows.append((r["name"], r.get("common", ""), float(r["ra_deg"]),
+                common = r.get("common", "").strip() or curated.get(
+                    r["name"].replace(" ", ""), "")
+                rows.append((r["name"], common, float(r["ra_deg"]),
                              float(r["dec_deg"]), float(r.get("major_arcmin") or 0.0),
                              r.get("type", ""), float(r.get("minor_arcmin") or 0.0),
                              float(r.get("pos_angle") or 0.0), r.get("messier", "")))

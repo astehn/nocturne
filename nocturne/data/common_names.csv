@@ -1,0 +1,33 @@
+# Colloquial names for objects whose catalogues carry none.
+#
+# HAND-CURATED, and deliberately short. These names live in amateur astronomy
+# culture, not in professional catalogues: SIMBAD has four NAME identifiers for
+# NGC 7000 and NONE for Sh 2-155 or Sh 2-131, and VizieR is no better. There is
+# nothing to fetch, so every row here was written by hand and is only as good as
+# the person who wrote it.
+#
+# Rules for adding: the designation must exist in openngc.csv (a dead row is
+# silently useless), the name must be one people actually say, and it must name
+# THAT object rather than the region around it. An earlier draft of this file
+# called Sh2-131 the "Elephant's Trunk Nebula" — Sh2-131 is the whole 170' IC
+# 1396 region; the trunk is vdB 142 inside it. Wrong names are worse than none,
+# because a common name outranks size in identify_target.
+designation,common
+Sh2-155,Cave Nebula
+Sh2-142,Wizard Nebula
+Sh2-157,Lobster Claw Nebula
+Sh2-101,Tulip Nebula
+Sh2-129,Flying Bat Nebula
+Sh2-132,Lion Nebula
+Sh2-136,Ghost Nebula
+Sh2-199,Soul Nebula
+Sh2-276,Barnard's Loop
+B33,Horsehead Nebula
+B72,Snake Nebula
+B86,Ink Spot Nebula
+B142,Barnard's E Nebula
+B143,Barnard's E Nebula
+LDN935,Gulf of Mexico
+LDN1622,Boogeyman Nebula
+vdB141,Ghost Nebula
+vdB142,Elephant's Trunk Nebula
