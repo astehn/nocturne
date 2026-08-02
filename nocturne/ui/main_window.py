@@ -1190,6 +1190,9 @@ class MainWindow(QMainWindow):
             "plate-solve": "#5faa8c",  # teal-green
             "share": "#5aa9c9",        # cyan
             "upscale": "#cf8f9b",      # muted rose
+            "trim": "#b0a06a",         # muted olive — the gap in the wheel,
+                                        # and far from upscale's rose so the two
+                                        # finishing tools do not read as variants
         }
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
@@ -1202,7 +1205,7 @@ class MainWindow(QMainWindow):
         self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
                                               # canvas pill owns overlay visibility)
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
-        self._trim_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Trim", self._trim)
+        self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
