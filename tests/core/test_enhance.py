@@ -178,3 +178,104 @@ def test_dark_structure_is_brightness_neutral():
     hp_in = lum - gaussian_filter(lum, 8.0)
     hp_out = out[..., 0] - gaussian_filter(out[..., 0], 8.0)
     assert hp_out.std() > hp_in.std()                                # local contrast increased (definition)
+
+
+# --- Sharpen Nebulosity -------------------------------------------------------
+
+def _neb_field(sky_frac=0.3, seed=1):
+    """Nebulosity with real fine structure over a faint noisy sky."""
+    from scipy.ndimage import gaussian_filter
+    rng = np.random.default_rng(seed)
+    f = gaussian_filter(rng.normal(0, 1, (200, 200)), 2.0)
+    f = (f - f.min()) / (f.max() - f.min())
+    a = np.repeat((0.30 + 0.35 * f)[..., None], 3, 2).astype(np.float32)
+    n = int(200 * sky_frac)
+    a[:n] = 0.02 + rng.normal(0, 0.006, (n, 200, 3))
+    return AstroImage(np.clip(a, 0, 1).astype(np.float32), is_linear=False), n
+
+
+def _acut(arr, sl):
+    g = arr[sl].mean(axis=2)
+    return float(np.abs(np.diff(g, axis=1)).mean())
+
+
+def test_sharpen_lifts_nebulosity_detail_and_leaves_the_sky_alone():
+    """An unsharp mask on a stretched astro frame finds the noise first — the
+    signal mask is what stops that, and it is the reason this is safe."""
+    from nocturne.core.enhance import sharpen_nebulosity_layers
+    sl, n = _neb_field()
+    stars = AstroImage(np.zeros((200, 200, 3), np.float32), is_linear=False)
+    base = sharpen_nebulosity_layers(sl, stars, amount=0.0)
+    out = sharpen_nebulosity_layers(sl, stars)
+
+    neb = _acut(out.data, np.s_[100:]) / _acut(base.data, np.s_[100:])
+    sky = _acut(out.data, np.s_[:n - 5]) / _acut(base.data, np.s_[:n - 5])
+    assert neb > 1.08, f"nebulosity barely sharpened (x{neb:.3f})"
+    assert sky < 1.02, f"faint sky was sharpened too (x{sky:.3f}) — the mask leaked"
+
+
+def test_the_effect_does_not_depend_on_how_much_sky_is_in_frame():
+    """The original floor_pct=40 anchored the ramp to the middle of the
+    histogram, so a wide field pushed it up INTO the signal and the mask over
+    nebulosity swung from 0.08 to 1.00 — a 4x difference in effect between
+    targets, for no reason the user could see."""
+    from nocturne.core.enhance import sharpen_nebulosity_layers
+    stars = AstroImage(np.zeros((200, 200, 3), np.float32), is_linear=False)
+    gains = []
+    for frac in (0.10, 0.30, 0.60, 0.80):
+        sl, n = _neb_field(frac)
+        base = sharpen_nebulosity_layers(sl, stars, amount=0.0)
+        out = sharpen_nebulosity_layers(sl, stars)
+        gains.append(_acut(out.data, np.s_[n + 20:]) / _acut(base.data, np.s_[n + 20:]))
+    spread = max(gains) / min(gains)
+    # Measured, not guessed: the tuned values give 1.009 across 10-80% sky, the
+    # old floor_pct=40/ramp=0.25 gives 1.095. 1.05 separates them cleanly — an
+    # earlier threshold of 1.15 sat exactly on the old spread and let it pass.
+    assert spread < 1.05, f"effect varies {spread:.3f}x with sky fraction: {gains}"
+
+
+def test_the_stars_layer_is_never_sharpened():
+    """The whole premise. Stars are split out, sharpened never touches them, and
+    they are screened back — so they cannot ring."""
+    from nocturne.core.enhance import sharpen_nebulosity_layers
+    sl, _ = _neb_field()
+    star_arr = np.zeros((200, 200, 3), np.float32)
+    star_arr[120, 120] = 0.95
+    stars = AstroImage(star_arr, is_linear=False)
+    flat = AstroImage(np.full((200, 200, 3), 0.3, np.float32), is_linear=False)
+
+    # against a perfectly flat starless there is no detail to add, so any change
+    # at the star could only have come from sharpening the star itself
+    a = sharpen_nebulosity_layers(flat, stars, amount=0.0)
+    b = sharpen_nebulosity_layers(flat, stars, amount=1.0)
+    assert np.allclose(a.data, b.data, atol=1e-6), "the stars layer was altered"
+
+    # ...and the star must arrive at full strength, not merely at the SAME
+    # strength in both. Comparing the two runs alone is blind to anything that
+    # dims the star layer, because it dims both sides equally.
+    expect = 1.0 - (1.0 - flat.data) * (1.0 - star_arr)
+    assert np.allclose(b.data, expect, atol=1e-6), "the star did not survive intact"
+
+
+def test_amount_zero_is_a_plain_recombine():
+    from nocturne.core.enhance import sharpen_nebulosity_layers
+    sl, _ = _neb_field()
+    stars = AstroImage(np.zeros((200, 200, 3), np.float32), is_linear=False)
+    out = sharpen_nebulosity_layers(sl, stars, amount=0.0)
+    assert np.allclose(out.data, sl.data, atol=1e-6)
+
+
+def test_taps_stack_gently_rather_than_all_at_once():
+    """Enhancements are tap-to-stack, which is what keeps this from being the
+    most abusable control in the app: each tap is small, and more is a choice."""
+    from nocturne.core.enhance import sharpen_nebulosity_layers
+    sl, _ = _neb_field()
+    stars = AstroImage(np.zeros((200, 200, 3), np.float32), is_linear=False)
+    base = sharpen_nebulosity_layers(sl, stars, amount=0.0)
+    gains, cur = [], sl
+    for _ in range(3):
+        cur = sharpen_nebulosity_layers(cur, stars)
+        gains.append(_acut(cur.data, np.s_[100:]) / _acut(base.data, np.s_[100:]))
+    assert gains == sorted(gains), gains
+    assert gains[0] < 1.25, f"a single tap is too strong ({gains[0]:.3f})"
+    assert gains[2] > gains[0] * 1.2, "stacking taps must actually accumulate"

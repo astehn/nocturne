@@ -212,6 +212,7 @@ def build_panel(
             ("star_colour_btn", "Star Colour", "Star Colour"),
             ("dark_structure_btn", "Dark Structure", "Dark Structure"),
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
+            ("sharpen_btn", "Sharpen Nebulosity", "Sharpen Nebulosity"),
         ]
         for attr, label, op in _specs:
             btn = QPushButton(label)

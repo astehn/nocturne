@@ -421,7 +421,7 @@ _TOPIC_LIST = (
     _t("enhancements", "Enhancements",
        "Targeted, tap-to-stack finishing moves for colour, stars, dust, and glow.",
        "<h4>What it does</h4>"
-       "<p>A bank of ten gentle finishing taps, grouped by what they touch:</p>"
+       "<p>A bank of eleven gentle finishing taps, grouped by what they touch:</p>"
        "<ul>"
        "<li><b>Colour boosts</b> — <b>Boost Red</b> (Ha), <b>Boost Cyan</b> (OIII), "
        "<b>Boost Blue</b>, <b>Boost Gold</b>: hue-selective saturation lifts.</li>"
@@ -432,6 +432,9 @@ _TOPIC_LIST = (
        "<li><b>Darken Sky</b> / <b>Lighten Sky</b> — shadow-masked background adjustments.</li>"
        "<li><b>Dark Structure</b> — adds definition to dust lanes and dark nebulae.</li>"
        "<li><b>Soft Glow</b> — a dreamy Orton-style bloom over the bright signal.</li>"
+       "<li><b>Sharpen Nebulosity</b> — crisps up nebula structure only. It sharpens the "
+       "starless layer under a signal mask and screens the stars back untouched, so stars "
+       "cannot ring and the background noise is not amplified.</li>"
        "</ul>"
        "<h4>How to use it</h4>"
        "<p>Tap a button to apply one gentle nudge; tap again to stack more. Each tap is its own "
@@ -440,8 +443,10 @@ _TOPIC_LIST = (
        "<p>The colour boosts are hue-selective — Boost Red only deepens red areas and leaves teal "
        "alone, and Boost Gold warms golden-brown dust lanes. The sky moves are shadow-masked, so "
        "they only touch the dark background and leave nebula and stars untouched. Star Colour "
-       "takes a moment on its first tap while it separates the stars. Dark Structure and Soft Glow "
-       "are subtle by design — stack a few taps to taste.</p>"),
+       "and Sharpen Nebulosity take a moment on their first tap while they separate the stars. "
+       "Sharpening is the easiest finishing move to overdo — one or two taps is usually right, "
+       "and if the noise starts to look like texture you have gone too far. Dark Structure and "
+       "Soft Glow are subtle by design — stack a few taps to taste.</p>"),
 
     _t("export", "Export",
        "Save your finished image.",
