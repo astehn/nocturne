@@ -44,9 +44,12 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
 - ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves, auto Levels, and HDR core recovery — each with a live preview.
 - 🔬 **Pixel readout & clipping warning** — hover for a pixel's R/G/B and luminance (with a crosshair so you know which one); from Stretch on, a live warning when highlights blow or shadows crush, plus an overlay showing exactly which pixels.
-- ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure and soft glow — ten taps, each individually undoable.
+- ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure, soft glow and nebulosity sharpening — eleven taps, each individually undoable.
+- 🔪 **Sharpen Nebulosity** — sharpens nebula structure only: it works on the starless layer under a signal mask and screens the stars back untouched, so stars can't ring and background noise isn't amplified.
 - ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically.
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
+- ✂️ **Trim** — crop the edges off a *finished* image. A ragged stacking border is invisible until after the stretch, and going back to the Crop step would throw away everything done since; Trim appends instead, so the whole edit survives.
+- 🖥️ **Fullscreen inspection** — press `F` for a distraction-free canvas to pan and zoom around the frame.
 - 📤 **Share** — reframe to a social aspect ratio with an optional caption, then export or copy a JPEG — with or without your plate-solve annotations.
 - ♻️ **Recipes & batch** — save your steps (Enhancements taps included) and apply them to a whole folder.
 - 💾 **Export** — 16-bit TIFF, 32-bit float FITS (WCS preserved), 8-bit PNG/JPEG, or a starless + stars pair.
