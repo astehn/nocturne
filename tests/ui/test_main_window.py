@@ -740,7 +740,8 @@ def test_reset_action_disabled_until_loaded(qtbot, tmp_path):
     assert win._reset_act.isEnabled() is False
     win.open_fits(_make_fits(tmp_path))
     assert win._reset_act.isEnabled() is True
-    assert win._source_base is not None and win._source_label
+    # Reset restores from the project's own index 0, not a private copy.
+    assert win.project.state_at(0) is not None and win._source_label
 
 
 def test_reset_confirmed_clears_history(qtbot, tmp_path, monkeypatch):
@@ -2466,6 +2467,36 @@ def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatc
     assert win.project is not None
     assert win.project.position == position_before
     np.testing.assert_array_equal(win.project.current().data, data_before)
+
+
+def test_reset_works_on_a_loaded_project(qtbot, tmp_path, monkeypatch):
+    """Reset restored from a private _source_base that only open_image ever set.
+    _open_project restored _source_label but not that, so Reset raised
+    AttributeError on every loaded bundle while working on a fresh FITS."""
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current().data.copy()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+
+    out = str(tmp_path / "resettable.nocturne")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+    win.project = None                       # prove the reload is real
+    win._open_project(out)
+    assert any(n == "Stretch" for n, _ in win.project.entries())
+
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._reset_image()                       # used to raise AttributeError
+
+    assert win.project.entries() == []
+    np.testing.assert_array_equal(win.project.current().data, base)
+    # The bundle on disk still holds the discarded edits, so the session no
+    # longer matches it — quitting now must still prompt to save.
+    assert win._dirty is True
 
 
 def test_open_project_newer_version_shows_warning(qtbot, tmp_path, monkeypatch):

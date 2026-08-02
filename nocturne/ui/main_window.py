@@ -1323,7 +1323,6 @@ class MainWindow(QMainWindow):
         # snapshots an in-flight step may be about to write into, and the new
         # Project must not receive a callback belonging to the old one.
         self._swap_workspace()
-        self._source_base = base
         self._source_label = label
         self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
@@ -2383,7 +2382,19 @@ class MainWindow(QMainWindow):
         )
         if resp != QMessageBox.StandardButton.Yes:
             return
-        self.open_image(self._source_base, self._source_label)
+        # Ask the project for its own base rather than keeping a private copy.
+        # A _source_base attribute set only in open_image is a second copy of a
+        # fact the project already holds at index 0, and _open_project restored
+        # _source_label without it — so Reset raised AttributeError on every
+        # loaded bundle while working fine on a freshly-opened FITS.
+        was_project = self._project_path is not None
+        self.open_image(self.project.state_at(0), self._source_label)
+        if was_project:
+            # The bundle on disk still holds the edits we just discarded, so the
+            # session no longer matches it. open_image clears _dirty for the
+            # freshly-opened case, which is not this one.
+            self._dirty = True
+            self._update_title()
 
     def _stage_for_step_name(self, name):
         """Map a history step name to the stepper stage that produced it, for
