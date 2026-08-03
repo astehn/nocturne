@@ -39,28 +39,28 @@ def _largest_true_rectangle(mask: np.ndarray) -> tuple:
 
 
 def full_coverage_bounds(coverage: np.ndarray, n_frames: int,
-                         frac: float = 0.5) -> tuple:
+                         frac: float = 0.9) -> tuple:
     """Largest axis-aligned rectangle where at least `frac` of the frames
     contributed. Returns (top, bottom, left, right), bottom/right exclusive.
     Falls back to the full frame if no pixel meets the threshold.
 
-    `frac` is set by NOISE, not by taste. Shot noise falls as sqrt(N), so a
-    pixel built from half the frames is sqrt(2) = 1.41x noisier than the fully
-    covered interior — one stop, and about where a grainier border starts to
-    read as a defect rather than as an edge. Hence 0.5.
+    `frac` is high because frames are NOT normalized to a common sky level,
+    not because of noise.
 
-    It used to be 0.9, from when partial coverage also made pixels DARK: the
-    integrator divided by the frame count including frames that contributed
-    nothing, so the edges carried a brightness ramp that had to be cut away
-    (see integrate.py). With that fixed the discarded pixels are correctly
-    bright and merely noisier, and 0.9 was measured on a real 60-frame M31
-    stack to throw away 24% of the frame to avoid 1.07x noise — a bad trade.
-    At 0.5 the same stack keeps 91% with a worst case of 1.52x, and only at
-    the extreme boundary.
+    It was briefly 0.5, on the reasoning that shot noise falls as sqrt(N) so
+    half-covered pixels are only sqrt(2) noisier — true, and it kept 91% of the
+    frame instead of 76%. On real M31 data that produced visible curved BANDS
+    along the fringe, and the cause is not noise at all. Sky background varies
+    262% across that session (0.088 to 0.427 between frames). An interior pixel
+    averages every frame, so its sky is the mean of all of them; a fringe pixel
+    averages only the subset that reached it, whose mean sky is different. Each
+    coverage boundary therefore becomes a step in background level, and the
+    rotation envelope gets drawn on the picture.
 
-    Erring wide is also the cheaper mistake now that Trim exists: a user can
-    always cut more off a finished image, but nothing can put back what the
-    stacker discarded.
+    Keeping only where nearly every frame contributed makes the subsets nearly
+    identical, which hides the problem. The real fix is per-frame normalization
+    before combining (Siril: "additive + scaling"), and once that lands this can
+    drop to the noise-driven value.
 
     For speed on full-resolution masks the search runs on a subsampled copy and
     the bounds are scaled back (a few pixels of imprecision at the crop edge is

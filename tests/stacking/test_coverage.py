@@ -36,30 +36,37 @@ def test_full_coverage_bounds_falls_back_when_none_meets_threshold():
     assert full_coverage_bounds(cov, n_frames=10) == (0, 8, 0, 8)
 
 
-def test_the_default_threshold_keeps_pixels_within_sqrt2_of_interior_noise():
+def test_the_default_threshold_keeps_only_near_fully_covered_pixels():
     """Pins the tuned constant, which the test above does not: it passes at any
     frac between ~0.3 and ~1.0 because its bands are far apart.
 
-    The default is set by noise. Shot noise falls as sqrt(N), so half-covered
-    pixels are sqrt(2) = 1.41x noisier than the fully covered interior — the
-    point where a grainy border starts reading as a defect. Concentric bands at
-    45% and 55% coverage straddle that line: the 55% band must be kept and the
-    45% band must not.
+    The constant is high because frames are NOT normalized to a common sky
+    level. An interior pixel averages every frame; a fringe pixel averages only
+    the subset that reached it, and those subsets have different mean sky. On
+    real M31 data the sky varies 262% between frames, so every coverage
+    boundary became a visible step and the rotation envelope was drawn on the
+    picture — seen 2026-08-03 after this was briefly relaxed to 0.5 on a
+    noise-only argument, which is why the bands here are 85% and 95% rather
+    than the 45/55 that noise alone would justify.
+
+    When per-frame normalization lands ("additive + scaling", as Siril does),
+    this can drop to the noise-driven value of about 0.5 and THIS TEST SHOULD
+    CHANGE WITH IT — it pins today's constraint, not a permanent truth.
     """
     import inspect
     from nocturne.stacking import coverage as c
 
     n = 20
-    cov = np.full((n, n), 9, np.int32)      # 45% — one sqrt(2)+ too noisy
-    cov[4:16, 4:16] = 11                    # 55% — inside the budget
-    cov[8:12, 8:12] = n                     # fully covered core
+    cov = np.full((n, n), 17, np.int32)     # 85% — subset still differs enough
+    cov[4:16, 4:16] = 19                    # 95% — effectively every frame
+    cov[8:12, 8:12] = n
     assert full_coverage_bounds(cov, n_frames=n) == (4, 16, 4, 16), \
-        "the default no longer sits between 45% and 55% coverage"
+        "the default no longer sits between 85% and 95% coverage"
 
     frac = inspect.signature(c.full_coverage_bounds).parameters["frac"].default
-    assert np.sqrt(1.0 / frac) <= 1.45, \
-        f"frac={frac} admits pixels {np.sqrt(1/frac):.2f}x noisier than the interior"
-    assert frac <= 0.6, f"frac={frac} discards area the coverage fix made usable"
+    assert frac >= 0.85, (
+        f"frac={frac} keeps fringe whose covering subset differs from the "
+        "interior's — that shows as sky-level banding until frames are normalized")
 
 
 def test_a_sparse_fringe_is_still_cut_off():
