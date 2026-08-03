@@ -29,6 +29,38 @@ def test_run_stack_produces_master(tmp_path):
     assert os.path.exists(result.output_path)
 
 
+def test_master_keeps_the_optics_so_the_fov_hint_is_not_assumed(tmp_path):
+    """The in-memory master goes straight to open_image, so if it loses the
+    optics every downstream scale question falls back to the SEESTAR_S30_PRO
+    profile. That was invisible on an S30 Pro — the assumed camera was the
+    right one — and wrong by 56% on an S50 (250 mm vs 160 mm focal length),
+    which is enough to fail a solve and silently cost SPCC its calibration.
+
+    Asserts the SOURCE, not just the number: a hint that happens to look right
+    while coming from a guess is the bug this is guarding."""
+    from nocturne.core.instrument import fov_hint
+
+    base = make_star_field(n_stars=40, seed=7)
+    s50 = {"FOCALLEN": 250.0, "XPIXSZ": 2.9, "OBJECT": "M42"}
+    paths = []
+    for i in range(4):
+        t = SimilarityTransform(translation=(i * 0.5, -i * 0.5))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"s50_{i}.fit"
+        write_color_fits(p, f, exptime=10.0, header=s50)
+        paths.append(str(p))
+
+    result = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")))
+    meta = result.image.metadata
+    assert meta["focal_length"] == 250.0 and meta["pixel_size"] == 2.9
+    assert meta["target"] == "M42"
+
+    h = result.image.data.shape[0]
+    got, source = fov_hint(meta, h)
+    assert source == "header", "the master's own optics were dropped, so the scale was assumed"
+    assert got == pytest.approx(206.265 * 2.9 / 250.0 * h / 3600.0, rel=1e-6)
+
+
 def _rotated_subs(tmp_path, n=5, seed=3):
     # Subs with real rotation between them, so the covered region is a rotated
     # envelope smaller than a single frame (the alt-az case).

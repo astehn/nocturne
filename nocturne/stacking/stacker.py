@@ -35,6 +35,35 @@ def master_header(ref_meta: dict, count: int, integ: float) -> dict:
     return header
 
 
+def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) -> dict:
+    """In-memory metadata for a master, mirroring what master_header writes to
+    the file. The optics cards are the point: fov_hint reads focal_length and
+    pixel_size, and without them it falls back to the SEESTAR_S30_PRO profile.
+
+    The master used to be built from a bare dict of target/frames/exposure/
+    dimensions, so the FILE carried the optics (via solve_cards) while the
+    in-memory image handed straight to open_image did not. Nothing caught it on
+    an S30 Pro, where the fallback profile happens to be the right camera. On a
+    Seestar S50 (250 mm vs 160 mm) the assumed scale is 3.74"/px against a real
+    2.39"/px, so the FOV hint comes out 56% too large — enough to make a solve
+    fail, which silently costs SPCC its photometric calibration.
+    """
+    meta = {
+        "target": ref_meta.get("target"),
+        "frames": count,
+        "exposure": integ,
+        "width": w,
+        "height": h,
+    }
+    # Pointing and scale survive stacking: registration is a rigid transform to
+    # the reference frame, so the reference's own optics still describe the master.
+    for key in ("focal_length", "pixel_size", "ra", "dec", "filter", "gain",
+                "date", "solve_cards"):
+        if (value := ref_meta.get(key)) is not None:
+            meta[key] = value
+    return meta
+
+
 def master_filename(target: str, count: int, exposure_s: float, total_s: float) -> str:
     """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits.
     Degrades gracefully as header info is missing; worst case master.fits."""
@@ -150,13 +179,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
     image = AstroImage(
         np.clip(master, 0.0, 1.0).astype(np.float32),
         is_linear=True,
-        metadata={
-            "target": ref_img.metadata.get("target"),
-            "frames": len(used),
-            "exposure": integ,
-            "width": cw,
-            "height": ch,
-        },
+        metadata=master_metadata(ref_img.metadata, len(used), integ, cw, ch),
     )
     save_fits(image, opts.output_path,
               header=master_header(ref_img.metadata, len(used), integ))

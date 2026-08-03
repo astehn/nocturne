@@ -14,11 +14,15 @@ def make_star_field(shape=(80, 80), n_stars=30, seed=0, bg=0.02):
     return np.clip(img, 0.0, 1.0).astype(np.float32)
 
 
-def write_color_fits(path, lum2d, exptime=10.0):
-    """Write a (3, H, W) FITS the loader reads as color (no debayer)."""
+def write_color_fits(path, lum2d, exptime=10.0, header=None):
+    """Write a (3, H, W) FITS the loader reads as color (no debayer).
+    `header` adds extra cards — optics (FOCALLEN/XPIXSZ) for tests that care
+    what survives into a master."""
     cube = np.stack([lum2d, lum2d, lum2d], axis=0).astype(np.float32)
     hdu = fits.PrimaryHDU(cube)
     hdu.header["EXPTIME"] = exptime
+    for card, value in (header or {}).items():
+        hdu.header[card] = value
     hdu.writeto(str(path), overwrite=True)
 
 
