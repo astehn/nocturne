@@ -121,6 +121,17 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
     rejected: list = []
     n = len(paths)
 
+    # A stack refills the progress bar several times — once registering, then
+    # once per integration pass — and a bar that reaches 100% and restarts with
+    # no explanation reads as a hang or a crash. Number the phases so the
+    # restart is expected. The count lives HERE because only run_stack knows
+    # that sigma-clip walks the frames twice; asking the dialog to know that
+    # would be a second copy of the same fact.
+    steps = 1 + (2 if opts.method == "sigma_clip" else 1)
+
+    def step_label(step: int, what: str) -> str:
+        return f"Step {step} of {steps} — {what}"
+
     # Phase A: register each remaining sub against the reference.
     for i, path in enumerate(paths[1:], start=1):
         _check_cancel()
@@ -141,7 +152,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
         exposures[path] = float(sub.metadata.get("exposure", 0.0) or 0.0)
         used.append(path)
         if on_progress is not None:
-            on_progress(i, n, "registering")
+            on_progress(i, n, step_label(1, "aligning frames"))
 
     if len(used) < 3:
         raise ValueError(
@@ -151,14 +162,13 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
 
     # Phase B: integrate (streaming — reload + warp per frame, low memory).
     # Emit per-frame progress so the (longest) integration step isn't a frozen
-    # bar. sigma-clip walks every frame twice, so label the passes.
+    # bar. sigma-clip walks every frame twice, hence a step number per pass.
     total = len(used)
-    passes = 2 if opts.method == "sigma_clip" else 1
     pass_no = {"n": 0}
 
     def frames():
         pass_no["n"] += 1
-        label = "integrating" if passes == 1 else f"integrating (pass {pass_no['n']}/{passes})"
+        label = step_label(1 + pass_no["n"], "combining frames")
         for i, path in enumerate(used, start=1):
             _check_cancel()
             if on_progress is not None:

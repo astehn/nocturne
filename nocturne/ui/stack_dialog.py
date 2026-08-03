@@ -210,7 +210,9 @@ class StackDialog(QDialog):
                           self._signals.progress.emit(i, n, "grading"),
                           strictness=strictness)
 
-        self._start(work, self._on_graded, "Grading frames…")
+        self._start(work, self._on_graded,
+                    "Measuring every frame — this is the slow part, and your "
+                    "Strictness and Integration choices apply instantly afterwards.")
 
     def _on_graded(self, stats) -> None:
         # Strictness may have changed while the async measure was running —
@@ -419,7 +421,9 @@ class StackDialog(QDialog):
     def _on_progress(self, i: int, n: int, label: str) -> None:
         self.progress.setMaximum(max(1, n))
         self.progress.setValue(i)
-        self.status.setText(f"{label}… {i}/{n}")
+        # The bar refills once per phase; the label carries "Step N of M" so a
+        # restart reads as progress rather than as a hang.
+        self.status.setText(f"{label} — {i}/{n} frames")
 
     @staticmethod
     def _stack_report(result) -> str:

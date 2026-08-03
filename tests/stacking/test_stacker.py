@@ -123,24 +123,34 @@ def test_average_emits_per_frame_integration_progress(tmp_path):
     calls = []
     run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")),
               on_progress=lambda i, n, label: calls.append((i, n, label)))
-    integ = [c for c in calls if c[2] == "integrating"]
+    integ = [c for c in calls if "combining" in c[2]]
     # one progress tick per used frame, reaching the total
     assert len(integ) == 4
     assert [c[0] for c in integ] == [1, 2, 3, 4]
     assert all(c[1] == 4 for c in integ)
 
 
-def test_sigma_clip_labels_both_integration_passes(tmp_path):
+def test_progress_numbers_the_phases_so_a_refilling_bar_reads_as_progress(tmp_path):
+    """The bar restarts once per phase. Reaching 100% and starting over with no
+    explanation reads as a hang, so every label carries "Step N of M" — and M
+    must match the number of phases the chosen method actually runs, which only
+    run_stack knows (sigma-clip walks the frames twice, average once)."""
     paths = _make_subs(tmp_path)
-    calls = []
-    run_stack(StackOptions("sigma_clip", 2.5, paths, str(tmp_path / "m.fits")),
-              on_progress=lambda i, n, label: calls.append((i, n, label)))
-    labels = {c[2] for c in calls}
-    assert "integrating (pass 1/2)" in labels
-    assert "integrating (pass 2/2)" in labels
-    # each pass ticks per frame up to the total
-    p1 = [c[0] for c in calls if c[2] == "integrating (pass 1/2)"]
-    assert p1 == [1, 2, 3, 4]
+
+    def labels_for(method):
+        calls = []
+        run_stack(StackOptions(method, 2.5, paths, str(tmp_path / f"{method}.fits")),
+                  on_progress=lambda i, n, label: calls.append(label))
+        return calls
+
+    avg = set(labels_for("average"))
+    assert avg == {"Step 1 of 2 — aligning frames", "Step 2 of 2 — combining frames"}
+
+    sig = set(labels_for("sigma_clip"))
+    assert sig == {"Step 1 of 3 — aligning frames",
+                   "Step 2 of 3 — combining frames",
+                   "Step 3 of 3 — combining frames"}, \
+        "sigma-clip runs two integration passes and must say so"
 
 
 def test_run_stack_reports_unreadable(tmp_path):
