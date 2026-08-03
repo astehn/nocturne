@@ -48,6 +48,38 @@ def test_trim_help_matches_how_trim_actually_behaves():
     assert "history" in b or "edit survives" in b or "whole edit" in b
 
 
+def test_stacking_help_names_the_real_controls():
+    """The topic explained neither Strictness nor Integration, so a user faced
+    with three strictness levels and two integration methods had nothing to
+    choose on. Guard the names against the widgets that actually exist."""
+    b = _body("stacking")
+    sd = _src("nocturne/ui/stack_dialog.py")
+    for label in ("Relaxed", "Normal", "Strict"):
+        assert label in b, f"strictness level {label!r} not explained"
+        assert label in sd, f"{label!r} is no longer a strictness option"
+    assert "Sigma-clipped" in b and 'QRadioButton("Sigma-clipped")' in sd
+    assert "Average" in b and "avg_radio" in sd
+    for label in ("Low", "High"):
+        assert label in b, f"kappa level {label!r} not explained"
+    assert 'KAPPA = {"Low"' in sd and '"High"' in sd
+
+
+def test_stacking_help_does_not_contradict_how_judging_works():
+    """Three claims that are load-bearing and easy to get wrong. Each one
+    describes behaviour a user would otherwise read as a bug — most of all the
+    'count did not change' case, which is what prompted the topic."""
+    b = _body("stacking")
+    g = _src("nocturne/stacking/grade.py")
+    # the cloud floor ignores strictness — the help says so, the code hardcodes it
+    assert "half the usual" in b
+    assert "star_floor = 0.5 * star_median" in g
+    # a bright sky warns rather than rejects
+    assert "warning" in b and "s.warning = WARN_SKY" in g
+    # the gate is relative to the session, not an absolute number
+    assert "session itself" in b or "relative to the night" in b
+    assert "np.median(vals) + k * vals.std()" in g
+
+
 def test_fullscreen_help_names_the_real_keys():
     b = _body("fullscreen")
     mw = _src("nocturne/ui/main_window.py")
