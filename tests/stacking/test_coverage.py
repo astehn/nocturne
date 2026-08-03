@@ -34,3 +34,38 @@ def test_full_coverage_bounds_crops_to_covered_core():
 def test_full_coverage_bounds_falls_back_when_none_meets_threshold():
     cov = np.ones((8, 8), np.int32)  # every pixel covered by only 1 frame
     assert full_coverage_bounds(cov, n_frames=10) == (0, 8, 0, 8)
+
+
+def test_the_default_threshold_keeps_pixels_within_sqrt2_of_interior_noise():
+    """Pins the tuned constant, which the test above does not: it passes at any
+    frac between ~0.3 and ~1.0 because its bands are far apart.
+
+    The default is set by noise. Shot noise falls as sqrt(N), so half-covered
+    pixels are sqrt(2) = 1.41x noisier than the fully covered interior — the
+    point where a grainy border starts reading as a defect. Concentric bands at
+    45% and 55% coverage straddle that line: the 55% band must be kept and the
+    45% band must not.
+    """
+    import inspect
+    from nocturne.stacking import coverage as c
+
+    n = 20
+    cov = np.full((n, n), 9, np.int32)      # 45% — one sqrt(2)+ too noisy
+    cov[4:16, 4:16] = 11                    # 55% — inside the budget
+    cov[8:12, 8:12] = n                     # fully covered core
+    assert full_coverage_bounds(cov, n_frames=n) == (4, 16, 4, 16), \
+        "the default no longer sits between 45% and 55% coverage"
+
+    frac = inspect.signature(c.full_coverage_bounds).parameters["frac"].default
+    assert np.sqrt(1.0 / frac) <= 1.45, \
+        f"frac={frac} admits pixels {np.sqrt(1/frac):.2f}x noisier than the interior"
+    assert frac <= 0.6, f"frac={frac} discards area the coverage fix made usable"
+
+
+def test_a_sparse_fringe_is_still_cut_off():
+    """The relaxation must not become 'keep everything'. A rim covered by a
+    handful of frames is genuinely poor data and stays outside the crop."""
+    n = 40
+    cov = np.full((30, 30), 3, np.int32)    # 7.5% — a sparse rim
+    cov[5:25, 5:25] = n
+    assert full_coverage_bounds(cov, n_frames=n) == (5, 25, 5, 25)
