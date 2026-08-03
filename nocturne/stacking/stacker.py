@@ -8,10 +8,10 @@ import numpy as np
 from ..core.export import save_fits
 from ..core.image import AstroImage
 from ..core.tasks import current
-from .coverage import coverage_map, full_coverage_bounds
+from .coverage import full_coverage_bounds
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
-from .register import RegistrationError, find_transform, warp_to
+from .register import RegistrationError, find_transform, warp_with_validity
 
 
 def _check_cancel() -> None:
@@ -163,20 +163,23 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
-            yield warp_to(load_sub(path, normalize=False).data, transforms[path])
+            yield warp_with_validity(load_sub(path, normalize=False).data,
+                                     transforms[path])
 
     if opts.method == "sigma_clip":
-        master = sigma_clip_integrate(frames, opts.kappa)
+        master, coverage = sigma_clip_integrate(frames, opts.kappa)
     else:
-        master = average_integrate(frames())
+        master, coverage = average_integrate(frames())
 
     integ = sum(exposures[p] for p in used)
 
     # Auto-crop to the region covered by (nearly) all frames. Field rotation
     # (alt-az) and drift leave slanted, low-coverage edges; keep only the fully
     # stacked interior so the master is a clean rectangle of good pixels.
+    # The coverage comes from integration itself — it used to be recomputed here
+    # by warping a mask per transform, a second answer to a question integration
+    # had already answered.
     if autocrop:
-        coverage = coverage_map([transforms[p] for p in used], ref_shape)
         top, bottom, left, right = full_coverage_bounds(coverage, len(used))
         master = master[top:bottom, left:right]
 

@@ -28,3 +28,23 @@ def warp_to(data: np.ndarray, matrix: np.ndarray) -> np.ndarray:
         for c in range(data.shape[2])
     ]
     return np.stack(channels, axis=2).astype(np.float32)
+
+
+def warp_with_validity(data: np.ndarray, matrix: np.ndarray):
+    """Warp, and say which pixels the frame actually reached.
+
+    `warp` fills everything outside the source with zero, and zero is a
+    legitimate pixel value — so the warped array alone cannot distinguish "the
+    sky was dark here" from "this frame did not see here". Integration must know
+    the difference or partial coverage silently dilutes the average (see
+    integrate.py). A warped all-ones mask answers it exactly.
+
+    The 0.999 threshold rather than >0 keeps the boundary row honest: bilinear
+    interpolation makes edge pixels a blend of real data and the zero fill, so a
+    pixel that is only fractionally covered is treated as not covered. Costs one
+    extra single-channel warp per frame.
+    """
+    warped = warp_to(data, matrix)
+    ones = np.ones(data.shape[:2], dtype=np.float32)
+    valid = warp_to(ones, matrix) >= 0.999
+    return warped, valid

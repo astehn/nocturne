@@ -1,7 +1,5 @@
 import numpy as np
-from nocturne.stacking.coverage import (
-    coverage_map, full_coverage_bounds, _largest_true_rectangle,
-)
+from nocturne.stacking.coverage import full_coverage_bounds, _largest_true_rectangle
 
 
 def test_largest_true_rectangle_finds_block():
@@ -14,9 +12,12 @@ def test_largest_true_rectangle_all_true():
     assert _largest_true_rectangle(np.ones((3, 6), bool)) == (0, 3, 0, 6)
 
 
-def test_coverage_map_identity_transforms_full():
-    # Three identity transforms -> every pixel covered by all three.
-    cov = coverage_map([np.eye(3), np.eye(3), np.eye(3)], (6, 6))
+def test_identity_transforms_cover_every_pixel():
+    """Coverage now comes from integration itself rather than a second warp of a
+    ones mask, so this asserts the property where it is actually produced."""
+    from nocturne.stacking.integrate import average_integrate
+    frames = [np.full((6, 6), 0.5, np.float32) for _ in range(3)]
+    _, cov = average_integrate(frames)
     assert cov.shape == (6, 6)
     assert np.all(cov == 3)
 

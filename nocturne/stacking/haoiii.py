@@ -9,9 +9,9 @@ from skimage.transform import resize
 from ..core.export import save_fits
 from ..core.fits_io import _bayer_pattern, solve_cards_from_header
 from ..core.image import AstroImage
-from .coverage import coverage_map, full_coverage_bounds
+from .coverage import full_coverage_bounds
 from .integrate import average_integrate, sigma_clip_integrate
-from .register import RegistrationError, find_transform, warp_to
+from .register import RegistrationError, find_transform, warp_with_validity
 
 
 def load_cfa(path: str) -> tuple:
@@ -155,20 +155,20 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
                 plane = ha if which == "ha" else oiii
                 if on_progress is not None:
                     on_progress(i, total, label)
-                yield warp_to(plane, transforms[path])
+                yield warp_with_validity(plane, transforms[path])
         return gen
 
     ha_frames = _channel_frames("ha", "stacking Ha")
     oiii_frames = _channel_frames("oiii", "stacking OIII")
     if opts.method == "sigma_clip":
-        ha_master = sigma_clip_integrate(ha_frames, opts.kappa)
-        oiii_master = sigma_clip_integrate(oiii_frames, opts.kappa)
+        ha_master, coverage = sigma_clip_integrate(ha_frames, opts.kappa)
+        oiii_master, _ = sigma_clip_integrate(oiii_frames, opts.kappa)
     else:
-        ha_master = average_integrate(ha_frames())
-        oiii_master = average_integrate(oiii_frames())
+        ha_master, coverage = average_integrate(ha_frames())
+        oiii_master, _ = average_integrate(oiii_frames())
 
-    # Coverage crop (Ha transforms), then renorm OIII to Ha and pack RGB.
-    coverage = coverage_map([transforms[p] for p in used], ref_shape)
+    # Coverage crop (from the Ha integration — both channels share the same
+    # transforms, so one coverage map describes both), then renorm and pack RGB.
     top, bottom, left, right = full_coverage_bounds(coverage, len(used))
     ha_master = ha_master[top:bottom, left:right]
     oiii_master = oiii_master[top:bottom, left:right]

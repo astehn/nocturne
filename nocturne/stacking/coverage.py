@@ -1,20 +1,16 @@
+"""Where the stacked frames actually overlap, and the largest clean rectangle
+inside that.
+
+`coverage_map` used to live here — it re-derived per-pixel coverage by warping a
+ones mask per transform, after integration had already had the same information
+in its hands and thrown it away. The integrators now return coverage directly
+(see integrate.py), so this file only decides where to cut. One computation of
+one fact: two of them is how the FOV hint and the target name each ended up with
+a second, divergent implementation.
+"""
 from __future__ import annotations
 
 import numpy as np
-
-from .register import warp_to
-
-
-def coverage_map(transforms: list, shape: tuple) -> np.ndarray:
-    """Per-pixel count of how many frames actually covered each pixel of the
-    reference frame. Warps an all-ones mask by each frame's transform (out-of-
-    frame areas warp to 0) and sums. Needs only the transforms — no disk I/O."""
-    cov = np.zeros(shape, dtype=np.int32)
-    ones = np.ones(shape, dtype=np.float32)
-    for matrix in transforms:
-        warped = warp_to(ones, matrix)
-        cov += (warped > 0.5)
-    return cov
 
 
 def _largest_true_rectangle(mask: np.ndarray) -> tuple:
