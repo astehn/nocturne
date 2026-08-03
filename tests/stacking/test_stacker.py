@@ -61,6 +61,34 @@ def test_master_keeps_the_optics_so_the_fov_hint_is_not_assumed(tmp_path):
     assert got == pytest.approx(206.265 * 2.9 / 250.0 * h / 3600.0, rel=1e-6)
 
 
+def test_the_master_still_names_its_camera_after_a_save_and_reload(tmp_path):
+    """The in-memory master and the same master reloaded from disk must identify
+    as the same camera — the two paths a user actually takes (stack then keep
+    working, versus stack, restart, reopen). Without INSTRUME in the written
+    header the reloaded file falls back to matching on focal length, which is
+    fine until two Seestars share one."""
+    from nocturne.core.fits_io import load_fits
+    from nocturne.core.instrument import identify, SEESTAR_S50
+
+    base = make_star_field(n_stars=40, seed=11)
+    s50 = {"FOCALLEN": 250.0, "XPIXSZ": 2.9, "CREATOR": "ZWO Seestar S50"}
+    paths = []
+    for i in range(4):
+        t = SimilarityTransform(translation=(i * 0.5, -i * 0.5))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"cam{i}.fit"
+        write_color_fits(p, f, exptime=10.0, header=s50)
+        paths.append(str(p))
+
+    out = str(tmp_path / "named.fits")
+    result = run_stack(StackOptions("average", 2.5, paths, out))
+    assert identify(result.image.metadata) is SEESTAR_S50, "in-memory master lost its camera"
+
+    reloaded = load_fits(out)
+    assert reloaded.metadata.get("instrument") == "ZWO Seestar S50"
+    assert identify(reloaded.metadata) is SEESTAR_S50, "reloaded master lost its camera"
+
+
 def _rotated_subs(tmp_path, n=5, seed=3):
     # Subs with real rotation between them, so the covered region is a rotated
     # envelope smaller than a single frame (the alt-az case).

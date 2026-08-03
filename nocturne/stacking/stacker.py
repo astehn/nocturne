@@ -32,6 +32,14 @@ def master_header(ref_meta: dict, count: int, integ: float) -> dict:
     filt = ref_meta.get("filter")
     if filt:
         header["FILTER"] = filt
+    # Name the camera that took the data. Without it a reloaded master is
+    # identified only by its focal length, which works today but is a guess the
+    # moment two Seestars share one. INSTRUME rather than CREATOR: the data came
+    # from the camera, but the FILE was created by Nocturne, and CREATOR
+    # conventionally means the latter.
+    camera = ref_meta.get("instrument") or ref_meta.get("creator")
+    if camera:
+        header["INSTRUME"] = camera
     return header
 
 
@@ -58,7 +66,7 @@ def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) ->
     # Pointing and scale survive stacking: registration is a rigid transform to
     # the reference frame, so the reference's own optics still describe the master.
     for key in ("focal_length", "pixel_size", "ra", "dec", "filter", "gain",
-                "date", "solve_cards"):
+                "date", "solve_cards", "creator", "instrument"):
         if (value := ref_meta.get(key)) is not None:
             meta[key] = value
     return meta
