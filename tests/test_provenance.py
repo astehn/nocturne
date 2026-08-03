@@ -28,7 +28,7 @@ def test_capture_header_shows_present_fields():
     assert "## Capture" in r
     assert "- Target: NGC 7000" in r
     assert "- Total integration: 2h 15m (135 × 60s)" in r
-    assert "- Camera: Sony IMX585" in r
+    assert "- Camera: Sony IMX585 (assumed" in r   # META names no camera
     assert "- Captured: 2026-07-20" in r
 
 
@@ -67,8 +67,19 @@ def test_empty_history():
 def test_missing_metadata_degrades_without_target_or_integration():
     r = provenance.build_report([("Stretch", 0.5)], {}, app_version="0.4.0", date=D)
     assert "## Capture" in r
-    assert "- Camera: Sony IMX585" in r          # camera is always known from the profile
+    assert "- Camera: Sony IMX585 (assumed" in r  # falls back, and SAYS it fell back
     assert "- Target:" not in r
+
+
+def test_the_report_names_the_camera_the_file_names():
+    """The report is the authoritative record of how an image was made, and it
+    used to state the S30 Pro's sensor unconditionally — a flat falsehood on
+    anyone else's data. An S50 stack must say IMX462, with no 'assumed'."""
+    meta = dict(META, creator="ZWO Seestar S50")
+    r = provenance.build_report(_entries(), meta, app_version="0.4.0", date=D)
+    assert "- Camera: Sony IMX462 (ZWO Seestar S50)" in r
+    assert "assumed" not in r
+    assert "IMX585" not in r
 
 
 def test_unserializable_option_is_isolated(monkeypatch):

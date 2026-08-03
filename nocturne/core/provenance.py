@@ -9,7 +9,7 @@ import re
 
 from ..recipe import _NAME_TO_STAGE, serialize_option
 from .fits_io import format_integration, resolve_integration
-from .instrument import SEESTAR_S30_PRO
+from .instrument import DEFAULT_INSTRUMENT, identify
 
 # dict-option steps whose headline choice is a single field of the serialized dict
 _HEADLINE_FIELD = {
@@ -79,7 +79,14 @@ def _capture_lines(metadata: dict) -> list[str]:
         if integ.frames is not None and integ.per_sub_s is not None:
             s += f" ({integ.frames} × {integ.per_sub_s:g}s)"
         out.append(f"- Total integration: {s}")
-    out.append(f"- Camera: {SEESTAR_S30_PRO.sensor}")   # always known from the profile
+    # This used to print the S30 Pro's sensor unconditionally, which made the
+    # report state a falsehood on anyone else's data — in the one document
+    # meant to be an authoritative record of how the image was made. Say what
+    # the file says, and mark it when we are only assuming.
+    if (cam := identify(metadata)) is not None:
+        out.append(f"- Camera: {cam.sensor} ({cam.name})")
+    else:
+        out.append(f"- Camera: {DEFAULT_INSTRUMENT.sensor} (assumed — no camera in the file)")
     if metadata.get("date"):
         out.append(f"- Captured: {_md_escape(str(metadata['date']).split('T')[0])}")
     if metadata.get("target_solved"):

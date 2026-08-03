@@ -10,7 +10,7 @@ from astropy.io import fits
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 
 from .image import AstroImage, finite_or_zero
-from .instrument import SEESTAR_S30_PRO
+from .instrument import DEFAULT_INSTRUMENT, SEESTAR_S30_PRO, identify
 
 
 def _normalize(arr: np.ndarray) -> np.ndarray:
@@ -60,6 +60,8 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "temp": ("CCD-TEMP", "CCD_TEMP"),
         "date": ("DATE-OBS", "DATE"),
         "livetime": ("LIVETIME",),
+        "creator": ("CREATOR",),        # 'ZWO Seestar S50' — names the camera outright
+        "instrument": ("INSTRUME",),    # 'imx585' or 'Seestar S50'; inconsistent, so secondary
         "focal_length": ("FOCALLEN",),
         "pixel_size": ("XPIXSZ", "YPIXSZ"),
         "ra": ("OBJCTRA", "RA"),
@@ -169,10 +171,16 @@ def _target_from_filename(filename: str | None) -> str | None:
     return stem or None
 
 
-def import_summary(meta: dict, instrument=SEESTAR_S30_PRO,
+def import_summary(meta: dict, instrument=None,
                     filename: str | None = None) -> str:
     """Grouped rich-HTML readout: 'Your stack' (header, present fields only) +
-    'Camera & scope' (per-file where available, else instrument profile)."""
+    'Camera & scope' (per-file where available, else instrument profile).
+
+    `instrument` defaults to whichever camera the file names, so an S50 stack
+    is not labelled with the S30 Pro's sensor. Callers may still pass one
+    explicitly; None means "work it out"."""
+    if instrument is None:
+        instrument = identify(meta) or DEFAULT_INSTRUMENT
     stack: list[tuple[str, str]] = []
     target = meta.get("target") or _target_from_filename(filename)
     if target:
