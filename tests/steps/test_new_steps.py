@@ -63,15 +63,18 @@ def test_light_applies_a_real_fraction_not_a_rounding_error():
         f"light applied {100*part/full:.0f}% of the correction, expected about half"
 
 
-def test_background_passes_a_stiffer_model_for_light():
-    """light pairs a partial correction with a STIFFER model, because the case
-    it exists for is an object large enough that a flexible model mistakes its
-    outer halo for sky and subtracts it."""
+def test_both_options_use_the_same_background_model():
+    """One dial, not two. An earlier version also stiffened the model for light,
+    which measured under 3 points on the real M31 master (92.8% removed at
+    smoothing 0.3 against 90.1% at 0.8) while the amount moved the same frame
+    from 44% to 93%. Two dials moving at once, for a benefit too small to see,
+    made the control harder to predict for nothing."""
     _, light_args, _ = _run_background("light")
     _, strong_args, _ = _run_background("strong")
-    s_light = float(light_args[light_args.index("-smoothing") + 1])
-    s_strong = float(strong_args[strong_args.index("-smoothing") + 1])
-    assert s_light > s_strong
+    s_light = light_args[light_args.index("-smoothing") + 1]
+    s_strong = strong_args[strong_args.index("-smoothing") + 1]
+    assert s_light == s_strong, \
+        "the options differ by amount alone, so the model must be identical"
 
 
 def test_background_default_is_the_full_correction():

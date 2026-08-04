@@ -23,12 +23,14 @@ so the amount is applied here: run the extraction, then subtract that fraction
 of what it proposes. Measured on the same gradient, that gives a genuinely
 linear 0 to 86.2% — around forty times the range smoothing offered.
 
-Both settings move together, and monotonically. "light" pairs a STIFFER model
-with a partial correction, which is what the awkward case wants: when the
-object fills the frame — a large galaxy, say — a flexible model mistakes its
-faint outer halo for sky and subtracts the thing you came for. "strong" pairs a
-flexible model with the full correction, which is right for an ordinary frame
-where the object is small against the sky.
+One model, two amounts. An earlier version also stiffened the model for
+"light", on the theory that a flexible model mistakes a frame-filling object's
+faint outer halo for sky and subtracts the thing you came for. Measured on the
+real M31 master that theory earned almost nothing — 92.8% of the gradient
+removed at smoothing 0.3 against 90.1% at 0.8, under three points — while the
+amount moved the same frame from 44% to 93%. Two dials moving at once for a
+benefit too small to see is a worse control than one dial, so the stiffening
+went. It can come back if a frame ever shows it is needed.
 """
 from __future__ import annotations
 
@@ -37,11 +39,15 @@ from ..history.step import Step
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 
-# option -> (GraXpert -smoothing, fraction of the modelled correction to apply)
-_SETTINGS = {
-    "light": (0.8, 0.5),
-    "strong": (0.3, 1.0),
-}
+# One background model for both options, at the smoothing that modelled the real
+# M31 gradient best of those measured (92.8% removed, against 92.0% at 0.5 and
+# 90.1% at 0.8).
+_SMOOTHING = 0.3
+
+# Fraction of the modelled correction to subtract. Measured on that master:
+# 0.5 removes 44.3% of the gradient, 1.0 removes 92.8% — so "light removes about
+# half of what strong does" is literally true, on any frame, by construction.
+_AMOUNT = {"light": 0.5, "strong": 1.0}
 
 
 class BackgroundStep(Step):
@@ -64,8 +70,8 @@ class BackgroundStep(Step):
     def apply(self, img: AstroImage, option: str) -> AstroImage:
         if option == "off":
             return img.copy()
-        smoothing, amount = _SETTINGS[option]
-        corrected = self._gx.background_extraction(img, smoothing, runner=self._runner)
+        amount = _AMOUNT[option]
+        corrected = self._gx.background_extraction(img, _SMOOTHING, runner=self._runner)
         if amount >= 1.0:
             return corrected
         # Subtracting `amount` of the proposed correction. Equivalent to scaling

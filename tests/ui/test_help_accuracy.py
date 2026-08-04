@@ -160,7 +160,9 @@ def test_background_help_does_not_tell_you_to_pick_the_weaker_option():
     assert "light</b> for most images" not in b
     assert "Strong</b> is the ordinary choice" in b
     # strong must genuinely apply more of the correction than light
-    pairs = re.findall(r'"(light|strong)": \(([\d.]+), ([\d.]+)\)', src)
-    amounts = {name: float(amount) for name, _smoothing, amount in pairs}
+    amounts = {n: float(v) for n, v in
+               re.findall(r'"(light|strong)": ([\d.]+)', src)}
     assert amounts["strong"] > amounts["light"], "the options are inverted again"
+    assert amounts["light"] / amounts["strong"] == pytest.approx(0.5, abs=0.15), \
+        "the help says light removes about half as much"
     assert "fills the frame" in b.lower(), "the case Light exists for is unexplained"
