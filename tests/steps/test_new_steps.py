@@ -16,18 +16,69 @@ def test_background_off_is_noop():
     assert np.allclose(out.data, img.data)
 
 
-def test_background_light_calls_graxpert():
-    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+def _run_background(option, corrected=None):
+    """Apply a Background option against a stubbed GraXpert, returning
+    (result, the argv GraXpert was called with, the input image)."""
+    rng = np.random.default_rng(4)
+    img = AstroImage(rng.random((8, 8, 3)).astype(np.float32))
     captured = {}
 
     def fake(args):
         captured["args"] = args
-        write_temp_fits(img, args[args.index("-output") + 1])
+        # GraXpert "removes" a constant pedestal unless the test says otherwise
+        out = corrected if corrected is not None else np.clip(img.data - 0.10, 0, 1)
+        write_temp_fits(AstroImage(out.astype(np.float32)),
+                        args[args.index("-output") + 1])
 
     step = BackgroundStep(GraXpert("/fake"))
     step._runner = fake
-    step.apply(img, "light")
-    assert captured["args"][captured["args"].index("-smoothing") + 1] == "0.3"
+    return step.apply(img, option), captured["args"], img
+
+
+def test_strong_removes_more_than_light():
+    """The bug this replaced: the options were labelled by correction strength
+    but implemented as GraXpert's -smoothing, which is the opposite axis — a
+    stiffer model removes LESS. "strong" (0.7) was gentler than "light" (0.3),
+    and the help told users to pick it for a heavy gradient. Seen on a real M31
+    frame: strong changed the image 8.8%, light 9.1%."""
+    light, _, img = _run_background("light")
+    strong, _, _ = _run_background("strong")
+    moved_light = float(np.abs(light.data - img.data).mean())
+    moved_strong = float(np.abs(strong.data - img.data).mean())
+    assert moved_strong > moved_light, (
+        f"strong moved the image {moved_strong:.4f} and light {moved_light:.4f} — "
+        "the labels are inverted again")
+
+
+def test_light_applies_a_real_fraction_not_a_rounding_error():
+    """Fixing the direction alone would have been nearly pointless: across its
+    whole 0.1-0.9 range, -smoothing moved the measured result by 2.2 percentage
+    points. The amount is what gives the control range, so light must land
+    meaningfully short of strong rather than a hair behind it."""
+    light, _, img = _run_background("light")
+    strong, _, _ = _run_background("strong")
+    full = float(np.abs(strong.data - img.data).mean())
+    part = float(np.abs(light.data - img.data).mean())
+    assert 0.3 < part / full < 0.7, \
+        f"light applied {100*part/full:.0f}% of the correction, expected about half"
+
+
+def test_background_passes_a_stiffer_model_for_light():
+    """light pairs a partial correction with a STIFFER model, because the case
+    it exists for is an object large enough that a flexible model mistakes its
+    outer halo for sky and subtracts it."""
+    _, light_args, _ = _run_background("light")
+    _, strong_args, _ = _run_background("strong")
+    s_light = float(light_args[light_args.index("-smoothing") + 1])
+    s_strong = float(strong_args[strong_args.index("-smoothing") + 1])
+    assert s_light > s_strong
+
+
+def test_background_default_is_the_full_correction():
+    """Both options effectively applied the whole correction before, so
+    defaulting to the partial one would quietly halve what everyone gets."""
+    step = BackgroundStep(GraXpert("/fake"))
+    assert step.default_option() == "strong"
 
 
 def test_crop_step_applies_params():

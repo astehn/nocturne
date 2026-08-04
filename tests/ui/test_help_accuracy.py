@@ -148,3 +148,19 @@ def test_stacking_help_explains_the_framing_choice():
     assert 'QCheckBox("Trim the ragged edges")' in sd
     assert "noisier" in b, "the cost of keeping the edges is not stated"
     assert "crop later" in b or "put back" in b
+
+
+def test_background_help_does_not_tell_you_to_pick_the_weaker_option():
+    """It said "choose light for most images, strong when the gradient is heavy"
+    while the code did the reverse — the options were labelled by correction
+    strength and implemented as GraXpert's -smoothing, where a higher number is
+    a stiffer model that removes LESS."""
+    b = _body("background")
+    src = _src("nocturne/steps/background.py")
+    assert "light</b> for most images" not in b
+    assert "Strong</b> is the ordinary choice" in b
+    # strong must genuinely apply more of the correction than light
+    pairs = re.findall(r'"(light|strong)": \(([\d.]+), ([\d.]+)\)', src)
+    amounts = {name: float(amount) for name, _smoothing, amount in pairs}
+    assert amounts["strong"] > amounts["light"], "the options are inverted again"
+    assert "fills the frame" in b.lower(), "the case Light exists for is unexplained"

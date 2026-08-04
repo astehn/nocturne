@@ -1317,11 +1317,15 @@ def test_apply_star_reduction_commits(qtbot, tmp_path):
     assert win.project.entries()[-1][0] == "Star Reduction"
 
 
-def test_background_stage_defaults_to_light(qtbot, tmp_path):
+def test_background_stage_defaults_to_the_full_correction(qtbot, tmp_path):
+    """Was "light", which used to mean the full correction under a misleading
+    name — the options were labelled by strength but implemented as GraXpert's
+    -smoothing, so both removed essentially everything. Now that "light" really
+    is partial, the default has to be the one that still does the whole job."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
-    assert win._panel.option_box.currentText() == "light"
+    assert win._panel.option_box.currentText() == "strong"
 
 
 def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
