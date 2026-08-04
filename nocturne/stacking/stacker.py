@@ -11,6 +11,7 @@ from ..core.tasks import current
 from .coverage import full_coverage_bounds
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
+from .normalize import frame_stats, normalize_to
 from .register import RegistrationError, find_transform, warp_with_validity
 
 
@@ -117,6 +118,12 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
 
     transforms = {ref_path: np.eye(3)}
     exposures = {ref_path: float(ref_img.metadata.get("exposure", 0.0) or 0.0)}
+    # Sky level is measured here, while Phase A has each frame open anyway, and
+    # applied at integration. Without it, which frames a pixel happened to
+    # average changes its background, so every coverage boundary shows as a step
+    # — see normalize.py.
+    ref_stats = frame_stats(ref_img.data)
+    norm_stats = {ref_path: ref_stats}
     used = [ref_path]
     rejected: list = []
     n = len(paths)
@@ -150,6 +157,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
             continue
         transforms[path] = matrix
         exposures[path] = float(sub.metadata.get("exposure", 0.0) or 0.0)
+        norm_stats[path] = frame_stats(sub.data)
         used.append(path)
         if on_progress is not None:
             on_progress(i, n, step_label(1, "aligning frames"))
@@ -173,8 +181,13 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
-            yield warp_with_validity(load_sub(path, normalize=False).data,
-                                     transforms[path])
+            # Normalize BEFORE warping: warp's out-of-frame fill stays a clean
+            # zero and the validity mask keeps it out of the average, whereas
+            # correcting afterwards would shift that fill to a plausible-looking
+            # sky value.
+            data = normalize_to(load_sub(path, normalize=False).data,
+                                norm_stats[path], ref_stats)
+            yield warp_with_validity(data, transforms[path])
 
     if opts.method == "sigma_clip":
         master, coverage = sigma_clip_integrate(frames, opts.kappa)

@@ -250,3 +250,37 @@ def test_master_header_carries_filter():
     assert h["FILTER"] == "LP"
     # no filter available -> no FILTER card, no crash
     assert "FILTER" not in master_header({"frames": 3}, 3, 60.0)
+
+
+def test_frames_with_different_sky_levels_are_normalized_before_combining(tmp_path):
+    """That normalize.py is correct means nothing if run_stack does not call it.
+    Deleting the call passed the entire suite until this existed.
+
+    Half these frames carry a much brighter sky. Un-normalized, the master's
+    background lands between the two levels; normalized, every frame is brought
+    to the reference's level and the master keeps the reference's sky-to-star
+    ratio. The ratio rather than an absolute, because run_stack divides the
+    master by its peak at the end.
+    """
+    base = make_star_field(n_stars=40, seed=5)
+    paths = []
+    for i in range(8):
+        f = base.copy()
+        if i >= 4:
+            f = f + 0.30                      # a much brighter sky, same stars
+        p = tmp_path / f"sky{i}.fit"
+        write_color_fits(p, f.astype(np.float32), exptime=10.0)
+        paths.append(str(p))
+
+    r = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "sky.fits")),
+                  autocrop=False)
+    d = r.image.data
+    got = float(np.median(d) / d.max())
+
+    ref = base
+    normalized = float(np.median(ref) / ref.max())          # every frame at ref level
+    unnormalized = float(np.median(ref + 0.15) / (ref + 0.15).max())   # averaged levels
+
+    assert abs(got - normalized) < abs(got - unnormalized), (
+        f"sky/peak {got:.4f} is closer to the un-normalized {unnormalized:.4f} "
+        f"than to the normalized {normalized:.4f} — run_stack is not normalizing")
