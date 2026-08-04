@@ -137,3 +137,14 @@ def test_no_topic_is_an_empty_stub():
         words = len(re.sub(r"<[^>]+>", " ", t.body).split())
         assert words >= 40, f"{t.id} is only {words} words — a stub, not a topic"
         assert t.summary.strip(), f"{t.id} has no summary"
+
+
+def test_stacking_help_explains_the_framing_choice():
+    """A checkbox with no explanation is a coin toss. The topic must name the
+    control and say what turning it off costs and buys."""
+    b = _body("stacking")
+    sd = _src("nocturne/ui/stack_dialog.py")
+    assert "Trim the ragged edges" in b
+    assert 'QCheckBox("Trim the ragged edges")' in sd
+    assert "noisier" in b, "the cost of keeping the edges is not stated"
+    assert "crop later" in b or "put back" in b

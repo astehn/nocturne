@@ -9,7 +9,8 @@ from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget, QTableWidgetItem,
+    QCheckBox, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -81,6 +82,8 @@ class StackDialog(QDialog):
         self.kappa_box = QComboBox()
         self.kappa_box.addItems(list(KAPPA.keys()))
         self.kappa_box.setCurrentText("Medium")
+        self.crop_check = QCheckBox("Trim the ragged edges")
+        self.crop_check.setChecked(True)
         self.strictness_box = QComboBox()
         self.strictness_box.addItems(["Relaxed", "Normal", "Strict"])
         self.strictness_box.setCurrentText("Normal")
@@ -121,6 +124,16 @@ class StackDialog(QDialog):
         method_wrap = QWidget()
         method_wrap.setLayout(method_row)
         form.addRow("Integration", method_wrap)
+
+        crop_row = QHBoxLayout()
+        crop_row.addWidget(self.crop_check)
+        crop_row.addWidget(QLabel(
+            "Off keeps the full frame — the edges are built from fewer frames, "
+            "so they are noisier, but you can always crop later"))
+        crop_row.addStretch(1)
+        crop_wrap = QWidget()
+        crop_wrap.setLayout(crop_row)
+        form.addRow("Framing", crop_wrap)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
 
         self._stack_btn = QPushButton("Stack")
@@ -418,7 +431,8 @@ class StackDialog(QDialog):
             return
         method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
         opts = StackOptions(method, KAPPA[self.kappa_box.currentText()],
-                            include, self.output_edit.text().strip())
+                            include, self.output_edit.text().strip(),
+                            autocrop=self.crop_check.isChecked())
         runner = self._stack_runner
 
         def work():

@@ -105,10 +105,10 @@ def _rotated_subs(tmp_path, n=5, seed=3):
 
 def test_autocrop_trims_low_coverage_edges(tmp_path):
     paths = _rotated_subs(tmp_path)
-    full = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "f.fits")),
-                     autocrop=False)
-    cropped = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "c.fits")),
-                        autocrop=True)
+    full = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "f.fits"),
+                                  autocrop=False))
+    cropped = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "c.fits"),
+                                     autocrop=True))
     fh, fw = full.image.data.shape[:2]
     ch, cw = cropped.image.data.shape[:2]
     assert ch <= fh and cw <= fw
@@ -272,8 +272,8 @@ def test_frames_with_different_sky_levels_are_normalized_before_combining(tmp_pa
         write_color_fits(p, f.astype(np.float32), exptime=10.0)
         paths.append(str(p))
 
-    r = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "sky.fits")),
-                  autocrop=False)
+    r = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "sky.fits"),
+                               autocrop=False))
     d = r.image.data
     got = float(np.median(d) / d.max())
 

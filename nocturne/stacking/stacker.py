@@ -94,6 +94,11 @@ class StackOptions:
     kappa: float
     include: list         # paths, ordered best-first; include[0] is the reference
     output_path: str
+    # Trim to the region nearly every frame covered. A user choice rather than a
+    # test hook: with coverage-aware integration and normalization the uncovered
+    # fringe is correctly exposed, just built from fewer frames, so keeping it is
+    # a legitimate preference — and on a 2 MP sensor the pixels are worth having.
+    autocrop: bool = True
 
 
 @dataclass
@@ -106,7 +111,7 @@ class StackResult:
     output_path: str
 
 
-def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) -> StackResult:
+def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     paths = list(opts.include)
     if len(paths) < 3:
         raise ValueError("need at least 3 frames to stack")
@@ -202,7 +207,7 @@ def run_stack(opts: StackOptions, *, on_progress=None, autocrop: bool = True) ->
     # The coverage comes from integration itself — it used to be recomputed here
     # by warping a mask per transform, a second answer to a question integration
     # had already answered.
-    if autocrop:
+    if opts.autocrop:
         top, bottom, left, right = full_coverage_bounds(coverage, len(used))
         master = master[top:bottom, left:right]
 

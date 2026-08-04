@@ -515,3 +515,46 @@ def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
     dlg.strictness_box.setCurrentText("Relaxed")
     assert dlg.table.item(trailed, 5).text() == "0.020", \
         "_rejudge wrote the verdict into the wrong column"
+
+
+def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
+    """Andreas preferred the uncropped master (2026-08-04): with coverage-aware
+    integration and normalization the fringe is correctly exposed, just noisier,
+    and on a 2 MP sensor those pixels are worth keeping. The choice is only
+    real if it actually travels to run_stack — a checkbox wired to nothing looks
+    identical from the outside."""
+    from nocturne.stacking.grade import FrameStats
+    from nocturne.stacking.stacker import StackResult
+    from nocturne.ui.stack_dialog import StackDialog
+
+    seen = {}
+
+    def fake_stack(opts, on_progress=None):
+        seen["autocrop"] = opts.autocrop
+        return StackResult(object(), opts.include, [], len(opts.include), 30.0,
+                           opts.output_path)
+
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [FrameStats(str(tmp_path / n), 800, 2.4, 0.02, 0.9, True, exposure=20.0)
+             for n in ("a.fit", "b.fit", "c.fit")]
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg._stack_runner = fake_stack
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+
+    assert dlg.crop_check.isChecked(), "trimming stays the default"
+    dlg.crop_check.setChecked(False)
+    dlg.run()
+    qtbot.waitUntil(lambda: "autocrop" in seen, timeout=3000)
+    assert seen["autocrop"] is False, "the framing choice never reached run_stack"
+
+    seen.clear()
+    dlg.crop_check.setChecked(True)
+    dlg.run()
+    qtbot.waitUntil(lambda: "autocrop" in seen, timeout=3000)
+    assert seen["autocrop"] is True
