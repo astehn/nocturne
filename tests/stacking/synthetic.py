@@ -2,15 +2,25 @@ import numpy as np
 from astropy.io import fits
 
 
-def make_star_field(shape=(80, 80), n_stars=30, seed=0, bg=0.02):
-    """A float32 image (0..1) with gaussian 'stars' on a flat background."""
+def make_star_field(shape=(80, 80), n_stars=30, seed=0, bg=0.02, stretch=1.0):
+    """A float32 image (0..1) with gaussian 'stars' on a flat background.
+
+    `stretch` elongates every star along x — 1.0 is round, 2.0 is twice as wide
+    as tall. Trailing from wind or a tracking slip looks like this, and grading
+    must be able to see it: the area (and therefore the FWHM, which is the
+    geometric mean of the axes) is deliberately held roughly constant so a test
+    can prove the roundness metric is doing the work rather than FWHM.
+    """
     rng = np.random.default_rng(seed)
     img = np.full(shape, bg, dtype=np.float32)
     ys = rng.integers(8, shape[0] - 8, n_stars)
     xs = rng.integers(8, shape[1] - 8, n_stars)
     yy, xx = np.mgrid[0:shape[0], 0:shape[1]]
+    sx = 1.5 * np.sqrt(stretch)          # widen and narrow together, so a*b holds
+    sy = 1.5 / np.sqrt(stretch)
     for y, x in zip(ys, xs):
-        img = img + 0.8 * np.exp(-(((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.5 ** 2)))
+        img = img + 0.8 * np.exp(-(((xx - x) ** 2) / (2 * sx ** 2)
+                                   + ((yy - y) ** 2) / (2 * sy ** 2)))
     return np.clip(img, 0.0, 1.0).astype(np.float32)
 
 

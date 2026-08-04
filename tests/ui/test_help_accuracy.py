@@ -77,7 +77,10 @@ def test_stacking_help_does_not_contradict_how_judging_works():
     assert "warning" in b and "s.warning = WARN_SKY" in g
     # the gate is relative to the session, not an absolute number
     assert "session itself" in b or "relative to the night" in b
-    assert "np.median(vals) + k * vals.std()" in g
+    assert "return median + k * mad" in g
+    # roundness is judged separately from FWHM, and the help must say why
+    assert "round" in b.lower() and "REASON_TRAILED" in g
+    assert "1.00" in b and "1.3" in b
 
 
 def test_fullscreen_help_names_the_real_keys():

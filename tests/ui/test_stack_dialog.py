@@ -140,10 +140,11 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
-    assert dlg.table.columnCount() == 6
-    assert "softer" in dlg.table.item(0, 5).text()
-    assert "Brighter sky" in dlg.table.item(1, 5).text()
-    assert dlg.table.item(2, 5).text() == "OK"
+    assert dlg.table.columnCount() == 7
+    from nocturne.ui.stack_dialog import _VERDICT_COL
+    assert "softer" in dlg.table.item(0, _VERDICT_COL).text()
+    assert "Brighter sky" in dlg.table.item(1, _VERDICT_COL).text()
+    assert dlg.table.item(2, _VERDICT_COL).text() == "OK"
 
 
 def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
@@ -483,3 +484,34 @@ def test_cells_carry_tooltips(qtbot, tmp_path):
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
     item = dlg.table.item(0, 5)
     assert item.toolTip() == item.text() != ""
+
+
+def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
+    """A "stars trailed" verdict is unreadable without the number behind it, so
+    elongation gets its own column. It also guards the off-by-one that adding
+    that column created: _rejudge rewrites the verdict cell by index, and with a
+    literal 5 it would now overwrite Bg instead."""
+    from nocturne.stacking.grade import FrameStats
+    from nocturne.ui.stack_dialog import StackDialog, _VERDICT_COL
+
+    for i in range(10):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.9, True,
+                        elongation=1.05, exposure=20.0) for i in range(9)]
+    stats.append(FrameStats(str(tmp_path / "f9.fit"), 800, 2.4, 0.02, 0.9, True,
+                            elongation=1.90, exposure=20.0))
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
+
+    trailed = next(r for r in range(dlg.table.rowCount())
+                   if dlg.table.item(r, 4).text() == "1.90")
+    assert "trailed" in dlg.table.item(trailed, _VERDICT_COL).text().lower()
+    assert dlg.table.item(trailed, 5).text() == "0.020", "Bg column was overwritten"
+
+    dlg.strictness_box.setCurrentText("Relaxed")
+    assert dlg.table.item(trailed, 5).text() == "0.020", \
+        "_rejudge wrote the verdict into the wrong column"

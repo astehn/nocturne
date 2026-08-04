@@ -24,6 +24,10 @@ from .frame_preview import FramePreview
 from .worker import run_async
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
+# The verdict is the last column and _rejudge rewrites it in place. Named
+# because it was a bare 5 in two places and adding the Round column moved it —
+# a literal index would have written verdicts into the Bg cell.
+_VERDICT_COL = 6
 PREVIEW_CACHE_LIMIT = 4   # full-res QImages (~24 MB each) — small LRU
 
 
@@ -63,12 +67,13 @@ class StackDialog(QDialog):
         self.folder_edit = QLineEdit()
         self.output_edit = QLineEdit()
         self.output_edit.textEdited.connect(self._mark_output_edited)
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg", "Verdict"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
         hdr = self.table.horizontalHeader()
-        for col in (0, 2, 3, 4):
+        for col in (0, 2, 3, 4, 5):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        for col in (1, 5):                    # File and Verdict share the slack
+        for col in (1, 6):                    # File and Verdict share the slack
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
         self.avg_radio = QRadioButton("Average")
         self.sigma_radio = QRadioButton("Sigma-clipped")
@@ -239,8 +244,12 @@ class StackDialog(QDialog):
                 self.table.setItem(row, 1, _cell(os.path.basename(s.path)))
                 self.table.setItem(row, 2, _cell(str(s.star_count)))
                 self.table.setItem(row, 3, _cell(f"{s.fwhm:.1f}"))
-                self.table.setItem(row, 4, _cell(f"{s.background:.3f}"))
-                self.table.setItem(row, 5, _cell(self._verdict_text(s)))
+                # "Round" is elongation: 1.00 is circular, higher is trailed.
+                # Shown because a "stars trailed" rejection is unreadable
+                # without the number that caused it.
+                self.table.setItem(row, 4, _cell(f"{s.elongation:.2f}"))
+                self.table.setItem(row, 5, _cell(f"{s.background:.3f}"))
+                self.table.setItem(row, _VERDICT_COL, _cell(self._verdict_text(s)))
                 self._tint_row(row, s)
         finally:
             self._updating_table = False
@@ -286,9 +295,9 @@ class StackDialog(QDialog):
                 else:
                     s.included = (self.table.item(row, 0).checkState()
                                   == Qt.CheckState.Checked)
-                item5 = self.table.item(row, 5)
-                item5.setText(self._verdict_text(s))
-                item5.setToolTip(item5.text())
+                verdict = self.table.item(row, _VERDICT_COL)
+                verdict.setText(self._verdict_text(s))
+                verdict.setToolTip(verdict.text())
                 self._tint_row(row, s)
         finally:
             self._updating_table = False
