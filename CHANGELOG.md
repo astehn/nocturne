@@ -2,6 +2,27 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.11.0] — 2026-08-04
+
+Stacking that keeps your pixels — and a camera it recognises.
+
+### Added
+- Sharpen Nebulosity, an eleventh Enhancements tap. Sharpening a whole astro frame finds the noise first and rings the stars; this sharpens the starless layer under a signal mask and screens the stars back untouched, so nebula structure crisps up while stars cannot ring and the background is left alone. It is the easiest finishing move to overdo — one or two taps is usually right.
+- Nocturne now recognises which Seestar took the picture, reading it from the file rather than assuming. Every camera question previously answered "S30 Pro", which is invisible if that is what you own and wrong otherwise — an S50's image scale is 2.39 arcsec/pixel against the S30 Pro's 3.74, enough to make a plate solve fail and quietly cost photometric colour its calibration. Adding a future model is a single entry.
+- Trailed frames are now rejected when stacking. Wind, a nudge of the tripod or a tracking slip stretches the stars into short streaks, and that could not be detected before: frame sharpness is measured as the geometric mean of the two star axes, which is unchanged when a star is stretched one way and squeezed the other. A real frame with stars 70% longer than wide passed as a good one. A new Round column shows the measurement, where 1.00 is circular.
+- Keep the full frame when stacking. An alt-az mount rotates the field as it tracks, so the outer edges of a stack are built from fewer frames than the middle, and Nocturne used to always trim back to the fully covered region — about a quarter of the picture. Turn "Trim the ragged edges" off and you keep everything. You can always crop later with the Crop step or Trim, but nothing can put back what the stacker discarded.
+- Stacking says how far along it is. The progress bar fills once per phase, and reaching 100% only to restart with no explanation reads as a hang, so each phase now says "Step 2 of 3". Grading also explains itself while it runs, including that your Strictness and Integration choices apply instantly afterwards and never re-read the files.
+
+### Changed
+- Every frame is brought to a common sky level before combining. Sky brightness varies enormously across a session — 262% on a real M31 run, as the target climbed and the moon moved — so which frames a given pixel happened to average used to change its background. That drew the rotation pattern onto the finished picture as curved bands wherever the edges were kept.
+- The in-app help now explains Strictness and Integration properly: what grading measures, what each option means in plain terms, when you would pick one over another, and why a frame count that does not change when you change Strictness is informative rather than broken. Sigma-clipping versus Average, and what the kappa setting actually does, are covered too.
+
+### Fixed
+- The edges of a stack came out dark. Frames that did not reach a pixel still counted toward its average, so an edge pixel covered by 10 of 80 frames came out at 12% of its true brightness — a smooth ramp inward that no amount of cropping could remove. Sigma-clipping appeared immune to this and was not.
+- Frame grading could reject most of a good session. At Strict the quality threshold could fall below the session's own median, condemning perfectly typical frames; on a real session it rejected 37 of 60. The bright-sky warning had been misfiring the same way all along.
+- Reset did nothing on a loaded project. It restored from a value that was only set when opening a FITS file, so it failed on every saved project — and reported the failure only to the console, leaving the button looking dead.
+- A stacked master lost its optical details, so anything afterwards that needed the image scale fell back to an assumption instead of the real values. Masters now also record which camera took the data.
+
 ## [0.10.0] — 2026-08-02
 
 Trim without losing your edit, a distraction-free view, and labels that stop colliding.
