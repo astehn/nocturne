@@ -15,8 +15,10 @@ file_mode = "644"
 # download_path = "/var/www/your-site/download/App.zip"   # if the site serves its own binary, the deploy refreshes it; MUST be inside remote_path
 # Static assets to deploy. rsync runs WITHOUT --delete, so server-only files survive.
 include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "get.php", "img/"]
-# Internal files + server-state paths. Required server-state excludes:
-# config*.php, db/, uploads/ (the script refuses to run without them).
+# Internal files + server-state paths. REQUIRED (the script refuses to run
+# without them): config*.php, db/, uploads/ protect server state; *.fits and
+# *.fit stop astro data reaching the web root — sample masters are staged
+# inside site/ and published by their own explicit step (samples_path).
 exclude = [
   "img/_originals/", "PRODUCT.md", "DESIGN.md", "README.md",
   "_research_external_tools.md", "tests/",

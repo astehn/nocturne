@@ -54,7 +54,7 @@ owner = "www-data:www-data"
 dir_mode = "755"
 file_mode = "644"
 include = ["*.html", "styles.css", "main.js", "img/"]
-exclude = ["img/_originals/", "config*.php", "db/", "uploads/"]
+exclude = ["img/_originals/", "config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 ''')
     return p
 
@@ -200,7 +200,7 @@ owner = "www-data:www-data"
 dir_mode = "755"
 file_mode = "644"
 include = ["*.php"]
-exclude = ["config*.php", "db/", "uploads/"]
+exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 ''')
     site = tmp_path / "site"; site.mkdir()
     (site / "config.php").write_text("secret")
@@ -354,7 +354,7 @@ owner = "www-data:www-data"
 dir_mode = "755"
 file_mode = "644"
 include = ["*.html"]
-exclude = ["config*.php", "db/", "uploads/"]
+exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 download_path = "/var/www/nocturne/download/Nocturne.zip"
 ''')
     return deploy.load_config(p)
@@ -409,7 +409,7 @@ owner = "www-data:www-data"
 dir_mode = "755"
 file_mode = "644"
 include = ["*.html"]
-exclude = ["config*.php", "db/", "uploads/"]
+exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 download_path = "/srv/other/App.zip"
 ''')
     with pytest.raises(ValueError):
@@ -466,3 +466,85 @@ def test_site_only_dry_run_uploads_nothing(tmp_path, monkeypatch):
     rc = deploy.main(["--config", str(cfg_path), "--site-only", "--dry-run"])
     assert rc == 0
     assert ran == [], "a dry run must not execute rsync"
+
+
+# --- sample data upload ------------------------------------------------------
+# The site rsync excludes *.fits as a guard against pushing astro data into the
+# web root by accident. Sample masters are published deliberately, so they get
+# their own explicit step rather than a hole in that guard.
+
+def _samples_config(**over):
+    from deploy import DeployConfig
+    base = dict(repo="a/b", ssh_host="user@vps", remote_path="/var/www/n",
+                owner="www-data:www-data", dir_mode="755", file_mode="644",
+                include=["*.html"],
+                exclude=["config*.php", "db/", "uploads/", "*.fits", "*.fit"],
+                samples_path="/var/www/n/data/samples")
+    base.update(over)
+    return DeployConfig(**base)
+
+
+def test_samples_are_not_smuggled_into_the_site_rsync(tmp_path):
+    """The exclusion is the point. Sample masters are STAGED inside site/, so
+    without this the main rsync would sweep 190 MB of FITS into the web root
+    alongside the deliberate upload that puts them in the right place."""
+    from deploy import build_rsync_cmd
+    cmd = build_rsync_cmd(_samples_config(), tmp_path)
+    assert "--exclude=*.fits" in cmd and "--exclude=*.fit" in cmd
+
+
+def test_deploy_refuses_to_run_without_the_fits_guard(tmp_path):
+    """Asserting the flag is present only reflects the config handed in. This
+    asserts the guard is MANDATORY — that a config which drops it is rejected
+    rather than quietly publishing astro data."""
+    from deploy import build_rsync_cmd
+    for dropped in ("*.fits", "*.fit"):
+        exclude = [e for e in ("config*.php", "db/", "uploads/", "*.fits", "*.fit")
+                   if e != dropped]
+        with pytest.raises(ValueError, match="guards"):
+            build_rsync_cmd(_samples_config(exclude=exclude), tmp_path)
+
+
+def test_samples_command_uploads_the_staged_directory(tmp_path):
+    from deploy import build_samples_cmd
+    d = tmp_path / "samples"
+    d.mkdir()
+    (d / "NGC7000_163x20s_54min.fits").write_bytes(b"x" * 32)
+    cmd = build_samples_cmd(_samples_config(), d)
+    assert cmd is not None
+    assert cmd[0] == "rsync" and "--rsync-path=sudo rsync" in cmd
+    assert cmd[-1] == "user@vps:/var/www/n/data/samples/"
+    # large files that never change in place — a re-deploy must not re-send them
+    assert "--size-only" in cmd
+
+
+def test_samples_command_is_skipped_when_nothing_is_staged(tmp_path):
+    from deploy import build_samples_cmd
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert build_samples_cmd(_samples_config(), empty) is None
+    assert build_samples_cmd(_samples_config(), tmp_path / "missing") is None
+    assert build_samples_cmd(_samples_config(samples_path=None), empty) is None
+
+
+def test_samples_path_must_sit_inside_remote_path(tmp_path):
+    """Same rule as download_path, and for the same reason: the post-upload
+    chown recurses remote_path only, so anything outside it would be left
+    owned by the SSH user and unreadable to the web server."""
+    from deploy import load_config
+    cfg = tmp_path / "d.toml"
+    cfg.write_text('''
+[github]
+repo = "a/b"
+[website]
+ssh_host = "user@vps"
+remote_path = "/var/www/n"
+owner = "www-data:www-data"
+dir_mode = "755"
+file_mode = "644"
+include = ["*.html"]
+exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
+samples_path = "/somewhere/else"
+''')
+    with pytest.raises(ValueError, match="samples_path"):
+        load_config(cfg)

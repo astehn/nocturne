@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # repo root
 SITE = ROOT / "site"
+SAMPLES = SITE / "data" / "samples"   # staged by build_samples.py; pushed separately
 SITE_SRC = SITE / "_src"
 DIST = ROOT / "dist"
 
@@ -65,6 +66,11 @@ class DeployConfig:
     include: list[str]
     exclude: list[str]
     download_path: str | None = None   # VPS path of the site's self-hosted download, refreshed each deploy; MUST be inside remote_path (the post-upload chown recurses remote_path only)
+    # VPS path for the sample-data masters. Separate from the site rsync ON
+    # PURPOSE: `exclude` carries *.fits / *.fit as a guard against ever pushing
+    # astro data into the web root by accident, and that guard stays. Sample
+    # masters are published deliberately, by their own explicit step.
+    samples_path: str | None = None
 
 
 def load_config(path: Path) -> DeployConfig:
@@ -82,16 +88,17 @@ def load_config(path: Path) -> DeployConfig:
             include=list(web["include"]),
             exclude=list(web["exclude"]),
             download_path=web.get("download_path"),
+            samples_path=web.get("samples_path"),
         )
     except KeyError as e:
         raise ValueError(f"deploy config missing required key: {e}") from e
-    if cfg.download_path and not (
-        cfg.download_path == cfg.remote_path
-        or cfg.download_path.startswith(cfg.remote_path.rstrip("/") + "/")
-    ):
-        raise ValueError(
-            f"download_path {cfg.download_path!r} must be inside remote_path "
-            f"{cfg.remote_path!r} so the post-upload chown covers it")
+    for label, path in (("download_path", cfg.download_path),
+                        ("samples_path", cfg.samples_path)):
+        if path and not (path == cfg.remote_path
+                         or path.startswith(cfg.remote_path.rstrip("/") + "/")):
+            raise ValueError(
+                f"{label} {path!r} must be inside remote_path "
+                f"{cfg.remote_path!r} so the post-upload chown covers it")
     return cfg
 
 
@@ -165,7 +172,12 @@ def render_changelog_html(version: str, date: datetime.date, notes: Notes) -> st
     return "\n".join(lines)
 
 
-REQUIRED_EXCLUDES = ("config*.php", "db/", "uploads/")
+# Server state that must never be overwritten, plus astro data that must never
+# be swept into the web root. *.fits became load-bearing when sample masters
+# started being STAGED inside site/ (site/data/samples/): without it the main
+# rsync would copy 190 MB of FITS to the wrong place, alongside the deliberate
+# upload that puts them in the right one.
+REQUIRED_EXCLUDES = ("config*.php", "db/", "uploads/", "*.fits", "*.fit")
 
 
 def release_asset_name(version: str) -> str:
@@ -223,6 +235,23 @@ def build_download_cmd(config: DeployConfig, asset: str) -> list[str] | None:
         return None
     return ["rsync", "-av", "--rsync-path=sudo rsync",
             str(DIST / asset), f"{config.ssh_host}:{config.download_path}"]
+
+
+def build_samples_cmd(config: DeployConfig, samples_dir: Path) -> list[str] | None:
+    """rsync the staged sample masters to the VPS, or None when nothing is
+    configured or staged.
+
+    Deliberately its own command rather than an entry in `include`: the site
+    rsync excludes *.fits, and that exclusion is a safety guard worth keeping
+    intact. `--size-only` because these files are large and never edited in
+    place — a re-deploy should not re-upload 200 MB over a timestamp.
+    """
+    if not config.samples_path or not samples_dir.is_dir():
+        return None
+    if not any(samples_dir.iterdir()):
+        return None
+    return ["rsync", "-av", "--size-only", "--rsync-path=sudo rsync",
+            f"{samples_dir}/", f"{config.ssh_host}:{config.samples_path}/"]
 
 
 def real_run(cmd: list[str], *, capture: bool = False) -> str:
@@ -366,6 +395,9 @@ def main(argv: list[str]) -> int:
         dl = build_download_cmd(config, asset)
         if dl:
             print("  " + " ".join(dl))
+        samples = build_samples_cmd(config, SAMPLES)
+        if samples:
+            print("  " + " ".join(samples))
         print("  " + " ".join(build_chown_cmd(config)))
         return 0
 
@@ -421,6 +453,9 @@ def _remote_release(config, version, notes, asset, run=real_run) -> None:
     dl = build_download_cmd(config, asset)
     if dl:
         steps.append(dl)
+    samples = build_samples_cmd(config, SAMPLES)
+    if samples:
+        steps.append(samples)
     steps.append(build_chown_cmd(config))
     i = 0
     try:
