@@ -102,3 +102,22 @@ def test_totals_are_summed_across_targets(tmp_path):
     for t in targets:
         t["pw"], t["ph"] = 100, 100
     assert "1 h 07 m" in build_samples.render(targets)
+
+
+def test_title_override_wins_over_the_header(tmp_path):
+    """A Seestar records OBJECT as wherever it was pointed, which is not always
+    what the frame shows. The M16 set is filed as "M 17" — the scope's target —
+    while the picture is plainly the Eagle Nebula, and Nocturne's plate solving
+    calls the field M 16. Heading that card "M 17" would read as a mislabelled
+    image, and editing the FITS to fix a caption is the wrong repair."""
+    d = _target(tmp_path, "M16", obj="M 17")
+    (d / "title.txt").write_text("M 16 — Eagle Nebula\n")
+    t = build_samples._read_targets(tmp_path)[0]
+    assert t["target"] == "M 16 — Eagle Nebula"
+    # the header is still the source for everything measurable
+    assert t["frames"] == 163
+
+
+def test_without_an_override_the_header_still_names_the_card(tmp_path):
+    _target(tmp_path, "NGC7000", obj="NGC 7000")
+    assert build_samples._read_targets(tmp_path)[0]["target"] == "NGC 7000"

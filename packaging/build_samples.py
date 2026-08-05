@@ -8,10 +8,18 @@ editing HTML. So everything on the page is derived:
         NGC7000_163x20s_54min.png    a representative picture of the result
         Google_Drive.txt             one line: the share link for the subframes
         about.txt                    OPTIONAL: a paragraph about this target
+        title.txt                    OPTIONAL: overrides the card heading
 
 Frame counts and exposures come from the FITS header rather than the filename,
 because the filename is a convenience and the header is the record. The filename
 is used only for the download's public name.
+
+The heading is the exception, which is why title.txt exists. A Seestar records
+OBJECT as whatever it was told to slew to, and that is not always what the frame
+shows: the M16 set is filed as "M 17" because that is where the scope was
+pointed, while the picture is unmistakably the Eagle Nebula — and Nocturne's own
+plate solving calls the field M 16, the larger of the two objects in it. Titling
+that card "M 17" would read as a mislabelled image.
 
     .venv/bin/python packaging/build_samples.py [--source DIR] [--check]
 
@@ -85,7 +93,10 @@ def _read_targets(source: pathlib.Path) -> list[dict]:
             continue
         link_file = folder / "Google_Drive.txt"
         about_file = folder / "about.txt"
+        title_file = folder / "title.txt"
         facts = _fits_facts(fits_files[0])
+        if title_file.exists() and title_file.read_text().strip():
+            facts["target"] = title_file.read_text().strip().splitlines()[0]
         facts.update({
             "slug": folder.name,
             "fits": fits_files[0],
