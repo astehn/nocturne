@@ -2,6 +2,16 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.11.1] — 2026-08-05
+
+Background extraction that does what the label says.
+
+### Changed
+- The Background strength control now has a real range. Both settings previously removed within about a percentage point of each other — measured across GraXpert's entire smoothing range, the choice spanned 2.2 points, which is not a choice. Light now removes roughly half of what Strong does, and Strong removes essentially the whole modelled gradient. That makes Light genuinely useful for the case it exists for: when your target fills the frame — a large galaxy, or a nebula spanning most of the picture — the model can mistake the object's faint outer parts for sky and subtract the very thing you came for. If Strong leaves your object looking flat or hollowed out at the edges, that is what happened; undo and try Light.
+
+### Fixed
+- Background extraction's two strengths were the wrong way round. The options are labelled by how much correction they apply, but were implemented as GraXpert's smoothing setting — the opposite axis, where a higher number means a stiffer model that removes LESS. So "strong" was gentler than "light", and the in-app help told you to reach for it when the gradient was heavy. Both now do what they say, and Strong is the default.
+
 ## [0.11.0] — 2026-08-04
 
 Stacking that keeps your pixels — and a camera it recognises.
