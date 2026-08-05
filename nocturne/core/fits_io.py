@@ -7,7 +7,43 @@ from dataclasses import dataclass
 import numpy as np
 import tifffile
 from astropy.io import fits
-from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
+
+
+def _import_demosaicing():
+    """Import colour_demosaicing without letting it shell out to git.
+
+    Its __init__ runs `git describe` at import time to decorate a version
+    string, and wraps it in a bare except — so on a developer's machine it
+    fails silently and nobody notices. On a Mac WITHOUT the Xcode command line
+    tools, /usr/bin/git is a stub whose entire job is to pop the system
+    "install the developer tools?" dialog. The exception is still caught; the
+    dialog has already appeared.
+
+    So a downloaded copy of Nocturne asked its user to install a compiler
+    before it would open a photograph (reported on 0.11.1, 2026-08-05). Denying
+    the call before it can spawn a process is the whole fix: their own except
+    swallows the FileNotFoundError and falls back to the packaged version
+    string, which is the value we want anyway.
+    """
+    import subprocess
+    real = subprocess.check_output
+
+    def no_git(cmd, *args, **kwargs):
+        first = cmd[0] if isinstance(cmd, (list, tuple)) and cmd else cmd
+        if isinstance(first, str) and first.rsplit("/", 1)[-1] == "git":
+            raise FileNotFoundError("git lookup suppressed: a packaged app must "
+                                    "not trigger the Xcode tools installer")
+        return real(cmd, *args, **kwargs)
+
+    subprocess.check_output = no_git
+    try:
+        from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
+    finally:
+        subprocess.check_output = real
+    return demosaicing_CFA_Bayer_bilinear
+
+
+demosaicing_CFA_Bayer_bilinear = _import_demosaicing()
 
 from .image import AstroImage, finite_or_zero
 from .instrument import DEFAULT_INSTRUMENT, SEESTAR_S30_PRO, identify
