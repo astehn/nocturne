@@ -37,6 +37,7 @@ NAV = [
     ("Home",      "index.html",          "#top"),
     ("Tools",     "tools.html",          "tools.html"),
     ("Guide",     "guide.html",          "guide.html"),
+    ("Sample data", "sample-data.html",  "sample-data.html"),
     ("FAQ",       "faq.html",            "faq.html"),
     ("Changelog", "changelog.html",      "changelog.html"),
     ("Download",  "index.html#download", "#download"),
