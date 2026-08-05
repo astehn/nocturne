@@ -23,6 +23,7 @@ and structured data all follow from those. That is deliberate — it makes the
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import sys
@@ -84,6 +85,27 @@ SOFTWARE_APP = {
 }
 
 
+def asset_url(name: str) -> str:
+    """`name?v=<content hash>` — a cache buster, not decoration.
+
+    The server sends `Cache-Control: public, max-age=2592000`, so a returning
+    visitor keeps a stylesheet for THIRTY DAYS. That is the right setting for
+    a file that never changes and exactly wrong for one that does: the sample
+    data page shipped with new .sample rules and every existing visitor got the
+    new HTML against their cached old CSS, which rendered the cards unstyled.
+    Seen live 2026-08-05.
+
+    Keying the query string to the file's contents means an unchanged asset
+    keeps its long cache and a changed one is fetched immediately, with no
+    manual version to remember to bump.
+    """
+    path = SITE / name
+    if not path.exists():
+        return name
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:10]
+    return f"{name}?v={digest}"
+
+
 def parse_front_matter(text: str) -> tuple[dict, str]:
     """`--- key: value ... ---` then the body. Values are plain strings; `scripts`
     is comma-separated."""
@@ -138,7 +160,7 @@ def head_html(name: str, meta: dict) -> str:
         f'  <meta name="twitter:image" content="{image}">',
         f'  <link rel="canonical" href="{url}">',
         '  <link rel="icon" type="image/png" href="img/favicon.png">',
-        '  <link rel="stylesheet" href="styles.css">',
+        f'  <link rel="stylesheet" href="{asset_url("styles.css")}">',
     ]
     ld = None
     if name == "index.html":
@@ -175,7 +197,8 @@ def head_html(name: str, meta: dict) -> str:
 
 def render(name: str, meta: dict, body: str) -> str:
     is_home = name == "index.html"
-    scripts = "\n".join(f'  <script src="{s}"></script>' for s in meta["scripts"])
+    scripts = "\n".join(f'  <script src="{asset_url(s)}"></script>'
+                        for s in meta["scripts"])
     privacy = f'\n      <p class="fine">{FOOTER_PRIVACY}</p>' if is_home else ""
     return f'''<!DOCTYPE html>
 <html lang="en">
