@@ -2,6 +2,13 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.11.2] — 2026-08-05
+
+A fresh install no longer asks for Xcode before it will open a photograph.
+
+### Fixed
+- On a Mac without Apple's command line developer tools, launching Nocturne popped a system dialog asking to install them. Nothing was broken — dismissing it left the app working normally — but it is a poor thing to meet on a machine you have just installed on, and nothing about opening a FITS needs a compiler. The cause was a library Nocturne uses to debayer raw frames, which runs `git describe` when it loads in order to decorate a version string. On a developer's machine that fails quietly and is never noticed; without the tools installed, macOS answers the same call by offering to install them. Nocturne now stops that lookup before it can start a process, which the library already copes with by falling back to its packaged version number.
+
 ## [0.11.1] — 2026-08-05
 
 Background extraction that does what the label says.
