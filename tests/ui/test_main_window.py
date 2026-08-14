@@ -3882,3 +3882,73 @@ def test_the_burned_export_does_not_use_the_live_scale(qtbot, tmp_path, monkeypa
     src = inspect.getsource(MainWindow._annotated_rgb8)
     assert "scale_for" in src
     assert "_live_label_scale" not in src
+
+
+# --- the overlay's shown/hidden state is the USER'S, not the item's -----------
+
+def _solved_window(qtbot, tmp_path):
+    """A window carrying a cached solve whose signature matches the current
+    framing, with the overlay already on the canvas — the state you are in after
+    pressing Plate Solve."""
+    from astropy.wcs import WCS
+    from nocturne.core.catalog import CatalogObject
+    from nocturne.tools.astap import SolveResult
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    objs = [CatalogObject("NGC 7000", "NA Neb", 100.0, 0.0, 120.0, 12, 12)]
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), objs)
+    win._show_annotations(*win._solve[1:])
+    assert win.image_view._annotations is not None, "precondition: an overlay is up"
+    return win
+
+
+def _hide_annotations(win):
+    """Switch the overlay off the way the user does — the canvas pill — so the
+    button's checked state and the item's visibility move together."""
+    win.image_view.annotation_pill.button.setChecked(False)
+    assert win.image_view._annotations.isVisible() is False
+    assert win.image_view.annotation_pill.is_shown() is False
+
+
+def test_zoom_does_not_revive_annotations_the_user_hid(qtbot, tmp_path):
+    """Reported 2026-08-14. Zooming re-runs the label layout, which builds a NEW
+    overlay item; the user's hide must survive that. It is a view preference, not
+    a property of the item being replaced."""
+    win = _solved_window(qtbot, tmp_path)
+    _hide_annotations(win)
+    was_visible = win.image_view._annotations.isVisible()
+    was_pill_on = win.image_view.annotation_pill.is_shown()
+
+    win._relayout_annotations()          # what a zoom triggers, via the 120 ms timer
+
+    assert win.image_view._annotations.isVisible() == was_visible
+    assert win.image_view.annotation_pill.is_shown() == was_pill_on
+
+
+def test_layer_change_does_not_revive_annotations_the_user_hid(qtbot, tmp_path):
+    """Same defect through the other rebuild path: toggling a layer or density
+    re-renders from the cached solve and must not switch the overlay back on."""
+    win = _solved_window(qtbot, tmp_path)
+    _hide_annotations(win)
+    was_visible = win.image_view._annotations.isVisible()
+    was_pill_on = win.image_view.annotation_pill.is_shown()
+
+    win._rebuild_overlay_from_cache()
+
+    assert win.image_view._annotations.isVisible() == was_visible
+    assert win.image_view.annotation_pill.is_shown() == was_pill_on
+
+
+def test_a_solve_shows_annotations_even_if_the_previous_ones_were_hidden(qtbot, tmp_path):
+    """Guards the fix against over-reaching: remembering 'hidden' must not make a
+    solve the user just asked for come up invisible. `_show_annotations` is the
+    funnel a fresh solve goes through."""
+    win = _solved_window(qtbot, tmp_path)
+    _hide_annotations(win)
+
+    win._show_annotations(*win._solve[1:])
+
+    assert win.image_view._annotations.isVisible() is True
+    assert win.image_view.annotation_pill.is_shown() is True

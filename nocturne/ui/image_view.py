@@ -135,6 +135,7 @@ class ImageView(QGraphicsView):
         self._divider = None
         self._split_x = 0.0
         self._annotations = None
+        self._annotations_shown = True   # the USER's choice; outlives any one overlay item
         self._zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
         self._zoom_pill.raise_()
         self._position_zoom_pill()
@@ -184,6 +185,7 @@ class ImageView(QGraphicsView):
         pill.move(self.width() - pill.width() - m, m)      # top-right, clear of the zoom pill
 
     def _on_annotation_toggled(self, shown: bool) -> None:
+        self._annotations_shown = shown
         if self._annotations is not None:
             self._annotations.setVisible(shown)
         self.annotationsToggled.emit(shown)
@@ -551,18 +553,27 @@ class ImageView(QGraphicsView):
         self._handles.clear()
 
     # --- annotation overlay (DSO labels + compass + scale bar) ---
-    def set_annotations(self, group) -> None:
+    def set_annotations(self, group, *, keep_visibility: bool = False) -> None:
         """Annotations are CLIPPED to the image. A big nebula's true-size circle
         legitimately runs past the frame edge, but without a clip it also paints
         across the empty canvas around the image, which reads as a broken
-        overlay rather than an object larger than the field."""
+        overlay rather than an object larger than the field.
+
+        `keep_visibility` is for callers that merely REBUILD the overlay — a zoom
+        relayout, a layer or density change. They replace the item, and hidden-ness
+        used to ride on the item, so every zoom switched the overlay back on
+        (reported 2026-08-14). Callers that put a solve on screen at the user's
+        request leave it False: pressing Solve must show the result."""
         if self._annotations is not None:
             self._scene.removeItem(self._annotations)
             self._annotations = None
         if group is None:
             self.annotation_pill.hide()
+            self._annotations_shown = True   # a cleared overlay starts shown next time
             return
-        self.annotation_pill.set_shown(True)
+        if not keep_visibility:
+            self._annotations_shown = True
+        self.annotation_pill.set_shown(self._annotations_shown)
         self.annotation_pill.show()
         self.annotation_pill.raise_()
         pm = self._item.pixmap()
@@ -571,6 +582,7 @@ class ImageView(QGraphicsView):
         clip.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemClipsChildrenToShape, True)
         clip.setZValue(8)
         group.setParentItem(clip)
+        clip.setVisible(self._annotations_shown)
         self._scene.addItem(clip)
         self._annotations = clip
 

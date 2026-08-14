@@ -1065,7 +1065,7 @@ class MainWindow(QMainWindow):
         """Re-place the labels for the current zoom. Cheap: no re-solve, no
         catalogue query — just the layout pass over the cached solution."""
         if self._solve and self.image_view._annotations is not None:
-            self._show_annotations(*self._solve[1:])
+            self._show_annotations(*self._solve[1:], keep_visibility=True)
 
     def _rebuild_overlay_from_cache(self) -> None:
         """Layer/density changes only affect WHAT the overlay draws, not the
@@ -1079,7 +1079,7 @@ class MainWindow(QMainWindow):
         if self._solve[0] != self._solve_sig():
             return
         _sig, res, objs = self._solve
-        self._show_annotations(res, objs)
+        self._show_annotations(res, objs, keep_visibility=True)
 
     def _annotation_primitives(self, res, objs, shape, ui_scale: float = 1.0) -> list:
         """The ONE call both the live overlay and the burned PNG export make
@@ -1132,7 +1132,7 @@ class MainWindow(QMainWindow):
         z = self.image_view.zoom()
         return 1.0 / z if z > 0 else 1.0
 
-    def _show_annotations(self, res, objs):
+    def _show_annotations(self, res, objs, *, keep_visibility: bool = False):
         """The ONE path that puts annotations on the canvas — and the one place
         staleness is enforced.
 
@@ -1150,7 +1150,8 @@ class MainWindow(QMainWindow):
         h, w = self.project.current().data.shape[:2]
         prims = self._annotation_primitives(res, objs, (h, w),
                                             ui_scale=self._live_label_scale())
-        self.image_view.set_annotations(build_annotation_group(prims, (h, w)))
+        self.image_view.set_annotations(build_annotation_group(prims, (h, w)),
+                                        keep_visibility=keep_visibility)
 
     def _remove_stars(self, img):
         if rcastro_valid(self.settings):
