@@ -284,3 +284,28 @@ def test_frames_with_different_sky_levels_are_normalized_before_combining(tmp_pa
     assert abs(got - normalized) < abs(got - unnormalized), (
         f"sky/peak {got:.4f} is closer to the un-normalized {unnormalized:.4f} "
         f"than to the normalized {normalized:.4f} — run_stack is not normalizing")
+
+
+def test_stack_result_reports_the_peak_it_divided_by(tmp_path):
+    """A mosaic averages panel masters together, and run_stack normalises each
+    one by ITS OWN peak — so two panels whose brightest star differs land on
+    different scales, and averaging them makes a step that reads as a background
+    fault. Undoing it needs the divisor, which is otherwise lost."""
+    paths = _make_subs(tmp_path)
+    result = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")))
+
+    assert result.peak > 0.0
+    assert float(result.image.data.max()) == pytest.approx(1.0, abs=1e-6)
+    assert float((result.image.data * result.peak).max()) == pytest.approx(
+        result.peak, rel=1e-6)
+
+
+def test_peak_does_not_change_the_master(tmp_path):
+    """Assert UNCHANGED, not 'not wrong': the new field must be pure addition."""
+    paths = _make_subs(tmp_path)
+    a = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "a.fits")))
+    before = a.image.data.copy()
+    b = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "b.fits")))
+    assert np.array_equal(b.image.data, before)
+    assert b.frame_count == a.frame_count
+    assert b.integration_seconds == a.integration_seconds

@@ -109,6 +109,11 @@ class StackResult:
     frame_count: int
     integration_seconds: float
     output_path: str
+    # What the master was divided by. A mosaic averages several masters, each
+    # normalised by its OWN peak, so two panels whose brightest star differs sit
+    # on different scales — undoing that is the difference between a seam and a
+    # smooth join. Defaulted so existing positional construction is unaffected.
+    peak: float = 0.0
 
 
 def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
@@ -222,4 +227,5 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     )
     save_fits(image, opts.output_path,
               header=master_header(ref_img.metadata, len(used), integ))
-    return StackResult(image, used, rejected, len(used), integ, opts.output_path)
+    return StackResult(image, used, rejected, len(used), integ, opts.output_path,
+                       peak)
