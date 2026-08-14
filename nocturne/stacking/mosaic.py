@@ -268,3 +268,60 @@ def reproject_panel(data, panel_wcs, global_wcs, out_shape):
              for c in range(data.shape[2])], axis=2)
         out = np.where(valid[:, :, None], out, 0.0)
     return out.astype(np.float32), valid
+
+
+def match_offsets(layers, valids):
+    """A constant per panel, bringing every overlap to a common level.
+
+    Measured in the OVERLAP, never over the whole frame: panels see different
+    objects, so a panel holding a galaxy has a higher median for real reasons
+    and matching on that would subtract the signal.
+
+    Solved pairwise against the first panel that shares area, which is enough
+    for Stage 1; a global least-squares over every overlap is Stage 2. A panel
+    sharing area with nothing keeps an offset of zero — there is nothing to
+    match it to, and inventing one would move real signal.
+    """
+    import numpy as np
+
+    offsets = [0.0] * len(layers)
+    for i in range(1, len(layers)):
+        for j in range(i):
+            both = valids[i] & valids[j]
+            if both.sum() < 50:
+                continue
+            a = layers[j][both]
+            b = layers[i][both]
+            if a.ndim > 1:
+                a, b = a.mean(axis=-1), b.mean(axis=-1)
+            offsets[i] = offsets[j] + float(np.median(a) - np.median(b))
+            break
+    return offsets
+
+
+def combine_panels(layers, valids, weights, offsets=None):
+    """Weighted average over the panels that reached each pixel.
+
+    Weighted by integration time rather than equally: an overlap between a
+    48-sub panel and a 4-sub one should look mostly like the deep one. Pixels no
+    panel reached stay zero AND report zero coverage, so a later trim can tell
+    them from genuinely dark sky.
+    """
+    import numpy as np
+
+    offsets = offsets if offsets is not None else [0.0] * len(layers)
+    shape = layers[0].shape
+    colour = len(shape) == 3
+    acc = np.zeros(shape, np.float32)
+    wsum = np.zeros(shape[:2], np.float32)
+    coverage = np.zeros(shape[:2], np.int32)
+    for data, valid, weight, off in zip(layers, valids, weights, offsets):
+        mask = valid[:, :, None] if colour else valid
+        acc += np.where(mask, (data + off) * weight, 0.0)
+        wsum += valid * weight
+        coverage += valid
+    safe = np.maximum(wsum, 1e-6)
+    master = acc / (safe[:, :, None] if colour else safe)
+    hit = coverage > 0
+    master = np.where(hit[:, :, None] if colour else hit, master, 0.0)
+    return master.astype(np.float32), coverage
