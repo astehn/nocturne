@@ -71,3 +71,75 @@ def test_thin_panels_are_dropped_and_named(tmp_path):
     assert len(dropped) == 2
     assert all("only 2 subs" in reason for _path, reason in dropped)
     assert {p for p, _ in dropped} == {p for p in paths if "stray" in p}
+
+
+def _panel_wcs(ra, dec, shape=(80, 80)):
+    from astropy.wcs import WCS
+    w = WCS(naxis=2)
+    w.wcs.crpix = [shape[1] / 2, shape[0] / 2]
+    w.wcs.crval = [ra, dec]
+    w.wcs.cdelt = [-0.001, 0.001]
+    w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    return w
+
+
+def test_run_mosaic_assembles_a_canvas_bigger_than_one_panel(tmp_path):
+    """Two pointings offset in Dec must produce a canvas taller than one frame —
+    the whole point of the feature."""
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+
+    def fake_solver(master_path):
+        # panels come back north-first, so panel_01 is the higher-Dec pointing
+        dec = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, dec), (80, 80)
+
+    out = tmp_path / "mosaic.fits"
+    result = run_mosaic(
+        MosaicOptions(include=paths, output_path=str(out), astap_path="unused",
+                      method="average", kappa=2.5,
+                      # 0.05 deg apart, so the default 0.56 deg radius (sized for
+                      # the S30 Pro's 2.24 deg frame) would merge them into one
+                      # panel; these synthetic frames are 0.08 deg across
+                      radius_deg=0.02),
+        solver=fake_solver)
+
+    assert result.panel_count == 2
+    assert result.frame_count == 10
+    assert result.integration_seconds == 100.0
+    assert result.image.data.shape[0] > 80, "canvas must be taller than one panel"
+    assert result.image.data.ndim == 3
+    assert out.exists()
+
+
+def test_run_mosaic_refuses_a_single_pointing(tmp_path):
+    """One pointing is an ordinary stack. Silently producing a one-panel
+    'mosaic' would be a worse answer than saying so."""
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = _panel_subs(tmp_path, "a", 10.0, 41.0, n=5)
+    opts = MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
+                         astap_path="unused")
+    with pytest.raises(ValueError, match="one pointing"):
+        run_mosaic(opts, solver=lambda p: (_panel_wcs(10.0, 41.0), (80, 80)))
+
+
+def test_run_mosaic_needs_two_panels_on_the_sky(tmp_path):
+    """Panels that will not solve cannot be placed. One survivor is not a
+    mosaic, and saying so beats writing a single-panel file called one."""
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    opts = MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
+                         astap_path="unused", method="average", radius_deg=0.02)
+
+    def only_one_solves(master_path):
+        if "panel_01" in master_path:
+            return _panel_wcs(10.0, 41.05), (80, 80)
+        return None
+
+    with pytest.raises(ValueError, match="two panels"):
+        run_mosaic(opts, solver=only_one_solves)

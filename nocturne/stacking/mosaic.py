@@ -325,3 +325,96 @@ def combine_panels(layers, valids, weights, offsets=None):
     hit = coverage > 0
     master = np.where(hit[:, :, None] if colour else hit, master, 0.0)
     return master.astype(np.float32), coverage
+
+
+@dataclass
+class MosaicOptions:
+    include: list
+    output_path: str
+    astap_path: str
+    method: str = "sigma_clip"
+    kappa: float = 3.0
+    autocrop: bool = True
+    min_panel_subs: int = 4
+    radius_deg: float = 0.56
+
+
+@dataclass
+class MosaicResult:
+    image: object
+    panel_count: int
+    frame_count: int
+    integration_seconds: float
+    dropped: list
+    output_path: str
+    wcs: object = None
+
+
+def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicResult:
+    """Group, stack, solve, reproject, combine.
+
+    The master carries the global WCS, so plate-solve annotations work on a
+    mosaic without re-solving it.
+    """
+    import tempfile
+
+    import numpy as np
+
+    from ..core.export import save_fits          # NOT fits_io — save lives in export
+    from ..core.image import AstroImage
+    from .coverage import full_coverage_bounds
+
+    panels = discover_panels(read_pointings(list(opts.include)), opts.radius_deg)
+    if len(panels) < 2:
+        raise ValueError(
+            "these frames are all one pointing — stack them normally rather "
+            "than as a mosaic")
+
+    with tempfile.TemporaryDirectory(prefix="nocturne_mosaic_") as work:
+        stacks, dropped = stack_panels(
+            panels, work, method=opts.method, kappa=opts.kappa,
+            min_panel_subs=opts.min_panel_subs, on_progress=on_progress)
+        solved, unsolved = solve_panels(stacks, opts.astap_path, solver=solver,
+                                        on_progress=on_progress)
+        dropped.extend(unsolved)
+        if len(solved) < 2:
+            raise ValueError(
+                "fewer than two panels could be placed on the sky — a mosaic "
+                "needs at least two solved panels")
+
+        wcs, shape = global_frame(solved)
+        layers, valids, weights = [], [], []
+        for i, p in enumerate(solved, start=1):
+            if on_progress is not None:
+                on_progress(i, len(solved), f"Step 3 of 3 — placing panel {i}")
+            img = load_fits(p.stack.master_path, normalize=False)
+            # undo run_stack's per-master peak normalisation: two panels whose
+            # brightest star differs are otherwise on different scales, and the
+            # step that produces looks like a background fault
+            data = img.data * (p.stack.peak or 1.0)
+            out, valid = reproject_panel(data, p.wcs, wcs, shape)
+            layers.append(out)
+            valids.append(valid)
+            weights.append(p.stack.integration_seconds)
+
+        offsets = match_offsets(layers, valids)
+        master, coverage = combine_panels(layers, valids, weights, offsets)
+        frame_count = sum(s.frame_count for s in stacks)
+        integration = sum(s.integration_seconds for s in stacks)
+
+    if opts.autocrop:
+        # frac against ONE frame: a mosaic's coverage is 1 nearly everywhere by
+        # design, so the stack's "nearly every frame saw this" test would throw
+        # the whole picture away
+        top, bottom, left, right = full_coverage_bounds(coverage, 1)
+        master = master[top:bottom, left:right]
+
+    peak = float(master.max())
+    if peak > 0:
+        master = master / peak
+    image = AstroImage(np.clip(master, 0.0, 1.0).astype(np.float32),
+                       is_linear=True,
+                       metadata={"panels": len(solved), "frames": frame_count})
+    save_fits(image, opts.output_path)
+    return MosaicResult(image, len(solved), frame_count, integration,
+                        dropped, opts.output_path, wcs)
