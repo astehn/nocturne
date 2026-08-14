@@ -179,3 +179,61 @@ def test_read_pointings_does_not_decode_pixels(tmp_path, monkeypatch):
     pointings = mosaic.read_pointings(paths)
     assert len(pointings) == 3
     assert pointings[paths[0]] == pytest.approx((10.0, 41.0))
+
+
+def test_work_dir_keeps_the_panel_masters(tmp_path):
+    """A 40-minute stack must not be thrown away. With work_dir set, the panel
+    masters survive the run — for the user to inspect, and so blending can be
+    re-tried without re-stacking."""
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    work = tmp_path / "work"
+
+    def fake_solver(master_path):
+        dec = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, dec), (80, 80)
+
+    run_mosaic(MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
+                             astap_path="unused", method="average",
+                             max_spread_deg=0.02, work_dir=str(work)),
+               solver=fake_solver)
+
+    masters = sorted(p.name for p in work.glob("panel_*.fits"))
+    assert masters == ["panel_01.fits", "panel_02.fits"]
+
+
+def test_an_existing_panel_master_is_reused_not_restacked(tmp_path):
+    """Resuming must skip the expensive part. If a panel master is already on
+    disk from an earlier run, run_stack must not be called for it again."""
+    import nocturne.stacking.mosaic as mosaic
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    work = tmp_path / "work"
+
+    def fake_solver(master_path):
+        dec = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, dec), (80, 80)
+
+    opts = MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
+                         astap_path="unused", method="average",
+                         max_spread_deg=0.02, work_dir=str(work))
+    run_mosaic(opts, solver=fake_solver)
+
+    calls = []
+    real = mosaic.run_stack
+    def counting(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+    mosaic.run_stack = counting
+    try:
+        result = run_mosaic(opts, solver=fake_solver)
+    finally:
+        mosaic.run_stack = real
+
+    assert calls == [], "panel masters already on disk must not be re-stacked"
+    assert result.panel_count == 2
+    assert result.frame_count == 10       # still reported from the panel groups

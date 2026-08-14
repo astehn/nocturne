@@ -151,6 +151,17 @@ def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
                 dropped.append((p, f"panel has only {len(panel.paths)} subs"))
             continue
         out = os.path.join(workdir, f"panel_{i:02d}.fits")
+        if os.path.exists(out):
+            # Resuming: the expensive part is already done. master_metadata
+            # stores "exposure" as the TOTAL integration and "frames" as the
+            # count, so both survive in the file. The peak does not, but it is
+            # only a per-panel scale factor and the overlap matching absorbs it.
+            meta = load_fits(out, normalize=False).metadata
+            stacks.append(PanelStack(
+                panel, out, 1.0,
+                int(meta.get("frames") or len(panel.paths)),
+                float(meta.get("exposure") or 0.0)))
+            continue
         if on_progress is not None:
             on_progress(i, len(panels), f"Step 1 of 3 — stacking panel {i}")
         try:
@@ -386,6 +397,10 @@ class MosaicOptions:
     autocrop: bool = True
     min_panel_subs: int = 4
     max_spread_deg: float = 0.56
+    # Where panel masters live. None uses a temporary directory and
+    # discards them; a path keeps them, so a 40-minute stack survives and
+    # a re-run reuses it instead of repeating the expensive part.
+    work_dir: str | None = None
 
 
 @dataclass
@@ -405,6 +420,7 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     The master carries the global WCS, so plate-solve annotations work on a
     mosaic without re-solving it.
     """
+    import contextlib
     import tempfile
 
     import numpy as np
@@ -422,7 +438,13 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
             "these frames are all one pointing — stack them normally rather "
             "than as a mosaic")
 
-    with tempfile.TemporaryDirectory(prefix="nocturne_mosaic_") as work:
+    if opts.work_dir:
+        os.makedirs(opts.work_dir, exist_ok=True)
+        work_ctx = contextlib.nullcontext(opts.work_dir)
+    else:
+        work_ctx = tempfile.TemporaryDirectory(prefix="nocturne_mosaic_")
+
+    with work_ctx as work:
         stacks, dropped = stack_panels(
             panels, work, method=opts.method, kappa=opts.kappa,
             min_panel_subs=opts.min_panel_subs, on_progress=on_progress)
