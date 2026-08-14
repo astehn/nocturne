@@ -63,6 +63,11 @@ def discover_panels(pointings: dict[str, tuple[float, float]],
     from scipy.spatial.distance import pdist
 
     paths = sorted(pointings)
+    if not paths:
+        # nothing to group: frames with no pointing cards, or no frames at all.
+        # pdist on an empty array raises, and the UI calls this on whatever the
+        # folder happens to hold.
+        return []
     if len(paths) == 1:
         ra, dec = pointings[paths[0]]
         return [Panel(ra, dec, (paths[0],))]

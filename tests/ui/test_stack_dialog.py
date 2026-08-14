@@ -558,3 +558,97 @@ def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
     dlg.run()
     qtbot.waitUntil(lambda: "autocrop" in seen, timeout=3000)
     assert seen["autocrop"] is True
+
+
+# --- mosaic ------------------------------------------------------------------
+
+def _sub_with_pointing(tmp_path, name, ra, dec):
+    import numpy as np
+    from tests.stacking.synthetic import make_star_field, write_color_fits
+    p = tmp_path / name
+    write_color_fits(p, make_star_field(shape=(40, 40), seed=1), exptime=10.0,
+                     header={"RA": ra, "DEC": dec})
+    return str(p)
+
+
+def test_mosaic_option_is_offered_when_the_subs_span_several_pointings(qtbot, tmp_path):
+    """A user who shot a mosaic should be told so. Nothing in the dialog
+    currently distinguishes 400 subs of one field from 400 across twenty."""
+    paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
+    paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
+
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.scan_pointings()
+
+    assert dlg.mosaic_check.isEnabled()
+    assert "2" in dlg.mosaic_check.text(), dlg.mosaic_check.text()
+
+
+def test_mosaic_option_stays_off_for_a_single_pointing(qtbot, tmp_path):
+    """One field is an ordinary stack. Offering a mosaic there would invite a
+    slower, worse result for no reason."""
+    for i in range(4):
+        _sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0)
+
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.scan_pointings()
+
+    assert not dlg.mosaic_check.isEnabled()
+    assert not dlg.mosaic_check.isChecked()
+
+
+def test_mosaic_says_it_needs_astap_when_there_is_none(qtbot, tmp_path):
+    """Mosaic geometry comes from plate solving. Without ASTAP the honest move
+    is to say so, not to fall back to something worse in silence."""
+    paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
+    paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
+
+    settings = Settings()
+    settings.astap_path = ""
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.scan_pointings()
+
+    assert not dlg.mosaic_check.isEnabled()
+    assert "ASTAP" in dlg.mosaic_check.toolTip()
+
+
+def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
+    """The checkbox must actually change what runs — a control that looks right
+    and does nothing is the specific failure worth guarding."""
+    paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
+    paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
+
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)
+
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.output_edit.setText(str(tmp_path / "out.fits"))
+    dlg._on_graded([_stats2(p, 0.9) for p in paths])       # fills the table
+    dlg.scan_pointings()
+    dlg.mosaic_check.setChecked(True)
+
+    seen = {}
+    def fake_mosaic(opts, on_progress=None):
+        seen["opts"] = opts
+        raise RuntimeError("stop here — only the routing is under test")
+    dlg._mosaic_runner = fake_mosaic
+    dlg._stack_runner = lambda *a, **k: pytest.fail("must not run the plain stacker")
+
+    dlg.run()
+    qtbot.waitUntil(lambda: "opts" in seen, timeout=3000)
+    assert seen["opts"].astap_path == str(tmp_path / "astap")
+    assert len(seen["opts"].include) == 6

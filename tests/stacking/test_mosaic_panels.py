@@ -92,3 +92,16 @@ def test_ra_separation_accounts_for_declination():
     """One degree of RA is much less than one degree on the sky at Dec 60."""
     pointings = {"a.fit": (10.0, 60.0), "b.fit": (11.0, 60.0)}   # 0.5 deg apart on sky
     assert len(discover_panels(pointings, max_spread_deg=0.56)) == 1
+
+
+def test_no_pointings_is_no_panels_not_a_crash():
+    """The dialog calls this on whatever the chosen folder holds, including
+    files with no pointing cards at all. scipy's pdist raises on an empty
+    array, which turned a folder of unreadable files into a crash."""
+    assert discover_panels({}, max_spread_deg=0.56) == []
+
+
+def test_one_pointing_is_one_panel():
+    panels = discover_panels({"only.fit": (10.0, 41.0)}, max_spread_deg=0.56)
+    assert len(panels) == 1
+    assert panels[0].paths == ("only.fit",)

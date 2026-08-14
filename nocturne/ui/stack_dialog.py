@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
 
 from ..core.autostretch import unlinked_stretch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
-from ..settings import start_dir
+from ..settings import astap_valid, start_dir
 from ..stacking.frames import discover_subs, load_sub
 from ..stacking.grade import grade_frames, judge
+from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
+                               run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
 from .frame_preview import FramePreview
@@ -58,6 +60,7 @@ class StackDialog(QDialog):
         self._on_master = on_master
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
+        self._mosaic_runner = run_mosaic    # injectable for tests
         self._stats = []
         self._busy = False
         self._active_token: CancelToken | None = None
@@ -83,6 +86,10 @@ class StackDialog(QDialog):
         self.kappa_box = QComboBox()
         self.kappa_box.addItems(list(KAPPA.keys()))
         self.kappa_box.setCurrentText("Medium")
+        self.mosaic_check = QCheckBox("Stack as mosaic")
+        self.mosaic_check.setEnabled(False)
+        self.mosaic_check.setToolTip(
+            "Available when the subs cover more than one pointing")
         self.crop_check = QCheckBox("Trim the ragged edges")
         self.crop_check.setChecked(True)
         self.strictness_box = QComboBox()
@@ -128,6 +135,7 @@ class StackDialog(QDialog):
 
         crop_row = QHBoxLayout()
         crop_row.addWidget(self.crop_check)
+        crop_row.addWidget(self.mosaic_check)
         crop_row.addWidget(QLabel(
             "Off keeps the full frame — the edges are built from fewer frames, "
             "so they are noisier, but you can always crop later"))
@@ -212,6 +220,39 @@ class StackDialog(QDialog):
         if tok is not None:
             tok.cancel()
 
+    def scan_pointings(self) -> None:
+        """Notice a mosaic and say so.
+
+        Nothing in this dialog distinguished 400 subs of one field from 400
+        across twenty pointings, so a user who shot a mosaic got a stack of the
+        whole lot registered to one frame — which cannot work. Reading the
+        pointings is header-only and costs about 0.2 s for 400 subs.
+        """
+        folder = self.folder_edit.text().strip()
+        paths = discover_subs(folder) if folder else []
+        panels = discover_panels(read_pointings(paths), 0.56) if paths else []
+
+        if len(panels) < 2:
+            self.mosaic_check.setChecked(False)
+            self.mosaic_check.setEnabled(False)
+            self.mosaic_check.setText("Stack as mosaic")
+            self.mosaic_check.setToolTip(
+                "These subs all cover one pointing — an ordinary stack is right")
+            return
+
+        self.mosaic_check.setText(f"Stack as mosaic — {len(panels)} pointings")
+        if not astap_valid(self._settings):
+            self.mosaic_check.setChecked(False)
+            self.mosaic_check.setEnabled(False)
+            self.mosaic_check.setToolTip(
+                "A mosaic is placed on the sky by plate solving, so it needs "
+                "ASTAP — set its path in Settings")
+            return
+        self.mosaic_check.setEnabled(True)
+        self.mosaic_check.setToolTip(
+            "Stack each pointing separately, plate-solve them, and assemble one "
+            "wide image")
+
     # --- grade ---
     def grade(self) -> None:
         if self._busy:
@@ -221,6 +262,7 @@ class StackDialog(QDialog):
         if not paths:
             self.status.setText("No .fit subs found in that folder.")
             return
+        self.scan_pointings()
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
@@ -431,6 +473,24 @@ class StackDialog(QDialog):
             self.status.setText("Select at least 3 frames to stack.")
             return
         method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
+
+        if self.mosaic_check.isChecked():
+            mosaic_opts = MosaicOptions(
+                include=include, output_path=self.output_edit.text().strip(),
+                astap_path=self._settings.astap_path, method=method,
+                kappa=KAPPA[self.kappa_box.currentText()],
+                autocrop=self.crop_check.isChecked())
+            mosaic_runner = self._mosaic_runner
+
+            def mosaic_work():
+                return mosaic_runner(mosaic_opts, on_progress=lambda i, n, label:
+                                     self._signals.progress.emit(i, n, label))
+
+            self._start(mosaic_work, self._on_stacked,
+                        "Stacking each pointing, then assembling the mosaic — "
+                        "this takes considerably longer than one stack.")
+            return
+
         opts = StackOptions(method, KAPPA[self.kappa_box.currentText()],
                             include, self.output_edit.text().strip(),
                             autocrop=self.crop_check.isChecked())
