@@ -102,3 +102,64 @@ def test_a_canvas_within_the_limit_is_allowed():
     panels = [_solved(10.0, 41.0), _solved(10.1, 41.1)]
     _w, (h, w) = global_frame(panels, max_megapixels=250.0)
     assert h > 80 and w > 80
+
+
+# --- reprojection ------------------------------------------------------------
+
+def test_a_panel_reprojected_onto_its_own_frame_is_unchanged():
+    """Identity case: same WCS in and out must return the same pixels. If this
+    drifts, every other geometry result is meaningless."""
+    from nocturne.stacking.mosaic import reproject_panel
+    from tests.stacking.synthetic import make_star_field
+
+    data = make_star_field(shape=(80, 80), n_stars=30, seed=7)
+    w = _wcs(10.0, 41.0)
+    out, valid = reproject_panel(data, w, w, (80, 80))
+    assert valid.mean() > 0.95
+    np.testing.assert_allclose(out[valid], data[valid], atol=1e-4)
+
+
+def test_a_star_lands_at_the_sky_position_it_came_from():
+    """The test that would have caught FITS_Y_DOWN: put ONE star at a known
+    pixel, carry it through the sky, and check where it arrives. A synthetic
+    fixture that is merely self-consistent cannot catch a flipped axis; a known
+    sky coordinate can."""
+    from nocturne.stacking.mosaic import reproject_panel
+
+    data = np.zeros((80, 80), np.float32)
+    data[20, 60] = 1.0                       # row 20, column 60
+    panel = _wcs(10.0, 41.0)
+    sky_ra, sky_dec = panel.pixel_to_world_values(60, 20)
+
+    canvas = _wcs(10.05, 41.05, shape=(200, 200))
+    out, _valid = reproject_panel(data, panel, canvas, (200, 200))
+
+    ex, ey = canvas.world_to_pixel_values(sky_ra, sky_dec)
+    got = np.unravel_index(int(np.argmax(out)), out.shape)
+    assert abs(got[1] - float(ex)) < 1.0, f"column {got[1]} vs expected {float(ex)}"
+    assert abs(got[0] - float(ey)) < 1.0, f"row {got[0]} vs expected {float(ey)}"
+
+
+def test_colour_panels_keep_their_channels():
+    from nocturne.stacking.mosaic import reproject_panel
+    from tests.stacking.synthetic import make_star_field
+
+    data = np.stack([make_star_field(shape=(80, 80), seed=i) for i in range(3)],
+                    axis=2)
+    w = _wcs(10.0, 41.0)
+    out, valid = reproject_panel(data, w, w, (80, 80))
+    assert out.shape == (80, 80, 3)
+    assert valid.shape == (80, 80)
+
+
+def test_area_outside_the_panel_is_marked_invalid():
+    """Zero is a legitimate pixel value, so integration must be told which
+    pixels a panel actually reached — the same reason warp_with_validity exists."""
+    from nocturne.stacking.mosaic import reproject_panel
+    from tests.stacking.synthetic import make_star_field
+
+    data = make_star_field(shape=(80, 80), seed=3)
+    out, valid = reproject_panel(data, _wcs(10.0, 41.0),
+                                 _wcs(10.0, 41.0, shape=(300, 300)), (300, 300))
+    assert valid.mean() < 0.2
+    assert out[~valid].max() == 0.0

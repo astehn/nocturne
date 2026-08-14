@@ -228,3 +228,43 @@ def global_frame(solved, *, max_megapixels: float = 250.0):
     # shift the reference pixel so the canvas starts at (0, 0)
     wcs.wcs.crpix = [1.0 - x0, 1.0 - y0]
     return wcs, (h_px, w_px)
+
+
+def reproject_panel(data, panel_wcs, global_wcs, out_shape):
+    """Resample a panel onto the global frame, and say which pixels it reached.
+
+    Coordinates run canvas -> sky -> panel, which is the direction a resampler
+    needs: for every OUTPUT pixel, where in the input did it come from.
+
+    Bilinear, matching `register.warp_to`, so a mosaic and an ordinary stack
+    resample alike. Validity is a warped ones-mask on the same 0.999 threshold
+    `warp_with_validity` uses, because zero is a legitimate pixel value and
+    integration must be able to tell "dark sky" from "this panel did not see
+    here".
+    """
+    import numpy as np
+    from scipy.ndimage import map_coordinates
+
+    h, w = out_shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    sky = global_wcs.pixel_to_world_values(xx.ravel(), yy.ravel())
+    px, py = panel_wcs.world_to_pixel_values(sky[0], sky[1])
+    # map_coordinates indexes (row, column) — py before px. Reversing these
+    # transposes the sky, which is exactly the class of mistake FITS_Y_DOWN was.
+    coords = np.array([np.asarray(py).reshape(h, w), np.asarray(px).reshape(h, w)])
+
+    ones = np.ones(data.shape[:2], dtype=np.float32)
+    valid = map_coordinates(ones, coords, order=1, mode="constant",
+                            cval=0.0) >= 0.999
+
+    if data.ndim == 2:
+        out = map_coordinates(data.astype(np.float32), coords, order=1,
+                              mode="constant", cval=0.0)
+        out = np.where(valid, out, 0.0)
+    else:
+        out = np.stack(
+            [map_coordinates(data[:, :, c].astype(np.float32), coords, order=1,
+                             mode="constant", cval=0.0)
+             for c in range(data.shape[2])], axis=2)
+        out = np.where(valid[:, :, None], out, 0.0)
+    return out.astype(np.float32), valid
