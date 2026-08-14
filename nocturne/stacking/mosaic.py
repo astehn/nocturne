@@ -134,3 +134,97 @@ def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
                                  res.frame_count, res.integration_seconds))
         dropped.extend(res.rejected)
     return stacks, dropped
+
+
+@dataclass
+class SolvedPanel:
+    stack: PanelStack
+    wcs: object
+    shape: tuple[int, int]
+
+
+class CanvasTooLarge(Exception):
+    pass
+
+
+def _astap_solver(astap_path: str):
+    """Solve a panel MASTER through the existing ASTAP wrapper.
+
+    Masters rather than subs: a stacked panel is far deeper than a 10 s frame,
+    so it solves far more reliably, and it is one solve per panel instead of one
+    per sub.
+    """
+    from ..tools.astap import Astap, solve_with_scale_fallback
+
+    astap = Astap(astap_path)
+
+    def solve(master_path: str):
+        img = load_fits(master_path, normalize=False)
+        res, _source = solve_with_scale_fallback(astap, img, img.metadata,
+                                                 img.data.shape[0])
+        if not res.solved or res.wcs is None:
+            return None
+        return res.wcs, img.data.shape[:2]
+
+    return solve
+
+
+def solve_panels(stacks, astap_path, *, solver=None, on_progress=None):
+    """Place each panel on the sky. Panels that will not solve are REPORTED, not
+    guessed at — an invented position puts real stars in the wrong sky."""
+    solver = solver or _astap_solver(astap_path)
+    solved, unsolved = [], []
+    for i, s in enumerate(stacks, start=1):
+        if on_progress is not None:
+            on_progress(i, len(stacks), f"Step 2 of 3 — solving panel {i}")
+        got = solver(s.master_path)
+        if got is None:
+            unsolved.append((s.master_path, "panel could not be solved"))
+            continue
+        wcs, shape = got
+        solved.append(SolvedPanel(s, wcs, shape))
+    return solved, unsolved
+
+
+def global_frame(solved, *, max_megapixels: float = 250.0):
+    """A TAN frame covering every panel, tangent at the mosaic centre.
+
+    Tangent at the CENTRE rather than at the first panel: gnomonic distortion
+    grows with distance from the tangent point, so centring it halves the worst
+    case across the field.
+    """
+    import numpy as np
+    from astropy.wcs import WCS
+
+    ras, decs = [], []
+    for p in solved:
+        h, w = p.shape
+        sky = p.wcs.pixel_to_world_values([0, w, 0, w], [0, 0, h, h])
+        ras.extend(np.asarray(sky[0]).ravel())
+        decs.extend(np.asarray(sky[1]).ravel())
+    ras, decs = np.asarray(ras), np.asarray(decs)
+
+    scale = float(np.sqrt(abs(np.linalg.det(solved[0].wcs.pixel_scale_matrix))))
+
+    wcs = WCS(naxis=2)
+    wcs.wcs.crval = [float(ras.mean()), float(decs.mean())]
+    wcs.wcs.cdelt = [-scale, scale]
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crpix = [1.0, 1.0]
+
+    x, y = wcs.world_to_pixel_values(ras, decs)
+    x0, y0 = float(np.floor(x.min())), float(np.floor(y.min()))
+    w_px = int(np.ceil(x.max()) - x0) + 1
+    h_px = int(np.ceil(y.max()) - y0) + 1
+
+    mp = (w_px * h_px) / 1e6
+    if mp > max_megapixels:
+        # one decimal, not zero: a limit that prints as "0 megapixels" tells the
+        # user nothing about how far over they are
+        raise CanvasTooLarge(
+            f"the mosaic would be {w_px} x {h_px} px ({mp:.1f} megapixels); "
+            f"the limit is {max_megapixels:.1f} megapixels")
+
+    # shift the reference pixel so the canvas starts at (0, 0)
+    wcs.wcs.crpix = [1.0 - x0, 1.0 - y0]
+    return wcs, (h_px, w_px)
