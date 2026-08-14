@@ -331,35 +331,103 @@ def reproject_panel(data, panel_wcs, global_wcs, out_shape):
 
 
 def match_offsets(layers, valids):
-    """A constant per panel, bringing every overlap to a common level.
+    """A constant per panel, chosen so every overlap agrees as nearly as it can.
 
     Measured in the OVERLAP, never over the whole frame: panels see different
     objects, so a panel holding a galaxy has a higher median for real reasons
-    and matching on that would subtract the signal.
+    and matching on that would subtract the signal the user came for.
 
-    Solved pairwise against the first panel that shares area, which is enough
-    for Stage 1; a global least-squares over every overlap is Stage 2. A panel
-    sharing area with nothing keeps an offset of zero — there is nothing to
-    match it to, and inventing one would move real signal.
+    Solved over EVERY overlap at once rather than chaining each panel to the
+    first neighbour it happens to touch. Real overlaps are mutually
+    inconsistent — a panel with a sky gradient implies one offset against its
+    left neighbour and another against its right — and chaining satisfies the
+    edges it walks while dumping the whole disagreement on the ones it skips.
+    Measured on a four-panel ring: four seams at 0.0000 and two at 0.0375.
+    Least squares spreads that instead, which is what stops a single seam being
+    the visible one.
+
+    This is a weighted graph Laplacian, `L o = b`, with each overlap weighted by
+    its area — a bigger shared region is a better measurement. Each connected
+    component is anchored on its first panel, so the picture keeps its overall
+    level and a panel overlapping nothing keeps its own: there is nothing to
+    match it to, and inventing an offset would move real signal.
     """
     import numpy as np
 
-    offsets = [0.0] * len(layers)
-    for i in range(1, len(layers)):
-        for j in range(i):
+    n = len(layers)
+    A = np.zeros((n, n), np.float64)
+    b = np.zeros(n, np.float64)
+    adjacency = {i: set() for i in range(n)}
+
+    for i in range(n):
+        for j in range(i + 1, n):
             both = valids[i] & valids[j]
-            if both.sum() < 50:
+            area = int(both.sum())
+            if area < 50:
                 continue
-            a = layers[j][both]
-            b = layers[i][both]
-            if a.ndim > 1:
-                a, b = a.mean(axis=-1), b.mean(axis=-1)
-            offsets[i] = offsets[j] + float(np.median(a) - np.median(b))
-            break
+            li, lj = layers[i][both], layers[j][both]
+            if li.ndim > 1:
+                li, lj = li.mean(axis=-1), lj.mean(axis=-1)
+            # want (li + o_i) == (lj + o_j), i.e. o_i - o_j = median(lj) - median(li)
+            d = float(np.median(lj) - np.median(li))
+            w = float(area)
+            A[i, i] += w; A[j, j] += w
+            A[i, j] -= w; A[j, i] -= w
+            b[i] += w * d
+            b[j] -= w * d
+            adjacency[i].add(j)
+            adjacency[j].add(i)
+
+    offsets = [0.0] * n
+    seen = set()
+    for root in range(n):
+        if root in seen:
+            continue
+        component, queue = [], [root]
+        seen.add(root)
+        while queue:                                   # breadth-first component
+            node = queue.pop()
+            component.append(node)
+            for nb in adjacency[node]:
+                if nb not in seen:
+                    seen.add(nb)
+                    queue.append(nb)
+        component.sort()
+        if len(component) < 2:
+            continue                                   # nothing to match against
+        # anchor the component's first panel at zero, then solve the rest
+        free = component[1:]
+        sub_a = A[np.ix_(free, free)]
+        sub_b = b[free]
+        solution, *_ = np.linalg.lstsq(sub_a, sub_b, rcond=None)
+        for idx, value in zip(free, solution):
+            offsets[idx] = float(value)
     return offsets
 
 
-def combine_panels(layers, valids, weights, offsets=None):
+def feather_weights(valid, width: float):
+    """A 0..1 ramp rising from a panel's border inward over `width` pixels.
+
+    Without it every coverage boundary is a step: two panels that disagree by a
+    constant meet at a cliff, which is exactly the seam the Stage 1 mosaic
+    showed. Fading each panel out at its own edge turns the cliff into a
+    gradient, and the overlap decides how quickly.
+
+    The ramp is normalised by the panel's OWN maximum distance rather than by
+    `width`, so a sliver of coverage narrower than the feather still reaches
+    full weight somewhere. Weighting a sliver to nothing would discard the only
+    data covering that part of the sky.
+    """
+    import numpy as np
+    from scipy.ndimage import distance_transform_edt
+
+    dist = distance_transform_edt(valid)
+    reach = min(float(width), float(dist.max()) if dist.max() > 0 else 1.0)
+    w = np.clip(dist / max(reach, 1e-6), 0.0, 1.0)
+    return np.where(valid, w, 0.0).astype(np.float32)
+
+
+def combine_panels(layers, valids, weights, offsets=None, weights_map=None):
     """Weighted average over the panels that reached each pixel.
 
     Weighted by integration time rather than equally: an overlap between a
@@ -370,15 +438,19 @@ def combine_panels(layers, valids, weights, offsets=None):
     import numpy as np
 
     offsets = offsets if offsets is not None else [0.0] * len(layers)
+    maps = weights_map if weights_map is not None else [None] * len(layers)
     shape = layers[0].shape
     colour = len(shape) == 3
     acc = np.zeros(shape, np.float32)
     wsum = np.zeros(shape[:2], np.float32)
     coverage = np.zeros(shape[:2], np.int32)
-    for data, valid, weight, off in zip(layers, valids, weights, offsets):
+    for data, valid, weight, off, wmap in zip(layers, valids, weights, offsets, maps):
+        # a per-pixel feather multiplies the panel's flat weight, so depth and
+        # distance-from-edge both count
+        pix = valid * weight if wmap is None else wmap * weight
         mask = valid[:, :, None] if colour else valid
-        acc += np.where(mask, (data + off) * weight, 0.0)
-        wsum += valid * weight
+        acc += np.where(mask, (data + off) * (pix[:, :, None] if colour else pix), 0.0)
+        wsum += pix
         coverage += valid
     safe = np.maximum(wsum, 1e-6)
     master = acc / (safe[:, :, None] if colour else safe)
@@ -472,7 +544,12 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
             weights.append(p.stack.integration_seconds)
 
         offsets = match_offsets(layers, valids)
-        master, coverage = combine_panels(layers, valids, weights, offsets)
+        # feather over a tenth of the panel's short side: wide enough to hide a
+        # residual step, narrow enough that a panel still dominates its own middle
+        panel_short = min(min(p.shape) for p in solved)
+        feather = [feather_weights(v, panel_short / 10.0) for v in valids]
+        master, coverage = combine_panels(layers, valids, weights, offsets,
+                                          weights_map=feather)
         frame_count = sum(s.frame_count for s in stacks)
         integration = sum(s.integration_seconds for s in stacks)
 

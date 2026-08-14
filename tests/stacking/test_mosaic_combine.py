@@ -77,3 +77,142 @@ def test_colour_layers_combine_per_channel():
     assert master.shape == (40, 40, 3)
     assert abs(float(master[0, 20, 0]) - 0.6) < 1e-6
     assert coverage[0, 20] == 2
+
+
+# --- feathering --------------------------------------------------------------
+
+def test_feather_weight_is_zero_at_the_edge_and_full_inside():
+    """A panel's contribution must fade in from its border, or every coverage
+    boundary is a step. The Stage 1 mosaic showed exactly those steps."""
+    from nocturne.stacking.mosaic import feather_weights
+
+    valid = np.zeros((40, 40), bool)
+    valid[10:30, 10:30] = True
+    w = feather_weights(valid, width=5)
+
+    assert w[valid].max() > 0.99
+    assert w[10, 10] < 0.3                    # the corner of the valid region
+    assert w[20, 20] > 0.99                   # deep inside
+    assert w[~valid].max() == 0.0             # nothing outside
+
+
+def test_feather_is_monotonic_from_the_edge_inward():
+    from nocturne.stacking.mosaic import feather_weights
+
+    valid = np.zeros((40, 40), bool)
+    valid[10:30, 10:30] = True
+    w = feather_weights(valid, width=5)
+    ramp = [float(w[20, x]) for x in range(10, 21)]
+    assert all(b >= a - 1e-6 for a, b in zip(ramp, ramp[1:])), ramp
+
+
+def test_a_panel_narrower_than_the_feather_still_contributes():
+    """A thin sliver of coverage must not be weighted to nothing — it is the
+    only data in that part of the sky."""
+    from nocturne.stacking.mosaic import feather_weights
+
+    valid = np.zeros((40, 40), bool)
+    valid[:, 18:22] = True                    # 4 px wide, feather asks for 10
+    w = feather_weights(valid, width=10)
+    assert w[valid].max() > 0.0
+
+
+def test_feathering_removes_the_step_between_mismatched_panels():
+    """The point of the whole exercise: two panels that disagree by a constant
+    must join with a gradient rather than a cliff."""
+    from nocturne.stacking.mosaic import combine_panels, feather_weights
+
+    a, av = _layer(0.40, (0, 40, 0, 25))
+    b, bv = _layer(0.60, (0, 40, 15, 40))
+    hard, _c = combine_panels([a, b], [av, bv], [1.0, 1.0])
+    soft, _c2 = combine_panels([a, b], [av, bv], [1.0, 1.0],
+                               weights_map=[feather_weights(av, 8),
+                                            feather_weights(bv, 8)])
+    # the biggest single-pixel jump along a row across the seam
+    hard_jump = float(np.abs(np.diff(hard[20, :])).max())
+    soft_jump = float(np.abs(np.diff(soft[20, :])).max())
+    assert soft_jump < hard_jump / 2, (soft_jump, hard_jump)
+
+
+# --- global offset matching --------------------------------------------------
+
+def test_offsets_use_every_overlap_not_just_the_first():
+    """Three panels in a row, each 0.1 brighter than the last. Chaining against
+    the FIRST overlapping neighbour propagates whatever error that one pair had;
+    solving all overlaps together spreads the disagreement instead."""
+    from nocturne.stacking.mosaic import match_offsets
+
+    a, av = _layer(0.40, (0, 40, 0, 20))
+    b, bv = _layer(0.50, (0, 40, 12, 30))
+    c, cv = _layer(0.60, (0, 40, 22, 40))
+    offsets = match_offsets([a, b, c], [av, bv, cv])
+
+    levelled = [0.40 + offsets[0], 0.50 + offsets[1], 0.60 + offsets[2]]
+    assert max(levelled) - min(levelled) < 1e-3, levelled
+
+
+def test_a_disconnected_panel_keeps_its_own_level():
+    """Nothing to match it to. Inventing an offset would move real signal."""
+    from nocturne.stacking.mosaic import match_offsets
+
+    a, av = _layer(0.40, (0, 40, 0, 15))
+    b, bv = _layer(0.50, (0, 40, 10, 25))
+    lone, lv = _layer(0.90, (0, 40, 32, 40))
+    offsets = match_offsets([a, b, lone], [av, bv, lv])
+    assert offsets[2] == 0.0
+    assert abs((0.40 + offsets[0]) - (0.50 + offsets[1])) < 1e-3
+
+
+def test_matching_is_anchored_so_the_picture_keeps_its_level():
+    """Offsets are relative; without an anchor the whole mosaic could drift up
+    or down as a group, changing the exposure of the finished picture."""
+    from nocturne.stacking.mosaic import match_offsets
+
+    a, av = _layer(0.40, (0, 40, 0, 25))
+    b, bv = _layer(0.60, (0, 40, 15, 40))
+    offsets = match_offsets([a, b], [av, bv])
+    assert offsets[0] == 0.0, "the first panel is the reference"
+
+
+def _ring():
+    """Four panels in a ring, where panel A carries a gradient so its overlap
+    with B implies a different offset than its overlap with D. The measurements
+    cannot all be satisfied — which is the situation a real mosaic is always in,
+    and the only one where solving all overlaps together beats chaining."""
+    layers, valids = [], []
+    specs = [(0.40, (0, 25, 0, 25)), (0.50, (0, 25, 15, 40)),
+             (0.60, (15, 40, 15, 40)), (0.55, (15, 40, 0, 25))]
+    for k, (val, (y0, y1, x0, x1)) in enumerate(specs):
+        d = np.zeros((40, 40), np.float32)
+        v = np.zeros((40, 40), bool)
+        d[y0:y1, x0:x1] = val
+        if k == 0:
+            d[y0:y1, x0:x1] += np.linspace(0, 0.12, x1 - x0, dtype=np.float32)[None, :]
+        v[y0:y1, x0:x1] = True
+        layers.append(d)
+        valids.append(v)
+    return layers, valids
+
+
+def _overlap_residuals(layers, valids, offsets):
+    import itertools
+    out = []
+    for i, j in itertools.combinations(range(len(layers)), 2):
+        both = valids[i] & valids[j]
+        if both.sum() < 50:
+            continue
+        out.append(abs(float(np.median(layers[i][both] + offsets[i])
+                             - np.median(layers[j][both] + offsets[j]))))
+    return out
+
+
+def test_inconsistent_overlaps_are_spread_not_dumped_on_one_seam():
+    """Chaining against the first overlapping neighbour zeroes the seams it uses
+    and dumps the entire disagreement on the ones it does not: measured on this
+    ring, 0.0000 on four overlaps and 0.0375 on two. Solving every overlap
+    together shares the error out, which is what stops one seam being visible."""
+    from nocturne.stacking.mosaic import match_offsets
+
+    layers, valids = _ring()
+    residuals = _overlap_residuals(layers, valids, match_offsets(layers, valids))
+    assert max(residuals) < 0.02, residuals
