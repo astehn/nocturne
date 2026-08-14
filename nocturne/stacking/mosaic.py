@@ -154,19 +154,39 @@ def _astap_solver(astap_path: str):
     so it solves far more reliably, and it is one solve per panel instead of one
     per sub.
     """
-    from ..tools.astap import Astap, solve_with_scale_fallback
+    from ..tools.astap import ASTAP, solve_with_scale_fallback
 
-    astap = Astap(astap_path)
+    astap = ASTAP(astap_path)
 
     def solve(master_path: str):
         img = load_fits(master_path, normalize=False)
-        res, _source = solve_with_scale_fallback(astap, img, img.metadata,
-                                                 img.data.shape[0])
+        try:
+            res, _source = solve_with_scale_fallback(astap, img, img.metadata,
+                                                     img.data.shape[0])
+        except OSError:
+            # a binary that vanished mid-run is one panel's problem, not the
+            # run's; run_mosaic checks up front that it was there to begin with
+            return None
         if not res.solved or res.wcs is None:
             return None
         return res.wcs, img.data.shape[:2]
 
     return solve
+
+
+def check_astap(astap_path: str) -> None:
+    """Fail before any stacking if ASTAP is not usable.
+
+    Mosaic geometry comes from astrometry, so a missing solver is fatal — and
+    the benchmark showed what discovering that late costs: every panel stacked,
+    twenty minutes spent, then an error. One stat call up front instead.
+    """
+    if not (astap_path and os.path.isfile(astap_path)
+            and os.access(astap_path, os.X_OK)):
+        raise ValueError(
+            f"mosaic stacking needs ASTAP to place the panels on the sky, and "
+            f"there is no runnable solver at {astap_path!r} — set the ASTAP "
+            f"path in Settings")
 
 
 def solve_panels(stacks, astap_path, *, solver=None, on_progress=None):
@@ -363,6 +383,9 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     from ..core.export import save_fits          # NOT fits_io — save lives in export
     from ..core.image import AstroImage
     from .coverage import full_coverage_bounds
+
+    if solver is None:
+        check_astap(opts.astap_path)
 
     panels = discover_panels(read_pointings(list(opts.include)), opts.radius_deg)
     if len(panels) < 2:

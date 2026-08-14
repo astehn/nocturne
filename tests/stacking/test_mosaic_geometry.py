@@ -163,3 +163,23 @@ def test_area_outside_the_panel_is_marked_invalid():
                                  _wcs(10.0, 41.0, shape=(300, 300)), (300, 300))
     assert valid.mean() < 0.2
     assert out[~valid].max() == 0.0
+
+
+def test_the_real_astap_solver_can_be_built(tmp_path):
+    """Every other solver test injects a fake, so nothing exercised the real
+    factory — and it shipped with the class named `Astap` when it is `ASTAP`.
+    The benchmark hit that only after stacking every panel.
+
+    This builds the real solver and calls it against a binary that does not
+    exist. The import and construction must succeed; the solve must then fail
+    cleanly rather than raise, because a missing ASTAP is a user situation, not
+    a crash.
+    """
+    from nocturne.stacking.mosaic import _astap_solver
+    from tests.stacking.synthetic import make_star_field, write_color_fits
+
+    solve = _astap_solver(str(tmp_path / "no-such-astap"))
+
+    master = tmp_path / "panel.fits"
+    write_color_fits(master, make_star_field(shape=(80, 80), seed=5), exptime=10.0)
+    assert solve(str(master)) is None

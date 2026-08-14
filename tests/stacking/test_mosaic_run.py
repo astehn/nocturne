@@ -143,3 +143,22 @@ def test_run_mosaic_needs_two_panels_on_the_sky(tmp_path):
 
     with pytest.raises(ValueError, match="two panels"):
         run_mosaic(opts, solver=only_one_solves)
+
+
+def test_a_missing_astap_is_refused_before_any_stacking(tmp_path):
+    """Mosaic geometry comes from astrometry, so no solver is fatal. The
+    benchmark showed what finding out late costs: every panel stacked, twenty
+    minutes spent, then an ImportError. One stat call up front instead — and
+    nothing may be written."""
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    out = tmp_path / "m.fits"
+    opts = MosaicOptions(include=paths, output_path=str(out),
+                         astap_path=str(tmp_path / "no-such-astap"),
+                         method="average", radius_deg=0.02)
+
+    with pytest.raises(ValueError, match="ASTAP"):
+        run_mosaic(opts)                 # no solver injected: the real path
+    assert not out.exists()
