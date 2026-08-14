@@ -44,7 +44,7 @@ def test_frames_without_usable_pointing_are_skipped(tmp_path):
 def test_stack_panels_produces_one_master_per_panel(tmp_path):
     paths = (_panel_subs(tmp_path, "a", 10.0, 41.0, seed=1)
              + _panel_subs(tmp_path, "b", 10.0, 42.5, seed=2))
-    panels = discover_panels(read_pointings(paths), radius_deg=0.56)
+    panels = discover_panels(read_pointings(paths), max_spread_deg=0.56)
     assert len(panels) == 2
 
     stacks, dropped = stack_panels(panels, str(tmp_path), method="average",
@@ -63,7 +63,7 @@ def test_thin_panels_are_dropped_and_named(tmp_path):
     where the frames went."""
     paths = (_panel_subs(tmp_path, "a", 10.0, 41.0, n=5, seed=1)
              + _panel_subs(tmp_path, "stray", 10.0, 44.0, n=2, seed=3))
-    panels = discover_panels(read_pointings(paths), radius_deg=0.56)
+    panels = discover_panels(read_pointings(paths), max_spread_deg=0.56)
 
     stacks, dropped = stack_panels(panels, str(tmp_path), method="average",
                                    kappa=2.5, min_panel_subs=4)
@@ -103,7 +103,7 @@ def test_run_mosaic_assembles_a_canvas_bigger_than_one_panel(tmp_path):
                       # 0.05 deg apart, so the default 0.56 deg radius (sized for
                       # the S30 Pro's 2.24 deg frame) would merge them into one
                       # panel; these synthetic frames are 0.08 deg across
-                      radius_deg=0.02),
+                      max_spread_deg=0.02),
         solver=fake_solver)
 
     assert result.panel_count == 2
@@ -134,7 +134,7 @@ def test_run_mosaic_needs_two_panels_on_the_sky(tmp_path):
     paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
              + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
     opts = MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
-                         astap_path="unused", method="average", radius_deg=0.02)
+                         astap_path="unused", method="average", max_spread_deg=0.02)
 
     def only_one_solves(master_path):
         if "panel_01" in master_path:
@@ -157,8 +157,25 @@ def test_a_missing_astap_is_refused_before_any_stacking(tmp_path):
     out = tmp_path / "m.fits"
     opts = MosaicOptions(include=paths, output_path=str(out),
                          astap_path=str(tmp_path / "no-such-astap"),
-                         method="average", radius_deg=0.02)
+                         method="average", max_spread_deg=0.02)
 
     with pytest.raises(ValueError, match="ASTAP"):
         run_mosaic(opts)                 # no solver injected: the real path
     assert not out.exists()
+
+
+def test_read_pointings_does_not_decode_pixels(tmp_path, monkeypatch):
+    """Grouping needs two header cards. Decoding and debayering every frame to
+    get them cost 191 ms against getheader's 1 ms — 75 seconds of dead air on
+    the real 392-sub set before the first progress line."""
+    import nocturne.stacking.mosaic as mosaic
+
+    paths = _panel_subs(tmp_path, "a", 10.0, 41.0, n=3)
+
+    def explode(*a, **k):
+        raise AssertionError("read_pointings must not load pixel data")
+
+    monkeypatch.setattr(mosaic, "load_fits", explode)
+    pointings = mosaic.read_pointings(paths)
+    assert len(pointings) == 3
+    assert pointings[paths[0]] == pytest.approx((10.0, 41.0))

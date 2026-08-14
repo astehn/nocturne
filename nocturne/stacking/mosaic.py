@@ -35,37 +35,51 @@ def _separation_deg(a: tuple[float, float], b: tuple[float, float]) -> float:
 
 
 def discover_panels(pointings: dict[str, tuple[float, float]],
-                    radius_deg: float) -> list[Panel]:
-    """Group frames into panels by SINGLE LINKAGE — a frame joins a panel if it
-    is within `radius_deg` of ANY member, not of a moving centroid.
+                    max_spread_deg: float) -> list[Panel]:
+    """Group frames into panels by COMPLETE LINKAGE: no panel may span more than
+    `max_spread_deg` from end to end.
 
-    Order independence is the point. A greedy centroid shifts as it absorbs
-    members, so the same frames cluster differently depending on the order they
-    arrive in; two spikes on one 392-sub set produced 22 panels and 29 that way.
+    Single linkage — join if within the threshold of ANY member — was tried
+    first and is unusable here. It chains: on the real 392-sub M 31 set at the
+    0.56 deg threshold it produced TWO panels, one of them holding 390 frames,
+    because a dense grid of overlapping pointings always offers some pair close
+    enough to bridge. Nor is there a threshold that works, since a dithered
+    panel spans 0.16-0.37 deg while neighbouring panels sit 0.73 deg apart, and
+    chaining bites long before that gap. Bounding the DIAMETER instead forbids
+    the bridge outright: two panels 0.73 deg apart cannot form a group of spread
+    0.56. The same data then yields 39 panels of 16-25 subs.
 
-    Header RA/DEC is the mount's COMMANDED pointing, which is useless for dither
-    (99% of consecutive frames report no movement) and exactly right here: the
-    mount's intent is what defines a panel.
+    Order independence still matters — a greedy centroid gave 22 panels and 29
+    on one set depending only on iteration order — so paths are sorted before
+    clustering and every tie is therefore broken the same way whatever order the
+    caller passes.
+
+    Header RA/DEC is the mount's COMMANDED pointing, useless for measuring
+    dither (99% of consecutive frames report no movement) and exactly right
+    here: the mount's intent is what defines a panel.
     """
+    import numpy as np
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import pdist
+
     paths = sorted(pointings)
-    parent = {p: p for p in paths}
+    if len(paths) == 1:
+        ra, dec = pointings[paths[0]]
+        return [Panel(ra, dec, (paths[0],))]
 
-    def find(p: str) -> str:
-        while parent[p] != p:
-            parent[p] = parent[parent[p]]
-            p = parent[p]
-        return p
+    # tangent-plane projection about the median declination, so plain euclidean
+    # distance is the sky separation — the same small-angle assumption
+    # _separation_deg makes, and valid over any field a Seestar can shoot
+    decs = [pointings[p][1] for p in paths]
+    cos_ref = math.cos(math.radians(sum(decs) / len(decs)))
+    xy = np.array([[pointings[p][0] * cos_ref, pointings[p][1]] for p in paths])
 
-    for i, a in enumerate(paths):
-        for b in paths[i + 1:]:
-            if _separation_deg(pointings[a], pointings[b]) <= radius_deg:
-                ra, rb = find(a), find(b)
-                if ra != rb:
-                    parent[rb] = ra
+    labels = fcluster(linkage(pdist(xy), method="complete"),
+                      t=max_spread_deg, criterion="distance")
 
-    groups: dict[str, list[str]] = {}
-    for p in paths:
-        groups.setdefault(find(p), []).append(p)
+    groups: dict[int, list[str]] = {}
+    for p, label in zip(paths, labels):
+        groups.setdefault(int(label), []).append(p)
 
     panels = []
     for members in groups.values():
@@ -94,10 +108,25 @@ def read_pointings(paths: list[str]) -> dict[str, tuple[float, float]]:
     strings on some files; a frame that cannot be placed belongs in no panel,
     and putting it in the wrong one would corrupt a stack rather than lose a
     frame.
+
+    HEADER ONLY. `load_fits` decodes and debayers the whole frame: 191 ms against
+    `getheader`'s 1 ms — 306x, or 75 seconds of dead air on a 392-sub set before
+    the first progress line appears. Grouping needs two cards. `_parse_metadata`
+    is reused rather than re-reading the cards here so the OBJCTRA-before-RA
+    precedence keeps exactly one definition.
     """
+    from astropy.io import fits
+
+    from ..core.fits_io import _parse_metadata
+
     out = {}
     for p in paths:
-        meta = load_fits(p, normalize=False).metadata
+        try:
+            header = fits.getheader(p)
+        except Exception:
+            continue
+        meta = _parse_metadata(header, int(header.get("NAXIS2", 0) or 0),
+                               int(header.get("NAXIS1", 0) or 0))
         try:
             ra, dec = float(meta["ra"]), float(meta["dec"])
         except (KeyError, TypeError, ValueError):
@@ -356,7 +385,7 @@ class MosaicOptions:
     kappa: float = 3.0
     autocrop: bool = True
     min_panel_subs: int = 4
-    radius_deg: float = 0.56
+    max_spread_deg: float = 0.56
 
 
 @dataclass
@@ -387,7 +416,7 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     if solver is None:
         check_astap(opts.astap_path)
 
-    panels = discover_panels(read_pointings(list(opts.include)), opts.radius_deg)
+    panels = discover_panels(read_pointings(list(opts.include)), opts.max_spread_deg)
     if len(panels) < 2:
         raise ValueError(
             "these frames are all one pointing — stack them normally rather "
