@@ -12,7 +12,11 @@ two gnomonic projections, and the error it leaves grows with panel separation
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
+
+from ..core.fits_io import load_fits
+from .stacker import StackOptions, run_stack
 
 
 @dataclass(frozen=True)
@@ -71,3 +75,62 @@ def discover_panels(pointings: dict[str, tuple[float, float]],
                             tuple(sorted(members))))
     # deterministic output order: north first, then east
     return sorted(panels, key=lambda p: (-p.centre_dec, p.centre_ra))
+
+
+@dataclass
+class PanelStack:
+    panel: Panel
+    master_path: str
+    peak: float
+    frame_count: int
+    integration_seconds: float
+
+
+def read_pointings(paths: list[str]) -> dict[str, tuple[float, float]]:
+    """Commanded RA/DEC per frame, in degrees.
+
+    Frames without a numeric pointing are omitted rather than guessed at. The
+    loader prefers OBJCTRA/OBJCTDEC over RA/DEC and those are sexagesimal
+    strings on some files; a frame that cannot be placed belongs in no panel,
+    and putting it in the wrong one would corrupt a stack rather than lose a
+    frame.
+    """
+    out = {}
+    for p in paths:
+        meta = load_fits(p, normalize=False).metadata
+        try:
+            ra, dec = float(meta["ra"]), float(meta["dec"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out[p] = (ra, dec)
+    return out
+
+
+def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
+                 on_progress=None):
+    """Stack each panel with the ORDINARY stacker.
+
+    Grading, sigma-clipping, sky normalization and coverage-aware integration
+    all apply per panel for free — which is why this is orchestration rather
+    than a second stacker. Returns (stacks, dropped), where dropped is
+    (path, reason) for every frame that will not reach the mosaic.
+    """
+    stacks, dropped = [], []
+    for i, panel in enumerate(panels, start=1):
+        if len(panel.paths) < min_panel_subs:
+            for p in panel.paths:
+                dropped.append((p, f"panel has only {len(panel.paths)} subs"))
+            continue
+        out = os.path.join(workdir, f"panel_{i:02d}.fits")
+        if on_progress is not None:
+            on_progress(i, len(panels), f"Step 1 of 3 — stacking panel {i}")
+        try:
+            res = run_stack(StackOptions(method, kappa, list(panel.paths), out))
+        except ValueError as exc:
+            for p in panel.paths:
+                dropped.append((p, f"panel failed to stack: {exc}"))
+            continue
+        stacks.append(PanelStack(panel, res.output_path, res.peak,
+                                 res.frame_count, res.integration_seconds))
+        dropped.extend(res.rejected)
+    return stacks, dropped
