@@ -553,6 +553,7 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
         frame_count = sum(s.frame_count for s in stacks)
         integration = sum(s.integration_seconds for s in stacks)
 
+    top = left = 0
     if opts.autocrop:
         # frac against ONE frame: a mosaic's coverage is 1 nearly everywhere by
         # design, so the stack's "nearly every frame saw this" test would throw
@@ -566,6 +567,15 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     image = AstroImage(np.clip(master, 0.0, 1.0).astype(np.float32),
                        is_linear=True,
                        metadata={"panels": len(solved), "frames": frame_count})
-    save_fits(image, opts.output_path)
+    # The WCS goes INTO THE FILE, not just the result object. Placing panels
+    # astrometrically and then discarding the solution would leave a mosaic that
+    # cannot be annotated, cannot be re-solved cheaply, and cannot even report
+    # its own scale. CRPIX moves with the trim: cropping the canvas shifts the
+    # reference pixel by exactly the pixels removed.
+    cards = dict(wcs.to_header())
+    if opts.autocrop:
+        cards["CRPIX1"] = float(cards.get("CRPIX1", 1.0)) - left
+        cards["CRPIX2"] = float(cards.get("CRPIX2", 1.0)) - top
+    save_fits(image, opts.output_path, header=cards)
     return MosaicResult(image, len(solved), frame_count, integration,
                         dropped, opts.output_path, wcs)

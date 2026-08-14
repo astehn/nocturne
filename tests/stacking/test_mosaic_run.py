@@ -237,3 +237,34 @@ def test_an_existing_panel_master_is_reused_not_restacked(tmp_path):
     assert calls == [], "panel masters already on disk must not be re-stacked"
     assert result.panel_count == 2
     assert result.frame_count == 10       # still reported from the panel groups
+
+
+def test_the_saved_mosaic_carries_its_wcs(tmp_path):
+    """The whole point of placing panels astrometrically is that the result
+    knows where it is. Returning the WCS in MosaicResult but not writing it to
+    the file means a reopened mosaic cannot be annotated — and comparing it
+    against another tool cannot even read its scale."""
+    from astropy.io import fits
+    from astropy.wcs import WCS
+
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    out = tmp_path / "m.fits"
+
+    def fake_solver(master_path):
+        dec = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, dec), (80, 80)
+
+    run_mosaic(MosaicOptions(include=paths, output_path=str(out),
+                             astap_path="unused", method="average",
+                             max_spread_deg=0.02), solver=fake_solver)
+
+    header = fits.getheader(str(out))
+    assert "CRVAL1" in header and "CRVAL2" in header
+    saved = WCS(header, naxis=2)
+    assert saved.has_celestial
+    # and it must describe the sky the panels were actually on
+    assert abs(float(saved.wcs.crval[0]) - 10.0) < 0.5
+    assert abs(float(saved.wcs.crval[1]) - 41.0) < 0.5
