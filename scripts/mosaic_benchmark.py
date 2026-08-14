@@ -49,8 +49,12 @@ def main(subs_dir, out_dir):
     def progress(i, n, label):
         print(f"  {label} ({i}/{n})", flush=True)
 
+    # panels/ persists so a re-run skips the forty minutes of stacking and goes
+    # straight to placement and blending
     res = run_mosaic(MosaicOptions(include=paths, output_path=out,
-                                   astap_path=ASTAP), on_progress=progress)
+                                   astap_path=ASTAP,
+                                   work_dir=os.path.join(out_dir, "panels")),
+                     on_progress=progress)
 
     print(f"\npanels {res.panel_count} | frames {res.frame_count} | "
           f"{res.integration_seconds / 60:.0f} min | dropped {len(res.dropped)}")
