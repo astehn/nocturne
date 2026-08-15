@@ -16,7 +16,16 @@ import os
 from dataclasses import dataclass
 
 from ..core.fits_io import load_fits
+from ..core.tasks import current
 from .stacker import StackOptions, run_stack
+
+
+def _check_cancel() -> None:
+    """A mosaic runs for tens of minutes. Every loop that can take a
+    while has to be interruptible, or Cancel is a lie."""
+    tok = current()
+    if tok is not None:
+        tok.check()
 
 
 @dataclass(frozen=True)
@@ -151,6 +160,7 @@ def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
     """
     stacks, dropped = [], []
     for i, panel in enumerate(panels, start=1):
+        _check_cancel()
         if len(panel.paths) < min_panel_subs:
             for p in panel.paths:
                 dropped.append((p, f"panel has only {len(panel.paths)} subs"))
@@ -240,6 +250,7 @@ def solve_panels(stacks, astap_path, *, solver=None, on_progress=None):
     solver = solver or _astap_solver(astap_path)
     solved, unsolved = [], []
     for i, s in enumerate(stacks, start=1):
+        _check_cancel()
         if on_progress is not None:
             on_progress(i, len(stacks), f"Step 2 of 3 — solving panel {i}")
         got = solver(s.master_path)
@@ -536,6 +547,7 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
         wcs, shape = global_frame(solved)
         layers, valids, weights = [], [], []
         for i, p in enumerate(solved, start=1):
+            _check_cancel()
             if on_progress is not None:
                 on_progress(i, len(solved), f"Step 3 of 3 — placing panel {i}")
             img = load_fits(p.stack.master_path, normalize=False)

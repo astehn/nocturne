@@ -268,3 +268,36 @@ def test_the_saved_mosaic_carries_its_wcs(tmp_path):
     # and it must describe the sky the panels were actually on
     assert abs(float(saved.wcs.crval[0]) - 10.0) < 0.5
     assert abs(float(saved.wcs.crval[1]) - 41.0) < 0.5
+
+
+def test_cancelling_stops_the_mosaic_between_panels(tmp_path):
+    """A mosaic takes about forty minutes on a real set. run_stack checks the
+    token per frame, so cancelling during panel stacking already worked — but
+    the solving and placement loops had no checks at all, so Cancel did nothing
+    for the whole second half of the run."""
+    from nocturne.core.tasks import Cancelled, CancelToken, clear_ambient, set_ambient
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    opts = MosaicOptions(include=paths, output_path=str(tmp_path / "m.fits"),
+                         astap_path="unused", method="average",
+                         max_spread_deg=0.02, work_dir=str(tmp_path / "w"))
+
+    token = CancelToken()
+    solves = []
+
+    def solver(master_path):
+        solves.append(master_path)
+        token.cancel()                     # user hits Cancel during solving
+        return _panel_wcs(10.0, 41.0), (80, 80)
+
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_mosaic(opts, solver=solver)
+    finally:
+        clear_ambient()
+
+    assert len(solves) == 1, "must not carry on solving every remaining panel"
+    assert not (tmp_path / "m.fits").exists()

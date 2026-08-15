@@ -506,8 +506,10 @@ class StackDialog(QDialog):
         self.progress.setMaximum(max(1, n))
         self.progress.setValue(i)
         # The bar refills once per phase; the label carries "Step N of M" so a
-        # restart reads as progress rather than as a hang.
-        self.status.setText(f"{label} — {i}/{n} frames")
+        # restart reads as progress rather than as a hang. A mosaic's phases
+        # count panels, and saying "frames" there is just wrong.
+        noun = "panels" if "panel" in label else "frames"
+        self.status.setText(f"{label} — {i}/{n} {noun}")
 
     @staticmethod
     def _stack_report(result) -> str:

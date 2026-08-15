@@ -652,3 +652,17 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     qtbot.waitUntil(lambda: "opts" in seen, timeout=3000)
     assert seen["opts"].astap_path == str(tmp_path / "astap")
     assert len(seen["opts"].include) == 6
+
+
+def test_progress_counts_panels_not_frames_during_a_mosaic(qtbot, tmp_path):
+    """The mosaic's phases count panels. Reporting "6/38 frames" while placing
+    panel 6 of 38 is simply wrong, and on a forty-minute run the progress line
+    is most of what the user has to go on."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+
+    dlg._on_progress(6, 38, "Step 3 of 3 — placing panel 6")
+    assert "6/38 panels" in dlg.status.text(), dlg.status.text()
+
+    dlg._on_progress(5, 20, "Step 1 of 3 — aligning frames")
+    assert "5/20 frames" in dlg.status.text(), dlg.status.text()
