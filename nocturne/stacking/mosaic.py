@@ -178,7 +178,7 @@ def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
                 float(meta.get("exposure") or 0.0)))
             continue
         if on_progress is not None:
-            on_progress(i, len(panels), f"Step 1 of 3 — stacking panel {i}")
+            on_progress(i, len(panels), f"Step 1 of 5 — stacking panel {i}")
         try:
             res = run_stack(StackOptions(method, kappa, list(panel.paths), out))
         except ValueError as exc:
@@ -252,7 +252,7 @@ def solve_panels(stacks, astap_path, *, solver=None, on_progress=None):
     for i, s in enumerate(stacks, start=1):
         _check_cancel()
         if on_progress is not None:
-            on_progress(i, len(stacks), f"Step 2 of 3 — solving panel {i}")
+            on_progress(i, len(stacks), f"Step 2 of 5 — solving panel {i}")
         got = solver(s.master_path)
         if got is None:
             unsolved.append((s.master_path, "panel could not be solved"))
@@ -346,7 +346,7 @@ def reproject_panel(data, panel_wcs, global_wcs, out_shape):
     return out.astype(np.float32), valid
 
 
-def match_offsets(layers, valids):
+def match_offsets(layers, valids, on_progress=None):
     """A constant per panel, chosen so every overlap agrees as nearly as it can.
 
     Measured in the OVERLAP, never over the whole frame: panels see different
@@ -375,8 +375,26 @@ def match_offsets(layers, valids):
     b = np.zeros(n, np.float64)
     adjacency = {i: set() for i in range(n)}
 
+    # Bounding box per panel. On a real mosaic this is the difference between
+    # minutes and seconds: 34 panels is 561 pairs, each otherwise ANDing two
+    # 28-megapixel masks, and most pairs do not touch at all.
+    boxes = []
+    for v in valids:
+        rows = np.flatnonzero(np.asarray(v).any(axis=1))
+        cols = np.flatnonzero(np.asarray(v).any(axis=0))
+        boxes.append(None if not rows.size or not cols.size
+                     else (rows[0], rows[-1], cols[0], cols[-1]))
+
     for i in range(n):
+        if on_progress is not None:
+            on_progress(i + 1, n)
         for j in range(i + 1, n):
+            bi, bj = boxes[i], boxes[j]
+            if bi is None or bj is None:
+                continue
+            if (bi[1] < bj[0] or bj[1] < bi[0]      # no row overlap
+                    or bi[3] < bj[2] or bj[3] < bi[2]):   # no column overlap
+                continue
             both = valids[i] & valids[j]
             area = int(both.sum())
             if area < 50:
@@ -384,6 +402,11 @@ def match_offsets(layers, valids):
             li, lj = layers[i][both], layers[j][both]
             if li.ndim > 1:
                 li, lj = li.mean(axis=-1), lj.mean(axis=-1)
+            # A median over millions of pixels costs real time and buys no
+            # accuracy over a large sample of them.
+            if li.size > 200_000:
+                step = li.size // 200_000 + 1
+                li, lj = li[::step], lj[::step]
             # want (li + o_i) == (lj + o_j), i.e. o_i - o_j = median(lj) - median(li)
             d = float(np.median(lj) - np.median(li))
             w = float(area)
@@ -549,7 +572,7 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
         for i, p in enumerate(solved, start=1):
             _check_cancel()
             if on_progress is not None:
-                on_progress(i, len(solved), f"Step 3 of 3 — placing panel {i}")
+                on_progress(i, len(solved), f"Step 3 of 5 — placing panel {i}")
             img = load_fits(p.stack.master_path, normalize=False)
             # undo run_stack's per-master peak normalisation: two panels whose
             # brightest star differs are otherwise on different scales, and the
@@ -560,11 +583,20 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
             valids.append(valid)
             weights.append(p.stack.integration_seconds)
 
-        offsets = match_offsets(layers, valids)
+        def blend_progress(i, n):
+            if on_progress is not None:
+                on_progress(i, n, f"Step 4 of 5 — matching panel {i}")
+
+        offsets = match_offsets(layers, valids, on_progress=blend_progress)
         # feather over a tenth of the panel's short side: wide enough to hide a
         # residual step, narrow enough that a panel still dominates its own middle
         panel_short = min(min(p.shape) for p in solved)
-        feather = [feather_weights(v, panel_short / 10.0) for v in valids]
+        feather = []
+        for i, v in enumerate(valids, start=1):
+            _check_cancel()
+            if on_progress is not None:
+                on_progress(i, len(valids), f"Step 5 of 5 — blending panel {i}")
+            feather.append(feather_weights(v, panel_short / 10.0))
         master, coverage = combine_panels(layers, valids, weights, offsets,
                                           weights_map=feather)
         frame_count = sum(s.frame_count for s in stacks)

@@ -216,3 +216,62 @@ def test_inconsistent_overlaps_are_spread_not_dumped_on_one_seam():
     layers, valids = _ring()
     residuals = _overlap_residuals(layers, valids, match_offsets(layers, valids))
     assert max(residuals) < 0.02, residuals
+
+
+def test_matching_reports_progress():
+    """After the last panel is placed there were several minutes of silence
+    while every pair of panels was compared. A bar sitting at 100% with no
+    explanation reads as a hang — the exact thing the stacker's phase numbering
+    exists to prevent."""
+    from nocturne.stacking.mosaic import match_offsets
+
+    layers, valids = [], []
+    for k in range(4):
+        d = np.zeros((40, 40), np.float32)
+        v = np.zeros((40, 40), bool)
+        d[:, k * 8:k * 8 + 20] = 0.4 + k * 0.05
+        v[:, k * 8:k * 8 + 20] = True
+        layers.append(d)
+        valids.append(v)
+
+    seen = []
+    match_offsets(layers, valids, on_progress=lambda i, n: seen.append((i, n)))
+    assert seen, "no progress reported"
+    assert seen[-1][0] == seen[-1][1] == 4
+
+
+class _CountingMask(np.ndarray):
+    """A bool array that records every full-array AND it takes part in."""
+    calls = []
+
+    def __and__(self, other):
+        _CountingMask.calls.append(1)
+        return np.ndarray.__and__(self, other)
+
+
+def test_panels_that_cannot_overlap_are_not_compared_pixel_by_pixel():
+    """561 pairs on a 28-megapixel canvas is minutes of work, and most pairs do
+    not touch at all. A bounding-box test rejects those for the cost of four
+    integers.
+
+    The first version of this test patched np.bitwise_and and passed against the
+    unoptimised code, because `a & b` calls ndarray.__and__ and never reaches
+    the module function. It counts the operator now.
+    """
+    from nocturne.stacking.mosaic import match_offsets
+
+    layers, valids = [], []
+    for k in range(6):
+        d = np.zeros((600, 600), np.float32)
+        v = np.zeros((600, 600), bool).view(_CountingMask)
+        x = k * 100
+        d[:, x:x + 60] = 0.4
+        v[:, x:x + 60] = True
+        layers.append(d)
+        valids.append(v)
+
+    _CountingMask.calls = []
+    match_offsets(layers, valids)
+    # 15 pairs exist; only the 5 adjacent ones can share pixels
+    assert len(_CountingMask.calls) <= 6, (
+        f"{len(_CountingMask.calls)} full-canvas comparisons for 5 real overlaps")
