@@ -90,10 +90,64 @@ def _mtf_midtones(current_med: float, target: float) -> float:
     )
 
 
+def neutral_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
+    """Neutralise the background, then stretch every channel with ONE curve.
+
+    The stretch's job is brightness, not colour, and the per-channel (unlinked)
+    version had an opinion it should not have had. It gives each channel a gain
+    of roughly target/(sigma*MAD), and a Bayer sensor gives green half the noise
+    of red and blue because it has twice as many green photosites — so green was
+    amplified about 1.9x harder than the other channels. On a real M 31 mosaic
+    that turned a 3.6% green DEFICIT in the data into a 4.7% green EXCESS on
+    screen, and in the exported file. Remove Green could not fix it: it runs
+    before the stretch, and the stretch re-normalised each channel afterwards.
+
+    Two jobs were conflated. Setting a black point per channel is right — it is
+    what stops the lowest channel clipping on light-polluted OSC data, and why
+    the unlinked version was chosen. Setting a GAIN per channel is wrong. So the
+    background is levelled additively first, which is what makes the sky neutral
+    and keeps every channel off the floor, and then one shadow point and one
+    midtones value are applied to all three. An additive offset leaves signal
+    ABOVE the background untouched, so the data's own colour survives.
+
+    Measured colour drift from the linear truth, over five real captures across
+    two sites and both filters:
+
+        image                   unlinked   linked   this
+        M 31 mosaic (IRCUT)      +0.124    -0.011   -0.021
+        NGC 7000 (LP)            +0.064    -0.034   -0.039
+        M 8 (LP)                 +0.039    +0.015   +0.011
+        M 31 device mosaic       +0.069    +0.009   +0.003
+        M 45 (Bortle 3/4)        +0.061    +0.002   +0.001
+
+    Plain linked is not the answer either: on M 45 it crushed a whole channel to
+    zero, which is precisely the failure the unlinked version existed to avoid.
+    """
+    d = np.asarray(data, dtype=np.float32)
+    if d.ndim == 2:
+        shadow, m = _stretch_params(d, target)
+        return _apply_params(d, shadow, m)
+
+    meds = []
+    for c in range(d.shape[2]):
+        ch = d[:, :, c]
+        meds.append(float(np.nanmedian(ch)) if np.isfinite(ch).any() else 0.0)
+    ref = float(np.mean(meds))
+    out = np.stack([d[:, :, c] - (meds[c] - ref) for c in range(d.shape[2])], axis=2)
+
+    if not np.isfinite(out).any():
+        return np.clip(np.nan_to_num(out), 0.0, 1.0)
+    mad = float(np.nanmedian(np.abs(out - ref))) or 1e-6
+    shadow = max(0.0, ref - _SIGMA * mad)
+    clipped = np.clip((out - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
+    m = _mtf_midtones(float(np.nanmedian(clipped)) or 1e-6, target)
+    return _apply_params(out, shadow, m)
+
+
 def autostretch(img: AstroImage) -> np.ndarray:
     # Display-only: lift the background to a fixed target for a clear preview.
-    # Per-channel (unlinked) so the background stays neutral and no single channel
-    # is clipped — a common (linked) black point crushes the lowest channel (red
-    # on OSC LP data) and invents a colour cast. Matches the committed stretch, so
-    # the preview equals the exported result at every step.
-    return unlinked_stretch(img.data, _TARGET_BG)
+    # Neutralise-then-link, so the sky is neutral and no channel is crushed
+    # WITHOUT the stretch inventing a colour cast of its own — see
+    # neutral_stretch. Matches the committed stretch, so the preview equals the
+    # exported result at every step.
+    return neutral_stretch(img.data, _TARGET_BG)

@@ -159,3 +159,86 @@ def test_an_all_nan_channel_yields_no_nan_parameters():
         warnings.simplefilter("error", RuntimeWarning)
         out = unlinked_stretch(data)
     assert np.isfinite(out[..., 0]).all() and np.isfinite(out[..., 2]).all()
+
+
+# --- the stretch must not invent colour --------------------------------------
+
+def _bayer_like(seed=0, shape=(200, 200)):
+    """An image shaped like real OSC data: green carries HALF the noise, because
+    a Bayer sensor has twice as many green photosites, while the signal is
+    genuinely RED-dominant. Measured on the M 31 mosaic: sky R 0.01748 G 0.01733
+    B 0.01727, MAD R 0.000150 G 0.000078 B 0.000143."""
+    rng = np.random.default_rng(seed)
+    sky = {"R": 0.01748, "G": 0.01733, "B": 0.01727}
+    mad = {"R": 0.000150, "G": 0.000078, "B": 0.000143}
+    chans = []
+    for c in "RGB":
+        chans.append(rng.normal(sky[c], mad[c] * 1.4826, shape).astype(np.float32))
+    data = np.stack(chans, axis=2)
+    # a red-dominant object in the middle, well above the sky
+    data[80:120, 80:120] += np.array([0.0058, 0.0038, 0.0036], dtype=np.float32)
+    return np.clip(data, 0.0, 1.0)
+
+
+def _signal_ratio(x):
+    """Green against the mean of red and blue, over the bright object."""
+    obj = x[80:120, 80:120]
+    r, g, b = (float(np.median(obj[:, :, i])) for i in range(3))
+    return g / ((r + b) / 2)
+
+
+def test_the_stretch_does_not_invent_a_green_cast():
+    """THE bug, reported 2026-08-15 on a real M 31 mosaic. Green carries half
+    the noise on a Bayer sensor, and a per-channel MTF gives each channel a gain
+    of roughly target/(sigma*MAD) — so green was amplified ~1.9x harder and a
+    3.6% green DEFICIT came out as a 4.7% green EXCESS. Measured on the real
+    file: linear 0.964, after the shipped stretch 1.047."""
+    data = _bayer_like()
+    before = _signal_ratio(data)
+    assert before < 1.0, "fixture must start red-dominant"
+
+    after = _signal_ratio(autostretch(AstroImage(data)))
+    assert after < 1.0, (
+        f"the stretch turned a green deficit ({before:.3f}) into an excess "
+        f"({after:.3f}) — it is inventing colour")
+    assert abs(after - before) < 0.05, (before, after)
+
+
+def test_the_stretch_leaves_the_sky_neutral():
+    """The property unlinked was chosen for, and it must survive the fix: a
+    plain linked stretch left the sky at 0.876 on the real mosaic."""
+    out = autostretch(AstroImage(_bayer_like()))
+    sky = out[:60, :60]
+    meds = [float(np.median(sky[:, :, i])) for i in range(3)]
+    assert max(meds) - min(meds) < 0.02, meds
+
+
+def test_the_stretch_does_not_crush_the_darkest_channel():
+    """The reason a plain linked stretch was rejected: on light-polluted OSC
+    data a common black point drags the lowest channel down. Measured on the
+    real mosaic, linked put the darkest sky channel at 0.152 against 0.255."""
+    out = autostretch(AstroImage(_bayer_like()))
+    sky = out[:60, :60]
+    assert min(float(np.median(sky[:, :, i])) for i in range(3)) > 0.15
+
+
+def test_a_real_colour_cast_is_still_reported_faithfully():
+    """Not inventing colour is not the same as removing it. A genuinely green
+    object must still look green."""
+    data = _bayer_like()
+    data[80:120, 80:120] += np.array([0.0, 0.004, 0.0], dtype=np.float32)
+    assert _signal_ratio(autostretch(AstroImage(data))) > 1.05
+
+
+def test_the_preview_and_the_committed_stretch_agree():
+    """The WYSIWYG rule: what the canvas shows at the Stretch step must be what
+    the file contains. They are two call sites of the same maths, and nothing
+    pinned them together — so a fix applied to one could silently ship a preview
+    that lies about the export."""
+    from nocturne.core.stretch import amount_to_target, apply_stretch
+
+    data = _bayer_like(seed=3)
+    committed = apply_stretch(AstroImage(data.copy()), 0.5).data
+    from nocturne.core.autostretch import neutral_stretch
+    preview = neutral_stretch(data, amount_to_target(0.5))
+    np.testing.assert_allclose(committed, preview, atol=1e-6)

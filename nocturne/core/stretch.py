@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .autostretch import unlinked_stretch
+from .autostretch import neutral_stretch
 from .image import AstroImage
 
 # Slider amount [0, 1] maps to a target background-median brightness. Mid-slider
@@ -20,5 +20,5 @@ def amount_to_target(amount: float) -> float:
 def apply_stretch(img: AstroImage, amount: float) -> AstroImage:
     """Adaptive nonlinear stretch (linear -> display). `amount` in [0, 1] is the
     aggressiveness; the stretch measures the image so faint signal is lifted."""
-    out = unlinked_stretch(img.data, amount_to_target(amount))
+    out = neutral_stretch(img.data, amount_to_target(amount))
     return AstroImage(out.astype(np.float32), is_linear=False, metadata=dict(img.metadata))
