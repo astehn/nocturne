@@ -90,6 +90,7 @@ class StackDialog(QDialog):
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
+        self.mosaic_check.toggled.connect(lambda _on: self._auto_output_path())
         self.crop_check = QCheckBox("Trim the ragged edges")
         self.crop_check.setChecked(True)
         self.strictness_box = QComboBox()
@@ -135,7 +136,6 @@ class StackDialog(QDialog):
 
         crop_row = QHBoxLayout()
         crop_row.addWidget(self.crop_check)
-        crop_row.addWidget(self.mosaic_check)
         crop_row.addWidget(QLabel(
             "Off keeps the full frame — the edges are built from fewer frames, "
             "so they are noisier, but you can always crop later"))
@@ -143,6 +143,20 @@ class StackDialog(QDialog):
         crop_wrap = QWidget()
         crop_wrap.setLayout(crop_row)
         form.addRow("Framing", crop_wrap)
+
+        # Its own row, not squeezed alongside "Trim the ragged edges". Sharing a
+        # line truncated both hints and read as an either/or choice, when they
+        # are independent: a mosaic can be trimmed or not, exactly like a stack.
+        mosaic_row = QHBoxLayout()
+        mosaic_row.addWidget(self.mosaic_check)
+        self.mosaic_hint = QLabel(
+            "Several pointings assembled into one wide image — needs ASTAP, "
+            "and takes considerably longer")
+        self.mosaic_hint.setWordWrap(True)
+        mosaic_row.addWidget(self.mosaic_hint, 1)
+        mosaic_wrap = QWidget()
+        mosaic_wrap.setLayout(mosaic_row)
+        form.addRow("Mosaic", mosaic_wrap)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
 
         self._stack_btn = QPushButton("Stack")
@@ -369,7 +383,8 @@ class StackDialog(QDialog):
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
         target = next((s.target for s in kept if s.target), "")
         name = master_filename(target, len(kept), exposure,
-                               sum(s.exposure for s in kept))
+                               sum(s.exposure for s in kept),
+                               mosaic=self.mosaic_check.isChecked())
         self.output_edit.setText(os.path.join(folder, name))
 
     @staticmethod

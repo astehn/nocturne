@@ -3957,3 +3957,34 @@ def test_a_solve_shows_annotations_even_if_the_previous_ones_were_hidden(qtbot, 
 
     assert win.image_view._annotations.isVisible() is True
     assert win.image_view.annotation_pill.is_shown() is True
+
+
+def test_background_warns_when_the_frame_is_mostly_uncropped_mosaic(qtbot, tmp_path):
+    """Reported 2026-08-15: background extraction gives horrible results on an
+    uncropped mosaic, because GraXpert fits its model over the black wedges.
+    Natural, but the user has no way to know it — especially one who crops at
+    the END of the pipeline, which the tool otherwise permits."""
+    import numpy as np
+    from astropy.io import fits as _fits
+
+    # written into the FILE, not mutated afterwards: Project.current() returns a
+    # fresh copy each call, so an in-memory edit is discarded immediately
+    arr = (np.random.rand(3, 24, 24) * 1000).astype(np.uint16)
+    arr[:, :8, :] = 0                          # a third of the frame never covered
+    path = tmp_path / "wedged.fits"
+    _fits.PrimaryHDU(arr).writeto(str(path))
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(path))
+    win._warn_if_uncovered("background")
+
+    assert "crop" in win._warning.text().lower(), win._warning.text()
+    assert "%" in win._warning.text()
+
+
+def test_no_uncovered_warning_on_an_ordinary_frame(qtbot, tmp_path):
+    """It must stay quiet on the normal case or it trains the user to ignore it."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._warn_if_uncovered("background")
+    assert win._warning.text() == ""

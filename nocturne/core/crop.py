@@ -80,3 +80,22 @@ def auto_crop(img: AstroImage, margin: float = 0.0) -> AstroImage:
         is_linear=img.is_linear,
         metadata=dict(img.metadata),
     )
+
+
+def uncovered_fraction(img: AstroImage) -> float:
+    """How much of the frame is not data at all — the black wedges an uncropped
+    mosaic or a rotated stack leaves behind.
+
+    Exactly zero across every channel, not "dark": real sky is faint but never
+    identically zero, while an uncovered pixel was never written to. A threshold
+    generous enough to catch dark sky would warn on every well-exposed linear
+    image, which would train the user to ignore the warning.
+
+    The number matters because background extraction fits a model over the WHOLE
+    frame. GraXpert has no way to know a black corner is not sky, so it fits the
+    gradient to it and the result is unusable — which is what a user meets if
+    they leave the crop until the end of the pipeline.
+    """
+    data = np.asarray(img.data)
+    empty = (data == 0.0).all(axis=2) if data.ndim == 3 else (data == 0.0)
+    return float(empty.mean())

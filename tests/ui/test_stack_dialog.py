@@ -666,3 +666,66 @@ def test_progress_counts_panels_not_frames_during_a_mosaic(qtbot, tmp_path):
 
     dlg._on_progress(5, 20, "Step 1 of 3 — aligning frames")
     assert "5/20 frames" in dlg.status.text(), dlg.status.text()
+
+
+def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
+    """M31_302x10s_50min.fits does not say the one thing that makes this file
+    different from every other master in the folder."""
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    stats = [_stats2(str(tmp_path / f"s{i}.fit"), 0.9, exposure=10.0) for i in range(4)]
+    for s in stats:
+        s.target = "M 31"
+    dlg._on_graded(stats)
+
+    import os
+    plain = os.path.basename(dlg.output_edit.text())
+    assert "mosaic" not in plain.lower()
+
+    dlg.mosaic_check.setEnabled(True)
+    dlg.mosaic_check.setChecked(True)
+    named = os.path.basename(dlg.output_edit.text())
+    assert "mosaic" in named.lower(), named
+    assert named.startswith("M31_mosaic_"), named
+
+
+def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    stats = [_stats2(str(tmp_path / f"s{i}.fit"), 0.9, exposure=10.0) for i in range(4)]
+    for s in stats:
+        s.target = "M 31"
+    dlg._on_graded(stats)
+    dlg.mosaic_check.setEnabled(True)
+
+    import os
+    dlg.mosaic_check.setChecked(True)
+    dlg.mosaic_check.setChecked(False)
+    assert "mosaic" not in os.path.basename(dlg.output_edit.text()).lower()
+
+
+def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
+    """The mosaic rename must respect the existing rule: once the user edits the
+    path, the dialog stops touching it."""
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg._on_graded([_stats2(str(tmp_path / "s0.fit"), 0.9, exposure=10.0)])
+
+    dlg.output_edit.setText("/tmp/my_name.fits")
+    dlg._mark_output_edited("/tmp/my_name.fits")
+    dlg.mosaic_check.setEnabled(True)
+    dlg.mosaic_check.setChecked(True)
+    assert dlg.output_edit.text() == "/tmp/my_name.fits"

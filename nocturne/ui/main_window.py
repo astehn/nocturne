@@ -567,6 +567,27 @@ class MainWindow(QMainWindow):
         """Routine results & progress → the copyable Output box."""
         self.output_panel.show_line(text)
 
+    def _warn_if_uncovered(self, stage_id: str) -> None:
+        """Say so before background extraction runs over black wedges.
+
+        Reported on a real uncropped mosaic: the result is unusable, and
+        nothing told the user why. GraXpert fits its gradient model over the
+        WHOLE frame and cannot know a black corner is not sky. The pipeline
+        deliberately allows cropping late — Trim exists for exactly that — so a
+        user can reach this step with an uncropped frame quite reasonably.
+        """
+        if stage_id != "background" or self.project is None:
+            return
+        from ..core.crop import uncovered_fraction
+        share = uncovered_fraction(self.project.current())
+        if share <= 0.02:
+            return
+        self._show_warning(
+            f"{share:.0%} of this frame is empty — the ragged edges of a mosaic "
+            f"or a rotated stack. Background extraction fits its model over the "
+            f"whole picture, including those, so it will give a poor result. "
+            f"Crop first, then come back to this step.")
+
     def _show_warning(self, text: str) -> None:
         """Blocking guidance / errors → prominent right-pane label near the buttons."""
         self._warning.setStyleSheet("color: #ff6b6b;")
@@ -1536,6 +1557,7 @@ class MainWindow(QMainWindow):
         }
         target = self._leading_kept(self.project.entries(), preceding)
         self.project.jump_back(target)
+        self._warn_if_uncovered(stage_id)
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
             self._clear_warning()

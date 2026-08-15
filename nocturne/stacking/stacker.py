@@ -73,10 +73,18 @@ def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) ->
     return meta
 
 
-def master_filename(target: str, count: int, exposure_s: float, total_s: float) -> str:
-    """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits.
-    Degrades gracefully as header info is missing; worst case master.fits."""
+def master_filename(target: str, count: int, exposure_s: float, total_s: float,
+                    mosaic: bool = False) -> str:
+    """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits,
+    or M31_mosaic_302x10s_50min.fits. Degrades gracefully as header info is
+    missing; worst case master.fits.
+
+    A mosaic says so in its name: it is the one property that distinguishes it
+    from every other master in the same folder, and a frame count alone does
+    not hint at it."""
     obj = re.sub(r"[^A-Za-z0-9-]+", "", target or "") or "master"
+    if mosaic:
+        obj += "_mosaic"
     if exposure_s > 0:
         frames = f"{count}x{exposure_s:g}s"
     elif count > 0:
