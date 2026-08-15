@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 
 from ..settings import Settings, astap_valid, resolve_binary
 from ..tools.probe import probe_binary
+from . import file_dialogs
 
 
 # Where to download each external tool (shown as a link next to its path row).
@@ -26,7 +27,7 @@ def _path_row(edit: QLineEdit, on_test, result: QLabel,
     line.addWidget(edit)
     browse = QPushButton("Browse…")
     browse.clicked.connect(
-        lambda: edit.setText(QFileDialog.getOpenFileName(row)[0] or edit.text())
+        lambda: edit.setText(file_dialogs.open_file(row) or edit.text())
     )
     test = QPushButton("Test")
     test.clicked.connect(on_test)
@@ -48,7 +49,7 @@ def _folder_row(edit: QLineEdit) -> QWidget:
     line.addWidget(edit)
     browse = QPushButton("Browse…")
     browse.clicked.connect(
-        lambda: edit.setText(QFileDialog.getExistingDirectory(row) or edit.text())
+        lambda: edit.setText(file_dialogs.choose_folder(row) or edit.text())
     )
     line.addWidget(browse)
     return row

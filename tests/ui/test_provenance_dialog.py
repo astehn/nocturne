@@ -27,7 +27,7 @@ def test_copy_calls_clipboard_runner(qtbot, monkeypatch):
 def test_save_writes_raw_markdown(qtbot, monkeypatch, tmp_path):
     saved = []
     d = _dialog(qtbot, monkeypatch, saved, [])
-    monkeypatch.setattr("nocturne.ui.provenance_dialog.QFileDialog.getSaveFileName",
+    monkeypatch.setattr("nocturne.ui.file_dialogs.save_file",
                         staticmethod(lambda *a, **k: (str(tmp_path / "p.md"), "")))
     d._save_btn.click()
     assert saved and saved[0][0] == "# Report\n\nbody"
@@ -45,7 +45,7 @@ def test_save_default_name_uses_source_label(qtbot, monkeypatch, tmp_path):
                          save_runner=lambda t, p: None, clipboard_runner=lambda t: None)
     qtbot.addWidget(d)
     seen = {}
-    monkeypatch.setattr("nocturne.ui.provenance_dialog.QFileDialog.getSaveFileName",
+    monkeypatch.setattr("nocturne.ui.file_dialogs.save_file",
                         staticmethod(lambda parent, caption, default, filt: (seen.update(default=default) or ("", ""))))
     d._save_btn.click()
     assert seen["default"].endswith("ngc7000_stack-provenance.md")

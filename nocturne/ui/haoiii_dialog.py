@@ -14,6 +14,7 @@ from ..settings import start_dir
 from ..stacking.grade import grade_frames
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .worker import run_async
+from . import file_dialogs
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 
@@ -93,7 +94,7 @@ class HaOIIIDialog(QDialog):
 
     # --- browse ---
     def _browse_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Folder of raw subs", start_dir(self._settings.base_dir))
+        path = file_dialogs.choose_folder(self, "Folder of raw subs", start_dir(self._settings.base_dir))
         if path:
             self.folder_edit.setText(path)
             if not self.output_edit.text().strip():
@@ -101,7 +102,7 @@ class HaOIIIDialog(QDialog):
             self.grade()
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getSaveFileName(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
+        path = file_dialogs.save_file(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
         if path:
             self.output_edit.setText(path)
 

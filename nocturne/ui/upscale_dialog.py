@@ -16,6 +16,7 @@ from ..core.upscale import LanczosEngine, upscale_crop, upscale_filename, upscal
 from ..settings import start_dir
 from .image_view import ImageView
 from .worker import run_async
+from . import file_dialogs
 
 SCALE = 2   # fixed in v1; only the engine choice varies
 
@@ -213,7 +214,7 @@ class UpscaleDialog(QDialog):
             return
         default_name = upscale_filename(self._metadata.get("source_label"), self._scale)
         default_path = os.path.join(start_dir(self._settings.base_dir), default_name)
-        path, _ = QFileDialog.getSaveFileName(self, "Export upscaled image", default_path,
+        path, _ = file_dialogs.save_file(self, "Export upscaled image", default_path,
                                               "JPEG (*.jpg);;PNG (*.png);;TIFF (*.tiff)")
         if path:
             self._do_export(path)

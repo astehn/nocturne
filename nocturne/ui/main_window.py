@@ -70,6 +70,7 @@ from .stepper import Stepper
 from .welcome import WelcomeScreen
 from .busy_bar import BusyBar
 from .worker import run_async
+from . import file_dialogs
 
 _ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
@@ -656,7 +657,7 @@ class MainWindow(QMainWindow):
             )
             if resp != QMessageBox.StandardButton.Save:
                 return
-        path, _ = QFileDialog.getSaveFileName(self, "Save Recipe", start_dir(self.settings.base_dir), "Recipe (*.json)")
+        path, _ = file_dialogs.save_file(self, "Save Recipe", start_dir(self.settings.base_dir), "Recipe (*.json)")
         if not path:
             return
         if not path.lower().endswith(".json"):
@@ -1304,7 +1305,7 @@ class MainWindow(QMainWindow):
 
     # --- file / project ---
     def _choose_fits(self) -> None:
-        path = QFileDialog.getOpenFileName(self, "Open FITS", start_dir(self.settings.base_dir), "FITS (*.fit *.fits)")[0]
+        path = file_dialogs.open_file(self, "Open FITS", start_dir(self.settings.base_dir), "FITS (*.fit *.fits)")
         if path:
             self.open_fits(path)
 
@@ -1357,7 +1358,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
-        path, _ = QFileDialog.getSaveFileName(
+        path, _ = file_dialogs.save_file(
             self, "Save project", start, "Nocturne project (*.nocturne)")
         if not path:
             return
@@ -1408,7 +1409,7 @@ class MainWindow(QMainWindow):
             return
         if path is None:
             start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
-            path, _ = QFileDialog.getOpenFileName(
+            path, _ = file_dialogs.open_file(
                 self, "Open Project", start, "Nocturne project (*.nocturne)")
             if not path:
                 return
@@ -2627,7 +2628,7 @@ class MainWindow(QMainWindow):
             if not rcastro_valid(self.settings):
                 self._show_warning("Starless + stars split needs RC-Astro (see Settings).")
                 return
-            folder = QFileDialog.getExistingDirectory(self, "Export starless + stars to…", start_dir(self.settings.base_dir))
+            folder = file_dialogs.choose_folder(self, "Export starless + stars to…", start_dir(self.settings.base_dir))
             if not folder:
                 return
 
@@ -2648,7 +2649,7 @@ class MainWindow(QMainWindow):
             fmt, "TIFF (*.tiff)")
         ext = {"PNG": ".png", "FITS": ".fits"}.get(fmt, ".tiff")
         stem = os.path.splitext(self._source_label or "export")[0]
-        path, _ = QFileDialog.getSaveFileName(
+        path, _ = file_dialogs.save_file(
             self, "Export", os.path.join(start_dir(self.settings.base_dir), stem + ext),
             filters, selected
         )

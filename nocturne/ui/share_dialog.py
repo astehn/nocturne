@@ -19,6 +19,7 @@ from ..core.share import (
 from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
 from ..settings import start_dir
 from .image_view import ImageView
+from . import file_dialogs
 
 
 class ShareDialog(QDialog):
@@ -394,7 +395,7 @@ class ShareDialog(QDialog):
                                        self._aspect_label, self._ext)
         default_path = os.path.join(start_dir(self._settings.base_dir), default_name)
         flt = "PNG (*.png)" if self._ext == "png" else "JPEG (*.jpg)"
-        path, _ = QFileDialog.getSaveFileName(self, "Export share image", default_path, flt)
+        path, _ = file_dialogs.save_file(self, "Export share image", default_path, flt)
         if path:
             self._do_export(path)
 

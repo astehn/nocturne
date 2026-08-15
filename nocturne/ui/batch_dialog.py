@@ -14,6 +14,7 @@ from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..recipe import load_recipe
 from ..settings import start_dir
 from .worker import run_async
+from . import file_dialogs
 
 
 class _ProgressSignals(QObject):
@@ -80,17 +81,17 @@ class BatchDialog(QDialog):
 
     # --- browse handlers ---
     def _browse_recipe(self) -> None:
-        path = QFileDialog.getOpenFileName(self, "Recipe", start_dir(self._settings.base_dir), "Recipe (*.json)")[0]
+        path = file_dialogs.open_file(self, "Recipe", start_dir(self._settings.base_dir), "Recipe (*.json)")
         if path:
             self.recipe_edit.setText(path)
 
     def _browse_input(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Input folder", start_dir(self._settings.base_dir))
+        path = file_dialogs.choose_folder(self, "Input folder", start_dir(self._settings.base_dir))
         if path:
             self.input_edit.setText(path)
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Output folder", start_dir(self._settings.base_dir))
+        path = file_dialogs.choose_folder(self, "Output folder", start_dir(self._settings.base_dir))
         if path:
             self.output_edit.setText(path)
 

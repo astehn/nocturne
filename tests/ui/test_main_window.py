@@ -371,13 +371,13 @@ def test_help_menu_actions_exist(qtbot, tmp_path):
 
 def test_save_recipe_writes_loadable_file(qtbot, tmp_path, monkeypatch):
     from nocturne.recipe import load_recipe
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
     out = str(tmp_path / "r.json")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_recipe()
     assert [s["stage"] for s in load_recipe(out).steps] == ["stretch"]
@@ -393,11 +393,11 @@ def test_open_bad_file_does_not_crash(qtbot, tmp_path):
 
 
 def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     out = tmp_path / "pic.png"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(out), "")))
     calls = []
     monkeypatch.setattr(win, "_run_busy",
@@ -407,7 +407,7 @@ def test_export_single_routes_through_run_busy(qtbot, tmp_path, monkeypatch):
 
 
 def test_export_dialog_opens_on_chosen_format(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     seen = {}
@@ -417,7 +417,7 @@ def test_export_dialog_opens_on_chosen_format(qtbot, tmp_path, monkeypatch):
         seen["selected"] = selected
         return (str(tmp_path / "out.fits"), "")
 
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(fake))
+    monkeypatch.setattr(file_dialogs, "save_file", (fake))
     monkeypatch.setattr(win, "_run_busy",
                         lambda work, on_result, label, err_prefix: None)
     win.export_final("FITS")
@@ -502,12 +502,12 @@ def test_curve_add_contrast_preset_seeds_non_identity(qtbot, tmp_path):
 
 
 def test_export_failure_is_surfaced(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     import nocturne.ui.main_window as mw
     win = _window(qtbot, tmp_path)  # _async_enabled = False -> inline
     win.open_fits(_make_fits(tmp_path))
     out = tmp_path / "pic.png"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(out), "")))
     monkeypatch.setattr(mw, "save_png",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
@@ -629,7 +629,7 @@ def test_show_about_opens_dialog(qtbot, tmp_path):
 
 def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     import numpy as np
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     from nocturne.settings import Settings
     from nocturne.core.image import AstroImage
     import nocturne.ui.main_window as mw
@@ -641,8 +641,7 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     win.settings = Settings(rcastro_path=str(rc_bin))
 
     out = tmp_path / "splitout"; out.mkdir()
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory",
-                        staticmethod(lambda *a, **k: str(out)))
+    monkeypatch.setattr(file_dialogs, "choose_folder", (lambda *a, **k: str(out)))
 
     class _FakeRC:
         def __init__(self, *a, **k):
@@ -658,23 +657,23 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
 
 
 def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     out = tmp_path / "pic.png"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(out), "")))
     win.export_final("PNG")
     assert out.exists()
 
 
 def test_export_clears_stale_error_on_success(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._show_warning("Export failed: disk full")   # stale error from a prior attempt
     out = tmp_path / "pic.png"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(out), "")))
     win.export_final("PNG")
     assert out.exists()
@@ -685,14 +684,14 @@ def test_export_fits_writes_wcs_when_solved(qtbot, tmp_path, monkeypatch):
     from astropy.io import fits
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
     wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
     win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
     out = tmp_path / "out.fits"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(out), "")))
     win.export_final("FITS")
     qtbot.waitUntil(lambda: out.exists(), timeout=3000)
@@ -983,7 +982,8 @@ def test_open_help_shows_requested_topic(qtbot, tmp_path):
 
 
 def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     from nocturne.history.project import Project
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -997,7 +997,7 @@ def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatc
                         staticmethod(lambda *a, **k: (calls.__setitem__("dialog", calls["dialog"] + 1)
                                                       or QMessageBox.StandardButton.Cancel)))
     saved = {"n": 0}
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (saved.__setitem__("n", saved["n"] + 1), ("", ""))[1]))
     win._save_recipe()
     assert calls["dialog"] == 1            # warned about the uncaptured step
@@ -1005,7 +1005,8 @@ def test_save_recipe_warns_and_cancels_on_uncaptured(qtbot, tmp_path, monkeypatc
 
 
 def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     from nocturne.recipe import load_recipe
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -1014,7 +1015,7 @@ def test_save_recipe_warns_then_saves_when_confirmed(qtbot, tmp_path, monkeypatc
     out = str(tmp_path / "r.json")
     monkeypatch.setattr(QMessageBox, "warning",
                         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save))
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_recipe()
     # No forced warning needed: Enhancements taps are captured, not dropped.
@@ -1406,8 +1407,8 @@ def test_open_fits_starts_in_base_dir(qtbot, tmp_path, monkeypatch):
     seen = {}
     def _fake_open(*a, **k):
         seen["dir"] = a[2]          # 3rd positional arg is the start `dir`
-        return ("", "")             # (path, filter) — path "" so nothing opens
-    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", staticmethod(_fake_open))
+        return ""                   # open_file returns a path; "" so nothing opens
+    monkeypatch.setattr(mw.file_dialogs, "open_file", _fake_open)
     win._choose_fits()
     assert seen["dir"] == str(tmp_path)     # opened at the base folder
 
@@ -1419,8 +1420,8 @@ def test_open_fits_blank_base_dir_uses_os_default(qtbot, tmp_path, monkeypatch):
     seen = {}
     def _fake_open(*a, **k):
         seen["dir"] = a[2]          # 3rd positional arg is the start `dir`
-        return ("", "")             # (path, filter) — path "" so nothing opens
-    monkeypatch.setattr(mw.QFileDialog, "getOpenFileName", staticmethod(_fake_open))
+        return ""                   # open_file returns a path; "" so nothing opens
+    monkeypatch.setattr(mw.file_dialogs, "open_file", _fake_open)
     win._choose_fits()
     assert seen["dir"] == ""
 
@@ -2015,10 +2016,10 @@ def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
 
 
 def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (str(tmp_path / "r.json"), "")))
     win._save_recipe()
     assert "Saved recipe" in win.output_panel.toPlainText()
@@ -2450,7 +2451,7 @@ def test_toolbar_tool_icons_all_load(qtbot):
 # --- saved projects: Save/Save As/Open Project/Recent + solve-state persistence ---
 
 def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
@@ -2459,7 +2460,7 @@ def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatc
     data_before = win.project.current().data.copy()
 
     out = str(tmp_path / "proj.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
     assert win._project_path == out
@@ -2477,7 +2478,8 @@ def test_reset_works_on_a_loaded_project(qtbot, tmp_path, monkeypatch):
     """Reset restored from a private _source_base that only open_image ever set.
     _open_project restored _source_label but not that, so Reset raised
     AttributeError on every loaded bundle while working on a fresh FITS."""
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     base = win.project.current().data.copy()
@@ -2485,7 +2487,7 @@ def test_reset_works_on_a_loaded_project(qtbot, tmp_path, monkeypatch):
     win.apply_current(0.5)
 
     out = str(tmp_path / "resettable.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
     win.project = None                       # prove the reload is real
@@ -2519,11 +2521,11 @@ def test_open_project_newer_version_shows_warning(qtbot, tmp_path, monkeypatch):
 
 
 def test_open_project_adds_to_recent(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     out = str(tmp_path / "proj2.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
 
@@ -2537,7 +2539,7 @@ def test_open_project_adds_to_recent(qtbot, tmp_path, monkeypatch):
 
 def test_solve_state_round_trips_through_save_and_open(qtbot, tmp_path, monkeypatch):
     from astropy.wcs import WCS
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     from nocturne.tools.astap import SolveResult
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -2546,7 +2548,7 @@ def test_solve_state_round_trips_through_save_and_open(qtbot, tmp_path, monkeypa
     win._solve = (win._solve_sig(), SolveResult(True, wc, 100.0, 0.0, 3.6), [])
 
     out = str(tmp_path / "solved.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
 
@@ -2562,12 +2564,12 @@ def test_solve_state_round_trips_through_save_and_open(qtbot, tmp_path, monkeypa
 
 
 def test_open_project_without_solve_leaves_unsolved(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win._solve is None
     out = str(tmp_path / "unsolved.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
 
@@ -2592,21 +2594,21 @@ def test_dirty_true_after_edit(qtbot, tmp_path):
 
 
 def test_dirty_false_after_save_project_as(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
     assert win._dirty is True
     out = str(tmp_path / "dirty.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
     assert win._dirty is False
 
 
 def test_window_title_reflects_name_and_dirty_marker(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     assert win.windowTitle() == "Nocturne"   # no image yet
     win.open_fits(_make_fits(tmp_path))
@@ -2616,7 +2618,7 @@ def test_window_title_reflects_name_and_dirty_marker(qtbot, tmp_path, monkeypatc
     win.apply_current(0.5)
     assert "•" in win.windowTitle()
     out = str(tmp_path / "titled.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
     assert "titled" in win.windowTitle()
@@ -2648,13 +2650,14 @@ def test_confirm_save_if_dirty_discard_returns_true(qtbot, tmp_path, monkeypatch
 
 
 def test_confirm_save_if_dirty_save_runs_save_project(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
     out = str(tmp_path / "confirmed.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: QMessageBox.StandardButton.Save)
@@ -2664,12 +2667,13 @@ def test_confirm_save_if_dirty_save_runs_save_project(qtbot, tmp_path, monkeypat
 
 
 def test_confirm_save_if_dirty_save_dialog_cancelled_returns_false(qtbot, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: ("", "")))   # user dismisses Save As
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: QMessageBox.StandardButton.Save)
@@ -2718,13 +2722,14 @@ def test_open_fits_guarded_by_confirm_save_if_dirty(qtbot, tmp_path, monkeypatch
 
 def test_closeevent_dirty_offers_save(qtbot, tmp_path, monkeypatch):
     from PySide6.QtGui import QCloseEvent
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
     out = str(tmp_path / "closesave.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: QMessageBox.StandardButton.Save)
@@ -2757,7 +2762,7 @@ def test_save_project_as_drives_progress_and_clears_dirty(qtbot, tmp_path, monke
     """_async_enabled=False -> _run_busy runs synchronously, so the save still
     round-trips and clears dirty exactly as before; along the way, save_project's
     on_progress must reach the busy panel via _save_signals -> _set_progress."""
-    from PySide6.QtWidgets import QFileDialog
+    from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
@@ -2772,7 +2777,7 @@ def test_save_project_as_drives_progress_and_clears_dirty(qtbot, tmp_path, monke
     monkeypatch.setattr(win, "_set_progress", spy)
 
     out = str(tmp_path / "progress.nocturne")
-    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+    monkeypatch.setattr(file_dialogs, "save_file",
                         staticmethod(lambda *a, **k: (out, "")))
     win._save_project_as()
 

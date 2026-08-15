@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..settings import start_dir
+from . import file_dialogs
 
 
 def _default_save(text: str, path: str) -> None:
@@ -61,7 +62,7 @@ class ProvenanceDialog(QDialog):
         stem = os.path.splitext(os.path.basename(self._source_label))[0] if self._source_label else ""
         name = f"{stem}-provenance.md" if stem else "provenance.md"
         default = os.path.join(start_dir(self._settings.base_dir), name)
-        path, _ = QFileDialog.getSaveFileName(self, "Save provenance report", default,
+        path, _ = file_dialogs.save_file(self, "Save provenance report", default,
                                               "Markdown (*.md);;Text (*.txt)")
         if path:
             self._save_runner(self._report, path)

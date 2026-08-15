@@ -23,6 +23,7 @@ from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
 from .frame_preview import FramePreview
 from .worker import run_async
+from . import file_dialogs
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 # The verdict is the last column and _rejudge rewrites it in place. Named
@@ -170,13 +171,13 @@ class StackDialog(QDialog):
 
     # --- browse ---
     def _browse_folder(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Folder of subs", start_dir(self._settings.base_dir))
+        path = file_dialogs.choose_folder(self, "Folder of subs", start_dir(self._settings.base_dir))
         if path:
             self.folder_edit.setText(path)
             self.grade()
 
     def _browse_output(self) -> None:
-        path = QFileDialog.getSaveFileName(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
+        path = file_dialogs.save_file(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
         if path:
             self.output_edit.setText(path)
             self._output_user_edited = True
