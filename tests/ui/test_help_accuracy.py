@@ -166,3 +166,15 @@ def test_background_help_does_not_tell_you_to_pick_the_weaker_option():
     assert amounts["light"] / amounts["strong"] == pytest.approx(0.5, abs=0.15), \
         "the help says light removes about half as much"
     assert "fills the frame" in b.lower(), "the case Light exists for is unexplained"
+
+
+def test_stacking_help_explains_the_mosaic_option():
+    """Shipped features with no help is a mistake this project has made twice —
+    six features had none at v0.4.2, and Trim and Fullscreen had none at v0.10.0.
+    Guard the mosaic wording against the control that actually exists."""
+    b = _body("stacking")
+    sd = _src("nocturne/ui/stack_dialog.py")
+    assert "Stack as mosaic" in b, "the mosaic checkbox is not explained"
+    assert "Stack as mosaic" in sd, "the checkbox label changed; update the help"
+    assert "ASTAP" in b, "the help must say a mosaic needs ASTAP"
+    assert "astap_valid" in sd, "the ASTAP gate is gone; update the help"
