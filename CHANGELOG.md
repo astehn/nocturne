@@ -2,6 +2,19 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.12.0] — 2026-08-15
+
+Colours that match your data — and dialogs that open where you can see them.
+
+### Changed
+- Green removal now starts at zero. With the stretch fixed, most images have no green to remove — and on a clean image the old default of 0.40 was making the sky slightly greener, because green removal only acts where green exceeds red and blue, which on clean data happens only in the noise. It is still there, at whatever strength you choose, for an image that genuinely needs it.
+- Projects saved before this release will reopen with the corrected colour, not the colour you saved. A saved project replays its steps rather than storing the finished pixels, so it now benefits from the fix.
+
+### Fixed
+- Images no longer come out green. The stretch — the step that lifts faint signal into view — was giving each colour channel its own amount of amplification, based on how noisy that channel was. A colour camera has twice as many green photosites as red or blue, so green arrives smoother, and the stretch mistook "smoother" for "needs more boost", amplifying green about twice as hard as the other channels. On a real Andromeda mosaic this turned a picture whose data was genuinely red-dominant into one that looked distinctly green. Photometric colour calibration reported no problem, correctly — the green was never in your data; it was added afterwards. The stretch now levels the channels first and brightens them all identically, so it changes brightness and never colour. Checked against five captures across a dark site and a light-polluted one, on both filters.
+- The app no longer freezes when a dialog opens. On a second monitor, macOS was placing Open and Save panels on your primary display — and if Nocturne was fullscreen, on a different desktop entirely. The panel had control, so every click elsewhere just beeped and the app looked hung, with no way out but force-quitting and losing the session. File dialogs are now attached to Nocturne's own window, where they cannot wander off to another screen.
+- Annotations no longer switch themselves back on. Hiding the plate-solve overlay and then zooming brought it straight back, because zooming rebuilds the overlay and your choice to hide it was stored on the thing being rebuilt.
+
 ## [0.11.2] — 2026-08-05
 
 A fresh install no longer asks for Xcode before it will open a photograph.
