@@ -243,13 +243,21 @@ def build_panel(
             apply_btn.clicked.connect(lambda: on_apply(_color_option()))
         lay.addWidget(apply_btn)
         # Remove Green (SCNR) with a strength dial + live preview — a knob, not a
-        # hammer. Default gentle so it knocks back a green cast without flattening
-        # real nebula colour; 1.00 == the classic full clamp.
+        # hammer. 1.00 == the classic full clamp.
+        #
+        # Default OFF, not 0.40. SCNR clamps green only where it exceeds the
+        # red/blue average, and on data with no green cast that happens only in
+        # the noise — so it shaves the upper half of green's fluctuations, skews
+        # the distribution the stretch neutralises on, and makes the sky GREENER.
+        # Measured on a real M 31 mosaic: the stretched sky went 0.983 -> 1.003 at
+        # strength 0.40 and -> 1.027 at 1.00, where 1.000 is neutral. A default
+        # that harms the common case is the wrong default.
         lay.addWidget(_desc_label(
-            "Optional: knock back a green cast. Drag for strength (right = stronger); "
-            "you usually won't need much."))
-        rg_slider = ResetSlider(40)          # default 0.40 (gentle)
-        rg_val = QLabel("0.40")
+            "Optional, and usually unnecessary: the stretch already neutralises "
+            "the sky. Reach for this only if a green cast survives it, then drag "
+            "for strength (right = stronger)."))
+        rg_slider = ResetSlider(0)           # off until the user asks for it
+        rg_val = QLabel("0.00")
         rg_row = QHBoxLayout()
         rg_row.addWidget(QLabel("Green removal"))
         rg_row.addWidget(rg_val)

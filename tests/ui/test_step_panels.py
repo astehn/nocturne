@@ -106,7 +106,7 @@ def test_auto_panel_remove_green_slider_previews_live(qtbot):
     changes = []
     w = build_panel(_stage("color"), on_removegreen_change=changes.append)
     qtbot.addWidget(w)
-    assert w.rg_slider.value() == 40          # gentle default (0.40)
+    # the default lives in its own test; this one is about the live preview
     w.rg_slider.setValue(25)
     assert changes[-1] == 0.25                # slider drives the live preview
 
@@ -467,3 +467,16 @@ def test_green_fringe_panel_gated_and_wired(qtbot):
     w.apply_btn.setEnabled(True)
     w.apply_btn.click()
     assert applied.get("s") == 0.60
+
+
+def test_green_removal_starts_at_zero(qtbot):
+    """Measured 2026-08-15 on a real M 31 mosaic with no green in it: at
+    strength 0.40 the stretched sky went from G/mean(R,B) 0.983 to 1.003, and at
+    1.00 to 1.027. SCNR only clamps green where it EXCEEDS the red/blue average,
+    which in clean data happens only in the noise — so it shaves the upper half
+    of green's fluctuations, skews the distribution the stretch neutralises on,
+    and makes the sky greener. A default that harms the common case is the wrong
+    default, and the control is already labelled optional."""
+    w = build_panel(_stage("color"))
+    qtbot.addWidget(w)
+    assert w.rg_slider.value() == 0
