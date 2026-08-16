@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.13.0] — 2026-08-16
+
+Mosaics, and a large master that no longer fights back.
+
+### Added
+- Mosaic stacking. Point Nocturne at a folder of subs covering several pointings, tick Mosaic in the Stack dialog, and it works out which frames belong to which panel from where the telescope was aimed, stacks each panel with the ordinary stacker, plate-solves them, builds one global frame on the sky and assembles a single wide picture — panel edges feathered, every overlap matched at once rather than pair by pair. It needs ASTAP installed and takes considerably longer than an ordinary stack. Built and validated on a 302-sub Andromeda mosaic.
+- See what background extraction removed. After the step runs, tick Show what was removed to put the subtracted gradient on the canvas on its own. Mid-grey is where nothing was taken. A smooth ramp, brighter toward one edge or corner, is sky-glow and means the step did its job; if instead you can see the shape of your object in it, the model mistook your signal for sky and subtracted some of it — undo and try Light. That failure is nearly invisible in the corrected image, where the object merely looks a little flat, and obvious here.
+- The stacking report now tells you the peak level a master was normalised by.
+
+### Changed
+- Large images are around five times quicker to work with. On a 39.5 megapixel mosaic, one move of a slider went from 2.66 seconds to 0.54, and opening that master from 12.4 seconds to 5.6. Nearly two thirds of the stretch was being spent computing four numbers — the median and spread of each channel — by reading every one of 39 million pixels twice. Reading a fixed, evenly spaced sample instead returns the same four numbers to within a ten-millionth. The sample is derived from the image's shape rather than chosen at random, so the same image always produces the same result and two exports can never differ. A test forces the exhaustive path back on and checks that not one pixel moves by more than one step in 256; on the real master the worst case was a quarter of a step.
+
+### Fixed
+- A mosaic master now records what went into it. It was written with its position on the sky in place of the usual stack details, so the frame count, exposure and filter were missing from the finished file.
+- Show what was removed could not be clicked. Whether the control was available was worked out only when the step's panel was first drawn, and applying a step redraws the panel without rebuilding it — so after running background extraction the control stayed greyed out until you navigated to another step and back.
+- The removed gradient was shown in the wrong colours. Background extraction takes out a fixed amount per colour channel as well as a gradient, and scaling all three channels together turned that fixed amount into colour: on a North America Nebula frame the gradient rendered vivid blue-green when it was in fact strongest in red. Each channel is now levelled on its own before the view is brightened, so colour in it once again means one channel genuinely had a stronger gradient than the others.
+- A real gradient could be reported as nothing. The threshold below which the app decides nothing measurable was removed sat just above a gradient measured on a real 54-minute capture, so a slightly flatter sky would have answered “removed nothing measurable” for a correction that plainly changed the picture.
+
 ## [0.12.0] — 2026-08-15
 
 Colours that match your data — and dialogs that open where you can see them.
