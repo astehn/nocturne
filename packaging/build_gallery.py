@@ -181,13 +181,24 @@ def collect(source: pathlib.Path) -> list[dict]:
         if master:
             e.update(facts_from_master(master))
             e["facts_from"] = "master"
-        else:
-            e.update(facts_from_filename(stem))
-            e["facts_from"] = "filename" if e.get("frames") else "none"
+        # A master can match and still say nothing: mosaics written before
+        # 2026-08-16 carry only a WCS, because run_mosaic passed the WCS cards
+        # to save_fits in place of the stack cards. Fall through to the filename
+        # rather than caption the picture with a blank.
+        if not master or not e.get("frames"):
+            from_name = {k: v for k, v in facts_from_filename(stem).items() if v}
+            e.update(from_name)
+            # record where the NUMBERS came from, not where the file came from:
+            # a master can match and still be silent, and calling that "master"
+            # would make the manifest's provenance field a lie
+            e["facts_from"] = "filename" if from_name else "none"
         if not e.get("target"):
             e["target"] = target_from_name(stem)
         if e["facts_from"] != "master":
-            e["needs_review"] = "no master matched; capture data read from the filename"
+            e["needs_review"] = (
+                "master carries no stack cards; capture data read from the filename"
+                if e.get("master") else
+                "no master matched; capture data read from the filename")
         e["common"] = COMMON.get(e["target"], "")
         override = img.with_suffix(".txt")
         if override.exists():
