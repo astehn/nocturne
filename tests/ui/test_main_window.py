@@ -4025,7 +4025,91 @@ def test_the_model_toggle_is_off_until_background_has_run(qtbot, tmp_path):
     have nothing to show."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.goto_stage("background") if hasattr(win, "goto_stage") else None
-    win._rebuild_panel()
-    if hasattr(win._panel, "show_model_check"):
-        assert not win._panel.show_model_check.isEnabled()
+    win._go_to_id("background")
+    assert not win._panel.show_model_check.isEnabled()
+
+
+def test_the_model_toggle_enables_as_soon_as_background_runs(qtbot, tmp_path):
+    """Reported 2026-08-16: the log said "Background (strong) — Δ 4.4%" and the
+    checkbox was still greyed out. Its state was computed only when the panel was
+    BUILT, and applying a step refreshes the panel without rebuilding it — so the
+    control only woke up if you navigated away and back."""
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+    assert not win._panel.show_model_check.isEnabled(), "nothing has run yet"
+
+    base = win.project.current()
+    flattened = AstroImage(np.full_like(base.data, float(np.median(base.data))),
+                           is_linear=True, metadata=dict(base.metadata))
+    from nocturne.ui.main_window import _PrecomputedStep
+    win.project.run_step(_PrecomputedStep("Background", flattened), "strong")
+    win._refresh()
+
+    assert win._panel.show_model_check.isEnabled(), (
+        "the step has run; the control must be usable without navigating away")
+
+
+def test_the_model_shows_only_the_backgrounds_own_effect(qtbot, tmp_path):
+    """The model is "before the step" minus "after the step" — not minus the
+    CURRENT image. Diffing against the current state was right only until a
+    later step ran; from Stretch on it would have drawn the stretch into the
+    "removed gradient" and blamed background extraction for it."""
+    import numpy as np
+    from astropy.io import fits as _fits
+
+    y, x = np.mgrid[0:24, 0:24]
+    path = tmp_path / "grad2.fits"
+    _fits.PrimaryHDU(np.stack([(300 + x * 40).astype(np.uint16)] * 3)).writeto(str(path))
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(path))
+    win._go_to_id("background")
+
+    from nocturne.ui.main_window import _PrecomputedStep
+    base = win.project.current()
+    flat = float(np.median(base.data))
+    flattened = AstroImage(np.full_like(base.data, flat), is_linear=True,
+                           metadata=dict(base.metadata))
+    win.project.run_step(_PrecomputedStep("Background", flattened), "strong")
+
+    from nocturne.core.inspect import background_model
+    expected = background_model(base, flattened)
+
+    # a later step that is not a constant offset — normalising the model would
+    # absorb one of those, so a flat shift proves nothing
+    later = flattened.data + (y[:, :, None] / 24.0).astype(np.float32) * 0.2
+    win.project.run_step(
+        _PrecomputedStep("Stretch", AstroImage(later, is_linear=False,
+                                               metadata=dict(base.metadata))), "0.5")
+    win._refresh()
+
+    win._on_show_background_model(True)
+    shown = win._canvas_img.data
+    assert np.allclose(shown, expected.image.data, atol=1e-5), (
+        "the gradient view picked up a later step's change")
+
+
+def test_the_toggle_cannot_stay_checked_once_the_canvas_is_back_to_normal(qtbot, tmp_path):
+    """A checked box saying "showing what was removed" over the ordinary image
+    is a lie about what is on screen. Undo, redo, Apply and navigation all end in
+    _refresh, and _refresh always repaints the current image."""
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("background")
+
+    from nocturne.ui.main_window import _PrecomputedStep
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Background", AstroImage(
+        np.full_like(base.data, float(np.median(base.data))), is_linear=True,
+        metadata=dict(base.metadata))), "strong")
+    win._refresh()
+    win._panel.show_model_check.setChecked(True)
+    assert win._panel.show_model_check.isChecked()
+
+    win._refresh()
+    assert not win._panel.show_model_check.isChecked(), (
+        "the canvas is showing the current image again")
+    assert np.allclose(win._canvas_img.data, win.project.current().data)

@@ -2789,15 +2789,6 @@ class MainWindow(QMainWindow):
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
                 import_summary(self.project.current().metadata, filename=self._source_label))
-        if stage.id == "background" and hasattr(new_panel, "show_model_check"):
-            # only offer it once the step has run: the model is before-minus-after,
-            # so before it runs there is nothing to subtract
-            ran = loaded and any(e.name == STEP_NAME["background"]
-                                 for e in self.project.entries())
-            new_panel.show_model_check.setEnabled(ran)
-            if ran:
-                new_panel.show_model_check.setToolTip(
-                    "Show the gradient that was subtracted, on its own")
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
@@ -2816,6 +2807,43 @@ class MainWindow(QMainWindow):
             self._setup_saturation()
         self._update_explainer()
 
+    def _sync_background_model_toggle(self) -> None:
+        """Make the "Show what was removed" control agree with the canvas.
+
+        Called from _refresh, which is where apply, undo, redo and navigation all
+        converge and which always repaints the CURRENT image. Two things follow:
+        the control is usable exactly when the step has run — computing that at
+        panel-build time left it greyed out after an apply until you navigated
+        away and back — and it cannot stay checked, because the gradient is no
+        longer what is on screen.
+        """
+        check = getattr(self._panel, "show_model_check", None)
+        if check is None:
+            return
+        ran = self._background_states() is not None
+        check.setEnabled(ran)
+        check.setToolTip("Show the gradient that was subtracted, on its own" if ran
+                         else "Available once background extraction has run")
+        if check.isChecked():
+            was = check.blockSignals(True)   # the canvas is already repainted
+            check.setChecked(False)
+            check.blockSignals(was)
+
+    def _background_states(self):
+        """The image entering the Background step and the image leaving it.
+
+        Bracket the entry itself rather than diffing against `current()`: from
+        Stretch onwards the current image carries later steps too, and the
+        difference would draw them into the "removed gradient" — blaming
+        background extraction for a change it did not make.
+        """
+        if self.project is None:
+            return None
+        for i, (name, _opt) in enumerate(self.project.entries()):
+            if name == STEP_NAME["background"]:
+                return self.project.state_at(i), self.project.state_at(i + 1)
+        return None
+
     def _on_show_background_model(self, checked: bool) -> None:
         """Put the removed gradient on the canvas, or take it off again.
 
@@ -2829,7 +2857,10 @@ class MainWindow(QMainWindow):
             self._refresh()
             return
         from ..core.inspect import background_model
-        model = background_model(self._peek_before(), self.project.current())
+        pair = self._background_states()
+        if pair is None:
+            return
+        model = background_model(*pair)
         if not model.removed_anything:
             self._show_output("Background extraction removed nothing measurable.")
             if hasattr(self._panel, "show_model_check"):
@@ -3032,6 +3063,7 @@ class MainWindow(QMainWindow):
             self._displayed = img
         self._update_info_strip()
         self._update_clipping_line()
+        self._sync_background_model_toggle()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
