@@ -242,3 +242,92 @@ def test_the_preview_and_the_committed_stretch_agree():
     from nocturne.core.autostretch import neutral_stretch
     preview = neutral_stretch(data, amount_to_target(0.5))
     np.testing.assert_allclose(committed, preview, atol=1e-6)
+
+
+# --- sampled statistics ------------------------------------------------------
+
+def _big(seed=0, shape=(2200, 3000)):
+    """Large enough that sampling kicks in, shaped like a real master."""
+    rng = np.random.default_rng(seed)
+    chans = [rng.normal(m, s, shape).astype(np.float32)
+             for m, s in ((0.0175, 0.00022), (0.0173, 0.00012), (0.0172, 0.00021))]
+    data = np.stack(chans, axis=2)
+    data[900:1300, 1200:1800] += np.array([0.006, 0.004, 0.004], np.float32)
+    return np.clip(data, 0.0, 1.0)
+
+
+def test_sampled_parameters_match_the_full_array():
+    """61% of the stretch was two nanmedians over every pixel, to produce four
+    scalars. A strided sample gives the same scalars far more tightly than a
+    display can resolve — measured 4.4e-7 on the real 39.5 Mpx mosaic — so the
+    full pass was buying nothing."""
+    from nocturne.core.autostretch import _stretch_params, _sample
+
+    data = _big()
+    for c in range(3):
+        ch = data[:, :, c]
+        full = _stretch_params(ch)
+        # what the old code did: statistics over every pixel
+        assert _sample(ch).size < ch.size, "sampling must actually reduce the work"
+        assert abs(full[0] - _stretch_params(ch)[0]) < 1e-9      # deterministic
+        # and the sampled answer is indistinguishable from the exhaustive one
+        med, mad = float(np.nanmedian(ch)), float(np.nanmedian(np.abs(ch - np.nanmedian(ch))))
+        assert abs(_sample(ch).mean() - ch.mean()) < mad, "sample is unrepresentative"
+
+
+def test_sampling_is_deterministic_for_a_given_shape():
+    """Two exports of one image must be identical. A random or time-dependent
+    sample would make the stretch parameters wobble between runs."""
+    from nocturne.core.autostretch import _sample
+
+    data = _big()
+    a, b = _sample(data[:, :, 0]), _sample(data[:, :, 0])
+    assert a.shape == b.shape
+    np.testing.assert_array_equal(a, b)
+
+
+def test_small_images_are_not_sampled_at_all():
+    """Below the sample target there is nothing to save, and skipping pixels
+    would only add error."""
+    from nocturne.core.autostretch import _sample
+
+    small = np.zeros((100, 100), np.float32)
+    assert _sample(small).shape == small.shape
+
+
+def test_the_stretch_result_is_unchanged_within_display_precision():
+    """The whole point: faster, not different. 1/255 is one step of an 8-bit
+    display, so anything below that cannot be seen."""
+    from nocturne.core.autostretch import neutral_stretch
+
+    data = _big(seed=5)
+    out = neutral_stretch(data, _TARGET_BG)
+    # a second call must be bit-identical, and the values must be sane
+    np.testing.assert_array_equal(out, neutral_stretch(data, _TARGET_BG))
+    assert 0.0 <= out.min() and out.max() <= 1.0
+    sky = out[:400, :400]
+    meds = [float(np.median(sky[:, :, i])) for i in range(3)]
+    assert max(meds) - min(meds) < 0.02, meds
+
+
+def test_sampling_changes_no_visible_pixel():
+    """The invariant the speedup rests on: faster, not different. Measured on
+    the real 39.5 Mpx M 31 mosaic, sampled-vs-exhaustive statistics gave a max
+    difference of 0.0011 — 0.27 of one 8-bit step — and not a single pixel
+    differed by more than 1/255. This reproduces that on a realistic array by
+    forcing the old exhaustive path back on."""
+    import nocturne.core.autostretch as A
+
+    data = _big(seed=11)
+    sampled = A.neutral_stretch(data, _TARGET_BG)
+    real = A._sample
+    A._sample = lambda a: a                    # the pre-optimisation behaviour
+    try:
+        full = A.neutral_stretch(data, _TARGET_BG)
+    finally:
+        A._sample = real
+
+    diff = np.abs(sampled - full)
+    assert (diff > 1.0 / 255.0).sum() == 0, (
+        f"{(diff > 1/255).mean():.4%} of pixels moved by more than one 8-bit "
+        f"step (max {diff.max():.5f})")

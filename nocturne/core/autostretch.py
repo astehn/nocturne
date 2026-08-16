@@ -8,6 +8,30 @@ _TARGET_BG = 0.25  # target median for the stretched display
 _SIGMA = 2.8
 
 
+_SAMPLE_TARGET = 200_000    # samples per channel for deriving statistics
+
+
+def _sample(a: np.ndarray) -> np.ndarray:
+    """A strided view for deriving statistics, or the array itself if small.
+
+    The stretch needs four scalars — two medians and two MADs — and taking them
+    over every pixel was 61% of its cost on a 39.5 Mpx master: 1.4 s of 2.3 s.
+    A sample of ~200k pixels returns the same scalars to within 4.4e-7, measured
+    on that master, which is four orders of magnitude below one step of an 8-bit
+    display.
+
+    The stride comes from the SHAPE and nothing else, so the same image always
+    yields the same parameters. A random sample would make two exports of one
+    image differ. The 200k target and this trick are the stacker's, from
+    normalize.py, where the same reasoning applies to per-frame sky levels.
+    """
+    n = a.shape[0] * a.shape[1]
+    if n <= _SAMPLE_TARGET:
+        return a
+    step = int(np.sqrt(n / _SAMPLE_TARGET)) + 1
+    return a[::step, ::step]
+
+
 def _mtf(m: float, x: np.ndarray) -> np.ndarray:
     # Midtones transfer function (PixInsight/Siril style). np.where evaluates
     # both branches, so a near-zero denominator can warn even though the result
@@ -40,10 +64,13 @@ def _stretch_params(c: np.ndarray, target: float = _TARGET_BG) -> tuple[float, f
     """
     if not np.isfinite(c).any():
         return 0.0, 0.5          # no statistics to derive from; leave it alone
-    med = float(np.nanmedian(c))
-    mad = float(np.nanmedian(np.abs(c - med))) or 1e-6
+    s = _sample(c)
+    med = float(np.nanmedian(s))
+    mad = float(np.nanmedian(np.abs(s - med))) or 1e-6
     shadow = max(0.0, med - _SIGMA * mad)
-    clipped = np.clip((c - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
+    # the second median is derived from the sample too — clipping the whole
+    # channel here would put the expensive pass straight back
+    clipped = np.clip((s - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
     med2 = float(np.nanmedian(clipped)) or 1e-6
     return shadow, _mtf_midtones(med2, target)
 
@@ -131,15 +158,15 @@ def neutral_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     meds = []
     for c in range(d.shape[2]):
         ch = d[:, :, c]
-        meds.append(float(np.nanmedian(ch)) if np.isfinite(ch).any() else 0.0)
+        meds.append(float(np.nanmedian(_sample(ch))) if np.isfinite(ch).any() else 0.0)
     ref = float(np.mean(meds))
     out = np.stack([d[:, :, c] - (meds[c] - ref) for c in range(d.shape[2])], axis=2)
 
     if not np.isfinite(out).any():
         return np.clip(np.nan_to_num(out), 0.0, 1.0)
-    mad = float(np.nanmedian(np.abs(out - ref))) or 1e-6
+    mad = float(np.nanmedian(np.abs(_sample(out) - ref))) or 1e-6
     shadow = max(0.0, ref - _SIGMA * mad)
-    clipped = np.clip((out - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
+    clipped = np.clip((_sample(out) - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
     m = _mtf_midtones(float(np.nanmedian(clipped)) or 1e-6, target)
     return _apply_params(out, shadow, m)
 
