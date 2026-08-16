@@ -85,3 +85,68 @@ def test_one_nan_pixel_no_longer_blanks_a_displayed_channel():
                   - ref[..., 1][good].astype(int)).max() <= 1, \
         "the 399 good pixels must render as they do without the bad one"
     assert out[5, 5, 1] == 0, "the bad pixel itself reads as no-data black"
+
+
+def test_a_large_histogram_is_a_sample_with_the_same_shape():
+    """0.29 s of every live-preview tick on a 39.5 Mpx master, to draw a widget a
+    few hundred pixels wide. A histogram is a SHAPE, and a few hundred thousand
+    pixels have the same shape as forty million.
+
+    The first version of this test passed against the unsampled code, because
+    "it peaks in the right bin" is true either way. This one checks the total,
+    which is the observable difference."""
+    import numpy as np
+    from nocturne.core.histogram import histogram
+    from nocturne.core.image import AstroImage
+
+    rng = np.random.default_rng(3)
+    big = np.clip(rng.normal(0.3, 0.08, (2400, 3200, 3)), 0, 1).astype(np.float32)
+    h = histogram(AstroImage(big, is_linear=False))
+
+    total = sum(h["r"])
+    assert total < 2400 * 3200, "a large histogram must be sampled, not exhaustive"
+    assert total > 100_000, f"sampled too hard to be a good shape ({total})"
+    peak = int(np.argmax(np.asarray(h["r"], float)))
+    assert 70 <= peak <= 84, f"peaks at bin {peak}, expected ~0.3*255=77"
+
+
+def test_sampling_preserves_the_clipped_fraction():
+    """The clipping readout reports percentages off these counts, so what has to
+    survive sampling is the RATIO, not the absolute number."""
+    import numpy as np
+    from nocturne.core.histogram import histogram
+    from nocturne.core.inspect import clipping_from_histogram
+    from nocturne.core.image import AstroImage
+
+    rng = np.random.default_rng(7)
+    data = np.clip(rng.normal(0.5, 0.2, (2000, 2600, 3)), 0, 1).astype(np.float32)
+    data[:40] = 1.0                     # 2% of rows blown out
+    img = AstroImage(data, is_linear=False)
+
+    # sampled against the SAME function on the full data — the only comparison
+    # that isolates sampling error. Comparing against a hand-computed "truth"
+    # measures the difference between two definitions instead, which is how the
+    # first version of this test managed to fail for the wrong reason.
+    import nocturne.core.histogram as H
+    sampled = clipping_from_histogram(histogram(img))
+    real = H._sample
+    H._sample = lambda a: a
+    try:
+        full = clipping_from_histogram(histogram(img))
+    finally:
+        H._sample = real
+
+    assert abs(sampled.hi_frac - full.hi_frac) < 0.002, (sampled.hi_frac, full.hi_frac)
+    assert abs(sampled.lo_frac - full.lo_frac) < 0.002, (sampled.lo_frac, full.lo_frac)
+
+
+def test_small_histograms_still_count_every_pixel():
+    """Below the sample threshold nothing is skipped, so the counts remain an
+    exact census — several tests and the clipping readout rely on that."""
+    import numpy as np
+    from nocturne.core.histogram import histogram
+    from nocturne.core.image import AstroImage
+
+    data = np.full((40, 40, 3), 0.5, np.float32)
+    h = histogram(AstroImage(data, is_linear=False))
+    assert sum(h["r"]) == 1600

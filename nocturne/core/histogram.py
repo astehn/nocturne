@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from .autostretch import _sample
 from .image import AstroImage, finite_or_zero
 
 
@@ -31,8 +32,20 @@ def _counts_256(channel: np.ndarray) -> np.ndarray:
 
 
 def histogram(img: AstroImage, bins: int = 256) -> dict:
-    """Per-channel pixel counts over [0, 1]. Color -> {'r','g','b'}, mono -> {'l'}."""
-    data = np.clip(img.data, 0.0, 1.0)
+    """Per-channel pixel counts over [0, 1]. Color -> {'r','g','b'}, mono -> {'l'}.
+
+    Large images are SAMPLED. This cost 0.29 s of every live-preview tick on a
+    39.5 Mpx master, to draw a widget a few hundred pixels wide — and a
+    histogram is a shape, which a few hundred thousand pixels describe as well
+    as forty million. The counts are therefore a sample, not a census; the
+    clipping readout is unaffected because it reports FRACTIONS, and a strided
+    sample preserves those.
+
+    Below the threshold nothing is skipped, so small images keep an exact
+    census. The stride comes from the shape alone (see autostretch._sample), so
+    the same image always gives the same histogram.
+    """
+    data = _sample(np.clip(img.data, 0.0, 1.0))
 
     def counts(channel: np.ndarray) -> np.ndarray:
         if bins == 256:
