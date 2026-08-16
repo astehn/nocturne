@@ -151,10 +151,28 @@ def write_sizes(src: pathlib.Path, slug: str) -> dict:
     return out
 
 
+def read_skips(source: pathlib.Path) -> set[str]:
+    """Filenames listed in skip.txt stay out of the gallery.
+
+    The folder is the source of truth, so the way to exclude a picture should
+    not be to delete it — Andreas keeps a cropped and an uncropped M 31, and
+    only one belongs on the site. One line per filename, # for comments.
+    """
+    f = source / "skip.txt"
+    if not f.exists():
+        return set()
+    return {line.strip() for line in f.read_text().splitlines()
+            if line.strip() and not line.startswith("#")}
+
+
 def collect(source: pathlib.Path) -> list[dict]:
     entries = []
+    skips = read_skips(source)
     for img in sorted(source.iterdir()):
         if img.suffix.lower() not in (".jpg", ".jpeg", ".png") or img.name.startswith("."):
+            continue
+        if img.name in skips:
+            print(f"  skipping {img.name} (listed in skip.txt)")
             continue
         stem = img.stem
         slug = re.sub(r"[^a-z0-9]+", "-", stem.lower()).strip("-")

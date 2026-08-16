@@ -301,3 +301,32 @@ def test_cancelling_stops_the_mosaic_between_panels(tmp_path):
 
     assert len(solves) == 1, "must not carry on solving every remaining panel"
     assert not (tmp_path / "m.fits").exists()
+
+
+def test_the_saved_mosaic_records_what_went_into_it(tmp_path):
+    """Found while building the website gallery 2026-08-16: a mosaic master
+    carried its WCS and nothing else — no frame count, no integration, no
+    target, no optics. So it could not caption itself, and a later plate solve
+    would have had no focal length to work from. An ordinary stack writes all of
+    that via master_header; a mosaic was discarding it to make room for the WCS
+    cards, when it needed both."""
+    from astropy.io import fits
+
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+
+    paths = (_panel_subs(tmp_path, "a", 10.0, 41.00, seed=1)
+             + _panel_subs(tmp_path, "b", 10.0, 41.05, seed=2))
+    out = tmp_path / "m.fits"
+
+    def fake_solver(master_path):
+        dec = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, dec), (80, 80)
+
+    run_mosaic(MosaicOptions(include=paths, output_path=str(out),
+                             astap_path="unused", method="average",
+                             max_spread_deg=0.02), solver=fake_solver)
+
+    h = fits.getheader(str(out))
+    assert h.get("STACKCNT") == 10, "the frame count must survive"
+    assert float(h.get("EXPTIME")) == 100.0, "the integration must survive"
+    assert "CRVAL1" in h, "and the WCS must still be there"

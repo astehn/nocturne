@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from ..core.fits_io import load_fits
 from ..core.tasks import current
-from .stacker import StackOptions, run_stack
+from .stacker import StackOptions, master_header, run_stack
 
 
 def _check_cancel() -> None:
@@ -568,12 +568,17 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
                 "needs at least two solved panels")
 
         wcs, shape = global_frame(solved)
-        layers, valids, weights = [], [], []
+        layers, valids, weights, ref_meta = [], [], [], None
         for i, p in enumerate(solved, start=1):
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, len(solved), f"Step 3 of 5 — placing panel {i}")
             img = load_fits(p.stack.master_path, normalize=False)
+            if ref_meta is None:
+                # the first panel stands for the mosaic's optics, target and
+                # filter: every panel came from the same telescope on the same
+                # night, and a master with no focal length cannot be plate-solved
+                ref_meta = dict(img.metadata)
             # undo run_stack's per-master peak normalisation: two panels whose
             # brightest star differs are otherwise on different scales, and the
             # step that produces looks like a background fault
@@ -621,7 +626,12 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     # cannot be annotated, cannot be re-solved cheaply, and cannot even report
     # its own scale. CRPIX moves with the trim: cropping the canvas shifts the
     # reference pixel by exactly the pixels removed.
-    cards = dict(wcs.to_header())
+    # BOTH, not either: a mosaic needs the WCS to know where it is AND the stack
+    # cards to say what it is made of. Writing only the WCS left a master with no
+    # frame count, no integration, no target and no optics — it could not caption
+    # itself and a later solve had no scale to start from.
+    cards = master_header(ref_meta or {}, frame_count, integration)
+    cards.update(dict(wcs.to_header()))
     if opts.autocrop:
         cards["CRPIX1"] = float(cards.get("CRPIX1", 1.0)) - left
         cards["CRPIX2"] = float(cards.get("CRPIX2", 1.0)) - top
