@@ -55,6 +55,7 @@ def build_panel(
     on_fringe_change=None,
     on_fringe_apply=None,
     on_lc_change=None,
+    on_show_model=None,
     on_curve_change=None,
     on_curve_preset=None,
     on_recover_change=None,
@@ -167,6 +168,19 @@ def build_panel(
 
         box.currentTextChanged.connect(_update_enabled)
 
+        # Seeing the model is how you tell a real gradient from the fit eating
+        # the faint outer parts of your object: the first is a smooth ramp, the
+        # second carries the shape of the thing you photographed. In the
+        # corrected image that failure only looks "a bit flat".
+        show_model = None
+        if stage.id == "background":
+            show_model = QCheckBox("Show what was removed")
+            show_model.setEnabled(False)          # nothing to show until it runs
+            show_model.setToolTip(
+                "Available once background extraction has run")
+            if on_show_model is not None:
+                show_model.toggled.connect(on_show_model)
+
         engine_box = None
         if stage.id == "noise_sharpen" and denoise_engine_choices:
             engine_box = QComboBox()
@@ -197,6 +211,9 @@ def build_panel(
         w.option_box = box
         w.apply_btn = apply_btn
         w.disabled_note = note
+        if show_model is not None:
+            lay.addWidget(show_model)
+            w.show_model_check = show_model
 
     elif stage.kind == "enhance":
         lay.addWidget(_desc_label(

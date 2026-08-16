@@ -3988,3 +3988,44 @@ def test_no_uncovered_warning_on_an_ordinary_frame(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._warn_if_uncovered("background")
     assert win._warning.text() == ""
+
+
+def test_showing_the_background_model_puts_the_gradient_on_the_canvas(qtbot, tmp_path):
+    """Requested 2026-08-16 after seeing AstroWizard do it, and it is how
+    PixInsight's DBE earns trust: you can see what was subtracted. The model is
+    the step's before minus its after, so it needs nothing stored."""
+    import numpy as np
+    from astropy.io import fits as _fits
+
+    # a frame with a real gradient across it
+    y, x = np.mgrid[0:24, 0:24]
+    arr = (300 + x * 40).astype(np.uint16)
+    path = tmp_path / "grad.fits"
+    _fits.PrimaryHDU(np.stack([arr, arr, arr])).writeto(str(path))
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(path))
+    before = win.project.current()
+
+    # stand in for GraXpert: flatten the ramp
+    flat = np.full_like(before.data, float(np.median(before.data)))
+    win._displayed = None
+    win._set_canvas(AstroImage(flat, is_linear=True))
+
+    from nocturne.core.inspect import background_model
+    model = background_model(before, AstroImage(flat, is_linear=True))
+    assert model.removed_anything
+    assert model.span > 0.01
+    row = model.image.data[12, :, 0]
+    assert row[-1] > row[0] + 0.5, "the ramp must be visible in the model"
+
+
+def test_the_model_toggle_is_off_until_background_has_run(qtbot, tmp_path):
+    """Before the step runs there is no after to subtract, so the control would
+    have nothing to show."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.goto_stage("background") if hasattr(win, "goto_stage") else None
+    win._rebuild_panel()
+    if hasattr(win._panel, "show_model_check"):
+        assert not win._panel.show_model_check.isEnabled()

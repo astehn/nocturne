@@ -199,3 +199,71 @@ def test_clipping_with_neither_highlight_nor_shadow():
     assert c.hi_frac == 0.0
     assert c.lo_frac == 0.0
     # Channel names may vary based on dict iteration, but fractions must be clear
+
+
+# --- what background extraction removed ---------------------------------------
+
+def _with_gradient(shape=(120, 160), slope=0.06, base=0.05):
+    """A flat sky plus a linear ramp — the thing background extraction exists to
+    remove."""
+    import numpy as np
+    y, x = np.mgrid[0:shape[0], 0:shape[1]]
+    ramp = (x / shape[1]) * slope
+    data = np.full((*shape, 3), base, np.float32) + ramp[..., None].astype(np.float32)
+    return data
+
+
+def test_the_model_shows_the_gradient_that_was_removed():
+    """The point of showing it: a user can see WHAT was taken out, which is how
+    you tell a real gradient from the tool eating your object."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    before = _with_gradient()
+    after = np.full_like(before, 0.05)                 # the ramp removed
+    m = background_model(AstroImage(before), AstroImage(after))
+
+    assert m.removed_anything
+    row = m.image.data[60, :, 0]
+    assert row[-1] > row[0] + 0.5, "the ramp must be visible across the frame"
+    assert 0.0 <= m.image.data.min() and m.image.data.max() <= 1.0
+
+
+def test_nothing_removed_is_reported_not_amplified():
+    """If the step did nothing, the difference is float noise. Normalising that
+    would paint a vivid pattern out of rounding error and look like a bug in the
+    data — so say 'nothing' instead."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    same = _with_gradient()
+    m = background_model(AstroImage(same), AstroImage(same.copy()))
+    assert not m.removed_anything
+    assert float(np.ptp(m.image.data)) == 0.0
+
+
+def test_the_model_reports_how_strong_the_gradient_was():
+    """In the image's own units, so it can be stated rather than guessed at."""
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+    import numpy as np
+
+    before = _with_gradient(slope=0.06)
+    after = np.full_like(before, 0.05)
+    m = background_model(AstroImage(before), AstroImage(after))
+    assert abs(m.span - 0.06) < 0.005, m.span
+
+
+def test_a_mono_image_is_handled():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    y, x = np.mgrid[0:80, 0:80]
+    before = (0.04 + x / 80 * 0.03).astype(np.float32)
+    after = np.full_like(before, 0.04)
+    m = background_model(AstroImage(before), AstroImage(after))
+    assert m.removed_anything
+    assert m.image.data.ndim == 2

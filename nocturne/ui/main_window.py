@@ -2773,6 +2773,7 @@ class MainWindow(QMainWindow):
             on_lc_change=self._on_lc_change,
             on_fringe_change=self._on_fringe_change,
             on_fringe_apply=self._apply_green_fringe,
+            on_show_model=self._on_show_background_model,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
             on_recover_change=self._on_recover_change,
@@ -2788,6 +2789,15 @@ class MainWindow(QMainWindow):
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
                 import_summary(self.project.current().metadata, filename=self._source_label))
+        if stage.id == "background" and hasattr(new_panel, "show_model_check"):
+            # only offer it once the step has run: the model is before-minus-after,
+            # so before it runs there is nothing to subtract
+            ran = loaded and any(e.name == STEP_NAME["background"]
+                                 for e in self.project.entries())
+            new_panel.show_model_check.setEnabled(ran)
+            if ran:
+                new_panel.show_model_check.setToolTip(
+                    "Show the gradient that was subtracted, on its own")
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
@@ -2805,6 +2815,31 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+
+    def _on_show_background_model(self, checked: bool) -> None:
+        """Put the removed gradient on the canvas, or take it off again.
+
+        Nothing is stored for this: the model is the step's before minus its
+        after, and both are already in the project's history, so it is exact by
+        construction and survives undo without any extra bookkeeping.
+        """
+        if self.project is None:
+            return
+        if not checked:
+            self._refresh()
+            return
+        from ..core.inspect import background_model
+        model = background_model(self._peek_before(), self.project.current())
+        if not model.removed_anything:
+            self._show_output("Background extraction removed nothing measurable.")
+            if hasattr(self._panel, "show_model_check"):
+                self._panel.show_model_check.setChecked(False)
+            return
+        self._set_canvas(model.image)
+        self._show_output(
+            f"Showing the removed gradient — {model.span * 100:.1f}% of the "
+            f"image's range. A smooth ramp is sky-glow; if it carries the shape "
+            f"of your object, the fit took signal with it.")
 
     def _on_show_clipping(self, checked: bool) -> None:
         """Toggle the clipped-pixel overlay. Global, not per-step: clipping is

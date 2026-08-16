@@ -178,3 +178,13 @@ def test_stacking_help_explains_the_mosaic_option():
     assert "Stack as mosaic" in sd, "the checkbox label changed; update the help"
     assert "ASTAP" in b, "the help must say a mosaic needs ASTAP"
     assert "astap_valid" in sd, "the ASTAP gate is gone; update the help"
+
+
+def test_background_help_explains_the_model_view():
+    """A control with no help is a control the user must guess at, and this one
+    exists to be interpreted rather than merely pressed."""
+    b = _body("background")
+    sp = _src("nocturne/ui/step_panels.py")
+    assert "Show what was removed" in b, "the model toggle is not explained"
+    assert "Show what was removed" in sp, "the label changed; update the help"
+    assert "shape of your object" in b.lower(), "the failure it detects is not described"

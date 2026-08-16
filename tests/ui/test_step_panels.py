@@ -480,3 +480,26 @@ def test_green_removal_starts_at_zero(qtbot):
     w = build_panel(_stage("color"))
     qtbot.addWidget(w)
     assert w.rg_slider.value() == 0
+
+
+def test_background_panel_offers_to_show_what_was_removed(qtbot):
+    """A background model you cannot see is a step you have to take on trust.
+    Seeing it is how a user tells a real gradient from the fit eating the faint
+    outer parts of their object — which looks merely 'a bit flat' in the
+    corrected image and is obvious in the model."""
+    w = build_panel(_stage("background"))
+    qtbot.addWidget(w)
+    assert hasattr(w, "show_model_check")
+    assert not w.show_model_check.isChecked()
+    assert not w.show_model_check.isEnabled(), "nothing to show until it has run"
+
+
+def test_the_show_model_toggle_reports_state(qtbot):
+    seen = []
+    w = build_panel(_stage("background"), on_show_model=seen.append)
+    qtbot.addWidget(w)
+    w.show_model_check.setEnabled(True)
+    w.show_model_check.setChecked(True)
+    assert seen == [True]
+    w.show_model_check.setChecked(False)
+    assert seen == [True, False]

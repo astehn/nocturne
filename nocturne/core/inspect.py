@@ -90,3 +90,51 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     shadow = (r == 0) | (g == 0) | (b == 0)
     highlight = (r == 255) | (g == 255) | (b == 255)
     return shadow, highlight
+
+
+class BackgroundModel(NamedTuple):
+    image: "AstroImage"      # the removed gradient, normalised for viewing
+    span: float              # its strength in the image's own units
+    removed_anything: bool
+
+
+def background_model(before: "AstroImage", after: "AstroImage") -> BackgroundModel:
+    """What background extraction took out, as a picture you can look at.
+
+    The model is simply `before - after`, so it is exact by construction rather
+    than a second guess at what the tool did — and it needs nothing stored,
+    because both images are already in the project's history.
+
+    Seeing it is the point. A background model that is a smooth ramp is the tool
+    working; one that carries the SHAPE OF YOUR OBJECT means the fit mistook
+    faint outer signal for sky and subtracted the thing you came for. That is
+    invisible in the corrected image, where the object merely looks a little
+    flat, and obvious here.
+
+    Normalised to 0..1 for display only, because a gradient is a few percent of
+    the range and would otherwise be a uniform dark rectangle. `span` reports the
+    real strength in the image's own units, so the number is not lost in the
+    stretch.
+
+    A difference of nothing stays a difference of nothing: normalising float
+    rounding error would paint a vivid pattern out of noise and read as a fault
+    in the data. Below the threshold the image is returned flat and
+    `removed_anything` is False.
+    """
+    import numpy as np
+
+    from .image import AstroImage
+
+    diff = np.asarray(before.data, np.float32) - np.asarray(after.data, np.float32)
+    lo, hi = float(diff.min()), float(diff.max())
+    span = hi - lo
+    # 1/1000 of the range is far below anything a stretch could show, and well
+    # above float32 error on values of order 0.01
+    if span < 1e-3:
+        return BackgroundModel(
+            AstroImage(np.zeros_like(diff), is_linear=False,
+                       metadata=dict(before.metadata)), span, False)
+    norm = (diff - lo) / span
+    return BackgroundModel(
+        AstroImage(norm.astype(np.float32), is_linear=False,
+                   metadata=dict(before.metadata)), span, True)
