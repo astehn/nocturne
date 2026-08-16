@@ -111,14 +111,26 @@ def background_model(before: "AstroImage", after: "AstroImage") -> BackgroundMod
     invisible in the corrected image, where the object merely looks a little
     flat, and obvious here.
 
-    Normalised to 0..1 for display only, because a gradient is a few percent of
+    Brightened for display only, because a gradient is a fraction of a percent of
     the range and would otherwise be a uniform dark rectangle. `span` reports the
-    real strength in the image's own units, so the number is not lost in the
-    stretch.
+    real strength in the image's own units, so the number is not lost.
+
+    **Mid-grey means nothing was removed there.** Each channel is centred on its
+    own median first, because extraction takes out a per-channel PEDESTAL as well
+    as a ramp, and a pedestal is a level, not a gradient. Sharing one lo/hi across
+    the channels turned that offset into colour: on NGC7000_163x20s_54min the
+    per-channel medians were R -0.000428, G +0.000179, B +0.000222 against a span
+    of 0.00106, so red landed 0.57 below the others and the model rendered vivid
+    cyan — while the actual ramp was STRONGEST IN RED (0.000419 / 0.000274 /
+    0.000376). The picture said the opposite of the measurement.
+
+    Amplitude is then scaled by a single shared half-range, not per channel, so a
+    genuinely stronger gradient in one channel still reads as colour. Sky-glow is
+    not grey and the view should not pretend it is.
 
     A difference of nothing stays a difference of nothing: normalising float
-    rounding error would paint a vivid pattern out of noise and read as a fault
-    in the data. Below the threshold the image is returned flat and
+    rounding error would paint a vivid pattern out of noise and read as a fault in
+    the data. Below the threshold the image is returned flat and
     `removed_anything` is False.
     """
     import numpy as np
@@ -126,15 +138,19 @@ def background_model(before: "AstroImage", after: "AstroImage") -> BackgroundMod
     from .image import AstroImage
 
     diff = np.asarray(before.data, np.float32) - np.asarray(after.data, np.float32)
-    lo, hi = float(diff.min()), float(diff.max())
-    span = hi - lo
-    # 1/1000 of the range is far below anything a stretch could show, and well
-    # above float32 error on values of order 0.01
-    if span < 1e-3:
+    span = float(diff.max() - diff.min())
+    # float32 error on values of order 0.01 is ~1e-7, so 1e-6 is comfortably
+    # above noise. The previous 1e-3 floor was six percent BELOW a real
+    # measurement — NGC 7000's gradient spanned 0.00106 for a 5.2% correction —
+    # so a slightly flatter sky would have been called nothing.
+    if span < 1e-6:
         return BackgroundModel(
             AstroImage(np.zeros_like(diff), is_linear=False,
                        metadata=dict(before.metadata)), span, False)
-    norm = (diff - lo) / span
+    centred = diff - np.median(diff.reshape(-1, diff.shape[-1]), axis=0) \
+        if diff.ndim == 3 else diff - np.median(diff)
+    half = float(np.abs(centred).max()) or 1.0
+    norm = np.clip(centred / (2.0 * half) + 0.5, 0.0, 1.0)
     return BackgroundModel(
         AstroImage(norm.astype(np.float32), is_linear=False,
                    metadata=dict(before.metadata)), span, True)

@@ -267,3 +267,70 @@ def test_a_mono_image_is_handled():
     m = background_model(AstroImage(before), AstroImage(after))
     assert m.removed_anything
     assert m.image.data.ndim == 2
+
+
+def _ramp(nx=40, ny=30):
+    import numpy as np
+    x = np.linspace(0.0, 1.0, nx, dtype=np.float32)
+    return np.tile(x, (ny, 1))
+
+
+def test_a_per_channel_pedestal_does_not_tint_the_model():
+    """Measured on NGC7000_163x20s_54min (2026-08-16): background extraction
+    removed a DIFFERENT CONSTANT from each channel — the diff's per-channel
+    medians were R -0.000428, G +0.000179, B +0.000222 against a total span of
+    0.00106. Normalising all three channels through one lo/hi turned that offset
+    into more than half the output range and painted the model vivid cyan, while
+    the actual ramp was strongest in RED (spans 0.000419 / 0.000274 / 0.000376).
+    A pedestal is a level, not a gradient; it must not become colour."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    ramp = _ramp() * 0.001
+    before = np.stack([ramp + 0.02] * 3, axis=-1)
+    # identical ramp in every channel, but a different constant per channel
+    after = before - np.stack([ramp - 0.0004, ramp + 0.0002, ramp + 0.0002], axis=-1)
+
+    m = background_model(AstroImage(before, is_linear=True),
+                         AstroImage(after, is_linear=True))
+    d = m.image.data
+    assert np.allclose(d[..., 0], d[..., 1], atol=1e-3), "red drifted from green"
+    assert np.allclose(d[..., 1], d[..., 2], atol=1e-3), "blue drifted from green"
+
+
+def test_a_channel_with_a_stronger_ramp_still_shows_as_colour():
+    """The pedestal must go, but a genuinely stronger gradient in one channel is
+    real and worth seeing — sky-glow is not grey. Removing the offset must not
+    flatten this too."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    ramp = _ramp() * 0.001
+    before = np.stack([ramp + 0.02] * 3, axis=-1)
+    after = before - np.stack([ramp * 2.0, ramp, ramp], axis=-1)   # red twice as steep
+
+    d = background_model(AstroImage(before, is_linear=True),
+                         AstroImage(after, is_linear=True)).image.data
+    red_swing = d[..., 0].max() - d[..., 0].min()
+    green_swing = d[..., 1].max() - d[..., 1].min()
+    assert red_swing > green_swing * 1.8, "the stronger red ramp was flattened away"
+
+
+def test_a_real_gradient_is_not_dismissed_as_nothing():
+    """NGC 7000, 54 min: the removed gradient spanned 0.00106 and the step changed
+    the image 5.2%. The old floor was 1e-3 — six percent below that measurement,
+    so a slightly flatter sky would have answered "removed nothing measurable"
+    for a plainly visible correction."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.inspect import background_model
+
+    ramp = _ramp() * 0.0005          # half the NGC 7000 gradient, still real
+    before = np.stack([ramp + 0.019] * 3, axis=-1)
+    after = before - np.stack([ramp] * 3, axis=-1)
+
+    m = background_model(AstroImage(before, is_linear=True),
+                         AstroImage(after, is_linear=True))
+    assert m.removed_anything, f"span {m.span} dismissed as nothing"

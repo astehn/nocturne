@@ -2868,9 +2868,10 @@ class MainWindow(QMainWindow):
             return
         self._set_canvas(model.image)
         self._show_output(
-            f"Showing the removed gradient — {model.span * 100:.1f}% of the "
-            f"image's range. A smooth ramp is sky-glow; if it carries the shape "
-            f"of your object, the fit took signal with it.")
+            f"Showing the removed gradient — {model.span * 100:.2f}% of the "
+            f"image's range. Mid-grey is where nothing was taken. A smooth ramp "
+            f"is sky-glow; if it carries the shape of your object, the fit took "
+            f"signal with it.")
 
     def _on_show_clipping(self, checked: bool) -> None:
         """Toggle the clipped-pixel overlay. Global, not per-step: clipping is
