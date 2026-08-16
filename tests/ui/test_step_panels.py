@@ -387,11 +387,17 @@ def test_process_panel_preselects_default_option(qapp):
     assert w.option_box.currentText() == "light"   # not "off"
 
 
-def test_background_panel_explains_gradient(qapp):
+def test_background_panel_explains_gradient_and_how_to_check_it(qapp):
+    """The panel must point at the control that answers "did that go well?".
+    It used to send you to Before/After, which shows the corrected image but not
+    what was taken out of it — the case worth catching (the fit eating your
+    object) looks merely a little flat there and is obvious in the model."""
     from PySide6.QtWidgets import QLabel
     w = build_panel(_stage("background"))
     texts = " ".join(l.text().lower() for l in w.findChildren(QLabel))
-    assert "gradient" in texts and "before/after" in texts
+    assert "gradient" in texts
+    assert "show what was removed" in texts, "the check is not named"
+    assert "mid-grey" in texts, "mid-grey is the reading key; without it the view is unreadable"
 
 
 def test_curves_panel_has_editor_and_presets(qtbot):

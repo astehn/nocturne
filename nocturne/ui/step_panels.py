@@ -145,7 +145,9 @@ def build_panel(
             lay.addWidget(_desc_label(
                 "A gradient is uneven sky-glow — brighter toward one edge or corner. "
                 "Light suits most images; use Strong when it's heavy. After applying, "
-                "use Before/After (toolbar) to check the result."))
+                "tick Show what was removed: mid-grey is where nothing was taken, and "
+                "a smooth ramp is sky-glow. If it carries the shape of your object, "
+                "the fit took signal with it — undo and try Light."))
         box = QComboBox()
         box.addItems(_PROCESS_OPTIONS[stage.id])
         if option_default:
