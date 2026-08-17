@@ -272,3 +272,50 @@ def test_save_project_cancelled_leaves_existing_bundle_intact(tmp_path):
     leftover = [p for p in tmp_path.iterdir() if p.name != "existing.nocturne" and "cache" not in p.name]
     assert leftover == []
 
+
+
+def test_load_project_reports_progress_per_step(tmp_path):
+    """Opening a 2.05 GB project takes long enough that the window reads as
+    hung (reported 2026-08-17). Saving already reports progress; loading is the
+    slow half and reported nothing, so the busy panel had no fraction to show.
+
+    The loop over the manifest's steps is a natural denominator — this is a real
+    fraction, not a spinner.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.history.project import Project
+    from nocturne.history.project_store import load_project, save_project
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    base = AstroImage(np.full((8, 8, 3), 0.2, np.float32), is_linear=False)
+    project = Project(base, str(cache))
+    for i in range(3):
+        project.record_precomputed(
+            f"Step {i}", "",
+            AstroImage(np.full((8, 8, 3), 0.3 + i * 0.1, np.float32), is_linear=False))
+
+    out = str(tmp_path / "p.nocturne")
+    save_project(project, out)
+
+    seen = []
+    loaded = load_project(out, str(tmp_path / "cache2"),
+                          on_progress=lambda d, t: seen.append((d, t)))
+    assert loaded.project is not None
+    assert seen, "no progress was reported"
+    assert seen[-1][0] == seen[-1][1], f"never reached completion: {seen[-1]}"
+    assert seen[-1][1] == 3, f"total should be the step count, got {seen[-1][1]}"
+    assert [d for d, _ in seen] == sorted(d for d, _ in seen), "progress went backwards"
+
+
+def test_load_project_still_works_without_a_progress_callback(tmp_path):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.history.project import Project
+    from nocturne.history.project_store import load_project, save_project
+    cache = tmp_path / "c"; cache.mkdir()
+    project = Project(AstroImage(np.full((4, 4, 3), 0.2, np.float32), is_linear=False), str(cache))
+    out = str(tmp_path / "q.nocturne")
+    save_project(project, out)
+    assert load_project(out, str(tmp_path / "c2")).project is not None

@@ -2510,7 +2510,7 @@ def test_open_project_newer_version_shows_warning(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
 
-    def fake_load(path, cache_dir):
+    def fake_load(path, cache_dir, **kw):     # the real one gained on_progress
         raise mw.NewerVersionError("bundle is newer than this build supports")
 
     monkeypatch.setattr(mw, "load_project", fake_load)
@@ -4226,3 +4226,104 @@ def test_open_project_from_the_toolbar_handles_cancel(qtbot, tmp_path, monkeypat
     win._open_project()
     assert win._warning.text() == "", "cancelling warned the user"
     assert np.array_equal(win.project.current().data, before), "the image changed"
+
+
+def _saved_project(win, tmp_path, name="p.nocturne"):
+    import nocturne.ui.main_window as mw
+    out = str(tmp_path / name)
+    orig = mw.file_dialogs.save_file
+    mw.file_dialogs.save_file = staticmethod(lambda *a, **k: (out, ""))
+    try:
+        win._save_project_as()
+    finally:
+        mw.file_dialogs.save_file = orig
+    return out
+
+
+def test_opening_a_project_runs_off_the_ui_thread(qtbot, tmp_path):
+    """Reported 2026-08-17 on a 2.05 GB project: opening takes a considerable
+    time and the window simply sits there, which reads as a hang — the same
+    symptom as the dialog bug that once cost a session. Saving already runs off
+    the interface thread with a busy panel; loading, the slower half, did not."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = _saved_project(win, tmp_path)
+
+    win2 = _window(qtbot, tmp_path)
+    submitted = []
+    win2._pool = type("P", (), {"start": lambda _s, w: submitted.append(w)})()
+    win2._async_enabled = True
+    win2._open_project(out)
+    assert submitted, "the load ran on the UI thread"
+    assert win2._busy, "no busy indication while it loads"
+
+
+def test_opening_a_project_shows_a_real_progress_fraction(qtbot, tmp_path):
+    """Not a spinner: load_project replays the history step by step, so the
+    denominator is genuine."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    out = _saved_project(win, tmp_path, "prog.nocturne")
+
+    win2 = _window(qtbot, tmp_path)
+    seen = []
+    win2._load_signals.progress.connect(lambda d, t: seen.append((d, t)))
+    win2._open_project(out)
+    qtbot.waitUntil(lambda: win2.project is not None and not win2._busy, timeout=10000)
+    assert seen, "no progress was reported to the window"
+    assert seen[-1][0] == seen[-1][1]
+
+
+def test_a_failed_load_leaves_the_current_image_alone(qtbot, tmp_path):
+    """Every early return had to leave an in-flight op untouched, and the same
+    must hold now the failure arrives from a worker: a corrupt bundle must not
+    take your open image with it."""
+    import numpy as np
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.current().data.copy()
+    bad = tmp_path / "bad.nocturne"
+    bad.write_bytes(b"not a zip at all")
+    win._open_project(str(bad))
+    qtbot.waitUntil(lambda: not win._busy, timeout=10000)
+    assert win.project is not None, "the workspace was torn down by a failed load"
+    assert np.array_equal(win.project.current().data, before)
+    assert win._warning.text(), "the failure was silent"
+
+
+def test_a_stale_load_does_not_overwrite_a_newer_one(qtbot, tmp_path):
+    """A hazard the async move INTRODUCES. Loading synchronously froze the UI, so
+    a second Open was impossible; off-thread it is not, and two loads can be in
+    flight at once.
+
+    The generation guard in _run_busy does NOT cover it, and the direction
+    matters — a first attempt at this test ran the loads in the wrong order and
+    passed with the guard removed. If the LATE load arrives after another has
+    committed, the generation guard drops it correctly. The unprotected case is
+    the loads finishing IN START ORDER, which is the normal case: the first
+    commits and bumps the generation, so the second is then discarded as stale
+    and the user is left looking at the project they did not ask for last.
+
+    Interleaved explicitly because _run_busy runs synchronously in tests and the
+    two loads would otherwise never overlap at all.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    first = _saved_project(win, tmp_path, "first.nocturne")
+    second = _saved_project(win, tmp_path, "second.nocturne")
+
+    win2 = _window(qtbot, tmp_path)
+    workers = []
+    win2._pool = type("P", (), {"start": lambda _s, w: workers.append(w)})()
+    win2._async_enabled = True
+    win2._open_project(first)
+    win2._open_project(second)          # the user changes their mind mid-load
+    assert len(workers) == 2, "both loads should be in flight"
+
+    workers[0].run()                    # they finish in START order, the normal case
+    workers[1].run()
+    assert win2._project_path == second, (
+        f"landed on {win2._project_path!r} — the first load won and the user's "
+        f"most recent choice was discarded")

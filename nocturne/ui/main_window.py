@@ -117,6 +117,16 @@ class _AutoEnhanceSignals(QObject):
     progress = Signal(int, int, str)
 
 
+_NEWER_VERSION = object()   # sentinel: the bundle needs a newer build
+
+
+class _LoadSignals(QObject):
+    """Marshals load_project's on_progress callback back onto the GUI thread —
+    mirrors _SaveSignals. Loading is the SLOWER half of the pair and reported
+    nothing, so a large project looked like a hang."""
+    progress = Signal(int, int)
+
+
 class _SaveSignals(QObject):
     """Marshals save_project's on_progress callback (fired from the worker
     thread when async is enabled) back onto the GUI thread via a queued
@@ -169,6 +179,13 @@ class MainWindow(QMainWindow):
         self._save_signals = _SaveSignals()
         self._save_signals.progress.connect(
             lambda d, t: self._set_progress("Saving project", d, t))
+        self._load_signals = _LoadSignals()
+        self._load_signals.progress.connect(
+            lambda d, t: self._set_progress("Opening project", d, t))
+        self._load_project_fn = None    # override to inject; None = the real one,
+                                        # resolved at CALL time so monkeypatching
+                                        # the module still works
+        self._open_seq = 0                     # see _open_project's supersede guard
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -1470,17 +1487,41 @@ class MainWindow(QMainWindow):
                 self, "Open Project", start, "Nocturne project (*.nocturne)")
             if not path:
                 return
-        try:
-            loaded = load_project(path, self._cache_dir)
-        except NewerVersionError:
-            self._show_warning(
-                "This project was made by a newer version of Nocturne — update the app to open it.")
-            return
-        except Exception as exc:
-            self._show_warning(f"Could not open project: {exc}")
-            return
-        # Only now — every early return above (dialog cancelled, newer-version,
-        # load failed) must leave an in-flight op running and untouched.
+        # Load OFF the UI thread. A 2 GB project takes long enough that a frozen
+        # window is indistinguishable from a crash — the same symptom as the
+        # dialog bug that once cost a session. Saving already worked this way;
+        # loading, the slower half, did not.
+        cache_dir = self._cache_dir          # captured HERE, on the UI thread: the
+        load = self._load_project_fn or load_project   # worker reads self at an
+        self._open_seq += 1                  # moment, by which time it may have moved
+        seq = self._open_seq
+
+        def work():
+            try:
+                return load(path, cache_dir,
+                            on_progress=lambda d, t: self._load_signals.progress.emit(d, t))
+            except NewerVersionError:
+                return _NEWER_VERSION    # not an error path: it has its own message
+
+        def on_result(loaded) -> None:
+            if seq != self._open_seq:
+                # A later Open Project superseded this one. The generation guard
+                # cannot catch this: it only bumps when a load COMMITS, so two
+                # in-flight loads both look current and the first to finish would
+                # win — the opposite of what the user last asked for.
+                return
+            if loaded is _NEWER_VERSION:
+                self._show_warning("This project was made by a newer version of "
+                                   "Nocturne — update the app to open it.")
+                return
+            self._apply_loaded_project(path, loaded)
+
+        self._run_busy(work, on_result, "Opening project…", "Could not open project")
+
+    def _apply_loaded_project(self, path: str, loaded) -> None:
+        """Commit a loaded bundle. Reached only on success, so every failure —
+        cancelled dialog, newer version, unreadable file — still leaves the
+        current workspace and any in-flight op untouched."""
         self._swap_workspace()
         self.project = loaded.project
         self._source_label = loaded.source_label

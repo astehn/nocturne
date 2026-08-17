@@ -187,13 +187,18 @@ def _bytes_to_array(data: bytes) -> np.ndarray:
     return np.load(io.BytesIO(data))
 
 
-def load_project(path: str, cache_dir: str) -> LoadedProject:
+def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProject:
     """Read a `.nocturne` bundle and rebuild a live `Project`: the base image
     is loaded straight from its embedded npy, then each recorded step is
     either replayed (deterministic stages, re-run through `make_step` /
     `run_step` from the serialized option) or restored from its cached npy
     snapshot (`record_precomputed`) — reproducing every history position
-    pixel-for-pixel."""
+    pixel-for-pixel.
+
+    `on_progress(done, total)`, if given, is called after each step is replayed
+    or restored — the same shape `save_project` uses. Loading is the slow half
+    of the pair and reported nothing, so a large project looked like a hang.
+    """
     from .project import Project  # local import: avoids a history/project_store <-> project cycle
 
     with zipfile.ZipFile(path) as zf:
@@ -212,7 +217,8 @@ def load_project(path: str, cache_dir: str) -> LoadedProject:
         project = Project(base, cache_dir)
 
         settings = Settings()
-        for step in manifest["steps"]:
+        total = len(manifest["steps"])
+        for done, step in enumerate(manifest["steps"], start=1):
             if step["cached"]:
                 data = _bytes_to_array(zf.read(step["cache"]))
                 img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
@@ -221,6 +227,8 @@ def load_project(path: str, cache_dir: str) -> LoadedProject:
                 native = deserialize_option(step["stage"], step["option"])
                 step_obj = make_step(step["stage"], settings)
                 project.run_step(step_obj, native)
+            if on_progress is not None:
+                on_progress(done, total)
 
         project.jump_back(manifest["position"])
 
