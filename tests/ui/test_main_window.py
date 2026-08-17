@@ -4427,3 +4427,57 @@ def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monk
     win._open_color_balance()
     assert _RecordingCB.opened[-1]["starless"] is starless, (
         "Star Reduction had already split this exact image and it was ignored")
+
+
+def test_the_right_pane_is_the_same_width_on_every_step(qtbot, tmp_path):
+    """Reported 2026-08-17 from three screenshots: the image visibly changes size
+    when you move between steps.
+
+    The right pane had a minimum width and no maximum, so it grew to whatever its
+    widest child wanted — and that varies per step. Measured sizeHints:
+    Background 575 px against 161-301 px for every other step, a 414 px spread.
+    The canvas takes what is left, so the image is re-fitted smaller on
+    Background and larger everywhere else.
+
+    Background is the outlier because its description text is long, which is a
+    moving target: any future edit to any step's copy would change the layout of
+    the whole window. Capping the pane makes the text wrap instead.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1400, 900)
+    win.show()
+    qtbot.waitExposed(win)
+
+    widths = {}
+    for stage_id in ("crop", "background", "color", "stretch", "curves", "export"):
+        win._go_to_id(stage_id)
+        qtbot.wait(1)
+        widths[stage_id] = win._right_panel.width()
+
+    assert len(set(widths.values())) == 1, (
+        f"the pane changes width between steps, so the canvas jumps: {widths}")
+
+
+def test_no_step_panel_is_wider_than_the_pane_allows(qtbot):
+    """The cap must not simply clip a control off the edge — the checkbox labels
+    in Colour Balance were being cut exactly that way. Anything too wide has to
+    WRAP, which means the panels must contain no unwrappable widget wider than
+    the cap."""
+    from nocturne.ui import pipeline as pl
+    from nocturne.ui.main_window import RIGHT_PANE_MAX_W
+    from nocturne.ui.step_panels import build_panel
+    from PySide6.QtWidgets import QComboBox, QPushButton, QSlider
+    for stage in pl._CORE + pl._IN_APP_TAIL:
+        try:
+            panel = build_panel(stage)
+        except Exception:
+            continue
+        widgets = []
+        for cls in (QComboBox, QPushButton, QSlider):
+            widgets.extend(panel.findChildren(cls))
+        for w in widgets:
+            hint = w.sizeHint().width()
+            assert hint <= RIGHT_PANE_MAX_W - 40, (
+                f"{stage.id}: a {type(w).__name__} wants {hint} px and cannot wrap; "
+                f"it will be clipped inside a {RIGHT_PANE_MAX_W} px pane")

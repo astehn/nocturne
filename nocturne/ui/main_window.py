@@ -92,6 +92,17 @@ _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
 
+# The step panel is capped so the RIGHT PANE cannot change width from step to
+# step. It had only a minimum, so it grew to whatever its widest child wanted:
+# measured 2026-08-17, Background's panel wanted 575 px against 161-301 px for
+# every other step, which moved the pane 92 px and re-fitted the image smaller
+# on that one step alone. Long description text is a moving target — any future
+# copy edit would relayout the whole window — so the cap makes the text wrap
+# instead. 360 clears the widest non-description panel (saturation, 301 px) with
+# room, and no unwrappable control comes near it (guarded by a test).
+RIGHT_PANE_MAX_W = 360
+
+
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
 
@@ -2895,6 +2906,8 @@ class MainWindow(QMainWindow):
             sig = self._solve_sig() if loaded else None
             solved = loaded and self._solve is not None and self._solve[0] == sig
             new_panel.burn_annotations.setEnabled(solved)
+        new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
+                                                     # canvas, a constant width
         self._right_layout.replaceWidget(self._panel, new_panel)
         self._panel.deleteLater()
         self._panel = new_panel
