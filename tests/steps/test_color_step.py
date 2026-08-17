@@ -89,3 +89,57 @@ def test_photometric_gains_exception_falls_back(monkeypatch):
     out = step.apply(_img(), ColorSettings(method="photometric"))
     assert out.data.shape == (40, 40, 3)                     # no raise, fell back
     assert step.last_message                                 # a fallback reason is set
+
+
+# --- the log must say WHICH failure it was (2026-08-17) ----------------------
+
+def _fail_with(exc):
+    def boom(*a, **k):
+        raise exc
+    return ColorStep(astap=_FakeAstap(), gaia_query=boom)
+
+
+def test_a_network_failure_says_unreachable_AND_why():
+    """The reason used to be discarded entirely — `except GaiaError:` did not
+    even bind the exception, so the log could not distinguish a DNS failure from
+    a timeout from an error page."""
+    from nocturne.tools.gaia import GaiaUnreachable
+    step = _fail_with(GaiaUnreachable("TimeoutError: timed out"))
+    step.apply(_img(), ColorSettings(method="photometric"))
+    msg = step.last_message.lower()
+    assert "reach" in msg and "sky balance" in msg
+    assert "timed out" in msg, f"the underlying reason is missing: {step.last_message}"
+
+
+def test_an_empty_field_does_NOT_claim_gaia_was_unreachable():
+    """Andreas's actual suspicion: the message may be bogus. It was — Gaia
+    answering with no usable stars was reported as a network problem, sending
+    you to look at your connection for a fault that is not there."""
+    from nocturne.tools.gaia import GaiaNoStars
+    step = _fail_with(GaiaNoStars("no stars between G 7 and 15 with a BP-RP colour"))
+    step.apply(_img(), ColorSettings(method="photometric"))
+    msg = step.last_message.lower()
+    assert "reach" not in msg, f"still blames the network: {step.last_message}"
+    assert "sky balance" in msg
+
+
+def test_a_throttled_or_error_page_is_reported_as_its_own_thing():
+    """Reproduced against the live service while investigating: under load
+    VizieR answers quickly with something that is not catalogue data. The fetch
+    SUCCEEDS, so this is neither unreachable nor an empty field."""
+    from nocturne.tools.gaia import GaiaBadResponse
+    step = _fail_with(GaiaBadResponse("not catalogue data: <html> 503 Service Unavailable"))
+    step.apply(_img(), ColorSettings(method="photometric"))
+    msg = step.last_message.lower()
+    assert "reach" not in msg, f"still blames the network: {step.last_message}"
+    assert "503" in step.last_message, "the response is not quoted, so nothing is diagnosable"
+
+
+def test_an_unrecognised_gaia_failure_still_falls_back():
+    """A catch-all for the base class. Handling only the three known subclasses
+    meant any future one would escape and take the step down, rather than
+    falling back to sky balance like every other failure here does."""
+    step = _fail_with(GaiaError("something new"))
+    out = step.apply(_img(), ColorSettings(method="photometric"))
+    assert out.data.shape == (40, 40, 3)
+    assert "sky balance" in step.last_message.lower()

@@ -34,7 +34,8 @@ class ColorStep(Step):
     def _photometric(self, img: AstroImage):
         """Solve -> query Gaia -> gains -> apply. Returns the calibrated image, or
         None (and sets self.last_message) on any failure so apply() falls back."""
-        from ..tools.gaia import GaiaError
+        from ..tools.gaia import (GaiaBadResponse, GaiaError, GaiaNoStars,
+                                  GaiaUnreachable)
         from ..core.spcc import photometric_gains, apply_gains
         if self._astap is None or self._gaia_query is None:
             self.last_message = "ASTAP not set — used sky balance."
@@ -64,10 +65,28 @@ class ColorStep(Step):
         # measured from the solution itself.
         fov = res.pixscale_arcsec * h / 3600.0 if res.pixscale_arcsec else 2.0
         radius = min(fov * 0.5 * (1.0 + (w / h) ** 2) ** 0.5, 1.2)
+        # Three different problems with three different answers. They were all
+        # reported as "Couldn't reach Gaia", and the exception was not even bound,
+        # so the reason never reached the log — which sent people looking at
+        # their network for faults that were not there.
         try:
             gaia = self._gaia_query(res.center_ra_deg, res.center_dec_deg, radius)
-        except GaiaError:
-            self.last_message = "Couldn't reach Gaia — used sky balance."
+        except GaiaUnreachable as exc:
+            self.last_message = (f"Couldn't reach Gaia ({exc}) — used sky balance.")
+            return None
+        except GaiaNoStars as exc:
+            self.last_message = (f"Gaia has no usable stars for this field "
+                                 f"({exc}) — used sky balance.")
+            return None
+        except GaiaBadResponse as exc:
+            self.last_message = (f"Gaia answered with something unreadable, most "
+                                 f"likely busy — used sky balance. {exc}")
+            return None
+        except GaiaError as exc:
+            # Catch-all for the base class and any future subclass. Without it a
+            # new failure mode would escape and take the whole step with it,
+            # instead of falling back to sky balance like every other one.
+            self.last_message = f"Gaia lookup failed ({exc}) — used sky balance."
             return None
         try:
             spcc = photometric_gains(img, res.wcs, gaia)
