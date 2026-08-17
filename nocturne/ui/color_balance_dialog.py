@@ -70,13 +70,16 @@ class ColorBalanceDialog(QDialog):
     """
 
     def __init__(self, settings, base: AstroImage, parent=None, on_apply=None,
-                 starless=None, stars=None) -> None:
+                 starless=None, stars=None, on_split=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Colour Balance")
         self.resize(1100, 760)
         self._settings = settings
         self._base = base
         self._on_apply = on_apply
+        self._on_split = on_split   # hand the split back so it can be cached:
+                                    # a StarX run per open is the main friction
+                                    # in the two-applies workflow
         self._pool = QThreadPool.globalInstance()
         self._starx_runner = self._default_starx
         self._starless = starless
@@ -227,6 +230,8 @@ class ColorBalanceDialog(QDialog):
 
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers
+        if self._on_split is not None and self._stars is not None:
+            self._on_split(self._starless, self._stars)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.handles.set_histogram(self._prev_starless.data)

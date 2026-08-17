@@ -4327,3 +4327,103 @@ def test_a_stale_load_does_not_overwrite_a_newer_one(qtbot, tmp_path):
     assert win2._project_path == second, (
         f"landed on {win2._project_path!r} — the first load won and the user's "
         f"most recent choice was discarded")
+
+
+class _RecordingCB:
+    """Stands in for ColorBalanceDialog and records what it was handed."""
+    opened: list = []
+
+    def __init__(self, settings, base, parent=None, on_apply=None,
+                 starless=None, stars=None, on_split=None):
+        _RecordingCB.opened.append({"starless": starless, "stars": stars,
+                                    "on_split": on_split, "base": base})
+        self._on_split = on_split
+
+    def exec(self):
+        return 0
+
+
+def _stretched_window(qtbot, tmp_path):
+    from nocturne.ui.main_window import _PrecomputedStep
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", AstroImage(
+        base.data, is_linear=False, metadata=dict(base.metadata))), "0.5")
+    win._refresh()
+    return win
+
+
+def test_colour_balance_reuses_a_star_split_across_opens(qtbot, tmp_path, monkeypatch):
+    """Reported 2026-08-17. Every open paid a full StarX run, which is the main
+    friction in the two-applies workflow — cool the arms, then warm the core.
+    Star Reduction already caches its split keyed by a fingerprint of the base;
+    this is the same cache."""
+    import numpy as np
+    import nocturne.ui.color_balance_dialog as cbd
+    _RecordingCB.opened = []
+    # patched in ITS OWN module: _open_color_balance imports it locally, so a
+    # patch on main_window's namespace never takes and a real modal dialog opens
+    monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    win = _stretched_window(qtbot, tmp_path)
+
+    win._open_color_balance()
+    first = _RecordingCB.opened[-1]
+    assert first["starless"] is None, "nothing cached yet, so it must split itself"
+
+    cur = win.project.current()
+    starless = AstroImage(cur.data * 0.9, is_linear=False, metadata=dict(cur.metadata))
+    stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
+    first["on_split"](starless, stars)          # the dialog reports its split back
+
+    win._open_color_balance()
+    second = _RecordingCB.opened[-1]
+    assert second["starless"] is starless, "the split was not reused"
+    assert second["stars"] is stars
+
+
+def test_the_cached_split_is_dropped_when_the_image_changes(qtbot, tmp_path, monkeypatch):
+    """A stale split would recolour against the wrong starless layer — silently,
+    since it is the right shape."""
+    import numpy as np
+    import nocturne.ui.color_balance_dialog as cbd
+    from nocturne.ui.main_window import _PrecomputedStep
+    _RecordingCB.opened = []
+    monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    win = _stretched_window(qtbot, tmp_path)
+
+    win._open_color_balance()
+    cur = win.project.current()
+    win._RecordingCB_split = None
+    _RecordingCB.opened[-1]["on_split"](
+        AstroImage(cur.data * 0.9, is_linear=False, metadata=dict(cur.metadata)),
+        AstroImage(np.zeros_like(cur.data), is_linear=False))
+
+    # a further step changes the pixels the split belonged to
+    win.project.run_step(_PrecomputedStep("Saturation", AstroImage(
+        np.clip(cur.data * 1.3, 0, 1), is_linear=False, metadata=dict(cur.metadata))), "0.5")
+    win._refresh()
+    win._open_color_balance()
+    assert _RecordingCB.opened[-1]["starless"] is None, (
+        "a split from a different image was handed over")
+
+
+def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monkeypatch):
+    """The two caches would otherwise duplicate an expensive run for no reason —
+    it is the same split of the same image."""
+    import numpy as np
+    import nocturne.ui.color_balance_dialog as cbd
+    _RecordingCB.opened = []
+    # patched in ITS OWN module: _open_color_balance imports it locally, so a
+    # patch on main_window's namespace never takes and a real modal dialog opens
+    monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    win = _stretched_window(qtbot, tmp_path)
+
+    cur = win.project.current()
+    starless = AstroImage(cur.data * 0.8, is_linear=False, metadata=dict(cur.metadata))
+    stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
+    win._sr_layers = (win._sr_sig(cur), starless, stars)
+
+    win._open_color_balance()
+    assert _RecordingCB.opened[-1]["starless"] is starless, (
+        "Star Reduction had already split this exact image and it was ignored")

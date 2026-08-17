@@ -259,6 +259,7 @@ class MainWindow(QMainWindow):
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
         self._sr_layers = None    # (sig, starless, stars) once the split lands
+        self._cb_layers = None    # the same, for Colour Balance — see _cached_split
         self._sr_pending = None
         self._sr_ready = False
         self._sr_timer = QTimer(self)
@@ -778,9 +779,31 @@ class MainWindow(QMainWindow):
         if not self.project.current().is_color:
             self._show_warning("Colour Balance needs a colour image.")
             return
-        from .color_balance_dialog import ColorBalanceDialog
-        ColorBalanceDialog(self.settings, self.project.current(), parent=self,
-                           on_apply=self._apply_color_balance).exec()
+        from . import color_balance_dialog as _cbd
+        base = self.project.current()
+        starless, stars = self._cached_split(base)
+        _cbd.ColorBalanceDialog(self.settings, base, parent=self,
+                                on_apply=self._apply_color_balance,
+                                starless=starless, stars=stars,
+                                on_split=lambda sl, st: self._remember_split(base, sl, st)).exec()
+
+    def _cached_split(self, img):
+        """A star split already computed for this exact image, or (None, None).
+
+        Star Reduction's cache is consulted too: it is the same split of the same
+        pixels, and paying for StarX twice because two tools each kept their own
+        store would be pure waste. Keyed on _sr_sig, so any upstream change to
+        the image misses — a stale split is the same shape as a good one and
+        would recolour against the wrong layer with nothing to show for it.
+        """
+        sig = self._sr_sig(img)
+        for entry in (self._cb_layers, self._sr_layers):
+            if entry and entry[0] == sig:
+                return entry[1], entry[2]
+        return None, None
+
+    def _remember_split(self, img, starless, stars) -> None:
+        self._cb_layers = (self._sr_sig(img), starless, stars)
 
     def _apply_color_balance(self, result, opts) -> None:
         """Appends, like Trim. A finishing tool must never truncate the history

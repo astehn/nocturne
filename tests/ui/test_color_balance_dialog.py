@@ -483,3 +483,30 @@ def test_the_preview_downscale_conserves_the_stars(qtbot):
     after = float(np.clip(small - bg, 0, None).sum()) * step * step
     assert after == pytest.approx(before, rel=0.02), (
         f"star flux {after:.0f} against {before:.0f} — the preview is losing stars")
+
+
+def test_the_dialog_reports_its_split_so_it_can_be_cached(qtbot):
+    """Without this the window has nothing to cache and every open pays another
+    StarX run — the main friction in the two-applies workflow (cool the arms,
+    then warm the core)."""
+    base, starless, stars = _layers()
+    seen = []
+    d = ColorBalanceDialog(Settings(), base, starless=starless, stars=stars,
+                           on_split=lambda sl, st: seen.append((sl, st)))
+    qtbot.addWidget(d)
+    d.show()
+    assert seen, "the split was never handed back"
+    assert seen[0][0] is starless and seen[0][1] is stars
+
+
+def test_no_split_is_reported_when_there_are_no_stars(qtbot):
+    """Without RC-Astro the dialog falls back to the whole image with stars=None.
+    Caching that as a split would hand a later open a 'starless' layer that still
+    has its stars in it."""
+    base, starless, _stars = _layers()
+    seen = []
+    d = ColorBalanceDialog(Settings(), base, starless=starless, stars=None,
+                           on_split=lambda sl, st: seen.append((sl, st)))
+    qtbot.addWidget(d)
+    d.show()
+    assert seen == [], "a split with no stars layer was cached as if it were real"
