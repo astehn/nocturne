@@ -48,6 +48,7 @@ from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import remove_green, remove_green_fringe, remove_green_fringe_masked
+from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
@@ -772,7 +773,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Colour Balance", result), opts)
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Colour Balance", opts.get("tone", ""), None))
+            format_log_entry("Colour Balance", cb_describe(opts), None))
         self._clear_warning()
         self._refresh()
 

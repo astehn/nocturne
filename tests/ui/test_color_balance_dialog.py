@@ -52,7 +52,7 @@ def _dlg(qtbot, on_apply=None):
 def test_opens_with_a_neutral_adjustment(qtbot):
     d = _dlg(qtbot)
     b = d.balance()
-    assert (b.red, b.green, b.blue) == (0.0, 0.0, 0.0)
+    assert b.is_neutral(), f"opened with an adjustment already set: {b}"
     assert b.preserve_lum is True and b.strength == 1.0
 
 
@@ -166,13 +166,12 @@ def test_the_option_dict_round_trips_every_field(qtbot):
     d.handles.set_range(0.2, 0.9)
     d._apply()
     qtbot.waitUntil(lambda: bool(seen), timeout=5000)   # Apply composes off-thread
-    for key in ("tone", "red", "green", "blue", "preserve_lum",
-                "strength", "lo", "hi", "feather"):
+    for key in ("shadows", "midtones", "highlights", "preserve_lum",
+                "strength", "lo", "hi", "feather", "invert"):
         assert key in seen, f"{key} missing from the recorded option"
-    assert seen["tone"] == "highlights"
+    assert seen["highlights"] == pytest.approx([0.0, 0.0, 0.5])
     assert seen["lo"] == pytest.approx(0.2)
     assert seen["hi"] == pytest.approx(0.9)
-    assert seen["blue"] == pytest.approx(0.5)
     assert seen["strength"] == pytest.approx(0.8)
 
 
@@ -198,8 +197,8 @@ def test_reset_returns_every_control_to_neutral(qtbot):
     d.show_mask_check.setChecked(True)
     d.reset()
     b = d.balance()
-    assert (b.red, b.green, b.blue) == (0.0, 0.0, 0.0)
-    assert b.tone == "midtones" and b.strength == 1.0
+    assert b.is_neutral(), f"reset left an adjustment behind: {b}"
+    assert b.strength == 1.0
     assert not d.show_mask_check.isChecked()
     assert d.handles.range() == (0.0, 1.0)
 
@@ -262,7 +261,7 @@ def test_apply_still_delivers_the_result_when_the_work_finishes(qtbot):
     d._apply()
     qtbot.waitUntil(lambda: "result" in got, timeout=5000)
     assert got["result"].data.shape == d._starless.data.shape
-    assert got["opts"]["blue"] == pytest.approx(0.5)
+    assert got["opts"]["midtones"] == pytest.approx([0.0, 0.0, 0.5])
 
 
 def test_the_panel_states_the_mask_convention_correctly(qtbot):
@@ -353,3 +352,70 @@ def test_every_checkbox_label_fits_the_panel(qtbot):
             f"{box.text()!r} needs {width} px and will be cut off; "
             f"shorten it and put the detail in the tooltip")
         assert box.toolTip(), f"{box.text()!r} has no tooltip to carry the detail"
+
+
+# --- independent amounts per tonal range (2026-08-17) ------------------------
+
+def test_switching_tone_leaves_the_other_ranges_UNCHANGED(qtbot):
+    """The fiddly half of per-tone amounts, and the one worth an assert-unchanged
+    test: set midtones, switch to highlights, come back — the midtone values must
+    be exactly as left, not merely 'not zero'."""
+    d = _dlg(qtbot)
+    d.tone_box.setCurrentText("Midtones")
+    d.sliders["red"].setValue(-18)
+    d.sliders["blue"].setValue(20)
+    before = (d.sliders["red"].value(), d.sliders["green"].value(),
+              d.sliders["blue"].value())
+
+    d.tone_box.setCurrentText("Highlights")
+    assert (d.sliders["red"].value(), d.sliders["green"].value(),
+            d.sliders["blue"].value()) == (0, 0, 0), "highlights inherited the midtones"
+    d.sliders["blue"].setValue(40)
+
+    d.tone_box.setCurrentText("Midtones")
+    after = (d.sliders["red"].value(), d.sliders["green"].value(),
+             d.sliders["blue"].value())
+    assert after == before, f"midtones changed on the round trip: {before} -> {after}"
+
+
+def test_both_ranges_reach_the_balance_at_once(qtbot):
+    """Not just remembered in the widgets — both must be in the Balance that
+    compose() uses, or the tool still applies one range at a time."""
+    d = _dlg(qtbot)
+    d.tone_box.setCurrentText("Midtones")
+    d.sliders["red"].setValue(100)
+    d.tone_box.setCurrentText("Highlights")
+    d.sliders["blue"].setValue(100)
+
+    b = d.balance()
+    assert b.midtones == pytest.approx((1.0, 0.0, 0.0))
+    assert b.highlights == pytest.approx((0.0, 0.0, 1.0))
+    assert b.shadows == pytest.approx((0.0, 0.0, 0.0))
+
+
+def test_the_option_records_all_three_ranges(qtbot):
+    seen = {}
+    d = _dlg(qtbot, on_apply=lambda result, opts: seen.update(opts))
+    d.tone_box.setCurrentText("Shadows")
+    d.sliders["green"].setValue(-30)
+    d.tone_box.setCurrentText("Highlights")
+    d.sliders["blue"].setValue(60)
+    d._apply()
+    qtbot.waitUntil(lambda: bool(seen), timeout=5000)
+    assert seen["shadows"] == pytest.approx([0.0, -0.30, 0.0])
+    assert seen["highlights"] == pytest.approx([0.0, 0.0, 0.60])
+    assert seen["midtones"] == pytest.approx([0.0, 0.0, 0.0])
+
+
+def test_reset_clears_every_range_not_just_the_visible_one(qtbot):
+    """Reset with Highlights showing must not leave a midtone adjustment behind
+    where the user cannot see it."""
+    d = _dlg(qtbot)
+    d.tone_box.setCurrentText("Midtones")
+    d.sliders["red"].setValue(80)
+    d.tone_box.setCurrentText("Highlights")
+    d.sliders["blue"].setValue(80)
+    d.reset()
+    b = d.balance()
+    assert b.midtones == (0.0, 0.0, 0.0) and b.highlights == (0.0, 0.0, 0.0)
+    assert b.shadows == (0.0, 0.0, 0.0)

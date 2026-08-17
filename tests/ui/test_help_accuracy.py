@@ -214,3 +214,11 @@ def test_the_colour_balance_help_covers_invert_and_the_scale_bar():
     body = TOPICS["color_balance"].body.lower()
     assert "invert" in body, "the invert toggle is not documented"
     assert "black-to-white" in body, "the scale bar under the histogram is not explained"
+
+
+def test_the_colour_balance_help_explains_that_ranges_are_independent():
+    """The whole point of the per-range change: someone who does not know the
+    ranges are remembered will keep applying one at a time."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    assert "each range keeps its own" in body, "per-range independence is not explained"

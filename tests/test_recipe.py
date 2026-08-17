@@ -151,7 +151,8 @@ def test_a_colour_balance_survives_a_recipe_round_trip():
     """Otherwise it is the one finishing move a recipe cannot reproduce — which
     re-opens the export-to-Photoshop leak this feature exists to close."""
     from nocturne.recipe import deserialize_option, serialize_option
-    opts = {"tone": "midtones", "red": -0.18, "green": 0.0, "blue": 0.2,
+    opts = {"shadows": [0.0, 0.0, 0.0], "midtones": [-0.18, 0.0, 0.2],
+            "highlights": [0.0, 0.0, 0.5],
             "preserve_lum": True, "strength": 0.8,
             "lo": 0.379, "hi": 0.748, "feather": 0.08, "invert": False}
     out = deserialize_option("color_balance", serialize_option("color_balance", opts))
@@ -160,16 +161,32 @@ def test_a_colour_balance_survives_a_recipe_round_trip():
     assert isinstance(out["strength"], float) and isinstance(out["preserve_lum"], bool)
 
 
-def test_a_colour_balance_recipe_written_before_invert_still_loads():
-    """Recipes and projects saved on this branch before the invert toggle existed
-    have no such key. They must open, with invert off, rather than raising."""
+def test_a_colour_balance_saved_before_per_tone_amounts_still_loads():
+    """The migration that matters. Adjustments saved on this branch before each
+    tonal range had its own amounts carry a single `tone` plus one triple. They
+    must open as that range's amounts with the other two at zero — and with
+    invert defaulted off, since that did not exist either."""
     from nocturne.recipe import deserialize_option
-    old = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
-           "preserve_lum": True, "strength": 1.0,
+    old = {"tone": "midtones", "red": -0.18, "green": 0.0, "blue": 0.2,
+           "preserve_lum": True, "strength": 0.8,
            "lo": 0.379, "hi": 0.748, "feather": 0.08}
     out = deserialize_option("color_balance", old)
+    assert out["midtones"] == [-0.18, 0.0, 0.2]
+    assert out["shadows"] == [0.0, 0.0, 0.0]
+    assert out["highlights"] == [0.0, 0.0, 0.0]
     assert out["invert"] is False
-    assert out["lo"] == 0.379
+    assert out["lo"] == 0.379 and out["strength"] == 0.8
+
+
+def test_an_old_shadows_adjustment_lands_in_shadows_not_midtones():
+    """The migration must honour WHICH range was set — defaulting everything to
+    midtones would silently move the adjustment to a different part of the
+    picture on reopening."""
+    from nocturne.recipe import deserialize_option
+    out = deserialize_option("color_balance",
+                             {"tone": "shadows", "red": 0.5, "green": 0.0, "blue": 0.0})
+    assert out["shadows"] == [0.5, 0.0, 0.0]
+    assert out["midtones"] == [0.0, 0.0, 0.0]
 
 
 def test_a_colour_balance_recipe_keeps_its_band_absolute():
@@ -178,8 +195,7 @@ def test_a_colour_balance_recipe_keeps_its_band_absolute():
     re-derived it per image, the same recipe would mean different things on
     different frames and nothing would say so."""
     from nocturne.recipe import serialize_option
-    opts = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
-            "preserve_lum": True, "strength": 1.0,
+    opts = {"midtones": [0.0, 0.0, 0.2], "preserve_lum": True, "strength": 1.0,
             "lo": 0.379, "hi": 0.748, "feather": 0.08}
     ser = serialize_option("color_balance", opts)
     assert ser["lo"] == 0.379 and ser["hi"] == 0.748

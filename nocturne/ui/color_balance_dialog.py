@@ -73,6 +73,11 @@ class ColorBalanceDialog(QDialog):
         self.tone_box = QComboBox()
         self.tone_box.addItems([t.capitalize() for t in TONES])
         self.tone_box.setCurrentText("Midtones")
+        # Each tonal range keeps its OWN three amounts, as Photoshop's Color
+        # Balance does — switching the Tone selector must not discard the range
+        # you just set. The sliders show one range at a time; this holds them all.
+        self._amounts = {t: [0, 0, 0] for t in TONES}
+        self._showing = "midtones"
 
         self.sliders, self.slider_vals = {}, {}
         for _label, key in _AXES:
@@ -113,7 +118,7 @@ class ColorBalanceDialog(QDialog):
         self._render_timer.setInterval(_DEBOUNCE_MS)
         self._render_timer.timeout.connect(self._do_render)
 
-        self.tone_box.currentTextChanged.connect(lambda _t: self._schedule_render())
+        self.tone_box.currentTextChanged.connect(self._on_tone_change)
         for s in self.sliders.values():
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.strength_slider.valueChanged.connect(lambda _v: self._on_slider_change())
@@ -215,12 +220,31 @@ class ColorBalanceDialog(QDialog):
         self._on_starless((self._base, None))
 
     # --- model ------------------------------------------------------------
+    def _capture_visible_tone(self) -> None:
+        """Store the sliders into whichever range they are currently showing."""
+        self._amounts[self._showing] = [self.sliders[k].value()
+                                        for k in ("red", "green", "blue")]
+
+    def _on_tone_change(self, text: str) -> None:
+        # No capture here: _on_slider_change stores every edit as it happens and
+        # balance() captures again when it reads, so a third call did nothing —
+        # removing it changed no test, which is how it was found.
+        self._showing = text.lower()
+        for key, value in zip(("red", "green", "blue"), self._amounts[self._showing]):
+            slider = self.sliders[key]
+            # Blocked to avoid three spurious re-renders, not for correctness:
+            # _showing is already the new range, so an unblocked load would just
+            # re-capture the values it had that instant put there.
+            was = slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(was)
+        self._update_value_labels()
+        self._schedule_render()
+
     def balance(self) -> Balance:
+        self._capture_visible_tone()
         return Balance(
-            tone=self.tone_box.currentText().lower(),
-            red=self.sliders["red"].value() / 100.0,
-            green=self.sliders["green"].value() / 100.0,
-            blue=self.sliders["blue"].value() / 100.0,
+            **{t: tuple(v / 100.0 for v in self._amounts[t]) for t in TONES},
             preserve_lum=self.preserve_check.isChecked(),
             strength=self.strength_slider.value() / 100.0,
         )
@@ -232,7 +256,8 @@ class ColorBalanceDialog(QDialog):
     def options(self) -> dict:
         b = self.balance()
         lo, hi, feather = self.band()
-        return {"tone": b.tone, "red": b.red, "green": b.green, "blue": b.blue,
+        return {"shadows": list(b.shadows), "midtones": list(b.midtones),
+                "highlights": list(b.highlights),
                 "preserve_lum": b.preserve_lum, "strength": b.strength,
                 "lo": lo, "hi": hi, "feather": feather,
                 "invert": self.invert_check.isChecked()}
@@ -245,6 +270,7 @@ class ColorBalanceDialog(QDialog):
         for key in ("red", "green", "blue"):
             if key in kw:
                 self.sliders[key].setValue(int(round(kw[key] * 100)))
+        self._capture_visible_tone()
         if "preserve_lum" in kw:
             self.preserve_check.setChecked(bool(kw["preserve_lum"]))
         if "strength" in kw:
@@ -262,9 +288,16 @@ class ColorBalanceDialog(QDialog):
         self._schedule_render()
 
     def reset(self) -> None:
-        self.tone_box.setCurrentText("Midtones")
+        # Zero the sliders BEFORE switching tone. Switching captures whatever the
+        # sliders currently show into the range being left, so clearing the store
+        # first and switching second wrote the stale values straight back in.
         for s in self.sliders.values():
             s.setValue(0)
+        self._amounts = {t: [0, 0, 0] for t in TONES}   # every range, not just the visible one
+        was = self.tone_box.blockSignals(True)
+        self.tone_box.setCurrentText("Midtones")
+        self.tone_box.blockSignals(was)
+        self._showing = "midtones"
         self.preserve_check.setChecked(True)
         self.strength_slider.setValue(100)
         self.feather_slider.setValue(8)
@@ -277,6 +310,7 @@ class ColorBalanceDialog(QDialog):
 
     # --- rendering --------------------------------------------------------
     def _on_slider_change(self) -> None:
+        self._capture_visible_tone()
         self._update_value_labels()
         self._schedule_render()
 

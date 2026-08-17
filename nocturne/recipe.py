@@ -49,10 +49,11 @@ def serialize_option(stage_id, option):
         return [float(amount), float(nebula)]
     if stage_id == "color_balance":
         o = option or {}
-        return {"tone": str(o.get("tone", "midtones")),
-                "red": float(o.get("red", 0.0)),
-                "green": float(o.get("green", 0.0)),
-                "blue": float(o.get("blue", 0.0)),
+        def _triple(key):
+            v = o.get(key) or (0.0, 0.0, 0.0)
+            return [float(v[0]), float(v[1]), float(v[2])]
+        return {"shadows": _triple("shadows"), "midtones": _triple("midtones"),
+                "highlights": _triple("highlights"),
                 "preserve_lum": bool(o.get("preserve_lum", True)),
                 "strength": float(o.get("strength", 1.0)),
                 # The band is stored as MEASURED, not re-derived on replay: a
@@ -101,16 +102,25 @@ def deserialize_option(stage_id, value):
             return (float(value[0]), float(value[1]))
         return (float(value), 0.0)   # legacy bare float
     if stage_id == "color_balance":
-        return {"tone": str(value.get("tone", "midtones")),
-                "red": float(value.get("red", 0.0)),
-                "green": float(value.get("green", 0.0)),
-                "blue": float(value.get("blue", 0.0)),
-                "preserve_lum": bool(value.get("preserve_lum", True)),
-                "strength": float(value.get("strength", 1.0)),
-                "lo": float(value.get("lo", 0.0)),
-                "hi": float(value.get("hi", 1.0)),
-                "feather": float(value.get("feather", 0.08)),
-                "invert": bool(value.get("invert", False))}
+        def _triple(key):
+            v = value.get(key) or (0.0, 0.0, 0.0)
+            return [float(v[0]), float(v[1]), float(v[2])]
+        out = {"shadows": _triple("shadows"), "midtones": _triple("midtones"),
+               "highlights": _triple("highlights"),
+               "preserve_lum": bool(value.get("preserve_lum", True)),
+               "strength": float(value.get("strength", 1.0)),
+               "lo": float(value.get("lo", 0.0)),
+               "hi": float(value.get("hi", 1.0)),
+               "feather": float(value.get("feather", 0.08)),
+               "invert": bool(value.get("invert", False))}
+        # Read the shape saved before each tonal range had its own amounts: one
+        # `tone` plus a single triple. Projects written on this branch in the
+        # last few hours have it, and must still open unchanged.
+        if "tone" in value and value["tone"] in out:
+            out[value["tone"]] = [float(value.get("red", 0.0)),
+                                  float(value.get("green", 0.0)),
+                                  float(value.get("blue", 0.0))]
+        return out
     if stage_id == "narrowband":
         import dataclasses
         from .core.narrowband import NarrowbandParams
