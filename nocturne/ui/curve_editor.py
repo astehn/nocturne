@@ -13,9 +13,16 @@ _MARGIN = 8           # px inset so handles at the edges stay visible
 
 
 class CurveEditor(QWidget):
-    """A draggable tone-curve editor. Interior points can be added (click empty
-    space), moved (drag), and removed (double-click); the two corner endpoints
-    (0,0) and (1,1) are pinned. Emits `curveChanged` with the point list."""
+    """A draggable tone-curve editor. Points can be added (click empty space),
+    moved (drag, or arrow-key the selected one), and removed (double-click).
+
+    The two END points move like any other — dragging the low one right sets a
+    black point, the high one left a white point. They used to be pinned at
+    (0,0) and (1,1), which made both impossible; `build_lut` holds the end values
+    outside the point range so a moved endpoint clips or rolls off correctly.
+    Only the first and last cannot be deleted, since a curve needs two points.
+
+    Emits `curveChanged` with the point list."""
 
     curveChanged = Signal(list)
 
@@ -26,6 +33,8 @@ class CurveEditor(QWidget):
         self._points: list[tuple[float, float]] = [(0.0, 0.0), (1.0, 1.0)]
         self._hist = None          # normalized [0,1] bin heights, or None
         self._drag: int | None = None
+        self._selected: int | None = None    # survives release, so keys can nudge
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # --- model ---
     def points(self) -> list[tuple[float, float]]:
@@ -44,11 +53,26 @@ class CurveEditor(QWidget):
         self.set_points(self._points + [(x, y)])
 
     def remove_point(self, index: int) -> None:
-        if 0 < index < len(self._points) - 1:   # never a corner
+        if 0 < index < len(self._points) - 1:   # a curve needs two points
             self.set_points(self._points[:index] + self._points[index + 1:])
 
     def reset(self) -> None:
+        self._selected = None
         self.set_points([(0.0, 0.0), (1.0, 1.0)])
+
+    def select_point(self, i: int | None) -> None:
+        """Mark a point as the one the keyboard acts on."""
+        self._selected = i if i is None or 0 <= i < len(self._points) else None
+        self.update()
+
+    def readout_text(self) -> str:
+        """Input/output of the selected point. A curve editor without numbers is
+        guesswork: one pixel of a 240 px widget is about 0.004, so there was no
+        way to know what value a drag had actually set."""
+        if self._selected is None or self._selected >= len(self._points):
+            return ""
+        x, y = self._points[self._selected]
+        return f"in {x:.2f}   out {y:.2f}"
 
     def set_histogram(self, data) -> None:
         lum = data.mean(axis=2) if data.ndim == 3 else data
@@ -89,23 +113,28 @@ class CurveEditor(QWidget):
             self._drag = self._nearest(x, y)     # grab the just-added point
         else:
             self._drag = i
+        self._selected = self._drag              # the keyboard follows the mouse
         e.accept()
 
     def mouseMoveEvent(self, e) -> None:
         if self._drag is None:
             return
-        i = self._drag
-        if i == 0 or i == len(self._points) - 1:  # corners are pinned
-            return
-        x, y = self._to_norm(e.position().x(), e.position().y())
-        lo = self._points[i - 1][0] + _MIN_GAP
-        hi = self._points[i + 1][0] - _MIN_GAP
-        if hi <= lo:                              # no room -> keep current x
-            x = self._points[i][0]
-        else:
-            x = float(np.clip(x, lo, hi))
+        self._move_to(self._drag, *self._to_norm(e.position().x(), e.position().y()))
+
+    def _move_to(self, i: int, x: float, y: float) -> None:
+        """Move point `i`, keeping the x-order build_lut depends on.
+
+        The endpoints move like any other point — dragging the low one right is
+        how you set a black point, the high one left a white point. They used to
+        be pinned at the corners, which made both impossible. Only the
+        neighbours constrain them, so an endpoint is free to slide along its own
+        end of the range.
+        """
+        lo = self._points[i - 1][0] + _MIN_GAP if i > 0 else 0.0
+        hi = self._points[i + 1][0] - _MIN_GAP if i < len(self._points) - 1 else 1.0
+        x = self._points[i][0] if hi <= lo else float(np.clip(x, lo, hi))
         pts = list(self._points)
-        pts[i] = (x, y)
+        pts[i] = (x, float(np.clip(y, 0.0, 1.0)))
         self._points = pts
         self.update()
         self.curveChanged.emit(self.points())
@@ -119,6 +148,25 @@ class CurveEditor(QWidget):
         i = self._nearest(x, y)
         if i is not None:
             self.remove_point(i)
+        e.accept()
+
+    # --- keyboard ---
+    _NUDGE = 1.0 / 255.0        # one 8-bit output level: the smallest step the
+                                # exported file can actually represent
+    _NUDGE_COARSE = 10.0 / 255.0
+
+    def keyPressEvent(self, e) -> None:      # noqa: N802 (Qt override)
+        deltas = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
+                  Qt.Key.Key_Down: (0, -1), Qt.Key.Key_Up: (0, 1)}
+        d = deltas.get(e.key())
+        if d is None or self._selected is None:
+            super().keyPressEvent(e)
+            return
+        step = (self._NUDGE_COARSE
+                if e.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                else self._NUDGE)
+        x, y = self._points[self._selected]
+        self._move_to(self._selected, x + d[0] * step, y + d[1] * step)
         e.accept()
 
     # --- paint ---
@@ -158,8 +206,15 @@ class CurveEditor(QWidget):
         p.drawPolyline(curve)
 
         for i, (px, py) in enumerate(self._points):
-            corner = i == 0 or i == len(self._points) - 1
-            p.setBrush(QColor("#888888") if corner else QColor("#ffffff"))
+            end = i == 0 or i == len(self._points) - 1
+            p.setBrush(QColor("#ffd479") if i == self._selected
+                       else QColor("#bbbbbb") if end else QColor("#ffffff"))
             p.setPen(QPen(QColor("#333333"), 1))
             c = self._to_px(px, py)
-            p.drawEllipse(c, 5, 5)
+            p.drawEllipse(c, 6 if i == self._selected else 5,
+                          6 if i == self._selected else 5)
+
+        text = self.readout_text()
+        if text:
+            p.setPen(QPen(QColor("#cccccc"), 1))
+            p.drawText(ox + 4, oy + 14, text)

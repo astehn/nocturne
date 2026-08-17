@@ -62,6 +62,14 @@ def build_lut(points: list[tuple[float, float]], n: int = 1024) -> np.ndarray:
         h11 = t3 - t2
         out[mask] = (h00 * ys[s] + h10 * h[s] * m[s]
                      + h01 * ys[s + 1] + h11 * h[s] * m[s + 1])
+    # Hold the end values outside the control points instead of letting the
+    # polynomial run on. This is what makes a black or white point work: with a
+    # low endpoint at (0.25, 0), everything darker must BE black, not a linear
+    # continuation into negative territory. Two of the four cases used to be
+    # rescued by the clip below — extrapolation left [0,1] and was flattened —
+    # so a lifted black point silently crushed the shadows it was lifting.
+    out[grid < xs[0]] = ys[0]
+    out[grid > xs[-1]] = ys[-1]
     return np.clip(out, 0.0, 1.0).astype(np.float32)
 
 
@@ -86,19 +94,29 @@ def apply_curve(img: AstroImage, points: list[tuple[float, float]]) -> AstroImag
 
 
 def sanitize_points(pts, min_gap: float = _MIN_GAP) -> list[tuple[float, float]]:
-    """Sort control points, clamp to [0,1], force the corner endpoints
-    (0,0)/(1,1), and enforce a minimum x-gap between interior points -
-    dropping any interior point too close to the previously-kept point or
-    too close to the right corner."""
-    interior = sorted((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1)))
-                      for x, y in pts if 0.0 < x < 1.0)
-    out = [(0.0, 0.0)]
-    for x, y in interior:
+    """Sort control points, clamp to [0,1], and enforce a minimum x-gap.
+
+    The endpoints are whatever the user put there. They used to be forced to
+    (0,0) and (1,1), which made a black or white point — dragging the low
+    endpoint right, or the high one left — impossible to express: the drag was
+    discarded the instant it was committed. `build_lut` holds the end values
+    outside the point range, so a moved endpoint clips or rolls off exactly as
+    it should.
+
+    What still has to hold is what build_lut depends on: sorted, inside [0,1],
+    and strictly increasing in x.
+    """
+    ordered = sorted((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1)))
+                     for x, y in pts)
+    if not ordered:
+        return [(0.0, 0.0), (1.0, 1.0)]
+    out = [ordered[0]]
+    for x, y in ordered[1:]:
         if x - out[-1][0] >= min_gap:
             out.append((x, y))
-    if len(out) > 1 and (1.0 - out[-1][0]) < min_gap:
-        out.pop()
-    out.append((1.0, 1.0))
+    if len(out) < 2:                       # a curve needs two points to exist
+        x0, y0 = out[0]
+        out = [(0.0, y0), (1.0, y0)] if x0 in (0.0, 1.0) else [(0.0, 0.0), (1.0, 1.0)]
     return out
 
 

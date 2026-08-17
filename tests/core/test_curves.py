@@ -111,15 +111,75 @@ def test_gentle_s_adds_midtone_contrast():
     assert slope > 1.0        # steeper than linear through the midtones
 
 
-def test_sanitize_points_forces_corners_and_min_gap():
+def test_sanitize_points_drops_points_closer_than_the_min_gap():
+    """Corners are no longer forced — see the endpoint tests below — but the
+    spacing rule still holds, because build_lut needs strictly increasing x."""
     pts = sanitize_points([(0.3, 0.2), (0.305, 0.25), (0.6, 0.4)])
     xs = [p[0] for p in pts]
-    assert pts[0] == (0.0, 0.0) and pts[-1] == (1.0, 1.0)
     assert xs == sorted(xs) and len(set(xs)) == len(xs)
-    assert len(pts) == 4          # 0.305 was too close to 0.3 -> dropped, corners kept
+    assert len(pts) == 2, "0.305 was too close to 0.3 and should have gone"
+    assert pts[0] == (0.3, 0.2), "the caller's endpoint must survive"
 
 
 def test_sanitize_points_is_idempotent():
     once = sanitize_points([(0.3, 0.2), (0.6, 0.4), (0.9995, 0.9)])
     twice = sanitize_points(once)
     assert once == twice
+
+
+# --- endpoints: black point / white point (2026-08-17) -----------------------
+# The corners used to be pinned at (0,0) and (1,1), which made setting a black
+# or white point impossible — the single most common curves move. Unpinning them
+# exposed that build_lut EXTRAPOLATES the Hermite polynomial outside the control
+# points instead of holding the end values.
+
+def test_below_the_first_point_holds_its_value_instead_of_extrapolating():
+    """A black point lifted to (0.3, 0.5) must map everything darker to 0.5.
+    The polynomial ran on regardless and gave 0.29 at x=0 — a *darker* output
+    than the black point itself, so lifting the blacks crushed them instead.
+    The two cases where extrapolation happened to leave [0,1] were clipped and
+    looked correct, which is why this hid."""
+    lut = build_lut([(0.3, 0.5), (1.0, 1.0)], n=101)
+    below = lut[:30]
+    assert np.allclose(below, 0.5, atol=1e-6), f"got {below.min()}..{below.max()}"
+
+
+def test_above_the_last_point_holds_its_value_instead_of_extrapolating():
+    """A white point pulled down to (0.7, 0.8) must map everything brighter to
+    0.8. It kept climbing to 1.0, so the highlight roll-off did nothing."""
+    lut = build_lut([(0.0, 0.0), (0.7, 0.8)], n=101)
+    above = lut[71:]
+    assert np.allclose(above, 0.8, atol=1e-6), f"got {above.min()}..{above.max()}"
+
+
+def test_a_black_point_clips_the_shadows_to_zero():
+    """The ordinary black-point move: drag the low endpoint right. Everything at
+    or below that input becomes pure black."""
+    lut = build_lut([(0.25, 0.0), (1.0, 1.0)], n=101)
+    assert np.allclose(lut[:26], 0.0, atol=1e-6)
+    assert lut[60] > 0.0, "midtones must still pass"
+
+
+def test_sanitize_keeps_endpoints_the_user_moved():
+    """sanitize_points used to force (0,0) and (1,1) onto every point list, so
+    an endpoint drag was discarded the moment it was committed."""
+    pts = sanitize_points([(0.2, 0.05), (0.5, 0.5), (0.9, 0.95)])
+    assert pts[0] == (0.2, 0.05), f"first endpoint rewritten to {pts[0]}"
+    assert pts[-1] == (0.9, 0.95), f"last endpoint rewritten to {pts[-1]}"
+
+
+def test_sanitize_still_sorts_clamps_and_spaces_interior_points():
+    """Unpinning the corners must not lose the guarantees build_lut relies on:
+    sorted, inside [0,1], and no two points closer than the minimum gap."""
+    pts = sanitize_points([(0.9, 0.9), (0.5, 0.5), (0.505, 0.6), (-0.2, 0.1), (1.4, 2.0)])
+    xs = [x for x, _ in pts]
+    assert xs == sorted(xs), "not sorted"
+    assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in pts), "outside [0,1]"
+    assert all(b - a > 0 for a, b in zip(xs, xs[1:])), "coincident x survived"
+
+
+def test_identity_is_unchanged_by_the_endpoint_work():
+    """The default curve must still be a no-op — this is the regression that
+    would silently alter every image that never touches Curves."""
+    lut = build_lut(IDENTITY, n=256)
+    assert np.allclose(lut, np.linspace(0, 1, 256), atol=1e-6)
