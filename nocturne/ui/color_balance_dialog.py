@@ -124,8 +124,9 @@ class ColorBalanceDialog(QDialog):
             return wrap
 
         controls = QFormLayout()
-        controls.addRow(QLabel("Shift the colour of one tonal range. Mid-grey in the "
-                               "mask means untouched; the stars are never altered."))
+        controls.addRow(QLabel("Shift the colour of one tonal range. In the mask, "
+                               "white is fully adjusted and black is untouched; "
+                               "the stars are never altered."))
         controls.addRow("Tone", self.tone_box)
         for label, key in _AXES:
             controls.addRow(label, _row(self.sliders[key], self.slider_vals[key]))

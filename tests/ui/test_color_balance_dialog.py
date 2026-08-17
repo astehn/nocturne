@@ -263,3 +263,21 @@ def test_apply_still_delivers_the_result_when_the_work_finishes(qtbot):
     qtbot.waitUntil(lambda: "result" in got, timeout=5000)
     assert got["result"].data.shape == d._starless.data.shape
     assert got["opts"]["blue"] == pytest.approx(0.5)
+
+
+def test_the_panel_states_the_mask_convention_correctly(qtbot):
+    """White reveals, black conceals — the Photoshop convention, and what
+    range_mask actually does: out = data + (shifted - data) * mask, so 1 is
+    fully adjusted and 0 is untouched.
+
+    Reported 2026-08-17. The panel said "mid-grey in the mask means untouched",
+    which is the BACKGROUND GRADIENT VIEW's convention — that image is a signed
+    difference, so its zero point sits in the middle. Two greyscale overlays in
+    one app with opposite meanings, and the label had them crossed while the
+    help topic had them right.
+    """
+    from PySide6.QtWidgets import QLabel
+    d = _dlg(qtbot)
+    text = " ".join(lbl.text().lower() for lbl in d.findChildren(QLabel))
+    assert "mid-grey" not in text, "the mask's zero point is black, not mid-grey"
+    assert "white" in text and "black" in text, "the convention is not stated"
