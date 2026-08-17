@@ -155,3 +155,73 @@ def test_output_stays_in_range_and_float32():
     out = apply_balance(img, Balance(red=1.0, green=1.0, blue=1.0))
     assert out.data.dtype == np.float32
     assert out.data.min() >= 0.0 and out.data.max() <= 1.0
+
+
+def test_the_masked_path_matches_the_exhaustive_one_exactly():
+    """apply_balance skips pixels the mask discards, because preserving
+    luminosity converts to CIE Lab and back — 4.5 s of a 7.6 s Apply on the
+    39.5 Mpx M 31 mosaic, for a mask selecting 2.11% of the frame.
+
+    The optimisation must not change the answer, and this is the test that
+    proves it. Measured agreement is 2.4e-7 — one float32 ULP, six hundred
+    thousandths of one 8-bit level — not bit-for-bit, because converting a
+    reshaped (N,1,3) slice to CIE Lab reassociates the arithmetic differently
+    from converting an (H,W,3) image. That is floating point, not logic.
+
+    It does not threaten WYSIWYG: preview and export both go through THIS
+    function, so they agree with each other exactly. The comparison here is
+    against an exhaustive implementation that no longer exists in the code.
+    """
+    from nocturne.core.color_balance import MAX_SHIFT, tone_weight
+    from nocturne.core.narrowband import preserve_lightness
+
+    from nocturne.core.color_balance import _SPARSE_MAX
+
+    rng = np.random.default_rng(7)
+    data = np.clip(_astro_like(64) + rng.normal(0, 0.02, (64, 64, 3)), 0, 1).astype(np.float32)
+    img = AstroImage(data, is_linear=False)
+
+    # A SPARSE mask, or this tests the wrong branch. The first version of this
+    # test used a mask covering 78% of the frame, which takes the dense path —
+    # so a mutation that dropped the mask weighting from the sparse path passed
+    # it. Both branches are exercised below.
+    mask = np.zeros((64, 64), np.float32)
+    mask[:, 20:36] = np.linspace(0.0, 1.0, 16, dtype=np.float32)
+    assert float((mask > 0).mean()) < _SPARSE_MAX, "this mask takes the dense path"
+    assert (mask == 0).any() and (mask == 1).any(), "the mask must exercise both extremes"
+
+    b = Balance(tone="midtones", red=-0.18, blue=0.20, preserve_lum=True, strength=0.8)
+    fast = apply_balance(img, b, mask).data
+
+    # the exhaustive reference, written out longhand
+    w = tone_weight(data.mean(axis=2), b.tone)[..., None]
+    shifted = np.clip(data + np.array([b.red, b.green, b.blue], np.float32) * MAX_SHIFT * w,
+                      0.0, 1.0)
+    shifted = preserve_lightness(shifted, data)
+    slow = np.clip(data + (shifted - data) * mask[..., None] * b.strength, 0, 1).astype(np.float32)
+
+    diff = float(np.max(np.abs(fast - slow)))
+    assert diff < 1e-6, f"sparse path: max difference {diff:.3e} — larger than float32 noise"
+
+    # and the DENSE branch, which the sparse gate hands off to above _SPARSE_MAX
+    dense_mask = np.clip(np.tile(np.linspace(-0.2, 1.4, 64, dtype=np.float32), (64, 1)), 0, 1)
+    assert float((dense_mask > 0).mean()) > _SPARSE_MAX, "this mask takes the sparse path"
+    fast_d = apply_balance(img, b, dense_mask).data
+    shifted_d = np.clip(data + np.array([b.red, b.green, b.blue], np.float32) * MAX_SHIFT * w,
+                        0.0, 1.0)
+    shifted_d = preserve_lightness(shifted_d, data)
+    slow_d = np.clip(data + (shifted_d - data) * dense_mask[..., None] * b.strength,
+                     0, 1).astype(np.float32)
+    diff_d = float(np.max(np.abs(fast_d - slow_d)))
+    assert diff_d < 1e-6, f"dense path: max difference {diff_d:.3e}"
+
+
+def test_the_masked_path_leaves_discarded_pixels_bit_identical():
+    """Where the mask is zero the pixel must be the ORIGINAL, byte for byte —
+    not a value that merely rounds back to it."""
+    data = _astro_like(48)
+    img = AstroImage(data, is_linear=False)
+    mask = np.zeros((48, 48), np.float32)
+    mask[:24] = 1.0
+    out = apply_balance(img, Balance(blue=1.0, red=-1.0), mask).data
+    assert np.array_equal(out[24:], data[24:])

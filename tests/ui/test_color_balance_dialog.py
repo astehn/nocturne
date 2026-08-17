@@ -165,6 +165,7 @@ def test_the_option_dict_round_trips_every_field(qtbot):
     d.set_balance_for_test(blue=0.5, tone="highlights", strength=0.8)
     d.handles.set_range(0.2, 0.9)
     d._apply()
+    qtbot.waitUntil(lambda: bool(seen), timeout=5000)   # Apply composes off-thread
     for key in ("tone", "red", "green", "blue", "preserve_lum",
                 "strength", "lo", "hi", "feather"):
         assert key in seen, f"{key} missing from the recorded option"
@@ -184,6 +185,7 @@ def test_apply_hands_over_the_same_image_the_preview_showed(qtbot):
     d.preset_box.setCurrentText("Object, not the core")
     shown = d.preview_image().data
     d._apply()
+    qtbot.waitUntil(lambda: "result" in got, timeout=5000)
     expected = d.compose(d._prev_starless, d._prev_stars).data
     assert np.allclose(shown, expected, atol=1e-6)
     assert got["result"].data.shape == d._starless.data.shape
@@ -227,3 +229,37 @@ def test_the_band_actually_limits_where_the_colour_moves(qtbot):
         "pixels the mask excluded were recoloured")
     assert not np.allclose(after[selected], before[selected], atol=1e-4), (
         "pixels the mask selected did not move")
+
+
+def test_apply_does_not_block_the_ui_thread(qtbot):
+    """Apply on the 39.5 Mpx mosaic takes 3.4 s with a real mask and 7.8 s with
+    the whole frame selected. Running that on the UI thread freezes the window
+    with no feedback — which in this app has previously been indistinguishable
+    from the hang that cost a session.
+
+    Asserted structurally: the heavy work goes through the dialog's thread pool,
+    and the button is disabled meanwhile so it cannot be pressed twice.
+    """
+    calls = []
+    d = _dlg(qtbot, on_apply=lambda result, opts: calls.append(opts))
+    d.set_balance_for_test(blue=0.5)
+
+    submitted = []
+    d._pool = type("P", (), {"start": lambda _self, w: submitted.append(w)})()
+    d._apply()
+
+    assert submitted, "Apply ran the composition on the UI thread"
+    assert not d.apply_btn.isEnabled(), "Apply stayed clickable while working"
+    assert calls == [], "on_apply fired before the work finished"
+
+
+def test_apply_still_delivers_the_result_when_the_work_finishes(qtbot):
+    """The async path must end where the synchronous one did: on_apply gets the
+    full-resolution image, and the dialog closes."""
+    got = {}
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.update(result=result, opts=opts))
+    d.set_balance_for_test(blue=0.5, strength=0.9)
+    d._apply()
+    qtbot.waitUntil(lambda: "result" in got, timeout=5000)
+    assert got["result"].data.shape == d._starless.data.shape
+    assert got["opts"]["blue"] == pytest.approx(0.5)

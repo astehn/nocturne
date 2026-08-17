@@ -29,6 +29,10 @@ TONES = ("shadows", "midtones", "highlights")
 # slider: it would make full travel a ~55% swing.
 MAX_SHIFT = 0.10
 
+# Above this fraction of the frame, skipping unselected pixels costs more than
+# it saves — see the gate in apply_balance.
+_SPARSE_MAX = 0.5
+
 
 @dataclass(frozen=True)
 class Balance:
@@ -80,14 +84,44 @@ def apply_balance(img: AstroImage, b: Balance,
     if strength == 0.0 or not amounts.any():
         return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
 
-    w = tone_weight(data.mean(axis=2), b.tone)[..., None]
+    if mask is None:
+        return AstroImage(_blended(data, data, amounts, b, strength),
+                          is_linear=img.is_linear, metadata=dict(img.metadata))
+
+    # Work only where the mask actually selects something. Everywhere else the
+    # blend multiplies the shift by zero and throws it away, so computing it is
+    # pure waste — and it is not small waste: preserving luminosity converts to
+    # CIE Lab and back, which on the 39.5 Mpx M 31 mosaic took 4.5 s of a 7.6 s
+    # Apply while the mask selected 2.11% of the frame. Exact, not approximate:
+    # the discarded pixels are unchanged either way.
+    m = np.clip(mask, 0.0, 1.0).astype(np.float32)
+    sel = m > 0.0
+    frac = float(sel.mean())
+    if frac == 0.0:
+        return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
+    if frac > _SPARSE_MAX:
+        # Gathering and scattering costs more than it saves once most of the
+        # frame is selected: measured on the 39.5 Mpx mosaic, the whole-image
+        # case went 7.6 s -> 10.5 s before this gate existed. The saving only
+        # exists when there is genuinely something to skip.
+        return AstroImage(_blended(data, data, amounts, b, strength, m[..., None]),
+                          is_linear=img.is_linear, metadata=dict(img.metadata))
+
+    out = data.copy()
+    patch = data[sel][:, None, :]                       # (N, 1, 3) keeps Lab happy
+    shifted = _blended(patch, patch, amounts, b, strength, m[sel][:, None, None])
+    out[sel] = shifted[:, 0, :]
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
+def _blended(data: np.ndarray, ref: np.ndarray, amounts: np.ndarray,
+             b: Balance, strength: float, mask=None) -> np.ndarray:
+    """Shift, preserve luminosity, blend — on whatever slice it is handed."""
+    w = tone_weight(ref.mean(axis=-1), b.tone)[..., None]
     shifted = np.clip(data + amounts * MAX_SHIFT * w, 0.0, 1.0)
     if b.preserve_lum:
         from .narrowband import preserve_lightness
         shifted = preserve_lightness(shifted, data)
-
-    blend = strength if mask is None else (
-        np.clip(mask, 0.0, 1.0).astype(np.float32)[..., None] * strength)
-    out = data + (shifted - data) * blend
-    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
-                      is_linear=img.is_linear, metadata=dict(img.metadata))
+    blend = strength if mask is None else mask * strength
+    return np.clip(data + (shifted - data) * blend, 0.0, 1.0).astype(np.float32)

@@ -313,9 +313,25 @@ class ColorBalanceDialog(QDialog):
             self.preview.view.fit()
 
     def _apply(self) -> None:
+        """Compose at full resolution OFF the UI thread.
+
+        Measured on the 39.5 Mpx M 31 mosaic: 3.4 s with a real mask, 7.8 s with
+        the whole frame selected. Run on the UI thread that is a window frozen
+        with no feedback, which in this app is indistinguishable from the hang
+        that once cost a whole session.
+        """
         if self._starless is None:
             self.status.setText("Still removing stars…")
             return
+        self.apply_btn.setEnabled(False)
+        self.status.setText("Applying at full resolution…")
+        run_async(self._pool, self.compose, self._on_composed, self._on_compose_error)
+
+    def _on_composed(self, result: AstroImage) -> None:
         if self._on_apply is not None:
-            self._on_apply(self.compose(), self.options())
+            self._on_apply(result, self.options())
         self.accept()
+
+    def _on_compose_error(self, exc) -> None:
+        self.apply_btn.setEnabled(True)
+        self.status.setText(f"Could not apply: {exc}")
