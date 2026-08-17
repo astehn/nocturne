@@ -4113,3 +4113,57 @@ def test_the_toggle_cannot_stay_checked_once_the_canvas_is_back_to_normal(qtbot,
     assert not win._panel.show_model_check.isChecked(), (
         "the canvas is showing the current image again")
     assert np.allclose(win._canvas_img.data, win.project.current().data)
+
+
+def test_colour_balance_appends_instead_of_truncating(qtbot, tmp_path):
+    """It is a FINISHING tool: it must never discard work done after the step it
+    conceptually sits beside. Same reason Trim appends rather than reaching back
+    into the pipeline."""
+    import numpy as np
+    from nocturne.ui.main_window import _PrecomputedStep
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", base), "0.5")
+    before = len(win.project.entries())
+
+    result = AstroImage(np.clip(base.data * 1.01, 0, 1), is_linear=False,
+                        metadata=dict(base.metadata))
+    win._apply_color_balance(result, {"tone": "midtones", "red": 0.0, "green": 0.0,
+                                      "blue": 0.2, "preserve_lum": True,
+                                      "strength": 0.8, "lo": 0.379, "hi": 0.748,
+                                      "feather": 0.08})
+    names = [n for n, _ in win.project.entries()]
+    assert len(names) == before + 1, "an entry was truncated"
+    assert names[-1] == "Colour Balance"
+    assert "Stretch" in names, "the earlier step was discarded"
+
+
+def test_colour_balance_can_be_applied_twice(qtbot, tmp_path):
+    """Cool the arms, then warm the core: two separately undoable entries. This
+    is the payoff of appending rather than being a pipeline step."""
+    import numpy as np
+    from nocturne.ui.main_window import _PrecomputedStep
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", base), "0.5")
+    opts = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
+            "preserve_lum": True, "strength": 0.8, "lo": 0.379, "hi": 0.748,
+            "feather": 0.08}
+    for _ in range(2):
+        win._apply_color_balance(
+            AstroImage(np.clip(win.project.current().data * 1.01, 0, 1),
+                       is_linear=False, metadata=dict(base.metadata)), opts)
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Colour Balance") == 2
+    assert win.project.can_undo()
+
+
+def test_the_colour_balance_toolbar_action_exists(qtbot, tmp_path):
+    """The icon is a NEW ASSET and load_icon RAISES on a missing SVG, so a
+    fresh clone that lacks it cannot construct MainWindow at all — the fault
+    that hid for four days with update.svg."""
+    win = _window(qtbot, tmp_path)
+    assert win._cb_act is not None
+    assert win._cb_act.text() == "Colour Balance"

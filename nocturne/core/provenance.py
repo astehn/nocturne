@@ -17,6 +17,7 @@ _HEADLINE_FIELD = {
     "Background": "engine",
     "Noise Reduction": "engine",
     "Narrowband": "palette",
+    "Colour Balance": "tone",
 }
 
 _FAILED = object()   # sentinel: this step's option could not be serialized

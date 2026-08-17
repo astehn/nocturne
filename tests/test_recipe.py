@@ -137,3 +137,37 @@ def test_uncaptured_excludes_enhance_taps():
     from nocturne.recipe import uncaptured_step_names
     entries = [("Boost Red", None), ("Soft Glow", None)]
     assert uncaptured_step_names(entries) == []
+
+
+def test_colour_balance_is_registered_as_a_recipe_step():
+    """The round-trip test below passes VACUOUSLY without this: an unregistered
+    stage id falls through serialize_option unchanged, so any dict round-trips
+    whether or not the tool is wired in at all."""
+    from nocturne.recipe import _NAME_TO_STAGE
+    assert _NAME_TO_STAGE.get("Colour Balance") == "color_balance"
+
+
+def test_a_colour_balance_survives_a_recipe_round_trip():
+    """Otherwise it is the one finishing move a recipe cannot reproduce — which
+    re-opens the export-to-Photoshop leak this feature exists to close."""
+    from nocturne.recipe import deserialize_option, serialize_option
+    opts = {"tone": "midtones", "red": -0.18, "green": 0.0, "blue": 0.2,
+            "preserve_lum": True, "strength": 0.8,
+            "lo": 0.379, "hi": 0.748, "feather": 0.08}
+    out = deserialize_option("color_balance", serialize_option("color_balance", opts))
+    assert out == opts
+    # and the types are normalised, not merely passed through
+    assert isinstance(out["strength"], float) and isinstance(out["preserve_lum"], bool)
+
+
+def test_a_colour_balance_recipe_keeps_its_band_absolute():
+    """The band is stored as measured, not re-fitted on replay. A preset is a
+    starting point computed once from the image in front of you; if a recipe
+    re-derived it per image, the same recipe would mean different things on
+    different frames and nothing would say so."""
+    from nocturne.recipe import serialize_option
+    opts = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
+            "preserve_lum": True, "strength": 1.0,
+            "lo": 0.379, "hi": 0.748, "feather": 0.08}
+    ser = serialize_option("color_balance", opts)
+    assert ser["lo"] == 0.379 and ser["hi"] == 0.748

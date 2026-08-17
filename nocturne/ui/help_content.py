@@ -330,6 +330,50 @@ _TOPIC_LIST = (
        "<p>Small moves go a long way. A steep curve can crush the faint outer nebulosity "
        "into the background — keep an eye on the dim detail as you pull.</p>"),
 
+    _t("color_balance", "Colour Balance",
+       "Shift the colour of one tonal range, inside a chosen band of brightness.",
+       "<h4>What it does</h4>"
+       "<p>Warms or cools part of the picture without touching the rest. The classic "
+       "case is a galaxy: its arms are young blue stars and its core is old and "
+       "golden, so pushing the arms bluer while leaving the core alone separates the "
+       "two populations. It is a finishing tool — it appends to your history, so it "
+       "never discards work you have already done, and you can run it twice with "
+       "different settings.</p>"
+       "<p><b>Your stars are never altered.</b> The tool separates them out, adjusts "
+       "only the starless layer, and lays the untouched stars back on top.</p>"
+       "<h4>Tone</h4>"
+       "<p>Which brightnesses to act on: <b>shadows</b>, <b>midtones</b> or "
+       "<b>highlights</b>. Midtones is the usual choice — it is where nebulosity and "
+       "spiral arms live.</p>"
+       "<h4>The three sliders</h4>"
+       "<p>Each is a pair of opposites: <b>Cyan — Red</b>, <b>Magenta — Green</b> and "
+       "<b>Yellow — Blue</b>. Drag toward the colour you want more of. Small moves go "
+       "a long way; a fifth of the travel is a clearly visible change.</p>"
+       "<p><b>Preserve luminosity</b> keeps the brightness exactly as it was and "
+       "changes only the colour. Leave it on unless you specifically want the "
+       "adjustment to lighten or darken as well.</p>"
+       "<p><b>Strength</b> scales the whole adjustment, like a layer's opacity.</p>"
+       "<h4>Limit to</h4>"
+       "<p>This is what makes the tool precise: the adjustment only applies to a "
+       "<b>band of brightness</b>, which you set with the two handles over the "
+       "histogram. Everything darker or brighter than the band is left alone.</p>"
+       "<p>The presets are starting points, measured from your own image rather than "
+       "fixed numbers — a stretched sky sits wherever the stretch put it, so a fixed "
+       "band would be meaningless. <b>Whole image</b> applies everywhere. "
+       "<b>Bright areas</b> takes everything above the sky. <b>Midtones</b> takes the "
+       "middle of the signal. <b>Object, not the core</b> takes the object but stops "
+       "short of its brightest centre — the one to reach for on a galaxy. After "
+       "picking a preset the handles stay yours to move.</p>"
+       "<p><b>Feather</b> softens both edges of the band, so the adjustment fades in "
+       "and out instead of leaving a visible seam.</p>"
+       "<p><b>Show the mask</b> puts the band itself on screen: white is fully "
+       "affected, black is untouched. Look at it. A mask you cannot see is a mask you "
+       "cannot trust, and it is the quickest way to tell whether you have actually "
+       "selected the thing you meant to.</p>"
+       "<h4>Tips</h4>"
+       "<p>Work in two passes rather than one big move — cool the arms, apply, then "
+       "warm the core with a second run. Each is separately undoable.</p>"),
+
     _t("saturation", "Saturation",
        "Mute or boost colour intensity.",
        "<h4>What it does</h4>"
@@ -825,7 +869,8 @@ SECTIONS: tuple[HelpSection, ...] = (
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
-    HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband")),
+    HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband",
+                          "color_balance")),
     HelpSection("Sharing & Projects", ("share", "upscale", "saved-projects", "provenance")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
     HelpSection("Recipes & Batch", ("recipes",)),

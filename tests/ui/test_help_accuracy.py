@@ -188,3 +188,19 @@ def test_background_help_explains_the_model_view():
     assert "Show what was removed" in b, "the model toggle is not explained"
     assert "Show what was removed" in sp, "the label changed; update the help"
     assert "shape of your object" in b.lower(), "the failure it detects is not described"
+
+
+def test_the_colour_balance_help_names_the_real_controls():
+    """Help drifts silently — it has done on three consecutive releases, and
+    v0.13.0 nearly shipped telling users to check background extraction with a
+    control that cannot show what they needed to see."""
+    from nocturne.core.color_balance import TONES
+    from nocturne.core.mask import BAND_PRESETS
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    for name in BAND_PRESETS:
+        assert name.lower() in body, f"preset {name!r} is not in the help"
+    for tone in TONES:
+        assert tone in body, f"tone {tone!r} is not in the help"
+    for word in ("preserve luminosity", "strength", "feather", "show the mask"):
+        assert word in body, f"{word!r} is not in the help"

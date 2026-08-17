@@ -750,6 +750,32 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _open_color_balance(self) -> None:
+        if self.project is None:
+            return
+        if self.project.current().is_linear:
+            self._show_warning("Stretch the image first — Colour Balance works on "
+                               "the stretched image.")
+            return
+        if not self.project.current().is_color:
+            self._show_warning("Colour Balance needs a colour image.")
+            return
+        from .color_balance_dialog import ColorBalanceDialog
+        ColorBalanceDialog(self.settings, self.project.current(), parent=self,
+                           on_apply=self._apply_color_balance).exec()
+
+    def _apply_color_balance(self, result, opts) -> None:
+        """Appends, like Trim. A finishing tool must never truncate the history
+        of work done after the step it conceptually sits beside."""
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Colour Balance", result), opts)
+        self._mark_dirty()
+        self.log_panel.append_entry(
+            format_log_entry("Colour Balance", opts.get("tone", ""), None))
+        self._clear_warning()
+        self._refresh()
+
     def _on_auto_progress(self, i: int, n: int, name: str) -> None:
         self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
         if self._busy_shown:
@@ -1217,6 +1243,9 @@ class MainWindow(QMainWindow):
             "trim": "#b0a06a",         # muted olive — the gap in the wheel,
                                         # and far from upscale's rose so the two
                                         # finishing tools do not read as variants
+            "color-balance": "#c97f5b",  # burnt orange — the last unused hue, and
+                                         # warm where share/haoiii are cool, so a
+                                         # colour tool does not read as a share one
         }
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
@@ -1230,6 +1259,8 @@ class MainWindow(QMainWindow):
                                               # canvas pill owns overlay visibility)
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
         self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
+        self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
+                                    "Colour Balance", self._open_color_balance)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
