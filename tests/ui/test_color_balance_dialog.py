@@ -419,3 +419,32 @@ def test_reset_clears_every_range_not_just_the_visible_one(qtbot):
     b = d.balance()
     assert b.midtones == (0.0, 0.0, 0.0) and b.highlights == (0.0, 0.0, 0.0)
     assert b.shadows == (0.0, 0.0, 0.0)
+
+
+def test_the_preview_downscale_conserves_the_stars(qtbot):
+    """Reported 2026-08-17: stars look extremely pixelated when zoomed into the
+    dialog's preview.
+
+    The preview decimates to 640 px for interactive speed. Doing that by strided
+    sampling — every Nth pixel — throws away most of the star field: measured on
+    300 synthetic 3x3 stars decimated 8x, 253 VANISHED ENTIRELY and the 47
+    survivors were rendered at full amplitude, which is the hard single-pixel
+    look. Area-averaging keeps every one and conserves flux exactly.
+
+    Flux, not appearance, because it is the property that can be stated
+    numerically and it is what "the stars are still there" actually means.
+    """
+    from nocturne.ui.color_balance_dialog import _downscale
+    from nocturne.core.image import AstroImage
+    bg = 0.05
+    data = np.full((512, 512, 3), bg, np.float32)
+    rng = np.random.default_rng(1)
+    for y, x in zip(rng.integers(3, 509, 200), rng.integers(3, 509, 200)):
+        data[y - 1:y + 2, x - 1:x + 2] = 0.9
+
+    small = _downscale(AstroImage(data, is_linear=False), max_edge=64).data
+    step = 512 // 64
+    before = float(np.clip(data - bg, 0, None).sum())
+    after = float(np.clip(small - bg, 0, None).sum()) * step * step
+    assert after == pytest.approx(before, rel=0.02), (
+        f"star flux {after:.0f} against {before:.0f} — the preview is losing stars")
