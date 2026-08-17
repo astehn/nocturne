@@ -1462,7 +1462,10 @@ class MainWindow(QMainWindow):
             return
         if path is None:
             start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
-            path, _ = file_dialogs.open_file(
+            # open_file returns a PATH, not (path, filter) — unlike the static
+            # Qt helper it replaced. Unpacking it as a pair shipped broken in
+            # v0.12.0 and v0.13.0.
+            path = file_dialogs.open_file(
                 self, "Open Project", start, "Nocturne project (*.nocturne)")
             if not path:
                 return

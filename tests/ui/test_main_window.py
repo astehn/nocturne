@@ -4186,3 +4186,43 @@ def test_colour_balance_is_unavailable_until_the_image_is_stretched(qtbot, tmp_p
         base.data, is_linear=False, metadata=dict(base.metadata))), "0.5")
     win._refresh()
     assert win._cb_act.isEnabled(), "still disabled after a stretch"
+
+
+def test_open_project_from_the_toolbar_actually_opens(qtbot, tmp_path, monkeypatch):
+    """Reported 2026-08-17, broken in the SHIPPED v0.12.0 and v0.13.0.
+
+    The file-dialog migration swapped QFileDialog.getOpenFileName, which returns
+    (path, filter), for file_dialogs.open_file, which returns a path — but left
+    the tuple unpacking in place. `path, _ = "…/M31_project.nocturne"` raises
+    ValueError, so the toolbar button could not open a project at all.
+
+    Every existing test calls _open_project(path) WITH a path, which skips the
+    dialog branch entirely, so the one line the button actually runs had no
+    coverage. This test takes the no-argument path the button takes.
+    """
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = str(tmp_path / "round.nocturne")
+    monkeypatch.setattr(mw.file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win2 = _window(qtbot, tmp_path)
+    monkeypatch.setattr(mw.file_dialogs, "open_file",
+                        lambda *a, **k: out)          # a plain str, as the real one returns
+    win2._open_project()                              # no path: the toolbar's path
+    assert win2._project_path == out, "the project was not opened"
+
+
+def test_open_project_from_the_toolbar_handles_cancel(qtbot, tmp_path, monkeypatch):
+    """Cancelling returns "" — which must be a quiet no-op, not an exception and
+    not an attempt to load a file called ""."""
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.current().data.copy()
+    monkeypatch.setattr(mw.file_dialogs, "open_file", lambda *a, **k: "")
+    win._open_project()
+    assert win._warning.text() == "", "cancelling warned the user"
+    assert np.array_equal(win.project.current().data, before), "the image changed"
