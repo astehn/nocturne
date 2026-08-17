@@ -132,3 +132,39 @@ def test_painting_works_with_and_without_a_histogram(qtbot):
     w.set_histogram(np.random.default_rng(2).random((16, 16, 3)).astype(np.float32))
     w.set_range(0.3, 0.7)
     w.render(QPixmap(w.size()))
+
+
+def test_a_black_to_white_strip_labels_the_axis(qtbot):
+    """The histogram alone does not say what the axis MEANS. Someone who has not
+    worked with images for years has no way to know the handles select by
+    brightness, or which end is which. A gradient under it says so without a
+    word of explanation.
+
+    Asserted by rendering and sampling: the strip must actually go dark on the
+    left and light on the right, not merely exist.
+    """
+    from PySide6.QtGui import QPixmap
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    pm = QPixmap(w.size())
+    w.render(pm)
+    img = pm.toImage()
+    _ox, oy, _pw, ph = w._plot()                 # locate the strip from the real
+    y = oy + ph + w.STRIP_H // 2                 # geometry, not from the bottom edge
+    left = img.pixelColor(12, y).lightness()
+    right = img.pixelColor(w.width() - 12, y).lightness()
+    assert left < 40, f"the left end of the strip is not black ({left})"
+    assert right > 215, f"the right end of the strip is not white ({right})"
+    assert right - left > 180, "the strip is not a gradient"
+
+
+def test_the_strip_does_not_eat_the_histogram_area(qtbot):
+    """The band handles must still map across the full width, and the histogram
+    must not be drawn over the strip."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    assert w._x_to_px(0.0) < w._x_to_px(1.0)
+    _ox, _oy, _pw, ph = w._plot()
+    assert ph < w.height() - w.STRIP_H, "the plot area overlaps the strip"

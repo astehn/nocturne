@@ -281,3 +281,59 @@ def test_the_panel_states_the_mask_convention_correctly(qtbot):
     text = " ".join(lbl.text().lower() for lbl in d.findChildren(QLabel))
     assert "mid-grey" not in text, "the mask's zero point is black, not mid-grey"
     assert "white" in text and "black" in text, "the convention is not stated"
+
+
+def test_the_mask_can_be_inverted(qtbot):
+    """Requested 2026-08-17. Selecting the complement of a band — everything
+    EXCEPT the object, say — is otherwise unreachable: the handles can only
+    describe one contiguous range."""
+    d = _dlg(qtbot)
+    d.preset_box.setCurrentText("Object, not the core")
+    normal = d.mask_for(d._starless).copy()
+    d.invert_check.setChecked(True)
+    inverted = d.mask_for(d._starless)
+    assert np.allclose(inverted, 1.0 - normal, atol=1e-6)
+
+
+def test_inverting_moves_the_other_pixels(qtbot):
+    """Not just the mask array — the composed RESULT must change the complement.
+    An invert that never reached compose() would pass the test above."""
+    d = _dlg(qtbot)
+    d.preset_box.setCurrentText("Object, not the core")
+    d.set_balance_for_test(blue=1.0, red=-1.0, strength=1.0)
+    before = d._base.data.copy()
+    normal_mask = d.mask_for(d._starless)
+    d.invert_check.setChecked(True)
+    after = d.compose().data
+    # FULLY inside only: a pixel at 0.9 inverts to 0.1, so a tenth of the
+    # adjustment legitimately still lands on it. Only mask == 1 inverts to
+    # exactly zero, and the band reaches exactly 1 by construction.
+    inside_band = normal_mask >= 1.0 - 1e-6
+    outside_band = normal_mask < 1e-6
+    assert inside_band.any() and outside_band.any()
+    assert np.allclose(after[inside_band], before[inside_band], atol=1e-6), (
+        "the band was still adjusted after inverting")
+    assert not np.allclose(after[outside_band], before[outside_band], atol=1e-4), (
+        "the complement was not adjusted")
+
+
+def test_invert_is_recorded_in_the_option(qtbot):
+    seen = {}
+    d = _dlg(qtbot, on_apply=lambda result, opts: seen.update(opts))
+    d.invert_check.setChecked(True)
+    d.set_balance_for_test(blue=0.5)
+    d._apply()
+    qtbot.waitUntil(lambda: bool(seen), timeout=5000)
+    assert seen["invert"] is True
+
+
+def test_the_description_label_wraps(qtbot):
+    """Seen in a screenshot 2026-08-17: the description was truncated because it
+    had no word wrap, unlike the status label beside it — so it either clips or
+    forces the panel wider than its 380 px cap."""
+    from PySide6.QtWidgets import QLabel
+    d = _dlg(qtbot)
+    described = [lbl for lbl in d.findChildren(QLabel)
+                 if "shift the colour" in lbl.text().lower()]
+    assert described, "the description label is gone"
+    assert described[0].wordWrap(), "the description label does not wrap"

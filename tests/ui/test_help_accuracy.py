@@ -204,3 +204,13 @@ def test_the_colour_balance_help_names_the_real_controls():
         assert tone in body, f"tone {tone!r} is not in the help"
     for word in ("preserve luminosity", "strength", "feather", "show the mask"):
         assert word in body, f"{word!r} is not in the help"
+
+
+def test_the_colour_balance_help_covers_invert_and_the_scale_bar():
+    """Both were added after the first draft of the topic. Help has drifted on
+    three consecutive releases; a control the help does not mention is a control
+    a beginner will not find."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    assert "invert" in body, "the invert toggle is not documented"
+    assert "black-to-white" in body, "the scale bar under the histogram is not explained"

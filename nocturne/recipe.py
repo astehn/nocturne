@@ -61,7 +61,8 @@ def serialize_option(stage_id, option):
                 # silently mean something different on every frame.
                 "lo": float(o.get("lo", 0.0)),
                 "hi": float(o.get("hi", 1.0)),
-                "feather": float(o.get("feather", 0.08))}
+                "feather": float(o.get("feather", 0.08)),
+                "invert": bool(o.get("invert", False))}
     if stage_id == "narrowband":
         from .core.narrowband import NarrowbandParams
         p = option if isinstance(option, NarrowbandParams) else NarrowbandParams()
@@ -108,7 +109,8 @@ def deserialize_option(stage_id, value):
                 "strength": float(value.get("strength", 1.0)),
                 "lo": float(value.get("lo", 0.0)),
                 "hi": float(value.get("hi", 1.0)),
-                "feather": float(value.get("feather", 0.08))}
+                "feather": float(value.get("feather", 0.08)),
+                "invert": bool(value.get("invert", False))}
     if stage_id == "narrowband":
         import dataclasses
         from .core.narrowband import NarrowbandParams

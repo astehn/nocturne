@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from .theme import BG_0, BORDER
@@ -10,6 +10,7 @@ from .theme import BG_0, BORDER
 _MARGIN = 8
 _MIN_SPAN = 0.02      # a band narrower than this selects essentially nothing
 _ACCENT = "#ffd479"
+_STRIP_GAP = 3        # breathing room between the histogram and the strip
 
 
 class RangeHandles(QWidget):
@@ -22,6 +23,12 @@ class RangeHandles(QWidget):
     """
 
     rangeChanged = Signal(float, float)
+
+    # A black-to-white bar under the histogram, so the axis explains itself.
+    # A histogram alone does not say WHAT is being selected — someone who has
+    # not spent years in image editors has no way to know the handles pick by
+    # brightness, or which end is which.
+    STRIP_H = 12
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -49,8 +56,9 @@ class RangeHandles(QWidget):
 
     # --- coordinate mapping ---
     def _plot(self):
+        """The histogram/handle area, excluding the gradient strip below it."""
         return (_MARGIN, _MARGIN, max(1, self.width() - 2 * _MARGIN),
-                max(1, self.height() - 2 * _MARGIN))
+                max(1, self.height() - 2 * _MARGIN - self.STRIP_H - _STRIP_GAP))
 
     def _x_to_px(self, x: float) -> float:
         ox, _oy, w, _h = self._plot()
@@ -111,4 +119,12 @@ class RangeHandles(QWidget):
 
         p.setPen(QPen(QColor(_ACCENT), 2))
         for x in (lo_px, hi_px):
-            p.drawLine(int(x), oy, int(x), oy + h)
+            p.drawLine(int(x), oy, int(x), oy + h + _STRIP_GAP + self.STRIP_H)
+
+        strip_y = oy + h + _STRIP_GAP
+        ramp = QLinearGradient(float(ox), 0.0, float(ox + w), 0.0)
+        ramp.setColorAt(0.0, QColor(0, 0, 0))
+        ramp.setColorAt(1.0, QColor(255, 255, 255))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(ramp)
+        p.drawRect(ox, int(strip_y), w, self.STRIP_H)

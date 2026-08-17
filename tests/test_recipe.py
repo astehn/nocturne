@@ -153,11 +153,23 @@ def test_a_colour_balance_survives_a_recipe_round_trip():
     from nocturne.recipe import deserialize_option, serialize_option
     opts = {"tone": "midtones", "red": -0.18, "green": 0.0, "blue": 0.2,
             "preserve_lum": True, "strength": 0.8,
-            "lo": 0.379, "hi": 0.748, "feather": 0.08}
+            "lo": 0.379, "hi": 0.748, "feather": 0.08, "invert": False}
     out = deserialize_option("color_balance", serialize_option("color_balance", opts))
     assert out == opts
     # and the types are normalised, not merely passed through
     assert isinstance(out["strength"], float) and isinstance(out["preserve_lum"], bool)
+
+
+def test_a_colour_balance_recipe_written_before_invert_still_loads():
+    """Recipes and projects saved on this branch before the invert toggle existed
+    have no such key. They must open, with invert off, rather than raising."""
+    from nocturne.recipe import deserialize_option
+    old = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
+           "preserve_lum": True, "strength": 1.0,
+           "lo": 0.379, "hi": 0.748, "feather": 0.08}
+    out = deserialize_option("color_balance", old)
+    assert out["invert"] is False
+    assert out["lo"] == 0.379
 
 
 def test_a_colour_balance_recipe_keeps_its_band_absolute():

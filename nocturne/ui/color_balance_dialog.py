@@ -89,6 +89,7 @@ class ColorBalanceDialog(QDialog):
         self.handles = RangeHandles()
         self.feather_slider = ResetSlider(8, minimum=0, maximum=30)
         self.feather_val = QLabel("0.08")
+        self.invert_check = QCheckBox("Invert — adjust everything OUTSIDE the range")
         self.show_mask_check = QCheckBox("Show the mask")
 
         self.reset_btn = QPushButton("Reset")
@@ -107,6 +108,7 @@ class ColorBalanceDialog(QDialog):
         self.strength_slider.valueChanged.connect(lambda _v: self._on_slider_change())
         self.feather_slider.valueChanged.connect(lambda _v: self._on_slider_change())
         self.preserve_check.toggled.connect(lambda _v: self._schedule_render())
+        self.invert_check.toggled.connect(lambda _v: self._do_render())
         self.show_mask_check.toggled.connect(lambda _v: self._do_render())
         self.preset_box.currentTextChanged.connect(self._on_preset)
         self.handles.rangeChanged.connect(lambda _lo, _hi: self._on_slider_change())
@@ -124,9 +126,11 @@ class ColorBalanceDialog(QDialog):
             return wrap
 
         controls = QFormLayout()
-        controls.addRow(QLabel("Shift the colour of one tonal range. In the mask, "
-                               "white is fully adjusted and black is untouched; "
-                               "the stars are never altered."))
+        blurb = QLabel("Shift the colour of one tonal range. In the mask, white is "
+                       "fully adjusted and black is untouched; the stars are never "
+                       "altered.")
+        blurb.setWordWrap(True)          # without this it clips, or forces the
+        controls.addRow(blurb)           # panel past its width cap
         controls.addRow("Tone", self.tone_box)
         for label, key in _AXES:
             controls.addRow(label, _row(self.sliders[key], self.slider_vals[key]))
@@ -136,6 +140,7 @@ class ColorBalanceDialog(QDialog):
         controls.addRow("Range", self.preset_box)
         controls.addRow("", self.handles)
         controls.addRow("Feather", _row(self.feather_slider, self.feather_val))
+        controls.addRow("", self.invert_check)
         controls.addRow("", self.show_mask_check)
         controls.addRow("", self.reset_btn)
 
@@ -218,7 +223,8 @@ class ColorBalanceDialog(QDialog):
         lo, hi, feather = self.band()
         return {"tone": b.tone, "red": b.red, "green": b.green, "blue": b.blue,
                 "preserve_lum": b.preserve_lum, "strength": b.strength,
-                "lo": lo, "hi": hi, "feather": feather}
+                "lo": lo, "hi": hi, "feather": feather,
+                "invert": self.invert_check.isChecked()}
 
     def set_balance_for_test(self, **kw) -> None:
         """Drive the real controls from keyword arguments, so tests exercise the
@@ -251,6 +257,7 @@ class ColorBalanceDialog(QDialog):
         self.preserve_check.setChecked(True)
         self.strength_slider.setValue(100)
         self.feather_slider.setValue(8)
+        self.invert_check.setChecked(False)
         self.show_mask_check.setChecked(False)
         self.preset_box.setCurrentIndex(0)
         self._on_preset(self.preset_box.currentText())
@@ -273,9 +280,16 @@ class ColorBalanceDialog(QDialog):
             self._render_timer.start()
 
     def mask_for(self, img: AstroImage) -> np.ndarray:
+        """The band, or its complement when inverted.
+
+        Inverting is not reachable any other way: the two handles can only
+        describe ONE contiguous range, so "everything except the object" has no
+        expression without this.
+        """
         lo, hi, feather = self.band()
         lum = img.data.mean(axis=2) if img.data.ndim == 3 else img.data
-        return range_mask(lum, lo, hi, feather=feather)
+        m = range_mask(lum, lo, hi, feather=feather)
+        return (1.0 - m).astype(np.float32) if self.invert_check.isChecked() else m
 
     def compose(self, starless: AstroImage | None = None,
                 stars: AstroImage | None = None) -> AstroImage:
