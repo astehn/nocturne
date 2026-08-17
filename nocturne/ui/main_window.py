@@ -102,6 +102,23 @@ _FREE_STAR_NOTE = (
 # room, and no unwrappable control comes near it (guarded by a test).
 RIGHT_PANE_MAX_W = 360
 
+# The right pane is a FIXED width, so the canvas never changes size — Andreas's
+# stated optimum is that the image stays in exactly the same place. Capping only
+# the step panel was not enough: with the help section COLLAPSED, which is how he
+# works, the other children drive the width and it swung 278-384 px, moving the
+# canvas by over 100. With help expanded the explainer is 562 px and masks all of
+# that, which is why the earlier fix measured as working and was not.
+#
+# 400 chosen from measurement on the real platform with real fonts: the pane's
+# minimum across every step is 292 (below that something clips), and the widest
+# it reached with help collapsed was 384. 400 clears both, and reclaims ~186 px
+# of canvas in the help-expanded case, where the pane used to take 586.
+#
+# Help now opens DOWNWARD inside this width — taller and scrolling — instead of
+# sideways. Revisit when the small-screen work lands: at the 1280 floor a fixed
+# 400 is a large share of the window, and that spec already plans a drawer.
+RIGHT_PANE_W = 400
+
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -312,7 +329,7 @@ class MainWindow(QMainWindow):
 
         right = QWidget()
         self._right_panel = right
-        right.setMinimumWidth(260)
+        right.setFixedWidth(RIGHT_PANE_W)
         self._right_layout = QVBoxLayout(right)
         self.histogram_view = HistogramView()
         self._right_layout.addWidget(self.histogram_view)

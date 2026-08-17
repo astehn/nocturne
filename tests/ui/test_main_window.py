@@ -4429,34 +4429,63 @@ def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monk
         "Star Reduction had already split this exact image and it was ignored")
 
 
-def test_the_right_pane_is_the_same_width_on_every_step(qtbot, tmp_path):
-    """Reported 2026-08-17 from three screenshots: the image visibly changes size
-    when you move between steps.
+@pytest.mark.parametrize("help_expanded", [True, False])
+def test_the_right_pane_is_the_same_width_on_every_step(qtbot, tmp_path, help_expanded):
+    """Reported 2026-08-17: the image changes size as you move between steps.
 
-    The right pane had a minimum width and no maximum, so it grew to whatever its
-    widest child wanted — and that varies per step. Measured sizeHints:
-    Background 575 px against 161-301 px for every other step, a 414 px spread.
-    The canvas takes what is left, so the image is re-fitted smaller on
-    Background and larger everywhere else.
+    BOTH help states, because the first fix only covered one and it was the wrong
+    one. With help EXPANDED the explainer is 562 px wide and dominates every
+    other child, so the pane looks stable no matter what the step panels do —
+    which is how a fix that did nothing for Andreas passed my measurements. With
+    help COLLAPSED, which is how he works, the remaining children drive the width
+    and it swung 278 to 384 px, moving the canvas by over 100.
 
-    Background is the outlier because its description text is long, which is a
-    moving target: any future edit to any step's copy would change the layout of
-    the whole window. Capping the pane makes the text wrap instead.
+    The pane is now a fixed width, so this holds by construction and is
+    independent of font metrics — which matters, because the offscreen platform
+    this suite runs on substitutes a fallback font and measures text differently
+    from the real app.
     """
     win = _window(qtbot, tmp_path)
+    win.settings.help_expanded = help_expanded
     win.open_fits(_make_fits(tmp_path))
     win.resize(1400, 900)
     win.show()
     qtbot.waitExposed(win)
 
-    widths = {}
-    for stage_id in ("crop", "background", "color", "stretch", "curves", "export"):
+    widths, canvases = {}, {}
+    for stage_id in ("load", "crop", "background", "color", "stretch", "curves", "export"):
         win._go_to_id(stage_id)
         qtbot.wait(1)
         widths[stage_id] = win._right_panel.width()
+        canvases[stage_id] = win.image_view.width()
 
-    assert len(set(widths.values())) == 1, (
-        f"the pane changes width between steps, so the canvas jumps: {widths}")
+    assert len(set(widths.values())) == 1, f"the pane changes width: {widths}"
+    assert len(set(canvases.values())) == 1, f"the canvas moves: {canvases}"
+
+
+def test_toggling_the_help_section_does_not_move_the_image(qtbot, tmp_path):
+    """Andreas's stated optimum: the image stays in exactly the same place.
+    Opening 'How this works' makes the help area taller and scroll within the
+    pane; it must not widen it."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1400, 900)
+    win.show()
+    qtbot.waitExposed(win)
+    win._go_to_id("background")
+
+    win.settings.help_expanded = False
+    win._apply_help_visibility() if hasattr(win, "_apply_help_visibility") else None
+    qtbot.wait(1)
+    collapsed = (win._right_panel.width(), win.image_view.width())
+
+    win.settings.help_expanded = True
+    win._apply_help_visibility() if hasattr(win, "_apply_help_visibility") else None
+    qtbot.wait(1)
+    expanded = (win._right_panel.width(), win.image_view.width())
+
+    assert collapsed == expanded, (
+        f"the image moves when help toggles: collapsed {collapsed}, expanded {expanded}")
 
 
 def test_no_step_panel_is_wider_than_the_pane_allows(qtbot):
@@ -4481,3 +4510,29 @@ def test_no_step_panel_is_wider_than_the_pane_allows(qtbot):
             assert hint <= RIGHT_PANE_MAX_W - 40, (
                 f"{stage.id}: a {type(w).__name__} wants {hint} px and cannot wrap; "
                 f"it will be clipped inside a {RIGHT_PANE_MAX_W} px pane")
+
+
+@pytest.mark.parametrize("help_expanded", [True, False])
+def test_the_fixed_pane_is_wide_enough_for_every_step(qtbot, tmp_path, help_expanded):
+    """A fixed width is trivially CONSTANT — it can also be far too narrow, and
+    the constancy test cannot tell the difference. A mutation setting it to 240,
+    well under the 292 px minimum measured on the real platform, passed that test
+    happily.
+
+    Compared against the pane's own live minimumSizeHint rather than a recorded
+    number, so it stays true under the substitute font this suite runs with,
+    which measures text differently from the real app.
+    """
+    win = _window(qtbot, tmp_path)
+    win.settings.help_expanded = help_expanded
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1400, 900)
+    win.show()
+    qtbot.waitExposed(win)
+    for stage_id in ("load", "crop", "background", "color", "stretch", "curves", "export"):
+        win._go_to_id(stage_id)
+        qtbot.wait(1)
+        need = win._right_panel.minimumSizeHint().width()
+        assert win._right_panel.width() >= need, (
+            f"{stage_id}: the pane is {win._right_panel.width()} px but needs "
+            f"{need}; something is clipped")
