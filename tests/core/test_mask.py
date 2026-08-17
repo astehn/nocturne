@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from nocturne.core.mask import range_mask, smoothstep
+from nocturne.core.mask import BAND_PRESETS, band_preset, range_mask, smoothstep
 
 
 def _ramp(h=64, w=64):
@@ -114,3 +114,67 @@ def test_smoothstep_endpoints():
     assert out[0] == pytest.approx(0.0)
     assert out[1] == pytest.approx(0.5)
     assert out[2] == pytest.approx(1.0)
+
+
+# --- band presets, derived from the image rather than fixed (2026-08-17) -----
+
+def _sky_and_object(n=200, sky=0.256, sigma=0.041, seed=0):
+    """Mostly sky at a realistic level, with a small bright object — the shape
+    of a wide-field frame, where percentiles are dominated by sky."""
+    rng = np.random.default_rng(seed)
+    lum = np.clip(rng.normal(sky, sigma, (n, n)), 0.0, 1.0).astype(np.float32)
+    y, x = np.mgrid[0:n, 0:n].astype(np.float32) / n
+    r = np.hypot(y - 0.5, x - 0.5) * 4.0
+    return np.clip(lum + 0.6 * np.exp(-4.0 * r * r), 0.0, 1.0).astype(np.float32)
+
+
+def test_whole_image_covers_everything():
+    assert band_preset(_sky_and_object(), "Whole image") == (0.0, 1.0)
+
+
+def test_a_preset_sits_above_the_sky_not_below_it():
+    """The failure this exists to prevent: the design specified fixed bounds of
+    0.12..0.80, but a stretched M 31 mosaic has its SKY at 0.256 — so that band
+    contained the whole sky and selected 87% of the frame, the exact inverse of
+    "the object". Bounds have to be measured against the image's own sky."""
+    lum = _sky_and_object()
+    sky = float(np.median(lum[lum > 0]))
+    for name in ("Bright areas", "Midtones", "Object, not the core"):
+        lo, _hi = band_preset(lum, name)
+        assert lo > sky, f"{name} starts at {lo:.3f}, at or below the sky ({sky:.3f})"
+
+
+def test_object_not_the_core_excludes_the_bright_end():
+    lum = _sky_and_object()
+    lo, hi = band_preset(lum, "Object, not the core")
+    assert 0.0 < lo < hi < 1.0, f"({lo}, {hi}) is not a band inside the range"
+    assert (lum > hi).any(), "nothing was actually excluded at the top"
+
+
+def test_a_preset_never_returns_an_empty_band():
+    """An empty band makes the tool silently inert. A very bright image can push
+    both bounds past 1.0, which is where this used to happen."""
+    for lum in (np.full((32, 32), 0.99, np.float32),
+                np.full((32, 32), 0.01, np.float32),
+                np.zeros((32, 32), np.float32)):
+        for name in BAND_PRESETS:
+            lo, hi = band_preset(lum, name)
+            assert hi > lo, f"{name} on {lum.mean():.2f}: empty band ({lo}, {hi})"
+            assert 0.0 <= lo <= 1.0 and 0.0 <= hi <= 1.0
+
+
+def test_presets_ignore_the_zero_padding_around_a_mosaic():
+    """A mosaic is zero-padded outside its footprint. Counting that padding as
+    sky drags the median down and every bound with it."""
+    lum = _sky_and_object()
+    padded = np.zeros((400, 400), np.float32)
+    padded[100:300, 100:300] = lum
+    for name in ("Bright areas", "Object, not the core"):
+        a = band_preset(lum, name)
+        b = band_preset(padded, name)
+        assert abs(a[0] - b[0]) < 0.02, f"{name}: padding moved the low bound {a} -> {b}"
+
+
+def test_an_unknown_preset_is_rejected():
+    with pytest.raises(ValueError):
+        band_preset(_sky_and_object(), "Sideways")

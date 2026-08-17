@@ -27,6 +27,8 @@ _SMOOTH_FRAC = 0.005
 # only 3.5x it and speckles an order of magnitude worse at any blur setting.
 _FEATHER = 0.08
 
+_MIN_PRESET_SPAN = 0.05   # a preset must never hand back an empty band
+
 
 def smoothstep(x: np.ndarray, a: float, b: float) -> np.ndarray:
     """Hermite ramp from 0 at `a` to 1 at `b`.
@@ -71,3 +73,50 @@ def range_mask(lum: np.ndarray, lo: float, hi: float,
         rise = (lum >= lo).astype(np.float32)
         fall = (lum <= hi).astype(np.float32)
     return np.clip(rise * fall, 0.0, 1.0).astype(np.float32)
+
+
+BAND_PRESETS = ("Whole image", "Bright areas", "Midtones", "Object, not the core")
+
+# How many sky-sigmas above the sky level each preset's bounds sit. Measured on
+# the stretched M 31 mosaic (sky 0.256, sigma 0.041): the arms only separate
+# from the sky above ~3 sigma, and the core sits above ~12.
+_PRESET_SIGMAS = {
+    "Bright areas": (3.0, None),
+    "Midtones": (2.0, 8.0),
+    "Object, not the core": (3.0, 12.0),
+}
+
+
+def band_preset(lum: np.ndarray, name: str) -> tuple[float, float]:
+    """Band bounds for a named preset, derived from THIS image's statistics.
+
+    Absolute constants cannot work. On a stretched M 31 mosaic the sky sits at
+    0.256, so a fixed band of 0.12..0.80 — which is what the design originally
+    specified — contains the entire sky and selects 87% of the frame, the exact
+    inverse of "the object". Rendered, it masked everything except the core.
+
+    The bounds returned are absolute, and that is what gets stored: the preset
+    is a starting point computed once from the image in front of you, not a mode
+    that silently re-fits itself on every image a recipe touches.
+    """
+    if name == "Whole image":
+        return (0.0, 1.0)
+    if name not in _PRESET_SIGMAS:
+        raise ValueError(f"unknown band preset: {name!r} (expected one of {BAND_PRESETS})")
+
+    lum = np.asarray(lum, dtype=np.float32)
+    v = lum[lum > 0.0]                     # a mosaic is zero-padded outside its footprint
+    if v.size == 0:
+        return (0.0, 1.0)
+    med = float(np.median(v))
+    below = v[v < med]
+    sigma = max(float(below.std()) if below.size else 0.0, 1e-3)
+
+    lo_k, hi_k = _PRESET_SIGMAS[name]
+    lo = med + lo_k * sigma
+    hi = 1.0 if hi_k is None else med + hi_k * sigma
+    # A bright image can push both bounds past 1.0; an empty band would make the
+    # tool silently inert, so keep a usable span at the top of the range instead.
+    lo = float(np.clip(lo, 0.0, 1.0 - 2 * _MIN_PRESET_SPAN))
+    hi = float(np.clip(hi, lo + _MIN_PRESET_SPAN, 1.0))
+    return (lo, hi)
