@@ -124,8 +124,8 @@ class ColorBalanceDialog(QDialog):
             "to say things like \u201ceverything except the galaxy\u201d")
         self.show_mask_check = QCheckBox("Show the mask")
         self.show_mask_check.setToolTip(
-            "Put the mask on screen instead of the picture: white is fully adjusted, "
-            "black is untouched")
+            "Light the parts of the picture the adjustment will reach, and dim the "
+            "rest — so you can see WHERE it lands, not just how strong it is")
 
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.clicked.connect(self.reset)
@@ -161,8 +161,8 @@ class ColorBalanceDialog(QDialog):
             return wrap
 
         controls = QFormLayout()
-        blurb = QLabel("Shift the colour of one tonal range. In the mask, white is "
-                       "fully adjusted and black is untouched; the stars are never "
+        blurb = QLabel("Shift the colour of one tonal range. Show the mask lights the "
+                       "areas that will change and dims the rest; the stars are never "
                        "altered.")
         blurb.setWordWrap(True)          # without this it clips, or forces the
         controls.addRow(blurb)           # panel past its width cap
@@ -370,13 +370,28 @@ class ColorBalanceDialog(QDialog):
         out = screen(adjusted.data, np.clip(st.data, 0.0, 1.0))
         return AstroImage(out, is_linear=base.is_linear, metadata=dict(base.metadata))
 
+    # How far the unselected areas are dimmed when the mask is shown. Low enough
+    # that the boundary is unmistakable, high enough that they stay legible as
+    # the picture rather than going flat black.
+    _UNSELECTED_DIM = 0.30
+
     def preview_image(self) -> AstroImage:
         src = self._prev_starless if self._prev_starless is not None else self._starless
-        if self.show_mask_check.isChecked():
-            m = self.mask_for(src)
-            return AstroImage(np.repeat(m[:, :, None], 3, axis=2).astype(np.float32),
-                              is_linear=False, metadata=dict(src.metadata))
-        return self.compose(src, self._prev_stars)
+        shown = self.compose(src, self._prev_stars)
+        if not self.show_mask_check.isChecked():
+            return shown
+
+        # Light the selection IN THE PICTURE rather than showing a bare greyscale
+        # mask. The mask alone shows its shape but not which parts of your own
+        # image it covers, which is the question actually being asked. Dimming and
+        # desaturating rather than tinting: an astro frame is already full of red,
+        # so a coloured wash invents something that can be mistaken for signal.
+        data = shown.data
+        m = self.mask_for(src)[:, :, None]
+        grey = data.mean(axis=2, keepdims=True)
+        out = data * m + grey * self._UNSELECTED_DIM * (1.0 - m)
+        return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                          is_linear=shown.is_linear, metadata=dict(shown.metadata))
 
     def _do_render(self) -> None:
         if self._prev_starless is None:

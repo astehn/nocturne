@@ -204,6 +204,8 @@ def test_the_colour_balance_help_names_the_real_controls():
         assert tone in body, f"tone {tone!r} is not in the help"
     for word in ("preserve luminosity", "strength", "feather", "show the mask"):
         assert word in body, f"{word!r} is not in the help"
+    assert "dims everything else" in body, (
+        "the help still describes the bare greyscale mask the view no longer shows")
 
 
 def test_the_colour_balance_help_covers_invert_and_the_scale_bar():

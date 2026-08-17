@@ -8,14 +8,21 @@ from nocturne.ui.color_balance_dialog import ColorBalanceDialog  # noqa: E402
 
 
 def _img(h=64, w=64):
-    """A galaxy-ish frame: dark sky with noise, mid-bright arms, a bright core —
-    a flat fixture would make every band preset land in the same place."""
+    """A galaxy-ish frame: dark sky with noise, mid-bright arms, a bright core,
+    and a warm cast.
+
+    Two properties are load-bearing. It must not be FLAT, or every band preset
+    lands in the same place. And it must not be GREYSCALE — it was, and a
+    mutation that dimmed without desaturating passed the test guarding exactly
+    that, because a monochrome fixture has no colour to lose.
+    """
     rng = np.random.default_rng(0)
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
     r = np.hypot(y - h / 2, x - w / 2) / (h / 2)
     lum = np.clip(rng.normal(0.20, 0.03, (h, w)).astype(np.float32)
                   + 0.75 * np.exp(-6.0 * r * r), 0.0, 1.0)
-    return AstroImage(np.repeat(lum[:, :, None], 3, axis=2).astype(np.float32),
+    tint = np.array([1.12, 1.0, 0.86], np.float32)      # a real frame is not grey
+    return AstroImage(np.clip(lum[:, :, None] * tint, 0.0, 1.0).astype(np.float32),
                       is_linear=False)
 
 
@@ -139,24 +146,50 @@ def test_the_stars_are_screened_back_not_adjusted(qtbot):
     assert np.allclose(out, expected, atol=1e-6)
 
 
-def test_showing_the_mask_puts_the_mask_on_the_preview(qtbot):
+def test_showing_the_mask_lights_the_selected_areas_of_the_picture(qtbot):
     """The background-gradient-view lesson: a mask you cannot see is a mask you
-    cannot trust, and inspecting it is part of the workflow this replaces."""
+    cannot trust. A bare greyscale mask showed its SHAPE but not which parts of
+    your own picture it covers — you had to hold the two side by side in your
+    head. Lighting the selection in the picture itself answers the actual
+    question, and dimming rather than tinting avoids inventing a colour that
+    could be mistaken for real signal in an image already full of red."""
+    d = _dlg(qtbot)
+    d.preset_box.setCurrentText("Object, not the core")
+    plain = d.preview_image().data.copy()
+    mask = d.mask_for(d._prev_starless)
+    d.show_mask_check.setChecked(True)
+    shown = d.preview_image().data
+
+    assert shown.min() >= 0.0 and shown.max() <= 1.0
+    lit, unlit = mask >= 1.0 - 1e-6, mask < 1e-6
+    assert lit.any() and unlit.any(), "the fixture exercises only one side"
+    assert np.allclose(shown[lit], plain[lit], atol=1e-6), (
+        "the selected areas were altered rather than left alone")
+    assert shown[unlit].mean() < plain[unlit].mean(), "the rest was not dimmed"
+
+
+def test_the_unselected_areas_lose_their_colour(qtbot):
+    """Desaturating as well as dimming is what makes the boundary unambiguous —
+    dimming alone can read as a darker part of the picture."""
     d = _dlg(qtbot)
     d.preset_box.setCurrentText("Object, not the core")
     d.show_mask_check.setChecked(True)
     shown = d.preview_image().data
-    assert shown.min() >= 0.0 and shown.max() <= 1.0
-    assert shown.std() > 0.01, "the mask preview is flat"
-    assert np.allclose(shown[..., 0], shown[..., 1]), "the mask should be greyscale"
+    mask = d.mask_for(d._prev_starless)
+    unlit = mask < 1e-6
+    spread = np.ptp(shown[unlit], axis=-1)
+    assert float(spread.max()) < 1e-5, "unselected pixels kept their colour"
 
 
-def test_unticking_show_the_mask_returns_to_the_picture(qtbot):
+def test_unticking_show_the_mask_restores_the_picture_exactly(qtbot):
     d = _dlg(qtbot)
+    d.preset_box.setCurrentText("Object, not the core")
+    before = d.preview_image().data.copy()
     d.show_mask_check.setChecked(True)
+    assert not np.allclose(d.preview_image().data, before), "ticking did nothing"
     d.show_mask_check.setChecked(False)
-    shown = d.preview_image().data
-    assert not np.allclose(shown, d.mask_for(d._prev_starless)[:, :, None])
+    assert np.array_equal(d.preview_image().data, before), (
+        "unticking did not restore the picture")
 
 
 def test_the_option_dict_round_trips_every_field(qtbot):
@@ -264,7 +297,7 @@ def test_apply_still_delivers_the_result_when_the_work_finishes(qtbot):
     assert got["opts"]["midtones"] == pytest.approx([0.0, 0.0, 0.5])
 
 
-def test_the_panel_states_the_mask_convention_correctly(qtbot):
+def test_the_panel_explains_what_showing_the_mask_does(qtbot):
     """White reveals, black conceals — the Photoshop convention, and what
     range_mask actually does: out = data + (shifted - data) * mask, so 1 is
     fully adjusted and 0 is untouched.
@@ -278,8 +311,10 @@ def test_the_panel_states_the_mask_convention_correctly(qtbot):
     from PySide6.QtWidgets import QLabel
     d = _dlg(qtbot)
     text = " ".join(lbl.text().lower() for lbl in d.findChildren(QLabel))
-    assert "mid-grey" not in text, "the mask's zero point is black, not mid-grey"
-    assert "white" in text and "black" in text, "the convention is not stated"
+    assert "mid-grey" not in text, (
+        "carried over from the background gradient view, where mid-grey IS the "
+        "no-change point because that image is a signed difference")
+    assert "dim" in text, "the panel does not say what Show the mask does"
 
 
 def test_the_mask_can_be_inverted(qtbot):
