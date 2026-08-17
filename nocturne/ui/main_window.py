@@ -1262,6 +1262,7 @@ class MainWindow(QMainWindow):
         self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
                                     "Colour Balance", self._open_color_balance)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
+        self._cb_act.setEnabled(False)     # same gate: a finishing tool needs a picture
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -3115,6 +3116,10 @@ class MainWindow(QMainWindow):
         self._trim_act.setToolTip(
             "Trim the edges of the finished image" if stretched else
             "Trim — available once you've stretched the image")
+        self._cb_act.setEnabled(stretched)
+        self._cb_act.setToolTip(
+            "Shift the colour of one tonal range" if stretched else
+            "Colour Balance — available once you've stretched the image")
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

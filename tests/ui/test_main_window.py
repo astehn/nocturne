@@ -4167,3 +4167,22 @@ def test_the_colour_balance_toolbar_action_exists(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     assert win._cb_act is not None
     assert win._cb_act.text() == "Colour Balance"
+
+
+def test_colour_balance_is_unavailable_until_the_image_is_stretched(qtbot, tmp_path):
+    """Trim and Share both grey out until there is a stretched picture to work
+    on, and Colour Balance is the same kind of finishing tool. Found in review:
+    it was left permanently enabled, so clicking it on a linear image produced a
+    warning where the other two simply show they are not ready yet."""
+    win = _window(qtbot, tmp_path)
+    assert not win._cb_act.isEnabled(), "enabled with no image open"
+
+    win.open_fits(_make_fits(tmp_path))
+    assert not win._cb_act.isEnabled(), "enabled on a linear image"
+
+    from nocturne.ui.main_window import _PrecomputedStep
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", AstroImage(
+        base.data, is_linear=False, metadata=dict(base.metadata))), "0.5")
+    win._refresh()
+    assert win._cb_act.isEnabled(), "still disabled after a stretch"
