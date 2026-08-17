@@ -48,6 +48,7 @@ from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import remove_green, remove_green_fringe, remove_green_fringe_masked
+from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curve, gentle_s_points
 from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
@@ -750,6 +751,32 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _open_color_balance(self) -> None:
+        if self.project is None:
+            return
+        if self.project.current().is_linear:
+            self._show_warning("Stretch the image first — Colour Balance works on "
+                               "the stretched image.")
+            return
+        if not self.project.current().is_color:
+            self._show_warning("Colour Balance needs a colour image.")
+            return
+        from .color_balance_dialog import ColorBalanceDialog
+        ColorBalanceDialog(self.settings, self.project.current(), parent=self,
+                           on_apply=self._apply_color_balance).exec()
+
+    def _apply_color_balance(self, result, opts) -> None:
+        """Appends, like Trim. A finishing tool must never truncate the history
+        of work done after the step it conceptually sits beside."""
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Colour Balance", result), opts)
+        self._mark_dirty()
+        self.log_panel.append_entry(
+            format_log_entry("Colour Balance", cb_describe(opts), None))
+        self._clear_warning()
+        self._refresh()
+
     def _on_auto_progress(self, i: int, n: int, name: str) -> None:
         self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
         if self._busy_shown:
@@ -1217,6 +1244,9 @@ class MainWindow(QMainWindow):
             "trim": "#b0a06a",         # muted olive — the gap in the wheel,
                                         # and far from upscale's rose so the two
                                         # finishing tools do not read as variants
+            "color-balance": "#c97f5b",  # burnt orange — the last unused hue, and
+                                         # warm where share/haoiii are cool, so a
+                                         # colour tool does not read as a share one
         }
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
@@ -1230,7 +1260,10 @@ class MainWindow(QMainWindow):
                                               # canvas pill owns overlay visibility)
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
         self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
+        self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
+                                    "Colour Balance", self._open_color_balance)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
+        self._cb_act.setEnabled(False)     # same gate: a finishing tool needs a picture
         self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
         self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -1430,7 +1463,10 @@ class MainWindow(QMainWindow):
             return
         if path is None:
             start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
-            path, _ = file_dialogs.open_file(
+            # open_file returns a PATH, not (path, filter) — unlike the static
+            # Qt helper it replaced. Unpacking it as a pair shipped broken in
+            # v0.12.0 and v0.13.0.
+            path = file_dialogs.open_file(
                 self, "Open Project", start, "Nocturne project (*.nocturne)")
             if not path:
                 return
@@ -3084,6 +3120,10 @@ class MainWindow(QMainWindow):
         self._trim_act.setToolTip(
             "Trim the edges of the finished image" if stretched else
             "Trim — available once you've stretched the image")
+        self._cb_act.setEnabled(stretched)
+        self._cb_act.setToolTip(
+            "Shift the colour of one tonal range" if stretched else
+            "Colour Balance — available once you've stretched the image")
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

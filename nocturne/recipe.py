@@ -13,6 +13,7 @@ _NAME_TO_STAGE["Rotate"] = "rotate"
 _NAME_TO_STAGE["Flip H"] = "flip_h"
 _NAME_TO_STAGE["Flip V"] = "flip_v"
 _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
+_NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
 
 
 @dataclass
@@ -46,6 +47,23 @@ def serialize_option(stage_id, option):
     if stage_id == "saturation":
         amount, nebula = option if isinstance(option, (tuple, list)) else (option, 0.0)
         return [float(amount), float(nebula)]
+    if stage_id == "color_balance":
+        o = option or {}
+        def _triple(key):
+            v = o.get(key) or (0.0, 0.0, 0.0)
+            return [float(v[0]), float(v[1]), float(v[2])]
+        return {"shadows": _triple("shadows"), "midtones": _triple("midtones"),
+                "highlights": _triple("highlights"),
+                "preserve_lum": bool(o.get("preserve_lum", True)),
+                "strength": float(o.get("strength", 1.0)),
+                # The band is stored as MEASURED, not re-derived on replay: a
+                # preset is a starting point computed once from the image in
+                # front of you, and a recipe that re-fitted it per image would
+                # silently mean something different on every frame.
+                "lo": float(o.get("lo", 0.0)),
+                "hi": float(o.get("hi", 1.0)),
+                "feather": float(o.get("feather", 0.08)),
+                "invert": bool(o.get("invert", False))}
     if stage_id == "narrowband":
         from .core.narrowband import NarrowbandParams
         p = option if isinstance(option, NarrowbandParams) else NarrowbandParams()
@@ -83,6 +101,26 @@ def deserialize_option(stage_id, value):
         if isinstance(value, (tuple, list)):
             return (float(value[0]), float(value[1]))
         return (float(value), 0.0)   # legacy bare float
+    if stage_id == "color_balance":
+        def _triple(key):
+            v = value.get(key) or (0.0, 0.0, 0.0)
+            return [float(v[0]), float(v[1]), float(v[2])]
+        out = {"shadows": _triple("shadows"), "midtones": _triple("midtones"),
+               "highlights": _triple("highlights"),
+               "preserve_lum": bool(value.get("preserve_lum", True)),
+               "strength": float(value.get("strength", 1.0)),
+               "lo": float(value.get("lo", 0.0)),
+               "hi": float(value.get("hi", 1.0)),
+               "feather": float(value.get("feather", 0.08)),
+               "invert": bool(value.get("invert", False))}
+        # Read the shape saved before each tonal range had its own amounts: one
+        # `tone` plus a single triple. Projects written on this branch in the
+        # last few hours have it, and must still open unchanged.
+        if "tone" in value and value["tone"] in out:
+            out[value["tone"]] = [float(value.get("red", 0.0)),
+                                  float(value.get("green", 0.0)),
+                                  float(value.get("blue", 0.0))]
+        return out
     if stage_id == "narrowband":
         import dataclasses
         from .core.narrowband import NarrowbandParams

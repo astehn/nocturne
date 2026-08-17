@@ -4113,3 +4113,116 @@ def test_the_toggle_cannot_stay_checked_once_the_canvas_is_back_to_normal(qtbot,
     assert not win._panel.show_model_check.isChecked(), (
         "the canvas is showing the current image again")
     assert np.allclose(win._canvas_img.data, win.project.current().data)
+
+
+def test_colour_balance_appends_instead_of_truncating(qtbot, tmp_path):
+    """It is a FINISHING tool: it must never discard work done after the step it
+    conceptually sits beside. Same reason Trim appends rather than reaching back
+    into the pipeline."""
+    import numpy as np
+    from nocturne.ui.main_window import _PrecomputedStep
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", base), "0.5")
+    before = len(win.project.entries())
+
+    result = AstroImage(np.clip(base.data * 1.01, 0, 1), is_linear=False,
+                        metadata=dict(base.metadata))
+    win._apply_color_balance(result, {"tone": "midtones", "red": 0.0, "green": 0.0,
+                                      "blue": 0.2, "preserve_lum": True,
+                                      "strength": 0.8, "lo": 0.379, "hi": 0.748,
+                                      "feather": 0.08})
+    names = [n for n, _ in win.project.entries()]
+    assert len(names) == before + 1, "an entry was truncated"
+    assert names[-1] == "Colour Balance"
+    assert "Stretch" in names, "the earlier step was discarded"
+
+
+def test_colour_balance_can_be_applied_twice(qtbot, tmp_path):
+    """Cool the arms, then warm the core: two separately undoable entries. This
+    is the payoff of appending rather than being a pipeline step."""
+    import numpy as np
+    from nocturne.ui.main_window import _PrecomputedStep
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", base), "0.5")
+    opts = {"tone": "midtones", "red": 0.0, "green": 0.0, "blue": 0.2,
+            "preserve_lum": True, "strength": 0.8, "lo": 0.379, "hi": 0.748,
+            "feather": 0.08}
+    for _ in range(2):
+        win._apply_color_balance(
+            AstroImage(np.clip(win.project.current().data * 1.01, 0, 1),
+                       is_linear=False, metadata=dict(base.metadata)), opts)
+    names = [n for n, _ in win.project.entries()]
+    assert names.count("Colour Balance") == 2
+    assert win.project.can_undo()
+
+
+def test_the_colour_balance_toolbar_action_exists(qtbot, tmp_path):
+    """The icon is a NEW ASSET and load_icon RAISES on a missing SVG, so a
+    fresh clone that lacks it cannot construct MainWindow at all — the fault
+    that hid for four days with update.svg."""
+    win = _window(qtbot, tmp_path)
+    assert win._cb_act is not None
+    assert win._cb_act.text() == "Colour Balance"
+
+
+def test_colour_balance_is_unavailable_until_the_image_is_stretched(qtbot, tmp_path):
+    """Trim and Share both grey out until there is a stretched picture to work
+    on, and Colour Balance is the same kind of finishing tool. Found in review:
+    it was left permanently enabled, so clicking it on a linear image produced a
+    warning where the other two simply show they are not ready yet."""
+    win = _window(qtbot, tmp_path)
+    assert not win._cb_act.isEnabled(), "enabled with no image open"
+
+    win.open_fits(_make_fits(tmp_path))
+    assert not win._cb_act.isEnabled(), "enabled on a linear image"
+
+    from nocturne.ui.main_window import _PrecomputedStep
+    base = win.project.current()
+    win.project.run_step(_PrecomputedStep("Stretch", AstroImage(
+        base.data, is_linear=False, metadata=dict(base.metadata))), "0.5")
+    win._refresh()
+    assert win._cb_act.isEnabled(), "still disabled after a stretch"
+
+
+def test_open_project_from_the_toolbar_actually_opens(qtbot, tmp_path, monkeypatch):
+    """Reported 2026-08-17, broken in the SHIPPED v0.12.0 and v0.13.0.
+
+    The file-dialog migration swapped QFileDialog.getOpenFileName, which returns
+    (path, filter), for file_dialogs.open_file, which returns a path — but left
+    the tuple unpacking in place. `path, _ = "…/M31_project.nocturne"` raises
+    ValueError, so the toolbar button could not open a project at all.
+
+    Every existing test calls _open_project(path) WITH a path, which skips the
+    dialog branch entirely, so the one line the button actually runs had no
+    coverage. This test takes the no-argument path the button takes.
+    """
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    out = str(tmp_path / "round.nocturne")
+    monkeypatch.setattr(mw.file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: (out, "")))
+    win._save_project_as()
+
+    win2 = _window(qtbot, tmp_path)
+    monkeypatch.setattr(mw.file_dialogs, "open_file",
+                        lambda *a, **k: out)          # a plain str, as the real one returns
+    win2._open_project()                              # no path: the toolbar's path
+    assert win2._project_path == out, "the project was not opened"
+
+
+def test_open_project_from_the_toolbar_handles_cancel(qtbot, tmp_path, monkeypatch):
+    """Cancelling returns "" — which must be a quiet no-op, not an exception and
+    not an attempt to load a file called ""."""
+    import nocturne.ui.main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = win.project.current().data.copy()
+    monkeypatch.setattr(mw.file_dialogs, "open_file", lambda *a, **k: "")
+    win._open_project()
+    assert win._warning.text() == "", "cancelling warned the user"
+    assert np.array_equal(win.project.current().data, before), "the image changed"

@@ -41,6 +41,10 @@ def _headline(name: str, ser) -> str:
     if isinstance(ser, (int, float, str)):
         return f"{ser}"
     if isinstance(ser, dict):
+        if name == "Colour Balance":
+            # Not a single field: which of the three tonal ranges were moved.
+            from .color_balance import describe
+            return describe(ser)
         field = _HEADLINE_FIELD.get(name)
         if field and ser.get(field) not in (None, ""):
             return f"{ser[field]}"

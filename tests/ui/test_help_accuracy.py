@@ -188,3 +188,39 @@ def test_background_help_explains_the_model_view():
     assert "Show what was removed" in b, "the model toggle is not explained"
     assert "Show what was removed" in sp, "the label changed; update the help"
     assert "shape of your object" in b.lower(), "the failure it detects is not described"
+
+
+def test_the_colour_balance_help_names_the_real_controls():
+    """Help drifts silently — it has done on three consecutive releases, and
+    v0.13.0 nearly shipped telling users to check background extraction with a
+    control that cannot show what they needed to see."""
+    from nocturne.core.color_balance import TONES
+    from nocturne.core.mask import BAND_PRESETS
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    for name in BAND_PRESETS:
+        assert name.lower() in body, f"preset {name!r} is not in the help"
+    for tone in TONES:
+        assert tone in body, f"tone {tone!r} is not in the help"
+    for word in ("preserve luminosity", "strength", "feather", "show the mask"):
+        assert word in body, f"{word!r} is not in the help"
+    assert "dims everything else" in body, (
+        "the help still describes the bare greyscale mask the view no longer shows")
+
+
+def test_the_colour_balance_help_covers_invert_and_the_scale_bar():
+    """Both were added after the first draft of the topic. Help has drifted on
+    three consecutive releases; a control the help does not mention is a control
+    a beginner will not find."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    assert "invert" in body, "the invert toggle is not documented"
+    assert "black-to-white" in body, "the scale bar under the histogram is not explained"
+
+
+def test_the_colour_balance_help_explains_that_ranges_are_independent():
+    """The whole point of the per-range change: someone who does not know the
+    ranges are remembered will keep applying one at a time."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["color_balance"].body.lower()
+    assert "each range keeps its own" in body, "per-range independence is not explained"

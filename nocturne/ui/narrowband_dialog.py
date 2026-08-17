@@ -21,10 +21,24 @@ _DEBOUNCE_MS = 90
 PALETTES = ["HOO", "Pseudo-SHO", "Pseudo-bicolor"]
 
 
-def _downscale(img: AstroImage) -> AstroImage:
+def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
+    """Shrink for the live preview by AVERAGING each block, not by sampling one
+    pixel in every N.
+
+    Striding is cheaper and destroys a star field: measured on 300 synthetic 3x3
+    stars decimated 8x, 253 vanished entirely and the 47 survivors were drawn at
+    full amplitude, which is the hard single-pixel look. Averaging keeps every
+    star and conserves flux exactly, for a few hundred milliseconds once — after
+    a star split that already takes seconds.
+    """
+    from skimage.transform import downscale_local_mean
     h, w = img.data.shape[:2]
-    step = max(1, max(h, w) // _PREVIEW_MAX)
-    return AstroImage(np.ascontiguousarray(img.data[::step, ::step]),
+    step = max(1, max(h, w) // max_edge)
+    if step == 1:
+        return img
+    blocks = (step, step, 1) if img.data.ndim == 3 else (step, step)
+    small = downscale_local_mean(img.data, blocks).astype(np.float32)
+    return AstroImage(np.ascontiguousarray(small),
                       is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
@@ -47,7 +61,8 @@ class NarrowbandDialog(QDialog):
         self._starless = starless
         self._stars = stars
         self._prev_starless = None
-        self._last = None                 # last rendered starless AstroImage (preview)
+        self._prev_stars = None
+        self._last = None                 # last COMPOSED AstroImage (what the preview shows)
         self._fitted = False
         self._started = False
 
@@ -152,6 +167,7 @@ class NarrowbandDialog(QDialog):
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers
         self._prev_starless = _downscale(self._starless)
+        self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.apply_btn.setEnabled(True)
         self._do_render()
 
@@ -202,10 +218,21 @@ class NarrowbandDialog(QDialog):
         if self._prev_starless is None:
             return
         try:
-            self._last = render(self._prev_starless, self._params())
+            nebula = render(self._prev_starless, self._params())
         except ValueError as exc:
             self.status.setText(str(exc))
             return
+        # Screen the untouched stars back for the PREVIEW too, not only on Apply.
+        # Showing the starless layer meant what you tuned against was never what
+        # you got, which breaks the rule that a preview equals its export — and
+        # it hid the tool's own promise, since you cannot watch stars stay
+        # unaltered when they are not on screen.
+        if self._prev_stars is None:
+            self._last = nebula
+        else:
+            self._last = AstroImage(
+                screen(nebula.data, np.clip(self._prev_stars.data, 0.0, 1.0)),
+                is_linear=nebula.is_linear, metadata=dict(nebula.metadata))
         self.preview.show_image(to_qimage(self._last))
         if not self._fitted:
             self._fitted = True
