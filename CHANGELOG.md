@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.14.0] — 2026-08-17
+
+Colour work that no longer needs another program.
+
+### Added
+- Colour Balance, a new finishing tool on the toolbar. Shift the colour of one tonal range at a time, inside a band of brightness you choose. Shadows, midtones and highlights each keep their own three sliders — Cyan/Red, Magenta/Green, Yellow/Blue — so you can warm the arms of a galaxy and leave its golden core alone in a single adjustment. The band is set with two handles over the image's own histogram, with a black-to-white scale beneath them so it is clear what is being selected, and the presets are measured from your picture rather than being fixed numbers: a stretched sky sits wherever the stretch put it. Tick Show the mask and the areas that will change light up in their own colours while everything else dims, so you can see exactly where the adjustment lands rather than only how strong it is. Your stars are separated out, left completely untouched, and laid back on top. It is a finishing tool, so it appends to your history and never discards work you have already done — run it twice with different settings if you want to treat two parts of the picture differently.
+- Black and white points on the Curves editor. Both end handles now drag: pull the low one right to set a black point, the high one left to set a white point. That is the commonest move there is on a curve and it was previously impossible — the corners were pinned. Click any point to see its input and output, and nudge it with the arrow keys one 8-bit level at a time, or ten with Shift.
+
+### Changed
+- Colour Balance skips the pixels its mask discards, which took Apply on a 39.5 megapixel mosaic from 7.6 seconds to 3.4, and it now composes off the interface thread so the window stays responsive while it works.
+
+### Fixed
+- Open Project could not open a project. It raised an error instead of opening anything, and had done since v0.12.0 — two releases. The cause was a change to how file dialogs are opened: the new one returns a path where the old one returned a path and a filter, and the caller was still expecting both.
+- The Colour Balance and Narrowband previews were throwing away most of the star field when shrinking the image for display, taking every thirteenth pixel rather than averaging. Measured on three hundred synthetic stars, two hundred and fifty-three disappeared entirely and the survivors were drawn at full brightness — which is why stars looked blocky when you zoomed in. Both now average, so every star survives.
+- The Narrowband preview showed the starless layer, with the stars only added back when you pressed Apply. What you were tuning against was never what you got.
+- Curves mishandled a lifted black point, crushing the very shadows it was meant to lift. The curve carried on past its outermost control points instead of holding their values, so raising the black point returned something darker than the point itself.
+
 ## [0.13.0] — 2026-08-16
 
 Mosaics, and a large master that no longer fights back.
