@@ -79,7 +79,12 @@ class ColorBalanceDialog(QDialog):
             self.sliders[key] = ResetSlider(0, minimum=-100, maximum=100)
             self.slider_vals[key] = QLabel("0")
 
-        self.preserve_check = QCheckBox("Preserve luminosity (colour only, no brightness change)")
+        # Labels stay SHORT. The form's label column leaves roughly 250 px, and a
+        # QCheckBox neither wraps nor elides — it simply loses the end of its own
+        # text. Detail goes in the tooltip, and the full story in the help.
+        self.preserve_check = QCheckBox("Preserve luminosity")
+        self.preserve_check.setToolTip(
+            "Change colour only — the brightness of every pixel stays exactly as it is")
         self.preserve_check.setChecked(True)
         self.strength_slider = ResetSlider(100)
         self.strength_val = QLabel("100%")
@@ -89,8 +94,14 @@ class ColorBalanceDialog(QDialog):
         self.handles = RangeHandles()
         self.feather_slider = ResetSlider(8, minimum=0, maximum=30)
         self.feather_val = QLabel("0.08")
-        self.invert_check = QCheckBox("Invert — adjust everything OUTSIDE the range")
+        self.invert_check = QCheckBox("Invert the range")
+        self.invert_check.setToolTip(
+            "Adjust everything OUTSIDE the band instead of inside it — the only way "
+            "to say things like \u201ceverything except the galaxy\u201d")
         self.show_mask_check = QCheckBox("Show the mask")
+        self.show_mask_check.setToolTip(
+            "Put the mask on screen instead of the picture: white is fully adjusted, "
+            "black is untouched")
 
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.clicked.connect(self.reset)

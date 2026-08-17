@@ -337,3 +337,19 @@ def test_the_description_label_wraps(qtbot):
                  if "shift the colour" in lbl.text().lower()]
     assert described, "the description label is gone"
     assert described[0].wordWrap(), "the description label does not wrap"
+
+
+def test_every_checkbox_label_fits_the_panel(qtbot):
+    """Seen in screenshots twice on 2026-08-17. The side panel is capped at
+    380 px and the form's label column eats roughly 130 of it, so a checkbox
+    wider than ~250 px is silently CLIPPED — QCheckBox neither wraps nor elides,
+    it just loses the end of its own text. Long explanations belong in the
+    tooltip and the help, not in the label."""
+    from PySide6.QtWidgets import QCheckBox
+    d = _dlg(qtbot)
+    for box in d.findChildren(QCheckBox):
+        width = box.sizeHint().width()
+        assert width <= 250, (
+            f"{box.text()!r} needs {width} px and will be cut off; "
+            f"shorten it and put the detail in the tooltip")
+        assert box.toolTip(), f"{box.text()!r} has no tooltip to carry the detail"
