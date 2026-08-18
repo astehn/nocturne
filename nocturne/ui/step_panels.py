@@ -45,7 +45,7 @@ def build_panel(
     on_flip_v=None,
     on_export=None,
     on_remove_green=None,
-    on_removegreen_change=None,
+    on_removegreen_change=None, on_tint_change=None,
     on_enhance=None,
     on_stretch_change=None,
     on_levels_change=None,
@@ -251,9 +251,54 @@ def build_panel(
         lay.addWidget(method_box)
         w.method_box = method_box
 
+        # Colour cast, two bipolar sliders centred on 0 (double-click resets).
+        #
+        # Why these exist: Seestar data arrives with a magenta cast that is the
+        # SENSOR's, not ours — measured on a raw sub at +0.041 on a (R+B)/2 - G
+        # axis and passed through to the master essentially unchanged (+0.037).
+        # Nocturne shipped Remove Green for a cast its own stacks never have, and
+        # nothing for the one they always do.
+        #
+        # Multiplicative gains on linear data, applied here rather than after the
+        # stretch, for a measured reason: an ADDITIVE move at this point is erased
+        # by neutral_stretch's background re-levelling (shift 0.00000), while a
+        # gain survives. It also leaves the background alone (also 0.00000), which
+        # is what we want -- the magenta is in the nebulosity, and the background
+        # is already faintly GREEN from chroma noise.
+        lay.addWidget(_desc_label(
+            "Optional. Nudge the overall colour if it looks too magenta or too "
+            "green. Double-click a slider to re-centre it."))
+        tint_slider = ResetSlider(0, minimum=-100, maximum=100)
+        tint_val = QLabel("0.00")
+        tint_row = QHBoxLayout()
+        tint_row.addWidget(QLabel("Green ←→ Magenta"))
+        tint_row.addWidget(tint_val)
+        def _emit_tint(*_):
+            tint_val.setText(f"{tint_slider.value() / 100:+.2f}")
+            temp_val.setText(f"{temp_slider.value() / 100:+.2f}")
+            if on_tint_change is not None:
+                on_tint_change(tint_slider.value() / 100.0, temp_slider.value() / 100.0)
+
+        tint_slider.valueChanged.connect(_emit_tint)
+        lay.addLayout(tint_row)
+        lay.addWidget(tint_slider)
+
+        temp_slider = ResetSlider(0, minimum=-100, maximum=100)
+        temp_val = QLabel("0.00")
+        temp_row = QHBoxLayout()
+        temp_row.addWidget(QLabel("Cool ←→ Warm"))
+        temp_row.addWidget(temp_val)
+        temp_slider.valueChanged.connect(_emit_tint)
+        lay.addLayout(temp_row)
+        lay.addWidget(temp_slider)
+        w.tint_slider = tint_slider
+        w.temp_slider = temp_slider
+
         def _color_option():
             photometric = method_box.currentText().startswith("Photometric")
-            return ColorSettings(method="photometric" if photometric else "sky")
+            return ColorSettings(method="photometric" if photometric else "sky",
+                                 tint=tint_slider.value() / 100.0,
+                                 temperature=temp_slider.value() / 100.0)
 
         apply_btn = QPushButton("Apply Color")
         apply_btn.setObjectName("primary")

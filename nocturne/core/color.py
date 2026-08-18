@@ -12,6 +12,65 @@ class ColorSettings:
     neutralize_background: bool = True
     remove_green: bool = False
     method: str = "sky"           # "sky" (background balance) or "photometric" (SPCC)
+    # Deliberate colour-cast controls, -1..+1, 0 = untouched. See tint_gains.
+    tint: float = 0.0             # -1 green  ..  +1 magenta
+    temperature: float = 0.0      # -1 cool   ..  +1 warm
+
+
+# Luminance weights (Rec. 709), used to hold brightness constant while colour
+# moves. Without this the sliders double as an exposure control and a user
+# cannot tell which one they are actually operating.
+_LUM_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
+
+# Full-scale gain spread. Calibrated, not guessed: on the M 45 master the
+# nebulosity carried a magenta cast of +0.0237 on a (R+B)/2 - G axis, and at
+# this value a tint of -0.75 lands it at +0.0014 (neutral) while -1.00 slightly
+# overshoots to -0.0053. So the worst measured cast is corrected at about
+# three-quarters of travel, leaving headroom for deliberate effect rather than
+# making the slider bottom out on a correction.
+_TINT_SPREAD = 0.35
+
+
+def tint_gains(tint: float, temperature: float) -> tuple:
+    """Per-channel multiplicative gains for a colour-cast move.
+
+    MULTIPLICATIVE, and applied to LINEAR data at the colour step, for three
+    reasons measured on real M 45 data (2026-08-18):
+
+    * An ADDITIVE move here is erased. `neutral_stretch` re-levels the
+      background additively afterwards, so a +0.002 green offset produced a
+      colour shift of exactly 0.00000. A multiplicative one survives.
+    * A gain preserves the RATIOS between channels, so the colour differences
+      between stars survive. A clamp (which is what mirroring SCNR would give)
+      removes the difference between an orange star and a blue one at the same
+      time as it removes the cast.
+    * This is also how photographic tools work: Lightroom and Camera Raw apply
+      temperature and tint as multipliers on linear raw data before the tone
+      curve, not as Lab offsets after it.
+
+    Exposure-neutral by construction: the luminance-weighted mean gain is 1, so
+    these two controls change colour and nothing else.
+    """
+    t = float(np.clip(tint, -1.0, 1.0))
+    w = float(np.clip(temperature, -1.0, 1.0))
+    if t == 0.0 and w == 0.0:
+        return (1.0, 1.0, 1.0)          # exact identity, not merely close
+    k = _TINT_SPREAD
+    g = np.array([1.0 + 0.5 * k * t + k * w,
+                  1.0 - 0.5 * k * t,
+                  1.0 + 0.5 * k * t - k * w], dtype=np.float64)
+    g = g / float((g * _LUM_WEIGHTS).sum())
+    return (float(g[0]), float(g[1]), float(g[2]))
+
+
+def apply_tint(img: AstroImage, tint: float, temperature: float) -> AstroImage:
+    """Shift the colour cast along green<->magenta and cool<->warm."""
+    gains = tint_gains(tint, temperature)
+    if not img.is_color or gains == (1.0, 1.0, 1.0):
+        return img.copy()
+    out = img.data.astype(np.float32) * np.asarray(gains, dtype=np.float32)
+    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
 def remove_green(img: AstroImage, strength: float = 1.0) -> AstroImage:
@@ -116,6 +175,10 @@ def apply_color(img: AstroImage, settings: ColorSettings) -> AstroImage:
         data = background_neutralize(data)
 
     result = AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
+    # Tint AFTER the background neutralise, so the user's move is relative to a
+    # neutral sky rather than fighting whatever cast the sky started with.
+    result = apply_tint(result, getattr(settings, "tint", 0.0),
+                        getattr(settings, "temperature", 0.0))
     if settings.remove_green:
         result = remove_green(result)
     return result

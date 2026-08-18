@@ -4600,3 +4600,58 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path):
         assert np.array_equal(committed, on_screen), (
             f"{sid}: Apply with the default changed the picture "
             f"({on_screen.mean():.4f} -> {committed.mean():.4f})")
+
+
+def test_tint_live_preview_equals_what_apply_color_produces(qtbot, tmp_path):
+    """The project's central rule, on the real code path.
+
+    An earlier version of this test called apply_color twice and compared the
+    results — trivially equal, and it exercised none of the preview code. This
+    drives `_render_tint_preview` on a real window and compares what it PUT ON
+    SCREEN against what pressing Apply Color computes.
+
+    It matters because the tint is applied INSIDE apply_color, after the
+    background neutralise. A preview that applied only the gains would show the
+    user something they cannot actually get.
+    """
+    import numpy as np
+    from nocturne.core.color import ColorSettings, apply_color
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for sid in ("crop", "background", "color"):
+        win.go_next()
+    assert win.current_stage_id() == "color"
+
+    win._tint_pending = (-0.4, 0.25)
+    win._render_tint_preview()
+    shown = win._displayed
+
+    expected = apply_color(win._preview_base("color"),
+                           ColorSettings(method="sky", tint=-0.4, temperature=0.25))
+    assert shown is not None, "preview did not render"
+    assert np.array_equal(shown.data, expected.data), (
+        "the live preview differs from what Apply Color would commit"
+    )
+
+
+def test_tint_preview_is_skipped_under_photometric(qtbot, tmp_path):
+    """Photometric plate-solves and queries Gaia — far too slow for a slider.
+
+    Rather than show a sky-balanced preview under a photometric setting (which
+    would break preview==export), the preview declines to render. Assert the
+    canvas is UNCHANGED, not merely 'different from the sky result': a preview
+    that rendered something else entirely would pass the weaker check.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for sid in ("crop", "background", "color"):
+        win.go_next()
+    panel = win._panel
+    if getattr(panel, "method_box", None) is None:
+        import pytest
+        pytest.skip("colour panel has no method box")
+    panel.method_box.setCurrentText("Photometric (SPCC)")
+    before = win._displayed
+    win._tint_pending = (-0.9, 0.0)
+    win._render_tint_preview()
+    assert win._displayed is before, "preview must not render under photometric"

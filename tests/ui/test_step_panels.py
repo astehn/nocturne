@@ -509,3 +509,51 @@ def test_the_show_model_toggle_reports_state(qtbot):
     assert seen == [True]
     w.show_model_check.setChecked(False)
     assert seen == [True, False]
+
+
+def test_colour_tint_sliders_are_bipolar_and_centred(qtbot):
+    """Centred at 0 with equal travel each way: this is a cast control, not a
+    strength dial. Double-click resets, which ResetSlider gives us."""
+    panel = build_panel(_stage("color"))
+    qtbot.addWidget(panel)
+    for name in ("tint_slider", "temp_slider"):
+        sl = getattr(panel, name)
+        assert sl.minimum() == -100 and sl.maximum() == 100, name
+        assert sl.value() == 0, f"{name} must default to no change"
+
+
+def test_colour_tint_sliders_reach_the_settings(qtbot):
+    """Drive the real widgets and read back what Apply would send to the core.
+
+    Captured by moving the sliders and inspecting the ColorSettings handed to
+    on_apply — not by calling the private builder, so a broken signal connection
+    is caught.
+    """
+    captured = []
+    panel = build_panel(_stage("color"), apply_enabled=True,
+                        on_apply=lambda opt: captured.append(opt))
+    qtbot.addWidget(panel)
+    panel.tint_slider.setValue(-40)
+    panel.temp_slider.setValue(25)
+    panel.apply_btn.click()
+    assert captured, "Apply Color did not fire"
+    assert captured[-1].tint == pytest.approx(-0.40)
+    assert captured[-1].temperature == pytest.approx(0.25)
+
+
+def test_zero_tint_leaves_the_colour_step_bit_identical(qtbot):
+    """A user who never touches the sliders must get exactly the old behaviour.
+
+    Assert-UNCHANGED against the pre-feature result, not 'close enough': a gain
+    of 0.999 would pass a tolerance test while recolouring every image ever
+    processed.
+    """
+    import numpy as np
+    from nocturne.core.color import ColorSettings, apply_color
+    from nocturne.core.image import AstroImage
+    rng = np.random.default_rng(4)
+    data = (rng.random((24, 24, 3)) * 0.4 + 0.05).astype(np.float32)
+    base = AstroImage(data, is_linear=True, metadata={})
+    without = apply_color(base, ColorSettings())
+    with_zero = apply_color(base, ColorSettings(tint=0.0, temperature=0.0))
+    assert np.array_equal(without.data, with_zero.data)

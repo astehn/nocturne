@@ -278,6 +278,13 @@ class MainWindow(QMainWindow):
         self._fringe_timer = QTimer(self)
         self._fringe_timer.setSingleShot(True)
         self._fringe_timer.timeout.connect(self._render_fringe_preview)
+        # Colour-cast (tint/temperature) live preview: multiplicative gains, so
+        # cheap. Debounced 90 ms like the others. SKY method only — see
+        # _render_tint_preview for why photometric cannot be previewed live.
+        self._tint_pending = None
+        self._tint_timer = QTimer(self)
+        self._tint_timer.setSingleShot(True)
+        self._tint_timer.timeout.connect(self._render_tint_preview)
         # Remove-Green (SCNR) live preview: a pure per-pixel op, debounced 90 ms.
         self._rg_pending = None
         self._rg_timer = QTimer(self)
@@ -2060,6 +2067,41 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _on_tint_change(self, tint: float, temperature: float) -> None:
+        self._tint_pending = (float(tint), float(temperature))
+        self._tint_timer.start(90)
+
+    def _render_tint_preview(self) -> None:
+        """Live-preview the colour cast exactly as Apply Color will produce it.
+
+        Runs the WHOLE colour step, not just the tint, because that is what the
+        Apply button does — `apply_color` neutralises the background first and
+        then applies the gains, so previewing the gains alone would show
+        something the user cannot get.
+
+        SKY method only. The photometric path plate-solves and queries Gaia,
+        which cannot run on every slider move; under that method the sliders take
+        effect on Apply, exactly as the Method box itself already does. Showing a
+        sky-balanced preview while photometric was selected would break the rule
+        that the preview equals what export produces.
+        """
+        if self.project is None or self.current_stage_id() != "color":
+            return
+        if self._tint_pending is None:
+            return
+        box = getattr(getattr(self, "_panel", None), "method_box", None)
+        if box is not None and box.currentText().startswith("Photometric"):
+            return
+        tint, temperature = self._tint_pending
+        from ..core.color import ColorSettings as _CS, apply_color as _ac
+        result = _ac(self._preview_base("color"),
+                     _CS(method="sky", tint=tint, temperature=temperature))
+        self._set_peek(False)
+        self._displayed = result
+        self._set_canvas(result)
+        self.histogram_view.set_image(result)
+        self._update_clipping_line()
+
     def _on_removegreen_change(self, strength: float) -> None:
         """Live-preview SCNR at the slider strength on the pre-remove-green base
         (== what the commit operates on, so preview == apply)."""
@@ -2916,6 +2958,7 @@ class MainWindow(QMainWindow):
             on_export=self.export_final,
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
+            on_tint_change=self._on_tint_change,
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,

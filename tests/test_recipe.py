@@ -1,3 +1,4 @@
+import pytest
 from nocturne.core.crop import CropParams
 from nocturne.core.color import ColorSettings
 from nocturne.recipe import (
@@ -199,3 +200,34 @@ def test_a_colour_balance_recipe_keeps_its_band_absolute():
             "lo": 0.379, "hi": 0.748, "feather": 0.08}
     ser = serialize_option("color_balance", opts)
     assert ser["lo"] == 0.379 and ser["hi"] == 0.748
+
+
+def test_colour_tint_survives_a_recipe_round_trip():
+    """Saved Projects reproduce pixel-exactly, so every parameter must persist.
+
+    `serialize_option` writes an explicit dict for the colour step rather than
+    dumping the dataclass, so a new field is silently dropped unless it is added
+    here — the tint would have been lost on save and the project would have
+    reproduced with different colour. The deserialiser is generic (it filters by
+    dataclass field names) so it needed no change; only the writer did.
+    """
+    from nocturne.core.color import ColorSettings
+    from nocturne.recipe import deserialize_option, serialize_option
+
+    original = ColorSettings(method="sky", tint=-0.4, temperature=0.25,
+                             remove_green=True, neutralize_background=False)
+    restored = deserialize_option("color", serialize_option("color", original))
+
+    assert restored.tint == pytest.approx(-0.4)
+    assert restored.temperature == pytest.approx(0.25)
+    assert restored.method == "sky"
+    assert restored.remove_green is True
+    assert restored.neutralize_background is False
+
+
+def test_a_recipe_written_before_tint_existed_still_loads():
+    """Old recipes have no tint key. They must load as 'no change', not crash."""
+    from nocturne.recipe import deserialize_option
+    old = {"neutralize_background": True, "remove_green": False, "method": "sky"}
+    restored = deserialize_option("color", old)
+    assert restored.tint == 0.0 and restored.temperature == 0.0
