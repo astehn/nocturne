@@ -278,6 +278,13 @@ class MainWindow(QMainWindow):
         self._fringe_timer = QTimer(self)
         self._fringe_timer.setSingleShot(True)
         self._fringe_timer.timeout.connect(self._render_fringe_preview)
+        # Colour-cast (tint/temperature) live preview: multiplicative gains, so
+        # cheap. Debounced 90 ms like the others. SKY method only — see
+        # _render_tint_preview for why photometric cannot be previewed live.
+        self._tint_pending = None
+        self._tint_timer = QTimer(self)
+        self._tint_timer.setSingleShot(True)
+        self._tint_timer.timeout.connect(self._render_tint_preview)
         # Remove-Green (SCNR) live preview: a pure per-pixel op, debounced 90 ms.
         self._rg_pending = None
         self._rg_timer = QTimer(self)
@@ -2060,6 +2067,58 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _apply_tint_step(self, tint: float, temperature: float) -> None:
+        """Commit the colour tint as its own step, on top of the colour result."""
+        if self.project is None or self._busy:
+            return
+        idx = PROCESSING_ORDER.index("tint")
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
+        }
+        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        base = self.project.current()
+        option = (float(tint), float(temperature))
+        result = self._step_for("tint").apply(base, option)
+        self.project.run_step(_PrecomputedStep("Colour Tint", result), option)
+        self._mark_dirty()
+        self.log_panel.append_entry(
+            format_log_entry("Colour Tint",
+                             f"tint {tint:+.2f} · temp {temperature:+.2f}",
+                             rms_delta(base, result)))
+        self._clear_warning()
+        self._refresh()
+
+    def _on_tint_change(self, tint: float, temperature: float) -> None:
+        self._tint_pending = (float(tint), float(temperature))
+        self._tint_timer.start(90)
+
+    def _render_tint_preview(self) -> None:
+        """Live-preview the tint on the PRE-TINT image — which is whatever the
+        colour calibration produced, applied or not.
+
+        This is why the tint is its own step rather than a field on
+        ColorSettings. Bundled in, the preview had to re-run the whole colour
+        step from the pre-colour base, so once the user had actually applied
+        Color the sliders appeared to do nothing (reported 2026-08-18). As its
+        own step it composes on top, and the order of operations matches how the
+        tool is used: calibrate, look, then nudge.
+
+        No photometric special case is needed any more: the calibration has
+        already happened by this point, whichever method produced it.
+        """
+        if self.project is None or self.current_stage_id() != "color":
+            return
+        if self._tint_pending is None:
+            return
+        tint, temperature = self._tint_pending
+        result = self._step_for("tint").apply(self._preview_base("tint"),
+                                              (tint, temperature))
+        self._set_peek(False)
+        self._displayed = result
+        self._set_canvas(result)
+        self.histogram_view.set_image(result)
+        self._update_clipping_line()
+
     def _on_removegreen_change(self, strength: float) -> None:
         """Live-preview SCNR at the slider strength on the pre-remove-green base
         (== what the commit operates on, so preview == apply)."""
@@ -2584,7 +2643,7 @@ class MainWindow(QMainWindow):
         if name in ENHANCE_NAMES:
             return "enhancements"
         sid = {sname: s for s, sname in STEP_NAME.items()}.get(name)
-        if sid == "remove_green":          # applied on the Color step
+        if sid in ("tint", "remove_green"):   # both applied on the Color step
             return "color"
         return sid
 
@@ -2916,6 +2975,8 @@ class MainWindow(QMainWindow):
             on_export=self.export_final,
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
+            on_tint_change=self._on_tint_change,
+            on_apply_tint=self._apply_tint_step,
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,

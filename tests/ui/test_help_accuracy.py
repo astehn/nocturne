@@ -224,3 +224,40 @@ def test_the_colour_balance_help_explains_that_ranges_are_independent():
     from nocturne.ui.help_content import TOPICS
     body = TOPICS["color_balance"].body.lower()
     assert "each range keeps its own" in body, "per-range independence is not explained"
+
+
+def test_colour_help_names_the_tint_controls_that_exist():
+    """The Color topic described only calibration and Remove Green.
+
+    Two sliders were added to that panel and the help would happily have gone on
+    describing the old one — the exact drift this file exists to catch. Pin the
+    slider labels to the widgets, so renaming one fails here.
+    """
+    b = _body("color")
+    sp = _src("nocturne/ui/step_panels.py")
+    for label in ("Green ←→ Magenta", "Cool ←→ Warm", "Apply Tint"):
+        assert label in b, f"the help never mentions {label!r}"
+        assert label in sp, f"{label!r} is no longer in the Color panel"
+
+
+def test_colour_help_gets_the_order_of_operations_right():
+    """Calibrate, then nudge, then de-green. This is the order Andreas asked
+    for, it is what PROCESSING_ORDER does, and the help must not describe a
+    different one — a user following the wrong order re-runs the calibration and
+    wonders why their tint vanished.
+    """
+    from nocturne.ui.pipeline import PROCESSING_ORDER
+    b = _body("color")
+    assert (PROCESSING_ORDER.index("color")
+            < PROCESSING_ORDER.index("tint")
+            < PROCESSING_ORDER.index("remove_green"))
+    # the prose must present them in that same order
+    assert b.index("1 — Calibrate") < b.index("2 — Nudge") < b.index("3 — Remove Green")
+
+
+def test_colour_help_does_not_claim_nocturne_creates_the_magenta():
+    """It is the sensor's, measured: a raw sub is already +0.041 on a
+    (R+B)/2 - G axis and the master +0.037. Saying otherwise would send users
+    hunting for a stacking fault that is not there."""
+    b = _body("color")
+    assert "camera, not the stacking" in b or "sensor, not" in b

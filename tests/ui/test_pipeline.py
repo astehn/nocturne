@@ -32,7 +32,7 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "remove_green", "deconvolution", "stretch",
+        "background", "color", "tint", "remove_green", "deconvolution", "stretch",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
@@ -48,10 +48,30 @@ def test_geometry_names():
 
 
 def test_remove_green_positioned_after_color():
+    """Intent preserved: Remove Green runs AFTER the colour calibration.
+
+    It is no longer adjacent — Colour Tint sits between them, so the order is
+    calibrate, nudge to taste, then de-green imported data. Asserting the
+    RELATIVE order rather than adjacency keeps the requirement and stops the
+    test breaking every time something is inserted nearby.
+    """
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     assert STEP_NAME["remove_green"] == "Remove Green"
-    i = PROCESSING_ORDER.index("remove_green")
-    assert PROCESSING_ORDER[i - 1] == "color"
+    assert PROCESSING_ORDER.index("remove_green") > PROCESSING_ORDER.index("color")
+
+
+def test_colour_tint_runs_between_calibration_and_remove_green():
+    """calibrate -> nudge -> de-green. The order Andreas asked for, pinned.
+
+    Tint must come AFTER colour so it nudges a calibrated image rather than
+    being undone by the calibration, and BEFORE remove_green so a de-green
+    applies to the final colour.
+    """
+    from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
+    assert STEP_NAME["tint"] == "Colour Tint"
+    assert (PROCESSING_ORDER.index("color")
+            < PROCESSING_ORDER.index("tint")
+            < PROCESSING_ORDER.index("remove_green"))
 
 
 def test_deconvolution_stage_and_order():

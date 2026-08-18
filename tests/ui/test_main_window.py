@@ -4600,3 +4600,87 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path):
         assert np.array_equal(committed, on_screen), (
             f"{sid}: Apply with the default changed the picture "
             f"({on_screen.mean():.4f} -> {committed.mean():.4f})")
+
+
+def test_tint_live_preview_equals_what_apply_tint_commits(qtbot, tmp_path):
+    """The project's central rule — preview equals what the commit produces.
+
+    Colour IS APPLIED FIRST, deliberately. Without that the pre-colour and
+    pre-tint images are identical, so the test cannot tell a preview built on
+    the calibrated image from one built on the raw image — and a first version
+    of this test passed happily under exactly that mutation.
+    """
+    import numpy as np
+    from nocturne.core.color import ColorSettings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for _ in range(3):
+        win.go_next()
+    assert win.current_stage_id() == "color"
+    win.apply_current(ColorSettings(method="sky"))
+    calibrated = win.project.current()
+
+    win._tint_pending = (-0.4, 0.25)
+    win._render_tint_preview()
+    shown = win._displayed
+
+    expected = win._step_for("tint").apply(calibrated, (-0.4, 0.25))
+    assert shown is not None, "preview did not render"
+    assert np.array_equal(shown.data, expected.data), (
+        "the preview is not the tint applied to the CALIBRATED image"
+    )
+
+
+def test_tint_still_works_after_apply_color(qtbot, tmp_path):
+    """THE regression test for the bug Andreas found.
+
+    With the tint bundled into ColorSettings its preview had to re-run the whole
+    colour step from the PRE-colour base, so once he had actually pressed Apply
+    Color the sliders appeared to do nothing. As its own step the tint composes
+    on top of whatever the calibration produced.
+
+    Asserts the preview DIFFERS from the applied colour result — i.e. the slider
+    had an effect — rather than merely 'is not None', which would pass even if
+    the preview rendered the unmodified image.
+    """
+    import numpy as np
+    from nocturne.core.color import ColorSettings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for _ in range(3):
+        win.go_next()
+    assert win.current_stage_id() == "color"
+
+    win.apply_current(ColorSettings(method="sky"))       # the user presses Apply Color
+    after_color = win.project.current()
+
+    win._tint_pending = (-0.9, 0.0)
+    win._render_tint_preview()
+    assert win._displayed is not None
+    # the slider must have HAD an effect...
+    assert not np.array_equal(win._displayed.data, after_color.data), (
+        "the tint slider had no effect after Apply Color — the reported bug"
+    )
+    # ...and that effect must be the tint ON THE CALIBRATED IMAGE. Asserting
+    # only "something changed" is not enough: a preview rebuilt from the
+    # PRE-colour base also differs from after_color, which is precisely the old
+    # broken behaviour, and it passed the weaker check.
+    expected = win._step_for("tint").apply(after_color, (-0.9, 0.0))
+    assert np.array_equal(win._displayed.data, expected.data), (
+        "the preview discarded the colour calibration"
+    )
+
+
+def test_applying_the_tint_commits_its_own_step(qtbot, tmp_path):
+    """Committed as its own history entry, so it can be undone alone and
+    re-adjusted without re-running the colour calibration."""
+    from nocturne.core.color import ColorSettings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for _ in range(3):
+        win.go_next()
+    win.apply_current(ColorSettings(method="sky"))
+    win._apply_tint_step(-0.5, 0.2)
+    names = [name for name, _opt in win.project.entries()]
+    assert "Colour Tint" in names
+    assert names.index("Color") < names.index("Colour Tint")

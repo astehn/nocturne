@@ -1,3 +1,4 @@
+import pytest
 from nocturne.core.crop import CropParams
 from nocturne.core.color import ColorSettings
 from nocturne.recipe import (
@@ -199,3 +200,32 @@ def test_a_colour_balance_recipe_keeps_its_band_absolute():
             "lo": 0.379, "hi": 0.748, "feather": 0.08}
     ser = serialize_option("color_balance", opts)
     assert ser["lo"] == 0.379 and ser["hi"] == 0.748
+
+
+def test_colour_tint_survives_a_recipe_round_trip():
+    """Saved Projects reproduce pixel-exactly, so every parameter must persist."""
+    from nocturne.recipe import deserialize_option, serialize_option
+    restored = deserialize_option("tint", serialize_option("tint", (-0.4, 0.25)))
+    assert restored == pytest.approx((-0.4, 0.25))
+
+
+def test_a_project_without_a_tint_step_is_unaffected():
+    """Projects saved before the tint existed simply have no tint entry.
+
+    Nothing to migrate: the step is absent from their step list, so they replay
+    exactly as before. This pins that an EMPTY option is a no-op rather than an
+    error, which is what a defensive default would hit.
+    """
+    from nocturne.recipe import deserialize_option
+    assert deserialize_option("tint", None) == (0.0, 0.0)
+    assert deserialize_option("tint", []) == (0.0, 0.0)
+
+
+def test_tint_step_with_no_option_leaves_the_image_alone():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.tint_step import TintStep
+    rng = np.random.default_rng(7)
+    data = rng.random((8, 8, 3)).astype(np.float32)
+    out = TintStep().apply(AstroImage(data.copy(), is_linear=True, metadata={}), None)
+    assert np.array_equal(out.data, data)

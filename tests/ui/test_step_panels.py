@@ -509,3 +509,59 @@ def test_the_show_model_toggle_reports_state(qtbot):
     assert seen == [True]
     w.show_model_check.setChecked(False)
     assert seen == [True, False]
+
+
+def test_colour_tint_sliders_are_bipolar_and_centred(qtbot):
+    """Centred at 0 with equal travel each way: this is a cast control, not a
+    strength dial. Double-click resets, which ResetSlider gives us."""
+    panel = build_panel(_stage("color"))
+    qtbot.addWidget(panel)
+    for name in ("tint_slider", "temp_slider"):
+        sl = getattr(panel, name)
+        assert sl.minimum() == -100 and sl.maximum() == 100, name
+        assert sl.value() == 0, f"{name} must default to no change"
+
+
+def test_colour_tint_has_its_own_apply_below_apply_color(qtbot):
+    """Calibrate first, then nudge. The tint is committed by its OWN button.
+
+    It was bundled into Apply Color at first, which meant the sliders could only
+    take effect by re-running the calibration — so after applying Color they
+    appeared dead. Its own button, placed after Apply Color, matches how the
+    tool is actually used.
+    """
+    sent = []
+    panel = build_panel(_stage("color"), apply_enabled=True,
+                        on_apply_tint=lambda t, w: sent.append((t, w)))
+    qtbot.addWidget(panel)
+    panel.tint_slider.setValue(-40)
+    panel.temp_slider.setValue(25)
+    panel.apply_tint_btn.click()
+    assert sent == [pytest.approx((-0.40, 0.25))]
+
+
+def test_apply_color_no_longer_carries_the_tint(qtbot):
+    """Apply Color must send calibration settings only, so pressing it does not
+    silently re-apply or discard a tint the user set afterwards."""
+    captured = []
+    panel = build_panel(_stage("color"), apply_enabled=True,
+                        on_apply=lambda opt: captured.append(opt))
+    qtbot.addWidget(panel)
+    panel.tint_slider.setValue(-80)
+    panel.apply_btn.click()
+    assert captured and not hasattr(captured[-1], "tint")
+
+
+def test_zero_tint_is_bit_identical(qtbot):
+    """A user who never touches the sliders must get exactly the old behaviour.
+
+    Assert-UNCHANGED, not 'close enough': a gain of 0.999 would pass a tolerance
+    test while recolouring every image ever processed.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.tint_step import TintStep
+    rng = np.random.default_rng(4)
+    data = (rng.random((24, 24, 3)) * 0.4 + 0.05).astype(np.float32)
+    out = TintStep().apply(AstroImage(data.copy(), is_linear=True, metadata={}), (0.0, 0.0))
+    assert np.array_equal(out.data, data)

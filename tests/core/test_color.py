@@ -113,3 +113,111 @@ def test_remove_green_fringe_masked_mono_is_noop():
     img = AstroImage(np.full((4, 4), 0.5, dtype=np.float32))
     out = remove_green_fringe_masked(img, np.ones((4, 4), np.float32), 1.0)
     assert out.data.ndim == 2 and np.allclose(out.data, 0.5)
+
+# ---------------------------------------------------------------- tint gains
+
+def test_zero_tint_leaves_the_image_untouched():
+    """The default must be a true no-op, not merely 'close'.
+
+    Assert-UNCHANGED rather than assert-not-wrong: a gain triple that is nearly
+    but not exactly 1.0 would still pass a tolerance check while quietly
+    recolouring every image that never touches the sliders.
+    """
+    from nocturne.core.color import tint_gains
+    r, g, b = tint_gains(0.0, 0.0)
+    assert (r, g, b) == (1.0, 1.0, 1.0)
+
+
+def test_negative_tint_moves_toward_green_positive_toward_magenta():
+    from nocturne.core.color import tint_gains
+    gr, gg, gb = tint_gains(-1.0, 0.0)
+    assert gg > 1.0 and gr < 1.0 and gb < 1.0, "negative tint must raise green"
+    mr, mg, mb = tint_gains(1.0, 0.0)
+    assert mg < 1.0 and mr > 1.0 and mb > 1.0, "positive tint must raise red+blue"
+
+
+def test_positive_temperature_warms_negative_cools():
+    from nocturne.core.color import tint_gains
+    wr, _wg, wb = tint_gains(0.0, 1.0)
+    assert wr > 1.0 and wb < 1.0, "warm must raise red and lower blue"
+    cr, _cg, cb = tint_gains(0.0, -1.0)
+    assert cr < 1.0 and cb > 1.0, "cool must lower red and raise blue"
+
+
+def test_gains_are_exposure_neutral():
+    """A colour control must not change brightness.
+
+    Without this the sliders double as an exposure control and the user cannot
+    tell which one they are actually operating.
+    """
+    import numpy as np
+    from nocturne.core.color import tint_gains, _LUM_WEIGHTS
+    for t in (-1.0, -0.4, 0.0, 0.6, 1.0):
+        for w in (-1.0, 0.0, 1.0):
+            g = np.asarray(tint_gains(t, w), dtype=np.float64)
+            assert abs(float((g * _LUM_WEIGHTS).sum()) - 1.0) < 1e-6, (t, w)
+
+
+def test_tint_preserves_the_colour_DIFFERENCES_between_stars():
+    """THE test for this feature. It encodes the requirement, not the mechanism.
+
+    Andreas asked for this because his stacks carry a magenta cast; a mirrored
+    SCNR was rejected because a CLAMP removes the colour difference between an
+    orange star and a blue one at the same time as it removes the cast.
+
+    The invariant a multiplicative gain actually guarantees is that R/G is
+    scaled by the SAME factor for every star, so the ratio between any two
+    stars' R/G is untouched. (Chromaticity — each star normalised by its own
+    sum — is NOT preserved, because that normalisation is non-linear; an earlier
+    version of this test asserted that and was simply wrong.)
+
+    A clamp fails this: whether a given star is clamped depends on its own
+    values, so it moves stars by different amounts. Verified by mutation.
+    """
+    import numpy as np
+    from nocturne.core.color import apply_tint
+    from nocturne.core.image import AstroImage
+
+    stars = np.array([[[0.60, 0.30, 0.20],      # orange
+                       [0.20, 0.30, 0.60],      # blue
+                       [0.40, 0.40, 0.40],      # neutral
+                       [0.15, 0.45, 0.25]]], dtype=np.float32)   # green-ish
+    img = AstroImage(stars.copy(), is_linear=True, metadata={})
+    out = apply_tint(img, -1.0, 0.3).data
+
+    def ratios(a):
+        return np.stack([a[0, :, 0] / a[0, :, 1], a[0, :, 2] / a[0, :, 1]], axis=1)
+
+    before, after = ratios(stars), ratios(out)
+    for i in range(stars.shape[1]):
+        for j in range(i + 1, stars.shape[1]):
+            b = before[i] / before[j]
+            a = after[i] / after[j]
+            assert np.allclose(b, a, rtol=1e-4), (
+                f"stars {i},{j} moved by different amounts: {b} -> {a}; "
+                "a gain must shift every star identically"
+            )
+
+
+def test_apply_tint_at_zero_returns_the_data_unchanged():
+    import numpy as np
+    from nocturne.core.color import apply_tint
+    from nocturne.core.image import AstroImage
+    rng = np.random.default_rng(0)
+    data = rng.random((8, 8, 3)).astype(np.float32)
+    out = apply_tint(AstroImage(data.copy(), is_linear=True, metadata={}), 0.0, 0.0)
+    assert np.array_equal(out.data, data), "zero tint must be bit-identical"
+
+
+def test_apply_color_does_not_touch_the_tint():
+    """The tint is its own step, applied AFTER calibration.
+
+    It lived on ColorSettings first. That made the sliders inert once the user
+    had actually applied Color — the only way to change the tint was to re-run
+    the calibration — which is what Andreas hit immediately. Keeping it out of
+    ColorSettings is what makes calibrate-then-nudge possible.
+    """
+    import dataclasses
+    from nocturne.core.color import ColorSettings
+    names = {f.name for f in dataclasses.fields(ColorSettings)}
+    assert "tint" not in names and "temperature" not in names
