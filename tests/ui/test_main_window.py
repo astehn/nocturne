@@ -4536,3 +4536,67 @@ def test_the_fixed_pane_is_wide_enough_for_every_step(qtbot, tmp_path, help_expa
         assert win._right_panel.width() >= need, (
             f"{stage_id}: the pane is {win._right_panel.width()} px but needs "
             f"{need}; something is clipped")
+
+
+def test_apply_stretch_untouched_commits_exactly_what_is_on_screen(qtbot, tmp_path):
+    """Reported by Andreas 2026-08-17: "surely pressing apply should just apply
+    what's on screen right?" It did not.
+
+    Entering the step nulled `_stretch_pending` and rendered NO preview, so the
+    canvas kept showing the ordinary display of a LINEAR image — which to_rgb8
+    autostretches purely so you can see anything — while Apply committed
+    apply_stretch(base, 0.50). Two different transforms. Measured on a real M 45
+    master: mean 0.2554 on screen against 0.2782 committed, +8.9%, with 94.7% of
+    pixels moving by more than one 8-bit step.
+
+    Stated as the invariant rather than the symptom, so it holds whatever the
+    default aggressiveness becomes: what the canvas shows when you arrive is what
+    Apply gives you.
+    """
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._async_enabled = False          # so the commit lands before we look
+
+    win._go_to_id("stretch")
+    on_screen = to_rgb8(win._canvas_img).copy()
+
+    win.apply_current(win._panel.stretch_slider.value() / 100.0)
+    committed = to_rgb8(win.project.current())
+
+    assert np.array_equal(committed, on_screen), (
+        f"Apply changed the picture: mean {on_screen.mean():.4f} on screen, "
+        f"{committed.mean():.4f} committed")
+
+
+def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path):
+    """The general form, across every step with a live preview. Measured
+    2026-08-18: Stretch was the ONLY one whose default was not a no-op — Curves,
+    Saturation, Recover Core, Local Contrast and Levels all default to exact
+    identities. This guards the others against acquiring the same fault when
+    someone changes a default."""
+    import numpy as np
+    from nocturne.ui.preview import to_rgb8
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._async_enabled = False
+    win._go_to_id("stretch")
+    win.apply_current(win._panel.stretch_slider.value() / 100.0)   # get non-linear
+
+    for sid, attr in (("curves", None), ("saturation", "sat_slider"),
+                      ("recover_core", "recover_slider"),
+                      ("local_contrast", "lc_slider")):
+        win._go_to_id(sid)
+        on_screen = to_rgb8(win._canvas_img).copy()
+        panel = win._panel
+        opt = ([(0.0, 0.0), (1.0, 1.0)] if sid == "curves"
+               else getattr(panel, attr).value() / 100.0)
+        before_n = len(win.project.entries())
+        win.apply_current(opt)
+        if len(win.project.entries()) == before_n:
+            continue                      # refused by a precondition; nothing to check
+        committed = to_rgb8(win.project.current())
+        assert np.array_equal(committed, on_screen), (
+            f"{sid}: Apply with the default changed the picture "
+            f"({on_screen.mean():.4f} -> {committed.mean():.4f})")

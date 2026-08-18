@@ -2162,6 +2162,30 @@ class MainWindow(QMainWindow):
         self._stretch_pending = amount
         self._stretch_timer.start(90)
 
+    def _sync_stretch_preview(self) -> None:
+        """On the Stretch step, show what Apply will actually commit.
+
+        Arriving at the step used to leave the canvas showing the ordinary
+        display of a LINEAR image — which to_rgb8 autostretches purely so you can
+        see anything — while Apply committed apply_stretch(base, slider). Two
+        different transforms, so pressing Apply without touching the slider
+        changed the picture: measured on a real M 45 master, +8.9% mean
+        brightness with 94.7% of pixels moving by more than one 8-bit step.
+
+        Called from _refresh, where navigation, undo, redo and apply all
+        converge. Skipped once the step HAS been applied: project.current() is
+        already the result, so re-rendering would repeat a 0.3 s stretch for no
+        visible change — and, less obviously, _show_preview resets the
+        before/after peek, so rendering unconditionally breaks Space on an
+        applied step. That second reason was found by mutation, not by design.
+        """
+        if (self.project is None or self.current_stage_id() != "stretch"
+                or not hasattr(self._panel, "stretch_slider")):
+            return
+        if any(n == STEP_NAME["stretch"] for n, _ in self.project.entries()):
+            return
+        self._render_stretch_preview()
+
     def _render_stretch_preview(self) -> None:
         """Non-committing live preview of the Stretch aggressiveness."""
         if self.project is None or self.current_stage_id() != "stretch":
@@ -3195,6 +3219,7 @@ class MainWindow(QMainWindow):
         self._update_info_strip()
         self._update_clipping_line()
         self._sync_background_model_toggle()
+        self._sync_stretch_preview()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
