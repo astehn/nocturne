@@ -364,3 +364,70 @@ def test_score_prefers_the_rounder_of_two_otherwise_identical_frames():
     trailed = _score(star_count=800, fwhm=2.4, background=0.02, elongation=1.80)
     assert trailed < round_frame, "elongation is not affecting the score"
     assert trailed == pytest.approx(round_frame * (1.05 / 1.80), rel=1e-6)
+
+
+# --- choosing the registration reference (2026-08-18) ------------------------
+
+def _stat(path, stars, fwhm, elong=1.1, included=True):
+    return FrameStats(path, stars, fwhm, 0.001, 0.0, included, elongation=elong)
+
+
+def test_the_reference_is_the_sharpest_frame_not_the_highest_scoring_one():
+    """Found 2026-08-18 on Andreas's one difficult session (MilkyWay_sub).
+
+    `_score` multiplies a RAW UNBOUNDED star count by bounded quality terms, so
+    when transparency varies the count swamps everything. Measured across four
+    real sessions, the score's correlation with FWHM degrades as star count
+    varies and INVERTS on the difficult one: -0.969 at 1.27x star spread,
+    -0.917 at 1.71x, -0.863 at 2.62x, and +0.698 at 2.99x. There it chose a
+    reference of FWHM 2.95 when a 2.14 frame was available — 38% softer — and
+    `run_stack` registers the entire session against `paths[0]`.
+
+    Star count belongs in reference selection as a THRESHOLD (enough stars to
+    solve a transform) and not as a weight. Sharpness and roundness decide.
+    """
+    from nocturne.stacking.grade import pick_reference
+    # the real pattern: clear frames are soft, thinner frames are sharp
+    stats = ([_stat(f"soft{i}.fit", stars=850, fwhm=2.95) for i in range(6)]
+             + [_stat(f"sharp{i}.fit", stars=300, fwhm=2.15) for i in range(6)])
+    ref = pick_reference(stats)
+    assert ref is not None and ref.path.startswith("sharp"), (
+        f"picked {ref.path if ref else None} — the score's raw star count won again")
+
+
+def test_a_trailed_frame_is_not_chosen_however_sharp_it_measures():
+    """FWHM is blind to trailing by construction: 2.3548*sqrt(a*b) is the
+    geometric mean of the axes, so a stretched star scores the same as a round
+    one. Aligning a whole session to a trailed reference is the fault elongation
+    was added to `_score` to prevent, and it must survive here too."""
+    from nocturne.stacking.grade import pick_reference
+    stats = [_stat("trailed.fit", stars=900, fwhm=2.10, elong=1.80),
+             _stat("round.fit", stars=880, fwhm=2.25, elong=1.05)]
+    assert pick_reference(stats).path == "round.fit"
+
+
+def test_a_frame_with_too_few_stars_to_register_is_not_chosen():
+    """The threshold half. Registration solves a transform from star patterns;
+    the sharpest frame in the session is useless as a reference if almost
+    nothing was detected in it."""
+    from nocturne.stacking.grade import pick_reference
+    stats = [_stat("empty.fit", stars=4, fwhm=1.50),
+             _stat("normal.fit", stars=600, fwhm=2.30)]
+    assert pick_reference(stats).path == "normal.fit"
+
+
+def test_rejected_frames_are_never_chosen_as_the_reference():
+    from nocturne.stacking.grade import pick_reference
+    stats = [_stat("rejected.fit", stars=900, fwhm=1.90, included=False),
+             _stat("kept.fit", stars=600, fwhm=2.40, included=True)]
+    assert pick_reference(stats).path == "kept.fit"
+
+
+def test_pick_reference_copes_when_nothing_qualifies():
+    """A session where every frame is below the star threshold must still stack:
+    fall back to the best of what there is rather than returning nothing."""
+    from nocturne.stacking.grade import pick_reference
+    stats = [_stat("a.fit", stars=6, fwhm=3.0), _stat("b.fit", stars=8, fwhm=2.2)]
+    ref = pick_reference(stats)
+    assert ref is not None and ref.path == "b.fit"
+    assert pick_reference([]) is None

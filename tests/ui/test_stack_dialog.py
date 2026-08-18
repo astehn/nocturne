@@ -729,3 +729,33 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     dlg.mosaic_check.setEnabled(True)
     dlg.mosaic_check.setChecked(True)
     assert dlg.output_edit.text() == "/tmp/my_name.fits"
+
+
+def test_the_reference_frame_is_first_in_the_stack_order(qtbot, tmp_path):
+    """run_stack aligns everything to paths[0], so whatever leads the list IS
+    the reference. Ordering purely by score put a SOFT frame there whenever
+    transparency varied — see grade.pick_reference for the four real sessions
+    measured, where the score's correlation with FWHM inverted on the difficult
+    one and chose a reference 38% softer than the sharpest available."""
+    from nocturne.stacking.grade import FrameStats
+    from nocturne.ui.stack_dialog import StackDialog
+    from nocturne.settings import Settings
+
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    # the difficult-session pattern: the frames with the most stars are the soft ones
+    stats = [FrameStats(f"soft{i}.fit", 850, 2.95, 0.001, 0.0, True, elongation=1.10)
+             for i in range(5)]
+    stats += [FrameStats(f"sharp{i}.fit", 600, 2.15, 0.001, 0.0, True, elongation=1.10)
+              for i in range(5)]
+    for s in stats:
+        s.score = s.star_count * (1.0 / (1.0 + s.fwhm)) / s.elongation
+
+    d._on_graded(stats)                      # the real path: judges and fills the table
+    paths = d._included_paths_best_first()
+
+    assert paths, "no frames were selected"
+    assert paths[0].startswith("sharp"), (
+        f"the reference is {paths[0]} — a soft frame leads the stack order")
+    assert len(paths) == 10, "the fix must not drop or duplicate frames"
+    assert len(set(paths)) == 10, "a frame appears twice"

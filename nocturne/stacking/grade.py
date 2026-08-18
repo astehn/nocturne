@@ -171,6 +171,41 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
             s.warning = WARN_SKY
 
 
+# Enough stars for astroalign to solve a transform against, with margin. The
+# thinnest real frame measured across four sessions had 282; this is a floor
+# against a genuinely empty frame, not a quality bar.
+_REF_MIN_STARS = 50
+
+
+def pick_reference(stats: list["FrameStats"]):
+    """The frame every other frame is registered to, or None if there is none.
+
+    NOT the same question as which frames are worth keeping, and deliberately
+    not answered by `_score`. That score multiplies a RAW UNBOUNDED star count
+    by bounded quality terms, so when transparency varies the count swamps
+    sharpness. Measured across four of Andreas's real sessions, its correlation
+    with FWHM degrades as star count spreads and inverts on the difficult one:
+
+        star-count spread   1.27x   1.71x   2.62x   2.99x
+        r(score, FWHM)     -0.969  -0.917  -0.863  +0.698
+
+    At 2.99x it chose a reference of FWHM 2.95 when a 2.14 frame was available,
+    and `run_stack` aligns the whole session to `paths[0]`.
+
+    What a reference actually wants is the best GEOMETRY — sharp and round —
+    plus merely enough stars to solve a transform. So star count is a threshold
+    here and not a weight, and the ranking is fwhm x elongation: elongation is
+    included for the same reason it is in `_score`, because FWHM is blind to
+    trailing by construction (the geometric mean of the axes is unchanged when
+    a star is stretched one way and squeezed the other).
+    """
+    included = [s for s in stats if s.included and not s.error and s.star_count > 0]
+    if not included:
+        return None
+    pool = [s for s in included if s.star_count >= _REF_MIN_STARS] or included
+    return min(pool, key=lambda s: s.fwhm * max(s.elongation, 1e-6))
+
+
 def grade_frames(paths: list[str], on_progress=None,
                  strictness: str = "normal") -> list[FrameStats]:
     stats: list[FrameStats] = []
