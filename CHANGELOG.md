@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.15.0] — 2026-08-18
+
+Colour you can steer, and stacks that stopped blurring themselves.
+
+### Added
+- Green ↔ Magenta and Cool ↔ Warm sliders on the Colour step. After you calibrate — sky balance or photometric — two sliders shift the overall colour of the picture, with a live preview as you drag and their own Apply. Both sit at zero and change nothing until you move them; double-click either to re-centre it. They multiply the colour channels rather than clamping one of them down, so the differences between stars survive the adjustment: an orange star stays orange next to a blue one, which is the one thing Remove Green cannot promise. Seestar data tends to land slightly magenta — measured at the same amount in a single raw frame as in a finished stack, so it comes from the camera rather than from the stacking — and a small nudge toward green is usually all it wants. The panel now runs in the order you would actually work in: calibrate, nudge to taste, then remove green only if you imported the image from other software, which is where a green cast normally comes from.
+- Opening a saved project shows progress instead of appearing to freeze.
+
+### Changed
+- Stacks are sharper. Registration was resampling every frame with bilinear interpolation, the softest option available, which set a floor on how sharp any stack could be. Measured on 266 frames of the Pleiades, moving to bicubic recovered 4.5% of star sharpness with no artefacts. A sharper demosaic was tried alongside it and rejected: it measured 21.7% sharper again, but painted a four-fold coloured cross around every star, and filtering that out bleached the real colour from the stars before it removed the artefact.
+- Colour Balance opens faster — the star separation is reused between opens rather than recomputed each time.
+
+### Fixed
+- Stretch committed something different from what you were looking at. Pressing Apply without touching the slider changed the picture: 94.7% of pixels moved and the mean brightness rose 8.9%.
+- The image no longer moves as you step through the pipeline. The right-hand panel changed width from one step to the next, shifting the picture under your cursor; it now holds a fixed width.
+- Stacking registers against the sharpest frame rather than the highest-scoring one. Star count was swamping sharpness in the score, so on a night of varying transparency a hazier but star-rich frame could be chosen as the reference every other frame was aligned to. On a Milky Way set this took the finished master from 2.95 to 2.14 FWHM.
+- Colour calibration now says which failure it hit — Gaia unreachable, no usable stars, or an unreadable answer — instead of reporting all three as "Couldn't reach Gaia", which sent people looking at their network for faults that were not there.
+
 ## [0.14.0] — 2026-08-17
 
 Colour work that no longer needs another program.
