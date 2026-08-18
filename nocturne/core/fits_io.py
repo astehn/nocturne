@@ -37,13 +37,19 @@ def _import_demosaicing():
 
     subprocess.check_output = no_git
     try:
-        from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
+        from colour_demosaicing import demosaicing_CFA_Bayer_Malvar2004
     finally:
         subprocess.check_output = real
-    return demosaicing_CFA_Bayer_bilinear
+    return demosaicing_CFA_Bayer_Malvar2004
 
 
-demosaicing_CFA_Bayer_bilinear = _import_demosaicing()
+# Malvar2004, not bilinear. Bilinear is the softest common demosaic, and on real
+# M 45 subs it measured 21.7% softer than this over a common 417-star subset —
+# about half of why a Nocturne master came out 17.7% softer than Siril's from the
+# same 266 frames (2026-08-18). Menon2007 is marginally worse than Malvar here
+# AND five times slower (1.40 vs 0.27 s/frame at 3840x2160), so it is not the
+# trade it looks like.
+_demosaic = _import_demosaicing()
 
 from .image import AstroImage, finite_or_zero
 from .instrument import DEFAULT_INSTRUMENT, SEESTAR_S30_PRO, identify
@@ -293,9 +299,13 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
     # header (Seestar subs are 'GRBG', not 'RGGB'); a wrong pattern demosaics one
     # phase off and produces a green maze + false colour.
     base = _normalize(raw) if normalize else raw.astype(np.float32)
-    rgb = demosaicing_CFA_Bayer_bilinear(base, _bayer_pattern(header))
-    if normalize:
-        rgb = np.clip(rgb, 0.0, 1.0)
+    rgb = _demosaic(base, _bayer_pattern(header))
+    # Malvar has negative filter lobes, so it rings around a saturated core and
+    # undershoots: 649 pixels below zero on a real M 45 sub, worst -7264 ADU.
+    # Flux cannot be negative, and the stacking path loads with normalize=False,
+    # so without this floor those values reach the stack and can poison a later
+    # log or sqrt stretch. Bilinear never needed it — its weights are all positive.
+    rgb = np.clip(rgb, 0.0, 1.0) if normalize else np.clip(rgb, 0.0, None)
     h, w = rgb.shape[:2]
     return AstroImage(rgb.astype(np.float32), is_linear=True,
                       metadata=_parse_metadata(header, h, w))

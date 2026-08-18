@@ -91,6 +91,6 @@ def test_the_demosaic_function_survives_the_suppression():
     """Suppressing the version lookup must not cost us the function we import
     the package for."""
     import numpy as np
-    from nocturne.core.fits_io import demosaicing_CFA_Bayer_bilinear
-    out = demosaicing_CFA_Bayer_bilinear(np.zeros((8, 8), np.float32), "GRBG")
+    from nocturne.core.fits_io import _demosaic
+    out = _demosaic(np.zeros((8, 8), np.float32), "GRBG")
     assert out.shape == (8, 8, 3)

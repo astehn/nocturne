@@ -51,3 +51,28 @@ def test_warp_with_validity_excludes_partially_interpolated_edge_pixels():
     partial = (warped > 0) & (warped < 0.5 - 1e-6)
     assert partial.any(), "expected a partially-interpolated column to exist"
     assert not (partial & valid).any(), "a partly-covered pixel was called valid"
+
+
+def test_subpixel_warp_preserves_star_peak():
+    """Registration resamples every frame once, so its interpolator sets a
+    floor on how sharp any stack can be.
+
+    Nocturne used order=1 (bilinear). Simulated as the pipeline uses it — one
+    resample per frame at a random sub-pixel phase, averaged over 12 phases —
+    bilinear cost +8.4% in stacked PSF half-light where order=3 cost +2.0%
+    (2026-08-18, M 45).
+
+    Half-pixel warp of a sigma=1.1 star, peak retained: order=1 69.0%,
+    order=3 77.7%. The 0.74 gate sits between them.
+    """
+    yy, xx = np.mgrid[-10:11, -10:11]
+    img = np.zeros((41, 41), np.float32)
+    img[10:31, 10:31] = np.exp(-(xx ** 2 + yy ** 2) / (2 * 1.1 ** 2))
+    half = np.asarray(SimilarityTransform(translation=(0.5, 0.5)).params, float)
+
+    warped = warp_to(img, half)
+
+    retained = warped.max() / img.max()
+    assert retained > 0.74, (
+        f"warp blurred the star: peak retained {retained:.3f}; bilinear scores ~0.69"
+    )
