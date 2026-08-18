@@ -12,9 +12,6 @@ class ColorSettings:
     neutralize_background: bool = True
     remove_green: bool = False
     method: str = "sky"           # "sky" (background balance) or "photometric" (SPCC)
-    # Deliberate colour-cast controls, -1..+1, 0 = untouched. See tint_gains.
-    tint: float = 0.0             # -1 green  ..  +1 magenta
-    temperature: float = 0.0      # -1 cool   ..  +1 warm
 
 
 # Luminance weights (Rec. 709), used to hold brightness constant while colour
@@ -175,10 +172,6 @@ def apply_color(img: AstroImage, settings: ColorSettings) -> AstroImage:
         data = background_neutralize(data)
 
     result = AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
-    # Tint AFTER the background neutralise, so the user's move is relative to a
-    # neutral sky rather than fighting whatever cast the sky started with.
-    result = apply_tint(result, getattr(settings, "tint", 0.0),
-                        getattr(settings, "temperature", 0.0))
     if settings.remove_green:
         result = remove_green(result)
     return result

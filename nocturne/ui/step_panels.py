@@ -45,7 +45,7 @@ def build_panel(
     on_flip_v=None,
     on_export=None,
     on_remove_green=None,
-    on_removegreen_change=None, on_tint_change=None,
+    on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
     on_stretch_change=None,
     on_levels_change=None,
@@ -251,6 +251,16 @@ def build_panel(
         lay.addWidget(method_box)
         w.method_box = method_box
 
+        def _color_option():
+            photometric = method_box.currentText().startswith("Photometric")
+            return ColorSettings(method="photometric" if photometric else "sky")
+
+        apply_btn = QPushButton("Apply Color")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_btn.clicked.connect(lambda: on_apply(_color_option()))
+        lay.addWidget(apply_btn)
         # Colour cast, two bipolar sliders centred on 0 (double-click resets).
         #
         # Why these exist: Seestar data arrives with a magenta cast that is the
@@ -294,18 +304,15 @@ def build_panel(
         w.tint_slider = tint_slider
         w.temp_slider = temp_slider
 
-        def _color_option():
-            photometric = method_box.currentText().startswith("Photometric")
-            return ColorSettings(method="photometric" if photometric else "sky",
-                                 tint=tint_slider.value() / 100.0,
-                                 temperature=temp_slider.value() / 100.0)
+        apply_tint_btn = QPushButton("Apply Tint")
+        apply_tint_btn.setEnabled(apply_enabled)
+        if on_apply_tint is not None:
+            apply_tint_btn.clicked.connect(
+                lambda: on_apply_tint(tint_slider.value() / 100.0,
+                                      temp_slider.value() / 100.0))
+        lay.addWidget(apply_tint_btn)
+        w.apply_tint_btn = apply_tint_btn
 
-        apply_btn = QPushButton("Apply Color")
-        apply_btn.setObjectName("primary")
-        apply_btn.setEnabled(apply_enabled)
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(_color_option()))
-        lay.addWidget(apply_btn)
         # Remove Green (SCNR) with a strength dial + live preview — a knob, not a
         # hammer. 1.00 == the classic full clamp.
         #

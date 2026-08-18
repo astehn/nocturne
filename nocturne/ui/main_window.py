@@ -2067,35 +2067,52 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _apply_tint_step(self, tint: float, temperature: float) -> None:
+        """Commit the colour tint as its own step, on top of the colour result."""
+        if self.project is None or self._busy:
+            return
+        idx = PROCESSING_ORDER.index("tint")
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
+        }
+        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        base = self.project.current()
+        option = (float(tint), float(temperature))
+        result = self._step_for("tint").apply(base, option)
+        self.project.run_step(_PrecomputedStep("Colour Tint", result), option)
+        self._mark_dirty()
+        self.log_panel.append_entry(
+            format_log_entry("Colour Tint",
+                             f"tint {tint:+.2f} · temp {temperature:+.2f}",
+                             rms_delta(base, result)))
+        self._clear_warning()
+        self._refresh()
+
     def _on_tint_change(self, tint: float, temperature: float) -> None:
         self._tint_pending = (float(tint), float(temperature))
         self._tint_timer.start(90)
 
     def _render_tint_preview(self) -> None:
-        """Live-preview the colour cast exactly as Apply Color will produce it.
+        """Live-preview the tint on the PRE-TINT image — which is whatever the
+        colour calibration produced, applied or not.
 
-        Runs the WHOLE colour step, not just the tint, because that is what the
-        Apply button does — `apply_color` neutralises the background first and
-        then applies the gains, so previewing the gains alone would show
-        something the user cannot get.
+        This is why the tint is its own step rather than a field on
+        ColorSettings. Bundled in, the preview had to re-run the whole colour
+        step from the pre-colour base, so once the user had actually applied
+        Color the sliders appeared to do nothing (reported 2026-08-18). As its
+        own step it composes on top, and the order of operations matches how the
+        tool is used: calibrate, look, then nudge.
 
-        SKY method only. The photometric path plate-solves and queries Gaia,
-        which cannot run on every slider move; under that method the sliders take
-        effect on Apply, exactly as the Method box itself already does. Showing a
-        sky-balanced preview while photometric was selected would break the rule
-        that the preview equals what export produces.
+        No photometric special case is needed any more: the calibration has
+        already happened by this point, whichever method produced it.
         """
         if self.project is None or self.current_stage_id() != "color":
             return
         if self._tint_pending is None:
             return
-        box = getattr(getattr(self, "_panel", None), "method_box", None)
-        if box is not None and box.currentText().startswith("Photometric"):
-            return
         tint, temperature = self._tint_pending
-        from ..core.color import ColorSettings as _CS, apply_color as _ac
-        result = _ac(self._preview_base("color"),
-                     _CS(method="sky", tint=tint, temperature=temperature))
+        result = self._step_for("tint").apply(self._preview_base("tint"),
+                                              (tint, temperature))
         self._set_peek(False)
         self._displayed = result
         self._set_canvas(result)
@@ -2626,7 +2643,7 @@ class MainWindow(QMainWindow):
         if name in ENHANCE_NAMES:
             return "enhancements"
         sid = {sname: s for s, sname in STEP_NAME.items()}.get(name)
-        if sid == "remove_green":          # applied on the Color step
+        if sid in ("tint", "remove_green"):   # both applied on the Color step
             return "color"
         return sid
 
@@ -2959,6 +2976,7 @@ class MainWindow(QMainWindow):
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,
+            on_apply_tint=self._apply_tint_step,
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_levels_change=self._on_levels_change,

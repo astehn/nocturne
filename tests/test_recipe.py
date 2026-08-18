@@ -203,31 +203,29 @@ def test_a_colour_balance_recipe_keeps_its_band_absolute():
 
 
 def test_colour_tint_survives_a_recipe_round_trip():
-    """Saved Projects reproduce pixel-exactly, so every parameter must persist.
-
-    `serialize_option` writes an explicit dict for the colour step rather than
-    dumping the dataclass, so a new field is silently dropped unless it is added
-    here — the tint would have been lost on save and the project would have
-    reproduced with different colour. The deserialiser is generic (it filters by
-    dataclass field names) so it needed no change; only the writer did.
-    """
-    from nocturne.core.color import ColorSettings
+    """Saved Projects reproduce pixel-exactly, so every parameter must persist."""
     from nocturne.recipe import deserialize_option, serialize_option
-
-    original = ColorSettings(method="sky", tint=-0.4, temperature=0.25,
-                             remove_green=True, neutralize_background=False)
-    restored = deserialize_option("color", serialize_option("color", original))
-
-    assert restored.tint == pytest.approx(-0.4)
-    assert restored.temperature == pytest.approx(0.25)
-    assert restored.method == "sky"
-    assert restored.remove_green is True
-    assert restored.neutralize_background is False
+    restored = deserialize_option("tint", serialize_option("tint", (-0.4, 0.25)))
+    assert restored == pytest.approx((-0.4, 0.25))
 
 
-def test_a_recipe_written_before_tint_existed_still_loads():
-    """Old recipes have no tint key. They must load as 'no change', not crash."""
+def test_a_project_without_a_tint_step_is_unaffected():
+    """Projects saved before the tint existed simply have no tint entry.
+
+    Nothing to migrate: the step is absent from their step list, so they replay
+    exactly as before. This pins that an EMPTY option is a no-op rather than an
+    error, which is what a defensive default would hit.
+    """
     from nocturne.recipe import deserialize_option
-    old = {"neutralize_background": True, "remove_green": False, "method": "sky"}
-    restored = deserialize_option("color", old)
-    assert restored.tint == 0.0 and restored.temperature == 0.0
+    assert deserialize_option("tint", None) == (0.0, 0.0)
+    assert deserialize_option("tint", []) == (0.0, 0.0)
+
+
+def test_tint_step_with_no_option_leaves_the_image_alone():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.tint_step import TintStep
+    rng = np.random.default_rng(7)
+    data = rng.random((8, 8, 3)).astype(np.float32)
+    out = TintStep().apply(AstroImage(data.copy(), is_linear=True, metadata={}), None)
+    assert np.array_equal(out.data, data)

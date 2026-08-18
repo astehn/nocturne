@@ -37,6 +37,7 @@ _IN_APP_TAIL = [
 STEP_NAME = {
     "background": "Background",
     "color": "Color",
+    "tint": "Colour Tint",
     "remove_green": "Remove Green",
     "deconvolution": "Deconvolution",
     "stretch": "Stretch",
@@ -50,7 +51,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "remove_green", "deconvolution", "stretch",
+    "background", "color", "tint", "remove_green", "deconvolution", "stretch",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]

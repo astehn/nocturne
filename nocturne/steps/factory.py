@@ -16,6 +16,7 @@ from .narrowband_step import NarrowbandStep
 from .noise_sharpen import NoiseSharpenStep
 from .recover_core import RecoverCoreStep
 from .remove_green_step import RemoveGreenStep
+from .tint_step import TintStep
 from .saturation_step import SaturationStep
 from .star_reduction import StarReductionStep
 from .stretch_step import StretchStep
@@ -37,6 +38,8 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         from ..tools.gaia import query_field
         astap = ASTAP(resolve_binary(settings.astap_path)) if astap_valid(settings) else None
         return ColorStep(astap=astap, gaia_query=query_field)
+    if stage_id == "tint":
+        return TintStep()
     if stage_id == "remove_green":
         return RemoveGreenStep()
     if stage_id == "stretch":

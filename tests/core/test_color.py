@@ -209,15 +209,15 @@ def test_apply_tint_at_zero_returns_the_data_unchanged():
     assert np.array_equal(out.data, data), "zero tint must be bit-identical"
 
 
-def test_color_settings_carry_tint_through_apply_color():
-    import numpy as np
-    from nocturne.core.color import ColorSettings, apply_color
-    from nocturne.core.image import AstroImage
-    rng = np.random.default_rng(1)
-    data = (rng.random((16, 16, 3)) * 0.3 + 0.1).astype(np.float32)
-    img = AstroImage(data, is_linear=True, metadata={})
-    plain = apply_color(img, ColorSettings(neutralize_background=False))
-    tinted = apply_color(img, ColorSettings(neutralize_background=False, tint=-1.0))
-    g_plain = float(np.median(plain.data[..., 1] / np.maximum(plain.data.mean(axis=2), 1e-6)))
-    g_tint = float(np.median(tinted.data[..., 1] / np.maximum(tinted.data.mean(axis=2), 1e-6)))
-    assert g_tint > g_plain, "tint must reach the image through apply_color"
+def test_apply_color_does_not_touch_the_tint():
+    """The tint is its own step, applied AFTER calibration.
+
+    It lived on ColorSettings first. That made the sliders inert once the user
+    had actually applied Color — the only way to change the tint was to re-run
+    the calibration — which is what Andreas hit immediately. Keeping it out of
+    ColorSettings is what makes calibrate-then-nudge possible.
+    """
+    import dataclasses
+    from nocturne.core.color import ColorSettings
+    names = {f.name for f in dataclasses.fields(ColorSettings)}
+    assert "tint" not in names and "temperature" not in names

@@ -29,12 +29,12 @@ def serialize_option(stage_id, option):
         c = option if isinstance(option, ColorSettings) else ColorSettings()
         # Explicit, not a dataclass dump — so a NEW FIELD MUST BE ADDED HERE or
         # it is silently dropped on save and the project reproduces differently.
-        # The tint was lost exactly this way before a round-trip test caught it.
         return {"neutralize_background": c.neutralize_background,
                 "remove_green": c.remove_green,
-                "method": c.method,
-                "tint": c.tint,
-                "temperature": c.temperature}
+                "method": c.method}
+    if stage_id == "tint":
+        t, w = option if option else (0.0, 0.0)
+        return [float(t), float(w)]
     if stage_id == "levels":
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
@@ -92,6 +92,8 @@ def deserialize_option(stage_id, value):
         import dataclasses
         fields = {f.name for f in dataclasses.fields(ColorSettings)}
         return ColorSettings(**{k: v for k, v in value.items() if k in fields})
+    if stage_id == "tint":
+        return tuple(value) if value else (0.0, 0.0)
     if stage_id == "levels":
         return tuple(value)
     if stage_id == "rotate":
