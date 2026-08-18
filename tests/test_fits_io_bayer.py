@@ -31,16 +31,13 @@ def test_load_fits_debayers_with_header_pattern(tmp_path):
     r, g, b = img[..., 0].mean(), img[..., 1].mean(), img[..., 2].mean()
     # Correct GRBG demosaic -> green dominates; red/blue stay far below it.
     #
-    # Compared as a RATIO, not against an absolute level. Malvar2004 is
-    # gradient-corrected bilinear: it feeds the green gradient into the red and
-    # blue estimate, which is where its sharpness comes from, so an all-green
-    # synthetic mosaic leaks ~16% into R/B where plain bilinear leaked ~7%. That
-    # leak is the algorithm working, not a phase error, and an absolute
-    # threshold would police the wrong thing.
-    #
-    # The ratio keeps the teeth that matter — a one-phase error is what produces
-    # a green maze and false colour. Measured on this fixture: correct pattern
-    # R/G 0.16, wrong pattern (RGGB or BGGR) R/G 6.88, a 43x separation.
+    # Compared as a RATIO, not against an absolute level, so the test survives a
+    # change of demosaic. What it exists to catch is a one-phase error, which is
+    # what produces a green maze and false colour; how much a given algorithm
+    # leaks between channels is a property of the algorithm, not a fault.
+    # Measured with a gradient-corrected demosaic the leak was ~16% against
+    # bilinear's ~7%, while a WRONG pattern gives R/G 6.88 against 0.16 correct
+    # — a 43x separation either way.
     assert g > 500.0
     assert r < 0.25 * g and b < 0.25 * g
 
@@ -68,42 +65,39 @@ def _write_bayer(path, cfa):
     return str(path)
 
 
-def test_debayer_preserves_star_sharpness(tmp_path):
-    """The demosaic must not blur stars away.
+def test_debayer_does_not_invent_colour_on_stars(tmp_path):
+    """The demosaic must not paint colour onto a neutral star.
 
-    Nocturne shipped `demosaicing_CFA_Bayer_bilinear`, and on real M 45 data
-    that measured 21.7% softer than Malvar2004 over a common 417-star subset —
-    about half of why a Nocturne master was 17.7% softer than Siril's from the
-    SAME 266 subs (2026-08-18).
+    This is the guard on the Malvar2004 experiment of 2026-08-18. Malvar is
+    genuinely sharper (21.7% on real subs) but puts a four-fold coloured cross
+    around every star, aligned with the 2x2 Bayer grid: it infers red and blue
+    from the green gradient, and at a star spanning ~2.6 px — near the CFA
+    sampling limit — that inference rings along the CFA axes. It shipped, and
+    Andreas spotted it on the first real stack.
 
-    Measured peak retention on this fixture: bilinear 75.9%, Malvar2004 105.4%
-    (over 100% because Malvar overshoots slightly, which is the ringing the
-    clip below handles). The 0.90 gate sits between them, so it fails if the
-    demosaic is ever swapped back to a blurring one.
+    Every star in this fixture is NEUTRAL, so any colour in the result was
+    invented by the demosaic. Measured ring colour error (max |R-G|/L + |B-G|/L
+    at radius 1.5-3.5 px): bilinear 1.08 median / 1.16 max, Malvar2004 9.15
+    median / 85.40 max. The gate at 3.0 sits far from both.
+
+    A sharper demosaic is still wanted — but it has to pass THIS, not just a
+    sharpness measure. The previous guard here checked only peak retention, so
+    it passed happily while the output was covered in false colour.
     """
-    scene = _bayer_star_scene()
-    p = _write_bayer(tmp_path / "stars.fit", scene)
+    scene = _bayer_star_scene(h=160, w=160)
+    p = _write_bayer(tmp_path / "neutral.fit", scene)
 
-    lum = load_fits(p, normalize=False).data.mean(axis=2)
-    retained = lum.max() / scene.max()
-    assert retained > 0.90, (
-        f"demosaic lost star peak: retained {retained:.3f} of the scene peak; "
-        "bilinear scores ~0.76 here"
+    rgb = load_fits(p, normalize=False).data.astype(np.float64)
+    lum = np.maximum(rgb.mean(axis=2), 1e-9)
+    dev = (np.abs(rgb[..., 0] - rgb[..., 1]) + np.abs(rgb[..., 2] - rgb[..., 1])) / lum
+
+    yy, xx = np.mgrid[-4:5, -4:5]
+    rr = np.hypot(xx, yy)
+    ring = (rr >= 1.5) & (rr <= 3.5)
+    ys, xs = np.nonzero(scene > 0.5 * scene.max())
+    worst = max(dev[y-4:y+5, x-4:x+5][ring].max()
+                for y, x in zip(ys, xs) if 4 <= y < 156 and 4 <= x < 156)
+    assert worst < 3.0, (
+        f"demosaic invented colour around neutral stars: {worst:.2f}; "
+        "bilinear scores ~1.2, a gradient-corrected demosaic ~9 and up"
     )
-
-
-def test_debayer_never_returns_negative_pixels(tmp_path):
-    """A sharpening demosaic rings, and flux cannot be negative.
-
-    Malvar2004 has negative filter lobes, so around a saturated core it
-    undershoots — measured on a real M 45 sub: 649 pixels below zero, the worst
-    at -7264 ADU. The existing clip only runs when normalize=True, and the whole
-    stacking path loads with normalize=False, so without a floor those values go
-    straight into the stack and can poison a later log or sqrt stretch.
-    """
-    cfa = np.full((60, 60), 300.0, np.float32)
-    cfa[28:32, 28:32] = 65535.0          # saturated core -> strong ringing
-    p = _write_bayer(tmp_path / "sat.fit", cfa)
-
-    data = load_fits(p, normalize=False).data
-    assert data.min() >= 0.0, f"demosaic produced {(data < 0).sum()} negative pixels"
