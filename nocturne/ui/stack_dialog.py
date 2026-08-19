@@ -537,13 +537,27 @@ class StackDialog(QDialog):
 
     @staticmethod
     def _stack_report(result) -> str:
+        # A mosaic and an ordinary stack finish through the SAME handler, and
+        # their results name the skipped-frame list differently: StackResult has
+        # `rejected`, MosaicResult has `dropped`. Reading only `rejected` raised
+        # AttributeError here — before the image was handed to the editor and
+        # before the dialog closed — so a finished mosaic went nowhere and the
+        # user had to close the window and open the file by hand. Reported as an
+        # annoyance; it was an unhandled exception.
+        skipped = getattr(result, "rejected", None)
+        if skipped is None:
+            skipped = getattr(result, "dropped", [])
+        panels = getattr(result, "panel_count", None)
         mins = result.integration_seconds / 60
-        text = (f"Done — stacked {result.frame_count} frames"
+        what = (f"assembled {panels} panels from {result.frame_count} frames"
+                if panels is not None else
+                f"stacked {result.frame_count} frames")
+        text = ("Done — " + what
                 + (f" ({mins:.0f} minutes of light)" if mins >= 1 else "")
                 + f" → {os.path.basename(result.output_path)}")
-        unaligned = [(p, r) for p, r in result.rejected
+        unaligned = [(p, r) for p, r in skipped
                      if r.startswith("registration failed")]
-        other = [(p, r) for p, r in result.rejected
+        other = [(p, r) for p, r in skipped
                  if not r.startswith("registration failed")]
         if unaligned:
             names = ", ".join(os.path.basename(p) for p, _ in unaligned)
@@ -558,7 +572,7 @@ class StackDialog(QDialog):
         self._set_busy(False)
         report = self._stack_report(result)
         self.status.setText(report)
-        if result.rejected:
+        if getattr(result, "rejected", None) or getattr(result, "dropped", None):
             QMessageBox.information(self, "Stack finished", report)
         if self._on_master is not None:
             self._on_master(result.image)

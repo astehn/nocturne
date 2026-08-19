@@ -759,3 +759,81 @@ def test_the_reference_frame_is_first_in_the_stack_order(qtbot, tmp_path):
         f"the reference is {paths[0]} — a soft frame leads the stack order")
     assert len(paths) == 10, "the fix must not drop or duplicate frames"
     assert len(set(paths)) == 10, "a frame appears twice"
+
+
+@pytest.fixture
+def no_modal(monkeypatch):
+    """Stop a finished stack opening a MODAL box that never gets clicked.
+
+    `_on_stacked` shows QMessageBox.information when anything was skipped, and a
+    modal in a headless run blocks forever — this hung the suite for ten minutes
+    before it was noticed. Any test that exercises the skipped-frames path needs
+    this.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[-1] if a else ""))
+    return shown
+
+
+def _dialog(qtbot, _tmp_path):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    return dlg
+
+
+def _mosaic_result(dropped=None):
+    from nocturne.stacking.mosaic import MosaicResult
+    from nocturne.core.image import AstroImage
+    import numpy as np
+    return MosaicResult(
+        image=AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True, metadata={}),
+        panel_count=4, frame_count=284, integration_seconds=2840.0,
+        dropped=list(dropped or []), output_path="/tmp/mosaic.fits")
+
+
+def test_a_finished_mosaic_reaches_the_editor_like_any_other_stack(qtbot, tmp_path, no_modal):
+    """A mosaic used to finish and go nowhere.
+
+    Both paths share `_on_stacked`, which builds a report BEFORE handing the
+    image over — and the report read `result.rejected`, which only StackResult
+    has. MosaicResult calls the same thing `dropped`, so a finished mosaic
+    raised AttributeError in the completion handler: no image in the editor, and
+    the dialog left open for the user to close and reopen the file by hand.
+
+    Andreas reported it as an annoyance; it was an unhandled exception.
+    """
+    dlg = _dialog(qtbot, tmp_path)
+    handed = []
+    dlg._on_master = handed.append
+
+    dlg._on_stacked(_mosaic_result())
+
+    assert handed, "the finished mosaic never reached the editor"
+    assert handed[0].data.shape == (8, 8, 3)
+    from PySide6.QtWidgets import QDialog
+    assert dlg.result() == QDialog.DialogCode.Accepted.value, \
+        "the dialog should close itself, as it does for an ordinary stack"
+
+
+def test_the_mosaic_report_counts_panels_not_just_frames(qtbot, tmp_path, no_modal):
+    """'Done — stacked 284 frames' is true but useless for a mosaic: what the
+    user wants to know is how many pointings were assembled."""
+    dlg = _dialog(qtbot, tmp_path)
+    dlg._on_master = lambda _img: None
+    dlg._on_stacked(_mosaic_result())
+    text = dlg.status.text()
+    assert "4" in text and "panel" in text.lower(), text
+    assert "284" in text
+
+
+def test_a_dropped_panel_is_reported_to_the_user(qtbot, tmp_path, no_modal):
+    """Panels that could not be stacked or solved are REPORTED, not silently
+    missing — a mosaic with a hole in it should say why."""
+    dlg = _dialog(qtbot, tmp_path)
+    dlg._on_master = lambda _img: None
+    dlg._on_stacked(_mosaic_result(
+        dropped=[("/x/panel3.fits", "panel could not be solved")]))
+    text = dlg.status.text()
+    assert "panel3" in text or "1" in text, text
