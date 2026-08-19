@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 from pathlib import Path
 
@@ -28,4 +29,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # MUST be the first thing, before Qt or anything else runs.
+    #
+    # Stacking registers frames in a process pool, and macOS SPAWNS rather than
+    # forks — each worker re-imports the entry point. In a PyInstaller bundle
+    # that means the app relaunching itself: a window per worker, recursively.
+    # freeze_support() makes a spawned child run its task and exit instead.
+    #
+    # This fails ONLY in the shipped .app. A dev run and the whole test suite
+    # are both silent about it, which is why it is pinned by a test that reads
+    # this file rather than by anything that could observe the behaviour here.
+    multiprocessing.freeze_support()
     main()
