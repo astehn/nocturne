@@ -2,6 +2,16 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.16.0] — 2026-08-19
+
+Stacking is seven times faster.
+
+### Changed
+- Stacking is about seven times faster. A 266-frame Pleiades stack that took ten minutes now takes under a minute and a half. Nocturne was using one processor core out of fourteen; it now uses your machine properly, and it works out how hard to push from the machine it finds itself on rather than from a fixed number — so a laptop is never asked to do what a desktop can, and a desktop is not held back to what a laptop could manage. The finished master is identical to the pixel, so saved projects reproduce exactly as they did before and nothing you have already made changes.
+
+### Fixed
+- A finished mosaic now opens in the editor, the same as any ordinary stack. It used to complete and then go nowhere — you had to close the stacking window and open the file by hand. It had been that way since mosaics arrived.
+
 ## [0.15.0] — 2026-08-18
 
 Colour you can steer, and stacks that stopped blurring themselves.
