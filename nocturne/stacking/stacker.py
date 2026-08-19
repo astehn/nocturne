@@ -13,6 +13,7 @@ from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
 from .normalize import frame_stats, normalize_to
 from .parallel import ordered_results, plan_workers
+from .register_pool import register_frames
 from .register import RegistrationError, find_transform, warp_with_validity
 
 
@@ -158,28 +159,30 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     def step_label(step: int, what: str) -> str:
         return f"Step {step} of {steps} — {what}"
 
-    # Phase A: register each remaining sub against the reference.
-    for i, path in enumerate(paths[1:], start=1):
-        _check_cancel()
-        try:
-            sub = load_sub(path, normalize=False)
-        except Exception as exc:
-            rejected.append((path, f"unreadable: {exc}"))
-            continue
-        if sub.data.shape[:2] != ref_shape:
-            rejected.append((path, "dimension mismatch"))
-            continue
-        try:
-            matrix = find_transform(luminance(sub.data), ref_lum)
-        except RegistrationError as exc:
-            rejected.append((path, f"registration failed: {exc}"))
-            continue
-        transforms[path] = matrix
-        exposures[path] = float(sub.metadata.get("exposure", 0.0) or 0.0)
-        norm_stats[path] = frame_stats(sub.data)
-        used.append(path)
+    # Derived per stack, never hardcoded: a count tuned to a 14-core desktop
+    # would swap a MacBook Air, and one safe for the Air would waste the
+    # desktop. See parallel.plan_workers for the measurements behind it.
+    plan = plan_workers()
+
+    # Phase A: register each remaining sub against the reference, across
+    # PROCESSES. astroalign is GIL-bound, so threads gave 1.22x here against
+    # 3.98x for processes; and a worker returns only a 3x3 matrix plus two short
+    # arrays, so there is almost nothing to pickle. Results come back in path
+    # order, so `used` is identical to the serial implementation's.
+    def _phase_a_progress(i):
         if on_progress is not None:
             on_progress(i, n, step_label(1, "aligning frames"))
+
+    for res in register_frames(paths[1:], ref_path, workers=plan.count,
+                               on_progress=_phase_a_progress,
+                               check_cancel=_check_cancel):
+        if res.reason is not None:
+            rejected.append((res.path, res.reason))
+            continue
+        transforms[res.path] = res.matrix
+        exposures[res.path] = res.exposure
+        norm_stats[res.path] = res.stats
+        used.append(res.path)
 
     if len(used) < 3:
         raise ValueError(
@@ -192,11 +195,6 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     # bar. sigma-clip walks every frame twice, hence a step number per pass.
     total = len(used)
     pass_no = {"n": 0}
-
-    # Derived per stack, never hardcoded: a count tuned to a 14-core desktop
-    # would swap a MacBook Air, and one safe for the Air would waste the
-    # desktop. See parallel.plan_workers for the measurements behind it.
-    plan = plan_workers()
 
     def _prepare(path):
         """The per-frame work, run on a worker thread.
