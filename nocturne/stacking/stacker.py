@@ -12,6 +12,7 @@ from .coverage import full_coverage_bounds
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
 from .normalize import frame_stats, normalize_to
+from .parallel import ordered_results, plan_workers
 from .register import RegistrationError, find_transform, warp_with_validity
 
 
@@ -192,20 +193,42 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     total = len(used)
     pass_no = {"n": 0}
 
+    # Derived per stack, never hardcoded: a count tuned to a 14-core desktop
+    # would swap a MacBook Air, and one safe for the Air would waste the
+    # desktop. See parallel.plan_workers for the measurements behind it.
+    plan = plan_workers()
+
+    def _prepare(path):
+        """The per-frame work, run on a worker thread.
+
+        Nearly all of it — FITS read, demosaic, normalise, warp — is C that
+        releases the GIL, which is why threads give 6.8x here where they give
+        1.2x in Phase A. Deliberately contains NO cancel check: core.tasks keeps
+        the ambient token in a threading.local, so `current()` is None on a
+        worker and the check would silently do nothing. Cancellation is handled
+        by the consuming loop below, which owns the token.
+        """
+        # Normalize BEFORE warping: warp's out-of-frame fill stays a clean
+        # zero and the validity mask keeps it out of the average, whereas
+        # correcting afterwards would shift that fill to a plausible-looking
+        # sky value.
+        data = normalize_to(load_sub(path, normalize=False).data,
+                            norm_stats[path], ref_stats)
+        return warp_with_validity(data, transforms[path])
+
     def frames():
         pass_no["n"] += 1
         label = step_label(1 + pass_no["n"], "combining frames")
-        for i, path in enumerate(used, start=1):
+        # ordered_results keeps the ORDER. Measured: the current integrators are
+        # order-INSENSITIVE at realistic scales, so this is not fixing a live
+        # bug. It is reproducibility by construction, for free — see
+        # parallel.ordered_results for the measurement and why it stays.
+        for i, out in enumerate(
+                ordered_results(used, _prepare, workers=plan.count), start=1):
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
-            # Normalize BEFORE warping: warp's out-of-frame fill stays a clean
-            # zero and the validity mask keeps it out of the average, whereas
-            # correcting afterwards would shift that fill to a plausible-looking
-            # sky value.
-            data = normalize_to(load_sub(path, normalize=False).data,
-                                norm_stats[path], ref_stats)
-            yield warp_with_validity(data, transforms[path])
+            yield out
 
     if opts.method == "sigma_clip":
         master, coverage = sigma_clip_integrate(frames, opts.kappa)

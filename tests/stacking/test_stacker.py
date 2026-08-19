@@ -309,3 +309,74 @@ def test_peak_does_not_change_the_master(tmp_path):
     assert np.array_equal(b.image.data, before)
     assert b.frame_count == a.frame_count
     assert b.integration_seconds == a.integration_seconds
+
+
+def test_the_master_is_bit_identical_whatever_the_worker_count(tmp_path, monkeypatch):
+    """The master must not depend on how many workers produced it.
+
+    Be clear about what this DOES catch, because an earlier version of this
+    docstring claimed more. It does NOT verify frame ordering: measured, the
+    integrators are order-insensitive at realistic scales, and reversing the
+    frames leaves the master bit-identical. Mutation-tested — reversing the
+    order leaves this test green.
+
+    What it does catch, verified by mutation, is a frame being DROPPED or
+    DUPLICATED by the pool, which is the realistic failure of a parallel
+    pipeline and which changes the master immediately.
+
+    np.array_equal, not allclose: 'nearly the same master' is the bug.
+    """
+    from nocturne.stacking import parallel, stacker
+    paths = _make_subs(tmp_path, n=6, seed=5)
+
+    masters = {}
+    for n in (1, 2, 5):
+        monkeypatch.setattr(
+            stacker, "plan_workers",
+            lambda n=n: parallel.WorkerPlan(count=n, limiter="test", cores=n, ram_gb=64.0))
+        out = tmp_path / f"m{n}.fits"
+        masters[n] = run_stack(
+            StackOptions("sigma_clip", 2.5, paths, str(out))).image.data
+
+    assert np.array_equal(masters[1], masters[2]), "2 workers changed the master"
+    assert np.array_equal(masters[1], masters[5]), "5 workers changed the master"
+
+
+def test_parallel_stacking_matches_the_serial_implementation(tmp_path, monkeypatch):
+    """Assert-UNCHANGED against one worker, which IS the old serial path.
+
+    Written this way rather than 'the master looks plausible': a parallel
+    implementation that quietly dropped or double-counted a frame would still
+    produce a plausible-looking master.
+    """
+    from nocturne.stacking import parallel, stacker
+    paths = _make_subs(tmp_path, n=5, seed=9)
+
+    def _plan(n):
+        return lambda: parallel.WorkerPlan(count=n, limiter="test", cores=n, ram_gb=64.0)
+
+    monkeypatch.setattr(stacker, "plan_workers", _plan(1))
+    serial = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "a.fits")))
+    monkeypatch.setattr(stacker, "plan_workers", _plan(4))
+    par = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "b.fits")))
+
+    assert np.array_equal(serial.image.data, par.image.data)
+    assert serial.used == par.used, "the frames used, and their order, must match"
+    assert serial.frame_count == par.frame_count
+    assert serial.integration_seconds == par.integration_seconds
+
+
+def test_progress_still_counts_every_frame_once_in_order(tmp_path, monkeypatch):
+    """Progress is reported when a result is CONSUMED, not when it is submitted,
+    so a parallel pool must not scramble or duplicate the count. A bar that
+    jumps around reads as a fault even when the stack is fine."""
+    from nocturne.stacking import parallel, stacker
+    monkeypatch.setattr(
+        stacker, "plan_workers",
+        lambda: parallel.WorkerPlan(count=4, limiter="test", cores=4, ram_gb=64.0))
+    paths = _make_subs(tmp_path, n=6, seed=3)
+    seen = []
+    run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")),
+              on_progress=lambda i, n, label=None: seen.append((i, label)))
+    combining = [i for i, label in seen if label and "combining" in label]
+    assert combining == list(range(1, 7)), combining
