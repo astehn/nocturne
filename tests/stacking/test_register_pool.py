@@ -139,19 +139,49 @@ def test_a_tiny_stack_does_not_pay_for_a_process_pool(tmp_path, monkeypatch):
     assert all(r.matrix is not None for r in out)
 
 
-def test_the_entry_point_calls_freeze_support():
-    """The packaged app spawns workers, and macOS spawn re-imports the entry
-    point — in a PyInstaller bundle that is the app relaunching itself, a window
-    per worker, recursively.
+def test_the_bundles_entry_point_calls_freeze_support():
+    """The packaged app spawns workers, and macOS spawn re-executes the bundle —
+    without freeze_support() that is the app relaunching itself, a window per
+    worker, recursively.
 
-    Asserted by READING the source, because the failure cannot be observed from
-    a dev run or from any test: it only happens inside a built .app. A test that
-    could observe it would be better; there isn't one, and a source check that
-    runs beats a manual step nobody performs.
+    Checks the file the PyInstaller SPEC NAMES, resolved from the spec rather
+    than hardcoded, and inspects the AST rather than the text. Both of those are
+    scars:
+
+    * The first version read nocturne/__main__.py, which is NOT what the bundle
+      runs — the entry script merely imports main() from it, so everything under
+      that module's `if __name__ == "__main__"` is dead code in the app. The
+      test passed while the shipped bundle had no protection at all. Only
+      building the bundle found it.
+    * The second version searched the source text for "freeze_support()", which
+      matched the entry point's own DOCSTRING. Deleting the actual call left the
+      test green.
+
+    So: find a real Call node, to multiprocessing.freeze_support, inside the
+    `if __name__ == "__main__"` block, before main().
     """
+    import ast
     import pathlib
-    src = (pathlib.Path(__file__).resolve().parents[2]
-           / "nocturne" / "__main__.py").read_text()
-    assert "freeze_support()" in src, "spawned workers will relaunch the whole app"
-    assert src.index("freeze_support()") < src.index("main()\n", src.index("__main__")), \
-        "freeze_support() must run before main()"
+    import re
+    root = pathlib.Path(__file__).resolve().parents[2]
+    spec = (root / "packaging" / "nocturne.spec").read_text()
+    m = re.search(r'SCRIPT\s*=\s*os\.path\.join\(SPECPATH,\s*"([^"]+)"\)', spec)
+    assert m, "could not find the entry script in nocturne.spec"
+    entry = root / "packaging" / m.group(1)
+    assert entry.exists(), entry
+
+    tree = ast.parse(entry.read_text())
+    guard = [n for n in tree.body
+             if isinstance(n, ast.If) and "__main__" in ast.dump(n.test)]
+    assert guard, f"{entry.name} has no `if __name__ == \"__main__\"` block"
+
+    calls = [n for n in ast.walk(guard[0]) if isinstance(n, ast.Call)]
+    names = [ast.unparse(c.func) for c in calls]
+    assert any(n.endswith("freeze_support") for n in names), (
+        f"{entry.name} is what the bundle runs and it never CALLS "
+        f"freeze_support() — spawned workers will relaunch the whole app. "
+        f"calls found: {names}"
+    )
+    fz = next(i for i, n in enumerate(names) if n.endswith("freeze_support"))
+    mn = next((i for i, n in enumerate(names) if n == "main"), len(names))
+    assert fz < mn, "freeze_support() must be called before main()"
