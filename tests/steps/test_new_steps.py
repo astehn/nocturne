@@ -205,9 +205,14 @@ def test_noise_graxpert_strength_per_preset():
         def denoise(self, image, strength, runner=None):
             seen["s"] = strength; return image
 
-    for level, expected in (("light", 0.5), ("medium", 0.7), ("strong", 0.9)):
+    # Reads the map rather than restating it: this test is about the LEVEL
+    # reaching the engine, and it hard-coded the pre-calibration numbers, so it
+    # failed the moment those were measured (2026-08-20) rather than catching
+    # anything. The values themselves are pinned in tests/core/test_noise_levels.py.
+    from nocturne.steps.noise_sharpen import _GX_LEVELS
+    for level in ("light", "medium", "strong"):
         NoiseSharpenStep(None, FakeGX()).apply(img, {"engine": "graxpert", "level": level})
-        assert seen["s"] == expected
+        assert seen["s"] == _GX_LEVELS[level]
 
 
 def test_noise_dict_unknown_level_coerces_to_medium():
