@@ -210,3 +210,49 @@ def test_the_readout_is_empty_with_nothing_selected(qtbot):
     ed = CurveEditor()
     qtbot.addWidget(ed)
     assert ed.readout_text() == ""
+
+
+def test_the_plot_area_is_square_whatever_shape_the_widget_is(qtbot):
+    """A tone curve maps [0,1] to [0,1] — it must be drawn square.
+
+    Measured in Andreas' configuration the inline editor is 336 x 240 and the
+    plot filled it, so the identity line was not at 45 degrees and a horizontal
+    drag moved 1.4x further per pixel than a vertical one. Hand and curve
+    disagreed, which is a large part of "difficult to see and control what you
+    are actually doing".
+    """
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    for w, h in ((336, 240), (240, 336), (700, 700), (900, 300)):
+        ed.resize(w, h)
+        _ox, _oy, pw, ph = ed._plot_rect()
+        assert pw == ph, f"plot {pw}x{ph} in a {w}x{h} widget is not square"
+
+
+def test_the_square_plot_is_centred_in_the_widget(qtbot):
+    """Otherwise it sits against one edge and the panel looks broken."""
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    ed.resize(400, 240)
+    ox, oy, pw, ph = ed._plot_rect()
+    assert abs((400 - pw) / 2 - ox) <= 1, (ox, pw)
+    assert abs((240 - ph) / 2 - oy) <= 1, (oy, ph)
+
+
+def test_a_click_still_lands_where_the_user_aimed_after_the_change(qtbot):
+    """The hit-testing and the drawing must use the SAME rectangle. If the plot
+    is centred but clicks are still mapped from the widget corner, every point
+    lands offset — which would be worse than the stretch it replaced."""
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    ed.resize(400, 240)
+    ox, oy, pw, ph = ed._plot_rect()
+    # the centre of the plot must map to (0.5, 0.5) in curve coordinates
+    x, y = ed._to_norm(ox + pw / 2, oy + ph / 2)
+    assert abs(x - 0.5) < 0.01 and abs(y - 0.5) < 0.01, (x, y)
+    # and back again
+    pt = ed._to_px(0.5, 0.5)
+    assert abs(pt.x() - (ox + pw / 2)) < 1.0 and abs(pt.y() - (oy + ph / 2)) < 1.0

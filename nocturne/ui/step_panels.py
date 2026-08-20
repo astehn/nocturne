@@ -57,7 +57,7 @@ def build_panel(
     on_lc_change=None,
     on_show_model=None,
     on_curve_change=None,
-    on_curve_preset=None,
+    on_curve_preset=None, on_curve_expand=None,
     on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
@@ -449,9 +449,15 @@ def build_panel(
             "Drag the curve to add midtone contrast. Drop a point on the "
             "background peak to pin the sky. Double-click a point to remove it."))
         editor = CurveEditor()
+        # Give it the pane's spare height. The right pane is 400 px wide and
+        # fixed (so the image never moves between steps), and the editor was
+        # sitting at its 240 px minimum inside a 424 px pane — 184 px unused,
+        # in the one widget where area is precision. It draws SQUARE now, so
+        # extra height also buys width up to the pane.
+        editor.setMinimumHeight(320)
         if on_curve_change is not None:
             editor.curveChanged.connect(lambda pts: on_curve_change(pts))
-        lay.addWidget(editor)
+        lay.addWidget(editor, 1)
 
         preset_row = QHBoxLayout()
         reset_btn = QPushButton("Reset")
@@ -462,6 +468,15 @@ def build_panel(
         preset_row.addWidget(reset_btn)
         preset_row.addWidget(add_btn)
         lay.addLayout(preset_row)
+
+        # The pane cannot get wider, so precision work goes to a dialog — the
+        # same answer Colour Balance and Narrowband already use. The inline
+        # editor stays the default: a quick tweak should not need a window.
+        expand_btn = QPushButton("Open large editor…")
+        if on_curve_expand is not None:
+            expand_btn.clicked.connect(lambda: on_curve_expand())
+        lay.addWidget(expand_btn)
+        w.expand_btn = expand_btn
 
         apply_btn = QPushButton("Apply Curves")
         apply_btn.setObjectName("primary")

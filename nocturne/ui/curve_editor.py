@@ -83,9 +83,21 @@ class CurveEditor(QWidget):
 
     # --- coordinate mapping (normalized [0,1] <-> widget px; y is inverted) ---
     def _plot_rect(self):
-        return (_MARGIN, _MARGIN,
-                max(1, self.width() - 2 * _MARGIN),
-                max(1, self.height() - 2 * _MARGIN))
+        """A SQUARE plot, centred.
+
+        A tone curve maps [0,1] to [0,1], so a stretched plot is a lie: the
+        identity line is not at 45 degrees and a horizontal drag moves further
+        per pixel than a vertical one. Measured in the real app the inline
+        editor is 336 x 240, so a horizontal drag moved 1.4x further — hand and
+        curve disagreed, which is much of what "fiddly" meant.
+
+        Drawing AND hit-testing both come through here (_to_px / _to_norm), so
+        they cannot drift apart.
+        """
+        side = max(1, min(self.width(), self.height()) - 2 * _MARGIN)
+        ox = (self.width() - side) // 2
+        oy = (self.height() - side) // 2
+        return (ox, oy, side, side)
 
     def _to_px(self, x: float, y: float):
         ox, oy, w, h = self._plot_rect()
