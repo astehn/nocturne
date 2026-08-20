@@ -19,15 +19,18 @@ DOWNLOAD_URLS = {
 
 
 def _path_row(edit: QLineEdit, on_test, result: QLabel,
-              download_url: str | None = None) -> QWidget:
+              download_url: str | None = None, caption: str = "Locate tool") -> QWidget:
     row = QWidget()
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 0, 0, 0)
     line = QHBoxLayout()
     line.addWidget(edit)
     browse = QPushButton("Browse…")
+    # The caption is REQUIRED by open_file. Omitting it raised inside the slot,
+    # where Qt prints to stderr and the button just looks dead — which is how
+    # this survived from 2026-08-15 into five releases.
     browse.clicked.connect(
-        lambda: edit.setText(file_dialogs.open_file(row) or edit.text())
+        lambda: edit.setText(file_dialogs.open_file(row, caption) or edit.text())
     )
     test = QPushButton("Test")
     test.clicked.connect(on_test)
@@ -49,7 +52,8 @@ def _folder_row(edit: QLineEdit) -> QWidget:
     line.addWidget(edit)
     browse = QPushButton("Browse…")
     browse.clicked.connect(
-        lambda: edit.setText(file_dialogs.choose_folder(row) or edit.text())
+        lambda: edit.setText(
+            file_dialogs.choose_folder(row, "Default image folder") or edit.text())
     )
     line.addWidget(browse)
     return row
@@ -80,13 +84,16 @@ class SettingsDialog(QDialog):
         form.addRow("Default folder", _folder_row(self._dir))
         form.addRow("GraXpert (required)",
                     _path_row(self._gx, self._test_graxpert, self._gx_result,
-                              DOWNLOAD_URLS["graxpert"]))
+                              DOWNLOAD_URLS["graxpert"],
+                              "Select GraXpert.app (or its executable)"))
         form.addRow("RC-Astro (optional)",
                     _path_row(self._rc, self._test_rcastro, self._rc_result,
-                              DOWNLOAD_URLS["rcastro"]))
+                              DOWNLOAD_URLS["rcastro"],
+                              "Select the rc-astro command (RC-Astro/CLI/rc-astro)"))
         form.addRow("ASTAP (optional)",
                     _path_row(self._astap, self._test_astap, self._astap_result,
-                              DOWNLOAD_URLS["astap"]))
+                              DOWNLOAD_URLS["astap"],
+                              "Select ASTAP.app (or its executable)"))
         form.addRow("Handle (for shares)", self._handle)
         form.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
