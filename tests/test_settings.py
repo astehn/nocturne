@@ -210,13 +210,13 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
 def _fake_tools(tmp_path):
     """A macOS-shaped layout: two .app bundles and one bare CLI binary."""
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
-    gx.mkdir(parents=True)
+    gx.mkdir(parents=True, exist_ok=True)
     (gx / "GraXpert").write_text("#!/bin/sh\n")
     astap = tmp_path / "ASTAP.app" / "Contents" / "MacOS"
-    astap.mkdir(parents=True)
+    astap.mkdir(parents=True, exist_ok=True)
     (astap / "ASTAP").write_text("#!/bin/sh\n")
     rc = tmp_path / "RC-Astro" / "CLI"
-    rc.mkdir(parents=True)
+    rc.mkdir(parents=True, exist_ok=True)
     (rc / "rc-astro").write_text("#!/bin/sh\n")
     return {
         "graxpert_path": [str(tmp_path / "GraXpert.app")],
@@ -289,3 +289,33 @@ def test_startup_actually_calls_autoconfigure():
     called = {n.func.id for n in ast.walk(fn)
               if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert "autoconfigure_tools" in called
+
+
+def test_rescan_replaces_a_path_that_does_not_work(tmp_path):
+    """The escape hatch for a user who has fumbled a path into the box.
+
+    Startup detection only fills EMPTY settings, so a wrong path is sticky
+    forever — nothing would ever correct it. An explicit rescan is allowed to
+    replace a path that does not resolve to a real executable.
+    """
+    from nocturne.settings import Settings, detect_tool_paths
+    broken = Settings(graxpert_path="/nope/not/here/graxpert")
+    assert "graxpert_path" not in detect_tool_paths(broken, candidates=_fake_tools(tmp_path))
+    found = detect_tool_paths(broken, candidates=_fake_tools(tmp_path), replace_invalid=True)
+    assert found["graxpert_path"].endswith("GraXpert.app")
+
+
+def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
+    """Assert UNCHANGED. A rescan fixes what is broken; it does not tidy.
+
+    Someone running a tool from a custom location has a WORKING path, and
+    replacing it with the default install would break a deliberate setup while
+    claiming to help.
+    """
+    from nocturne.settings import Settings, detect_tool_paths
+    mine = tmp_path / "custom" / "graxpert"
+    mine.parent.mkdir()
+    mine.write_text("#!/bin/sh\n")
+    found = detect_tool_paths(Settings(graxpert_path=str(mine)),
+                              candidates=_fake_tools(tmp_path), replace_invalid=True)
+    assert "graxpert_path" not in found

@@ -142,8 +142,15 @@ TOOL_CANDIDATES: dict[str, list[str]] = {
 }
 
 
-def detect_tool_paths(s: Settings, candidates: dict | None = None) -> dict[str, str]:
+def detect_tool_paths(s: Settings, candidates: dict | None = None,
+                      replace_invalid: bool = False) -> dict[str, str]:
     """Installed tools whose setting is currently EMPTY, as {field: path}.
+
+    `replace_invalid` is for the Settings dialog's explicit rescan, and widens
+    that to paths which no longer resolve to a real executable. Startup must not
+    use it — but without it a fumbled path is sticky forever, because the empty
+    check means nothing would ever correct it. A rescan fixes what is BROKEN and
+    still never touches a working custom path.
 
     Never returns a field the user has already set. Someone whose tool lives
     somewhere unusual has already paid the cost of finding it, and quietly
@@ -153,8 +160,10 @@ def detect_tool_paths(s: Settings, candidates: dict | None = None) -> dict[str, 
     """
     found: dict[str, str] = {}
     for field_name, paths in (candidates or TOOL_CANDIDATES).items():
-        if getattr(s, field_name, ""):
-            continue                      # configured; leave it alone
+        current = getattr(s, field_name, "")
+        if current and not (replace_invalid
+                            and not os.path.isfile(resolve_binary(current))):
+            continue                      # configured and working; leave it alone
         for raw in paths:
             path = os.path.expanduser(raw)
             if os.path.isfile(resolve_binary(path)):

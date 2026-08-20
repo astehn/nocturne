@@ -104,3 +104,30 @@ def test_browse_buttons_are_wired_and_do_not_raise(qtbot, monkeypatch):
         b.click()                      # raised TypeError before the fix
     assert len(seen) == len(buttons)
     assert all(caption for _kind, caption in seen), "a Browse button passed an empty caption"
+
+
+def test_rescan_button_fills_the_fields(qtbot, monkeypatch, tmp_path):
+    """Andreas: "if the user messes autodetection up by fumbling around in the
+    settings can we have a re-scan button, i think that would give some
+    confidence to users".
+
+    Drives the real button and reads the real line edits back, rather than
+    calling the handler directly — a connected-but-broken handler is exactly
+    what shipped in five releases (b4314fa).
+    """
+    from nocturne.settings import Settings
+    from nocturne.ui import settings_dialog
+
+    gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
+    gx.mkdir(parents=True)
+    (gx / "GraXpert").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(settings_dialog, "TOOL_CANDIDATES",
+                        {"graxpert_path": [str(tmp_path / "GraXpert.app")],
+                         "rcastro_path": [str(tmp_path / "absent")],
+                         "astap_path": [str(tmp_path / "absent")]})
+
+    dlg = settings_dialog.SettingsDialog(Settings(graxpert_path="/fumbled/by/hand"))
+    qtbot.addWidget(dlg)
+    dlg.rescan_btn.click()
+    assert dlg._gx.text().endswith("GraXpert.app")      # the broken path was replaced
+    assert "GraXpert" in dlg.rescan_result.text()

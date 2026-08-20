@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..settings import Settings, astap_valid, resolve_binary
+from ..settings import (TOOL_CANDIDATES, Settings, astap_valid,
+                        detect_tool_paths, resolve_binary)
 from ..tools.probe import probe_binary
 from . import file_dialogs
 
@@ -80,6 +81,11 @@ class SettingsDialog(QDialog):
         self.denoise_box.setCurrentText(
             "GraXpert" if settings.denoise_engine == "graxpert" else "RC-Astro")
 
+        self.rescan_btn = QPushButton("Rescan for installed apps")
+        self.rescan_btn.clicked.connect(self._rescan)
+        self.rescan_result = QLabel("")
+        self.rescan_result.setWordWrap(True)
+
         form = QFormLayout(self)
         form.addRow("Default folder", _folder_row(self._dir))
         form.addRow("GraXpert (required)",
@@ -94,6 +100,8 @@ class SettingsDialog(QDialog):
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"],
                               "Select ASTAP.app (or its executable)"))
+        form.addRow("", self.rescan_btn)
+        form.addRow("", self.rescan_result)
         form.addRow("Handle (for shares)", self._handle)
         form.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
@@ -107,6 +115,33 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def _rescan(self) -> None:
+        """Look again, and repair anything broken.
+
+        Reads the LINE EDITS rather than the saved settings, so it acts on what
+        the user is looking at — including a path they have just fumbled and not
+        yet saved, which is the case this button exists for. `replace_invalid`
+        lets it overwrite a path that does not resolve; a working custom path is
+        still left alone.
+        """
+        fields = {"graxpert_path": self._gx, "rcastro_path": self._rc,
+                  "astap_path": self._astap}
+        current = Settings(**{k: e.text().strip() for k, e in fields.items()})
+        found = detect_tool_paths(current, TOOL_CANDIDATES, replace_invalid=True)
+        for key, value in found.items():
+            fields[key].setText(value)
+        if found:
+            names = {"graxpert_path": "GraXpert", "rcastro_path": "RC-Astro",
+                     "astap_path": "ASTAP"}
+            self.rescan_result.setText(
+                "✓ Found " + ", ".join(names[k] for k in sorted(found)))
+        else:
+            configured = [e.text().strip() for e in fields.values() if e.text().strip()]
+            self.rescan_result.setText(
+                "Everything already set up." if len(configured) == len(fields)
+                else "Nothing found in the usual places — use Browse… if a tool "
+                     "is installed somewhere else.")
 
     def _show_result(self, label: QLabel, path: str, args: list[str]) -> None:
         if not path.strip():
