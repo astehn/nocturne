@@ -1063,7 +1063,8 @@ def test_levels_auto_sets_sliders(qtbot, tmp_path):
     win._on_levels_auto()
     from nocturne.core.levels import auto_levels
     b, g, wt = auto_levels(win.project.current().data)
-    assert abs(win._panel.black_slider.value() / 100 - b) < 0.02
+    from nocturne.ui.step_panels import BLACK_STEPS
+    assert abs(win._panel.black_slider.value() / BLACK_STEPS - b) < 0.002
 
 
 def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):

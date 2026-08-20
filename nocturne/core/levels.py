@@ -15,14 +15,65 @@ def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> A
     )
 
 
+# Black point = median - _BLACK_SIGMA * MAD, the same robust shape autostretch
+# uses. Not autostretch's 2.8, because the two run on different data: 2.8 clips
+# the LINEAR frame before a midtone transfer, while this runs after the stretch
+# has already compressed everything upward.
+#
+# 3.5 measured across six real masters (M 45, M 31 mosaic, M 8, M 16, NGC 7000,
+# NGC 281). It was 4.0 first, and 3.5 beat it on two independent grounds:
+#
+#   * It matches Andreas. On M 45 he set 0.07 by hand where 4.0 suggested 0.055;
+#     3.5 gives 0.081. Two data points is not a calibration, but the direction
+#     was consistent and the cost of following it is bounded below.
+#   * It ends a dead button. At 4.0 the black point on M 16 came out exactly
+#     0.0 — a nebula-filled frame whose MAD is large relative to its median — so
+#     Auto Levels did nothing at all there. 3.5 gives 0.0256.
+#
+# The floor is black clipping, which is what rules out going further: at 3.5 it
+# stays at or under 0.54% (M 8 the worst); at 3.0 M 8 reaches 0.98% and at 2.8
+# 1.25%, which eats faint nebulosity. M 31's 11.7% is its empty mosaic border
+# and does not move with sigma.
+_BLACK_SIGMA = 3.5
+
+
 def auto_levels(data: np.ndarray) -> tuple[float, float, float]:
-    """Suggested (black, gamma, white) for a stretched image — gentle, never
-    clips real signal hard."""
+    """Suggested (black, gamma, white) for a STRETCHED image.
+
+    Sets a black point and nothing else, because after a stretch there is
+    nothing else left to set automatically — and both of the other two used to
+    do active harm:
+
+    * **Gamma is 1.0.** autostretch deliberately places the background at
+      `_TARGET_BG` (0.25); this function used to re-target 0.35 with an adaptive
+      gamma, so two steps disagreed about sky brightness and the later one won.
+      Measured, it lifted the sky +12% to +30% on every real master. That is the
+      "milky" look Andreas rejected. `auto_enhance` had already diagnosed this
+      and worked around it locally by discarding the gamma; the manual Levels
+      step kept the defect.
+    * **White is 1.0.** The stretch already maps the data into [0, 1] with star
+      cores at the top, so a percentile white point can only clip stars or
+      brighten the frame. The old 99.9th percentile drove ~0.08% of pixels to
+      pure white on every master — roughly 6,000 star cores, whose colour is
+      real data, since Seestar cores do not saturate in the capture. Raising it
+      to 99.99% did not fix it either: on M 16 that percentile is 0.889 against
+      a maximum of 0.999, so it BRIGHTENED the sky 0.2013 -> 0.2264, smuggling
+      the lift back in through the other end.
+
+    MAD and not a percentile, which is the part that matters on a mosaic: 11.59%
+    of Andreas' real M 31 mosaic is empty border outside panel coverage, so the
+    old 1st percentile landed inside the border and returned exactly 0.0 — the
+    black point silently did nothing on every mosaic he made. The robust
+    estimator reads 0.1431 on that same frame and never sees the border.
+
+    nanmedian for the reason `autostretch._stretch_params` documents: these are
+    two scalars derived from the whole frame, and with plain `np.median` one NaN
+    makes both NaN, which then blanks every pixel.
+    """
     lum = data.mean(axis=2) if data.ndim == 3 else data
-    black = float(np.clip(np.percentile(lum, 1.0), 0.0, 0.5))
-    white = float(np.percentile(lum, 99.9))
-    white = max(white, black + 0.05)
-    med = float(np.median(lum))
-    x = float(np.clip((med - black) / max(white - black, 1e-4), 1e-3, 0.999))
-    gamma = float(np.clip(np.log(x) / np.log(0.35), 0.4, 2.5))
-    return black, gamma, white
+    if not np.isfinite(lum).any():
+        return 0.0, 1.0, 1.0            # no statistics to derive from
+    med = float(np.nanmedian(lum))
+    mad = float(np.nanmedian(np.abs(lum - med)))
+    black = float(np.clip(med - _BLACK_SIGMA * mad, 0.0, 0.5))
+    return black, 1.0, 1.0
