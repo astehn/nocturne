@@ -109,6 +109,12 @@ class CurvesDialog(QDialog):
 
         self.editor = CurveEditor()
         self.editor.setMinimumSize(_EDITOR_MIN, _EDITOR_MIN)
+        # The data behind the curve. Without it the plot is an unlabelled black
+        # box — the inline editor has always shown this (main_window feeds it on
+        # rebuild) and the dialog simply never did, which Andreas spotted at
+        # once. From the FULL-resolution base, so the shape matches the image
+        # rather than a decimated approximation of it.
+        self.editor.set_histogram(base.data)
         if points:
             self.editor.set_points(points)
         self.editor.curveChanged.connect(self._queue_preview)

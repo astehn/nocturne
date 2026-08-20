@@ -204,3 +204,11 @@ def test_the_editor_stays_usefully_bigger_than_the_inline_one_even_when_small(qt
     dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
     assert dlg.editor.minimumWidth() >= 340, dlg.editor.minimumWidth()
     assert dlg.editor.minimumHeight() >= 340, dlg.editor.minimumHeight()
+
+
+def test_the_dialog_shows_the_data_behind_the_curve(qtbot):
+    """It opened as an unlabelled black box: the inline editor has always been
+    fed a histogram and the dialog simply never was."""
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    assert dlg.editor._hist is not None, "no histogram behind the curve"
+    assert float(np.max(dlg.editor._hist)) > 0, "the histogram is empty"
