@@ -3003,6 +3003,7 @@ class MainWindow(QMainWindow):
             on_show_model=self._on_show_background_model,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
+            on_curve_expand=self._open_curves_dialog,
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
