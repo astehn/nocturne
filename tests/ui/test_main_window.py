@@ -1944,7 +1944,13 @@ def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path,
     # display autostretch) -- otherwise the two would differ for reasons
     # having nothing to do with annotations at all.
     plain_path = str(tmp_path / "plain.png")
-    to_qimage(win.project.current()).save(plain_path)
+    # Tagged the same way the burned export now is. QImage equality includes the
+    # colour space, so an untagged reference would differ for a reason that has
+    # nothing to do with annotations — and this test is about annotations.
+    from nocturne.colour_profiles import qt_colour_space
+    _plain = to_qimage(win.project.current())
+    _plain.setColorSpace(qt_colour_space("sRGB"))
+    _plain.save(plain_path)
     plain = QImage(plain_path)
 
     no_layers = {"objects": False, "stars": False, "grid": False,
@@ -1985,7 +1991,13 @@ def test_star_marker_painting_specifically_reaches_the_burned_export(qtbot, tmp_
     from nocturne.core.annotation_layout import Marker
 
     plain_path = str(tmp_path / "plain.png")
-    to_qimage(win.project.current()).save(plain_path)
+    # Tagged the same way the burned export now is. QImage equality includes the
+    # colour space, so an untagged reference would differ for a reason that has
+    # nothing to do with annotations — and this test is about annotations.
+    from nocturne.colour_profiles import qt_colour_space
+    _plain = to_qimage(win.project.current())
+    _plain.setColorSpace(qt_colour_space("sRGB"))
+    _plain.save(plain_path)
     plain = QImage(plain_path)
 
     star_marker = Marker(10.0, 10.0, "star", "#5cff5c")

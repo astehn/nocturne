@@ -2866,7 +2866,35 @@ class MainWindow(QMainWindow):
         self._bottom_bar.setVisible(self._log_act.isChecked())
 
     # --- exports ---
-    def export_final(self, fmt: str) -> None:
+    def _export_space(self) -> str:
+        """The colour space chosen in the panel, or sRGB.
+
+        Falls back rather than raising: the annotated-PNG path reaches this from
+        a lambda built before the panel is guaranteed to exist, and an export
+        that tags sRGB is far better than one that fails.
+        """
+        box = getattr(getattr(self, "_panel", None), "space_box", None)
+        return box.currentText() if box is not None else "sRGB"
+
+    def _prepare_for_export(self, img, space: str):
+        """Convert into `space` and return (image, profile bytes).
+
+        Conversion first, THEN the tag — the two must agree. Tagging without
+        converting would mis-declare the file, which is worse than the untagged
+        exports this work exists to fix: a reader would faithfully render the
+        wrong thing instead of guessing.
+        """
+        from ..colour_profiles import icc_bytes
+        from ..core.colour import convert
+        if space == "sRGB":
+            return img, icc_bytes("sRGB")     # no conversion, but still declared
+        from ..core.image import AstroImage
+        moved = convert(img.data, space)
+        return (AstroImage(moved, is_linear=img.is_linear,
+                           metadata=dict(img.metadata)),
+                icc_bytes(space))
+
+    def export_final(self, fmt: str, space: str = "sRGB") -> None:
         if self.project is None or self._busy:
             return
         img = self.project.current()
@@ -2882,8 +2910,10 @@ class MainWindow(QMainWindow):
             def _split():
                 rc = RCAstro(resolve_binary(self.settings.rcastro_path))
                 starless, stars = rc.remove_stars(img, runner=self._rc_runner)
-                save_tiff(starless, os.path.join(folder, "starless.tif"))
-                save_tiff(stars, os.path.join(folder, "stars.tif"))
+                sl, icc = self._prepare_for_export(starless, space)
+                st, _ = self._prepare_for_export(stars, space)
+                save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc)
+                save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc)
 
             self._run_busy(_split,
                            lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
@@ -2913,7 +2943,9 @@ class MainWindow(QMainWindow):
             if burn:
                 save = lambda img, path: self._save_png_with_annotations(img, path, self._solve[1])
             else:
-                save = save_png
+                def save(i, path):
+                    out, icc = self._prepare_for_export(i, space)
+                    save_png(out, path, icc=icc)
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
@@ -2923,7 +2955,10 @@ class MainWindow(QMainWindow):
         else:
             if not path.lower().endswith((".tiff", ".tif")):
                 path += ".tiff"
-            save, name = save_tiff, os.path.basename(path)
+            def save(i, path):
+                out, icc = self._prepare_for_export(i, space)
+                save_tiff(out, path, icc=icc)
+            name = os.path.basename(path)
         self._run_busy(lambda: save(img, path),
                        lambda _: self.log_panel.append_entry(f"Exported {name}"),
                        "Exporting…", "Export failed")
@@ -2935,6 +2970,11 @@ class MainWindow(QMainWindow):
         prims = self._annotation_primitives(res, objs, (h, w), ui_scale=scale_for((h, w)))
         out = to_qimage(img)
         paint_annotations(out, prims, (h, w))
+        # The annotated PNG goes through QImage.save, NOT core/export, so it
+        # needs tagging here or it ships untagged while the plain PNG next to it
+        # is fine — same Export button, two code paths.
+        from ..colour_profiles import qt_colour_space
+        out.setColorSpace(qt_colour_space(self._export_space()))
         out.save(path)
 
     # --- settings ---
