@@ -116,11 +116,28 @@ def test_levels_panel_emits_tuple(qtbot):
     w = build_panel(_stage("levels"), on_apply=got.append)
     qtbot.addWidget(w)
     assert w.panel_kind == "levels"
-    w.black_slider.setValue(20)
+    w.black_slider.setValue(200)        # black runs 0-1000, the other two 0-100
     w.gamma_slider.setValue(150)
     w.white_slider.setValue(90)
     w.apply_btn.click()
     assert got == [(0.20, 1.50, 0.90)]
+
+
+def test_black_point_slider_resolves_finer_than_a_hundredth(qtbot):
+    """The black point is the only value Auto Levels sets, so it carries the step.
+
+    At 100 steps its useful range (about 0-0.15) held roughly fifteen positions,
+    and auto's own output was rounded away before the user saw it: 0.081 and
+    0.085 both became 0.08. Andreas noticed the symptom — "it always does +5 on
+    black point" — on values that really were adapting underneath.
+    """
+    got = []
+    w = build_panel(_stage("levels"), on_apply=got.append)
+    qtbot.addWidget(w)                           # own the widget; no app from a sibling test
+    w.black_slider.setValue(81)                  # 0.081, a real auto_levels output
+    w.apply_btn.click()
+    assert got[0][0] == 0.081
+    assert "0.081" in w.black_val.text()
 
 
 def test_levels_panel_controls(qapp):

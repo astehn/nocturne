@@ -16,15 +16,25 @@ def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> A
 
 
 # Black point = median - _BLACK_SIGMA * MAD, the same robust shape autostretch
-# uses. 4.0, not autostretch's 2.8, because the two run on different data: 2.8
-# clips the LINEAR frame before a midtone transfer, while this runs after the
-# stretch has already compressed everything upward. Measured across six real
-# masters (M 45, M 31 mosaic, M 8, M 16, NGC 7000, NGC 281): at 2.8 the sky fell
-# to 0.106-0.155 and M 8 crushed 1.25% of the frame to pure black; at 4.0 the sky
-# lands at 0.150-0.201 with black clipping at or under 0.32% everywhere; at 5.0
-# it barely moves three of the six. 4.0 deepens the sky without eating faint
-# nebulosity.
-_BLACK_SIGMA = 4.0
+# uses. Not autostretch's 2.8, because the two run on different data: 2.8 clips
+# the LINEAR frame before a midtone transfer, while this runs after the stretch
+# has already compressed everything upward.
+#
+# 3.5 measured across six real masters (M 45, M 31 mosaic, M 8, M 16, NGC 7000,
+# NGC 281). It was 4.0 first, and 3.5 beat it on two independent grounds:
+#
+#   * It matches Andreas. On M 45 he set 0.07 by hand where 4.0 suggested 0.055;
+#     3.5 gives 0.081. Two data points is not a calibration, but the direction
+#     was consistent and the cost of following it is bounded below.
+#   * It ends a dead button. At 4.0 the black point on M 16 came out exactly
+#     0.0 — a nebula-filled frame whose MAD is large relative to its median — so
+#     Auto Levels did nothing at all there. 3.5 gives 0.0256.
+#
+# The floor is black clipping, which is what rules out going further: at 3.5 it
+# stays at or under 0.54% (M 8 the worst); at 3.0 M 8 reaches 0.98% and at 2.8
+# 1.25%, which eats faint nebulosity. M 31's 11.7% is its empty mosaic border
+# and does not move with sigma.
+_BLACK_SIGMA = 3.5
 
 
 def auto_levels(data: np.ndarray) -> tuple[float, float, float]:

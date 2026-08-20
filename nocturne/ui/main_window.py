@@ -65,7 +65,7 @@ from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
 from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
-from .step_panels import build_panel
+from .step_panels import BLACK_STEPS, build_panel
 from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
@@ -2162,7 +2162,7 @@ class MainWindow(QMainWindow):
             return
         b, g, w = auto_levels(self.project.current().data)
         # Setting the sliders fires _on_levels_change (which debounces a render).
-        self._panel.black_slider.setValue(round(b * 100))
+        self._panel.black_slider.setValue(round(b * BLACK_STEPS))
         self._panel.gamma_slider.setValue(round(g * 100))
         self._panel.white_slider.setValue(round(w * 100))
         self._render_levels_preview()
@@ -2209,7 +2209,7 @@ class MainWindow(QMainWindow):
         if self._levels_pending is not None:
             b, g, w = self._levels_pending
         else:
-            b = self._panel.black_slider.value() / 100.0
+            b = self._panel.black_slider.value() / BLACK_STEPS
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
         img = self._preview_base("levels")

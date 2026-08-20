@@ -11,6 +11,10 @@ from ..core.crop import ASPECTS
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
 
+# Black-point slider resolution. Ten times the other two levels sliders —
+# see the levels panel for why.
+BLACK_STEPS = 1000
+
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
@@ -388,20 +392,25 @@ def build_panel(
             auto_btn.clicked.connect(lambda: on_levels_auto())
         lay.addWidget(auto_btn)
 
-        black = ResetSlider(0)
+        # 1000 steps, not 100. The black point is the ONLY value Auto Levels
+        # sets now, so it carries the whole step; and its useful range is about
+        # 0-0.15, so 0.01 steps gave roughly fifteen usable positions and
+        # rounded most of the adaptation away before the user ever saw it.
+        black = ResetSlider(0, maximum=BLACK_STEPS)
         gamma = ResetSlider(100, minimum=10, maximum=300)  # 1.00
         white = ResetSlider(100)
-        black_val = QLabel("0.00")
+        black_val = QLabel("0.000")
         gamma_val = QLabel("1.00")
         white_val = QLabel("1.00")
 
         def _emit(*_):
-            black_val.setText(f"{black.value() / 100:.2f}")
+            black_val.setText(f"{black.value() / BLACK_STEPS:.3f}")
             gamma_val.setText(f"{gamma.value() / 100:.2f}")
             white_val.setText(f"{white.value() / 100:.2f}")
             if on_levels_change is not None:
                 on_levels_change(
-                    black.value() / 100.0, gamma.value() / 100.0, white.value() / 100.0
+                    black.value() / BLACK_STEPS, gamma.value() / 100.0,
+                    white.value() / 100.0
                 )
 
         black.valueChanged.connect(_emit)
@@ -413,7 +422,8 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(
-                (black.value() / 100.0, gamma.value() / 100.0, white.value() / 100.0)
+                (black.value() / BLACK_STEPS, gamma.value() / 100.0,
+                 white.value() / 100.0)
             ))
 
         black_row = QHBoxLayout()
