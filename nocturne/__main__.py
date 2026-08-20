@@ -6,7 +6,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME
-from .settings import resolve_settings_path
+from .settings import autoconfigure_tools, resolve_settings_path
 from .ui.main_window import MainWindow
 from .ui.theme import apply_dark_theme
 
@@ -22,7 +22,13 @@ def main() -> None:
         app.setWindowIcon(QIcon(str(icon_path)))
 
     apply_dark_theme(app)
-    win = MainWindow(settings_path=resolve_settings_path())
+
+    # Before the window: a first run with the tools already installed should
+    # need no trip to Settings at all. Only ever fills EMPTY paths.
+    settings_path = resolve_settings_path()
+    autoconfigure_tools(settings_path)
+
+    win = MainWindow(settings_path=settings_path)
     win.resize(1280, 760)
     win.show()
     sys.exit(app.exec())

@@ -121,6 +121,66 @@ def resolve_binary(path: str) -> str:
     return path
 
 
+# Where each tool's own installer puts it on macOS. Auto-detection exists
+# because the first user feedback this project ever received (2026-08-20) was
+# that configuring these three is messy — and it was: the Browse buttons in
+# Settings had been dead since 2026-08-15 (b4314fa), leaving a hand-typed
+# absolute path as the only route. All three of Andreas' tools sit at these
+# exact paths, so in the common case there is nothing to configure at all.
+#
+# A .app is listed as the BUNDLE, not the executable inside it. resolve_binary
+# has always accepted a bundle, which is precisely the affordance nobody could
+# reach, and it keeps this list readable.
+TOOL_CANDIDATES: dict[str, list[str]] = {
+    "graxpert_path": ["/Applications/GraXpert.app",
+                      "~/Applications/GraXpert.app"],
+    "rcastro_path": ["/Applications/RC-Astro/CLI/rc-astro",
+                     "~/Applications/RC-Astro/CLI/rc-astro"],
+    "astap_path": ["/Applications/ASTAP.app",
+                   "~/Applications/ASTAP.app",
+                   "/opt/homebrew/bin/astap"],
+}
+
+
+def detect_tool_paths(s: Settings, candidates: dict | None = None) -> dict[str, str]:
+    """Installed tools whose setting is currently EMPTY, as {field: path}.
+
+    Never returns a field the user has already set. Someone whose tool lives
+    somewhere unusual has already paid the cost of finding it, and quietly
+    replacing their path with a default would be worse than not detecting at
+    all — so the empty check is the whole safety model, and the test for it
+    asserts the configured value is unchanged rather than merely not-default.
+    """
+    found: dict[str, str] = {}
+    for field_name, paths in (candidates or TOOL_CANDIDATES).items():
+        if getattr(s, field_name, ""):
+            continue                      # configured; leave it alone
+        for raw in paths:
+            path = os.path.expanduser(raw)
+            if os.path.isfile(resolve_binary(path)):
+                found[field_name] = path
+                break
+    return found
+
+
+def autoconfigure_tools(path: str, candidates: dict | None = None) -> list[str]:
+    """Fill in any unconfigured tool found at its default location; save if so.
+
+    Returns the field names filled, so a caller can report them. Runs at
+    startup: doing it there rather than in load_settings keeps load_settings
+    pure, and keeps the test suite from picking up whatever happens to be
+    installed on the machine running it.
+    """
+    s = load_settings(path)
+    found = detect_tool_paths(s, candidates)
+    if not found:
+        return []
+    for field_name, value in found.items():
+        setattr(s, field_name, value)
+    save_settings(s, path)
+    return sorted(found)
+
+
 def graxpert_valid(s: Settings) -> bool:
     return bool(s.graxpert_path) and os.path.isfile(resolve_binary(s.graxpert_path))
 

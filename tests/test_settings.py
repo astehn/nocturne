@@ -199,3 +199,93 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
         "compass": True, "scale": True, "by_type": False,
     }
     assert loaded.annotation_density == "balanced"
+
+
+# --- tool auto-detection -------------------------------------------------
+# Reached us as a real user's "setup is messy, especially configuring RC-Astro,
+# GraXpert and ASTAP" (2026-08-20). The Browse buttons were also dead (b4314fa);
+# this is the other half — the tools install to predictable places, so in the
+# common case nobody should have to configure anything at all.
+
+def _fake_tools(tmp_path):
+    """A macOS-shaped layout: two .app bundles and one bare CLI binary."""
+    gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
+    gx.mkdir(parents=True)
+    (gx / "GraXpert").write_text("#!/bin/sh\n")
+    astap = tmp_path / "ASTAP.app" / "Contents" / "MacOS"
+    astap.mkdir(parents=True)
+    (astap / "ASTAP").write_text("#!/bin/sh\n")
+    rc = tmp_path / "RC-Astro" / "CLI"
+    rc.mkdir(parents=True)
+    (rc / "rc-astro").write_text("#!/bin/sh\n")
+    return {
+        "graxpert_path": [str(tmp_path / "GraXpert.app")],
+        "rcastro_path": [str(tmp_path / "RC-Astro" / "CLI" / "rc-astro")],
+        "astap_path": [str(tmp_path / "ASTAP.app")],
+    }
+
+
+def test_detects_each_tool_at_its_default_location(tmp_path):
+    from nocturne.settings import Settings, detect_tool_paths
+    found = detect_tool_paths(Settings(), candidates=_fake_tools(tmp_path))
+    assert set(found) == {"graxpert_path", "rcastro_path", "astap_path"}
+    # a .app is offered as the BUNDLE; resolve_binary already handles the rest,
+    # which is why no user ever needed Show Package Contents
+    assert found["graxpert_path"].endswith("GraXpert.app")
+
+
+def test_detection_never_overwrites_a_configured_path(tmp_path):
+    """The one thing auto-detection must not do is second-guess the user.
+
+    Assert UNCHANGED: someone with a tool installed somewhere unusual has
+    already paid the cost of finding it, and silently replacing their path with
+    a default would be worse than never detecting anything.
+    """
+    from nocturne.settings import Settings, detect_tool_paths
+    mine = "/somewhere/else/graxpert"
+    found = detect_tool_paths(Settings(graxpert_path=mine),
+                              candidates=_fake_tools(tmp_path))
+    assert "graxpert_path" not in found
+    assert Settings(graxpert_path=mine).graxpert_path == mine
+
+
+def test_detects_nothing_when_nothing_is_installed(tmp_path):
+    from nocturne.settings import Settings, detect_tool_paths
+    absent = {k: [str(tmp_path / "nope")] for k in
+              ("graxpert_path", "rcastro_path", "astap_path")}
+    assert detect_tool_paths(Settings(), candidates=absent) == {}
+
+
+def test_autoconfigure_writes_the_found_paths_to_disk(tmp_path):
+    from nocturne.settings import Settings, autoconfigure_tools, load_settings, save_settings
+    path = str(tmp_path / "settings.json")
+    save_settings(Settings(), path)
+    filled = autoconfigure_tools(path, candidates=_fake_tools(tmp_path))
+    assert set(filled) == {"graxpert_path", "rcastro_path", "astap_path"}
+    assert load_settings(path).graxpert_path.endswith("GraXpert.app")
+
+
+def test_autoconfigure_is_a_no_op_when_everything_is_already_set(tmp_path):
+    from nocturne.settings import Settings, autoconfigure_tools, load_settings, save_settings
+    path = str(tmp_path / "settings.json")
+    save_settings(Settings(graxpert_path="/a", rcastro_path="/b", astap_path="/c"), path)
+    assert autoconfigure_tools(path, candidates=_fake_tools(tmp_path)) == []
+    assert load_settings(path).graxpert_path == "/a"
+
+
+def test_startup_actually_calls_autoconfigure():
+    """Pins the WIRING, not just the helper.
+
+    The dead Browse buttons were a fully-written handler that nothing ever
+    invoked, and the freeze_support bug was the same shape. A tested function
+    nobody calls is exactly as useless. Reads the source rather than running
+    main(), which would need a QApplication.
+    """
+    import ast, inspect
+    from nocturne import __main__ as entry
+    tree = ast.parse(inspect.getsource(entry))
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+    called = {n.func.id for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert "autoconfigure_tools" in called
