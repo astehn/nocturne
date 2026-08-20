@@ -43,3 +43,51 @@ def test_auto_levels_sane():
     assert 0.0 <= b < w <= 1.0
     assert 0.4 <= g <= 2.5
     assert b < float(np.median(d)) < w
+
+
+def _sky(d):
+    """The background, not the whole frame: the median of the darker half."""
+    lum = d.mean(axis=2) if d.ndim == 3 else d
+    return float(np.median(lum[lum <= np.median(lum)]))
+
+
+def test_auto_levels_does_not_re_brighten_the_background():
+    """The stretch placed the background deliberately; Levels must not move it back up.
+
+    autostretch targets a median of 0.25 (`_TARGET_BG`) and auto_levels used to
+    re-target 0.35 with an adaptive gamma, so the two steps disagreed about how
+    bright the sky should be and the second one won. Measured on six real
+    masters, it lifted the sky +12% to +30% — the milky look Andreas rejected.
+    """
+    d = _stretched()
+    before = _sky(d)
+    out = apply_levels(AstroImage(d, is_linear=False), *auto_levels(d)).data
+    assert _sky(out) <= before + 1e-6
+
+
+def test_auto_levels_black_point_survives_a_mosaic_border():
+    """A percentile black point is contaminated by non-image pixels.
+
+    On Andreas' real M 31 mosaic 11.59% of the frame is empty border outside
+    panel coverage, so the 1st percentile landed INSIDE the border and returned
+    exactly 0.0 — the black point did nothing at all on any mosaic. A robust
+    median-MAD estimator gave 0.1431 on the same frame.
+    """
+    d = _stretched()
+    d[:, :8] = 0.0                      # 12.5% empty border, as a mosaic has
+    black, _g, _w = auto_levels(d)
+    assert black > 0.05, "the border swallowed the black point"
+
+
+def test_auto_levels_blows_no_additional_star_cores():
+    """Assert UNCHANGED, not 'not obviously wrong'.
+
+    A flat 99.9th-percentile white point clipped ~0.08% of pixels to pure white
+    on every real master — about 6,000 star cores, destroying their colour.
+    Seestar cores do not saturate in the capture, so that colour is real data.
+    """
+    d = _stretched()
+    d[10:12, 10:12] = (1.0, 0.85, 0.70)     # a bright star that still HAS colour
+    before = int((d >= 0.999).all(axis=2).sum())
+    out = apply_levels(AstroImage(d, is_linear=False), *auto_levels(d)).data
+    assert int((out >= 0.999).all(axis=2).sum()) == before
