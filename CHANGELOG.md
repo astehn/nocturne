@@ -2,6 +2,30 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.17.0] — 2026-08-20
+
+Colour-managed exports, a proper Curves editor, and setup that configures itself
+
+### Added
+- Choose the colour space on export — sRGB, Display P3, Adobe RGB or ProPhoto RGB. The image is converted into the space you pick and the ICC profile is embedded, so Photoshop and Lightroom read it as what it is instead of assuming their own working space. Wide-gamut spaces on 16-bit TIFF.
+- A large Curves editor, over three times the area of the side panel, with the live preview beside it.
+- Six Curves presets — Add contrast, Strong contrast, Lift faint, Deepen sky, Tame highlights — each measured against your own image rather than a fixed shape, so the background stays put while the rest of the curve moves.
+- Curves now draws your histogram behind the grid, with black-to-white ramps along both axes so you can see which tones you are moving.
+- Nocturne finds GraXpert, RC-Astro and ASTAP where their installers put them, so a fresh install usually needs no setup at all — and a Rescan button repairs a path that has been typed wrong.
+
+### Changed
+- Auto Levels now sets a black point and nothing else. It had been re-brightening midtones on top of a stretch that already placed the background, lifting the sky 12–30% and washing images out.
+- GraXpert denoise strengths recalibrated against real data: medium is 14% quieter and 36% cleaner in colour, at the same runtime.
+- The Levels black point adjusts in thousandths rather than hundredths — it is the value Auto sets, and hundredths rounded most of the adjustment away.
+
+### Fixed
+- Every Browse button in Settings did nothing, in every release since v0.12.0. Configuring GraXpert, RC-Astro or ASTAP by hand-typed path was the only route left.
+- A tool path pointing at a file that cannot be run — a document, a folder — was reported as installed with a green checkmark.
+- Exports carried no colour profile at all, so other editors guessed and could render a correct file far too dark.
+- Auto Levels did nothing to the shadows of any mosaic: its black point read the empty border and came out as exactly zero.
+- Auto Levels clipped roughly 6,000 star cores to pure white on a typical frame, throwing away their colour.
+- The Open large editor button in Curves did nothing.
+
 ## [0.16.0] — 2026-08-19
 
 Stacking is seven times faster.
