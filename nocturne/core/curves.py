@@ -133,3 +133,99 @@ def gentle_s_points(data: np.ndarray) -> list[tuple[float, float]]:
     raw = [(0.0, 0.0), (bg, bg),
            (lo_x, lo_x - d), (hi_x, hi_x + d), (1.0, 1.0)]
     return sanitize_points(raw)
+
+
+def _sky_level(data: np.ndarray) -> tuple[float, float]:
+    """(sky, span) for the image — the anchor every preset works relative to.
+
+    Measured, never assumed. Colour Balance's band presets originally used
+    absolute positions, and on M 31 — whose stretched sky sits at 0.256 — they
+    selected 87% of the frame, the inverse of the intent. A curve preset with
+    fixed point positions fails the same way: 'lift the shadows' means something
+    different on a Bortle 3 sky and a light-polluted one.
+    """
+    lum = data.mean(axis=2) if data.ndim == 3 else data
+    sky = float(np.clip(np.percentile(lum, 10.0), 0.0, 0.5))
+    return sky, 1.0 - sky
+
+
+def strong_s_points(data: np.ndarray) -> list[tuple[float, float]]:
+    """'Add contrast', pushed harder — for a flat image the gentle one barely
+    moves. Same shape, twice the deflection (0.12 of the span against 0.06)."""
+    sky, span = _sky_level(data)
+    d = span * 0.12
+    raw = [(0.0, 0.0), (sky, sky),
+           (sky + span * 0.35, sky + span * 0.35 - d),
+           (sky + span * 0.75, sky + span * 0.75 + d),
+           (1.0, 1.0)]
+    return sanitize_points(raw)
+
+
+def lift_faint_points(data: np.ndarray) -> list[tuple[float, float]]:
+    """Bring up outer nebulosity and dust WITHOUT greying the background.
+
+    Pinning the sky is the whole point, and what separates this from simply
+    brightening: the lift starts just above the sky and fades out by the
+    midtones, so the background keeps its level while the faint signal sitting
+    on top of it comes up.
+    """
+    sky, span = _sky_level(data)
+    x1 = sky + span * 0.15
+    x2 = sky + span * 0.45
+    raw = [(0.0, 0.0), (sky, sky),
+           (x1, x1 + span * 0.07),
+           (x2, x2 + span * 0.04),
+           (1.0, 1.0)]
+    return sanitize_points(raw)
+
+
+def deepen_sky_points(data: np.ndarray) -> list[tuple[float, float]]:
+    """Darken the background for a cleaner field, without crushing the faint
+    signal just above it — which is what a plain black-point slide would do.
+
+    The sky comes down; the point above it is held UP, so the gap between
+    background and faint detail widens instead of collapsing.
+    """
+    sky, span = _sky_level(data)
+    drop = min(sky * 0.5, span * 0.05)
+    raw = [(0.0, 0.0),
+           (sky, max(0.0, sky - drop)),
+           (sky + span * 0.30, sky + span * 0.30 + span * 0.02),
+           (1.0, 1.0)]
+    return sanitize_points(raw)
+
+
+def tame_highlights_points(data: np.ndarray) -> list[tuple[float, float]]:
+    """Roll the top end off so blown star and galaxy cores recover some shape.
+
+    Finds where THIS image's highlights actually are, not a fixed fraction of
+    the span. That distinction was found on real data: with the roll-off pinned
+    at 80% of the span, the M 31 mosaic's bright end (0.773) fell BELOW the
+    start of the roll-off, so the preset never reached the highlights it exists
+    to tame — and the monotone spline bulged slightly above the identity line on
+    the way there, brightening them by +0.0098 instead.
+
+    The knee sits just below the bright end, and the curve is pinned on identity
+    up to it, so nothing below the highlights moves and nothing is ever lifted.
+
+    Deliberately gentle: Recover Core does this properly on LINEAR data earlier
+    in the pipeline, and this is a finishing touch rather than a substitute.
+    """
+    lum = data.mean(axis=2) if data.ndim == 3 else data
+    sky, span = _sky_level(data)
+    # where the picture's highlights actually live
+    top = float(np.clip(np.percentile(lum, 99.0), sky + span * 0.25, 1.0))
+    knee = max(sky + span * 0.10, top - span * 0.25)
+    drop = (1.0 - knee) * 0.22
+    # Two extra anchors on the identity line between the sky and the knee.
+    # Monotone-cubic interpolation guarantees the curve never INVERTS, but not
+    # that it stays below its own chord: the descending segment after the knee
+    # pulls the tangent there below 1.0, which bows the preceding segment
+    # upward. Measured worst case across sky and highlight levels: 3.44 8-bit
+    # levels of lift with no anchors, 0.40 with these two — below one
+    # quantisation step, so it cannot reach any output.
+    a1 = sky + (knee - sky) * 0.50
+    a2 = sky + (knee - sky) * 0.85
+    raw = [(0.0, 0.0), (sky, sky), (a1, a1), (a2, a2),
+           (knee, knee), (1.0, max(knee, 1.0 - drop))]
+    return sanitize_points(raw)
