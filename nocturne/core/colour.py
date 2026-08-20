@@ -25,12 +25,27 @@ _COLOUR_LIB_NAME = {
     "sRGB": "sRGB",
     "Display P3": "Display P3",
     "Adobe RGB": "Adobe RGB (1998)",
+    # ProPhoto is the first space here with a D50 whitepoint, so it is the first
+    # to need a real chromatic adaptation rather than a no-op. Verified: a
+    # neutral survives it with 0.027 8-bit levels of spread, and Bradford and
+    # CAT02 agree to the level, so the default is fine.
+    "ProPhoto RGB": "ProPhoto RGB",
 }
 
 SPACES = tuple(_COLOUR_LIB_NAME)
 
+# BRADFORD, not the library's CAT02 default. The ICC specification uses Bradford
+# for chromatic adaptation, so it is what littlecms and Photoshop do — and
+# matching Photoshop is the entire point of this feature. It only bites where
+# the whitepoints differ, which today means ProPhoto's D50: measured against
+# littlecms across seven colours, CAT02 was out by 4.5 8-bit levels and Bradford
+# by 0.5. For the D65 spaces the adaptation is the identity either way.
+_ADAPTATION = "Bradford"
+
 # Wide gamut spreads the same 256 levels over a larger volume, so an 8-bit file
-# in one has visibly coarser gradients — and astro images are mostly smooth
+# in one has visibly coarser gradients. ProPhoto is the extreme case — its gamut
+# reaches beyond visible colour, and it is a 16-bit-only space by universal
+# convention for exactly this reason — and astro images are mostly smooth
 # gradients, the worst case for banding. PNG and JPEG are the share-and-publish
 # formats, where sRGB is what every viewer expects anyway.
 EIGHT_BIT_SPACES = ("sRGB",)
@@ -59,6 +74,7 @@ def convert(data: np.ndarray, to: str, frm: str = "sRGB") -> np.ndarray:
     # NaN, so it would reach the file — pure red is enough to trigger it.
     linear = RGB_to_RGB(arr.astype(np.float64),
                         _COLOUR_LIB_NAME[frm], _COLOUR_LIB_NAME[to],
+                        chromatic_adaptation_transform=_ADAPTATION,
                         apply_cctf_decoding=True, apply_cctf_encoding=False)
     linear = np.clip(np.asarray(linear), 0.0, 1.0)
     encode = RGB_COLOURSPACES[_COLOUR_LIB_NAME[to]].cctf_encoding

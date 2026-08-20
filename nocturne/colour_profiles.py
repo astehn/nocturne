@@ -20,6 +20,7 @@ _QT_NAME = {
     "sRGB": "SRgb",
     "Display P3": "DisplayP3",
     "Adobe RGB": "AdobeRgb",
+    "ProPhoto RGB": "ProPhotoRgb",
 }
 
 

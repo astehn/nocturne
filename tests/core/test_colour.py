@@ -128,3 +128,53 @@ def test_out_of_gamut_colours_do_not_become_nan():
         # out-of-gamut pixel, which is the signal that NaN was created at all.
         bad = [w for w in caught if issubclass(w.category, RuntimeWarning)]
         assert not bad, f"{space} created NaN before clipping: {[str(w.message) for w in bad]}"
+
+
+@pytest.mark.parametrize("space", ["Adobe RGB", "Display P3", "ProPhoto RGB"])
+def test_it_agrees_with_littlecms(space):
+    """Cross-check against a SECOND, independent implementation.
+
+    Ours goes through colour-science's matrices; this goes through littlecms
+    using the actual ICC profiles. Two different code paths arriving at the same
+    numbers is far stronger evidence than a reference figure quoted from memory
+    — and it needed to be, because the figure originally quoted here for
+    ProPhoto (179, 70, 42) was simply wrong, while both implementations agree on
+    (179, 70, 26).
+
+    The conversion uses BRADFORD adaptation, as the ICC specification requires
+    and as littlecms and Photoshop therefore do. colour-science defaults to
+    CAT02, which was out by 4.5 levels on ProPhoto — a real divergence from
+    Photoshop in a feature whose whole purpose is matching it.
+
+    TWO tolerances, because one number would hide the shape of the difference:
+
+    * worst case 3 levels, which only a maximally saturated PRIMARY reaches.
+      Pure sRGB blue sits on Adobe RGB's gamut boundary, so its linear red lands
+      within rounding distance of zero, and that space's gamma lifts near-zero
+      values steeply — ours gives 3, littlecms 0. A clipping artefact at the
+      very corner of the gamut, not a systematic shift.
+    * MEDIAN half a level, which is what actually catches a wrong matrix, a
+      missing transfer function or the wrong adaptation. Those move every
+      colour; a boundary artefact moves one.
+    """
+    import io
+    from PIL import Image, ImageCms
+    from PySide6.QtGui import QColorSpace
+    from nocturne.colour_profiles import _QT_NAME
+
+    def profile(name):
+        cs = QColorSpace(getattr(QColorSpace.NamedColorSpace, _QT_NAME[name]))
+        return ImageCms.ImageCmsProfile(io.BytesIO(bytes(cs.iccProfile())))
+
+    src = np.array([[[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0],
+                     [128, 128, 128], [40, 90, 160], [200, 120, 60]]], np.uint8)
+    lcms = np.array(ImageCms.profileToProfile(
+        Image.fromarray(src, "RGB"), profile("sRGB"), profile(space),
+        outputMode="RGB", renderingIntent=1)).astype(float)
+    ours = C.convert(src.astype(np.float32) / 255.0, space) * 255
+    diff = np.abs(ours - lcms)
+    worst, typical = float(diff.max()), float(np.median(diff))
+    assert worst <= 3.0, f"{space}: worst {worst:.1f} levels from littlecms"
+    assert typical <= 0.5, (
+        f"{space}: median {typical:.2f} levels from littlecms — a systematic "
+        "difference, not a gamut-boundary artefact")
