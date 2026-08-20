@@ -19,22 +19,35 @@ def _to_uint(data: np.ndarray, bits: int) -> np.ndarray:
     return (clipped * maxval + 0.5).astype(dtype)
 
 
-def save_tiff(img: AstroImage, path: str) -> None:
+# ICC profile tag. Photoshop and every other reader assigns its OWN working
+# space to an untagged file — which is why a correct M 16 export rendered dark
+# in Photoshop: sRGB data read as ProPhoto. This module stays ignorant of colour
+# SPACES (core/ is Qt-free and the bytes come from Qt); it embeds what it is
+# given. See nocturne/colour_profiles.py.
+_ICC_TAG = 34675
+
+
+def save_tiff(img: AstroImage, path: str, icc: bytes | None = None) -> None:
     # 16-bit TIFF for both mono and color (preserves dynamic range for further
     # editing). Pillow cannot write 16-bit RGB reliably, so use tifffile.
-    tifffile.imwrite(path, _to_uint(img.data, 16))
+    extratags = [(_ICC_TAG, 1, len(icc), icc, True)] if icc else None
+    tifffile.imwrite(path, _to_uint(img.data, 16), extratags=extratags)
 
 
-def save_jpeg(img: AstroImage, path: str, quality: int = 95) -> None:
+def save_jpeg(img: AstroImage, path: str, quality: int = 95,
+              icc: bytes | None = None) -> None:
     arr = _to_uint(img.data, 8)
     mode = "L" if arr.ndim == 2 else "RGB"
-    Image.fromarray(arr, mode=mode).save(path, format="JPEG", quality=quality)
+    extra = {"icc_profile": icc} if icc else {}
+    Image.fromarray(arr, mode=mode).save(path, format="JPEG", quality=quality,
+                                         **extra)
 
 
-def save_png(img: AstroImage, path: str) -> None:
+def save_png(img: AstroImage, path: str, icc: bytes | None = None) -> None:
     arr = _to_uint(img.data, 8)
     mode = "L" if arr.ndim == 2 else "RGB"
-    Image.fromarray(arr, mode=mode).save(path, format="PNG")
+    extra = {"icc_profile": icc} if icc else {}
+    Image.fromarray(arr, mode=mode).save(path, format="PNG", **extra)
 
 
 def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:

@@ -292,12 +292,14 @@ def test_export_panel_split_enabled_with_rcastro(qtbot):
 
 
 def test_export_panel_formats(qtbot):
+    """on_export now carries the colour space as well as the format — every
+    export is tagged, so the exporter has to know which space to declare."""
     got = []
-    w = build_panel(_stage("export"), on_export=got.append)
+    w = build_panel(_stage("export"), on_export=lambda f, s: got.append((f, s)))
     qtbot.addWidget(w)
     w.fmt_box.setCurrentText("PNG")
     w.export_btn.click()
-    assert got == ["PNG"]
+    assert got == [("PNG", "sRGB")]
 
 
 def test_sliders_are_reset_sliders_with_defaults(qtbot):

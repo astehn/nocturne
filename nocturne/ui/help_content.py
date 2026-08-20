@@ -572,10 +572,25 @@ _TOPIC_LIST = (
        "<b>starless + stars</b> pair (two TIFFs) for compositing elsewhere — that needs "
        "RC-Astro. The stars image is <i>unscreened</i>, so recombine the two with a "
        "<b>Screen</b> blend to reconstruct the image exactly.</p>"
+       "<p><b>Colour space.</b> Every export is tagged with the space it is in, so other "
+       "programs show it exactly as you see it here. <b>sRGB</b> is the default and the right "
+       "answer almost always: it is the space your screen shows and the one every browser "
+       "assumes. Choose <b>Display P3</b> or <b>Adobe RGB</b> only if the program you are "
+       "taking the file into works in that space — the picture then arrives without being "
+       "converted, and later edits such as a saturation boost have more room before they "
+       "clip.</p>"
+       "<p>A wider space does <i>not</i> add colour. Your picture's colours stay exactly "
+       "where they are; only the way they are written down changes. And a wider space is "
+       "offered for 16-bit TIFF only: in an 8-bit PNG the same 256 steps have to cover more "
+       "ground, which shows up as banding in smooth gradients — and astrophotographs are "
+       "mostly smooth gradients.</p>"
        "<h4>Tips</h4>"
        "<p>TIFF and FITS preserve the most information for further editing; PNG is best for "
        "quick sharing. You can also export earlier in the flow (even a linear file) if you want "
-       "a clean base to finish in another tool.</p>"),
+       "a clean base to finish in another tool.</p>"
+       "<p>If an export has ever looked different in another program than it did in Nocturne, "
+       "an untagged file was the reason: with nothing to say what space it was in, the other "
+       "program had to guess, and guessed its own. That cannot happen now.</p>"),
 
     # ---- Tools ----
     _t("tools", "External tools: GraXpert, RC-Astro & ASTAP",

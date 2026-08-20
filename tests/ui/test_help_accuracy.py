@@ -261,3 +261,17 @@ def test_colour_help_does_not_claim_nocturne_creates_the_magenta():
     hunting for a stacking fault that is not there."""
     b = _body("color")
     assert "camera, not the stacking" in b or "sensor, not" in b
+
+
+def test_the_export_help_explains_the_colour_space_control():
+    """A control with no explanation is a control nobody uses correctly — and
+    this one has a counter-intuitive property (a wider space adds no colour)
+    that a user will otherwise assume the opposite of."""
+    b = _body("export")
+    sp = _src("nocturne/ui/step_panels.py")
+    for label in ("sRGB", "Display P3", "Adobe RGB"):
+        assert label in b, f"the help never mentions {label!r}"
+    assert "Colour space" in sp, "the panel no longer has the control"
+    assert "does <i>not</i> add colour" in b or "not</i> add colour" in b, (
+        "the help must say plainly that a wider space adds no colour")
+    assert "16-bit TIFF only" in b, "the 8-bit restriction is unexplained"

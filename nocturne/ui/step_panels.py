@@ -659,17 +659,52 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "export":
+        from ..core.colour import EIGHT_BIT_SPACES, SPACES
         box = QComboBox()
         box.addItems(EXPORT_FORMATS)
         if not split_enabled:
             box.model().item(3).setEnabled(False)  # starless+stars split needs StarX
+
+        # Colour space. Every export is TAGGED with whichever is chosen, so a
+        # reader never has to guess — an untagged file is why a correct M 16
+        # export rendered dark in Photoshop.
+        space_box = QComboBox()
+        space_box.addItems(list(SPACES))
+
+        def _restrict_space(fmt: str) -> None:
+            """Wide gamut only for 16-bit TIFF.
+
+            Adobe RGB spreads the same 256 levels over a larger volume, so an
+            8-bit file in one bands visibly — and astro images are mostly smooth
+            gradients, the worst case. Enforced by DISABLING the entries and
+            pulling the selection back, not by hiding them: a user who picks
+            Adobe RGB and then PNG must not quietly get a banded file.
+            """
+            wide_ok = fmt.startswith("TIFF")
+            for i in range(space_box.count()):
+                allowed = wide_ok or space_box.itemText(i) in EIGHT_BIT_SPACES
+                space_box.model().item(i).setEnabled(allowed)
+            if not wide_ok and space_box.currentText() not in EIGHT_BIT_SPACES:
+                space_box.setCurrentText(EIGHT_BIT_SPACES[0])
+
+        box.currentTextChanged.connect(_restrict_space)
+        _restrict_space(box.currentText())
+
         export_btn = QPushButton("Export…")
         export_btn.setObjectName("primary")
         if on_export is not None:
-            export_btn.clicked.connect(lambda: on_export(box.currentText()))
+            export_btn.clicked.connect(
+                lambda: on_export(box.currentText(), space_box.currentText()))
         lay.addWidget(QLabel("Format"))
         lay.addWidget(box)
+        lay.addWidget(QLabel("Colour space"))
+        lay.addWidget(space_box)
+        lay.addWidget(_desc_label(
+            "Every export is tagged, so other programs show it as you see it "
+            "here. Wider spaces are for 16-bit TIFF only — in 8-bit they band."))
         lay.addWidget(export_btn)
+        w.format_box = box
+        w.space_box = space_box
         w.burn_annotations = QCheckBox("Burn annotations (PNG)")
         w.burn_annotations.setEnabled(False)   # main_window enables when a solve exists
         lay.addWidget(w.burn_annotations)

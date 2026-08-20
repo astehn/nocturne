@@ -126,19 +126,36 @@ def _burn_caption(image: QImage, caption: str, *,
     return out
 
 
+def _tag_srgb(image: QImage) -> QImage:
+    """Declare the image sRGB before writing it.
+
+    QImage.save() embeds whatever colour space the image carries, and an
+    untagged file leaves the reader to guess — which is exactly how a correct
+    export came to render dark in Photoshop. sRGB SPECIFICALLY, not the user's
+    chosen export space: a shared image is destined for the web, where every
+    browser assumes sRGB, and tagging it anything else would make it render
+    wrongly in the one place it is meant to be seen.
+    """
+    from ..colour_profiles import qt_colour_space
+    out = QImage(image)                 # detach; never retag the caller's image
+    out.setColorSpace(qt_colour_space("sRGB"))
+    return out
+
+
 def save_share_jpeg(image: QImage, path: str, quality: int = 92) -> None:
     """Kept for callers that specifically want JPEG. save_share picks by extension."""
-    image.save(path, "JPEG", quality)
+    _tag_srgb(image).save(path, "JPEG", quality)
 
 
 def save_share(image: QImage, path: str, quality: int = 92) -> None:
     """Write by extension: PNG is lossless (quality ignored), anything else JPEG.
     PNG matters here because annotation labels and the caption band have hard
     edges, which is exactly what JPEG smears."""
+    tagged = _tag_srgb(image)
     if os.path.splitext(path)[1].lower() == ".png":
-        image.save(path, "PNG")
+        tagged.save(path, "PNG")
     else:
-        image.save(path, "JPEG", quality)
+        tagged.save(path, "JPEG", quality)
 
 
 def to_clipboard(image: QImage) -> None:
