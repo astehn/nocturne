@@ -18,6 +18,7 @@ def test_missing_file_returns_defaults(tmp_path):
 def test_graxpert_valid(tmp_path):
     f = tmp_path / "graxpert"
     f.write_text("#!/bin/sh\n")
+    f.chmod(0o755)                 # executable: this test passed WITHOUT it, which was the bug
     assert graxpert_valid(Settings(graxpert_path=str(f))) is True
     assert graxpert_valid(Settings(graxpert_path="/nope")) is False
 
@@ -72,10 +73,13 @@ def test_astap_path_round_trips(tmp_path):
     assert load_settings(p).astap_path == "/opt/astap/astap"   # survives save+load
 
 
-def test_astap_valid_checks_file(tmp_path):
+def test_astap_valid_checks_it_is_runnable(tmp_path):
+    # Was test_astap_valid_checks_file, and it wrote the single character "x"
+    # and asserted that counted as ASTAP. The name was accurate: it checked for
+    # a FILE, which is not the question anyone was asking.
     from nocturne.settings import Settings, astap_valid
     assert astap_valid(Settings(astap_path="")) is False
-    real = tmp_path / "astap"; real.write_text("x")
+    real = tmp_path / "astap"; real.write_text("x"); real.chmod(0o755)
     assert astap_valid(Settings(astap_path=str(real))) is True
     assert astap_valid(Settings(astap_path=str(tmp_path / "nope"))) is False
 
@@ -212,12 +216,15 @@ def _fake_tools(tmp_path):
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
     gx.mkdir(parents=True, exist_ok=True)
     (gx / "GraXpert").write_text("#!/bin/sh\n")
+    (gx / "GraXpert").chmod(0o755)
     astap = tmp_path / "ASTAP.app" / "Contents" / "MacOS"
     astap.mkdir(parents=True, exist_ok=True)
     (astap / "ASTAP").write_text("#!/bin/sh\n")
+    (astap / "ASTAP").chmod(0o755)
     rc = tmp_path / "RC-Astro" / "CLI"
     rc.mkdir(parents=True, exist_ok=True)
     (rc / "rc-astro").write_text("#!/bin/sh\n")
+    (rc / "rc-astro").chmod(0o755)
     return {
         "graxpert_path": [str(tmp_path / "GraXpert.app")],
         "rcastro_path": [str(tmp_path / "RC-Astro" / "CLI" / "rc-astro")],
@@ -316,6 +323,40 @@ def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
     mine = tmp_path / "custom" / "graxpert"
     mine.parent.mkdir()
     mine.write_text("#!/bin/sh\n")
+    mine.chmod(0o755)
     found = detect_tool_paths(Settings(graxpert_path=str(mine)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
     assert "graxpert_path" not in found
+
+
+# --- what counts as "installed" ------------------------------------------
+# Andreas, 2026-08-20: he pointed the GraXpert box at a random markdown file.
+# The toolbar showed "GraXpert ✓" and Rescan reported "Everything already set
+# up". `*_valid` asked only os.path.isfile, and a .md file is a file.
+
+def test_a_data_file_is_not_a_tool(tmp_path):
+    """The exact fumble he made, on all three tools."""
+    from nocturne.settings import Settings, astap_valid, graxpert_valid, rcastro_valid
+    doc = tmp_path / "APPLICATION_AUDIT.md"
+    doc.write_text("# not a program\n")
+    assert not graxpert_valid(Settings(graxpert_path=str(doc)))
+    assert not rcastro_valid(Settings(rcastro_path=str(doc)))
+    assert not astap_valid(Settings(astap_path=str(doc)))
+
+
+def test_an_executable_is_a_tool(tmp_path):
+    from nocturne.settings import Settings, graxpert_valid
+    exe = tmp_path / "graxpert"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    assert graxpert_valid(Settings(graxpert_path=str(exe)))
+
+
+def test_rescan_repairs_a_path_pointing_at_a_data_file(tmp_path):
+    """Rescan could not fix his markdown path, because it believed it was fine."""
+    from nocturne.settings import Settings, detect_tool_paths
+    doc = tmp_path / "APPLICATION_AUDIT.md"
+    doc.write_text("# not a program\n")
+    found = detect_tool_paths(Settings(graxpert_path=str(doc)),
+                              candidates=_fake_tools(tmp_path), replace_invalid=True)
+    assert found.get("graxpert_path", "").endswith("GraXpert.app")

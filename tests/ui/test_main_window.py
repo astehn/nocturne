@@ -537,6 +537,7 @@ def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
     from nocturne.settings import Settings
     gx = tmp_path / "graxpert"
     gx.write_text("#!/bin/sh\n")
+    gx.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win = _window(qtbot, tmp_path)
     win.settings = Settings(graxpert_path=str(gx))  # rc-astro left empty
     win._update_tools_label()
@@ -638,6 +639,7 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     win.open_fits(_make_fits(tmp_path))
     # RC-Astro "configured" so the split path is allowed
     rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    rc_bin.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win.settings = Settings(rcastro_path=str(rc_bin))
 
     out = tmp_path / "splitout"; out.mkdir()
@@ -1216,6 +1218,7 @@ def test_local_contrast_preview_renders(qtbot, tmp_path):
 def _fake_rc_settings(tmp_path):
     from nocturne.settings import Settings
     rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    rc_bin.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     return Settings(rcastro_path=str(rc_bin))
 
 
@@ -1615,7 +1618,8 @@ def _hide_overlay(win):
 def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
 
     # Fake a solve: a WCS centred on the frame + one catalogue object dead-centre.
     from astropy.wcs import WCS
@@ -1643,7 +1647,8 @@ def test_plate_solve_not_configured_shows_hint(qtbot, tmp_path):
 def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
 
     from nocturne.tools.astap import SolveResult
     monkeypatch.setattr(win, "_solve_current",
@@ -1657,7 +1662,8 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
 def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -1696,7 +1702,8 @@ def test_solve_sig_stable_under_tonal_steps_changes_on_geometry(qtbot, tmp_path)
 def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -1717,7 +1724,8 @@ def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
 def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -1758,7 +1766,8 @@ def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeyp
     """
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -1802,7 +1811,8 @@ def _solved_win(qtbot, tmp_path, monkeypatch):
     panel interactions never grow this list."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -1914,7 +1924,8 @@ def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path,
     bar also being drawn."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -2295,7 +2306,8 @@ def test_share_receives_the_annotated_frame_when_solved(qtbot, tmp_path, monkeyp
     pixels, so labels could only reach a PNG export — which skips the reframing
     and caption Share exists for. This was the user's first-named use case."""
     win = _stretched_window(qtbot, tmp_path)
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -2331,7 +2343,8 @@ def test_share_gets_no_annotations_when_the_solve_is_stale(qtbot, tmp_path, monk
     """A solution belongs to the framing it was made for; burning a stale one
     into a shared image would publish labels in the wrong places."""
     win = _stretched_window(qtbot, tmp_path)
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -3142,7 +3155,8 @@ def test_fov_hint_falls_back_to_the_instrument_profile():
 
 def _solved_with_objects(qtbot, tmp_path, monkeypatch, objects):
     win = _stretched_window(qtbot, tmp_path)
-    win.settings.astap_path = str(tmp_path / "astap"); (tmp_path / "astap").write_text("x")
+    win.settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
@@ -3642,6 +3656,7 @@ def test_installing_astap_lights_the_button_up_without_a_restart(qtbot, tmp_path
     from nocturne.settings import Settings
     fake = tmp_path / "astap"
     fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win = _window(qtbot, tmp_path)
     assert not win._solve_act.isEnabled()
 

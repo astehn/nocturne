@@ -580,6 +580,7 @@ def test_mosaic_option_is_offered_when_the_subs_span_several_pointings(qtbot, tm
     settings = Settings()
     settings.astap_path = str(tmp_path / "astap")
     (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -674,6 +675,7 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
     settings = Settings()
     settings.astap_path = str(tmp_path / "astap")
     (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -698,6 +700,7 @@ def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
     settings = Settings()
     settings.astap_path = str(tmp_path / "astap")
     (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
@@ -719,6 +722,7 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     settings = Settings()
     settings.astap_path = str(tmp_path / "astap")
     (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))

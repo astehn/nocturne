@@ -161,12 +161,11 @@ def detect_tool_paths(s: Settings, candidates: dict | None = None,
     found: dict[str, str] = {}
     for field_name, paths in (candidates or TOOL_CANDIDATES).items():
         current = getattr(s, field_name, "")
-        if current and not (replace_invalid
-                            and not os.path.isfile(resolve_binary(current))):
+        if current and not (replace_invalid and not is_tool(current)):
             continue                      # configured and working; leave it alone
         for raw in paths:
             path = os.path.expanduser(raw)
-            if os.path.isfile(resolve_binary(path)):
+            if is_tool(path):
                 found[field_name] = path
                 break
     return found
@@ -190,13 +189,34 @@ def autoconfigure_tools(path: str, candidates: dict | None = None) -> list[str]:
     return sorted(found)
 
 
+def is_tool(path: str) -> bool:
+    """Does `path` name something the app could actually RUN?
+
+    Executable, not merely present. This asked `os.path.isfile` alone until
+    2026-08-20, when Andreas pointed the GraXpert box at a markdown file: the
+    toolbar cheerfully showed "GraXpert ✓" and Rescan reported "Everything
+    already set up", because a .md file is indeed a file. The check named a
+    property nobody cared about.
+
+    Still not proof it is the RIGHT program — pointing GraXpert at /bin/ls would
+    pass. That needs running it, which is what the Test button does via
+    probe_binary; this has to stay cheap enough for a toolbar indicator on every
+    settings change. Executable rejects every realistic fumble: a document, a
+    folder, a download that never finished, a path typed from memory.
+    """
+    if not path:
+        return False
+    resolved = resolve_binary(path)
+    return os.path.isfile(resolved) and os.access(resolved, os.X_OK)
+
+
 def graxpert_valid(s: Settings) -> bool:
-    return bool(s.graxpert_path) and os.path.isfile(resolve_binary(s.graxpert_path))
+    return is_tool(s.graxpert_path)
 
 
 def rcastro_valid(s: Settings) -> bool:
-    return bool(s.rcastro_path) and os.path.isfile(resolve_binary(s.rcastro_path))
+    return is_tool(s.rcastro_path)
 
 
 def astap_valid(s: Settings) -> bool:
-    return bool(s.astap_path) and os.path.isfile(resolve_binary(s.astap_path))
+    return is_tool(s.astap_path)

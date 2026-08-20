@@ -121,6 +121,7 @@ def test_rescan_button_fills_the_fields(qtbot, monkeypatch, tmp_path):
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
     gx.mkdir(parents=True)
     (gx / "GraXpert").write_text("#!/bin/sh\n")
+    (gx / "GraXpert").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     monkeypatch.setattr(settings_dialog, "TOOL_CANDIDATES",
                         {"graxpert_path": [str(tmp_path / "GraXpert.app")],
                          "rcastro_path": [str(tmp_path / "absent")],
