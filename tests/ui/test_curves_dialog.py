@@ -93,8 +93,114 @@ def test_the_preview_is_area_averaged_not_strided(qtbot):
         f"flux not preserved: {small.data.mean():.5f} vs {a.mean():.5f}")
 
 
-def test_the_editor_in_the_dialog_is_big(qtbot):
-    """The entire point of the dialog. 336 px inline; this must be far more."""
+def test_the_editor_gets_the_larger_share_of_the_dialog(qtbot):
+    """The entire point of the dialog is working area, so the curve must get the
+    bulk of it rather than being squeezed by the preview.
+
+    Asserted as a RATIO, not as pixels: the dialog now shrinks to fit small
+    screens, so an absolute size is only true on a big display. An earlier
+    version asserted >= 500 px and broke the moment the minimums came down for
+    the laptop case.
+    """
     dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
-    assert dlg.editor.minimumWidth() >= 500, dlg.editor.minimumWidth()
-    assert dlg.editor.minimumHeight() >= 500, dlg.editor.minimumHeight()
+    dlg.show(); qtbot.waitExposed(dlg)
+    assert dlg.editor.width() > dlg.preview_label.width(), (
+        dlg.editor.width(), dlg.preview_label.width())
+
+
+def test_fit_to_screen_clamps_to_a_small_display():
+    """Unit-test the clamp directly, with the sizes a MacBook Air reports.
+
+    The composed dialog cannot be measured for this in the suite: it runs
+    headless, where Qt substitutes fonts and reports different size hints than
+    the real app — the same trap that let a pane-width bug survive three
+    measurements. So assert the arithmetic, and keep the cocoa-measured figure
+    in the docstring: with these minimums the real dialog's minimum is 765 x 568,
+    inside the ~1280 x 750 an Air leaves after the menu bar.
+    """
+    from nocturne.ui import curves_dialog as cd
+
+    class _Screen:
+        def __init__(self, w, h): self._w, self._h = w, h
+        def availableGeometry(self):
+            class G:
+                def __init__(s, w, h): s._w, s._h = w, h
+                def width(s): return s._w
+                def height(s): return s._h
+            return G(self._w, self._h)
+
+    import unittest.mock as mock
+    with mock.patch.object(cd.QApplication, "primaryScreen",
+                           staticmethod(lambda: _Screen(1280, 800))):
+        w, h = cd._fit_to_screen(1180, 760)
+    assert w <= 1280 and h <= 750, (w, h)
+
+    with mock.patch.object(cd.QApplication, "primaryScreen",
+                           staticmethod(lambda: _Screen(3840, 2160))):
+        assert cd._fit_to_screen(1180, 760) == (1180, 760), "a big screen must not shrink it"
+
+
+# Everything around the editor: labels, the preset grid, the button box and the
+# window frame. MEASURED under cocoa, which is the only place the real figure
+# exists — with _EDITOR_MIN at 360 the dialog's minimum came to 765 x 568, so the
+# chrome is 208 px tall and 405 px wide beside the editor. Rounded up for
+# headroom, because a font change moves it.
+_CHROME_H = 230
+_CHROME_W = 430
+
+
+def test_the_minimums_leave_room_on_a_1280x800_laptop():
+    """Guards the SIZE CONSTANTS, not the composed size hint.
+
+    The composed hint cannot be trusted here: the suite runs headless, where Qt
+    substitutes fonts and reported a passing figure while cocoa measured 768 —
+    a dialog whose minimum was TALLER than an Air's screen, so it could not be
+    resized to fit at all. A test that reads the hint therefore proves nothing,
+    and a mutation putting the oversized minimum back sailed through it.
+
+    So do the arithmetic on the constants instead, with a measured allowance for
+    the chrome. This DOES fail when the minimum goes back up.
+    """
+    from nocturne.ui import curves_dialog as cd
+    assert cd._EDITOR_MIN + _CHROME_H <= 750, (
+        f"editor minimum {cd._EDITOR_MIN} + chrome {_CHROME_H} exceeds the 750 px "
+        "a 1280x800 laptop leaves after the menu bar")
+    assert cd._EDITOR_MIN + cd._PREVIEW_MIN_W + _CHROME_W <= 1280, (
+        f"{cd._EDITOR_MIN} + {cd._PREVIEW_MIN_W} + {_CHROME_W} exceeds 1280 px")
+
+
+def test_it_fits_a_1280x800_laptop(qtbot):
+    """The floor from the small-screen work: a 1280 x 800 MacBook Air, which
+    leaves roughly 1280 x 750 usable after the menu bar.
+
+    The first version's MINIMUM was 1118 x 768 — taller than the screen, so it
+    could not even be resized to fit. A dialog that cannot open on the machine
+    it is aimed at is worse than no dialog. Andreas raised this while it was
+    being built; it would otherwise have shipped and been discovered on the Air.
+    """
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    h = dlg.minimumSizeHint()
+    assert h.width() <= 1280, f"minimum width {h.width()} exceeds a 1280 px screen"
+    assert h.height() <= 750, f"minimum height {h.height()} exceeds 750 usable px"
+
+
+def test_it_opens_no_larger_than_the_screen_it_is_on(qtbot):
+    """Opening bigger than the display puts the buttons off the bottom edge,
+    where the primary action lives."""
+    from PySide6.QtWidgets import QApplication
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        pytest.skip("no screen")
+    avail = screen.availableGeometry()
+    assert dlg.width() <= avail.width(), (dlg.width(), avail.width())
+    assert dlg.height() <= avail.height(), (dlg.height(), avail.height())
+
+
+def test_the_editor_stays_usefully_bigger_than_the_inline_one_even_when_small(qtbot):
+    """Shrinking to fit a laptop must not shrink it to pointlessness — the
+    inline plot is 304 px square, so the dialog has to beat that clearly or
+    there is no reason to open it."""
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    assert dlg.editor.minimumWidth() >= 340, dlg.editor.minimumWidth()
+    assert dlg.editor.minimumHeight() >= 340, dlg.editor.minimumHeight()

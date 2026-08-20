@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QGridLayout,
-                               QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox,
+                               QGridLayout, QHBoxLayout, QLabel, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from ..core.curves import (apply_curve, deepen_sky_points, gentle_s_points,
                            lift_faint_points, strong_s_points,
@@ -32,6 +32,19 @@ from .preview import to_qimage
 
 _PREVIEW_MAX = 640
 
+# Small enough that the whole dialog fits a 1280 x 800 laptop — roughly
+# 1280 x 750 usable after the menu bar — and still clearly bigger than the
+# inline plot's 304 px square, or there is no reason to open it. The first
+# version used 560 and gave the dialog a MINIMUM of 1118 x 768: taller than the
+# screen, so on an Air it could not even be resized to fit. Andreas raised the
+# small-screen case while this was being built; it would otherwise have been
+# found on the Air, which is the machine nobody currently has to test on.
+_EDITOR_MIN = 360
+_PREVIEW_MIN_W = 280
+
+# What it opens at when there is room. Clamped to the screen below.
+_PREFERRED = (1180, 760)
+
 # The presets, in the order they are offered. Each takes the image and returns
 # control points measured from it — never fixed positions. See core.curves.
 PRESETS = (
@@ -41,6 +54,21 @@ PRESETS = (
     ("Deepen sky", deepen_sky_points),
     ("Tame highlights", tame_highlights_points),
 )
+
+
+def _fit_to_screen(w: int, h: int) -> tuple:
+    """Never open larger than the display.
+
+    A dialog taller than the screen puts its buttons off the bottom edge, which
+    is where the primary action lives. Leaves a margin for the menu bar and dock
+    rather than assuming the reported available area already excludes them.
+    """
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        return w, h
+    avail = screen.availableGeometry()
+    return (min(w, max(640, avail.width() - 40)),
+            min(h, max(480, avail.height() - 60)))
 
 
 def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
@@ -74,20 +102,20 @@ class CurvesDialog(QDialog):
                  on_apply=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Curves")
-        self.resize(1180, 760)
+        self.resize(*_fit_to_screen(*_PREFERRED))
         self._base = base
         self._small = _downscale(base)
         self._on_apply = on_apply
 
         self.editor = CurveEditor()
-        self.editor.setMinimumSize(560, 560)
+        self.editor.setMinimumSize(_EDITOR_MIN, _EDITOR_MIN)
         if points:
             self.editor.set_points(points)
         self.editor.curveChanged.connect(self._queue_preview)
 
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(460, 560)
+        self.preview_label.setMinimumSize(_PREVIEW_MIN_W, _EDITOR_MIN)
 
         presets = QGridLayout()
         self.preset_buttons = {}
