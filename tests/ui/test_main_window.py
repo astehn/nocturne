@@ -4684,3 +4684,42 @@ def test_applying_the_tint_commits_its_own_step(qtbot, tmp_path):
     names = [name for name, _opt in win.project.entries()]
     assert "Colour Tint" in names
     assert names.index("Color") < names.index("Colour Tint")
+
+
+def test_the_open_large_editor_button_actually_opens_it(qtbot, tmp_path, monkeypatch):
+    """THE regression test for a button that did nothing and said nothing.
+
+    `_open_curves_dialog` existed and the panel had an `on_curve_expand` hook,
+    but the callback was never PASSED to build_panel — an edit that targeted the
+    wrong method name and silently matched nothing. With the hook left at None
+    the panel makes no connection at all, so the button was inert and raised
+    nothing. The suite was green: 1671 tests, none of which pressed it.
+
+    So press it, on a real window, and assert the dialog was constructed.
+    Monkeypatched rather than shown, because a modal dialog blocks a headless
+    run forever — which is a different mistake already made once today.
+    """
+    from nocturne.ui import curves_dialog as cd
+    opened = []
+
+    class _Stub:
+        def __init__(self, base, points=None, parent=None, on_apply=None):
+            opened.append((base, points))
+        def setWindowModality(self, _m): pass
+        def exec(self): return 0
+
+    monkeypatch.setattr("nocturne.ui.curves_dialog.CurvesDialog", _Stub)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for _ in range(20):
+        if win.current_stage_id() == "curves":
+            break
+        win.go_next()
+    assert win.current_stage_id() == "curves"
+
+    win._panel.expand_btn.click()
+
+    assert opened, "the button is not connected to anything"
+    _base, points = opened[0]
+    assert points == win._panel.curve_editor.points(), (
+        "the dialog must open on the curve already in the pane")

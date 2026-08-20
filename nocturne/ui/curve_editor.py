@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
+from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPen, QPolygonF)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ..core.curves import _MIN_GAP, build_lut, sanitize_points
@@ -10,6 +10,14 @@ from .theme import BG_0, BORDER
 
 _HIT = 0.035          # handle hit radius in normalized coords
 _MARGIN = 8           # px inset so handles at the edges stay visible
+
+# Black-to-white ramps along both axes, so it is obvious which part of the plot
+# is shadows and which is highlights. Andreas asked for this — on an all-dark
+# panel the plot read as an unlabelled black box. Same idiom and thickness as
+# the ramp under the Colour Balance histogram (range_handles.STRIP_H), so the
+# two surfaces speak the same language.
+_RAMP = 10
+_RAMP_GAP = 4
 
 
 class CurveEditor(QWidget):
@@ -82,10 +90,28 @@ class CurveEditor(QWidget):
         self.update()
 
     # --- coordinate mapping (normalized [0,1] <-> widget px; y is inverted) ---
+    def _ramp_space(self) -> int:
+        return _RAMP + _RAMP_GAP
+
     def _plot_rect(self):
-        return (_MARGIN, _MARGIN,
-                max(1, self.width() - 2 * _MARGIN),
-                max(1, self.height() - 2 * _MARGIN))
+        """A SQUARE plot, centred, with room reserved for the axis ramps.
+
+        A tone curve maps [0,1] to [0,1], so a stretched plot is a lie: the
+        identity line is not at 45 degrees and a horizontal drag moves further
+        per pixel than a vertical one. Measured in the real app the inline
+        editor is 336 x 240, so a horizontal drag moved 1.4x further — hand and
+        curve disagreed, which is much of what "fiddly" meant.
+
+        Drawing AND hit-testing both come through here (_to_px / _to_norm), so
+        they cannot drift apart.
+        """
+        pad = self._ramp_space()
+        avail_w = self.width() - 2 * _MARGIN - pad     # left ramp
+        avail_h = self.height() - 2 * _MARGIN - pad    # bottom ramp
+        side = max(1, min(avail_w, avail_h))
+        ox = pad + _MARGIN + max(0, (avail_w - side) // 2)
+        oy = _MARGIN + max(0, (avail_h - side) // 2)
+        return (ox, oy, side, side)
 
     def _to_px(self, x: float, y: float):
         ox, oy, w, h = self._plot_rect()
@@ -170,11 +196,57 @@ class CurveEditor(QWidget):
         e.accept()
 
     # --- paint ---
+    def _paint_ramps(self, p, ox, oy, w, h) -> None:
+        """Black-to-white ramps under and beside the plot.
+
+        The horizontal one labels the INPUT axis, the vertical one the OUTPUT
+        axis — which is the pair Photoshop shows, and the reason a curve is
+        readable at a glance: you can see that dragging down on the left
+        darkens the shadows without having to reason about it.
+        """
+        below = QLinearGradient(float(ox), 0.0, float(ox + w), 0.0)
+        below.setColorAt(0.0, QColor(0, 0, 0))
+        below.setColorAt(1.0, QColor(255, 255, 255))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(below)
+        p.drawRect(ox, oy + h + _RAMP_GAP, w, _RAMP)
+
+        beside = QLinearGradient(0.0, float(oy + h), 0.0, float(oy))
+        beside.setColorAt(0.0, QColor(0, 0, 0))
+        beside.setColorAt(1.0, QColor(255, 255, 255))
+        p.setBrush(beside)
+        p.drawRect(ox - _RAMP_GAP - _RAMP, oy, _RAMP, h)
+
+        # A border LAST, so it sits over the wash and the ramps meet a hard
+        # edge. This is what the end handles now visibly sit on.
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(BORDER), 1))
+        p.drawRect(ox, oy, w, h)
+
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.fillRect(self.rect(), QColor(BG_0))
         ox, oy, w, h = self._plot_rect()
+
+        # The plot needs a VISIBLE EDGE. Everything here is dark, so with the
+        # plot the same colour as the panel behind it the end handles looked
+        # "dragged in" from the corners rather than sitting on them — reported
+        # by Andreas, and true: there was nothing to sit on.
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#101114"))
+        p.drawRect(ox, oy, w, h)
+
+        # A very subtle wash, dark at the shadow end and barely lifted at the
+        # highlight end, so the plot AREA reads as a tonal range too. Kept low
+        # enough not to compete with the histogram or the curve.
+        wash = QLinearGradient(float(ox), 0.0, float(ox + w), 0.0)
+        wash.setColorAt(0.0, QColor(255, 255, 255, 0))
+        wash.setColorAt(1.0, QColor(255, 255, 255, 16))
+        p.setBrush(wash)
+        p.drawRect(ox, oy, w, h)
+
+        self._paint_ramps(p, ox, oy, w, h)
 
         if self._hist is not None:
             fill = QColor(BORDER)

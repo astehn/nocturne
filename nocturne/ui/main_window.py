@@ -2386,6 +2386,20 @@ class MainWindow(QMainWindow):
             pts = [(0.0, 0.0), (1.0, 1.0)]
         self._panel.curve_editor.set_points(pts)   # emits curveChanged -> preview
 
+    def _open_curves_dialog(self) -> None:
+        """The big curve editor. Seeded with whatever is in the inline one, and
+        it hands its points straight back to it — so the two surfaces are one
+        state, and Apply Curves still commits from the same place."""
+        if self.project is None or self._busy:
+            return
+        from .curves_dialog import CurvesDialog
+        base = self._preview_base("curves")
+        dlg = CurvesDialog(base, points=self._panel.curve_editor.points(),
+                           parent=self,
+                           on_apply=self._panel.curve_editor.set_points)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.exec()
+
     # --- green fringe live preview (cached StarX split) ---
     def _fringe_preceding(self) -> set:
         """Names of the steps that precede Remove Green Fringe — the predecessors
@@ -2989,6 +3003,7 @@ class MainWindow(QMainWindow):
             on_show_model=self._on_show_background_model,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
+            on_curve_expand=self._open_curves_dialog,
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,

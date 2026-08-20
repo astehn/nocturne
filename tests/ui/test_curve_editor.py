@@ -210,3 +210,122 @@ def test_the_readout_is_empty_with_nothing_selected(qtbot):
     ed = CurveEditor()
     qtbot.addWidget(ed)
     assert ed.readout_text() == ""
+
+
+def test_the_plot_area_is_square_whatever_shape_the_widget_is(qtbot):
+    """A tone curve maps [0,1] to [0,1] — it must be drawn square.
+
+    Measured in Andreas' configuration the inline editor is 336 x 240 and the
+    plot filled it, so the identity line was not at 45 degrees and a horizontal
+    drag moved 1.4x further per pixel than a vertical one. Hand and curve
+    disagreed, which is a large part of "difficult to see and control what you
+    are actually doing".
+    """
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    for w, h in ((336, 240), (240, 336), (700, 700), (900, 300)):
+        ed.resize(w, h)
+        _ox, _oy, pw, ph = ed._plot_rect()
+        assert pw == ph, f"plot {pw}x{ph} in a {w}x{h} widget is not square"
+
+
+def test_the_square_plot_is_centred_in_the_space_left_by_the_ramps(qtbot):
+    """Centred in what REMAINS after the axis ramps, not in the whole widget.
+
+    The ramps take a strip below and beside the plot. Centring on the widget
+    instead would push the plot into them — this test caught exactly that when
+    the ramps were added.
+    """
+    from nocturne.ui.curve_editor import _MARGIN, _RAMP, _RAMP_GAP, CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    ed.resize(400, 300)
+    ox, oy, pw, ph = ed._plot_rect()
+    pad = _RAMP + _RAMP_GAP
+    assert ox >= pad, "the plot overlaps the vertical ramp"
+    assert oy + ph + _RAMP_GAP + _RAMP <= 300, "the horizontal ramp is off-widget"
+    avail_w = 400 - 2 * _MARGIN - pad
+    assert abs((avail_w - pw) / 2 - (ox - pad - _MARGIN)) <= 1, (ox, pw)
+
+
+def test_a_click_still_lands_where_the_user_aimed_after_the_change(qtbot):
+    """The hit-testing and the drawing must use the SAME rectangle. If the plot
+    is centred but clicks are still mapped from the widget corner, every point
+    lands offset — which would be worse than the stretch it replaced."""
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor()
+    qtbot.addWidget(ed)
+    ed.resize(400, 240)
+    ox, oy, pw, ph = ed._plot_rect()
+    # the centre of the plot must map to (0.5, 0.5) in curve coordinates
+    x, y = ed._to_norm(ox + pw / 2, oy + ph / 2)
+    assert abs(x - 0.5) < 0.01 and abs(y - 0.5) < 0.01, (x, y)
+    # and back again
+    pt = ed._to_px(0.5, 0.5)
+    assert abs(pt.x() - (ox + pw / 2)) < 1.0 and abs(pt.y() - (oy + ph / 2)) < 1.0
+
+
+def _render(ed, w=320, h=320):
+    """Paint the widget into an image so the drawing can be inspected.
+
+    Asserting on pixels rather than on the code that draws them: 'the gradient
+    is subtle' and 'the plot has an edge' are claims about what appears, and a
+    test that only checks a method was called proves nothing about that.
+    """
+    from PySide6.QtGui import QImage
+    ed.resize(w, h)
+    img = QImage(w, h, QImage.Format.Format_RGB32)
+    img.fill(0)
+    ed.render(img)          # QWidget.render takes the paint DEVICE, not a painter
+    return img
+
+
+def test_the_plot_has_a_visible_edge(qtbot):
+    """Andreas: the end points "look like they are dragged in" from the corners.
+
+    They were — the plot was the same colour as the panel behind it, so there
+    was no edge for them to sit on. The plot now has its own darker ground and a
+    border, and this asserts the boundary is actually distinguishable.
+    """
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor(); qtbot.addWidget(ed)
+    img = _render(ed)
+    ox, oy, w, h = ed._plot_rect()
+    outside = img.pixelColor(max(0, ox - 2), oy + h // 2)
+    on_edge = img.pixelColor(ox, oy + h // 2)
+    assert outside != on_edge, "the plot boundary is invisible against the panel"
+
+
+def test_the_shadow_end_is_darker_than_the_highlight_end(qtbot):
+    """The tonal wash, so the plot area itself reads as a range.
+
+    Sampled inside the plot, away from the curve and the handles.
+    """
+    from nocturne.ui.curve_editor import CurveEditor
+    ed = CurveEditor(); qtbot.addWidget(ed)
+    img = _render(ed)
+    ox, oy, w, h = ed._plot_rect()
+    y = oy + int(h * 0.15)                       # high in the plot, above the curve
+    left = img.pixelColor(ox + int(w * 0.08), y).lightness()
+    right = img.pixelColor(ox + int(w * 0.92), y).lightness()
+    assert right > left, f"no tonal wash: left {left}, right {right}"
+    assert right - left < 60, f"wash too strong ({right - left}) — it will fight the curve"
+
+
+def test_the_axis_ramps_run_black_to_white(qtbot):
+    """The strip below the plot labels the input axis, the one beside it the
+    output axis. Same idiom as the ramp under the Colour Balance histogram."""
+    from nocturne.ui.curve_editor import _RAMP, _RAMP_GAP, CurveEditor
+    ed = CurveEditor(); qtbot.addWidget(ed)
+    img = _render(ed)
+    ox, oy, w, h = ed._plot_rect()
+    y = oy + h + _RAMP_GAP + _RAMP // 2
+    dark = img.pixelColor(ox + 2, y).lightness()
+    light = img.pixelColor(ox + w - 3, y).lightness()
+    assert light - dark > 150, f"horizontal ramp is not a ramp: {dark} -> {light}"
+
+    x = ox - _RAMP_GAP - _RAMP // 2
+    low = img.pixelColor(x, oy + h - 3).lightness()
+    high = img.pixelColor(x, oy + 2).lightness()
+    assert high - low > 150, f"vertical ramp is not a ramp: {low} -> {high}"
