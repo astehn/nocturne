@@ -49,6 +49,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🔬 **Pixel readout & clipping warning** — hover for a pixel's R/G/B and luminance (with a crosshair so you know which one); from Stretch on, a live warning when highlights blow or shadows crush, plus an overlay showing exactly which pixels.
 - ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure, soft glow and nebulosity sharpening — eleven taps, each individually undoable.
 - 🔪 **Sharpen Nebulosity** — sharpens nebula structure only: it works on the starless layer under a signal mask and screens the stars back untouched, so stars can't ring and background noise isn't amplified.
+- 🎨 **Colour-managed export** — pick the colour space your export is written in: sRGB, Display P3, Adobe RGB or ProPhoto RGB. The image is converted into that space and the ICC profile is embedded, so Photoshop, Lightroom and Capture One read it as what it is instead of assuming their own working space. Wide-gamut spaces on 16-bit TIFF, where the extra depth pays for itself.
 - ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically.
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
 - ✂️ **Trim** — crop the edges off a *finished* image. A ragged stacking border is invisible until after the stretch, and going back to the Crop step would throw away everything done since; Trim appends instead, so the whole edit survives.
