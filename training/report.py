@@ -60,6 +60,13 @@ def _diff_cell(metric: dict, previous: dict | None) -> str:
     return f"{pct:.1f}%"
 
 
+def _panel_label(title: str, label: str) -> str:
+    """ASCII only: the sheet is drawn with PIL's default bitmap font, which has
+    no glyph past ASCII and renders anything else as a hollow box. An em-dash
+    here put one in every panel caption of the morning report."""
+    return f"{title} | {label}"
+
+
 def render_comparison_sheet(rows, out_path: str, cell: int = 220) -> str:
     """One PNG: one row per (target, depth) comparison, panels side by side.
 
@@ -116,7 +123,7 @@ def render_comparison_sheet(rows, out_path: str, cell: int = 220) -> str:
             )
             x = c * cell
             sheet.paste(pil, (x, y))
-            dr.text((x + 4, y + cell + 2), f"{title} — {label}", fill=(205, 212, 226))
+            dr.text((x + 4, y + cell + 2), _panel_label(title, label), fill=(205, 212, 226))
 
     out_dir = os.path.dirname(out_path)
     if out_dir:

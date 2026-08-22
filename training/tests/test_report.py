@@ -191,3 +191,14 @@ def test_render_comparison_sheet_rejects_empty_rows(tmp_path):
 
     with pytest.raises(ValueError):
         report.render_comparison_sheet([], str(tmp_path / "x.png"))
+
+
+def test_panel_labels_are_ascii_because_the_default_font_is():
+    """render_comparison_sheet draws with PIL's default bitmap font, which has
+    no glyph beyond ASCII -- an em-dash there renders as a hollow box in the
+    one artefact that gets looked at every morning."""
+    from report import _panel_label
+
+    label = _panel_label("NGC281 @ 16f", "noisy")
+    label.encode("ascii")            # raises if a non-ASCII char sneaks back in
+    assert "noisy" in label and "NGC281 @ 16f" in label
