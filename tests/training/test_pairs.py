@@ -11,6 +11,7 @@ from nocturne.training.pairs import (
     partition_pair,
     scan_training_frames,
 )
+import nocturne.training.pairs as pairs_module
 from tests.stacking.synthetic import make_star_field, write_cfa_fits
 
 
@@ -76,6 +77,78 @@ def test_combine_nights_merges_sessions_of_the_same_target(tmp_path):
     assert len(together) == 1
     assert len(together[0].frames) == 109
     assert together[0].night == "2026-07-15..2026-07-16"
+
+
+def _stub_prepare_stack_dropping_frames(monkeypatch, dropped_paths):
+    """Fabricate registration loss without depending on real misaligned data:
+    every path except ``dropped_paths`` "registers", so a chosen night can be
+    made to lose a controlled fraction of its frames."""
+    dropped = set(dropped_paths)
+
+    class _FakePrepared:
+        def __init__(self, paths):
+            kept = [p for p in paths if p not in dropped]
+            self.frames = {p: object() for p in kept}
+            self.rejected = tuple((p, "stub") for p in paths if p in dropped)
+
+    def fake_prepare_stack(paths, reference, **kwargs):
+        return _FakePrepared(list(dict.fromkeys(paths)))
+
+    monkeypatch.setattr(pairs_module, "prepare_stack", fake_prepare_stack)
+
+
+def test_combine_nights_warns_when_a_night_loses_most_frames(tmp_path, monkeypatch):
+    """A partial rotation mismatch degrades registration for one session
+    rather than destroying it outright; the warning must fire on that
+    partial loss, not only on losing a night completely."""
+    for i in range(10):
+        _write_header_only_frame(
+            tmp_path / f"night1_{i}.fit", target="NGC281", date="2026-07-15",
+        )
+    for i in range(10):
+        _write_header_only_frame(
+            tmp_path / f"night2_{i}.fit", target="NGC281", date="2026-07-16",
+        )
+    group = discover_frame_groups(tmp_path, target="NGC281", combine_nights=True)[0]
+    night2_paths = [f.path for f in group.frames if f.night == "2026-07-16"]
+    dropped = night2_paths[2:]  # night2 keeps only 2/10 -> below the warn threshold
+    _stub_prepare_stack_dropping_frames(monkeypatch, dropped)
+
+    messages = []
+    generate_training_pairs(
+        tmp_path, tmp_path / "out", target="NGC281", combine_nights=True,
+        on_progress=messages.append,
+    )
+    warnings = [m for m in messages if m.startswith("WARNING")]
+    assert len(warnings) == 1
+    assert "2026-07-16" in warnings[0]
+    assert "2/10" in warnings[0]
+
+
+def test_combine_nights_does_not_warn_when_both_nights_mostly_register(tmp_path, monkeypatch):
+    """No false alarm when registration succeeds well above the threshold
+    for every session (this is what caught the dead-code branch: it never
+    exercised the loop that actually decides whether to warn)."""
+    for i in range(10):
+        _write_header_only_frame(
+            tmp_path / f"night1_{i}.fit", target="NGC281", date="2026-07-15",
+        )
+    for i in range(10):
+        _write_header_only_frame(
+            tmp_path / f"night2_{i}.fit", target="NGC281", date="2026-07-16",
+        )
+    group = discover_frame_groups(tmp_path, target="NGC281", combine_nights=True)[0]
+    night2_paths = [f.path for f in group.frames if f.night == "2026-07-16"]
+    dropped = night2_paths[9:]  # night2 keeps 9/10 -> above the warn threshold
+    _stub_prepare_stack_dropping_frames(monkeypatch, dropped)
+
+    messages = []
+    generate_training_pairs(
+        tmp_path, tmp_path / "out", target="NGC281", combine_nights=True,
+        on_progress=messages.append,
+    )
+    warnings = [m for m in messages if m.startswith("WARNING")]
+    assert warnings == []
 
 
 def test_mosaic_group_is_flagged(tmp_path):

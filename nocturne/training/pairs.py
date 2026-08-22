@@ -49,6 +49,11 @@ from ..stacking.register_pool import register_frames
 
 Progress = Callable[[str, int, int], None]
 
+# Below this fraction of a combined night's frames surviving registration,
+# that session is materially compromised (likely a rotation mismatch), not
+# just a bit noisier — worth a loud warning rather than a silently thinner stack.
+_NIGHT_RETENTION_WARN_FRACTION = 0.5
+
 
 def _float(value) -> float | None:
     try:
@@ -815,24 +820,28 @@ def generate_training_pairs(
         if len(session_nights) > 1:
             # combine_nights pools sessions that may differ in telescope
             # rotation; registration is the only thing that can actually
-            # detect that, so surface it loudly instead of quietly stacking
-            # whatever fraction of one night happened to align.
+            # detect that, so surface a badly-aligned session loudly instead
+            # of quietly stacking whatever fraction of it happened to align.
+            total_by_night: dict[str, int] = defaultdict(int)
             registered_by_night: dict[str, int] = defaultdict(int)
             for frame in group.frames:
+                total_by_night[frame.night] += 1
                 if frame.path in prepared.frames:
                     registered_by_night[frame.night] += 1
-            dropped_nights = session_nights - registered_by_night.keys()
-            if dropped_nights or len(registered_by_night) < len(session_nights):
-                message = (
-                    f"WARNING: {group.slug} combines nights {sorted(session_nights)} but "
-                    f"registration only aligned frames from {sorted(registered_by_night)} "
-                    f"(counts={dict(registered_by_night)}); a session likely differs in "
-                    "telescope rotation and was effectively dropped"
-                )
-                if on_progress is not None:
-                    on_progress(message)
-                else:
-                    print(message)
+            for night in sorted(session_nights):
+                total = total_by_night[night]
+                registered = registered_by_night.get(night, 0)
+                if total and registered / total < _NIGHT_RETENTION_WARN_FRACTION:
+                    message = (
+                        f"WARNING: {group.slug} combined night {night} kept only "
+                        f"{registered}/{total} frames after registration "
+                        f"(below {_NIGHT_RETENTION_WARN_FRACTION:.0%}); it may differ "
+                        "in telescope rotation from the rest of the group"
+                    )
+                    if on_progress is not None:
+                        on_progress(message)
+                    else:
+                        print(message)
         specs = _group_pair_specs(group, available, config, reference)
         group_result = {
             "status": "prepared",
