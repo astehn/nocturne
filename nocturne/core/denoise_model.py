@@ -87,6 +87,29 @@ def _session(path: str):
     return ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])
 
 
+_EXPECTED_IN_CH = 4  # 3 image channels + 1 sigma-conditioning channel
+
+
+def _check_conditioned(sess, sensor: str) -> None:
+    """Refuse a pre-conditioning model outright rather than let onnxruntime's
+    raw shape error reach the user.
+
+    There is deliberately NO 3-channel fallback path here. The 3-channel model
+    is the one that visibly broke a 405-frame master into colour blotches; a
+    silent fallback is exactly how a known-harmful artifact keeps running
+    after everyone believes it was replaced.
+    """
+    found = sess.get_inputs()[0].shape[1]
+    if found != _EXPECTED_IN_CH:
+        raise RuntimeError(
+            f"denoise model '{sensor}' expects {found} input channels, not "
+            f"{_EXPECTED_IN_CH}. This is the OLD model, trained before noise "
+            "conditioning existed -- it does not know how noisy its input is "
+            "and will over-smooth a clean stack. Retrain and re-export it "
+            "with the current 4-channel pipeline (training/export_onnx.py) "
+            "before it can be used.")
+
+
 def _to_model_space(x: np.ndarray, a: float) -> np.ndarray:
     # float32 explicitly: np.arcsinh(1.0/a) is a numpy float64 scalar and would
     # otherwise upcast the whole array.
@@ -127,6 +150,7 @@ def denoise(img: AstroImage, strength: float = 0.75, *, sensor: str = "s30",
     a = float(metadata(sensor).get("asinh_a", 0.01))
     sigma_scale = float(metadata(sensor).get("sigma_scale", _DEFAULT_SIGMA_SCALE))
     sess = _session(model_path(sensor))
+    _check_conditioned(sess, sensor)
     name = sess.get_inputs()[0].name
 
     src = _to_model_space(np.ascontiguousarray(img.data, np.float32), a)

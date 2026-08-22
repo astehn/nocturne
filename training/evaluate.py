@@ -19,6 +19,7 @@ from astropy.io import fits
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data as D
 from model import DenoiseUNet
+from noise import estimate_sigma
 
 try:
     import sep
@@ -33,8 +34,14 @@ def _hwc(a):
 
 @torch.no_grad()
 def apply_model(img_hwc, model, device, strength=1.0, tile=256, overlap=32):
-    """Tiled inference with a feathered blend, so tile seams cannot appear."""
+    """Tiled inference with a feathered blend, so tile seams cannot appear.
+
+    Sigma is measured ONCE on the whole model-space image, not per tile --
+    every tile must be told the same thing about how noisy the image is, or a
+    clean edge would read as noisier than a busy centre for no real reason.
+    """
     H, W, C = img_hwc.shape
+    sigma = estimate_sigma(img_hwc)
     step = tile - overlap
     out = np.zeros((H, W, C), np.float32)
     wsum = np.zeros((H, W, 1), np.float32)
@@ -48,7 +55,7 @@ def apply_model(img_hwc, model, device, strength=1.0, tile=256, overlap=32):
             if patch.shape[0] != tile or patch.shape[1] != tile:
                 continue
             t = torch.from_numpy(np.ascontiguousarray(patch)).permute(2,0,1)[None].to(device)
-            r = model.denoise(t, strength)[0].permute(1,2,0).cpu().numpy()
+            r = model.denoise(t, sigma, strength)[0].permute(1,2,0).cpu().numpy()
             out[y0:y0+tile, x0:x0+tile] += r * win
             wsum[y0:y0+tile, x0:x0+tile] += win
     return out / np.maximum(wsum, 1e-6)
