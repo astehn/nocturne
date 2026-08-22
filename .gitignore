@@ -34,13 +34,16 @@ CLAUDE.md
 .claude.local.md
 
 # Large local model files (EDSR is shelved; never commit a 146 MB blob)
-nocturne/assets/models
+# Contents, NOT the directory: git will not re-include a file whose parent
+# DIRECTORY is excluded, so plain `nocturne/assets/models` made the negations
+# below silently dead and a clean checkout shipped without the model.
+nocturne/assets/models/*
 # ...but OUR OWN denoise model is a required asset and must travel with the code.
 # The directory is ignored because a 153 MB EDSR blob lives there; this one is
 # 7.7 MB. An untracked required asset is the update.svg bug again: every local
 # test passes because the file is sitting here, and a fresh clone is broken.
 !nocturne/assets/models/denoise_*.onnx
-!nocturne/assets/models/denoise_*.json/
+!nocturne/assets/models/denoise_*.json
 
 # Internal audits (local-only, like docs/audit and docs/superpowers)
 /docs/*_AUDIT_*.md
