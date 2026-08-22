@@ -1,6 +1,8 @@
 import os
 import sys
 
+import pytest
+
 _TRAINING = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_TRAINING)
 sys.path.insert(0, _TRAINING)
@@ -60,8 +62,15 @@ def test_a_model_that_helps_everywhere_passes():
 # prove: it is not a general-purpose harm detector for arbitrary models or
 # targets -- unlike the held-out-pair path, there is no ground truth here, so
 # a model could still pass this specific check while doing other damage this
-# proxy is blind to. It exists to make sure THIS regression, on THIS master,
-# can never silently start passing again.
+# proxy is blind to (e.g. star deformation on a deep stack; this proxy only
+# looks at background colour). It exists to make sure THIS regression, on
+# THIS master, can never silently start passing again -- it is not, by
+# itself, a complete safety net. The held-out-pair path (Steps 1-4) is the
+# one that generalises: it has real ground truth and covers stars directly
+# via evaluate.star_table, which this proxy does not attempt to replace.
+#
+# Needs the M8 master and the s30_v2 checkpoint, both on an external volume
+# not in git -- skipped, not failed, when that volume isn't mounted here.
 
 _M8_MASTER = "/Volumes/Work2/Images/Astro/Work/M8 Total/lights/M8_405x10s_68min.fits"
 _V2_RUN = "/Volumes/Work2/Images/Astro/denoise_runs/s30_v2/best.pt"
@@ -115,6 +124,13 @@ def _patch_chroma_bias(img_hwc, sky_mask, scale=25.0):
     return float((gm[sky_mask].std() ** 2 + rb[sky_mask].std() ** 2) ** 0.5)
 
 
+@pytest.mark.skipif(
+    not (os.path.isfile(_M8_MASTER) and os.path.isfile(_V2_RUN)),
+    reason=(
+        f"needs the real M8 master ({_M8_MASTER}) and the s30_v2 checkpoint "
+        f"({_V2_RUN}), both on an external volume not tracked in git -- not "
+        "a code failure if that drive isn't mounted here"),
+)
 def test_v2_model_fails_the_gate_on_the_real_m8_master():
     """This is the actual incident, replayed: today's v2 checkpoint, applied
     at its real default strength (nocturne.core.denoise_model.denoise's
