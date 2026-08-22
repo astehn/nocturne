@@ -3,12 +3,18 @@ import json
 import numpy as np
 from astropy.io import fits
 
+import pytest
+
+from nocturne.stacking.frames import load_sub
+from nocturne.stacking.normalize import normalize_to
+from nocturne.stacking.register import warp_with_validity
 from nocturne.training.pairs import (
     PairConfig,
     discover_frame_groups,
     generate_training_pairs,
     materialize_tiles,
     partition_pair,
+    prepare_stack,
     scan_training_frames,
 )
 import nocturne.training.pairs as pairs_module
@@ -231,3 +237,48 @@ def test_generate_pair_reuses_registration_and_writes_manifest(tmp_path):
     assert (pair_dir / "input.fits").exists()
     assert (pair_dir / "target.fits").exists()
     assert list((pair_dir / "tiles").glob("*.npz"))
+
+
+def _prepared_three_frame_stack(tmp_path):
+    """Three registered synthetic frames, for testing PreparedStack.integrate
+    on small subsets directly (bypassing prepare_stack's own >=3 source-frame
+    floor, which is about the whole group and is unrelated to this)."""
+    root = tmp_path / "source"
+    root.mkdir()
+    base = make_star_field(shape=(96, 96), n_stars=20, seed=3)
+    paths = []
+    for i in range(3):
+        path = root / f"frame_{i:02d}.fit"
+        write_cfa_fits(path, np.roll(base, (i % 2, -(i % 2)), axis=(0, 1)))
+        paths.append(str(path))
+    return prepare_stack(paths, paths[0], workers=1), paths
+
+
+def test_integrate_average_accepts_a_single_frame(tmp_path):
+    """average_integrate is a plain per-pixel mean and is correct even for
+    one frame; the ladder needs this rung (see nocturne/training/pairs.py:394
+    comment) so it must not be rejected by a floor meant for sigma_clip."""
+    prepared, paths = _prepared_three_frame_stack(tmp_path)
+    solo = [p for p in paths if p != prepared.reference_path][:1]
+    assert len(solo) == 1
+
+    stack = prepared.integrate(solo, method="average", workers=1)
+
+    record = prepared.frames[solo[0]]
+    sub = load_sub(solo[0], normalize=False)
+    normalized = normalize_to(sub.data, record.stats, prepared.reference_stats)
+    warped, valid = warp_with_validity(normalized, record.matrix)
+    expected = np.where(valid[..., None] if warped.ndim == 3 else valid, warped, 0.0)
+    np.testing.assert_allclose(stack.data, expected.astype(np.float32), atol=1e-5)
+    assert stack.used == tuple(solo)
+
+
+def test_integrate_sigma_clip_still_requires_three_frames(tmp_path):
+    """The relaxed floor is method-specific: sigma_clip has nothing to clip
+    between with only 2 samples and must keep failing loudly."""
+    prepared, paths = _prepared_three_frame_stack(tmp_path)
+    two = [p for p in paths if p != prepared.reference_path]
+    assert len(two) == 2
+
+    with pytest.raises(ValueError, match="sigma_clip"):
+        prepared.integrate(two, method="sigma_clip", workers=1)

@@ -1,0 +1,21 @@
+# Dependencies for the TRAINING environment (.venv-train) only.
+#
+# Nocturne itself (the `nocturne` package, shipped app) must NEVER depend on
+# torch or anything else in this file -- see training/data.py's docstring.
+# `nocturne/training/pairs.py` lives inside the package but is the one part
+# of it this venv also needs, because it drives the real registration/stacking
+# pipeline; that pulls in astropy/scipy/scikit-image/astroalign/sep/pillow too.
+#
+# Versions pinned from `.venv-train/bin/python -m pip freeze` on 2026-08-22.
+torch==2.13.0
+numpy==2.5.2
+astropy==8.0.1
+scipy==1.18.1
+sep==1.4.1
+pillow==12.3.0
+onnx==1.22.0
+onnxruntime==1.29.0
+onnxscript==0.7.1
+scikit-image==0.26.0
+astroalign==2.6.2
+pytest==9.1.1

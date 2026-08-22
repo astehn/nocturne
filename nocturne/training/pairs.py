@@ -412,10 +412,19 @@ class PreparedStack:
         missing = [p for p in selected if p not in self.frames]
         if missing:
             raise ValueError(f"frames were not successfully registered: {missing[:3]}")
-        if len(selected) < 3:
-            raise ValueError("need at least 3 successfully registered frames to stack")
         if method not in {"average", "sigma_clip"}:
             raise ValueError("method must be 'average' or 'sigma_clip'")
+        # sigma_clip needs samples to clip between and is genuinely broken
+        # below 3; average_integrate is a plain mean and is correct (if
+        # noisy) down to a single frame. That single frame matters: it is
+        # the strongest supervision signal in the denoise training ladder,
+        # since it is the noisiest input the model will ever be trained on.
+        min_required = 3 if method == "sigma_clip" else 1
+        if len(selected) < min_required:
+            raise ValueError(
+                f"method={method!r} needs at least {min_required} successfully "
+                f"registered frame(s) to stack, got {len(selected)}"
+            )
 
         worker_count = workers if workers is not None else plan_workers().count
         total = len(selected)
