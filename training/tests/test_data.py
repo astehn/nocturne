@@ -19,3 +19,40 @@ def test_dataset_reports_the_sigma_of_the_tile_it_returns():
     from noise import estimate_sigma
     assert abs(float(sigma) - estimate_sigma(noisy.permute(1, 2, 0).numpy())) < 1e-6
     assert float(sigma) > 0
+
+
+# ------------------------------------------------- the light-polluted holdout
+
+import data as D
+
+def _tile(target, group=None):
+    return D.TileRef(
+        path=f"/x/{target}/t0.npz",
+        group=group or f"s30_{target}_2026-08-09_LP_10s",
+        sensor="s30", target=target, input_count=8, target_count=128,
+    )
+
+
+def test_ngc281_is_assigned_to_a_split():
+    """The design's own new requirement: a Bortle 6-7 target in TEST. Task 2
+    taught the generator to combine NGC281's two nights precisely so it would
+    produce pairs -- but a target that produces tiles and belongs to no split
+    makes split_by_target raise, which would take down train.py, evaluate.py
+    and nightly.py on the FIRST full ladder build."""
+    _, _, test = D.split_by_target([_tile("NGC281")], "s30")
+    assert [t.target for t in test] == ["NGC281"]
+
+
+def test_test_split_still_contains_the_v1_reference_target():
+    """NGC281 is added ALONGSIDE NGC6888, not instead of it: per-target metrics
+    keep v1/v2/v3 comparable on exactly the same dark-sky holdout."""
+    assert "NGC6888" in D.S30_TEST
+    assert "NGC281" in D.S30_TEST
+
+
+def test_every_archive_target_belongs_to_exactly_one_split():
+    """Guards the whole failure mode, not just today's instance of it."""
+    splits = (D.S30_TRAIN, D.S30_VAL, D.S30_TEST)
+    everything = [t for s in splits for t in s]
+    assert len(everything) == len(set(everything)), "a target appears in two splits"
+    D.split_by_target([_tile(t) for t in everything], "s30")  # must not raise

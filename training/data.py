@@ -56,11 +56,18 @@ def from_model_space(y: np.ndarray, a: float = _ASINH_A) -> np.ndarray:
 # NOISE, which is a property of the sensor and the sky, not of the filter. Seeing
 # both makes it harder to learn a filter-specific shortcut.
 #
-# VAL AND TEST ARE UNCHANGED FROM v1 ON PURPOSE, so the two runs are measured on
-# exactly the same held-out sky and the only thing that moved is training data.
+# NGC6888 stays the v1 reference holdout, so per-target metrics compare runs on
+# exactly the same dark-sky test target and the only thing that moved is
+# training data. NGC281 joins it rather than replacing it: the FITS site
+# coordinates split this archive into Helsingborg (Bortle 6-7: NGC281, NGC7000)
+# and Crete (Bortle 3-4: everything else), and until now BOTH val and test were
+# dark-sky while most users are not. Task 2's combine-nights work exists
+# precisely so NGC281's 46+63 frames form one 109-frame group and can serve as
+# that light-polluted holdout -- a target that produces tiles but belongs to no
+# split makes split_by_target raise, taking down train/evaluate/nightly.
 S30_TRAIN = ("M16", "M17", "M8", "NGC6992", "M33", "M45", "NGC7000")
 S30_VAL = ("M27",)
-S30_TEST = ("NGC6888",)          # untouched until the very end
+S30_TEST = ("NGC6888", "NGC281")   # untouched until the very end
 
 
 @dataclass
