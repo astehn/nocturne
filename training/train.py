@@ -61,9 +61,10 @@ def evaluate(model, loader, device):
     """
     model.eval()
     tot = res = base = star_a = star_b = n = 0.0
-    for noisy, clean, mask in loader:
+    for noisy, clean, mask, sigma in loader:
         noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
-        out = model.denoise(noisy)
+        sigma = sigma.to(device)
+        out = model.denoise(noisy, sigma, 1.0)
         tot += masked_l1(out, clean, mask).item()
         m = mask.expand_as(clean)
         res += (((out - clean).abs()) * m).sum().item()
@@ -87,8 +88,8 @@ def save_samples(model, dataset, device, path, count=3):
     rows = []
     with torch.no_grad():
         for i in range(min(count, len(dataset))):
-            noisy, clean, _ = dataset[i]
-            out = model.denoise(noisy[None].to(device))[0].cpu()
+            noisy, clean, _, sigma = dataset[i]
+            out = model.denoise(noisy[None].to(device), sigma.to(device), 1.0)[0].cpu()
             strip = torch.cat([noisy, out.clamp(0, 1), clean], dim=2)
             rows.append((strip.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(np.uint8))
     model.train()
@@ -171,22 +172,32 @@ def main() -> None:
                              "val": sorted({t.target for t in val_t}),
                              "test": sorted({t.target for t in test_t})}}, fh, indent=2)
 
-    print(f"\n{'epoch':>6} {'train':>9} {'val':>9} {'denoised':>9} {'star_err':>9} {'sec':>6} {'ETA':>9}")
+    print(f"\n{'epoch':>6} {'train':>9} {'val':>9} {'denoised':>9} {'star_err':>9} "
+          f"{'sigma range':>15} {'sec':>6} {'ETA':>9}")
     print("-" * 74)
     t_start = time.time()
     for ep in range(start, args.epochs):
         te = time.time(); run = n = 0
-        for noisy, clean, mask in dl_tr:
+        sig_min, sig_max = float("inf"), float("-inf")
+        for noisy, clean, mask, sigma in dl_tr:
             noisy, clean, mask = noisy.to(dev), clean.to(dev), mask.to(dev)
-            loss = masked_l1(model.denoise(noisy), clean, mask)
+            sigma = sigma.to(dev)
+            sig_min = min(sig_min, sigma.min().item())
+            sig_max = max(sig_max, sigma.max().item())
+            loss = masked_l1(model.denoise(noisy, sigma, 1.0), clean, mask)
             opt.zero_grad(); loss.backward(); opt.step()
             run += loss.item(); n += 1
         sched.step()
         vl, denoised, star = evaluate(model, dl_va, dev)
         dt = time.time() - te
         eta = (args.epochs - ep - 1) * (time.time() - t_start) / (ep - start + 1)
+        # Printed every epoch, not just once, because a distribution that
+        # collapses to a near-constant mid-training (e.g. a bad batch order,
+        # or a bug that stops sigma from varying) means the fourth channel has
+        # stopped carrying information -- that must be visible, not silent.
+        sig_range = f"{sig_min:.4f}-{sig_max:.4f}"
         print(f"{ep:>6} {run/max(n,1):>9.5f} {vl:>9.5f} {denoised:>9.3f} {star:>9.3f} "
-              f"{dt:>6.0f} {time.strftime('%H:%M:%S', time.gmtime(eta)):>9}")
+              f"{sig_range:>15} {dt:>6.0f} {time.strftime('%H:%M:%S', time.gmtime(eta)):>9}")
 
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
                     "epoch": ep, "best": best, "args": vars(args)}, ck)

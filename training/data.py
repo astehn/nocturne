@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from noise import estimate_sigma
+
 # ---------------------------------------------------------------- transform
 
 # A FIXED, image-independent nonlinearity. This is the whole reason the model
@@ -178,6 +180,12 @@ class TileDataset:
         clean = to_model_space(np.ascontiguousarray(clean, np.float32), a)
         mask = (np.ascontiguousarray(cov, np.float32) >= self.cfg.min_coverage).astype(np.float32)
 
+        # Measured on THIS tile, after transform and augmentation -- a crop of
+        # empty sky and a crop of a bright core genuinely differ in noise, and
+        # that's exactly what the model is being told.
+        sigma = estimate_sigma(noisy)
+
         return (torch.from_numpy(noisy).permute(2, 0, 1),
                 torch.from_numpy(clean).permute(2, 0, 1),
-                torch.from_numpy(mask)[None])
+                torch.from_numpy(mask)[None],
+                torch.tensor(sigma, dtype=torch.float32))
