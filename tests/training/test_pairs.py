@@ -56,6 +56,28 @@ def test_scan_and_group_separates_sensor_filter_exposure_and_night(tmp_path):
     }
 
 
+def test_combine_nights_merges_sessions_of_the_same_target(tmp_path):
+    """NGC281 is 46 frames one night and 63 the next. Separately neither can
+    build a deep target; together they are a usable Bortle 6-7 holdout, which
+    the split requires and currently cannot have."""
+    for i in range(46):
+        _write_header_only_frame(
+            tmp_path / f"night1_{i}.fit", target="NGC281", date="2026-07-15",
+        )
+    for i in range(63):
+        _write_header_only_frame(
+            tmp_path / f"night2_{i}.fit", target="NGC281", date="2026-07-16",
+        )
+
+    apart = discover_frame_groups(tmp_path, target="NGC281")
+    assert len(apart) == 2 and sorted(len(g.frames) for g in apart) == [46, 63]
+
+    together = discover_frame_groups(tmp_path, target="NGC281", combine_nights=True)
+    assert len(together) == 1
+    assert len(together[0].frames) == 109
+    assert together[0].night == "2026-07-15..2026-07-16"
+
+
 def test_mosaic_group_is_flagged(tmp_path):
     for i in range(4):
         _write_header_only_frame(

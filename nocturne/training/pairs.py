@@ -257,12 +257,17 @@ def discover_frame_groups(
     exposure_s: float | None = None,
     target: str | None = None,
     min_frames: int = 3,
+    combine_nights: bool = False,
 ) -> list[FrameGroup]:
     """Group frames by sensor, target, filter, exposure, and capture night.
 
-    Groups are intentionally separated by night.  This prevents a first
-    prototype from silently mixing different sky conditions while still
-    leaving the caller free to combine sessions explicitly later.
+    Groups are separated by night unless ``combine_nights`` is set, which
+    drops night from the grouping key so a target's sessions are pooled into
+    one group.  This is the caller this module's docstring anticipated:
+    combining is only safe for the same target, filter and exposure, because
+    registration still has to succeed across sessions (e.g. the telescope may
+    have re-homed at a different rotation) — a session that can't be aligned
+    to the rest still shows up here, just with fewer usable frames.
     """
     frames = scan_training_frames(root)
     wanted_sensor = sensor.lower() if sensor else None
@@ -285,7 +290,7 @@ def discover_frame_groups(
             frame.target_dir,
             frame.filter_name,
             round(frame.exposure_s, 4),
-            frame.night,
+            "" if combine_nights else frame.night,
         )
         groups[key].append(frame)
 
@@ -297,6 +302,8 @@ def discover_frame_groups(
         dec = [f.dec_deg for f in members if f.dec_deg is not None]
         ra_span = _circular_span(ra)
         dec_span = max(dec) - min(dec) if len(dec) > 1 else 0.0
+        nights = sorted({f.night for f in members})
+        night_label = nights[0] if len(nights) == 1 else f"{nights[0]}..{nights[-1]}"
         # Preserve the information even when the caller later decides to allow
         # mosaics; the threshold is applied by the generation command.
         result.append(
@@ -305,7 +312,7 @@ def discover_frame_groups(
                 target_dir=key[1],
                 filter_name=key[2],
                 exposure_s=key[3],
-                night=key[4],
+                night=night_label,
                 frames=tuple(sorted(members, key=lambda f: (f.date_obs, f.path))),
                 ra_span_deg=ra_span,
                 dec_span_deg=dec_span,
@@ -770,6 +777,7 @@ def generate_training_pairs(
     target: str | None = None,
     min_frames: int = 3,
     include_mosaics: bool = False,
+    combine_nights: bool = False,
     workers: int | None = None,
     max_groups: int | None = None,
     on_progress: Callable[[str], None] | None = None,
@@ -785,6 +793,7 @@ def generate_training_pairs(
         exposure_s=exposure_s,
         target=target,
         min_frames=min_frames,
+        combine_nights=combine_nights,
     )
     if not include_mosaics:
         groups = [group for group in groups if not group.mosaic]
@@ -802,6 +811,28 @@ def generate_training_pairs(
         reference = all_paths[len(all_paths) // 2]
         prepared = prepare_stack(all_paths, reference, workers=workers)
         available = [p for p in all_paths if p in prepared.frames and p != reference]
+        session_nights = {f.night for f in group.frames}
+        if len(session_nights) > 1:
+            # combine_nights pools sessions that may differ in telescope
+            # rotation; registration is the only thing that can actually
+            # detect that, so surface it loudly instead of quietly stacking
+            # whatever fraction of one night happened to align.
+            registered_by_night: dict[str, int] = defaultdict(int)
+            for frame in group.frames:
+                if frame.path in prepared.frames:
+                    registered_by_night[frame.night] += 1
+            dropped_nights = session_nights - registered_by_night.keys()
+            if dropped_nights or len(registered_by_night) < len(session_nights):
+                message = (
+                    f"WARNING: {group.slug} combines nights {sorted(session_nights)} but "
+                    f"registration only aligned frames from {sorted(registered_by_night)} "
+                    f"(counts={dict(registered_by_night)}); a session likely differs in "
+                    "telescope rotation and was effectively dropped"
+                )
+                if on_progress is not None:
+                    on_progress(message)
+                else:
+                    print(message)
         specs = _group_pair_specs(group, available, config, reference)
         group_result = {
             "status": "prepared",
@@ -888,6 +919,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--max-groups", type=int, default=None)
     parser.add_argument("--include-mosaics", action="store_true")
+    parser.add_argument(
+        "--combine-nights", action="store_true",
+        help="Pool a target's capture nights into one group (same target/filter/exposure only)",
+    )
     parser.add_argument("--tiles", action="store_true", help="Also write compressed training tiles")
     parser.add_argument("--tile-size", type=int, default=512)
     parser.add_argument("--tile-overlap", type=int, default=32)
@@ -922,6 +957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         target=args.target,
         min_frames=args.min_frames,
         include_mosaics=args.include_mosaics,
+        combine_nights=args.combine_nights,
         workers=args.workers,
         max_groups=args.max_groups,
         on_progress=print,
