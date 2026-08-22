@@ -12,6 +12,5 @@
 
   "epochs": 300,
   "strength": 1.0,
-  "max_pairs": 3,
   "gate_tolerance": 0.0
 }

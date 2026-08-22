@@ -252,3 +252,64 @@ def test_cli_queue_mode_reports_missing_directory(tmp_path, capsys):
     rc = nightly.main(["--queue", str(tmp_path / "empty"), "--summary-out", str(tmp_path / "summary.md")])
     assert rc == 1
     assert "no configs found" in capsys.readouterr().out
+
+
+# ------------------------------------------------------- what the gate sees
+
+def _fake_pair_dirs():
+    dirs = []
+    for tgt, rungs in (("NGC281", [1, 2, 4, 8, 16]), ("NGC6888", [1, 2, 4, 8, 16, 32])):
+        for p in (0, 1):
+            for d in rungs:
+                dirs.append(f"/ds/s30_{tgt}_2026-01-01_LP_10s/pair_{p:04d}_in{d}_target128")
+    return dirs
+
+
+def test_a_real_run_gates_on_every_held_out_pair():
+    """The design's gate is "every held-out target at every depth". A real
+    (non-smoke) run must therefore not silently sample a subset -- the gate is
+    the only thing standing between an unattended run and overwriting the
+    model the app ships."""
+    from nightly import select_gate_pairs
+
+    dirs = _fake_pair_dirs()
+    chosen = select_gate_pairs(dirs, None)
+    assert set(chosen) == set(dirs)          # every one, none invented
+    assert len(chosen) == len(dirs) == 22
+
+
+def test_pairs_are_ordered_by_target_then_numeric_depth():
+    """Plain string sort puts in16 BEFORE in1 ('6' < '_'), so a truncated run
+    picked an arbitrary depth spread. Order by parsed depth instead."""
+    from nightly import select_gate_pairs
+
+    order = [d.rsplit("/", 1)[-1] for d in select_gate_pairs(_fake_pair_dirs(), None)
+             if "NGC281" in d and "pair_0000" in d]
+    assert order == [f"pair_0000_in{d}_target128" for d in (1, 2, 4, 8, 16)]
+
+
+def test_a_truncated_run_still_touches_every_held_out_target():
+    """If a config does cap the count, the cap must not hand every slot to
+    whichever target sorts first -- the previous behaviour gave all three to
+    NGC281 and never evaluated NGC6888 at all."""
+    from nightly import select_gate_pairs, _pair_identity
+
+    chosen = select_gate_pairs(_fake_pair_dirs(), 3)
+    assert len(chosen) == 3
+    assert {_pair_identity(d)[0] for d in chosen} == {"NGC281", "NGC6888"}
+
+
+def test_truncation_prefers_the_deepest_rungs():
+    """A cap should spend its budget where harm actually showed up: the deep
+    end is what the shipped model damaged, not the 1-frame rung."""
+    from nightly import select_gate_pairs, _pair_identity
+
+    chosen = select_gate_pairs(_fake_pair_dirs(), 2)
+    assert sorted(_pair_identity(d)[1] for d in chosen) == [16, 32]
+
+
+def test_select_gate_pairs_handles_a_cap_larger_than_the_dataset():
+    from nightly import select_gate_pairs
+
+    dirs = _fake_pair_dirs()
+    assert len(select_gate_pairs(dirs, 500)) == len(dirs)

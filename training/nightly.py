@@ -162,6 +162,42 @@ def _pair_identity(pair_dir: str) -> tuple[str, int]:
     return m_group.group(1), int(m_pair.group(1))
 
 
+def select_gate_pairs(pair_dirs, max_pairs) -> list[str]:
+    """The pairs the do-no-harm gate will actually be run on.
+
+    The design's gate is "every held-out target at every depth", so
+    `max_pairs=None` -- the default for a real run -- returns all of them. The
+    gate is the only thing between an unattended run and overwriting the model
+    the app ships, and a gate that samples is not a gate.
+
+    A config that DOES cap the count (smoke runs, a quick look) gets a
+    deliberate subset rather than an accident of string sorting: plain sorted()
+    puts `in16` before `in1` ('6' < '_'), which handed all three slots of the
+    old cap to one target at depths 16/1/2 and never evaluated the second
+    held-out target at all. Instead spend the budget deepest-first -- the deep
+    end is where the shipped model actually did harm -- while round-robining
+    across targets so no held-out target is skipped entirely.
+    """
+    ordered = sorted(pair_dirs, key=lambda d: (_pair_identity(d)[0], _pair_identity(d)[1], d))
+    if max_pairs is None:
+        return ordered
+
+    by_target: dict[str, list[str]] = {}
+    for d in ordered:
+        by_target.setdefault(_pair_identity(d)[0], []).append(d)
+    # deepest first within each target, then take one target at a time in turn
+    queues = [sorted(v, key=lambda d: (-_pair_identity(d)[1], d)) for _, v in sorted(by_target.items())]
+    chosen: list[str] = []
+    while len(chosen) < int(max_pairs) and any(queues):
+        for q in queues:
+            if not q:
+                continue
+            chosen.append(q.pop(0))
+            if len(chosen) >= int(max_pairs):
+                break
+    return sorted(chosen, key=lambda d: (_pair_identity(d)[0], _pair_identity(d)[1], d))
+
+
 def _evaluate_pair_with_images(pair_dir, model, device, strength):
     """metrics dict (evaluate.evaluate_pair) plus the raw linear-space images
     render_comparison_sheet needs -- evaluate_pair only returns numbers."""
@@ -253,10 +289,11 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     model.eval()
 
     strength = float(cfg.get("strength", 1.0))
-    max_pairs = int(cfg.get("max_pairs", 1 if smoke else 3))
+    max_pairs = cfg.get("max_pairs", 1 if smoke else None)
     tiles = D.scan_tiles(str(dataset_dir))
     _, _, test_tiles = D.split_by_target(tiles, sensor)
-    pair_dirs = sorted({os.path.dirname(os.path.dirname(t.path)) for t in test_tiles})[:max_pairs]
+    pair_dirs = select_gate_pairs(
+        {os.path.dirname(os.path.dirname(t.path)) for t in test_tiles}, max_pairs)
     if not pair_dirs:
         raise RuntimeError(f"no held-out (test-split) pairs found under {dataset_dir}")
 
