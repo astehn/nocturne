@@ -32,6 +32,12 @@ def check_no_harm(results, tolerance: float = 0.0) -> GateResult:
     caller may widen it deliberately (e.g. for a noisy proxy metric), but the
     default must never soften "worse than doing nothing" into "close enough."
     """
+    results = list(results)
+    if not results:
+        # `passed` is the signal that authorises overwriting the model the app
+        # ships. Granting it on an empty result set would ship a model that was
+        # never measured against anything -- refuse instead of passing vacuously.
+        return GateResult(passed=False, failures=["no held-out results to check"])
     failures = [
         f"{r.target} @ {r.depth} frames: model {r.model_err:.3e} vs input {r.input_err:.3e}"
         for r in results if r.model_err > r.input_err * (1.0 + tolerance)

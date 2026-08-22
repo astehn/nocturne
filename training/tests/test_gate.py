@@ -21,6 +21,19 @@ def test_a_model_that_makes_a_deep_stack_worse_fails():
     assert any("405" in f for f in g.failures)
 
 
+def test_a_gate_with_nothing_to_check_does_not_pass():
+    """A vacuous pass is the worst possible outcome here: `passed=True` is the
+    signal that authorises overwriting the model the app ships, and an empty
+    result set would grant it having verified nothing. nightly.py guards its
+    own call site, but the authority lives in this function, so the refusal
+    belongs here too."""
+    from gate import check_no_harm
+
+    result = check_no_harm([])
+    assert result.passed is False
+    assert result.failures and "no held-out" in result.failures[0]
+
+
 def test_a_model_that_helps_everywhere_passes():
     from gate import check_no_harm, DepthResult
     g = check_no_harm([DepthResult("NGC6888", 8, 1.0e-4, 0.5e-4),
