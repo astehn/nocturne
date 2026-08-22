@@ -17,6 +17,7 @@ import os
 from functools import lru_cache
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
 
 from .image import AstroImage
 
@@ -24,6 +25,37 @@ _MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
                           "assets", "models")
 _TILE = 256
 _OVERLAP = 32
+
+_SIGMA_HP_SIGMA = 2.0        # high-pass scale: removes scene, keeps noise
+_SIGMA_DARK_FRACTION = 0.60  # measure on the darker 60%, away from nebula cores
+
+
+def estimate_sigma(img: np.ndarray) -> float:
+    """Robust noise sigma, in the units of whatever array it is given.
+
+    Duplicated verbatim from `training/noise.py` rather than imported: the
+    sigma fed to the model as a conditioning channel must be computed
+    identically at training and inference time, and this package must never
+    import training code (or torch). See that file for why the mask is built
+    from smoothed luminance and MAD is pooled per-channel rather than on the
+    channel-averaged image -- both avoid biases that make the naive version
+    read noise levels wrong by 2-3x.
+    """
+    img = np.asarray(img, np.float32)
+    if img.ndim == 2:
+        img = img[:, :, None]
+    lum = img.mean(axis=2)
+    bg = gaussian_filter(lum, _SIGMA_HP_SIGMA)
+    mask = bg <= np.percentile(bg, _SIGMA_DARK_FRACTION * 100.0)
+    parts = []
+    for c in range(img.shape[2]):
+        chan = img[:, :, c]
+        hp = chan - gaussian_filter(chan, _SIGMA_HP_SIGMA)
+        parts.append(hp[mask])
+    v = np.concatenate(parts) if parts else np.empty(0, np.float32)
+    if v.size == 0:
+        return 0.0
+    return float(1.4826 * np.median(np.abs(v - np.median(v))))
 
 
 def model_path(sensor: str = "s30") -> str:
