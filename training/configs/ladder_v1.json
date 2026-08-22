@@ -8,5 +8,10 @@
   "min_target": 16,
   "pairs_per_depth": 2,
   "tiles": true,
-  "exclude_mosaics": true
+  "exclude_mosaics": true,
+
+  "epochs": 300,
+  "strength": 1.0,
+  "max_pairs": 3,
+  "gate_tolerance": 0.0
 }
