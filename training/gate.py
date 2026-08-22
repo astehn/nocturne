@@ -10,6 +10,12 @@ Checked PER DEPTH, never averaged. That regression was invisible in an
 average: shallow depths improved so much they buried one deep-stack
 regression. A gate that averages would have passed the exact model that
 caused this.
+
+The real M8 master has no ground truth of its own (it IS the deepest stack),
+so training/tests/test_gate.py evaluates it with a self-referential chroma
+proxy that only catches chroma-shaped damage -- see that file for what it
+does and does not prove. The held-out-pair path (input_err/model_err against
+real ground truth) is the check that generalises, stars included.
 """
 from __future__ import annotations
 

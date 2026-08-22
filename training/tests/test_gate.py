@@ -75,6 +75,32 @@ def test_a_model_that_helps_everywhere_passes():
 _M8_MASTER = "/Volumes/Work2/Images/Astro/Work/M8 Total/lights/M8_405x10s_68min.fits"
 _V2_RUN = "/Volumes/Work2/Images/Astro/denoise_runs/s30_v2/best.pt"
 
+# Checked: could the +24% at strength 0.75 be a tile-seam artefact of
+# _apply_unconditioned's ramp-blended overlap rather than real damage? A
+# seam would show up as extra patch-scale (~25px) chroma structure at the
+# tile pitch specifically, which a healthy model could also produce and
+# would make this a false-positive risk for the gate.
+#
+# Measured directly on a flat field + Gaussian noise (same distribution on
+# every channel, so the correct output has ZERO chroma structure by
+# construction -- there is no real colour to damage, so any bias increase
+# after the model runs has to come from the machinery, not the scene):
+#   - tiled (this harness, tile=256/overlap=32): input_err 0.00318,
+#     model_err 0.00462, +45.0%
+#   - single forward pass, NO tiling at all (512x512, fits in one call):
+#     input_err 0.00335, model_err 0.00485, +44.8%
+#   Tiling changes the result by 0.2 percentage points out of 45 -- noise,
+#   not signal.
+#   - within the tiled run, a 20px band straddling every tile seam measures
+#     LOWER bias than the interior (ratio 0.961), not higher, which is the
+#     opposite of what a seam artefact would look like.
+# Conclusion: the tiling contributes nothing measurable; the bias this test
+# measures is the model's own behaviour, confirmed by reproducing it with no
+# tiling involved at all. (Separately notable: this model invents patch-
+# scale chroma bias even on pure noise with no real structure present --
+# consistent with the postmortem's "learned chroma noise is large and strips
+# it hard" diagnosis, and not something a seam explanation would predict.)
+
 
 def _apply_unconditioned(img_hwc, model, device, strength, tile=256, overlap=32):
     """Tiled inference for the pre-conditioning (3-channel) checkpoint.
