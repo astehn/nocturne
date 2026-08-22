@@ -18,6 +18,7 @@ _CORE = [
     Stage("background", "Background", "process"),
     Stage("color", "Color", "auto"),
     Stage("deconvolution", "Deconvolution", "process"),
+    Stage("ai_denoise", "AI Denoise", "process"),
     Stage("stretch", "Stretch", "stretch"),
 ]
 
@@ -40,6 +41,7 @@ STEP_NAME = {
     "tint": "Colour Tint",
     "remove_green": "Remove Green",
     "deconvolution": "Deconvolution",
+    "ai_denoise": "AI Denoise",
     "stretch": "Stretch",
     "recover_core": "Recover Core",
     "levels": "Levels",
@@ -51,7 +53,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "tint", "remove_green", "deconvolution", "stretch",
+    "background", "color", "tint", "remove_green", "deconvolution", "ai_denoise", "stretch",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]

@@ -18,6 +18,7 @@ BLACK_STEPS = 1000
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
+    "ai_denoise": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
 }
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]

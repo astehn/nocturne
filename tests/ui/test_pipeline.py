@@ -5,14 +5,14 @@ from nocturne.ui.pipeline import (
 
 def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
-        "load", "crop", "background", "color", "deconvolution", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "ai_denoise", "stretch",
     ]
 
 
 def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "crop", "background", "color", "deconvolution", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "ai_denoise", "stretch",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction", "enhancements", "export",
     ]
@@ -32,7 +32,8 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "tint", "remove_green", "deconvolution", "stretch",
+        "background", "color", "tint", "remove_green", "deconvolution", "ai_denoise",
+        "stretch",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
@@ -81,7 +82,8 @@ def test_deconvolution_stage_and_order():
     assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
     i = PROCESSING_ORDER.index("deconvolution")
     assert PROCESSING_ORDER[i - 1] == "remove_green"
-    assert PROCESSING_ORDER[i + 1] == "stretch"
+    assert PROCESSING_ORDER[i + 1] == "ai_denoise"   # denoise is linear, before Stretch
+    assert PROCESSING_ORDER[i + 2] == "stretch"
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")
 

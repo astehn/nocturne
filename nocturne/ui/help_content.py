@@ -26,6 +26,7 @@ _STAGE_TO_TOPIC = {
     "background": "background",
     "color": "color",
     "deconvolution": "deconvolution",
+    "ai_denoise": "ai_denoise",
     "stretch": "stretch",
     "recover_core": "recover_core",
     "levels": "levels",
@@ -277,6 +278,28 @@ _TOPIC_LIST = (
        "<p>Tint and Remove Green do different jobs. The tint <i>shifts</i> colour and keeps the "
        "relationships between stars; Remove Green <i>clamps</i> one channel, which removes a cast "
        "but flattens colour along with it. Reach for the tint first.</p>"),
+
+    _t("ai_denoise", "AI Denoise",
+       "Nocturne's own denoiser, trained on Seestar stacks. Runs before Stretch.",
+       "<h4>What it does</h4>"
+       "<p>Removes noise using a model trained here on Seestar data — no external "
+       "tool needed, and a few seconds rather than minutes. It predicts the "
+       "<b>noise</b> and subtracts it, so <i>light</i> is a genuinely gentler "
+       "version of <i>strong</i> rather than a different operation.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Pick <b>light</b>, <b>medium</b> or <b>strong</b> and Apply. Medium is "
+       "the default because it removes noise down to the level a very deep stack "
+       "would have; strong goes further than that, which looks cleaner but is "
+       "smoother than the sky really is.</p>"
+       "<h4>Why it sits here</h4>"
+       "<p>Before Stretch, next to Deconvolution, because that is where it was "
+       "trained. The Stretch reshapes tones based on each image's own statistics, "
+       "and a model applied afterwards would meet a transformation it has never "
+       "seen.</p>"
+       "<h4>Tips</h4>"
+       "<p>It is trained on the <b>S30 Pro</b>. On other cameras the step does "
+       "nothing rather than guess. It is also new — compare against the "
+       "before/after and trust your eyes over the default.</p>"),
 
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",
