@@ -18,6 +18,15 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+# Sigma is divided by this before becoming the fourth input channel, so a
+# typical model-space sigma lands near 1.0 rather than near zero. Measured
+# over 40 real training tiles with the corrected estimator (training/noise.py
+# after the Task 1 fix): model-space sigma runs 0.0008-0.0031, median 0.0014.
+# NOT the originally planned 0.05 -- that was calibrated against an estimator
+# later found wrong by ~2.7x, and would put the channel at ~0.03, near enough
+# to zero that the network could not perceive it.
+SIGMA_SCALE = 0.0015
+
 
 def _block(cin: int, cout: int) -> nn.Sequential:
     return nn.Sequential(
@@ -27,7 +36,7 @@ def _block(cin: int, cout: int) -> nn.Sequential:
 
 
 class DenoiseUNet(nn.Module):
-    def __init__(self, base: int = 32, depth: int = 3, in_ch: int = 3):
+    def __init__(self, base: int = 32, depth: int = 3, in_ch: int = 4):
         super().__init__()
         chans = [base * (2 ** i) for i in range(depth)]      # 32, 64, 128
         self.enc = nn.ModuleList()
@@ -46,7 +55,10 @@ class DenoiseUNet(nn.Module):
         # Zero-initialised final layer: the model starts as an EXACT identity
         # (predicted noise = 0), so epoch zero cannot damage an image and any
         # improvement is visibly earned rather than inherited from luck.
-        self.out = nn.Conv2d(chans[0], in_ch, 1)
+        # Always 3 OUTPUT channels (predicted noise for R/G/B) regardless of
+        # in_ch -- the sigma map is an input-only conditioning channel, never
+        # something the network predicts.
+        self.out = nn.Conv2d(chans[0], 3, 1)
         nn.init.zeros_(self.out.weight); nn.init.zeros_(self.out.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -60,5 +72,11 @@ class DenoiseUNet(nn.Module):
             h = dec(torch.cat([h, skip], dim=1))
         return self.out(h)              # predicted NOISE
 
-    def denoise(self, x: torch.Tensor, strength: float = 1.0) -> torch.Tensor:
-        return x - strength * self.forward(x)
+    def denoise(self, x: torch.Tensor, sigma: float | torch.Tensor,
+                strength: float = 1.0) -> torch.Tensor:
+        """x is [B,3,H,W]; sigma is scalar or [B]. The sigma map is what lets a
+        405-frame master be recognised as already clean."""
+        if not torch.is_tensor(sigma):
+            sigma = torch.full((x.shape[0],), float(sigma), device=x.device)
+        smap = (sigma / SIGMA_SCALE).view(-1, 1, 1, 1).expand(-1, 1, *x.shape[2:])
+        return x - strength * self.forward(torch.cat([x, smap], dim=1))

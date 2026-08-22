@@ -29,6 +29,11 @@ _OVERLAP = 32
 _SIGMA_HP_SIGMA = 2.0        # high-pass scale: removes scene, keeps noise
 _SIGMA_DARK_FRACTION = 0.60  # measure on the darker 60%, away from nebula cores
 
+# Default if a model's .json predates the conditioning channel (none should,
+# but this keeps a stale metadata file from crashing rather than mis-scaling).
+# Mirrors training/model.py::SIGMA_SCALE -- see that file for how it was measured.
+_DEFAULT_SIGMA_SCALE = 0.0015
+
 
 def estimate_sigma(img: np.ndarray) -> float:
     """Robust noise sigma, in the units of whatever array it is given.
@@ -120,6 +125,7 @@ def denoise(img: AstroImage, strength: float = 0.75, *, sensor: str = "s30",
         return AstroImage(img.data.copy(), is_linear=True, metadata=dict(img.metadata))
 
     a = float(metadata(sensor).get("asinh_a", 0.01))
+    sigma_scale = float(metadata(sensor).get("sigma_scale", _DEFAULT_SIGMA_SCALE))
     sess = _session(model_path(sensor))
     name = sess.get_inputs()[0].name
 
@@ -127,6 +133,14 @@ def denoise(img: AstroImage, strength: float = 0.75, *, sensor: str = "s30",
     if src.ndim == 2:
         src = np.repeat(src[:, :, None], 3, axis=2)
     H, W, _ = src.shape
+
+    # Measured ONCE on the whole model-space image, not per tile: every tile
+    # of a given image must be told the same thing about how noisy it is, or
+    # a 405-frame master's already-clean edges would read as noisier than its
+    # centre for no reason connected to the actual noise.
+    sigma_val = estimate_sigma(src)
+    smap_value = np.float32(sigma_val / sigma_scale)
+    sigma_channel = np.full((1, 1, _TILE, _TILE), smap_value, np.float32)
 
     out = np.zeros_like(src)
     wsum = np.zeros((H, W, 1), np.float32)
@@ -142,7 +156,8 @@ def denoise(img: AstroImage, strength: float = 0.75, *, sensor: str = "s30",
             patch = src[y0:y0+_TILE, x0:x0+_TILE]
             if patch.shape[0] != _TILE or patch.shape[1] != _TILE:
                 continue
-            inp = np.ascontiguousarray(patch.transpose(2, 0, 1)[None])
+            rgb = patch.transpose(2, 0, 1)[None]
+            inp = np.ascontiguousarray(np.concatenate([rgb, sigma_channel], axis=1))
             noise = sess.run(None, {name: inp})[0][0].transpose(1, 2, 0)
             out[y0:y0+_TILE, x0:x0+_TILE] += (patch - strength * noise) * win
             wsum[y0:y0+_TILE, x0:x0+_TILE] += win

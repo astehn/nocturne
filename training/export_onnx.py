@@ -10,7 +10,7 @@ import numpy as np, torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data as D
-from model import DenoiseUNet
+from model import DenoiseUNet, SIGMA_SCALE
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v2")
@@ -23,7 +23,7 @@ net = DenoiseUNet(base=ck.get("args", {}).get("base", 32))
 net.load_state_dict(ck["model"]); net.eval()
 
 os.makedirs(os.path.dirname(a.out), exist_ok=True)
-dummy = torch.randn(1, 3, a.tile, a.tile)
+dummy = torch.randn(1, 4, a.tile, a.tile)
 torch.onnx.export(
     net, dummy, a.out, input_names=["input"], output_names=["noise"],
     dynamic_axes={"input": {0: "batch", 2: "h", 3: "w"},
@@ -44,12 +44,22 @@ size = os.path.getsize(a.out) / 1e6
 print(f"exported {a.out}  ({size:.1f} MB, self-contained)")
 assert size > 5, "weights are not embedded — the file is a graph stub"
 
+def _random_tile(h: int, w: int, rng: np.random.Generator) -> np.ndarray:
+    """3 image channels + 1 constant sigma-map channel, matching what
+    denoise() concatenates before calling forward() -- the exported graph's
+    input IS this 4-channel tensor, not a bare RGB tile."""
+    img = rng.random((1, 3, h, w), dtype=np.float32) * 0.6 + 0.2
+    sigma = rng.uniform(0.0005, 0.0025)          # plausible real-tile range
+    smap = np.full((1, 1, h, w), sigma / SIGMA_SCALE, dtype=np.float32)
+    return np.concatenate([img, smap], axis=1)
+
+
 import onnxruntime as ort
 sess = ort.InferenceSession(a.out, providers=["CPUExecutionProvider"])
 worst = 0.0
 rng = np.random.default_rng(0)
 for trial in range(5):
-    x = rng.random((1, 3, a.tile, a.tile), dtype=np.float32) * 0.6 + 0.2
+    x = _random_tile(a.tile, a.tile, rng)
     with torch.no_grad():
         ref = net(torch.from_numpy(x)).numpy()
     got = sess.run(["noise"], {"input": x})[0]
@@ -58,7 +68,7 @@ print(f"PyTorch vs ONNX, worst absolute difference over 5 random tiles: {worst:.
 assert worst < 1e-5, "ONNX output does not match PyTorch — do NOT ship this"
 
 # a non-square, non-multiple-of-8 size, because tiling at image edges will hit one
-x = rng.random((1, 3, 200, 328), dtype=np.float32) * 0.6 + 0.2
+x = _random_tile(200, 328, rng)
 try:
     got = sess.run(["noise"], {"input": x})[0]
     with torch.no_grad():
@@ -72,7 +82,9 @@ meta = {"model": os.path.basename(a.out), "sensor": "s30", "run": os.path.basena
         "asinh_a": D._ASINH_A, "space": "linear, pre-stretch",
         "predicts": "noise residual; result = input - strength * noise",
         "trained_on": list(D.S30_TRAIN), "validated_on": list(D.S30_VAL),
-        "held_out": list(D.S30_TEST), "tile": a.tile}
+        "held_out": list(D.S30_TEST), "tile": a.tile,
+        "in_channels": 4, "sigma_scale": SIGMA_SCALE,
+        "input_layout": "[R,G,B,sigma_map] -- sigma_map is estimate_sigma(image)/sigma_scale"}
 with open(os.path.splitext(a.out)[0] + ".json", "w") as fh:
     json.dump(meta, fh, indent=2)
 print("metadata:", json.dumps(meta))
