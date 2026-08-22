@@ -1,0 +1,12 @@
+{
+  "name": "ladder_v1",
+  "sensor": "s30",
+  "source": "/Volumes/Work2/Images/Astro/Training",
+  "combine_nights": true,
+  "depths": [1, 2, 4, 8, 16, 32, 64, 128],
+  "min_ratio": 4.0,
+  "min_target": 16,
+  "pairs_per_depth": 2,
+  "tiles": true,
+  "exclude_mosaics": true
+}
