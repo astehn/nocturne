@@ -524,3 +524,89 @@ def test_narrowband_help_gets_the_direction_of_the_two_headline_sliders_right():
     masks = [float(nebula_mask(rgb, p).mean()) for p in (0.0, 0.4, 1.0)]
     assert masks[0] > masks[1] > masks[2], "Protect background is inverted"
     assert "a higher setting protects more" in b
+
+
+def test_dualband_help_sends_you_to_the_right_tool_for_what_you_have():
+    """The overview topic said the Ha/OIII tool "splits a dualband master into
+    separate Ha and OIII masters, so you can combine them ... in your tool of
+    choice". It takes raw subs, not a master; it produces one file, not two; and
+    Nocturne finishes the job itself. Troubleshooting repeated the same claim."""
+    b = _body("dualband")
+    tb = _body("troubleshooting")
+    hd = _src("nocturne/ui/haoiii_dialog.py")
+    mw = _src("nocturne/ui/main_window.py")
+    for wrong in ("separate Ha and OIII masters", "tool of choice", "splits a dualband master"):
+        assert wrong not in b, f"the topic still claims {wrong!r}"
+        assert wrong not in tb, f"troubleshooting still claims {wrong!r}"
+    assert "split it into Ha and OIII channels" not in tb
+
+    # Route 1 is the Narrowband tool, on the stretched master
+    assert "Narrowband" in b and 'load_icon("narrowband"' in mw
+    assert "after the stretch" in b and "Narrowband works on the " in mw
+    # Route 2 is the Ha/OIII tool, on the raw subs, producing ONE master
+    assert "raw subs" in b and 'form.addRow("Folder of raw subs"' in hd
+    assert "<b>single</b> master" in b and "not two files" in b
+    assert '"Ha/OIII master"' in mw, "the extractor no longer hands a master back"
+    for route in ("Route 1", "Route 2"):
+        assert route in b
+
+
+def test_dualband_help_agrees_with_both_engines_about_which_gas_is_where():
+    """Two separate extractors, one claim: Ha is red, OIII is green AND blue.
+    The topic is the only place a user is told this, and it is the assumption
+    under every palette."""
+    from nocturne.core.image import AstroImage
+    from nocturne.core.narrowband import extract_ha_oiii
+    from nocturne.stacking.haoiii import extract_cfa_planes
+    b = _body("dualband")
+    assert "Ha on the red ones, OIII on the green and blue ones" in b
+    assert "hydrogen from red, oxygen from green and blue" in b
+
+    # Route 1: out of a finished colour image
+    rgb = np.zeros((8, 8, 3), np.float32)
+    rgb[..., 0], rgb[..., 1], rgb[..., 2] = 1.0, 0.4, 0.6
+    ha, oiii = extract_ha_oiii(AstroImage(rgb, is_linear=False))
+    assert ha.mean() == pytest.approx(1.0, abs=1e-6), "Ha is no longer the red channel"
+    assert oiii.mean() == pytest.approx(0.5, abs=1e-6), \
+        "OIII is no longer the average of green and blue"
+
+    # Route 2: out of the raw Bayer grid, same convention
+    cfa = np.zeros((8, 8), np.float32)
+    cfa[0::2, 0::2] = 1.0                      # RGGB red sites
+    cfa[0::2, 1::2] = cfa[1::2, 0::2] = 0.4    # green sites
+    cfa[1::2, 1::2] = 0.6                      # blue site
+    ha2, oiii2 = extract_cfa_planes(cfa, "RGGB")
+    assert ha2.mean() == pytest.approx(1.0, abs=1e-3)
+    assert oiii2.mean() == pytest.approx(0.5, abs=1e-3)
+
+
+def test_dualband_help_is_right_that_sho_is_unavailable_and_names_the_real_palettes():
+    from nocturne.core.narrowband import PALETTES, _combine
+    b = _body("dualband")
+    ha = np.linspace(0.1, 0.9, 64).reshape(8, 8).astype(np.float32)
+    oiii = np.linspace(0.9, 0.1, 64).reshape(8, 8).astype(np.float32)
+    with pytest.raises(ValueError):
+        _combine(ha, oiii, "SHO", 0.6)
+    assert "SHO is not offered anywhere in Nocturne" in b
+    for palette in PALETTES:
+        assert f"<b>{palette}</b>" in b, f"the topic does not name the {palette!r} palette"
+
+
+def test_dualband_help_is_honest_that_auto_enhance_applies_no_palette():
+    """A user who taps Auto Enhance on dualband data and gets a red-gold image
+    needs to know that is the design, not a failure to detect narrowband."""
+    from nocturne.core.auto_enhance import build_auto_plan, detect_data_type
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    b = _body("dualband")
+    assert "no palette in <b>Auto " in b and "red-gold" in b
+    img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True,
+                     metadata={"filter": "LP"})
+    stages = [stage for stage, _ in build_auto_plan(img, Settings())]
+    assert stages, "the auto plan is empty; this test proves nothing"
+    assert "narrowband" not in stages, "Auto Enhance now applies a palette; update the help"
+    # and the topic's LP / IRCUT reading of the header
+    assert "<b>LP</b>" in b and "<b>IRCUT</b>" in b
+    assert detect_data_type({"filter": "LP"}) == "dualband"
+    assert detect_data_type({"filter": "IRCUT"}) == "broadband"
+    assert "FILTER" in _src("nocturne/core/fits_io.py")
