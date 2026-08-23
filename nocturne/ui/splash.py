@@ -5,10 +5,12 @@ not the obvious one. Nocturne starts fast, so the splash was created, shown and
 replaced by the main window inside a few hundred milliseconds — it was working
 perfectly and nobody ever saw it.
 
-The fix is a MINIMUM VISIBLE TIME, not a delay bolted onto startup. Startup
-work runs while the splash is up, and only the unused remainder is waited out
-(:func:`remaining_hold`), so a slow launch costs nothing extra and a fast one
-still shows the thing.
+The fix is a minimum visible time measured from AFTER loading finishes. The
+obvious version — start the clock when the splash is shown and wait out the
+remainder — does not work, and failed twice: building the main window blocks the
+event loop for about half of startup, so the splash is on screen but frozen and
+never repainted. "It was up for two seconds" and "the user saw it for two
+seconds" are different claims, and only the second one matters.
 
 How that wait is spent matters as much as its length. `time.sleep` blocks the
 event loop, so the splash never gets to paint: macOS shows an empty white
@@ -40,15 +42,6 @@ _CAPTION_MARGIN = 22
 def splash_caption(version: str) -> str:
     """The version line, derived from the running version and never copied."""
     return f"v{version}"
-
-
-def remaining_hold(elapsed: float, minimum: float = MIN_SPLASH_SECONDS) -> float:
-    """How much longer the splash must stay up, given time already spent.
-
-    Clamped at zero: a startup slower than the minimum has already shown the
-    splash for long enough and must not be asked to wait backwards.
-    """
-    return max(0.0, float(minimum) - float(elapsed))
 
 
 class NocturneSplash(QSplashScreen):

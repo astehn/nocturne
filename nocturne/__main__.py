@@ -1,6 +1,5 @@
 import multiprocessing
 import sys
-import time
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, QTimer
@@ -10,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 from . import APP_NAME, __version__
 from .settings import autoconfigure_tools, resolve_settings_path
 from .ui.main_window import MainWindow
-from .ui.splash import make_splash, remaining_hold
+from .ui.splash import MIN_SPLASH_SECONDS, make_splash
 from .ui.theme import apply_dark_theme
 
 _ASSETS = Path(__file__).resolve().parent / "assets"
@@ -31,7 +30,6 @@ def main() -> None:
     # inherits the app palette. `--no-splash` exists because the person who
     # relaunches this app most is the one working on it.
     splash = None
-    started = time.monotonic()
     if "--no-splash" not in sys.argv:
         splash = make_splash(__version__)
         splash.show()
@@ -46,18 +44,29 @@ def main() -> None:
     win.resize(1280, 760)
 
     if splash is not None:
-        # Spend the REMAINDER of the minimum, not a fixed delay: a slow launch
-        # has already earned its visible time and waits for nothing extra.
+        # THE CLOCK STARTS HERE, once loading is finished — not when the splash
+        # was shown.
         #
+        # Building MainWindow blocks the event loop for ~1.1s of a ~2.3s
+        # startup (measured 2026-08-23). Throughout that the splash is on
+        # screen but FROZEN: never repainted, not composited, effectively not
+        # there. Counting it as visible time left under a second of real
+        # display and the splash appeared to flash and vanish — which is
+        # exactly how the first attempt at this failed, and why "it was up for
+        # two seconds" and "the user saw it for two seconds" are not the same
+        # claim.
+        #
+        # So: finish loading, force one real paint, THEN hold the full minimum.
+        splash.raise_()
+        app.processEvents()
+
         # A nested QEventLoop, never time.sleep — sleeping blocks the event
-        # loop, so the splash never paints and macOS shows a white rectangle
-        # and then a beachball. A click ends the wait early via the same loop.
-        hold = remaining_hold(time.monotonic() - started)
-        if hold > 0:
-            loop = QEventLoop()
-            QTimer.singleShot(int(hold * 1000), loop.quit)
-            splash.dismissed.connect(loop.quit)
-            loop.exec()
+        # loop, so the splash still would not paint and macOS shows a white
+        # rectangle and then a beachball. A click ends the wait early.
+        loop = QEventLoop()
+        QTimer.singleShot(int(MIN_SPLASH_SECONDS * 1000), loop.quit)
+        splash.dismissed.connect(loop.quit)
+        loop.exec()
         splash.finish(win)
 
     win.show()

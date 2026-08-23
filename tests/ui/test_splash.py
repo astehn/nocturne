@@ -10,7 +10,6 @@ from nocturne.ui.splash import (
     MIN_SPLASH_SECONDS,
     NocturneSplash,
     make_splash,
-    remaining_hold,
     splash_caption,
 )
 
@@ -22,15 +21,41 @@ def test_the_caption_reports_the_running_version():
     assert nocturne.__version__ in splash_caption(nocturne.__version__)
 
 
-def test_the_hold_fills_only_the_time_startup_did_not_use():
-    """The previous attempt failed because the app loaded before the splash was
-    ever seen. The fix is a MINIMUM visible time, not a fixed delay added to
-    startup: a slow start waits for nothing extra."""
-    assert remaining_hold(0.0, minimum=2.0) == pytest.approx(2.0)
-    assert remaining_hold(0.5, minimum=2.0) == pytest.approx(1.5)
-    assert remaining_hold(2.0, minimum=2.0) == pytest.approx(0.0)
-    # Never negative: a slow startup must not ask the caller to wait backwards.
-    assert remaining_hold(9.0, minimum=2.0) == 0.0
+def test_the_hold_starts_after_the_window_is_built_not_before(qtbot):
+    """Andreas, 2026-08-23, on the second failed attempt: "the splash just
+    disappears... it should be visible for two seconds from the time the
+    application has FINISHED loading."
+
+    He was right, and the measurement agreed: startup is ~2.3s of which ~1.1s
+    is MainWindow construction, and throughout that the event loop is blocked,
+    so the splash is on screen but frozen and never repainted. Starting the
+    clock when the splash is SHOWN therefore spends most of the budget on time
+    the user cannot see, leaving a flash.
+
+    Pinned by position: the wait must come after the window exists.
+    """
+    src = Path(nocturne.__file__).resolve().parent / "__main__.py"
+    tree = ast.parse(src.read_text())
+    main_fn = next(n for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def line_of(name: str) -> int | None:
+        for node in ast.walk(main_fn):
+            if isinstance(node, ast.Call):
+                f = node.func
+                if isinstance(f, ast.Name) and f.id == name:
+                    return node.lineno
+                if isinstance(f, ast.Attribute) and f.attr == name:
+                    return node.lineno
+        return None
+
+    window_line = line_of("MainWindow")
+    wait_line = line_of("QEventLoop")
+    assert window_line is not None and wait_line is not None
+    assert wait_line > window_line, (
+        "the splash hold runs BEFORE the window is built, so most of it is "
+        "spent while the event loop is blocked and the splash cannot repaint"
+    )
 
 
 def test_the_minimum_is_long_enough_to_actually_see():
