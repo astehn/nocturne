@@ -49,6 +49,37 @@ def masked_l1(pred, target, mask):
     return ((pred - target).abs() * m).sum() / denom
 
 
+def masked_l2(pred, target, mask):
+    m = mask.expand_as(pred)
+    denom = m.sum().clamp(min=1.0)
+    return (((pred - target) ** 2) * m).sum() / denom
+
+
+def _per_sample(err, mask):
+    m = mask.expand_as(err)
+    denom = m.sum(dim=(1, 2, 3)).clamp(min=1.0)
+    return (err * m).sum(dim=(1, 2, 3)) / denom
+
+
+def selected_loss(pred, target, mask, is_n2n):
+    """L1 for truth pairs, L2 for Noise2Noise pairs, chosen per sample.
+
+    L1's minimiser is the conditional median; Noise2Noise's unbiasedness
+    argument requires the conditional MEAN, i.e. L2 -- see
+    test_train_loss.py::test_l2_recovers_the_mean_and_l1_recovers_the_median
+    for the demonstration. Truth pairs keep L1 because it is what ladder_v1
+    was trained under and it holds fine detail well; whether they would also
+    do better under L2 is an open measurement, not an assumption baked in
+    here.
+
+    Reduced per sample first, so a mixed batch does not let one kind's
+    magnitude dominate the other's gradient.
+    """
+    l1 = _per_sample((pred - target).abs(), mask)
+    l2 = _per_sample((pred - target) ** 2, mask)
+    return torch.where(is_n2n > 0.5, l2, l1).mean()
+
+
 @torch.no_grad()
 def evaluate(model, loader, device):
     """Validation numbers that MEAN something.
@@ -185,7 +216,7 @@ def main() -> None:
             is_n2n = is_n2n.to(dev)
             sig_min = min(sig_min, sigma.min().item())
             sig_max = max(sig_max, sigma.max().item())
-            loss = masked_l1(model.denoise(noisy, sigma, 1.0), clean, mask)
+            loss = selected_loss(model.denoise(noisy, sigma, 1.0), clean, mask, is_n2n)
             opt.zero_grad(); loss.backward(); opt.step()
             run += loss.item(); n += 1
         sched.step()
