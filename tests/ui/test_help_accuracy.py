@@ -668,8 +668,9 @@ def test_recipes_help_is_right_that_a_replayed_crop_is_re_detected():
 
 
 def test_recipes_help_is_right_about_the_files_batch_reads_and_writes(qtbot, tmp_path):
-    """Only FITS is picked up, and only from the folder itself. A user pointing
-    Batch at a folder of TIFFs gets "0/0" and no explanation."""
+    """Only FITS is picked up, and only from the folder itself. Pointing Batch at
+    a folder of TIFFs used to get "0/0" and no explanation; it is now refused
+    before the run, and the help has to describe THAT, not the old report."""
     from nocturne.batch import _EXPORTERS
     from nocturne.settings import Settings
     from nocturne.ui.batch_dialog import BatchDialog
@@ -695,8 +696,10 @@ def test_recipes_help_is_right_about_the_files_batch_reads_and_writes(qtbot, tmp
         "Batch's input patterns changed; the help says FITS only, this folder only"
     for ext in ("<b>.fit</b>", "<b>.fits</b>", "<b>.fts</b>"):
         assert ext in b
-    assert "0/0" in b and "Done — {ok}/{len(results)} succeeded" in \
-        _src("nocturne/ui/batch_dialog.py")
+    assert "0/0" not in b, "the help still promises a 0/0 report Batch no longer gives"
+    assert "stops before it starts" in b, "the help never says the run is refused"
+    assert "No images to process in" in _src("nocturne/ui/batch_dialog.py"), \
+        "the refusal the help describes is not the one the dialog shows"
 
 
 def test_recipes_help_warns_that_an_existing_output_is_overwritten(tmp_path):

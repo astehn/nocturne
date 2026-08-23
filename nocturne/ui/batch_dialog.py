@@ -17,6 +17,12 @@ from .worker import run_async
 from . import file_dialogs
 
 
+# The formats Batch reads, in ONE place: _input_files globs these and the
+# nothing-found message names them, so the message cannot quietly become a lie
+# the day a format is added.
+_INPUT_PATTERNS = ("*.fit", "*.fits", "*.fts")
+
+
 class _ProgressSignals(QObject):
     progress = Signal(int, int)
 
@@ -134,7 +140,7 @@ class BatchDialog(QDialog):
     def _input_files(self) -> list[str]:
         folder = self.input_edit.text().strip()
         files: list[str] = []
-        for pat in ("*.fit", "*.fits", "*.fts"):
+        for pat in _INPUT_PATTERNS:
             files.extend(glob.glob(os.path.join(folder, pat)))
         return sorted(files)
 
@@ -155,6 +161,16 @@ class BatchDialog(QDialog):
             return
         recipe = load_recipe(recipe_path)
         paths = self._input_files()
+        if not paths:
+            # "Done — 0/0 succeeded" reads as success. Name the folder and what
+            # was looked for, because the usual cause is a folder of TIFFs, or
+            # the images sitting one level further down.
+            exts = ", ".join(p.lstrip("*") for p in _INPUT_PATTERNS)
+            self.status.setText(
+                f"No images to process in {self.input_edit.text().strip()} — "
+                f"Batch reads {exts} files, and only in that folder, not in "
+                f"sub-folders.")
+            return
         fmt = self.format_box.currentText()
         outdir = self.output_edit.text().strip()
         settings = self._settings

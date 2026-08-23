@@ -11,6 +11,7 @@ from nocturne.ui.batch_dialog import BatchDialog  # noqa: E402
 def test_batch_dialog_runs_with_fake_runner(qtbot, tmp_path):
     (tmp_path / "r.json").write_text('{"version":1,"steps":[{"stage":"stretch","option":0.5}]}')
     (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "a.fits").write_bytes(b"")   # an empty folder is refused now
     (tmp_path / "out").mkdir()
     dlg = BatchDialog(Settings())
     qtbot.addWidget(dlg)
@@ -44,6 +45,10 @@ def _ready(dlg, tmp_path):
     (tmp_path / "r.json").write_text('{"version":1,"steps":[{"stage":"stretch","option":0.5}]}')
     (tmp_path / "in").mkdir(exist_ok=True)
     (tmp_path / "out").mkdir(exist_ok=True)
+    # A run needs something to run on: an empty input folder is now refused
+    # rather than reported as "0/0 succeeded". The runner is faked in these
+    # tests, so the file is never opened.
+    (tmp_path / "in" / "a.fits").write_bytes(b"")
     dlg.recipe_edit.setText(str(tmp_path / "r.json"))
     dlg.input_edit.setText(str(tmp_path / "in"))
     dlg.output_edit.setText(str(tmp_path / "out"))
@@ -169,3 +174,41 @@ def test_a_partial_collision_still_runs(qtbot, tmp_path):
     dlg._batch_runner = lambda *a, **k: started.append(True) or []
     dlg.run()
     qtbot.waitUntil(lambda: started == [True], timeout=2000)
+
+
+def test_an_input_folder_with_no_images_says_so_and_does_not_run(qtbot, tmp_path):
+    # Was: "Done — 0/0 succeeded", which reads as success.
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    _ready(dlg, tmp_path)
+    tiffs = tmp_path / "tiffs"
+    tiffs.mkdir()
+    (tiffs / "m42.tiff").write_bytes(b"")
+    dlg.input_edit.setText(str(tiffs))
+    started = []
+    dlg._batch_runner = lambda *a, **k: started.append(True) or []
+    dlg.run()
+    text = dlg.status.text()
+    assert str(tiffs) in text, text                    # names the folder it looked in
+    assert "0/0" not in text and "succeeded" not in text
+    assert dlg._active_token is None
+    qtbot.wait(100)
+    assert started == [], "a run started on an empty input folder"
+
+
+def test_the_empty_folder_message_lists_the_extensions_the_glob_actually_uses(qtbot, tmp_path):
+    # Teeth against drift: the message and the glob must read from one list, or
+    # the message becomes a confident lie the day a format is added.
+    from nocturne.ui.batch_dialog import _INPUT_PATTERNS
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    _ready(dlg, tmp_path)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    dlg.input_edit.setText(str(empty))
+    dlg._batch_runner = lambda *a, **k: []
+    dlg.run()
+    text = dlg.status.text()
+    assert _INPUT_PATTERNS, "the glob patterns must be a shared constant"
+    for pat in _INPUT_PATTERNS:
+        assert pat.lstrip("*") in text, f"{pat} missing from: {text}"
