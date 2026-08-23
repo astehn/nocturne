@@ -44,62 +44,146 @@ def test_run_queue_defaults_to_run_one(monkeypatch):
     assert results[0].status == "ok"
 
 
-# ------------------------------------------------------------------ promote
+# -------------------------------------------------------------------- stage
 
-def test_a_failed_gate_does_not_promote_the_model(tmp_path):
-    """The brief's own acceptance test."""
-    from nightly import promote
+def _models_dir_digest():
+    """A digest of the models directory the APP loads from, as it stands now."""
+    import hashlib
+    from pathlib import Path
 
-    run_dir = tmp_path / "run"
-    dest = tmp_path / "dest"
-    assert promote(run_dir, gate_passed=False, dest=dest) is False
-    assert not list(dest.glob("*.onnx"))
+    models = Path(__file__).resolve().parents[2] / "nocturne" / "assets" / "models"
+    h = hashlib.sha256()
+    for f in sorted(models.iterdir()) if models.is_dir() else []:
+        h.update(f.name.encode())
+        h.update(str(f.stat().st_size).encode())
+        h.update(hashlib.sha256(f.read_bytes()).digest() if f.stat().st_size < 20_000_000
+                 else str(f.stat().st_mtime_ns).encode())
+    return h.hexdigest()
 
 
-def test_promote_copies_the_model_when_the_gate_passes(tmp_path):
-    from nightly import promote
+def test_a_passing_run_leaves_the_shipped_model_untouched(tmp_path):
+    """The 2026-08-23 run passed its gate and promoted a model that still
+    damaged the M8 master. The gate got stronger, but 'passed' still is not
+    'safe' -- the proxy is blind to everything that is not chroma-shaped. So
+    the runner loses the ability to ship anything.
+
+    Asserted as UNCHANGED bytes of the REAL nocturne/assets/models directory,
+    not as 'different from the new model': `!= new` would pass while the runner
+    wrote some third wrong thing, and a monkeypatched destination would miss a
+    hard-coded path entirely.
+    """
+    import nightly
+
+    before = _models_dir_digest()
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "model.onnx").write_bytes(b"onnx-bytes")
-    (run_dir / "model.json").write_text('{"a": 1}')
-    dest = tmp_path / "dest"
+    (run_dir / "model.onnx").write_bytes(b"a freshly trained model")
+    (run_dir / "model.json").write_text('{"sigma_scale": 0.0015}')
 
-    assert promote(run_dir, gate_passed=True, dest=dest, sensor="s30") is True
-    assert (dest / "denoise_s30_v1.onnx").read_bytes() == b"onnx-bytes"
-    assert (dest / "denoise_s30_v1.json").read_text() == '{"a": 1}'
-    assert not [p for p in dest.iterdir() if p.name.startswith(".")]  # no temp debris
+    assert nightly.stage(str(run_dir), gate_passed=True, sensor="s30")
+
+    assert _models_dir_digest() == before
+    assert (run_dir / "staged" / "denoise_s30_v1.onnx").read_bytes() == b"a freshly trained model"
+    assert (run_dir / "staged" / "denoise_s30_v1.json").read_text() == '{"sigma_scale": 0.0015}'
+    assert not [p for p in (run_dir / "staged").iterdir() if p.name.startswith(".")]
 
 
-def test_promote_returns_false_when_no_exported_model_exists(tmp_path):
-    """Gate passed but export never ran (e.g. it was skipped) -- nothing to promote."""
-    from nightly import promote
+def test_a_failing_gate_stages_nothing(tmp_path):
+    import nightly
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    dest = tmp_path / "dest"
+    (run_dir / "model.onnx").write_bytes(b"x")
+    assert not nightly.stage(str(run_dir), gate_passed=False, sensor="s30")
+    assert not (run_dir / "staged").exists()
 
-    assert promote(run_dir, gate_passed=True, dest=dest) is False
-    assert not list(dest.glob("*.onnx"))
+
+def test_stage_returns_false_when_no_exported_model_exists(tmp_path):
+    """Gate passed but export never ran (e.g. it was skipped) -- nothing to stage."""
+    import nightly
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert nightly.stage(str(run_dir), gate_passed=True) is False
+    assert not (run_dir / "staged").exists()
 
 
-def test_promote_leaves_no_partial_file_if_the_copy_is_interrupted(tmp_path, monkeypatch):
+def test_stage_leaves_no_partial_file_if_the_copy_is_interrupted(tmp_path, monkeypatch):
     """Prove the guard has teeth: break the copy mid-flight and confirm the
-    destination is left clean, not half-written."""
+    staging directory is left clean, not half-written."""
     import nightly
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     (run_dir / "model.onnx").write_bytes(b"x" * 1000)
-    dest = tmp_path / "dest"
 
     def boom(*a, **k):
         raise OSError("disk full")
 
     monkeypatch.setattr(nightly.shutil, "copyfile", boom)
     with pytest.raises(OSError):
-        nightly.promote(run_dir, gate_passed=True, dest=dest)
-    assert not list(dest.rglob("*"))
+        nightly.stage(str(run_dir), gate_passed=True)
+    assert not list((run_dir / "staged").rglob("*"))
+
+
+def test_nightly_no_longer_exposes_promote():
+    """A leftover promote() would be an easy accident to reintroduce."""
+    import nightly
+    assert not hasattr(nightly, "promote")
+
+
+def test_nightly_does_not_know_where_the_app_loads_models_from():
+    """The whole point of the change: the runner has no destination to ship to.
+    Pinned on the source, so a future edit that reintroduces the path is caught
+    even if no test happens to exercise that code path."""
+    import inspect
+    import nightly
+
+    assert not hasattr(nightly, "_NOCTURNE_MODELS_DIR")
+    src = inspect.getsource(nightly)
+    assert "assets" not in src, "nightly.py names the app's model directory again"
+
+
+def test_promote_ships_only_what_was_staged_and_only_when_told(tmp_path, monkeypatch):
+    """The human step. --yes is the explicit consent; without it, an aborted
+    prompt must leave the shipped model byte-identical."""
+    import hashlib
+    import promote as promote_mod
+
+    models = tmp_path / "models"
+    models.mkdir()
+    shipped = models / "denoise_s30_v1.onnx"
+    shipped.write_bytes(b"old model")
+    before = hashlib.sha256(shipped.read_bytes()).hexdigest()
+    monkeypatch.setattr(promote_mod, "_MODELS", models)
+
+    run_dir = tmp_path / "run"
+    staged = run_dir / "staged"
+    staged.mkdir(parents=True)
+    (staged / "denoise_s30_v1.onnx").write_bytes(b"new model")
+    (staged / "denoise_s30_v1.json").write_text('{"sigma_scale": 0.002}')
+
+    monkeypatch.setattr("builtins.input", lambda *a: "n")
+    assert promote_mod.main(["--run", str(run_dir)]) == 1
+    assert hashlib.sha256(shipped.read_bytes()).hexdigest() == before
+
+    assert promote_mod.main(["--run", str(run_dir), "--yes"]) == 0
+    assert shipped.read_bytes() == b"new model"
+    assert (models / "denoise_s30_v1.json").read_text() == '{"sigma_scale": 0.002}'
+    assert not [p for p in models.iterdir() if p.name.startswith(".")]
+
+
+def test_promote_refuses_a_run_with_nothing_staged(tmp_path, monkeypatch, capsys):
+    import promote as promote_mod
+
+    models = tmp_path / "models"
+    models.mkdir()
+    monkeypatch.setattr(promote_mod, "_MODELS", models)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert promote_mod.main(["--run", str(run_dir)]) == 2
+    assert not list(models.iterdir())
 
 
 # -------------------------------------------------------------- run history
@@ -205,14 +289,14 @@ def test_write_queue_summary_lists_every_config(tmp_path):
     from nightly import write_queue_summary, ExperimentResult
 
     results = [
-        ExperimentResult(name="a", status="ok", gate_passed=True, promoted=True, duration_s=61.0),
+        ExperimentResult(name="a", status="ok", gate_passed=True, staged=True, duration_s=61.0),
         ExperimentResult(name="b", status="error", error="boom", duration_s=3.0),
     ]
     out = write_queue_summary(results, tmp_path / "summary.md")
     text = open(out).read()
     assert "a" in text and "b" in text and "boom" in text
     assert "1/2 configs completed" in text
-    assert "1 promoted" in text
+    assert "1 staged" in text
 
 
 def test_cli_config_mode_reports_a_failing_single_config(tmp_path, monkeypatch, capsys):

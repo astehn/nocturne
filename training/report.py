@@ -148,7 +148,13 @@ def write_report(run_dir, gate, metrics, images, previous=None) -> str:
     lines = [f"# VERDICT: {verdict}", ""]
 
     if gate.passed:
-        lines.append("Do-no-harm gate passed at every depth checked. Safe to promote.")
+        lines.append(
+            "Do-no-harm gate passed at every depth checked, including the "
+            "truth-free deep-end proxy. That proxy is blind to anything not "
+            "chroma-shaped, so this is not proof of safety: the model is "
+            "STAGED, not shipped. Look at the comparison sheet, then promote "
+            "it yourself with training/promote.py."
+        )
     else:
         n = len(gate.failures)
         lines.append(

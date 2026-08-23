@@ -14,11 +14,15 @@ that ONE config, not the rest of the night.
     missing file during evaluation) is caught and recorded as ONE failed
     experiment rather than a dead queue.
 
-`promote()` is the other half of "unattended": a model that fails the
-do-no-harm gate (gate.py) must never reach nocturne/assets/models/, and a
-model that passes must arrive there atomically -- a copy interrupted by e.g.
-a laptop going to sleep must not leave a half-written .onnx where the app
-will try to load it next launch.
+`stage()` is the other half of "unattended", and it deliberately stops one
+step short of shipping. The 2026-08-23 run passed its own gate and promoted a
+model that still damaged a real 405-frame master; the gate is stronger now,
+but the deep-end proxy is explicitly blind to anything that is not
+chroma-shaped, so "passed" still does not mean "safe". This runner therefore
+has no destination to ship to at all -- it copies into run_dir/staged/ and a
+person runs training/promote.py after reading the morning report. The copy is
+still atomic, so a laptop going to sleep mid-copy cannot leave a half-written
+.onnx for the promote step to pick up.
 """
 from __future__ import annotations
 
@@ -44,7 +48,6 @@ from report import render_comparison_sheet, write_report  # noqa: E402
 _TRAINING_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _TRAINING_DIR.parent
 _DEFAULT_RUN_ROOT = Path("/Volumes/Work2/Images/Astro/denoise_runs")
-_NOCTURNE_MODELS_DIR = _REPO_ROOT / "nocturne" / "assets" / "models"
 
 # Subprocesses must run under the SAME interpreter this process was launched
 # with (.venv-train, per CLAUDE.md) -- sys.executable IS that interpreter,
@@ -69,12 +72,12 @@ class ExperimentResult:
     run_dir: str | None = None
     report_path: str | None = None
     gate_passed: bool | None = None
-    promoted: bool = False
+    staged: bool = False
     duration_s: float = 0.0
     error: str | None = None
 
 
-# --------------------------------------------------------------- promotion
+# ----------------------------------------------------------------- staging
 
 def _atomic_copy(src: Path, dst: Path) -> None:
     """Copy src to dst so a reader of dst never observes a partial file.
@@ -94,14 +97,18 @@ def _atomic_copy(src: Path, dst: Path) -> None:
             tmp.unlink()
 
 
-def promote(run_dir, gate_passed: bool, dest, sensor: str = "s30") -> bool:
-    """Copy this run's exported ONNX (+ metadata) into `dest` iff the gate passed.
+def stage(run_dir, gate_passed: bool, sensor: str = "s30") -> bool:
+    """Put this run's ONNX where a human can promote it -- never where the app looks.
 
-    Checked FIRST, before touching the filesystem at all: a model that fails
-    do-no-harm must never land where the app loads models from. That also
-    means a caller with a stale model.onnx left over in run_dir from some
-    earlier passing attempt can't have it promoted on a later failing run's
-    say-so -- the gate result passed in is the only thing that matters.
+    The 2026-08-23 run passed its gate and shipped a model that still damaged a
+    real 405-frame master. The gate is stronger now, but the deep-end proxy is
+    explicitly blind to anything that is not chroma-shaped, so "passed" still
+    does not mean "safe". Shipping is a decision a person makes after looking
+    at the morning report; use training/promote.py.
+
+    The gate is checked FIRST, before touching the filesystem at all, so a
+    stale model.onnx left in run_dir by an earlier passing attempt cannot be
+    staged on a later failing run's say-so.
     """
     if not gate_passed:
         return False
@@ -109,13 +116,11 @@ def promote(run_dir, gate_passed: bool, dest, sensor: str = "s30") -> bool:
     onnx_src = run_dir / "model.onnx"
     if not onnx_src.is_file():
         return False  # e.g. export never ran (smoke, or an earlier failure)
+    staged = run_dir / "staged"
     json_src = run_dir / "model.json"
-    dest = Path(dest)
-    onnx_dst = dest / f"denoise_{sensor}_v1.onnx"
-    json_dst = dest / f"denoise_{sensor}_v1.json"
     if json_src.is_file():
-        _atomic_copy(json_src, json_dst)
-    _atomic_copy(onnx_src, onnx_dst)  # last: this is the file the app checks for
+        _atomic_copy(json_src, staged / f"denoise_{sensor}_v1.json")
+    _atomic_copy(onnx_src, staged / f"denoise_{sensor}_v1.onnx")
     return True
 
 
@@ -310,7 +315,9 @@ def _with_deep_end(depth_results, deep, on_line=print):
 
 def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     """One experiment, end to end: build -> train -> evaluate -> gate -> report
-    -> (export + promote iff the gate passed and this isn't a smoke run)."""
+    -> (export + stage iff the gate passed and this isn't a smoke run).
+
+    Staging is as far as this goes: nothing here ships a model."""
     t0 = time.time()
     name = cfg["name"]
     smoke = bool(cfg.get("smoke", False))
@@ -381,7 +388,7 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     report_path = write_report(str(run_dir), gate_result, metrics, images, previous=previous)
     _save_metrics(run_dir, metrics)
 
-    promoted = False
+    staged = False
     if not smoke and gate_result.passed:
         export_cmd = [
             _PYTHON, str(_TRAINING_DIR / "export_onnx.py"),
@@ -389,11 +396,14 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
             "--out", str(run_dir / "model.onnx"),
         ]
         _run_subprocess(export_cmd, on_line=on_line)
-        promoted = promote(str(run_dir), gate_result.passed, dest=_NOCTURNE_MODELS_DIR, sensor=sensor)
+        staged = stage(str(run_dir), gate_result.passed, sensor=sensor)
+        on_line(f"STAGED at {run_dir / 'staged'} \u2014 NOT shipped. "
+                f"Review the report, then: "
+                f".venv-train/bin/python training/promote.py --run {run_dir}")
 
     return ExperimentResult(
         name=name, status="ok", run_dir=str(run_dir), report_path=report_path,
-        gate_passed=gate_result.passed, promoted=promoted, duration_s=time.time() - t0,
+        gate_passed=gate_result.passed, staged=staged, duration_s=time.time() - t0,
     )
 
 
@@ -423,20 +433,21 @@ def write_queue_summary(results: list[ExperimentResult], out_path) -> str:
     """The morning's punch list: one row per config, before anyone opens the
     per-config report.md files."""
     lines = ["# Nightly run summary", "", time.strftime("%Y-%m-%d %H:%M:%S"), ""]
-    lines.append("| config | status | gate | promoted | duration |")
+    lines.append("| config | status | gate | staged | duration |")
     lines.append("|---|---|---|---|---|")
     for r in results:
         gate = "PASS" if r.gate_passed else ("FAIL" if r.gate_passed is False else "—")
         mins = r.duration_s / 60.0
-        lines.append(f"| {r.name} | {r.status} | {gate} | {'yes' if r.promoted else 'no'} | {mins:.1f} min |")
+        lines.append(f"| {r.name} | {r.status} | {gate} | {'yes' if r.staged else 'no'} | {mins:.1f} min |")
         if r.error:
             lines.append(f"|  | error: `{r.error[:200]}` | | | |")
         if r.report_path:
             lines.append(f"|  | [report]({r.report_path}) | | | |")
     lines.append("")
     ok = sum(1 for r in results if r.status == "ok")
-    promoted = sum(1 for r in results if r.promoted)
-    lines.append(f"{ok}/{len(results)} configs completed; {promoted} promoted.")
+    staged = sum(1 for r in results if r.staged)
+    lines.append(f"{ok}/{len(results)} configs completed; {staged} staged "
+                 "(staged is not shipped \u2014 promote with training/promote.py).")
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines) + "\n")
@@ -458,7 +469,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     g.add_argument("--queue", help="directory of *.json configs, run in sorted filename order")
     g.add_argument("--config", help="a single config JSON file")
     ap.add_argument("--smoke", action="store_true",
-                    help="fast pipeline sanity check on already-built data; never promotes")
+                    help="fast pipeline sanity check on already-built data; never stages")
     ap.add_argument("--summary-out", default=None,
                     help="where to write the combined report (default: run_root/nightly_summary.md)")
     return ap
@@ -488,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         status = "OK" if r.status == "ok" else "ERROR"
         extra = f"  {r.error}" if r.error else ""
-        print(f"{r.name}: {status}  gate={r.gate_passed}  promoted={r.promoted}  "
+        print(f"{r.name}: {status}  gate={r.gate_passed}  staged={r.staged}  "
               f"({r.duration_s:.0f}s){extra}")
     print(f"summary: {summary_out}")
 
