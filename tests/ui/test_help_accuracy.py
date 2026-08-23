@@ -986,3 +986,134 @@ def test_upscale_help_is_right_that_stars_never_go_through_the_engine():
     assert out.data.shape == (80, 80, 3)
     assert out.data.max() > 0.3, "the star layer went through the engine and was erased"
     assert out.metadata["upscale"]["scale"] == 2
+
+
+def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
+    """The topic said "background, colour, stretch, and finishing polish" and
+    quoted not one value. Pin every stage and every constant to build_auto_plan,
+    including the two that depend on what is installed."""
+    from nocturne.core.auto_enhance import (
+        AUTO_BACKGROUND_STRENGTH, AUTO_DENOISE_STRONG, AUTO_GREEN_FRINGE,
+        AUTO_LOCAL_CONTRAST, AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA,
+        AUTO_STRETCH_AMOUNT, build_auto_plan)
+    from nocturne.core.image import AstroImage
+    from nocturne.core.levels import _BLACK_SIGMA
+    from nocturne.settings import Settings
+    from nocturne.ui.pipeline import STEP_NAME
+    from nocturne.ui.step_panels import STRETCH_TARGET_DEFAULTS
+    b = _body("auto-enhance")
+    img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
+
+    # Auto Enhance runs from the user's crop, so the plan it uses omits crop.
+    plan = dict(build_auto_plan(img, Settings(), include_crop=False))
+    assert list(plan) == ["color", "stretch", "levels", "saturation", "green_fringe",
+                          "noise_sharpen", "local_contrast"], "the plan changed"
+    for stage in plan:
+        assert f"<b>{STEP_NAME[stage]}</b>" in b, f"the topic never names {STEP_NAME[stage]!r}"
+
+    # Every number below is FORMATTED FROM the constant, never compared to a
+    # copy of it: asserting plan["stretch"] == AUTO_STRETCH_AMOUNT passes happily
+    # while both move away from the prose, which is the failure this file exists
+    # to catch.
+    assert plan["stretch"] == AUTO_STRETCH_AMOUNT
+    assert f"<b>{AUTO_STRETCH_AMOUNT:.2f}</b>, gentler than the " \
+           f"{STRETCH_TARGET_DEFAULTS['Auto'] / 100:.2f}" in b
+    assert plan["saturation"] == (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)
+    assert f"<b>{AUTO_SATURATION_AMOUNT:.2f}</b> with a light " \
+           f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost" in b
+    assert plan["local_contrast"] == AUTO_LOCAL_CONTRAST
+    assert f"<b>{AUTO_LOCAL_CONTRAST:.2f}</b>" in b
+    assert plan["green_fringe"] == AUTO_GREEN_FRINGE == 1.0 and "at full strength" in b
+    assert plan["noise_sharpen"]["level"] == AUTO_DENOISE_STRONG
+    assert f"at <i>{AUTO_DENOISE_STRONG}</i>, always" in b
+    assert plan["noise_sharpen"]["engine"] is None      # nothing installed
+    assert f"median minus {_BLACK_SIGMA} " in b
+
+    # the two conditional stages, with the tools present
+    full = dict(build_auto_plan(img, Settings(graxpert_path="/bin/echo",
+                                              astap_path="/bin/echo"),
+                                include_crop=False))
+    assert full["background"] == AUTO_BACKGROUND_STRENGTH
+    assert f"<b>Background</b> at <i>{AUTO_BACKGROUND_STRENGTH}</i>" in b
+    assert "<b>only if GraXpert is set up in Settings</b>" in b
+    assert full["color"].method == "photometric" and plan["color"].method == "sky"
+    assert "<b>photometric</b> if ASTAP is set up" in b and "sky-neutralise" in b
+    assert len(plan) == 7 and len(full) == 8
+    assert "the plan is <b>7</b> steps, and with GraXpert <b>8</b>" in b
+
+
+def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
+    """Everything the plan leaves out is a step the user can reach by hand, and
+    the topic now says which and why. Guard the list against the pipeline's."""
+    from nocturne.core.auto_enhance import build_auto_plan
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
+    b = _body("auto-enhance")
+    img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
+    planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
+                                                          astap_path="/bin/echo"))}
+    omitted = [s for s in PROCESSING_ORDER if s not in planned]
+    assert omitted == ["tint", "remove_green", "deconvolution", "ai_denoise",
+                       "recover_core", "curves", "star_reduction"], \
+        "the set of stages Auto Enhance skips changed"
+    for stage in ("deconvolution", "ai_denoise", "recover_core", "curves", "star_reduction"):
+        assert f"<b>{STEP_NAME[stage]}</b>" in b, \
+            f"the topic does not say {STEP_NAME[stage]!r} is left out"
+    assert "narrowband" not in planned and "<b>No narrowband palette, ever.</b>" in b
+    assert "red-gold" in b
+
+
+def test_auto_enhance_help_warns_that_a_failed_stage_is_skipped_in_silence():
+    """TODO calls this out and the help never did: run_auto_plan catches per
+    stage and continues, so a one-click result can be missing a step with no
+    error anywhere. The step count is the only signal."""
+    from nocturne.core.auto_enhance import run_auto_plan
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    b = _body("auto-enhance")
+    assert "<b>skipped in silence</b>" in b and "count the steps" in b
+
+    img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
+    plan = [("stretch", 0.3), ("levels", (0.0, 1.0, 1.0)), ("local_contrast", 0.15)]
+
+    def _boom(*a, **k):
+        raise RuntimeError("tool exploded")
+
+    from nocturne.steps import levels as levels_step
+    original = levels_step.LevelsStep.apply
+    levels_step.LevelsStep.apply = _boom
+    try:
+        results = run_auto_plan(img, plan, Settings())
+    finally:
+        levels_step.LevelsStep.apply = original
+    names = [name for name, _, _ in results]
+    assert names == ["Stretch", "Local Contrast"], \
+        "run_auto_plan no longer swallows a failing stage; the help says it does"
+    assert len(results) == len(plan) - 1     # the count is all the user is told
+    assert "how many steps it applied" in b
+
+
+def test_auto_enhance_help_is_right_that_saying_yes_destroys_the_old_edit():
+    """The confirmation reads like "we will replace this" — but jump_back
+    TRUNCATES, before the first stage runs, so Redo cannot bring the old
+    processing back and a cancelled run leaves you on the bare crop."""
+    from nocturne.core.image import AstroImage
+    from nocturne.history.project import Project
+    import tempfile
+    b = _body("auto-enhance")
+    assert "<b>the old processing is gone at that moment</b>" in b
+    mw = _src("nocturne/ui/main_window.py")
+    assert "self.project.jump_back(kept)" in mw
+    assert "Your crop is kept" in mw and "your crop, rotation and flips" in b
+
+    d = tempfile.mkdtemp()
+    p = Project(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), d)
+    for name in ("Crop", "Stretch", "Saturation"):
+        p.record_precomputed(name, "", AstroImage(np.zeros((8, 8, 3), np.float32),
+                                                  is_linear=True))
+    assert [n for n, _ in p.entries()] == ["Crop", "Stretch", "Saturation"]
+    p.jump_back(1)                       # what _auto_enhance does with kept == 1
+    assert [n for n, _ in p.entries()] == ["Crop"]
+    assert p.can_redo() is False, \
+        "jump_back now keeps the states; the help says Redo cannot bring them back"
