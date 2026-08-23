@@ -742,3 +742,121 @@ def test_recipes_help_explains_why_a_whole_batch_can_fail_identically():
     assert results[0]["ok"] is False, \
         "a missing GraXpert no longer fails the file; the help says it does"
     assert not (pathlib.Path(d) / "m42.tiff").exists(), "a failed file wrote output anyway"
+
+
+def _planted_star_field(seed=3):
+    """A small frame SEP can actually find stars in: real noise (so
+    Background.globalrms is meaningful) plus four planted, warm-coloured stars
+    of decreasing brightness."""
+    rng = np.random.default_rng(seed)
+    h, w = 160, 200
+    data = rng.normal(0.05, 0.004, (h, w, 3)).astype(np.float32)
+    yy, xx = np.mgrid[0:h, 0:w]
+    for y, x, b in [(40, 50, 0.9), (80, 140, 0.6), (120, 70, 0.45), (30, 160, 0.35)]:
+        g = np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.8 ** 2)).astype(np.float32)
+        data += g[:, :, None] * np.array([b, b * 0.7, b * 0.5], np.float32)
+    from nocturne.core.image import AstroImage
+    return AstroImage(np.clip(data, 0, 1).astype(np.float32), is_linear=False)
+
+
+def test_star_spikes_help_quotes_the_sliders_the_dialog_opens_with(qtbot):
+    """Four sliders, and the old topic gave a default or a range for none of
+    them. Read them off a real dialog: Length opening at zero is the whole
+    'nothing happened' story."""
+    from nocturne.ui.star_spikes_dialog import StarSpikesDialog
+    b = _body("star_spikes")
+    sd = _src("nocturne/ui/star_spikes_dialog.py")
+    d = StarSpikesDialog(_planted_star_field())
+    qtbot.addWidget(d)
+
+    rows = {"Length (off → long)": (d.length_slider, d.length_val),
+            "Intensity (faint → full)": (d.intensity_slider, d.intensity_val),
+            "Number of stars": (d.stars_slider, d.stars_val),
+            "Rotation": (d.angle_slider, d.angle_val)}
+    for label in rows:
+        assert f'_row("{label}"' in sd, f"{label!r} is no longer a row"
+        assert f"<b>{label}</b>" in b, f"the topic never names the {label!r} slider"
+
+    assert (d.length_slider.minimum(), d.length_slider.maximum()) == (0, 100)
+    assert d.length_slider.value() == 0 and d.length_val.text() == "0.00"
+    assert "default <b>0.00</b>, range 0.00 to 1.00" in b
+    assert (d.intensity_slider.minimum(), d.intensity_slider.maximum()) == (0, 100)
+    assert d.intensity_slider.value() == 100 and d.intensity_val.text() == "100%"
+    assert "default <b>100%</b>, range 0 to 100%" in b
+    assert (d.stars_slider.minimum(), d.stars_slider.maximum()) == (0, 50)
+    assert d.stars_slider.value() == 6 and d.stars_val.text() == "6"
+    assert "default <b>6</b>, range 0 to 50" in b
+    assert (d.angle_slider.minimum(), d.angle_slider.maximum()) == (0, 90)
+    assert d.angle_slider.value() == 0 and d.angle_val.text() == "0°"
+    assert "default <b>0°</b>, range 0 to 90°" in b
+
+    assert "Double-click" in b and "Double-click to reset" in _src("nocturne/ui/reset_slider.py")
+    assert 'QPushButton("Apply")' in sd and 'QPushButton("Close")' in sd
+    assert "<b>Apply</b>" in b and "<b>Close</b>" in b
+    assert "stretched" in b and "Star Spikes works on the " in _src("nocturne/ui/main_window.py")
+
+
+def test_star_spikes_help_is_right_that_the_dialog_opens_drawing_nothing(qtbot):
+    """The topic's headline reassurance. Prove it as an assert-UNCHANGED: the
+    render at the opening slider positions must equal the image that went in."""
+    from nocturne.core.star_spikes import add_spikes, detect_stars
+    from nocturne.ui.star_spikes_dialog import StarSpikesDialog
+    b = _body("star_spikes")
+    assert "opens with this at zero, which means no spikes at all" in b
+    img = _planted_star_field()
+    stars = detect_stars(img.data)
+    assert len(stars) >= 4, "the fixture has no stars; the rest proves nothing"
+
+    d = StarSpikesDialog(img)
+    qtbot.addWidget(d)
+    np.testing.assert_array_equal(d.result().data, np.clip(img.data, 0.0, 1.0))
+
+    # ... and the two other ways to draw nothing that the topic names
+    np.testing.assert_array_equal(
+        add_spikes(img, stars, 1.0, 0, 0.0, 1.0).data, np.clip(img.data, 0.0, 1.0))
+    np.testing.assert_array_equal(
+        add_spikes(img, stars, 1.0, 6, 0.0, 0.0).data, np.clip(img.data, 0.0, 1.0))
+    assert "At 0 nothing is drawn" in b and "At 0% nothing is drawn" in b
+    # and with no stars found, nothing is drawn at any setting
+    np.testing.assert_array_equal(
+        add_spikes(img, [], 1.0, 6, 0.0, 1.0).data, np.clip(img.data, 0.0, 1.0))
+    assert "no stars the detector recognises" in b
+
+
+def test_star_spikes_help_gets_the_geometry_and_the_blend_right():
+    """Three claims with numbers in them: arms reach 8% of the short edge, the
+    rotation range stops at 90° because the cross repeats there, and the screen
+    blend can only add light."""
+    from nocturne.core.star_spikes import _MAX_LEN_FRAC, add_spikes, detect_stars
+    b = _body("star_spikes")
+    img = _planted_star_field()
+    base = np.clip(img.data, 0.0, 1.0)
+    stars = detect_stars(img.data)
+
+    assert f"about <b>{_MAX_LEN_FRAC:.0%}</b> of your image" in b
+    one = add_spikes(img, stars, 1.0, 1, 0.0, 1.0)          # brightest star only
+    ys, xs = np.nonzero(np.abs(one.data - base).max(axis=2) > 1e-4)
+    reach = np.hypot(ys - stars[0].y, xs - stars[0].x).max()
+    cap = _MAX_LEN_FRAC * min(img.data.shape[:2])
+    assert 0.8 * cap <= reach <= cap + 1.5, f"arm reach {reach:.1f} is not {cap:.1f}px"
+
+    full = add_spikes(img, stars, 1.0, 4, 0.0, 1.0)
+    assert np.allclose(full.data, add_spikes(img, stars, 1.0, 4, 90.0, 1.0).data), \
+        "90° is no longer the same picture as 0°; the help explains the range that way"
+    assert not np.allclose(full.data, add_spikes(img, stars, 1.0, 4, 45.0, 1.0).data)
+    assert "the four arms are 90° apart" in b
+
+    assert (full.data >= base - 1e-6).all(), "the blend now darkens; the help says it cannot"
+    assert "<b>screen-blended</b>" in b and "never darkens" in b
+    assert float(add_spikes(img, stars, 1.0, 4, 0.0, 0.5).data.sum()) < float(full.data.sum())
+
+
+def test_star_spikes_help_is_honest_that_a_recipe_drops_it():
+    """It is one of the two steps Save Recipe warns it must leave out, so a
+    batch of the same recipe comes back without spikes."""
+    from nocturne.recipe import uncaptured_step_names
+    b = _body("star_spikes")
+    assert uncaptured_step_names([("Star Spikes", "")]) == ["Star Spikes"], \
+        "recipes now record Star Spikes; the help says they cannot"
+    assert "<b>recipe cannot record</b>" in b and "Trim is the" in b
+    assert '_PrecomputedStep("Star Spikes"' in _src("nocturne/ui/main_window.py")
