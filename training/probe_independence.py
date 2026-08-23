@@ -51,7 +51,6 @@ def common_mode_fraction(
     b: np.ndarray,
     *,
     hp_sigma: float = 2.0,
-    mask_sigma: float = 25.0,
     dark_fraction: float = 0.60,
 ) -> float:
     """Pearson correlation of two stacks' high-pass residuals, over dark sky.
@@ -61,20 +60,23 @@ def common_mode_fraction(
     and _DARK_FRACTION so this measures noise on the same definition of
     "noise" the conditioning channel uses.
 
-    mask_sigma does NOT mirror noise.py, deliberately. noise.py picks the dark
-    region off luminance smoothed at _HP_SIGMA, which is fine when the thing
-    being measured is zero-mean noise. Here it is not: a common-mode defect is
-    typically BRIGHT (hot pixel, warm column, amp glow), so a 2 px smoothing
-    lets the defect raise its own neighbourhood above the 60th percentile and
-    delete itself from the mask -- measured on the fixed-pattern fixture in
-    test_probe_independence.py, a 2 px mask retains 0.03% of the defect pixels
-    and reads rho=0.011 on data that is 47% common-mode. Estimating the dark
-    region at a scale far above the defect and far below the frame fixes it:
-    rho reads 0.468/0.465/0.466/0.467 at mask_sigma 8/16/25/40, so 25.0 is a
-    plateau rather than a tuned edge. 25 px also matches the scale
-    gate.patch_chroma_bias already uses for the same pixel-scale-vs-scene
-    split. The three other fixtures move by <0.002, so this only changes WHERE
-    the residual is sampled, never what is measured.
+    The dark mask is estimated at hp_sigma, and that small scale is doing more
+    work than it looks. Stars are 3-4 px FWHM, so the high-pass does NOT
+    remove them, and they are identical in both halves by construction -- the
+    mask is the only thing keeping the sky out of a number that is supposed to
+    be about noise. Measured: estimating the mask at 25 px instead reads
+    rho=+0.78 on a pure synthetic star field and +0.46/+0.26 on real disjoint
+    M45/M16 stacks, against +0.02/+0.01 here; excluding sharp structure from
+    the 25 px mask collapses it back to +0.03, i.e. ~95% of that was starlight.
+
+    KNOWN BLIND SPOT, stated rather than hidden: the same masking that keeps
+    stars out also partly excludes a BRIGHT positive defect, which raises its
+    own neighbourhood above the 60th percentile. On a flat field this probe
+    reads only +0.011 on a bright fixed-pattern stripe and +0.004 on sparse
+    hot pixels, against +0.57 on a zero-mean pattern of the same amplitude. So
+    it is sensitive to read-noise/dark-current non-uniformity and insensitive
+    to hot pixels. Hot pixels are handled upstream instead: n2n_v1 integrates
+    with sigma_clip, which rejects them before they reach either half.
     """
     a = np.asarray(a, np.float32)
     b = np.asarray(b, np.float32)
@@ -84,7 +86,7 @@ def common_mode_fraction(
         raise ValueError(f"shape mismatch: {a.shape} vs {b.shape}")
 
     lum = (a.mean(axis=2) + b.mean(axis=2)) / 2.0
-    bg = gaussian_filter(lum, mask_sigma)
+    bg = gaussian_filter(lum, hp_sigma)
     mask = bg <= np.percentile(bg, dark_fraction * 100.0)
 
     xs, ys = [], []
