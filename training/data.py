@@ -78,6 +78,9 @@ class TileRef:
     group: str
     input_count: int
     target_count: int
+    # Defaults to "truth" so pairs built before the Noise2Noise work still load
+    # -- and defaults to the kind whose loss (L1) those pairs were built for.
+    kind: str = "truth"
 
 
 def scan_tiles(root: str) -> list[TileRef]:
@@ -105,7 +108,8 @@ def scan_tiles(root: str) -> list[TileRef]:
                 raise ValueError(f"{pair_dir}: manifest does not claim disjoint frame sets")
             for tile in sorted(glob.glob(os.path.join(pair_dir, "tiles", "*.npz"))):
                 out.append(TileRef(tile, sensor, target, group,
-                                   pair["input_count"], pair["target_count"]))
+                                   pair["input_count"], pair["target_count"],
+                                   pair.get("kind", "truth")))
     return out
 
 
@@ -192,7 +196,12 @@ class TileDataset:
         # that's exactly what the model is being told.
         sigma = estimate_sigma(noisy)
 
+        # Carried per TILE rather than per batch, because a batch mixes tiles
+        # from both kinds of pair and each one needs its own loss.
+        is_n2n = 1.0 if self.tiles[i].kind == "n2n" else 0.0
+
         return (torch.from_numpy(noisy).permute(2, 0, 1),
                 torch.from_numpy(clean).permute(2, 0, 1),
                 torch.from_numpy(mask)[None],
-                torch.tensor(sigma, dtype=torch.float32))
+                torch.tensor(sigma, dtype=torch.float32),
+                torch.tensor(is_n2n, dtype=torch.float32))

@@ -67,6 +67,16 @@ def _slug(value: str) -> str:
     return value.strip("._-") or "unknown"
 
 
+def rung_kind(n_in: int, n_tgt: int, min_ratio: float = 4.0) -> str:
+    """"truth" if the target is genuinely cleaner, else "n2n".
+
+    Defined once, here, because build_dataset plans the rung and _write_pair
+    records it -- and if those two disagreed, a pair would be trained under a
+    loss chosen for the other kind.
+    """
+    return "truth" if n_tgt >= n_in * min_ratio else "n2n"
+
+
 def _sensor_name(telescope: str, instrument: str, shape: tuple[int, int]) -> str:
     text = f"{telescope} {instrument}".lower()
     if "s30" in text or shape == (2160, 3840):
@@ -540,6 +550,7 @@ class PairConfig:
     seed: int = 20260821
     method: str = "average"
     kappa: float = 2.5
+    min_ratio: float = 4.0
     stretch_amount: float | None = None
     tile_size: int = 512
     tile_overlap: int = 32
@@ -741,6 +752,7 @@ def _write_pair(
             "pair_index": spec["pair_index"],
             "input_count": spec["input_count"],
             "target_count": spec["target_count"],
+            "kind": rung_kind(spec["input_count"], spec["target_count"], config.min_ratio),
             "seed": spec["seed"],
             "reference": lookup.get(spec["reference"], FrameInfo(
                 spec["reference"], spec["reference"], group.target_dir, "",

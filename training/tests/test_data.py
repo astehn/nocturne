@@ -15,7 +15,7 @@ def test_dataset_reports_the_sigma_of_the_tile_it_returns():
     import data as D
     tiles = D.scan_tiles(PAIRS_ROOT)
     ds = D.TileDataset(tiles[:4], D.DataConfig(), train=False)
-    noisy, clean, mask, sigma = ds[0]
+    noisy, clean, mask, sigma, _is_n2n = ds[0]
     from noise import estimate_sigma
     assert abs(float(sigma) - estimate_sigma(noisy.permute(1, 2, 0).numpy())) < 1e-6
     assert float(sigma) > 0
@@ -56,3 +56,26 @@ def test_every_archive_target_belongs_to_exactly_one_split():
     everything = [t for s in splits for t in s]
     assert len(everything) == len(set(everything)), "a target appears in two splits"
     D.split_by_target([_tile(t) for t in everything], "s30")  # must not raise
+
+
+def test_a_tile_reports_whether_its_pair_was_noise2noise(tmp_path):
+    """The loss depends on it: L1 is median-seeking and is correct against a
+    genuinely cleaner target, but Noise2Noise needs the MEAN, so an n2n pair
+    must be trainable under L2. If the flag does not reach the dataset, every
+    pair silently gets the wrong loss and faint signal is pulled down."""
+    import numpy as np
+    from data import DataConfig, TileDataset, TileRef
+
+    tile = tmp_path / "t.npz"
+    np.savez(tile,
+             input=np.full((64, 64, 3), 0.05, np.float32),
+             target=np.full((64, 64, 3), 0.05, np.float32),
+             coverage=np.ones((64, 64), np.float32))
+    ref = TileRef(str(tile), "s30", "M8", "s30_M8_x", 395, 64, kind="n2n")
+    ds = TileDataset([ref], DataConfig(crop=64, augment=False), train=False)
+    assert len(ds[0]) == 5
+    assert float(ds[0][4]) == 1.0
+
+    ref_truth = TileRef(str(tile), "s30", "M8", "s30_M8_x", 16, 128, kind="truth")
+    ds2 = TileDataset([ref_truth], DataConfig(crop=64, augment=False), train=False)
+    assert float(ds2[0][4]) == 0.0

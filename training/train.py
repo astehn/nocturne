@@ -61,7 +61,7 @@ def evaluate(model, loader, device):
     """
     model.eval()
     tot = res = base = star_a = star_b = n = 0.0
-    for noisy, clean, mask, sigma in loader:
+    for noisy, clean, mask, sigma, _is_n2n in loader:
         noisy, clean, mask = noisy.to(device), clean.to(device), mask.to(device)
         sigma = sigma.to(device)
         out = model.denoise(noisy, sigma, 1.0)
@@ -88,7 +88,7 @@ def save_samples(model, dataset, device, path, count=3):
     rows = []
     with torch.no_grad():
         for i in range(min(count, len(dataset))):
-            noisy, clean, _, sigma = dataset[i]
+            noisy, clean, _, sigma, _ = dataset[i]
             out = model.denoise(noisy[None].to(device), sigma.to(device), 1.0)[0].cpu()
             strip = torch.cat([noisy, out.clamp(0, 1), clean], dim=2)
             rows.append((strip.permute(1, 2, 0).numpy() * 255).clip(0, 255).astype(np.uint8))
@@ -179,9 +179,10 @@ def main() -> None:
     for ep in range(start, args.epochs):
         te = time.time(); run = n = 0
         sig_min, sig_max = float("inf"), float("-inf")
-        for noisy, clean, mask, sigma in dl_tr:
+        for noisy, clean, mask, sigma, is_n2n in dl_tr:
             noisy, clean, mask = noisy.to(dev), clean.to(dev), mask.to(dev)
             sigma = sigma.to(dev)
+            is_n2n = is_n2n.to(dev)
             sig_min = min(sig_min, sigma.min().item())
             sig_max = max(sig_max, sigma.max().item())
             loss = masked_l1(model.denoise(noisy, sigma, 1.0), clean, mask)

@@ -271,6 +271,11 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
                     seed=seed,
                     method=method,
                     kappa=kappa,
+                    # The same ratio plan_ladder used above. _write_pair
+                    # recomputes each pair's kind from it, so a config that
+                    # moved min_ratio off 4.0 would otherwise have the planner
+                    # and the manifest labelling the same pair differently.
+                    min_ratio=min_ratio,
                     stretch_amount=None,  # pairs are linear; core.stretch derives per-image
                     tile_size=tile_size,
                     tile_overlap=tile_overlap,
