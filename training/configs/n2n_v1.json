@@ -1,0 +1,18 @@
+{
+  "name": "n2n_v1",
+  "sensor": "s30",
+  "source": "/Volumes/Work2/Images/Astro/Training",
+  "combine_nights": true,
+  "min_ratio": 4.0,
+  "min_target": 16,
+  "min_n2n_target": 64,
+  "pairs_per_depth": 2,
+  "method": "sigma_clip",
+  "kappa": 2.5,
+  "tiles": true,
+  "exclude_mosaics": true,
+
+  "epochs": 300,
+  "strength": 1.0,
+  "gate_tolerance": 0.0
+}
