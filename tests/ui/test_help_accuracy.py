@@ -699,49 +699,134 @@ def test_recipes_help_is_right_about_the_files_batch_reads_and_writes(qtbot, tmp
         _src("nocturne/ui/batch_dialog.py")
 
 
-def test_recipes_help_warns_that_batch_overwrites_by_input_name(tmp_path):
+def test_recipes_help_warns_that_an_existing_output_is_overwritten(tmp_path):
     """The output is the input's stem plus the format's extension, written with
-    no prompt — so FITS output into the input folder destroys the master. The
-    help says give the output its own folder; this is why."""
+    no prompt over whatever is already there — which is why the help says to
+    give the output a folder of its own."""
     from nocturne.batch import run_batch
     from nocturne.core.export import save_fits
     from nocturne.core.image import AstroImage
     from nocturne.recipe import Recipe
     from nocturne.settings import Settings
     b = _body("recipes")
-    assert "<b>Give the output its own folder</b>" in b
-    src = tmp_path / "in"
+    assert "<b>Give the output a folder of its own</b>" in b
+    assert "overwritten without asking" in b
+    src, out = tmp_path / "in", tmp_path / "out"
     src.mkdir()
+    out.mkdir()
     save_fits(AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True),
               str(src / "m42.fits"))
-    before = (src / "m42.fits").read_bytes()
+    (out / "m42.tiff").write_bytes(b"stale")
+    before = (out / "m42.tiff").read_bytes()
+    results = run_batch(Recipe(steps=[{"stage": "levels", "option": [0.0, 1.0, 1.0]}]),
+                        [str(src / "m42.fits")], str(out), "TIFF", Settings())
+    assert results[0]["ok"], results[0]["message"]
+    assert (out / "m42.tiff").read_bytes() != before, \
+        "batch no longer overwrites an existing output; the help says it does"
+
+    # ... and the one collision that IS refused, per file, master untouched
+    master = (src / "m42.fits").read_bytes()
     results = run_batch(Recipe(steps=[{"stage": "levels", "option": [0.0, 1.0, 1.0]}]),
                         [str(src / "m42.fits")], str(src), "FITS", Settings())
-    assert results[0]["ok"], results[0]["message"]
-    assert (src / "m42.fits").read_bytes() != before, \
-        "run_batch no longer overwrites the input; the help warns that it does"
+    assert results[0]["ok"] is False and "overwrite the source" in results[0]["message"]
+    assert (src / "m42.fits").read_bytes() == master, "the source master was written over"
+    assert "refuses outright is writing over the source itself" in b
 
 
-def test_recipes_help_explains_why_a_whole_batch_can_fail_identically():
+def test_recipes_help_explains_why_a_whole_batch_can_fail_identically(tmp_path):
     """Batch has no per-stage resilience: a step whose external tool is missing
     fails the entire file, with an OS-level message. Every file then fails the
-    same way, which reads as broken data."""
+    same way, which reads as broken data. The complement matters as much — the
+    tool-backed steps that DO fall back must not be blamed for it."""
     from nocturne.batch import run_batch
     from nocturne.core.export import save_fits
     from nocturne.core.image import AstroImage
-    from nocturne.recipe import Recipe
+    from nocturne.recipe import Recipe, missing_tools
     from nocturne.settings import Settings
-    import tempfile
     b = _body("recipes")
-    assert "that step cannot be skipped" in b and "<b>Settings</b>" in b
-    d = tempfile.mkdtemp()
-    path = pathlib.Path(d) / "m42.fits"
-    save_fits(AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True), str(path))
+    assert "it fails the whole file, not just" in b and "<b>Settings</b>" in b
+    save_fits(AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True),
+              str(tmp_path / "m42.fits"))
     results = run_batch(Recipe(steps=[{"stage": "background", "option": "strong"}]),
-                        [str(path)], d, "TIFF", Settings())      # nothing installed
+                        [str(tmp_path / "m42.fits")], str(tmp_path), "TIFF",
+                        Settings())              # nothing installed
     assert results[0]["ok"] is False, \
         "a missing GraXpert no longer fails the file; the help says it does"
-    assert not (pathlib.Path(d) / "m42.tiff").exists(), "a failed file wrote output anyway"
+    assert not (tmp_path / "m42.tiff").exists(), "a failed file wrote output anyway"
+
+    # every OTHER tool-backed step survives without its tool, on the free
+    # fallbacks — the help says so, and a gate must never widen past this
+    for stage, option in (("saturation", [0.5, 0.2]), ("green_fringe", 1.0),
+                          ("noise_sharpen", "strong"), ("star_reduction", 0.3),
+                          ("local_contrast", 0.15)):
+        r = run_batch(Recipe(steps=[{"stage": stage, "option": option}]),
+                      [str(tmp_path / "m42.fits")], str(tmp_path), "TIFF", Settings())
+        assert r[0]["ok"], f"{stage} no longer falls back: {r[0]['message']}"
+    assert "fall back to Nocturne’s own free" in b
+
+
+def test_recipes_help_is_right_that_run_is_gated_on_the_recipe(qtbot, tmp_path):
+    """The help promises a greyed-out Run naming the missing tool. Gated on the
+    RECIPE, not on the Batch button: a recipe needing nothing must stay runnable
+    with nothing installed, or the gate punishes people for a step they never
+    used."""
+    from nocturne.recipe import Recipe, save_recipe
+    from nocturne.settings import Settings
+    from nocturne.ui.batch_dialog import BatchDialog
+    b = _body("recipes")
+    assert "<b>Run is greyed out</b>" in b
+    needs_gx, plain = tmp_path / "bg.json", tmp_path / "plain.json"
+    save_recipe(Recipe(steps=[{"stage": "background", "option": "strong"},
+                              {"stage": "stretch", "option": 0.3}]), str(needs_gx))
+    save_recipe(Recipe(steps=[{"stage": "stretch", "option": 0.3}]), str(plain))
+
+    d = BatchDialog(Settings())                  # nothing installed
+    qtbot.addWidget(d)
+    assert d.run_btn.isEnabled(), "Batch is gated as a whole; only the recipe may gate it"
+
+    d.recipe_edit.setText(str(needs_gx))
+    assert d.run_btn.isEnabled() is False
+    assert "GraXpert" in d.status.text() and "GraXpert" in d.run_btn.toolTip()
+    ran = []
+    d._batch_runner = lambda *a, **k: ran.append(True) or []
+    d.output_edit.setText(str(tmp_path))
+    d.run()                     # bypassing the button, as a shortcut or a script would
+    assert ran == [], "a blocked recipe still started a run"
+
+    d.recipe_edit.setText(str(plain))            # needs nothing -> runnable
+    assert d.run_btn.isEnabled() and d.status.text() == ""
+    assert "Only a step that <i>cannot run at all</i> stops you" in b
+
+    bad = tmp_path / "notes.json"                # not a recipe at all
+    bad.write_text("this is not json")
+    d.recipe_edit.setText(str(bad))
+    assert d.run_btn.isEnabled() is False and "isn't a Nocturne recipe" in d.status.text()
+
+    d.recipe_edit.setText(str(plain))            # and it recovers
+    assert d.run_btn.isEnabled()
+
+
+def test_missing_tools_names_only_the_step_that_cannot_run_at_all():
+    """The pre-flight check behind gating Batch's Run button. It must stay
+    narrow: a recipe that merely WOULD BE better with RC-Astro has to remain
+    runnable, or the gate stops being a fact and becomes an opinion."""
+    from nocturne.recipe import Recipe, missing_tools
+    from nocturne.settings import Settings
+    bare = Settings()
+    assert missing_tools(Recipe(steps=[{"stage": "background", "option": "strong"}]),
+                         bare) == ["GraXpert"]
+    assert missing_tools(Recipe(steps=[{"stage": "background", "option": "off"}]),
+                         bare) == [], "an off Background needs no tool"
+    assert missing_tools(Recipe(steps=[{"stage": "background", "option": "strong"}]),
+                         Settings(graxpert_path="/bin/echo")) == []
+    for stage in ("saturation", "green_fringe", "noise_sharpen", "star_reduction",
+                  "deconvolution", "narrowband", "stretch", "levels", "curves"):
+        assert missing_tools(Recipe(steps=[{"stage": stage, "option": ""}]), bare) == [], \
+            f"{stage} is not a hard requirement; it falls back to a free implementation"
+    # one entry per tool, however many steps ask for it
+    assert missing_tools(Recipe(steps=[{"stage": "background", "option": "strong"},
+                                       {"stage": "background", "option": "light"}]),
+                         bare) == ["GraXpert"]
 
 
 def _planted_star_field(seed=3):

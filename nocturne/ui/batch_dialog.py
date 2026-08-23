@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..batch import overwrites_source, run_batch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
-from ..recipe import load_recipe
+from ..recipe import load_recipe, missing_tools
 from ..settings import start_dir
 from .worker import run_async
 from . import file_dialogs
@@ -40,6 +40,9 @@ class BatchDialog(QDialog):
         self._settings = settings
         self._batch_runner = run_batch  # injectable for tests
         self._active_token: CancelToken | None = None
+        self._blocked = ""       # why Run is refused, "" when it is allowed.
+                                 # Set before any widget exists: _recheck_recipe
+                                 # can fire from a textChanged during setup.
         self._pool = QThreadPool.globalInstance()
         self._signals = _ProgressSignals()
         self._signals.progress.connect(self._on_progress)
@@ -62,6 +65,12 @@ class BatchDialog(QDialog):
         self.run_btn = QPushButton("Run")
         self.run_btn.setObjectName("primary")
         self.run_btn.clicked.connect(self.run)
+        # Put the requirement in FRONT of the action, not behind it: a recipe
+        # with a Background step and no GraXpert loses every file to an errno
+        # message. Keyed on the RECIPE rather than on the Batch button, because
+        # most recipes need no external tool at all and greying the whole
+        # feature out would punish them for a step they never used.
+        self.recipe_edit.textChanged.connect(self._recheck_recipe)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self._cancel_active)
         self.cancel_btn.setEnabled(False)
@@ -78,6 +87,32 @@ class BatchDialog(QDialog):
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
+
+    # --- recipe pre-check ---
+    def _recheck_recipe(self, *_) -> None:
+        """Re-read the chosen recipe and decide whether Run can be honoured.
+        Runs on every edit of the path — typed as well as browsed, since the
+        field is a plain QLineEdit and a pasted path must gate the same way."""
+        self._blocked = ""
+        path = self.recipe_edit.text().strip()
+        if path and os.path.isfile(path):
+            try:
+                recipe = load_recipe(path)
+            except Exception:
+                self._blocked = "That file isn't a Nocturne recipe."
+            else:
+                missing = missing_tools(recipe, self._settings)
+                if missing:
+                    self._blocked = (
+                        f"This recipe has a Background step, which needs "
+                        f"{', '.join(missing)}. Install it and set the path in Settings, "
+                        f"or use a recipe without one.")
+        self.status.setText(self._blocked)
+        self._sync_run_enabled()
+
+    def _sync_run_enabled(self) -> None:
+        self.run_btn.setEnabled(not self._blocked and self._active_token is None)
+        self.run_btn.setToolTip(self._blocked or "Process every FITS in the input folder")
 
     # --- browse handlers ---
     def _browse_recipe(self) -> None:
@@ -108,6 +143,11 @@ class BatchDialog(QDialog):
         # same output filenames. A disabled QPushButton stops clicks, but not a
         # shortcut, a duplicate connect, or a programmatic call.
         if self._active_token is not None:
+            return
+        # Guarded here as well as by the disabled button, for the reason above:
+        # a disabled QPushButton stops clicks and nothing else.
+        if self._blocked:
+            self.status.setText(self._blocked)
             return
         recipe_path = self.recipe_edit.text().strip()
         if not recipe_path or not self.output_edit.text().strip():
@@ -149,7 +189,7 @@ class BatchDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         """Block re-entrant runs so two workers can't write the same output file."""
-        self.run_btn.setEnabled(not busy)
+        self.run_btn.setEnabled(not busy and not self._blocked)
         self.cancel_btn.setEnabled(busy)
         self.cancel_btn.setVisible(busy)
 

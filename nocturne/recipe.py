@@ -161,6 +161,30 @@ def uncaptured_step_names(entries) -> list[str]:
     return seen
 
 
+def missing_tools(recipe: Recipe, settings) -> list[str]:
+    """External tools this recipe CANNOT run without and that are not configured
+    on this machine. Sits next to uncaptured_step_names because it answers the
+    same shape of question about a recipe: what will not happen if you use it.
+
+    Today that is GraXpert alone. steps/factory builds every other tool-backed
+    stage (saturation, noise_sharpen, star_reduction, deconvolution,
+    green_fringe, narrowband) with `rc=None` when RC-Astro is absent, and each
+    falls back to a free implementation, so those recipes run fine. `background`
+    is built with a GraXpert unconditionally, so step.apply raises — and
+    run_batch's per-file `except` then loses the WHOLE file rather than the one
+    step, identically for every file in the folder, under an errno message that
+    never mentions GraXpert.
+
+    Deliberately NOT a check on what would merely improve the result. A recipe
+    that runs without RC-Astro must not be blocked because RC-Astro would have
+    done it better, or the gate stops being a fact and becomes an opinion.
+    """
+    from .settings import graxpert_valid
+    needs_gx = any(step.get("stage") == "background" and step.get("option") != "off"
+                   for step in recipe.steps)
+    return ["GraXpert"] if needs_gx and not graxpert_valid(settings) else []
+
+
 def save_recipe(recipe: Recipe, path: str) -> None:
     with open(path, "w") as f:
         json.dump({"version": 1, "steps": recipe.steps}, f, indent=2)
