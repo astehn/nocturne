@@ -860,3 +860,129 @@ def test_star_spikes_help_is_honest_that_a_recipe_drops_it():
         "recipes now record Star Spikes; the help says they cannot"
     assert "<b>recipe cannot record</b>" in b and "Trim is the" in b
     assert '_PrecomputedStep("Star Spikes"' in _src("nocturne/ui/main_window.py")
+
+
+def _upscale_dialog(qtbot, **kw):
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.upscale_dialog import UpscaleDialog
+    data = np.full((60, 60, 3), 0.1, np.float32)
+    data[30, 30] = 1.0
+    meta = {"target": "M42", "source_label": "m42.fits"}
+    d = UpscaleDialog(AstroImage(data, is_linear=False, metadata=meta), meta, Settings(), **kw)
+    qtbot.addWidget(d)
+    return d
+
+
+def test_upscale_help_names_the_controls_the_dialog_shows(qtbot):
+    """The topic mentioned three of the seven controls and no numbers. Engine,
+    the fixed scale, the status line and the disabled-until-run pair were all
+    missing."""
+    from nocturne.ui.upscale_dialog import SCALE
+    b = _body("upscale")
+    ud = _src("nocturne/ui/upscale_dialog.py")
+    d = _upscale_dialog(qtbot)
+
+    assert SCALE == 2 and "<b>2×</b>" in b
+    assert [d._engine_box.itemText(i) for i in range(d._engine_box.count())] == \
+        [e.name for e in d._engines]
+    assert d._engine_box.count() == 1 and d._engine.name == "Lanczos", \
+        "a second engine shipped; the help says there is nothing to decide"
+    assert "<b>Engine</b> currently offers one choice, <b>Lanczos</b>" in b
+    for label, text in (("<b>Upscale</b>", 'QPushButton("Upscale")'),
+                        ("<b>Compare</b>", 'QCheckBox("Compare")'),
+                        ("<b>Export…</b>", 'QPushButton("Export…")'),
+                        ("<b>Open as copy</b>", 'QPushButton("Open as copy")')):
+        assert label in b, f"the topic never names {label}"
+        assert text in ud, f"{text} is no longer a control"
+    assert "crop box" in b and "aspect_ratio=None" in ud   # free-form box, as the help says
+
+    assert d._export_btn.isEnabled() is False and d._open_copy_btn.isEnabled() is False
+    assert "stay disabled until you have run <b>Upscale</b> once" in b
+    d._run_upscale()
+    assert d._export_btn.isEnabled() and d._open_copy_btn.isEnabled()
+    assert d._result.data.shape == (120, 120, 3), "the scale is no longer 2×"
+    assert "120×120" in d.status.text() and "reports the new size in pixels" in b
+    assert "Stretch your image first" in b
+    assert "Upscale works on the " in _src("nocturne/ui/main_window.py"), \
+        "the stretch gate went; the help still sends people to stretch first"
+
+
+def test_upscale_help_is_right_that_open_as_copy_starts_a_new_project(qtbot, tmp_path):
+    """The surprise the old topic hid behind "keep editing it as a new project":
+    the edit history does not come with it. Prove it on a real MainWindow."""
+    from astropy.io import fits
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.main_window import MainWindow
+    b = _body("upscale")
+    assert "<b>your edit history is gone</b>" in b and "<b>save your project first</b>" in b
+
+    path = tmp_path / "stack.fits"
+    fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16)).writeto(str(path))
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win._async_enabled = False
+    qtbot.addWidget(win)
+    win.open_fits(str(path))
+    win.project.record_precomputed("Stretch", "", win.project.current())
+    assert win.project.can_undo() and win.project.entries(), "no history to lose"
+
+    result = AstroImage(np.full((48, 48, 3), 0.2, np.float32), is_linear=False)
+    win._open_upscaled(result)
+    assert win.project.can_undo() is False, "Open as copy kept the history; the help says it does not"
+    assert list(win.project.entries()) == []
+    assert win.current_stage_id() == "load", "the stepper no longer returns to Import & assess"
+    np.testing.assert_array_equal(win.project.current().data, result.data)
+
+
+def test_upscale_help_describes_the_sidecar_file_that_is_actually_written(qtbot, tmp_path):
+    """The .txt beside the export is the topic's one verifiable promise. Check
+    the default filename and the sentence the file ends on."""
+    from nocturne.core.upscale import upscale_filename
+    b = _body("upscale")
+    d = _upscale_dialog(qtbot)
+    d._run_upscale()
+    d._save_runner = lambda img, path: None
+    d._do_export(str(tmp_path / "out.jpg"))
+    report = (tmp_path / "out.txt").read_text()
+
+    assert upscale_filename("m42.fits", 2) == "m42_2x.jpg" and "yourfile_2x.jpg" in b
+    for claim in ("Lanczos", "2×", "m42.fits", "M42"):
+        assert claim in report, f"the sidecar no longer records {claim!r}"
+    assert "presentation derivative — enlarged, no synthesized detail" in report
+    assert "presentation derivative — enlarged, no synthesized detail" in b
+    assert "JPEG (*.jpg);;PNG (*.png);;TIFF (*.tiff)" in _src("nocturne/ui/upscale_dialog.py")
+    assert "JPEG, PNG or TIFF" in b
+
+
+def test_upscale_help_is_right_that_stars_never_go_through_the_engine():
+    """The layered claim: the engine enlarges the starless layer, the stars are
+    always resampled deterministically. A fake engine that erases its input must
+    still leave the stars standing."""
+    from nocturne.core.image import AstroImage
+    from nocturne.core.upscale import LanczosEngine, upscale_crop
+    b = _body("upscale")
+    assert "the stars themselves are always enlarged by the deterministic" in b
+
+    class _Erasing:
+        name = "Erasing"
+
+        def available(self):
+            return True
+
+        def upscale(self, img, scale):
+            out = LanczosEngine().upscale(img, scale)
+            return AstroImage(np.zeros_like(out.data), is_linear=out.is_linear,
+                              metadata=dict(out.metadata))
+
+        def provenance(self):
+            return {"engine": self.name, "kind": "test", "fabricates": True}
+
+    data = np.full((40, 40, 3), 0.05, np.float32)
+    yy, xx = np.mgrid[0:40, 0:40]
+    data += (np.exp(-((yy - 20) ** 2 + (xx - 20) ** 2) / 2.0)[:, :, None]
+             * np.float32(0.9))
+    img = AstroImage(np.clip(data, 0, 1).astype(np.float32), is_linear=False)
+    out = upscale_crop(img, None, _Erasing(), scale=2)
+    assert out.data.shape == (80, 80, 3)
+    assert out.data.max() > 0.3, "the star layer went through the engine and was erased"
+    assert out.metadata["upscale"]["scale"] == 2
