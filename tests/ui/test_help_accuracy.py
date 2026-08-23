@@ -388,3 +388,139 @@ def test_haoiii_help_does_not_borrow_controls_the_dialog_lacks():
     # threshold. Swap the two and the help would be advising the opposite.
     assert KAPPA["Low"] > KAPPA["High"], "the kappa labels are inverted"
     assert "<b>Low</b> rejection keeps more" in b
+
+
+def test_narrowband_help_names_every_control_the_dialog_shows():
+    """Four of the seven controls — Green blend, Saturation, Brightness and the
+    Reset button — were absent from the topic entirely, and the two that were
+    named were named without a value or a default. Pin each row label to the
+    widget that draws it."""
+    from nocturne.core.narrowband import PALETTES, _combine
+    from nocturne.recipe import _NAME_TO_STAGE
+    from nocturne.ui.narrowband_dialog import PALETTES as UI_PALETTES
+    b = _body("narrowband")
+    nd = _src("nocturne/ui/narrowband_dialog.py")
+
+    # two palette lists, one truth: the help is checked against the core one
+    assert list(UI_PALETTES) == list(PALETTES), "the dialog and the engine disagree"
+    ha = np.linspace(0.1, 0.9, 64).reshape(8, 8).astype(np.float32)
+    oiii = np.linspace(0.9, 0.1, 64).reshape(8, 8).astype(np.float32)
+    for palette in PALETTES:
+        assert palette in b, f"palette {palette!r} is not described"
+        _combine(ha, oiii, palette, 0.6)          # must be a palette that renders
+    with pytest.raises(ValueError):
+        _combine(ha, oiii, "SHO", 0.6)            # the help says SHO is not available
+    assert "no sulfur" in b
+
+    for row in ("OIII boost", "Green blend", "Protect background", "Saturation",
+                "Brightness"):
+        assert row in b, f"the help never mentions {row!r}"
+        assert f'controls.addRow("{row}"' in nd, f"{row!r} is no longer a control"
+    assert "Preserve lightness" in b and 'QCheckBox("Preserve lightness' in nd
+    assert "Reset" in b and 'QPushButton("Reset")' in nd
+    assert "Apply" in b and 'QPushButton("Apply")' in nd
+    assert "StarXTerminator" in b and "rcastro_valid" in nd
+    assert "stretched" in b and "Narrowband works on the " in _src("nocturne/ui/main_window.py")
+    assert "Recipes and Batch" in b and _NAME_TO_STAGE["Narrowband"] == "narrowband"
+
+
+def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
+    """Every default in the topic is a number a user will compare against what
+    is on screen. Read them off a real dialog rather than trusting the dataclass
+    — NarrowbandParams defaults lightness_preserve to True and the dialog
+    deliberately opens it OFF, so the two disagree by design."""
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.narrowband_dialog import NarrowbandDialog
+    b = _body("narrowband")
+    d = NarrowbandDialog(Settings(), AstroImage(np.zeros((8, 8, 3), np.float32),
+                                                is_linear=False))
+    qtbot.addWidget(d)
+    p = d._params()
+
+    assert p.palette == "HOO" and "Start here" in b
+    assert p.oiii_boost == 1.0 and d.oiii_val.text() == "×1.00"
+    assert "OIII boost — the key control (default ×1.00)" in b
+    assert p.brightness == 1.0 and d.bright_val.text() == "×1.00"
+    assert "Brightness (default ×1.00)" in b
+    assert p.blend_amount == 0.6 and d.blend_val.text() == "0.60"
+    assert "Green blend — HOO only (default 0.60)" in b
+    assert p.protect_background == 0.4 and d.protect_val.text() == "40%"
+    assert "Protect background (default 40%)" in b
+    assert p.saturation == 0.5 and d.sat_val.text() == "0.50"
+    assert "Saturation (default 0.50)" in b
+    assert d.lightness_check.isChecked() is False
+    assert "Preserve lightness — off by default" in b
+
+    d.oiii_slider.setValue(d.oiii_slider.maximum())
+    assert d.oiii_val.text() == "×2.00", "the OIII boost range moved"
+    assert "toward ×2.00" in b
+
+
+def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
+    """The control the user is most likely to read as broken: it is live in HOO
+    and does nothing at all in the other two palettes, because only HOO builds a
+    synthetic green."""
+    from nocturne.core.narrowband import _combine
+    b = _body("narrowband")
+    assert "It does nothing in Pseudo-SHO or Pseudo-bicolor." in b
+    rng = np.random.default_rng(11)
+    ha = rng.random((16, 16)).astype(np.float32)
+    oiii = rng.random((16, 16)).astype(np.float32)
+
+    def differs(palette):
+        low = _combine(ha, oiii, palette, 0.0)
+        high = _combine(ha, oiii, palette, 1.0)
+        return any(not np.allclose(x, y) for x, y in zip(low, high))
+
+    assert differs("HOO"), "Green blend no longer does anything in HOO either"
+    assert not differs("Pseudo-SHO"), "Pseudo-SHO now uses the blend; update the help"
+    assert not differs("Pseudo-bicolor"), "Pseudo-bicolor now uses the blend; update the help"
+
+
+def test_narrowband_help_describes_the_palettes_and_the_green_cap_correctly():
+    """Which gas lands in which channel is the whole content of a palette. And
+    green is clamped in two of the three — the help says which, and says why the
+    third is left alone."""
+    from nocturne.core.narrowband import _combine
+    b = _body("narrowband")
+    rng = np.random.default_rng(13)
+    ha = rng.random((16, 16)).astype(np.float32)
+    oiii = rng.random((16, 16)).astype(np.float32)
+
+    r, g, bl = _combine(ha, oiii, "Pseudo-bicolor", 0.6)
+    assert np.allclose(r, ha) and np.allclose(bl, ha), \
+        "Pseudo-bicolor no longer puts hydrogen in red AND blue"
+    assert np.allclose(g, oiii), "Pseudo-bicolor's green is no longer the real oxygen"
+    assert "hydrogen in red and blue, oxygen in green" in b
+
+    for palette in ("HOO", "Pseudo-SHO"):
+        r, g, bl = _combine(ha, oiii, palette, 1.0)
+        assert np.all(g <= (r + bl) / 2.0 + 1e-6), f"{palette} lost its green cap"
+    # and the cap is a real constraint, not a coincidence of the fixture
+    r, g, bl = _combine(ha, oiii, "HOO", 1.0, scnr=False)
+    assert np.any(g > (r + bl) / 2.0 + 1e-6)
+    assert "capped at the average of red and blue" in b
+    assert "Pseudo-bicolor's green is the real oxygen" in b
+
+
+def test_narrowband_help_gets_the_direction_of_the_two_headline_sliders_right():
+    """Both could be described backwards and still read plausibly. Higher OIII
+    boost must lift the oxygen further; higher Protect background must leave
+    MORE of the sky alone."""
+    from nocturne.core.narrowband import nebula_mask, normalize_to_reference
+    b = _body("narrowband")
+    rng = np.random.default_rng(17)
+    ha = np.clip(0.45 + 0.08 * rng.standard_normal((96, 96)), 0, 1).astype(np.float32)
+    oiii = np.clip(0.08 + 0.02 * rng.standard_normal((96, 96)), 0, 1).astype(np.float32)
+    levels = [float(normalize_to_reference(oiii, ha, 1.0, boost).mean())
+              for boost in (0.3, 1.0, 2.0)]
+    assert levels[0] < levels[1] < levels[2], "OIII boost no longer runs upward"
+    assert float(oiii.mean()) < levels[1], "×1.00 no longer lifts the oxygen at all"
+    assert "×1.00 is not &quot;off&quot;" in b
+    assert "Drop it below ×1.00 to pull the oxygen back down" in b
+
+    rgb = np.dstack([ha, oiii, oiii])
+    masks = [float(nebula_mask(rgb, p).mean()) for p in (0.0, 0.4, 1.0)]
+    assert masks[0] > masks[1] > masks[2], "Protect background is inverted"
+    assert "a higher setting protects more" in b
