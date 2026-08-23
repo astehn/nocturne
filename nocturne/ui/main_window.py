@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds
@@ -167,7 +167,7 @@ class _SaveSignals(QObject):
 class MainWindow(QMainWindow):
     def __init__(self, settings_path: str, check_updates: bool = True) -> None:
         super().__init__()
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(app_title())
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
         self.project: Project | None = None
@@ -532,10 +532,13 @@ class MainWindow(QMainWindow):
     def _update_title(self) -> None:
         name = (os.path.splitext(os.path.basename(self._project_path))[0]
                 if self._project_path else (self._source_label or None))
+        # app_title() carries the version and the beta marker. The splash is
+        # gone in two seconds; this is what keeps "beta" in front of the user
+        # for the rest of the session.
         if name is None:
-            self.setWindowTitle(APP_NAME)
+            self.setWindowTitle(app_title())
         else:
-            self.setWindowTitle(f"{APP_NAME} — {name}{' •' if self._dirty else ''}")
+            self.setWindowTitle(f"{app_title()} — {name}{' •' if self._dirty else ''}")
 
     def _confirm_save_if_dirty(self) -> bool:
         """Guard for actions that discard the current project (open/close). Returns

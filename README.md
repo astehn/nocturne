@@ -9,6 +9,11 @@
   A free, native desktop app that turns a stacked <strong>ZWO Seestar S30 Pro</strong> image into a finished picture — one guided step at a time.
 </p>
 
+<p align="center">
+  <strong>⚠️ Nocturne is beta software.</strong><br>
+  Expect rough edges — keep your originals backed up.
+</p>
+
 ---
 
 Like a lot of Seestar owners, you quickly outgrow the phone-app processing and end up bouncing between Siril, PixInsight, GraXpert and RC-Astro — repeating basically the same steps every single time. **Nocturne turns that repetitive workflow into a guided, one-step-at-a-time process**, dedicated to the S30 Pro, with a live preview and full undo at every step.

@@ -358,10 +358,13 @@ def test_before_after_toggle_enables_compare(qtbot, tmp_path):
     assert win.image_view.compare_active() is False
 
 
-def test_window_title_is_app_name(qtbot, tmp_path):
-    from nocturne import APP_NAME
+def test_window_title_is_app_name_and_version(qtbot, tmp_path):
+    """The title carries the version AND the beta marker: the splash that
+    announces beta is gone in two seconds, so the title bar is what keeps it in
+    front of the user. See tests/test_beta_disclosure.py for the drift guard."""
+    from nocturne import app_title
     win = _window(qtbot, tmp_path)
-    assert win.windowTitle() == APP_NAME
+    assert win.windowTitle() == app_title()
 
 
 def test_help_menu_actions_exist(qtbot, tmp_path):
@@ -2636,7 +2639,8 @@ def test_dirty_false_after_save_project_as(qtbot, tmp_path, monkeypatch):
 def test_window_title_reflects_name_and_dirty_marker(qtbot, tmp_path, monkeypatch):
     from nocturne.ui import file_dialogs
     win = _window(qtbot, tmp_path)
-    assert win.windowTitle() == "Nocturne"   # no image yet
+    from nocturne import app_title
+    assert win.windowTitle() == app_title()   # no image yet
     win.open_fits(_make_fits(tmp_path))
     assert "stack" in win.windowTitle()
     assert "•" not in win.windowTitle()

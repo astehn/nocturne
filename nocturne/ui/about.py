@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .. import APP_NAME, APP_TAGLINE, __version__
+import nocturne
+from .. import APP_NAME, APP_TAGLINE, __version__, version_label
 
 _DATA = Path(__file__).resolve().parent.parent / "assets" / "contributors.json"
 
@@ -48,8 +49,13 @@ def about_html(data: dict | None = None) -> str:
     )
     return (
         f"<h1>{APP_NAME}</h1>"
-        f"<p><i>{APP_TAGLINE}</i><br>Version {__version__}</p>"
-        "<h3>✦ Dreamed up &amp; directed by</h3>"
+        f"<p><i>{APP_TAGLINE}</i><br>Version {version_label()}</p>"
+        # nocturne.RELEASE_STAGE at CALL time, not a name bound at import:
+        # a module-level copy cannot be cleared for a stable release, and that
+        # is the exact drift tests/test_beta_disclosure.py guards against.
+        + (f"<p><b>This is {nocturne.RELEASE_STAGE} software.</b> "
+           f"{nocturne.BETA_NOTICE}.</p>" if nocturne.RELEASE_STAGE else "")
+        + "<h3>✦ Dreamed up &amp; directed by</h3>"
         f"<p><b>{creator['name']}</b> — {creator['role']}</p>"
         "<h3>✦ Code</h3>"
         f"<p>{data.get('ai', _FALLBACK['ai'])}</p>"
