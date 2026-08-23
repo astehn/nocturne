@@ -282,3 +282,91 @@ def test_integrate_sigma_clip_still_requires_three_frames(tmp_path):
 
     with pytest.raises(ValueError, match="sigma_clip"):
         prepared.integrate(two, method="sigma_clip", workers=1)
+
+
+def test_a_single_hot_pixel_does_not_set_the_pair_scale():
+    """The scale divides both sides of the pair, so it sets the image's
+    model-space units and therefore the sigma value fed to the conditioning
+    channel -- the exact channel that broke on M8. It must be a property of
+    the SCENE. With method='average' (ladder_v1's default) hot pixels survive
+    integration, so np.max could already be reading a sensor defect rather
+    than a star core; with an equally-noisy Noise2Noise target it could be a
+    noise spike."""
+    from nocturne.training.pairs import scene_scale
+
+    scene = np.full((64, 64, 3), 0.2, np.float32)
+    scene[30:34, 30:34, :] = 0.8          # a real star core, several px across
+    clean = scene.copy()
+    hot = scene.copy()
+    hot[10, 10, 0] = 5.0                  # one hot pixel
+
+    assert scene_scale(hot) == pytest.approx(scene_scale(clean), rel=0.05)
+    assert float(np.max(hot)) > 4.0       # proves plain max WOULD have taken it
+
+
+def test_the_scene_scale_still_tracks_a_real_bright_source():
+    """The guard must not be so aggressive it flattens genuine stars -- a
+    scale that ignores the brightest real thing in the frame would clip it."""
+    from nocturne.training.pairs import scene_scale
+
+    dim = np.full((64, 64, 3), 0.2, np.float32)
+    bright = dim.copy()
+    bright[28:36, 28:36, :] = 0.9
+    assert scene_scale(bright) > scene_scale(dim) * 2.0
+
+
+def test_the_smallest_corroborated_source_still_sets_the_scale():
+    """Two adjacent bright pixels are the least a real source can be, and on
+    ladder_v1's own targets the brightest pixel's neighbours run 0.70-0.99 of
+    it -- so those peaks are stars, not spikes, and any blanket smoother would
+    clip them. Measured 2026-08-23: a 3x3 median would have taken the scale to
+    0.70-0.79 of the raw max on every one of the nine ladder_v1 groups. This
+    test is what stops that: one corroborating neighbour is enough."""
+    from nocturne.training.pairs import scene_scale
+
+    scene = np.full((64, 64, 3), 0.2, np.float32)
+    scene[20, 20, 1] = 0.9
+    scene[20, 21, 1] = 0.9                # a two-pixel source, fully preserved
+    assert scene_scale(scene) == pytest.approx(0.9, rel=1e-4)
+
+
+def test_the_scene_scale_never_exceeds_the_raw_maximum():
+    """It is a floor-under-the-peak guard, not a rescale: nothing may push the
+    scale ABOVE the data, or the pair would be silently darkened."""
+    from nocturne.training.pairs import scene_scale
+
+    rng = np.random.default_rng(4)
+    data = rng.random((48, 48, 3)).astype(np.float32)
+    assert scene_scale(data) <= float(np.max(data)) + 1e-6
+
+
+def test_the_manifest_records_the_raw_max_beside_the_scene_scale(tmp_path):
+    """Both numbers, so a later run can tell whether the guard actually fired
+    on this pair or whether the two agreed -- which is the only way to know if
+    ladder_v1's scales were spike-driven."""
+    root = tmp_path / "source"
+    root.mkdir()
+    base = make_star_field(shape=(160, 160), n_stars=45, seed=18)
+    for i in range(8):
+        path = root / f"frame_{i:02d}.fit"
+        write_cfa_fits(path, np.roll(base, (i % 2, -(i % 3)), axis=(0, 1)))
+        with fits.open(path, mode="update") as hdul:
+            header = hdul[0].header
+            header["TELESCOP"] = "S30 Pro_test"
+            header["OBJECT"] = "Prototype"
+            header["DATE-OBS"] = f"2026-08-09T00:00:{i:02d}"
+            header["FILTER"] = "LP"
+            header["RA"] = 100.0
+            header["DEC"] = 20.0
+
+    output = tmp_path / "pairs"
+    results = generate_training_pairs(
+        root,
+        output,
+        config=PairConfig(input_counts=(3,), target_count=3, pairs_per_group=1),
+        workers=1,
+    )
+    pair_dir = output / results[0]["group"] / "pair_0000_in3_target3"
+    scaling = json.loads((pair_dir / "manifest.json").read_text())["pair_scaling"]
+    assert "scale_raw_max" in scaling
+    assert scaling["scale_raw_max"] >= scaling["shared_clean_peak"]

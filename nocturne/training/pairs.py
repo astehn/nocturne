@@ -559,18 +559,45 @@ class PairConfig:
     overwrite: bool = False
 
 
+def scene_scale(data: np.ndarray, *, window: int = 3) -> float:
+    """The pair's shared scale, taken from the scene rather than from noise.
+
+    A plain ``np.max`` is set by whatever single pixel is brightest -- which on
+    an ``average``-integrated stack can be a hot pixel, and on a Noise2Noise
+    target, whose per-pixel noise is as large as the input's, can be a noise
+    spike.  The scale divides both sides of the pair, so a spike there sets the
+    image's model-space units and therefore the sigma handed to the
+    conditioning channel.
+
+    So take the brightest level that at least one neighbour corroborates: a
+    ``window``x``window`` rank filter at the second-largest rank.  An isolated
+    spike cannot set it; a source two pixels across sets it exactly.  A blanket
+    smoother cannot do this job -- measured over ladder_v1's nine targets on
+    2026-08-23, the brightest pixel's four neighbours run 0.70-0.99 of it (they
+    are star cores, not spikes), and a 3x3 median would have pulled the scale
+    to 0.70-0.79 of the raw max on every one, clipping the brightest real star.
+    The rank filter leaves those between 0.84 and 1.00.
+    """
+    from scipy.ndimage import rank_filter
+
+    arr = finite_or_zero(np.asarray(data, dtype=np.float32))
+    planes = [arr[:, :, c] for c in range(arr.shape[2])] if arr.ndim == 3 else [arr]
+    return max(float(np.max(rank_filter(p, rank=-2, size=window))) for p in planes)
+
+
 def _scaled_pair(
     noisy: RawStack,
     clean: RawStack,
     *,
     stretch_amount: float | None,
-) -> tuple[AstroImage, AstroImage, np.ndarray, float, float, float]:
+) -> tuple[AstroImage, AstroImage, np.ndarray, float, float, float, float]:
     if noisy.data.shape != clean.data.shape:
         raise ValueError(
             f"pair geometry differs: noisy={noisy.data.shape}, clean={clean.data.shape}"
         )
     target = finite_or_zero(np.asarray(clean.data, dtype=np.float32))
-    scale = float(np.max(target))
+    raw_max = float(np.max(target))
+    scale = scene_scale(target)
     if not np.isfinite(scale) or scale <= 0:
         raise ValueError("clean stack has no positive finite scale")
 
@@ -593,6 +620,7 @@ def _scaled_pair(
         clean_image,
         coverage,
         scale,
+        raw_max,
         noisy_clip_fraction,
         clean_clip_fraction,
     )
@@ -704,6 +732,7 @@ def _write_pair(
     clean: AstroImage,
     coverage: np.ndarray,
     scale: float,
+    raw_max: float,
     noisy_clip_fraction: float,
     clean_clip_fraction: float,
     config: PairConfig,
@@ -775,6 +804,7 @@ def _write_pair(
         },
         "pair_scaling": {
             "shared_clean_peak": scale,
+            "scale_raw_max": raw_max,
             "noisy_clip_fraction": noisy_clip_fraction,
             "clean_clip_fraction": clean_clip_fraction,
         },
@@ -891,7 +921,7 @@ def generate_training_pairs(
                     autocrop=False,
                     label=f"{group.slug} clean",
                 )
-                noisy, clean, coverage, scale, noisy_clip, clean_clip = _scaled_pair(
+                noisy, clean, coverage, scale, raw_max, noisy_clip, clean_clip = _scaled_pair(
                     noisy_raw,
                     clean_raw,
                     stretch_amount=config.stretch_amount,
@@ -904,6 +934,7 @@ def generate_training_pairs(
                     clean,
                     coverage,
                     scale,
+                    raw_max,
                     noisy_clip,
                     clean_clip,
                     config,
