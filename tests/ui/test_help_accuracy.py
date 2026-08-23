@@ -12,6 +12,7 @@ worth more than a thorough one nobody performs.
 import pathlib
 import re
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
@@ -275,3 +276,115 @@ def test_the_export_help_explains_the_colour_space_control():
     assert "does <i>not</i> add colour" in b or "not</i> add colour" in b, (
         "the help must say plainly that a wider space adds no colour")
     assert "16-bit TIFF only" in b, "the 8-bit restriction is unexplained"
+
+
+def test_haoiii_help_describes_the_tool_that_actually_shipped():
+    """The topic said Ha/OIII "separates a dualband master into individual Ha
+    and OIII masters, for people who want to build a palette by hand in another
+    tool". Every clause of that is wrong: it takes a FOLDER OF RAW SUBS, not a
+    master; it stacks them; it writes ONE colour master; and that master opens
+    in Nocturne rather than going off to another program."""
+    b = _body("haoiii")
+    hd = _src("nocturne/ui/haoiii_dialog.py")
+    mw = _src("nocturne/ui/main_window.py")
+    assert "individual <b>Ha</b> and <b>OIII</b> masters" not in b
+    assert "another tool" not in b, "the topic still sends the user elsewhere"
+    # the controls the dialog really has
+    # pinned to the addRow that BUILDS each row: the folder label also appears
+    # in the file-chooser title, so a looser check survives half a rename.
+    assert "Folder of raw subs" in b and 'form.addRow("Folder of raw subs"' in hd
+    assert "Extract" in b and 'QPushButton("Extract")' in hd
+    assert "Integration" in b and 'form.addRow("Integration"' in hd
+    assert "Output" in b and 'form.addRow("Output"' in hd
+    assert "HaOIII_master.fits" in b and "HaOIII_master.fits" in hd
+    for ext in ("<b>.fit</b>", "<b>.fits</b>", "<b>.fts</b>"):
+        assert ext in b, f"the help does not list {ext}"
+    for pattern in ('"*.fit"', '"*.fits"', '"*.fts"'):
+        assert pattern in hd, f"{pattern} is no longer discovered; update the help"
+    # and it hands the finished master back to the app
+    assert "opens in Nocturne" in b and '"Ha/OIII master"' in mw
+
+
+def test_haoiii_help_gets_the_channel_mapping_right():
+    """Ha is the red-filtered sites; OIII is the green AND blue ones averaged.
+    A user who believes OIII is "the blue channel" will misread every result,
+    and the mapping is one line of code away from changing."""
+    from nocturne.stacking.haoiii import extract_cfa_planes
+    b = _body("haoiii")
+    assert "Ha on the red-filtered ones, OIII on the green and blue ones" in b
+    assert "Ha in red and OIII in green and blue" in b
+
+    def cfa(red, green, blue):
+        # RGGB: (0,0)=R, (0,1)=G, (1,0)=G, (1,1)=B
+        frame = np.zeros((8, 8), np.float32)
+        frame[0::2, 0::2] = red
+        frame[0::2, 1::2] = green
+        frame[1::2, 0::2] = green
+        frame[1::2, 1::2] = blue
+        return frame
+
+    ha, oiii = extract_cfa_planes(cfa(1.0, 0.0, 0.0), "RGGB")
+    assert ha.mean() == pytest.approx(1.0, abs=1e-3), "Ha is not the red sites"
+    assert oiii.mean() == pytest.approx(0.0, abs=1e-3), "red is leaking into OIII"
+    # green-only and blue-only must each give HALF: OIII is their average, so a
+    # green-only or blue-only OIII would read 1.0 or 0.0 here.
+    assert extract_cfa_planes(cfa(0.0, 1.0, 0.0), "RGGB")[1].mean() == pytest.approx(0.5, abs=1e-3)
+    assert extract_cfa_planes(cfa(0.0, 0.0, 1.0), "RGGB")[1].mean() == pytest.approx(0.5, abs=1e-3)
+
+
+def test_haoiii_help_explains_why_the_master_is_not_red():
+    """The extractor rescales OIII to Ha's median AND spread before combining,
+    so the master is far less red than a plain stack of the same subs. Told
+    nothing, a user reads that as a fault in the extraction."""
+    from nocturne.stacking.haoiii import renorm_oiii
+    b = _body("haoiii")
+    assert "less red" in b and "matched to the Ha" in b
+    assert "same brightness and contrast as the Ha" in b
+    rng = np.random.default_rng(7)
+    ha = np.clip(0.5 + 0.05 * rng.standard_normal((64, 64)), 0, 1).astype(np.float32)
+    oiii = np.clip(0.02 + 0.004 * rng.standard_normal((64, 64)), 0, 1).astype(np.float32)
+    out = renorm_oiii(ha, oiii)
+
+    def mad(x):
+        return float(np.median(np.abs(x - np.median(x))))
+
+    assert float(np.median(out)) == pytest.approx(float(np.median(ha)), abs=0.02), \
+        "OIII is no longer lifted to Ha's brightness"
+    assert mad(out) == pytest.approx(mad(ha), rel=0.15), \
+        "OIII is no longer matched to Ha's contrast"
+    assert float(np.median(oiii)) < 0.1, "fixture no longer has a faint OIII to lift"
+
+
+def test_haoiii_help_does_not_borrow_controls_the_dialog_lacks():
+    """It sits next to Stacking in the contents and grades with the same code,
+    which makes it easy to describe controls it does not have. It has no
+    Strictness selector and no framing checkbox, and it refuses fewer than
+    three frames."""
+    import inspect
+
+    from nocturne.stacking.coverage import full_coverage_bounds
+    from nocturne.stacking.grade import grade_frames
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    from nocturne.ui.haoiii_dialog import KAPPA
+    b = _body("haoiii")
+    hd = _src("nocturne/ui/haoiii_dialog.py")
+
+    assert "no <b>Strictness</b> setting here" in b
+    assert "strictness" not in hd.lower(), "the dialog gained a Strictness control"
+    assert inspect.signature(grade_frames).parameters["strictness"].default == "normal"
+
+    assert "no framing choice" in b
+    assert "QCheckBox" not in hd, "the dialog gained a checkbox the help ignores"
+    assert inspect.signature(full_coverage_bounds).parameters["frac"].default == 0.9
+
+    assert "at least three frames" in b
+    assert "at least 3 frames to extract" in hd
+    with pytest.raises(ValueError):
+        run_haoiii_extract(HaOIIIOptions("average", 2.5, ["a.fit", "b.fit"], "/x.fits"))
+
+    for level in KAPPA:
+        assert level in b, f"kappa level {level!r} is not explained"
+    # "Low rejection keeps more" is only true while a low setting is the WIDER
+    # threshold. Swap the two and the help would be advising the opposite.
+    assert KAPPA["Low"] > KAPPA["High"], "the kappa labels are inverted"
+    assert "<b>Low</b> rejection keeps more" in b
