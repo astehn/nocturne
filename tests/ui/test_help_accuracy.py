@@ -610,3 +610,135 @@ def test_dualband_help_is_honest_that_auto_enhance_applies_no_palette():
     assert detect_data_type({"filter": "LP"}) == "dualband"
     assert detect_data_type({"filter": "IRCUT"}) == "broadband"
     assert "FILTER" in _src("nocturne/core/fits_io.py")
+
+
+def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
+    """The topic named no step at all, so nobody could tell what "the steps you
+    applied" covers. Every stepper step must be named, and the two that are
+    silently dropped must be named as dropped — Save Recipe warns about exactly
+    these two."""
+    from nocturne.recipe import _NAME_TO_STAGE, uncaptured_step_names
+    from nocturne.ui.pipeline import ENHANCE_NAMES, STEP_NAME
+    b = _body("recipes")
+    for name in STEP_NAME.values():
+        assert name in b, f"the topic never mentions the {name!r} step"
+    for name in ("Crop", "Rotate", "Flip", "Narrowband", "Colour Balance"):
+        assert name in b
+    assert len(ENHANCE_NAMES) == 10 and "all ten <b>Enhancements</b>" in b
+    assert not uncaptured_step_names([(n, "") for n in ENHANCE_NAMES]), \
+        "the taps are no longer captured; the help says they are"
+
+    every = [(n, "") for n in list(_NAME_TO_STAGE) + list(ENHANCE_NAMES)
+             + ["Star Spikes", "Trim"]]
+    assert uncaptured_step_names(every) == ["Star Spikes", "Trim"], \
+        "the set of steps a recipe drops changed; the help names these two"
+    assert "<b>Star Spikes</b> and <b>Trim</b>" in b
+    assert "can’t include" in b
+    assert "can't include" in _src("nocturne/ui/main_window.py"), \
+        "Save Recipe no longer warns; the help promises it does"
+
+
+def test_recipes_help_is_right_that_a_replayed_crop_is_re_detected():
+    """A recipe stores the aspect, never the box. Batch re-detects the content
+    rectangle per image, so a recipe cannot reproduce a composition — the help
+    now says so, and this proves it."""
+    from nocturne.batch import apply_recipe
+    from nocturne.core.crop import CropParams, detect_content_bounds
+    from nocturne.core.image import AstroImage
+    from nocturne.recipe import Recipe, serialize_option
+    from nocturne.settings import Settings
+    b = _body("recipes")
+    assert "it does not keep the box you dragged" in b
+    assert "content rectangle" in b
+
+    stored = serialize_option("crop", CropParams(bounds=(5, 20, 5, 20), aspect="1:1"))
+    assert "bounds" not in stored, "the recipe now stores bounds; the help is stale"
+    assert stored["aspect"] == "1:1"
+
+    data = np.zeros((40, 40, 3), np.float32)
+    data[8:32, 6:30] = 0.5                       # content inset in a black border
+    img = AstroImage(data, is_linear=True)
+    out = apply_recipe(img, Recipe(steps=[{"stage": "crop", "option":
+                                           serialize_option("crop", CropParams(
+                                               bounds=(5, 20, 5, 20)))}]),
+                       Settings())
+    top, bottom, left, right = detect_content_bounds(img)
+    assert out.data.shape[:2] == (bottom - top, right - left), \
+        "the replayed crop is no longer the detected content rectangle"
+
+
+def test_recipes_help_is_right_about_the_files_batch_reads_and_writes(qtbot, tmp_path):
+    """Only FITS is picked up, and only from the folder itself. A user pointing
+    Batch at a folder of TIFFs gets "0/0" and no explanation."""
+    from nocturne.batch import _EXPORTERS
+    from nocturne.settings import Settings
+    from nocturne.ui.batch_dialog import BatchDialog
+    b = _body("recipes")
+    d = BatchDialog(Settings())
+    qtbot.addWidget(d)
+
+    for row in ("Recipe", "Input folder", "Output folder", "Format"):
+        assert f'form.addRow("{row}"' in _src("nocturne/ui/batch_dialog.py")
+        assert f"<b>{row}</b>" in b, f"the topic never names the {row!r} row"
+    assert [d.format_box.itemText(i) for i in range(d.format_box.count())] == \
+        list(_EXPORTERS), "the format list moved"
+    for fmt in _EXPORTERS:
+        assert f"<b>{fmt}</b>" in b or fmt in b
+
+    for name in ("a.fit", "b.fits", "c.fts", "d.tiff", "e.png", "f.jpg"):
+        (tmp_path / name).write_bytes(b"")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "g.fits").write_bytes(b"")
+    d.input_edit.setText(str(tmp_path))
+    found = {pathlib.Path(p).name for p in d._input_files()}
+    assert found == {"a.fit", "b.fits", "c.fts"}, \
+        "Batch's input patterns changed; the help says FITS only, this folder only"
+    for ext in ("<b>.fit</b>", "<b>.fits</b>", "<b>.fts</b>"):
+        assert ext in b
+    assert "0/0" in b and "Done — {ok}/{len(results)} succeeded" in \
+        _src("nocturne/ui/batch_dialog.py")
+
+
+def test_recipes_help_warns_that_batch_overwrites_by_input_name(tmp_path):
+    """The output is the input's stem plus the format's extension, written with
+    no prompt — so FITS output into the input folder destroys the master. The
+    help says give the output its own folder; this is why."""
+    from nocturne.batch import run_batch
+    from nocturne.core.export import save_fits
+    from nocturne.core.image import AstroImage
+    from nocturne.recipe import Recipe
+    from nocturne.settings import Settings
+    b = _body("recipes")
+    assert "<b>Give the output its own folder</b>" in b
+    src = tmp_path / "in"
+    src.mkdir()
+    save_fits(AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True),
+              str(src / "m42.fits"))
+    before = (src / "m42.fits").read_bytes()
+    results = run_batch(Recipe(steps=[{"stage": "levels", "option": [0.0, 1.0, 1.0]}]),
+                        [str(src / "m42.fits")], str(src), "FITS", Settings())
+    assert results[0]["ok"], results[0]["message"]
+    assert (src / "m42.fits").read_bytes() != before, \
+        "run_batch no longer overwrites the input; the help warns that it does"
+
+
+def test_recipes_help_explains_why_a_whole_batch_can_fail_identically():
+    """Batch has no per-stage resilience: a step whose external tool is missing
+    fails the entire file, with an OS-level message. Every file then fails the
+    same way, which reads as broken data."""
+    from nocturne.batch import run_batch
+    from nocturne.core.export import save_fits
+    from nocturne.core.image import AstroImage
+    from nocturne.recipe import Recipe
+    from nocturne.settings import Settings
+    import tempfile
+    b = _body("recipes")
+    assert "that step cannot be skipped" in b and "<b>Settings</b>" in b
+    d = tempfile.mkdtemp()
+    path = pathlib.Path(d) / "m42.fits"
+    save_fits(AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True), str(path))
+    results = run_batch(Recipe(steps=[{"stage": "background", "option": "strong"}]),
+                        [str(path)], d, "TIFF", Settings())      # nothing installed
+    assert results[0]["ok"] is False, \
+        "a missing GraXpert no longer fails the file; the help says it does"
+    assert not (pathlib.Path(d) / "m42.tiff").exists(), "a failed file wrote output anyway"
