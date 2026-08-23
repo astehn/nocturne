@@ -273,17 +273,6 @@ def test_integrate_average_accepts_a_single_frame(tmp_path):
     assert stack.used == tuple(solo)
 
 
-def test_integrate_sigma_clip_still_requires_three_frames(tmp_path):
-    """The relaxed floor is method-specific: sigma_clip has nothing to clip
-    between with only 2 samples and must keep failing loudly."""
-    prepared, paths = _prepared_three_frame_stack(tmp_path)
-    two = [p for p in paths if p != prepared.reference_path]
-    assert len(two) == 2
-
-    with pytest.raises(ValueError, match="sigma_clip"):
-        prepared.integrate(two, method="sigma_clip", workers=1)
-
-
 def test_a_single_hot_pixel_does_not_set_the_pair_scale():
     """The scale divides both sides of the pair, so it sets the image's
     model-space units and therefore the sigma value fed to the conditioning
@@ -370,3 +359,88 @@ def test_the_manifest_records_the_raw_max_beside_the_scene_scale(tmp_path):
     scaling = json.loads((pair_dir / "manifest.json").read_text())["pair_scaling"]
     assert "scale_raw_max" in scaling
     assert scaling["scale_raw_max"] >= scaling["shared_clean_peak"]
+
+
+def _write_synthetic_group(root, count=8, shape=(160, 160), seed=18):
+    """A registrable synthetic S30 sequence, the fixture both manifest tests use."""
+    root.mkdir(parents=True, exist_ok=True)
+    base = make_star_field(shape=shape, n_stars=45, seed=seed)
+    for i in range(count):
+        path = root / f"frame_{i:02d}.fit"
+        write_cfa_fits(path, np.roll(base, (i % 2, -(i % 3)), axis=(0, 1)))
+        with fits.open(path, mode="update") as hdul:
+            header = hdul[0].header
+            header["TELESCOP"] = "S30 Pro_test"
+            header["OBJECT"] = "Prototype"
+            header["DATE-OBS"] = f"2026-08-09T00:00:{i:02d}"
+            header["FILTER"] = "LP"
+            header["RA"] = 100.0
+            header["DEC"] = 20.0
+    return root
+
+
+def test_sigma_clip_falls_back_to_average_below_three_frames(tmp_path):
+    """n2n_v1 asks for sigma_clip globally, but the ladder's shallowest rungs
+    are 1 and 2 frames -- the noisiest inputs the model ever sees, and the
+    strongest supervision in the ladder. Refusing them (which a real smoke
+    build did, four times) amputates the shallow end of the ladder, so the
+    request degrades to a plain mean, which is exactly correct for 1-2 frames."""
+    prepared, paths = _prepared_three_frame_stack(tmp_path)
+    others = [p for p in paths if p != prepared.reference_path]
+    assert len(others) == 2
+
+    for subset in (others[:1], others):
+        stack = prepared.integrate(subset, method="sigma_clip", workers=1)
+        expected = prepared.integrate(subset, method="average", workers=1)
+        assert stack.method_used == "average", f"{len(subset)} frame(s)"
+        np.testing.assert_allclose(stack.data, expected.data, atol=1e-6)
+
+
+def test_three_frames_are_still_sigma_clipped(tmp_path):
+    """The fallback is a floor, not a replacement: as soon as clipping has
+    samples to clip between it must be what actually runs, or n2n_v1's whole
+    reason for asking (removing the hot pixels N2N would learn as signal)
+    quietly stops happening."""
+    prepared, paths = _prepared_three_frame_stack(tmp_path)
+    assert len(paths) == 3
+
+    stack = prepared.integrate(paths, method="sigma_clip", workers=1)
+    assert stack.method_used == "sigma_clip"
+
+
+def test_average_still_reports_itself_and_is_never_promoted(tmp_path):
+    prepared, paths = _prepared_three_frame_stack(tmp_path)
+    assert prepared.integrate(paths, method="average", workers=1).method_used == "average"
+    solo = [p for p in paths if p != prepared.reference_path][:1]
+    assert prepared.integrate(solo, method="average", workers=1).method_used == "average"
+
+
+def test_integrate_still_refuses_an_empty_selection(tmp_path):
+    """Zero frames is genuinely impossible for either method; the fallback
+    must not turn a real error into an empty stack."""
+    prepared, _ = _prepared_three_frame_stack(tmp_path)
+    for method in ("average", "sigma_clip"):
+        with pytest.raises(ValueError):
+            prepared.integrate([], method=method, workers=1)
+
+
+def test_the_manifest_records_which_method_each_side_actually_used(tmp_path):
+    """A pair can be mixed -- a 1-frame input is averaged while its 3-frame
+    target is clipped -- so one field per side, and a consumer can tell which
+    pairs were averaged rather than clipped without re-deriving the rule."""
+    root = _write_synthetic_group(tmp_path / "source")
+    output = tmp_path / "pairs"
+    results = generate_training_pairs(
+        root,
+        output,
+        config=PairConfig(
+            input_counts=(1,), target_count=3, pairs_per_group=1, method="sigma_clip",
+        ),
+        workers=1,
+    )
+    assert results[0]["pairs"][0]["status"] == "written", results[0]["pairs"][0]
+    pair_dir = output / results[0]["group"] / "pair_0000_in1_target3"
+    stack = json.loads((pair_dir / "manifest.json").read_text())["stack"]
+    assert stack["method"] == "sigma_clip", "the REQUEST is still recorded"
+    assert stack["method_used_input"] == "average"
+    assert stack["method_used_target"] == "sigma_clip"

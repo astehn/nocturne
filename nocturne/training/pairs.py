@@ -385,6 +385,9 @@ class RawStack:
     coverage: np.ndarray
     used: tuple[str, ...]
     integration_seconds: float
+    # The method that actually ran, which is not always the one requested --
+    # see PreparedStack.integrate's sigma_clip fallback.
+    method_used: str = "average"
 
 
 @dataclass
@@ -424,17 +427,20 @@ class PreparedStack:
             raise ValueError(f"frames were not successfully registered: {missing[:3]}")
         if method not in {"average", "sigma_clip"}:
             raise ValueError("method must be 'average' or 'sigma_clip'")
+        if not selected:
+            raise ValueError(
+                f"method={method!r} needs at least 1 successfully "
+                f"registered frame to stack, got 0"
+            )
         # sigma_clip needs samples to clip between and is genuinely broken
         # below 3; average_integrate is a plain mean and is correct (if
-        # noisy) down to a single frame. That single frame matters: it is
-        # the strongest supervision signal in the denoise training ladder,
-        # since it is the noisiest input the model will ever be trained on.
-        min_required = 3 if method == "sigma_clip" else 1
-        if len(selected) < min_required:
-            raise ValueError(
-                f"method={method!r} needs at least {min_required} successfully "
-                f"registered frame(s) to stack, got {len(selected)}"
-            )
+        # noisy) down to a single frame. So a shallow rung degrades to the
+        # mean rather than failing: that single frame matters, being the
+        # strongest supervision signal in the denoise training ladder, since
+        # it is the noisiest input the model will ever be trained on. The
+        # substitution is recorded, never silent -- a whole-dataset
+        # method="sigma_clip" must not read as though every pair was clipped.
+        method_used = "average" if len(selected) < 3 else method
 
         worker_count = workers if workers is not None else plan_workers().count
         total = len(selected)
@@ -456,7 +462,7 @@ class PreparedStack:
                     on_progress(f"{label} pass {pass_number}", index, total)
                 yield result
 
-        if method == "sigma_clip":
+        if method_used == "sigma_clip":
             data, coverage = sigma_clip_integrate(frames_for_pass, kappa)
         else:
             data, coverage = average_integrate(frames_for_pass())
@@ -471,6 +477,7 @@ class PreparedStack:
             coverage=np.asarray(coverage, dtype=np.int32),
             used=tuple(selected),
             integration_seconds=sum(self.frames[p].exposure_s for p in selected),
+            method_used=method_used,
         )
 
 
@@ -738,6 +745,7 @@ def _write_pair(
     config: PairConfig,
     root: Path,
     prepared: PreparedStack,
+    methods_used: tuple[str, str],
 ) -> dict:
     pair_dir = output_dir / group.slug / (
         f"pair_{spec['pair_index']:04d}_in{spec['input_count']}_"
@@ -795,6 +803,11 @@ def _write_pair(
         },
         "stack": {
             "method": config.method,
+            # What each side ACTUALLY integrated with. They can differ within
+            # one pair: a 1-frame input is averaged while its 64-frame target
+            # is clipped, and a consumer must not have to re-derive that.
+            "method_used_input": methods_used[0],
+            "method_used_target": methods_used[1],
             "kappa": config.kappa,
             "autocrop": False,
             "reference_path": str(Path(prepared.reference_path).relative_to(root))
@@ -940,6 +953,7 @@ def generate_training_pairs(
                     config,
                     root,
                     prepared,
+                    (noisy_raw.method_used, clean_raw.method_used),
                 )
             except Exception as exc:  # keep other pairs/groups usable
                 result = {
