@@ -150,17 +150,11 @@ def _apply_unconditioned(img_hwc, model, device, strength, tile=256, overlap=32)
     return out / np.maximum(wsum, 1e-6)
 
 
-def _patch_chroma_bias(img_hwc, sky_mask, scale=25.0):
-    """Large-scale colour-difference std within `sky_mask` -- the blotch
-    signature. `scale` (px) is well above single-pixel noise and well below
-    the whole frame; empirically the regression signal is stable across a
-    wide strength range with this value, so it is not a knife-edge tuning."""
-    from scipy.ndimage import gaussian_filter
-
-    r, g, b = img_hwc[:, :, 0], img_hwc[:, :, 1], img_hwc[:, :, 2]
-    gm = gaussian_filter((r + b) / 2 - g, scale)
-    rb = gaussian_filter(r - b, scale)
-    return float((gm[sky_mask].std() ** 2 + rb[sky_mask].std() ** 2) ** 0.5)
+# The proxy now lives in gate.py, where nightly.py can call it on every run
+# instead of it existing only inside this one replay test. Aliased rather than
+# rewritten at the call sites so the v2 positive control below stays literally
+# the test that was proven to catch the real regression.
+from gate import patch_chroma_bias as _patch_chroma_bias  # noqa: E402
 
 
 @pytest.mark.skipif(
@@ -215,3 +209,53 @@ def test_v2_model_fails_the_gate_on_the_real_m8_master():
         f"it passed: input_err={input_err:.5f} model_err={model_err:.5f}"
     )
     assert any("M8" in f and "405" in f for f in g.failures)
+
+
+# --- the deep-end proxy, now a gate function rather than a test fixture ----
+
+def test_patch_chroma_bias_is_zero_on_a_neutral_field():
+    """No colour structure -> no chroma bias. Anchors the metric's zero."""
+    import numpy as np
+    from gate import patch_chroma_bias, sky_mask
+
+    img = np.full((256, 256, 3), 0.2, np.float32)
+    assert patch_chroma_bias(img, sky_mask(img)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_patch_chroma_bias_detects_patch_scale_colour_blotching():
+    """The M8 failure signature: large-scale green/magenta patches. Single-
+    pixel chroma noise must NOT register, or the metric would fire on every
+    noisy image instead of on damage. Measured 2026-08-23 at the shipped
+    scale=25px: speckle 0.00039, blotching 0.01592 -- a factor of 40. Drop the
+    scale to 5px and the speckle figure rises to 0.0022 and breaks the first
+    assertion, which is what makes that assertion load-bearing."""
+    import numpy as np
+    from gate import patch_chroma_bias, sky_mask
+
+    rng = np.random.default_rng(0)
+    base = np.full((256, 256, 3), 0.2, np.float32)
+    mask = sky_mask(base)
+
+    speckle = base + rng.normal(0, 0.02, base.shape).astype(np.float32)
+    blotchy = base.copy()
+    blotchy[:128, :, 1] += 0.02          # a big green patch
+    blotchy[128:, :, 0] += 0.02          # a big red one
+
+    assert patch_chroma_bias(speckle, mask) < 0.002
+    assert patch_chroma_bias(blotchy, mask) > 0.005
+
+
+def test_the_sky_mask_selects_the_dark_end_and_leaves_the_bright_end_out():
+    """`sky_mask` is what keeps the metric off nebula cores, so it has to
+    actually exclude the bright end -- on a flat field every pixel qualifies
+    and the mask is untested by the two metric tests above."""
+    import numpy as np
+    from gate import sky_mask
+
+    ramp = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+    img = np.repeat(np.tile(ramp, (256, 1))[:, :, None], 3, axis=2)
+    mask = sky_mask(img, percentile=60.0)
+
+    assert mask.mean() == pytest.approx(0.60, abs=0.01)
+    assert mask[:, 0].all()               # the darkest column is sky
+    assert not mask[:, -1].any()          # the brightest column is not

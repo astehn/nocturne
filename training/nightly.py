@@ -51,6 +51,13 @@ _NOCTURNE_MODELS_DIR = _REPO_ROOT / "nocturne" / "assets" / "models"
 # since nightly.py is itself required to run under it.
 _PYTHON = sys.executable
 
+# The one real deep stack on this machine: no ground truth exists for it (it
+# IS the deepest stack there is), and it is the exact master the 2026-08-22
+# model damaged. Every run is checked against it, truth-free, via gate's
+# chroma proxy -- a held-out-pair gate cannot reach this depth by construction.
+_M8_MASTER = "/Volumes/Work2/Images/Astro/Work/M8 Total/lights/M8_405x10s_68min.fits"
+_M8_DEPTH = 405
+
 _PAIR_DIR_RE = re.compile(r"_in(\d+)_target(\d+)$")
 _GROUP_DIR_RE = re.compile(r"^(?:s30|s50)_([^_]+)_")
 
@@ -248,6 +255,59 @@ def _run_subprocess(cmd: list[str], *, on_line=print) -> None:
         raise RuntimeError(f"{os.path.basename(cmd[1])} exited {proc.returncode}\n{tail}")
 
 
+# --------------------------------------------------------- the deep end
+
+def _deep_end_result(model, device, strength: float):
+    """The truth-free deep-end check, as a DepthResult the gate can consume.
+
+    Returns None only if the master is not on this machine -- the caller must
+    treat that as "not verified", never as a pass.
+
+    The sky mask is taken from the INPUT and reused for the model output, so
+    both sides are measured over the same pixels; a mask recomputed on the
+    output would let a model that flattens the nebula move the goalposts under
+    itself. The stretch matters too: the bias is invisible in linear data --
+    that is what every prior relative-to-truth test missed -- and only becomes
+    the visible blotching once stretched the way a user would see it.
+    """
+    if not os.path.isfile(_M8_MASTER):
+        return None
+    from astropy.io import fits
+
+    import evaluate
+    import gate
+    from evaluate import _hwc
+    from nocturne.core.autostretch import linked_stretch
+
+    inp = _hwc(fits.getdata(_M8_MASTER))
+    a = D._ASINH_A
+    out = D.from_model_space(
+        evaluate.apply_model(D.to_model_space(inp, a), model, device, strength=strength), a)
+    sky = gate.sky_mask(inp)
+    return DepthResult(
+        "M8-deep-proxy", _M8_DEPTH,
+        gate.patch_chroma_bias(linked_stretch(inp, 0.25), sky),
+        gate.patch_chroma_bias(linked_stretch(out, 0.25), sky),
+    )
+
+
+def _with_deep_end(depth_results, deep, on_line=print):
+    """The result set the gate is handed -- or nothing at all, if the deep end
+    could not be measured.
+
+    An unverified deep end must not be allowed to pass on the held-out pairs'
+    say-so: those top out far below the depth the user actually works at, and
+    that gap is precisely how the 2026-08-22 model shipped. check_no_harm
+    refuses an empty set, so returning [] fails the run rather than skipping
+    the check.
+    """
+    if deep is None:
+        on_line("WARNING: deep-end proxy unavailable (M8 master not mounted) "
+                "\u2014 gate cannot pass")
+        return []
+    return list(depth_results) + [deep]
+
+
 def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     """One experiment, end to end: build -> train -> evaluate -> gate -> report
     -> (export + promote iff the gate passed and this isn't a smoke run)."""
@@ -305,6 +365,11 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
         depth_results.append(dr)
         metrics.append(dr._asdict())
         rows.append((f"{target} @ {depth}f", tgt, [("noisy", inp), ("model", out), ("truth", tgt)]))
+
+    deep = _deep_end_result(model, device, strength)
+    if deep is not None:
+        metrics.append(deep._asdict())
+    depth_results = _with_deep_end(depth_results, deep, on_line=on_line)
 
     gate_result = check_no_harm(depth_results, tolerance=float(cfg.get("gate_tolerance", 0.0)))
 

@@ -313,3 +313,92 @@ def test_select_gate_pairs_handles_a_cap_larger_than_the_dataset():
 
     dirs = _fake_pair_dirs()
     assert len(select_gate_pairs(dirs, 500)) == len(dirs)
+
+
+# ------------------------------------------------------- the deep-end proxy
+
+def test_the_deep_end_proxy_returns_nothing_when_the_master_is_absent(monkeypatch):
+    """The deep-end proxy is the ONLY check that can reach the depths the user
+    actually works at -- a truth-based gate never can, because the deepest
+    stack IS the truth. So its absence must be distinguishable from its
+    approval: it returns None, and run_one turns that into an empty result set,
+    which check_no_harm already refuses to pass."""
+    import nightly
+    from gate import check_no_harm
+
+    monkeypatch.setattr(nightly, "_M8_MASTER", "/nonexistent/master.fits")
+    assert nightly._deep_end_result(object(), object(), 0.75) is None
+    # and an empty result set is what run_one hands the gate in that case
+    assert not check_no_harm([], tolerance=0.0).passed
+
+
+def test_an_unverified_deep_end_leaves_the_gate_nothing_to_pass_on():
+    """A held-out set that passes on its own must NOT carry the run when the
+    deep end could not be measured. Asserted on the exact list the gate is
+    handed, because "passed" is what authorises staging a model."""
+    import nightly
+    from gate import DepthResult, check_no_harm
+
+    healthy = [DepthResult("NGC6888", 8, 1.0e-4, 0.5e-4),
+               DepthResult("NGC6888", 32, 1.3e-4, 0.7e-4)]
+    assert check_no_harm(healthy).passed          # they would pass alone
+
+    lines = []
+    assert nightly._with_deep_end(healthy, None, on_line=lines.append) == []
+    assert not check_no_harm(nightly._with_deep_end(healthy, None, on_line=lines.append)).passed
+    assert any("deep-end" in line for line in lines)
+
+
+def test_a_harmful_deep_end_fails_a_run_whose_held_out_pairs_all_pass():
+    """The 2026-08-23 shape of the incident: every held-out depth improved and
+    the deep master was still damaged."""
+    import nightly
+    from gate import DepthResult, check_no_harm
+
+    healthy = [DepthResult("NGC6888", 8, 1.0e-4, 0.5e-4)]
+    harmful = DepthResult("M8-deep-proxy", 405, 0.00318, 0.00462)
+    combined = nightly._with_deep_end(healthy, harmful)
+    assert combined == healthy + [harmful]
+    g = check_no_harm(combined)
+    assert not g.passed
+    assert any("M8-deep-proxy" in f for f in g.failures)
+
+
+def test_the_deep_end_proxy_measures_both_sides_over_the_same_sky_pixels(tmp_path, monkeypatch):
+    """Input and output must be compared over ONE set of pixels, chosen from
+    the input. A mask recomputed on the model's own output would let a model
+    that darkens the nebula move the goalposts under itself and score its own
+    damage as background."""
+    import numpy as np
+    import gate
+    import nightly
+    from astropy.io import fits
+
+    rng = np.random.default_rng(7)
+    img = (0.02 + 0.4 * np.linspace(0, 1, 128, dtype=np.float32)[None, :, None]
+           + rng.normal(0, 0.002, (128, 128, 3))).astype(np.float32)
+    master = tmp_path / "master.fits"
+    fits.writeto(master, np.transpose(img, (2, 0, 1)).astype(np.float32))
+    monkeypatch.setattr(nightly, "_M8_MASTER", str(master))
+
+    import evaluate
+    # A model that crushes the bright end. It has to REORDER pixels by
+    # luminance, not merely rescale them: sky_mask is a percentile, so any
+    # monotonic output (x*0.2+0.4, say) yields the identical mask and the
+    # assertions below could not tell the two apart. Clamping makes 70% of the
+    # frame tie at the top, which moves the 60th percentile onto the clamp.
+    monkeypatch.setattr(evaluate, "apply_model",
+                        lambda x, *a, **k: np.minimum(np.asarray(x, np.float32),
+                                                      np.percentile(x, 30)))
+
+    seen = []
+    real_bias = gate.patch_chroma_bias
+    monkeypatch.setattr(gate, "patch_chroma_bias",
+                        lambda img_hwc, mask, **kw: seen.append(mask.copy()) or real_bias(img_hwc, mask, **kw))
+
+    result = nightly._deep_end_result(object(), object(), 0.75)
+    assert result is not None
+    assert result.target == "M8-deep-proxy" and result.depth == nightly._M8_DEPTH
+    assert len(seen) == 2
+    assert np.array_equal(seen[0], seen[1]), "input and output were masked differently"
+    assert np.array_equal(seen[0], gate.sky_mask(img)), "the mask did not come from the input"
