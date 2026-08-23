@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..batch import run_batch
+from ..batch import overwrites_source, run_batch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..recipe import load_recipe
 from ..settings import start_dir
@@ -119,6 +119,16 @@ class BatchDialog(QDialog):
         outdir = self.output_edit.text().strip()
         settings = self._settings
         runner = self._batch_runner
+        # run_batch guards this per file too, and that is the authoritative
+        # check. Saying it once up front is simply kinder than fifty identical
+        # failures after the fact. Only when EVERY file collides: a partial
+        # collision is per-file business, and refusing the whole batch would
+        # strand the files that are fine.
+        if paths and all(overwrites_source(p, outdir, fmt) for p in paths):
+            self.status.setText(
+                "Every file would overwrite the source it was read from — "
+                "choose a different output folder or format.")
+            return
         self.progress.setMaximum(max(1, len(paths)))
         self.progress.setValue(0)
         self.status.setText("Processing…")

@@ -130,3 +130,42 @@ def test_failed_files_are_named_with_their_reason(qtbot, tmp_path):
     assert "1/2 succeeded" in text
     assert "bad.fit" in text and "no stars found" in text
     assert "good.fit" not in text
+
+
+def test_run_refuses_up_front_when_every_file_would_overwrite_itself(qtbot, tmp_path):
+    # Friendlier than fifty identical per-file failures after the fact.
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    _ready(dlg, tmp_path)
+    indir = tmp_path / "in"
+    (indir / "m42.fits").write_bytes(b"")
+    (indir / "ngc281.fits").write_bytes(b"")
+    dlg.output_edit.setText(str(indir))          # output folder == input folder
+    dlg.format_box.setCurrentText("FITS")
+    started = []
+    dlg._batch_runner = lambda *a, **k: started.append(True) or []
+    dlg.run()
+    assert "overwrite" in dlg.status.text().lower()
+    assert "output folder or format" in dlg.status.text()
+    # Refused before any worker was spun up at all, not merely before it landed.
+    assert dlg._active_token is None
+    assert dlg.run_btn.isEnabled()
+    qtbot.wait(100)
+    assert started == [], "processing began despite every file colliding"
+
+
+def test_a_partial_collision_still_runs(qtbot, tmp_path):
+    # Only SOME files colliding is run_batch's business, per file — the dialog
+    # must not refuse the whole batch and strand the files that are fine.
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    _ready(dlg, tmp_path)
+    indir = tmp_path / "in"
+    (indir / "m42.fits").write_bytes(b"")
+    (indir / "ngc281.fit").write_bytes(b"")      # exports to ngc281.fits — no collision
+    dlg.output_edit.setText(str(indir))
+    dlg.format_box.setCurrentText("FITS")
+    started = []
+    dlg._batch_runner = lambda *a, **k: started.append(True) or []
+    dlg.run()
+    qtbot.waitUntil(lambda: started == [True], timeout=2000)

@@ -161,3 +161,82 @@ def test_legacy_recipe_without_enhance_still_runs():
     base = _enhance_img()
     out = apply_recipe(base, Recipe(steps=[]), Settings())
     assert np.allclose(out.data, base.data)
+
+
+def _stretch() -> Recipe:
+    return Recipe(steps=[{"stage": "stretch", "option": 0.5}])
+
+
+def test_run_batch_never_overwrites_its_own_source(tmp_path):
+    # Output folder == input folder, Format=FITS: the destination IS the source.
+    # That master is hours of capture and there is no undo, so the file must come
+    # out byte-identical — not merely "different from the processed version".
+    src = tmp_path / "m42.fits"
+    _fits(src)
+    before = src.read_bytes()
+    results = run_batch(_stretch(), [str(src)], str(tmp_path), "FITS", Settings())
+    assert src.read_bytes() == before, "the source master was rewritten"
+    assert results[0]["ok"] is False
+    assert "overwrite the source file" in results[0]["message"]
+    assert "output folder or format" in results[0]["message"]
+
+
+def test_source_collision_survives_symlinks_dotdot_and_trailing_slashes(tmp_path):
+    # A string compare of folder names misses every one of these.
+    import os as _os
+    indir = tmp_path / "in"
+    indir.mkdir()
+    src = indir / "a.fits"
+    _fits(src)
+    before = src.read_bytes()
+    link = tmp_path / "elsewhere"
+    link.symlink_to(indir, target_is_directory=True)
+    for outdir in (str(link), str(indir) + _os.sep, str(indir / "sub" / "..")):
+        results = run_batch(_stretch(), [str(src)], outdir, "FITS", Settings())
+        assert src.read_bytes() == before, f"source rewritten via {outdir}"
+        assert results[0]["ok"] is False, f"collision missed via {outdir}"
+
+
+def test_a_collision_fails_only_that_file_and_the_batch_carries_on(tmp_path):
+    # b.fit exports to b.fits — a different name, so it must still be written.
+    a, b = tmp_path / "a.fits", tmp_path / "b.fit"
+    _fits(a)
+    _fits(b)
+    before = a.read_bytes()
+    results = run_batch(_stretch(), [str(a), str(b)], str(tmp_path), "FITS", Settings())
+    assert a.read_bytes() == before
+    assert [r["ok"] for r in results] == [False, True]
+    assert (tmp_path / "b.fits").exists()
+
+
+def test_a_collision_costs_nothing_because_it_is_caught_before_processing(tmp_path):
+    # Checked before the recipe runs, not after: a guard that still burns a
+    # GraXpert run per file before saying no is most of the cost of the bug.
+    src = tmp_path / "m42.fits"
+    _fits(src)
+    ran = []
+    rec = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
+    import nocturne.batch as batch_mod
+    real = batch_mod.apply_recipe
+    batch_mod.apply_recipe = lambda *a, **k: (ran.append(1), real(*a, **k))[1]
+    try:
+        run_batch(rec, [str(src)], str(tmp_path), "FITS", Settings())
+    finally:
+        batch_mod.apply_recipe = real
+    assert ran == [], "the recipe ran before the collision was noticed"
+
+
+def test_source_collision_on_a_case_insensitive_filesystem(tmp_path):
+    # macOS APFS is case-insensitive by default: m42.FITS and m42.fits are ONE
+    # file there, so realpath's case-sensitive compare is not enough on its own.
+    probe = tmp_path / "CaseProbe"
+    probe.write_text("x")
+    insensitive = (tmp_path / "caseprobe").exists()
+    src = tmp_path / "m42.FITS"
+    _fits(src)
+    before = src.read_bytes()
+    results = run_batch(_stretch(), [str(src)], str(tmp_path), "FITS", Settings())
+    assert src.read_bytes() == before, "the source master was rewritten"
+    if insensitive:
+        assert results[0]["ok"] is False
+        assert "overwrite the source file" in results[0]["message"]
