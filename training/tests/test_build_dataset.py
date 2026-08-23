@@ -1,4 +1,6 @@
+import build_dataset as bd
 from build_dataset import Rung, plan_ladder
+from nocturne.training.pairs import FrameGroup, FrameInfo
 
 
 def _truth(rungs):
@@ -102,3 +104,97 @@ def test_the_kind_always_agrees_with_the_ratio_that_defines_it():
         for r in plan_ladder(n):
             expected = "truth" if r.n_tgt >= r.n_in * 4.0 else "n2n"
             assert r.kind == expected, f"n_frames={n}: {r} should be {expected}"
+
+
+def _group(n_frames, slug_target="M16"):
+    frames = tuple(
+        FrameInfo(f"/src/{slug_target}/f{i:04d}.fit", f"f{i:04d}.fit", slug_target,
+                  slug_target, "s30", "S30 Pro", "", (2160, 3840), "LP", 10.0,
+                  "2026-08-09", f"2026-08-09T00:00:{i % 60:02d}", 275.1, -13.8, None)
+        for i in range(n_frames)
+    )
+    return FrameGroup("s30", slug_target, "LP", 10.0, "2026-08-09", frames)
+
+
+def _stub_build(monkeypatch, tmp_path, group, *, pre_made=()):
+    """Run build_dataset against one group with the expensive parts faked.
+
+    Returns (calls, manifest): `calls` is one entry per generate_training_pairs
+    invocation, which is the thing under test -- each real one re-registers
+    every frame in the group.
+    """
+    dataset_dir = tmp_path / "ds"
+    monkeypatch.setattr(bd, "_DEFAULT_DATASET_ROOT", tmp_path)
+    monkeypatch.setattr(bd, "discover_frame_groups", lambda *a, **k: [group])
+    monkeypatch.setattr(
+        bd, "_noise_record",
+        lambda pair_dir, n_in, n_tgt, status: {
+            "pair_dir": str(pair_dir), "status": status,
+            "input_count": n_in, "target_count": n_tgt,
+        },
+    )
+
+    def _write(n_in, n_tgt, pairs):
+        for i in range(pairs):
+            d = dataset_dir / group.slug / f"pair_{i:04d}_in{n_in}_target{n_tgt}"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "manifest.json").write_text("{}\n")
+
+    for n_in, n_tgt in pre_made:
+        _write(n_in, n_tgt, 2)
+
+    calls = []
+
+    def fake_generate(source, output, *, config, **kwargs):
+        calls.append(config)
+        rungs = config.rungs or tuple(
+            (n_in, config.target_count) for n_in in config.input_counts
+        )
+        for n_in, n_tgt in rungs:
+            _write(n_in, n_tgt, config.pairs_per_group)
+        return [{"group": group.slug, "pairs": []}]
+
+    monkeypatch.setattr(bd, "generate_training_pairs", fake_generate)
+    manifest = bd.build_dataset(
+        {"name": "ds", "source": str(tmp_path / "src"), "sensor": "s30",
+         "pairs_per_depth": 2, "method": "sigma_clip"},
+        on_line=lambda *a: None,
+    )
+    return calls, manifest
+
+
+def test_a_group_is_registered_once_however_many_target_depths_it_has(tmp_path, monkeypatch):
+    """A 366-frame group's ladder has four distinct targets (256, 237, 109,
+    64). Grouping the rungs by target and calling once per target meant four
+    full re-registrations of the same 365 frames -- measured as four
+    "preparing" lines for one group in a smoke build, and roughly two hours of
+    duplicated work across the archive. PreparedStack exists precisely so the
+    registration is reused."""
+    group = _group(366)
+    ladder = bd.plan_ladder(366, min_ratio=4.0, min_target=16, min_n2n_target=64)
+    assert len({r.n_tgt for r in ladder}) > 1, "fixture must span several targets"
+
+    calls, manifest = _stub_build(monkeypatch, tmp_path, group)
+
+    assert len(calls) == 1, f"{len(calls)} registrations for one group"
+    assert set(calls[0].rungs) == {(r.n_in, r.n_tgt) for r in ladder}
+    assert manifest["summary"].get("pairs_failed", 0) == 0
+    assert manifest["summary"]["pairs_generated"] == 2 * len(ladder)
+
+
+def test_rungs_already_on_disk_are_not_rebuilt(tmp_path, monkeypatch):
+    """Resumability survives the restructure: a rung whose pairs are already
+    written is left out of the single call and reported as already_present,
+    not regenerated and not counted as failed."""
+    group = _group(366)
+    ladder = bd.plan_ladder(366, min_ratio=4.0, min_target=16, min_n2n_target=64)
+    done = (ladder[0].n_in, ladder[0].n_tgt)
+
+    calls, manifest = _stub_build(monkeypatch, tmp_path, group, pre_made=[done])
+
+    assert len(calls) == 1
+    assert done not in set(calls[0].rungs)
+    assert set(calls[0].rungs) == {(r.n_in, r.n_tgt) for r in ladder} - {done}
+    assert manifest["summary"]["pairs_already_present"] == 2
+    assert manifest["summary"]["pairs_generated"] == 2 * (len(ladder) - 1)
+    assert manifest["summary"].get("pairs_failed", 0) == 0

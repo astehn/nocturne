@@ -444,3 +444,92 @@ def test_the_manifest_records_which_method_each_side_actually_used(tmp_path):
     assert stack["method"] == "sigma_clip", "the REQUEST is still recorded"
     assert stack["method_used_input"] == "average"
     assert stack["method_used_target"] == "sigma_clip"
+
+
+def _fake_group(name="s30_Prototype_2026-08-09_LP_10s"):
+    from nocturne.training.pairs import FrameGroup, FrameInfo
+
+    frames = tuple(
+        FrameInfo(f"/src/f{i:03d}.fit", f"f{i:03d}.fit", "Prototype", "Prototype",
+                  "s30", "S30 Pro", "", (32, 48), "LP", 10.0,
+                  "2026-08-09", f"2026-08-09T00:00:{i:02d}", 100.0, 20.0, None)
+        for i in range(40)
+    )
+    return FrameGroup("s30", "Prototype", "LP", 10.0, "2026-08-09", frames)
+
+
+def _specs(rungs, *, pairs_per_group=2):
+    group = _fake_group()
+    pool = [f.path for f in group.frames]
+    config = PairConfig(rungs=rungs, pairs_per_group=pairs_per_group)
+    return pairs_module._group_pair_specs(group, pool, config, pool[0])
+
+
+def test_a_rung_list_supersedes_input_counts_and_target_count():
+    """PairConfig could only ever express one target depth, so build_dataset
+    had to call generate_training_pairs once per distinct target -- and each
+    call re-registered the same frames from scratch. A mixed rung list is what
+    lets one call, and therefore one registration, serve the whole group."""
+    specs = _specs(((1, 16), (4, 8)), pairs_per_group=1)
+    assert [(s["input_count"], s["target_count"]) for s in specs] == [(1, 16), (4, 8)]
+
+
+def test_input_counts_and_target_count_still_work_when_no_rungs_are_given():
+    group = _fake_group()
+    pool = [f.path for f in group.frames]
+    config = PairConfig(input_counts=(2, 4), target_count=8, pairs_per_group=1)
+    specs = pairs_module._group_pair_specs(group, pool, config, pool[0])
+    assert [(s["input_count"], s["target_count"]) for s in specs] == [(2, 8), (4, 8)]
+
+
+def test_a_rungs_partition_is_the_same_whatever_else_is_in_the_call():
+    """The seed must key on the rung's OWN identity, not on its position in
+    the loop. With a running ordinal, moving four one-target calls into one
+    mixed call silently re-partitioned every rung -- so a rebuild would not
+    reproduce the dataset, and the resumability check that skips pairs already
+    on disk would be comparing against frames it never actually used."""
+    alone = _specs(((4, 8),))
+    with_others = _specs(((1, 16), (4, 8), (2, 32)))
+    picked = [s for s in with_others if (s["input_count"], s["target_count"]) == (4, 8)]
+
+    assert len(picked) == len(alone) == 2
+    for a, b in zip(alone, picked):
+        assert a["seed"] == b["seed"]
+        assert a["noisy"] == b["noisy"]
+        assert a["clean"] == b["clean"]
+
+
+def test_rungs_and_pair_indices_still_get_different_partitions():
+    """The other half of the contract: keying on identity must not collapse
+    into one seed for everything, or every pair of a group would draw the
+    same frames."""
+    specs = _specs(((1, 16), (1, 8), (4, 8)))
+    seeds = [s["seed"] for s in specs]
+    assert len(set(seeds)) == len(seeds) == 6, "n_in, n_tgt and pair_index must all count"
+
+
+def test_one_call_writes_every_rung_from_a_single_registration(tmp_path):
+    root = _write_synthetic_group(tmp_path / "source")
+    output = tmp_path / "pairs"
+    calls = []
+    real_prepare = pairs_module.prepare_stack
+
+    def counting_prepare(*args, **kwargs):
+        calls.append(args[0])
+        return real_prepare(*args, **kwargs)
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(pairs_module, "prepare_stack", counting_prepare):
+        results = generate_training_pairs(
+            root,
+            output,
+            config=PairConfig(rungs=((1, 3), (2, 4)), pairs_per_group=1),
+            workers=1,
+        )
+
+    assert len(calls) == 1, "one group must be registered exactly once"
+    assert [p["status"] for p in results[0]["pairs"]] == ["written", "written"]
+    group_dir = output / results[0]["group"]
+    assert (group_dir / "pair_0000_in1_target3" / "manifest.json").is_file()
+    assert (group_dir / "pair_0000_in2_target4" / "manifest.json").is_file()

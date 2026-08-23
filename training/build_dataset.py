@@ -252,80 +252,83 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             summary["groups_skipped_too_small"] += 1
             continue
 
-        by_target: dict[int, list[int]] = defaultdict(list)
-        for r in ladder:
-            by_target[r.n_tgt].append(r.n_in)
-
+        # ALL of the group's missing rungs in ONE call, whatever their target
+        # depths. generate_training_pairs registers the group once per call, so
+        # the previous grouping by target cost a full re-registration of the
+        # same frames per distinct target -- four of them on a 366-frame group
+        # under the derived ladder, where the old fixed ladder had only ever
+        # produced one. PreparedStack was built for exactly this reuse.
+        need = [
+            (r.n_in, r.n_tgt) for r in ladder
+            if not _pairs_fully_present(
+                dataset_dir, group.slug, r.n_in, r.n_tgt, pairs_per_depth
+            )
+        ]
         group_pairs: list[dict] = []
-        for n_tgt in sorted(by_target, reverse=True):
-            n_ins = sorted(by_target[n_tgt])
-            need = [
-                n_in for n_in in n_ins
-                if not _pairs_fully_present(dataset_dir, group.slug, n_in, n_tgt, pairs_per_depth)
-            ]
-            if need:
-                pair_config = PairConfig(
-                    input_counts=tuple(need),
-                    target_count=n_tgt,
-                    pairs_per_group=pairs_per_depth,
-                    seed=seed,
-                    method=method,
-                    kappa=kappa,
-                    # The same ratio plan_ladder used above. _write_pair
-                    # recomputes each pair's kind from it, so a config that
-                    # moved min_ratio off 4.0 would otherwise have the planner
-                    # and the manifest labelling the same pair differently.
-                    min_ratio=min_ratio,
-                    stretch_amount=None,  # pairs are linear; core.stretch derives per-image
-                    tile_size=tile_size,
-                    tile_overlap=tile_overlap,
-                    min_tile_coverage=min_tile_coverage,
-                    write_tiles=write_tiles,
-                    overwrite=False,
-                )
-                results = generate_training_pairs(
-                    cfg["source"],
-                    dataset_dir,
-                    config=pair_config,
-                    sensor=group.sensor,
-                    filter_name=group.filter_name,
-                    exposure_s=group.exposure_s,
-                    target=group.target_dir,
-                    min_frames=min_frames,
-                    include_mosaics=True,  # this group already passed the mosaic filter above
-                    combine_nights=combine_nights,
-                    workers=workers,
-                    on_progress=on_line,
-                )
-                # combine_nights=False can make more than one FrameGroup match
-                # the same (sensor, target, filter, exposure) filter -- one per
-                # night. Any such group is recorded under its own slug so
-                # nothing is silently dropped, but its pairs were only sized
-                # for THIS group's ladder; a mismatched one fails per-pair
-                # (partition_pair raises) rather than writing something wrong.
-                for group_result in results:
-                    processed_slugs.add(group_result["group"])
-                    if group_result["group"] != group.slug:
-                        summary["bystander_groups"] += 1
-                        dataset_manifest["groups"].append(
-                            {"group": group_result["group"], "note": "produced as a side effect "
-                             "of this group's filter matching more than one session; see combine_nights"}
-                        )
+        if need:
+            pair_config = PairConfig(
+                rungs=tuple(need),
+                pairs_per_group=pairs_per_depth,
+                seed=seed,
+                method=method,
+                kappa=kappa,
+                # The same ratio plan_ladder used above. _write_pair
+                # recomputes each pair's kind from it, so a config that
+                # moved min_ratio off 4.0 would otherwise have the planner
+                # and the manifest labelling the same pair differently.
+                min_ratio=min_ratio,
+                stretch_amount=None,  # pairs are linear; core.stretch derives per-image
+                tile_size=tile_size,
+                tile_overlap=tile_overlap,
+                min_tile_coverage=min_tile_coverage,
+                write_tiles=write_tiles,
+                overwrite=False,
+            )
+            results = generate_training_pairs(
+                cfg["source"],
+                dataset_dir,
+                config=pair_config,
+                sensor=group.sensor,
+                filter_name=group.filter_name,
+                exposure_s=group.exposure_s,
+                target=group.target_dir,
+                min_frames=min_frames,
+                include_mosaics=True,  # this group already passed the mosaic filter above
+                combine_nights=combine_nights,
+                workers=workers,
+                on_progress=on_line,
+            )
+            # combine_nights=False can make more than one FrameGroup match
+            # the same (sensor, target, filter, exposure) filter -- one per
+            # night. Any such group is recorded under its own slug so
+            # nothing is silently dropped, but its pairs were only sized
+            # for THIS group's ladder; a mismatched one fails per-pair
+            # (partition_pair raises) rather than writing something wrong.
+            for group_result in results:
+                processed_slugs.add(group_result["group"])
+                if group_result["group"] != group.slug:
+                    summary["bystander_groups"] += 1
+                    dataset_manifest["groups"].append(
+                        {"group": group_result["group"], "note": "produced as a side effect "
+                         "of this group's filter matching more than one session; see combine_nights"}
+                    )
 
-            for n_in in n_ins:
-                for pair_index in range(pairs_per_depth):
-                    pdir = _pair_dir(dataset_dir, group.slug, pair_index, n_in, n_tgt)
-                    if not (pdir / "manifest.json").is_file():
-                        summary["pairs_failed"] += 1
-                        group_pairs.append({
-                            "pair_dir": str(pdir), "status": "failed",
-                            "input_count": n_in, "target_count": n_tgt,
-                        })
-                        continue
-                    status = "generated" if n_in in need else "already_present"
-                    record = _noise_record(pdir, n_in, n_tgt, status)
-                    summary[f"pairs_{status}"] += 1
-                    group_pairs.append(record)
+        requested = set(need)
+        for rung in ladder:
+            n_in, n_tgt = rung.n_in, rung.n_tgt
+            for pair_index in range(pairs_per_depth):
+                pdir = _pair_dir(dataset_dir, group.slug, pair_index, n_in, n_tgt)
+                if not (pdir / "manifest.json").is_file():
+                    summary["pairs_failed"] += 1
+                    group_pairs.append({
+                        "pair_dir": str(pdir), "status": "failed",
+                        "input_count": n_in, "target_count": n_tgt,
+                    })
+                    continue
+                status = "generated" if (n_in, n_tgt) in requested else "already_present"
+                record = _noise_record(pdir, n_in, n_tgt, status)
+                summary[f"pairs_{status}"] += 1
+                group_pairs.append(record)
 
         dataset_manifest["groups"].append({
             "group": group.slug,

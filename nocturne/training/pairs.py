@@ -336,10 +336,22 @@ def discover_frame_groups(
     return result
 
 
-def _stable_seed(seed: int, group: FrameGroup, ordinal: int) -> int:
+def _stable_seed(
+    seed: int, group: FrameGroup, n_in: int, n_tgt: int, pair_index: int
+) -> int:
+    """Key a pair's partition on the rung's own identity, never on the order
+    it was planned in.
+
+    This used to take a running ordinal.  build_dataset now passes all of a
+    group's rungs in one call instead of one call per target depth, which
+    renumbers that ordinal -- so every rung would have drawn a different set
+    of frames than the previous build gave it.  Silently non-reproducible,
+    and it defeats the resumability check that skips pairs already on disk,
+    since those were built from a partition the rebuild no longer produces.
+    """
     text = (
         f"{seed}|{group.sensor}|{group.target_dir}|{group.filter_name}|"
-        f"{group.exposure_s:.4f}|{group.night}|{ordinal}"
+        f"{group.exposure_s:.4f}|{group.night}|{n_in}x{n_tgt}#{pair_index}"
     )
     return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little")
 
@@ -553,6 +565,11 @@ def prepare_stack(
 class PairConfig:
     input_counts: tuple[int, ...] = (16,)
     target_count: int = 128
+    # Explicit (input, target) rungs.  When set it supersedes input_counts
+    # and target_count, which between them can only describe one target
+    # depth -- and a group whose ladder has four of them would otherwise need
+    # four calls, i.e. four full re-registrations of the same frames.
+    rungs: tuple[tuple[int, int], ...] | None = None
     pairs_per_group: int = 4
     seed: int = 20260821
     method: str = "average"
@@ -699,31 +716,34 @@ def _group_pair_specs(
     reference: str,
 ) -> list[dict]:
     pool = list(available)
+    rungs = config.rungs
+    if rungs is None:
+        rungs = tuple((n_in, config.target_count) for n_in in config.input_counts)
     specs: list[dict] = []
-    ordinal = 0
-    for input_count in config.input_counts:
+    for input_count, target_count in rungs:
         for pair_index in range(config.pairs_per_group):
-            if input_count + config.target_count > len(pool):
+            if input_count + target_count > len(pool):
                 continue
-            seed = _stable_seed(config.seed, group, ordinal)
+            seed = _stable_seed(
+                config.seed, group, input_count, target_count, pair_index
+            )
             noisy, clean = partition_pair(
                 pool,
                 input_count=input_count,
-                target_count=config.target_count,
+                target_count=target_count,
                 seed=seed,
             )
             specs.append(
                 {
                     "pair_index": pair_index,
                     "input_count": input_count,
-                    "target_count": config.target_count,
+                    "target_count": target_count,
                     "seed": seed,
                     "reference": reference,
                     "noisy": noisy,
                     "clean": clean,
                 }
             )
-            ordinal += 1
     return specs
 
 
