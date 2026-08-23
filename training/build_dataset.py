@@ -17,7 +17,7 @@ import json
 import math
 import os
 import sys
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from datetime import datetime
 from pathlib import Path
 
@@ -37,38 +37,105 @@ from nocturne.training.pairs import (  # noqa: E402
 _DEFAULT_DATASET_ROOT = Path("/Volumes/Work2/Images/Astro/denoise/datasets")
 
 
+Rung = namedtuple("Rung", "n_in n_tgt kind")
+
+# The shallowest target a Noise2Noise rung may use. Deep enough that the
+# target's per-pixel noise is roughly Gaussian -- the L2 minimiser argument
+# wants a symmetric target distribution -- while leaving the input as deep as
+# the group can possibly make it. REASONED, not measured: revisit if the deep
+# rungs converge poorly.
+_MIN_N2N_TARGET = 64
+
+
+def _rung_kind(n_in: int, n_tgt: int, min_ratio: float) -> str:
+    """"truth" if the target is genuinely deeper, else "n2n".
+
+    The SAME rule nocturne.training.pairs.rung_kind applies when it stamps the
+    manifest, and it has to be, because the manifest's answer is what picks the
+    loss. Labelling a rung by where it sits in the plan instead of by its own
+    ratio disagreed with that rule on the max-depth rung of a 74-frame group:
+    n_in=9 against a 64-frame target is 7.1x deeper, a truth pair by any
+    reading, but the planner called it n2n purely because it was the deep rung.
+    """
+    return "truth" if n_tgt >= n_in * min_ratio else "n2n"
+
+
+def _powers_of_two_up_to(limit: int) -> list[int]:
+    out, n = [], 1
+    while n <= limit:
+        out.append(n)
+        n *= 2
+    return out
+
+
 def plan_ladder(
     n_frames: int,
-    depths: list[int],
+    *,
     min_ratio: float = 4.0,
     min_target: int = 16,
-) -> list[tuple[int, int]]:
-    """(input, target) depths this group can afford, by increasing input depth.
+    min_n2n_target: int = _MIN_N2N_TARGET,
+    max_input: int | None = None,
+) -> list[Rung]:
+    """Every (input, target) depth this group can afford, by increasing input.
+
+    Depths are DERIVED from n_frames, never taken from a fixed list. The old
+    planner did `n_tgt = min(budget, max(depths))`, which held every target at
+    128 frames however many the group had -- so the deepest INPUT anywhere was
+    32, while the user's real images are 250-450. That single line is the cause
+    of the M8 regression this spec exists to fix.
+
+    Two kinds of rung:
+
+    * "truth" -- a genuinely deeper target (min_ratio), as before. Better
+      supervision, so it is used wherever the group can afford it.
+    * "n2n" -- an independent noisy target, above the depth where a cleaner
+      target could exist at all. Noise2Noise: the target does not have to be
+      clean, only wrong in a way the input cannot predict.
 
     One frame is always reserved as the registration reference and belongs to
-    neither side; input and target must be disjoint. min_ratio exists because a
-    256->300 pair has a noise ratio of 1.08 and teaches almost nothing -- the
-    target has to be genuinely cleaner to be a target at all.
-
-    min_target is a separate floor UNDER min_ratio: on a small group, a 1-frame
-    input against a 4-frame target clears min_ratio=4.0 on paper, but a 4-frame
-    stack is still mostly noise -- training against it would teach the model
-    that noise is signal. 16 is the shallowest depth this project treats as a
-    usable "clean" reference at all, independent of what ratio it happens to
-    hit against a particular input.
+    neither side.
     """
-    out: list[tuple[int, int]] = []
-    for n_in in sorted(depths):
-        budget = n_frames - n_in - 1
-        if budget < n_in:
+    available = n_frames - 1
+    if available < 2:
+        return []
+    cap = available if max_input is None else min(available, max_input)
+
+    rungs: list[Rung] = []
+    truth_ceiling = 0
+    for n_in in _powers_of_two_up_to(cap):
+        budget = available - n_in
+        if budget < 1:
             continue
-        n_tgt = min(budget, max(depths))
-        if n_tgt < min_target:
+        candidates = _powers_of_two_up_to(budget)
+        if not candidates:
             continue
-        if n_tgt < n_in * min_ratio:
+        n_tgt = candidates[-1]
+        if n_tgt < min_target or n_tgt < n_in * min_ratio:
             continue
-        out.append((n_in, n_tgt))
-    return out
+        rungs.append(Rung(n_in, n_tgt, "truth"))
+        truth_ceiling = max(truth_ceiling, n_in)
+
+    seen = {(r.n_in, r.n_tgt) for r in rungs}
+    n2n: list[Rung] = []
+    for n_in in _powers_of_two_up_to(min(cap, available - min_n2n_target)):
+        if n_in <= truth_ceiling:
+            continue
+        n_tgt = available - n_in
+        if n_tgt < min_n2n_target:
+            continue
+        if (n_in, n_tgt) not in seen:
+            n2n.append(Rung(n_in, n_tgt, _rung_kind(n_in, n_tgt, min_ratio)))
+            seen.add((n_in, n_tgt))
+
+    # The max-depth rung: everything the group has, minus the smallest target
+    # allowed. This is the rung that actually reaches the user's own stack
+    # depth -- 395 frames on M8's 460 -- and no power of two would land there.
+    deep_in = min(cap, available - min_n2n_target)
+    if deep_in > truth_ceiling and deep_in >= 1 and (deep_in, min_n2n_target) not in seen:
+        n2n.append(Rung(deep_in, min_n2n_target,
+                        _rung_kind(deep_in, min_n2n_target, min_ratio)))
+
+    return rungs + sorted(n2n)
 
 
 def _pair_dir(dataset_dir: Path, group_slug: str, pair_index: int, n_in: int, n_tgt: int) -> Path:
@@ -124,7 +191,11 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
     dataset_dir = _DEFAULT_DATASET_ROOT / cfg["name"]
     dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    depths = list(cfg["depths"])
+    # `depths` is retired: rungs are derived from each group's real frame count.
+    # `max_input` remains only so a smoke config can keep a build small.
+    min_n2n_target = int(cfg.get("min_n2n_target", 64))
+    max_input = cfg.get("max_input")
+    max_input = int(max_input) if max_input is not None else None
     min_ratio = float(cfg.get("min_ratio", 4.0))
     min_target = int(cfg.get("min_target", 16))
     pairs_per_depth = int(cfg.get("pairs_per_depth", 2))
@@ -164,10 +235,16 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
     for index, group in enumerate(groups, start=1):
         if group.slug in processed_slugs:
             continue
-        ladder = plan_ladder(len(group.frames), depths, min_ratio, min_target)
+        ladder = plan_ladder(
+            len(group.frames),
+            min_ratio=min_ratio,
+            min_target=min_target,
+            min_n2n_target=min_n2n_target,
+            max_input=max_input,
+        )
         on_line(
             f"[{index}/{len(groups)}] {group.slug} ({len(group.frames)} frames): "
-            + (", ".join(f"{n_in}->{n_tgt}" for n_in, n_tgt in ladder) if ladder else "no valid pairs, skipped")
+            + (", ".join(f"{r.n_in}->{r.n_tgt}[{r.kind}]" for r in ladder) if ladder else "no valid pairs, skipped")
         )
         processed_slugs.add(group.slug)
         summary["groups_seen"] += 1
@@ -176,8 +253,8 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             continue
 
         by_target: dict[int, list[int]] = defaultdict(list)
-        for n_in, n_tgt in ladder:
-            by_target[n_tgt].append(n_in)
+        for r in ladder:
+            by_target[r.n_tgt].append(r.n_in)
 
         group_pairs: list[dict] = []
         for n_tgt in sorted(by_target, reverse=True):
@@ -252,7 +329,7 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             "filter": group.filter_name,
             "night": group.night,
             "frame_count": len(group.frames),
-            "ladder": [list(pair) for pair in ladder],
+            "ladder": [list(r) for r in ladder],
             "pairs": group_pairs,
         })
 
