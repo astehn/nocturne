@@ -34,13 +34,16 @@ def test_the_notice_names_a_real_risk_rather_than_saying_expect_bugs():
     assert "back" in BETA_NOTICE.lower()
 
 
-def test_the_splash_leads_with_beta(qtbot):
-    from nocturne.ui.splash import make_splash, splash_heading
-    assert splash_heading() == "BETA"
+def test_the_splash_shows_the_version_and_leaves_the_artwork_alone(qtbot):
+    """The artwork already sets "Nocturne" and "Beta" in its own type, so the
+    app draws only the number that changes between releases. An earlier version
+    painted a second BETA heading and a notice line over the picture."""
+    from nocturne.ui.splash import make_splash
     sp = make_splash(nocturne.__version__)
     qtbot.addWidget(sp)
-    assert sp.heading == "BETA"
-    assert sp.notice == BETA_NOTICE
+    assert sp.caption == f"v{nocturne.__version__}"
+    assert not hasattr(sp, "heading"), "the splash is drawing its own beta wording again"
+    assert not hasattr(sp, "notice"), "the splash is drawing its own notice again"
 
 
 def test_the_window_title_says_beta_with_and_without_a_project(qtbot, tmp_path):
@@ -77,7 +80,6 @@ def test_no_surface_spells_out_beta_on_its_own(monkeypatch, qtbot, tmp_path):
     """
     from nocturne.ui.about import about_html
     from nocturne.ui.main_window import MainWindow
-    from nocturne.ui.splash import splash_heading
 
     monkeypatch.setattr(nocturne, "RELEASE_STAGE", "")
 
@@ -87,5 +89,6 @@ def test_no_surface_spells_out_beta_on_its_own(monkeypatch, qtbot, tmp_path):
         "the window title hardcodes 'beta' instead of deriving it")
     assert "beta" not in about_html().lower(), (
         "the About dialog hardcodes 'beta' instead of deriving it")
-    assert splash_heading() == "", (
-        "the splash hardcodes its heading instead of deriving it")
+    # The splash is deliberately NOT in this guard: its beta wording is part of
+    # the artwork and no code can clear it. See the note beside RELEASE_STAGE --
+    # a stable release needs that image swapped by hand.

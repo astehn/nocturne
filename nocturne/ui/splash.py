@@ -19,38 +19,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPixmap
 from PySide6.QtWidgets import QSplashScreen
 
-import nocturne
 
 # Long enough to register as an image rather than a flicker. Andreas' report was
 # "the application loaded so fast that the user never saw the splash", so this is
 # the whole feature -- a tidy-up that lowers it re-creates the original bug.
 MIN_SPLASH_SECONDS = 2.0
 
-# The art is square and 1254 px; shown at source size it is a wall on a laptop.
-# This is the LOGICAL width -- the pixmap is rendered at devicePixelRatio above
-# it, so a retina screen still gets every pixel of the original.
-_LOGICAL_WIDTH = 420
+# The art is 2000x1254; shown at source size it is a wall on a laptop. This is
+# the LOGICAL width -- the pixmap is rendered at devicePixelRatio above it, so a
+# retina screen still gets every pixel of the original.
+_LOGICAL_WIDTH = 560
 
-_CAPTION_MARGIN = 18
+_CAPTION_MARGIN = 22
 
 
 def splash_caption(version: str) -> str:
     """The version line, derived from the running version and never copied."""
     return f"v{version}"
-
-
-def splash_heading() -> str:
-    """"BETA" while the release stage says so, and nothing once it does not.
-
-    Read from `nocturne.RELEASE_STAGE` at CALL time, never captured at import:
-    a module-level copy could not be cleared for a stable release, which is
-    exactly the drift this is meant to prevent.
-    """
-    return nocturne.RELEASE_STAGE.upper() if nocturne.RELEASE_STAGE else ""
 
 
 def remaining_hold(elapsed: float, minimum: float = MIN_SPLASH_SECONDS) -> float:
@@ -76,55 +65,44 @@ class NocturneSplash(QSplashScreen):
 
     dismissed = Signal()
 
-    def __init__(self, pixmap: QPixmap, caption: str,
-                 heading: str = "", notice: str = "") -> None:
+    def __init__(self, pixmap: QPixmap, caption: str) -> None:
         super().__init__(pixmap)
         self.caption = caption
-        self.heading = heading
-        self.notice = notice
 
     def mousePressEvent(self, event) -> None:  # noqa: N802  (Qt's spelling)
         self.dismissed.emit()
         super().mousePressEvent(event)
 
     def drawContents(self, painter) -> None:  # noqa: N802  (Qt's spelling)
-        """Beta first, centred and large; the version is the footnote.
+        """Draw the version and NOTHING else.
 
-        The ordering is the requirement: the whole reason this splash exists is
-        that nothing on the user's machine said the software was beta. A version
-        string tucked in a corner is something you read if you go looking, which
-        is the opposite of what was asked for.
+        The artwork already sets "Nocturne" and "Beta" in its own type, so the
+        app's only job is the number that changes between releases. An earlier
+        version of this painted its own BETA heading and a notice line over the
+        picture, which duplicated the wording that was already there and ran
+        across the tripod legs.
+
+        deviceIndependentSize(), NOT pixmap().rect(): the pixmap is stored at
+        devicePixelRatio while the painter works in LOGICAL points, so the
+        device rect puts the text at double its intended position -- off the
+        bottom of the splash, invisible. Headless tests run at dpr 1.0 where the
+        two are identical, so only rendering it on a real screen showed this.
         """
         super().drawContents(painter)
-        rect = self.pixmap().rect().adjusted(
+        if not self.caption:
+            return
+        size = self.pixmap().deviceIndependentSize()
+        rect = QRectF(0.0, 0.0, size.width(), size.height()).toRect().adjusted(
             _CAPTION_MARGIN, _CAPTION_MARGIN, -_CAPTION_MARGIN, -_CAPTION_MARGIN)
-        base = QFont(painter.font())
-        bottom = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
-
-        if self.caption:
-            f = QFont(base)
-            f.setPointSizeF(max(10.0, base.pointSizeF() - 1))
-            painter.setFont(f)
-            painter.setPen(QColor(150, 152, 162))
-            painter.drawText(rect, bottom, self.caption)
-            rect = rect.adjusted(0, 0, 0, -(painter.fontMetrics().height() + 4))
-
-        if self.notice:
-            f = QFont(base)
-            f.setPointSizeF(max(11.0, base.pointSizeF()))
-            painter.setFont(f)
-            painter.setPen(QColor(216, 218, 226))
-            painter.drawText(rect, bottom, self.notice)
-            rect = rect.adjusted(0, 0, 0, -(painter.fontMetrics().height() + 6))
-
-        if self.heading:
-            f = QFont(base)
-            f.setBold(True)
-            f.setPointSizeF(max(22.0, base.pointSizeF() * 2.0))
-            f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3.0)
-            painter.setFont(f)
-            painter.setPen(QColor(255, 176, 84))
-            painter.drawText(rect, bottom, self.heading)
+        font = QFont(painter.font())
+        font.setPointSizeF(max(11.0, font.pointSizeF()))
+        painter.setFont(font)
+        painter.setPen(QColor(168, 172, 188))
+        painter.drawText(
+            rect,
+            int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom),
+            self.caption,
+        )
 
 
 def splash_path() -> Path:
@@ -152,5 +130,4 @@ def make_splash(version: str, *, logical_width: int = _LOGICAL_WIDTH) -> Nocturn
         )
         src.setDevicePixelRatio(ratio)
 
-    return NocturneSplash(src, splash_caption(version),
-                          heading=splash_heading(), notice=nocturne.BETA_NOTICE)
+    return NocturneSplash(src, splash_caption(version))

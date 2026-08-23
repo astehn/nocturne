@@ -13,6 +13,11 @@ APP_TAGLINE = "Guided astrophotography processing for smart-telescope stacks"
 # spelling it out again. Set RELEASE_STAGE to "" to ship a stable release and
 # every surface drops the marker at once.
 RELEASE_STAGE = "beta"
+# NOTE: the splash ARTWORK (nocturne/assets/splash.png) also sets the word
+# "Beta" in its own type, and no code can clear that. Clearing RELEASE_STAGE for
+# a stable release therefore needs the image swapped by hand as well. The app's
+# own surfaces -- window title, About, README -- all derive from the constant
+# and drop the marker on their own; the picture does not.
 
 # Names the real risk instead of saying "expect bugs". This is not boilerplate:
 # a defect found on 2026-08-23 let Batch overwrite the very master it was

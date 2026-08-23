@@ -154,3 +154,33 @@ def test_main_waits_on_an_event_loop_and_never_sleeps():
     }
     assert "sleep" not in called, "main() blocks the event loop with sleep"
     assert "QEventLoop" in called, "main() does not run a real event loop while holding"
+
+
+def test_the_text_lands_inside_the_splash_on_a_retina_screen(qtbot):
+    """Reproduces devicePixelRatio 2.0, which the headless suite never does.
+
+    The pixmap is stored at dpr (840 px for a 420 pt splash) while the painter
+    works in logical points. Building the text rect from `pixmap().rect()` puts
+    every line at double its intended y — off the bottom, invisible — and every
+    other test in this file passes anyway, because offscreen runs at dpr 1.0.
+    Caught by rendering it on a real screen, not by the suite.
+    """
+    from PySide6.QtGui import QImage, QPainter
+
+    sp = make_splash("1.0.0")
+    qtbot.addWidget(sp)
+    pm = sp.pixmap()
+    pm.setDevicePixelRatio(2.0)
+    sp.setPixmap(pm)
+
+    logical = sp.pixmap().deviceIndependentSize().toSize()
+    img = QImage(logical, QImage.Format.Format_ARGB32)
+    img.fill(0)
+    p = QPainter(img)
+    sp.drawContents(p)
+    p.end()
+
+    painted = [y for y in range(img.height())
+               for x in range(0, img.width(), 4) if img.pixelColor(x, y).alpha() > 0]
+    assert painted, "nothing was painted inside the logical splash area at dpr 2.0"
+    assert max(painted) < img.height(), "text ran past the bottom edge"
