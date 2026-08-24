@@ -158,6 +158,19 @@ def _save_metrics(run_dir, metrics: list[dict]) -> None:
 
 # ------------------------------------------------------------ pair identity
 
+def _split_sensors(cfg: dict) -> tuple[str, ...]:
+    """The sensors whose tiles feed training, from `sensors` if the config
+    has it and from `sensor` otherwise.
+
+    They are deliberately separate keys. `sensor` is the model identity --
+    stage() writes denoise_{sensor}_v1.onnx and the app targets the S30 Pro
+    -- while `sensors` is only what the model learns FROM. Reusing one key
+    for both would rename the shipped model the moment S50 material was
+    added to the training set.
+    """
+    return D.parse_sensors(cfg.get("sensors") or (cfg.get("sensor", "s30"),))
+
+
 def _pair_identity(pair_dir: str) -> tuple[str, int]:
     """(target, input_depth) parsed from the directory layout build_dataset /
     nocturne.training.pairs writes -- must match build_dataset._pair_dir's
@@ -236,6 +249,7 @@ def _train_command(cfg: dict, dataset_dir, run_dir, smoke: bool) -> list[str]:
         "--pairs", str(dataset_dir),
         "--out", str(run_dir),
         "--sensor", cfg.get("sensor", "s30"),
+        "--sensors", ",".join(_split_sensors(cfg)),
         "--epochs", str(cfg.get("epochs", 300)),
     ]
     for flag, key in (("--batch", "batch"), ("--crop", "crop"), ("--lr", "lr"),
@@ -358,7 +372,7 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     strength = float(cfg.get("strength", 1.0))
     max_pairs = cfg.get("max_pairs", 1 if smoke else None)
     tiles = D.scan_tiles(str(dataset_dir))
-    _, _, test_tiles = D.split_by_target(tiles, sensor)
+    _, _, test_tiles = D.split_by_target(tiles, _split_sensors(cfg))
     pair_dirs = select_gate_pairs(
         {os.path.dirname(os.path.dirname(t.path)) for t in test_tiles}, max_pairs)
     if not pair_dirs:

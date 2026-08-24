@@ -335,3 +335,52 @@ def test_the_estimate_is_printed_before_a_single_pair_is_built(tmp_path, monkeyp
     # and it describes the plan that was actually built
     deep_row = next(l for l in text[estimate_at:] if l.strip().startswith("deep"))
     assert "12" in deep_row, deep_row      # 3 deep rungs x 4 pairs
+
+
+# ------------------------------------------------- which sensors get built
+
+def _stub_multi(monkeypatch, tmp_path, groups, cfg):
+    seen = {}
+
+    def fake_discover(source, **kwargs):
+        seen.update(kwargs)
+        return list(groups)
+
+    monkeypatch.setattr(bd, "_DEFAULT_DATASET_ROOT", tmp_path)
+    monkeypatch.setattr(bd, "discover_frame_groups", fake_discover)
+    monkeypatch.setattr(bd, "generate_training_pairs",
+                        lambda *a, **k: [{"group": "x", "pairs": []}])
+    monkeypatch.setattr(bd, "_noise_record",
+                        lambda pair_dir, n_in, n_tgt, status: {})
+    base = {"name": "ds", "source": str(tmp_path / "src"), "method": "average"}
+    base.update(cfg)
+    manifest = bd.build_dataset(base, on_line=lambda *a: None)
+    built = {g["group"] for g in manifest["groups"] if "frame_count" in g}
+    return seen, built
+
+
+def test_a_sensors_list_widens_the_material_that_gets_built(tmp_path, monkeypatch):
+    """n2n_v1 built 29% of the archive because `sensor` was one string used
+    both to pick the material and to name the shipped model. The S50 groups
+    are the deep ones -- M42 2361 frames, SH2-142 1357, NGC7023 821."""
+    groups = [_group(366, "M16"), _group(400, "M42", sensor="s50", shape=_S50_SHAPE)]
+    _, built = _stub_multi(monkeypatch, tmp_path, groups,
+                           {"sensor": "s30", "sensors": ["s30", "s50"]})
+    assert built == {groups[0].slug, groups[1].slug}
+
+
+def test_without_a_sensors_list_the_single_sensor_key_still_selects(tmp_path, monkeypatch):
+    """`sensor` alone must keep meaning what it meant, so re-running an old
+    config does not silently start building a different archive."""
+    groups = [_group(366, "M16"), _group(400, "M42", sensor="s50", shape=_S50_SHAPE)]
+    _, built = _stub_multi(monkeypatch, tmp_path, groups, {"sensor": "s30"})
+    assert built == {groups[0].slug}
+
+
+def test_the_model_name_is_not_what_selects_the_material(tmp_path, monkeypatch):
+    """The distinction the config has to carry: the model still ships as s30
+    while learning from both cameras."""
+    groups = [_group(400, "M42", sensor="s50", shape=_S50_SHAPE)]
+    _, built = _stub_multi(monkeypatch, tmp_path, groups,
+                           {"sensor": "s30", "sensors": ["s30", "s50"]})
+    assert built == {groups[0].slug}

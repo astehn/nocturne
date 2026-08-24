@@ -486,3 +486,25 @@ def test_the_deep_end_proxy_measures_both_sides_over_the_same_sky_pixels(tmp_pat
     assert len(seen) == 2
     assert np.array_equal(seen[0], seen[1]), "input and output were masked differently"
     assert np.array_equal(seen[0], gate.sky_mask(img)), "the mask did not come from the input"
+
+
+def test_train_command_widens_the_material_without_renaming_the_model():
+    """`sensor` and `sensors` are two different things and the config has to
+    keep them apart: the model Nocturne ships is still denoise_s30_v1 (the S30
+    Pro is the camera the app targets), while the material it learns from now
+    includes the S50 groups -- which are the deep ones."""
+    from nightly import _train_command
+    cmd = _train_command({"name": "n2n_v2", "sensor": "s30",
+                          "sensors": ["s30", "s50"]},
+                         dataset_dir="/d", run_dir="/r", smoke=False)
+    assert "--sensors" in cmd
+    assert cmd[cmd.index("--sensors") + 1] == "s30,s50"
+    assert cmd[cmd.index("--sensor") + 1] == "s30"
+
+
+def test_split_sensors_fall_back_to_the_single_sensor_key():
+    """An old config with only `sensor` must keep meaning exactly what it did."""
+    from nightly import _split_sensors
+    assert _split_sensors({"sensor": "s30"}) == ("s30",)
+    assert _split_sensors({"sensor": "s30", "sensors": ["s30", "s50"]}) == ("s30", "s50")
+    assert _split_sensors({}) == ("s30",)

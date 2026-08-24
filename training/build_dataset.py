@@ -329,12 +329,23 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
     tile_overlap = int(cfg.get("tile_overlap", 32))
     min_tile_coverage = float(cfg.get("min_tile_coverage", 0.9))
 
+    # `sensors` is the training MATERIAL; `sensor` is the model's identity --
+    # stage() writes denoise_{sensor}_v1.onnx and Nocturne targets the S30 Pro.
+    # They were one key, which is why n2n_v1 trained on 29% of the archive: the
+    # 5596 S50 frames, and with them every deep group on the drive, were
+    # excluded by the same string that names the shipped file.
+    sensors = set(cfg.get("sensors") or [cfg.get("sensor")])
     groups = discover_frame_groups(
         cfg["source"],
-        sensor=cfg.get("sensor"),
+        sensor=None,
         min_frames=min_frames,
         combine_nights=combine_nights,
     )
+    # Filtering groups, not frames: a group's key includes its sensor, so every
+    # frame in one shares it and the two are equivalent -- but only this way can
+    # more than one sensor be asked for in a single scan of the archive.
+    if None not in sensors:
+        groups = [g for g in groups if g.sensor in sensors]
     if exclude_mosaics:
         groups = [g for g in groups if not g.mosaic]
     if max_groups is not None:

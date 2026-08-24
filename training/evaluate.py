@@ -148,7 +148,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v1")
     ap.add_argument("--pairs", default="/Volumes/Work2/Images/Astro/TrainingPairs")
+    # --sensor is the model/run identity; --sensors is the material. See
+    # train.py for why they are not the same knob.
     ap.add_argument("--sensor", default="s30")
+    ap.add_argument("--sensors", default=",".join(D.TRAINING_SENSORS),
+                    help="comma-separated sensors whose tiles feed the split")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--max-pairs", type=int, default=3)
     ap.add_argument("--checkpoint", default="best.pt")
@@ -161,7 +165,8 @@ def main():
     print(f"checkpoint epoch {ck.get('epoch')}  val {ck.get('val', float('nan')):.5f}  strength {args.strength}")
 
     tiles = D.scan_tiles(args.pairs)
-    _, _, test = D.split_by_target(tiles, args.sensor)
+    sensors = D.parse_sensors(args.sensors)
+    _, _, test = D.split_by_target(tiles, sensors)
     test_targets = sorted({t.target for t in test})
     pair_dirs = sorted({os.path.dirname(os.path.dirname(t.path)) for t in test})[:args.max_pairs]
     print(f"HELD-OUT target(s): {', '.join(test_targets)} — never seen in training\n")

@@ -69,6 +69,38 @@ S30_TRAIN = ("M16", "M17", "M8", "NGC6992", "M33", "M45", "NGC7000")
 S30_VAL = ("M27",)
 S30_TEST = ("NGC6888", "NGC281")   # untouched until the very end
 
+# v3, 2026-08-24: the S50 half of the archive. n2n_v1 trained on 29% of what is
+# on the drive -- 5596 of 8408 frames are S50 and were excluded outright -- and
+# the S50 groups are the DEEP ones (M42 2361 frames, SH2-142 1357, NGC7023
+# 821), which is exactly the range where the model's measured benefit decays to
+# nothing. Andreas' ruling (2026-08-23): "different sensors and different FOV
+# but still a Seestar".
+#
+# NGC7023 is val, not train, on purpose: 821 frames give it deep rungs
+# (128/256/512/756), so it is the first deep validation signal this project has
+# ever had. Everything before now validated on shallow stacks only.
+#
+# S30_TEST is deliberately NOT extended. It is the untouched holdout, and
+# adding to it would move the baseline every per-target metric is compared
+# against.
+S50_TRAIN = ("M42", "SH2-142", "NGC6995", "M101")
+S50_VAL = ("NGC7023",)
+S50_TEST = ()
+
+# The sensors whose tiles feed training. NOT the sensor the model ships as:
+# Nocturne targets the S30 Pro and the exported model is still denoise_s30_v1.
+# Only the training MATERIAL widens.
+TRAINING_SENSORS = ("s30", "s50")
+
+# Targets that are different catalogue numbers for the same patch of sky, and
+# so must never land in different splits. Names alone cannot catch this.
+# NGC6992 (S30) and NGC6995 (S50) are both the Eastern Veil: their FITS
+# pointings are 314.350/+31.941 and 314.446/+31.486, 0.46 degrees apart, well
+# inside a single Seestar frame (the S30 Pro's long axis is about 1.3 degrees).
+# Scoring the model on one after training on the other would be scoring it on
+# sky it had already memorised.
+SAME_SKY = (("NGC6992", "NGC6995"),)
+
 
 @dataclass
 class TileRef:
@@ -113,14 +145,47 @@ def scan_tiles(root: str) -> list[TileRef]:
     return out
 
 
-def split_by_target(tiles: list[TileRef], sensor: str = "s30"):
-    """(train, val, test), partitioned by target with no overlap anywhere."""
-    sel = [t for t in tiles if t.sensor == sensor]
-    train = [t for t in sel if t.target in S30_TRAIN]
-    val = [t for t in sel if t.target in S30_VAL]
-    test = [t for t in sel if t.target in S30_TEST]
+def parse_sensors(value) -> tuple[str, ...]:
+    """A sensor list from a CLI flag ("s30,s50") or a config list."""
+    if isinstance(value, str):
+        value = value.split(",")
+    return tuple(str(v).strip() for v in value if str(v).strip())
+
+
+def _split_name(target: str) -> str | None:
+    """Which split a target belongs to, or None. Reads the module globals on
+    every call so a test can move a target and see the guards react."""
+    for name, members in (("train", set(S30_TRAIN) | set(S50_TRAIN)),
+                          ("val", set(S30_VAL) | set(S50_VAL)),
+                          ("test", set(S30_TEST) | set(S50_TEST))):
+        if target in members:
+            return name
+    return None
+
+
+def split_by_target(tiles: list[TileRef], sensors: str | tuple[str, ...] = "s30"):
+    """(train, val, test), partitioned by target with no overlap anywhere.
+
+    ``sensors`` takes one sensor or several. It defaults to the historical
+    single "s30" so an un-updated caller keeps its old behaviour rather than
+    silently widening; the real callers pass TRAINING_SENSORS.
+    """
+    wanted = {sensors} if isinstance(sensors, str) else set(sensors)
+    for region in SAME_SKY:
+        homes = {t: _split_name(t) for t in region}
+        distinct = {s for s in homes.values() if s is not None}
+        if len(distinct) > 1:
+            raise ValueError(
+                f"these are the same sky and must share one split: {homes}")
+    train_targets = set(S30_TRAIN) | set(S50_TRAIN)
+    val_targets = set(S30_VAL) | set(S50_VAL)
+    test_targets = set(S30_TEST) | set(S50_TEST)
+    sel = [t for t in tiles if t.sensor in wanted]
+    train = [t for t in sel if t.target in train_targets]
+    val = [t for t in sel if t.target in val_targets]
+    test = [t for t in sel if t.target in test_targets]
     seen = {t.target for t in sel}
-    unassigned = seen - set(S30_TRAIN) - set(S30_VAL) - set(S30_TEST)
+    unassigned = seen - train_targets - val_targets - test_targets
     if unassigned:
         raise ValueError(f"targets not assigned to any split: {sorted(unassigned)}")
     for a, b, name in ((train, val, "train/val"), (train, test, "train/test"), (val, test, "val/test")):

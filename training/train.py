@@ -131,7 +131,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", default="/Volumes/Work2/Images/Astro/TrainingPairs")
     ap.add_argument("--out", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v1")
+    # Two different things: --sensor names the RUN and the model Nocturne
+    # ships (denoise_s30_v1 -- the S30 Pro is the camera the app targets),
+    # while --sensors is the material trained on. The S50 groups are the
+    # deep ones, so widening the material is the whole point; widening the
+    # model name is not.
     ap.add_argument("--sensor", default="s30")
+    ap.add_argument("--sensors", default=",".join(D.TRAINING_SENSORS),
+                    help="comma-separated sensors whose tiles feed training")
     ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--crop", type=int, default=256)
@@ -153,7 +160,8 @@ def main() -> None:
     print("=" * 74)
 
     tiles = D.scan_tiles(args.pairs)
-    train_t, val_t, test_t = D.split_by_target(tiles, args.sensor)
+    sensors = D.parse_sensors(args.sensors)
+    train_t, val_t, test_t = D.split_by_target(tiles, sensors)
     if args.smoke:
         train_t, val_t = train_t[:16], val_t[:8]
         args.epochs = 2
