@@ -193,3 +193,240 @@ def test_parse_sensors_reads_a_comma_separated_flag():
     assert D.parse_sensors("s30,s50") == ("s30", "s50")
     assert D.parse_sensors(" s30 ") == ("s30",)
     assert D.parse_sensors(("s30", "s50")) == ("s30", "s50")
+
+
+# ------------------------------------------------- the generating dataset
+#
+# These tiles are manufactured in the fixture the way build_injection.py
+# manufactures them from real frames: a target that is a `depth`-frame stack
+# carrying its own residual noise, and four noise fields each with the noise of
+# a HALF stack, i.e. sqrt(2) times as much. Anything else and the depth->sigma
+# arithmetic under test would be checked against a fiction.
+
+import numpy as np
+
+
+def _injection_tile(path, *, depth=400, size=256, sigma=0.0006, seed=0, ramp=False):
+    rng = np.random.default_rng(seed)
+    level = np.full((size, size, 3), 0.05, np.float32)
+    amp = np.ones((1, size, 1), np.float32)
+    if ramp:
+        # A gradient in ONE axis, in both the scene and the noise amplitude, so
+        # a field rotated differently from its target is visible as a loss of
+        # correlation rather than needing to be reasoned about.
+        level = level + np.linspace(0.0, 0.02, size, dtype=np.float32)[None, :, None]
+        amp = (0.4 + 1.2 * np.linspace(0.0, 1.0, size, dtype=np.float32))[None, :, None]
+    target = level + (rng.normal(0, sigma, level.shape) * amp).astype(np.float32)
+    fields = (rng.normal(0, sigma * np.sqrt(2.0), (4, size, size, 3))
+              * amp[None]).astype(np.float32)
+    np.savez(path, target=target, fields=fields.astype(np.float32),
+             coverage=np.ones((size, size), np.float32), depth=np.int32(depth))
+    return str(path)
+
+
+def test_the_injection_dataset_hits_the_requested_depth_band(tmp_path):
+    """70% of examples must land in 200-500 frames, where his masters live.
+    Both previous models failed because of WHICH examples dominated: the first
+    saw mostly shallow stacks and over-corrected, the second mostly deep ones
+    and went timid. This proportion is the direct control on that."""
+    from data import DataConfig, InjectionDataset
+
+    tile = _injection_tile(tmp_path / "t.npz")
+    ds = InjectionDataset([tile], DataConfig(crop=128, augment=False), train=True)
+    np.random.seed(20260824)     # a proportion test needs a fixed draw
+    deep = sum(1 for _ in range(2000) if 200 <= ds.sample_depth() <= 500)
+    assert 0.66 <= deep / 2000 <= 0.74, f"deep share was {deep/2000:.3f}, wanted ~0.70"
+
+
+def test_the_deep_share_constant_is_what_controls_the_mixture(monkeypatch, tmp_path):
+    """Proof the number above is load-bearing and not a coincidence of the
+    seed: drive it to both ends and every draw must follow."""
+    import data as D
+    from data import DataConfig, InjectionDataset
+
+    ds = InjectionDataset([_injection_tile(tmp_path / "t.npz")],
+                          DataConfig(crop=128, augment=False), train=True)
+    np.random.seed(1)
+    monkeypatch.setattr(D, "_DEEP_SHARE", 1.0)
+    assert all(200 <= ds.sample_depth() <= 500 for _ in range(200))
+    monkeypatch.setattr(D, "_DEEP_SHARE", 0.0)
+    assert all(8 <= ds.sample_depth() < 200 for _ in range(200))
+
+
+def test_a_shallow_group_cannot_claim_a_deep_stack(tmp_path):
+    """A 40-frame group's target IS a 40-frame stack. Asking it for a
+    300-frame input would demand noise below the target's own floor -- and the
+    closer the request gets to the target's depth, the more the 'lesson' is a
+    target no cleaner than the input, which is the exact failure this design
+    exists to fix. Half the group's depth is where the manufactured input is
+    precisely a real half-stack: the deepest claim its own noise field backs."""
+    from data import _clamp_depth
+
+    assert _clamp_depth(300, 40) == 20
+    assert _clamp_depth(300, 2400) == 300      # a deep group is not clamped
+    assert _clamp_depth(8, 40) == 8
+
+
+def test_every_sample_is_a_supervised_pair_not_an_n2n_one(tmp_path):
+    """These have a genuinely cleaner target, so train.py must route them to L1.
+    is_n2n=1.0 would send them to L2, which exists for Noise2Noise's conditional
+    mean and is not what these need."""
+    from data import DataConfig, InjectionDataset
+
+    ds = InjectionDataset([_injection_tile(tmp_path / "t.npz", seed=1)],
+                          DataConfig(crop=128, augment=False), train=False)
+    item = ds[0]
+    assert len(item) == 5
+    assert float(item[4]) == 0.0
+
+
+def test_a_sample_has_the_same_shapes_tiledataset_returns(tmp_path):
+    """The 5-tuple goes straight into train.py's existing loop; a different
+    layout would be caught only by a shape error hours in, or not at all."""
+    from data import DataConfig, InjectionDataset
+    from noise import estimate_sigma
+
+    ds = InjectionDataset([_injection_tile(tmp_path / "t.npz", seed=2)],
+                          DataConfig(crop=128, augment=False), train=False)
+    noisy, clean, mask, sigma, is_n2n = ds[0]
+    assert noisy.shape == clean.shape == (3, 128, 128)
+    assert mask.shape == (1, 128, 128)
+    assert sigma.ndim == 0 and is_n2n.ndim == 0
+    # The sigma handed to the conditioning channel is measured on the tile the
+    # model is actually given, exactly as TileDataset does it.
+    assert abs(float(sigma) - estimate_sigma(noisy.permute(1, 2, 0).numpy())) < 1e-6
+
+
+def test_the_noisy_side_really_is_noisier_than_the_target(tmp_path):
+    """A silent failure to inject would produce identical input and target and
+    train a perfect do-nothing model — which is exactly the failure mode of the
+    run this design replaces.
+
+    The floor asserted is _MAX_DEPTH_FRACTION's own guarantee: at the clamp the
+    input IS a real half-stack of the target, i.e. sqrt(2) = 1.414 times as
+    noisy, and no sample may be quieter than that. (The plan's draft compared
+    against 1.5x, which only passed because its fixture's target was perfectly
+    noiseless -- against a target carrying real residual noise, as every real
+    one does, the deepest permitted sample sits at exactly 1.414.)"""
+    from data import DataConfig, InjectionDataset
+
+    ds = InjectionDataset([_injection_tile(tmp_path / "t.npz", seed=3)],
+                          DataConfig(crop=128, augment=False), train=True)
+    np.random.seed(3)
+    ratios = []
+    for _ in range(20):
+        noisy, clean, _, _, _ = ds[0]
+        ratios.append(float(noisy.std()) / float(clean.std()))
+    assert min(ratios) > 1.35, f"quietest sample was only {min(ratios):.2f}x"
+    assert max(ratios) > 3.0, f"noisiest sample was only {max(ratios):.2f}x — the shallow end never fired"
+
+
+def test_the_injected_noise_matches_the_depth_it_claims(tmp_path, monkeypatch):
+    """The whole knob is 'this looks like an n-frame stack'. If the achieved
+    sigma does not follow sqrt(n), the fourth channel is being told one thing
+    while the pixels say another -- and noise.py's docstring is explicit that
+    training and inference must be told the same number."""
+    import data as D
+    from data import DataConfig, InjectionDataset, from_model_space
+    from noise import estimate_sigma
+
+    depth = 800
+    tile = _injection_tile(tmp_path / "t.npz", depth=depth, seed=4)
+    ds = InjectionDataset([tile], DataConfig(crop=256, augment=False), train=False)
+    with np.load(tile) as rec:
+        floor = estimate_sigma(rec["target"])
+    for claimed in (400, 200, 50, 12):
+        monkeypatch.setattr(D.InjectionDataset, "sample_depth",
+                            lambda self, rng=None, n=claimed: n)
+        noisy, _, _, _, _ = ds[0]
+        got = estimate_sigma(from_model_space(noisy.permute(1, 2, 0).numpy()))
+        want = floor * np.sqrt(depth / claimed)
+        assert abs(got - want) / want < 0.05, (
+            f"{claimed} frames: measured {got:.6f}, wanted {want:.6f}")
+
+
+def test_a_validation_sample_is_the_same_every_time(tmp_path):
+    """train.py compares val loss across epochs and keeps the best checkpoint
+    by it. A val set that redraws its depth every epoch makes that comparison
+    noise, and 'best' becomes 'luckiest'."""
+    from data import DataConfig, InjectionDataset
+
+    ds = InjectionDataset([_injection_tile(tmp_path / "t.npz", seed=5)],
+                          DataConfig(crop=128), train=False)
+    first, second = ds[0], ds[0]
+    for a, b in zip(first, second):
+        assert np.array_equal(a.numpy(), b.numpy())
+
+
+def test_augmentation_moves_the_field_with_its_target(tmp_path):
+    """Flips and rotations must be applied to the target and the chosen field
+    TOGETHER. D carries signal-dependent shot noise tied to the intensities it
+    was measured on; rotating one and not the other puts bright-pixel noise
+    over dark sky while leaving every shape and every statistic intact."""
+    from scipy.ndimage import gaussian_filter
+
+    from data import DataConfig, InjectionDataset, from_model_space
+
+    tile = _injection_tile(tmp_path / "t.npz", seed=6, ramp=True)
+    # A crop SMALLER than the tile, so the field must also follow the target's
+    # random offset -- not only its rotation.
+    ds = InjectionDataset([tile], DataConfig(crop=192, augment=True), train=True)
+    np.random.seed(11)
+    for _ in range(8):
+        noisy, clean, _, _, _ = ds[0]
+        lin_n = from_model_space(noisy.permute(1, 2, 0).numpy())
+        lin_c = from_model_space(clean.permute(1, 2, 0).numpy())
+        added = gaussian_filter(np.abs(lin_n - lin_c).mean(axis=2), 4.0)
+        r = np.corrcoef(added.ravel(), lin_c.mean(axis=2).ravel())[0, 1]
+        assert r > 0.8, f"injected noise no longer tracks the scene it came from (r={r:.2f})"
+
+
+def test_the_injected_noise_is_exactly_one_of_the_tiles_own_fields(tmp_path):
+    """Exact, not statistical: the difference between the two sides must be a
+    scalar multiple of ONE of the four fields this tile carries, cropped at the
+    same place as the target. A field taken from the right tile but the wrong
+    offset is a plausible-looking bug that every summary statistic survives --
+    the noise is still real, still the right size, and no longer over the
+    pixels whose brightness produced it."""
+    from data import DataConfig, InjectionDataset, from_model_space
+
+    tile = _injection_tile(tmp_path / "t.npz", size=256, seed=8)
+    ds = InjectionDataset([tile], DataConfig(crop=128, augment=False), train=False)
+    noisy, clean, _, _, _ = ds[0]
+    d = (from_model_space(noisy.permute(1, 2, 0).numpy())
+         - from_model_space(clean.permute(1, 2, 0).numpy())).ravel()
+    with np.load(tile) as rec:
+        fields, target = rec["fields"], rec["target"]
+    y = x = (256 - 128) // 2                       # the centre crop val uses
+    assert np.allclose(from_model_space(clean.permute(1, 2, 0).numpy()),
+                       target[y:y+128, x:x+128], atol=1e-6), \
+        "the clean side is not this tile's target at the crop it claims"
+    best = max(abs(np.corrcoef(d, fields[j][y:y+128, x:x+128].ravel())[0, 1])
+               for j in range(len(fields)))
+    assert best > 0.999, f"best match to any of the tile's own fields was {best:.4f}"
+
+
+def test_the_dataset_works_with_only_the_training_dir_on_the_path(tmp_path):
+    """train.py puts `training/` on sys.path and nothing else, and `nocturne`
+    is not installed into .venv-train -- it is only ever found by path. So a
+    module-level import here is not enough: this reproduces train.py's own path
+    exactly, from a working directory that is not the repo, and drives a real
+    sample through. Without data.py's repo-root insert it dies on the first
+    batch, inside a DataLoader worker."""
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    training_dir = _Path(__file__).resolve().parents[1]
+    tile = _injection_tile(tmp_path / "t.npz", seed=9)
+    script = (
+        "import sys; sys.path.insert(0, %r)\n"
+        "import data as D\n"
+        "ds = D.InjectionDataset([%r], D.DataConfig(crop=128, augment=False), train=False)\n"
+        "n, c = ds[0][0], ds[0][1]\n"
+        "assert n.shape == c.shape == (3, 128, 128)\n"
+        "print('ok')\n" % (str(training_dir), tile)
+    )
+    proc = subprocess.run([_sys.executable, "-c", script], cwd=tmp_path,
+                          capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr

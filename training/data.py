@@ -11,11 +11,19 @@ import glob
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from noise import estimate_sigma
+# The repo root, so `nocturne.training.inject` is importable from here.
+# build_dataset.py and realism.py add it themselves because they are scripts;
+# this module is a LIBRARY, and train.py -- which imports it -- puts only
+# `training/` on the path. Without this line InjectionDataset dies on its first
+# batch, inside a DataLoader worker, where the traceback is hardest to read.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from noise import estimate_sigma  # noqa: E402
 
 # ---------------------------------------------------------------- transform
 
@@ -284,3 +292,150 @@ class TileDataset:
                 torch.from_numpy(mask)[None],
                 torch.tensor(sigma, dtype=torch.float32),
                 torch.tensor(is_n2n, dtype=torch.float32))
+
+
+# ------------------------------------------------- the generating dataset
+
+# The depth mixture. Not one distribution: "log-uniform, weighted towards the
+# deep end" would be two contradictory instructions.
+#
+# Which examples dominate is the whole game, and it is what sank both previous
+# runs in opposite directions. s30_v2 trained mostly on shallow stacks (85% of
+# n2n_v1's tiles had an input below 128 frames) and over-corrected until it
+# damaged a real 405-frame master; n2n_v2 trained mostly on deep, already-clean
+# targets and learned to do nothing, removing 55% of the noise on M45 where
+# GraXpert removes 85%. So the proportion is named, not buried: 200-500 frames
+# is the range Andreas' own masters occupy, and the shallow tail is there so a
+# newcomer's 30-frame stack still works.
+#
+# A STARTING POINT, and the first thing to vary if the model comes out timid or
+# aggressive -- which is why it is one number in one place.
+_DEEP_BAND = (200, 500)
+_SHALLOW_BAND = (8, 200)
+_DEEP_SHARE = 0.70
+
+# The deepest stack a group may be asked to imitate, as a fraction of its own
+# target's depth.
+#
+# At exactly half, `target + k*field` IS a real half-stack of that group (k
+# works out to 1/sqrt(2)), so this is the deepest claim the group's own noise
+# field actually backs. It also guarantees every example's input is at least
+# sqrt(2) noisier than its target. Above it the lesson thins towards a target
+# no cleaner than the input, which is precisely the emptiness this design
+# exists to fix -- a 366-frame group cannot teach anything useful about a
+# 350-frame stack, and pretending otherwise is how the last run went timid.
+_MAX_DEPTH_FRACTION = 0.5
+
+# Validation must not redraw its depth every epoch: train.py keeps the best
+# checkpoint by val loss, and a val set that moves makes "best" mean "luckiest".
+# Keyed per tile index, so val still spans the mixture instead of one depth.
+_VAL_SEED = 20260824
+
+
+def _log_uniform(rng, lo: int, hi: int) -> int:
+    return int(round(float(np.exp(rng.uniform(np.log(lo), np.log(hi))))))
+
+
+def _clamp_depth(depth: int, tile_depth: int) -> int:
+    """The requested depth, held to what this tile's own frames can back."""
+    return max(1, min(int(depth), max(1, int(tile_depth * _MAX_DEPTH_FRACTION))))
+
+
+class InjectionDataset:
+    """Training pairs manufactured per sample, not loaded from disk.
+
+    Each tile carries one clean target `M` (a `depth`-frame stack) and four
+    real noise fields `D` built by cancelling the sky between two disjoint
+    half-stacks -- see nocturne/training/inject.py and build_injection.py. A
+    sample is `M + k*D` with `k` solved so the result measures the noise of a
+    stack of the depth we asked for. The same tile therefore yields a different
+    lesson every epoch, which is why the dataset is a generator and the ladder's
+    files-per-depth are gone.
+
+    Returns TileDataset's exact 5-tuple with `is_n2n = 0.0`: the target here is
+    genuinely cleaner than the input, so these are ordinary supervised pairs and
+    train.py's existing selection routes them to L1. L2 exists for Noise2Noise's
+    conditional mean and is not what they need.
+    """
+
+    def __init__(self, tiles: list[str], cfg: DataConfig, train: bool = True):
+        # Paths, not arrays, and no module reference -- DataLoader workers are
+        # spawned on macOS and the dataset is pickled. Same reason as
+        # TileDataset; see its note.
+        self.tiles, self.cfg, self.train = list(tiles), cfg, train
+        if not self.tiles:
+            raise ValueError("no injection tiles — run build_injection.py first")
+
+    def __len__(self) -> int:
+        return len(self.tiles)
+
+    def sample_depth(self, rng=None) -> int:
+        """A stack depth in frames, drawn from the mixture above."""
+        rng = np.random if rng is None else rng
+        lo, hi = _DEEP_BAND if rng.random() < _DEEP_SHARE else _SHALLOW_BAND
+        return _log_uniform(rng, lo, hi)
+
+    def __getitem__(self, i: int):
+        import torch
+
+        from nocturne.training.inject import inject, scale_for_sigma
+
+        rng = np.random if self.train else np.random.default_rng(_VAL_SEED + i)
+        with np.load(self.tiles[i]) as rec:
+            target, fields = rec["target"], rec["fields"]
+            cov, tile_depth = rec["coverage"], int(rec["depth"])
+
+        c = self.cfg.crop
+        H, W = target.shape[:2]
+        if self.train:
+            y = rng.randint(0, H - c + 1) if hasattr(rng, "randint") else int(rng.integers(0, H - c + 1))
+            x = rng.randint(0, W - c + 1) if hasattr(rng, "randint") else int(rng.integers(0, W - c + 1))
+        else:
+            y, x = (H - c) // 2, (W - c) // 2      # deterministic, so val loss is comparable
+        which = int(rng.integers(len(fields))) if hasattr(rng, "integers") else rng.randint(len(fields))
+        target = target[y:y+c, x:x+c]
+        field = fields[which][y:y+c, x:x+c]
+        cov = cov[y:y+c, x:x+c]
+
+        if self.train and self.cfg.augment:
+            # Applied to the target and its field TOGETHER. D carries
+            # signal-dependent shot noise measured on those exact intensities;
+            # rotating one and not the other lays bright-pixel noise over dark
+            # sky, leaving every shape and every summary statistic intact.
+            # Flips and 90-degree rotations only -- anything that RESAMPLES
+            # would blur the very noise being modelled.
+            k = rng.randint(4) if hasattr(rng, "randint") else int(rng.integers(4))
+            if k:
+                target, field, cov = (np.rot90(a, k, (0, 1)) for a in (target, field, cov))
+            if rng.random() < 0.5:
+                target, field, cov = (a[:, ::-1] for a in (target, field, cov))
+
+        target = np.ascontiguousarray(target, np.float32)
+        field = np.ascontiguousarray(field, np.float32)
+
+        # depth -> sigma by the sqrt(n) law, off the target's OWN measured
+        # noise: this crop is a `tile_depth`-frame stack, so an n-frame one
+        # carries sqrt(tile_depth / n) times as much. Then solve for k
+        # numerically against the same estimator the app uses at inference --
+        # estimate_sigma is a MAD over a masked high-pass, not a closed form.
+        depth = _clamp_depth(self.sample_depth(rng), tile_depth)
+        floor = estimate_sigma(target)
+        if not floor > 0:
+            raise ValueError(
+                f"{self.tiles[i]}: the target crop measures no noise at all, so "
+                "no depth can be asked of it — the tile is empty or clipped")
+        k = scale_for_sigma(field, floor * float(np.sqrt(tile_depth / depth)),
+                            estimate_sigma, base=target)
+        noisy = np.clip(inject(target, field, k), 0.0, 1.0)
+
+        a = self.cfg.asinh_a
+        noisy = to_model_space(noisy, a)
+        clean = to_model_space(target, a)
+        mask = (np.ascontiguousarray(cov, np.float32) >= self.cfg.min_coverage).astype(np.float32)
+        sigma = estimate_sigma(noisy)
+
+        return (torch.from_numpy(noisy).permute(2, 0, 1),
+                torch.from_numpy(clean).permute(2, 0, 1),
+                torch.from_numpy(mask)[None],
+                torch.tensor(sigma, dtype=torch.float32),
+                torch.tensor(0.0, dtype=torch.float32))
