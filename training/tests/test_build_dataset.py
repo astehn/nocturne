@@ -106,17 +106,25 @@ def test_the_kind_always_agrees_with_the_ratio_that_defines_it():
             assert r.kind == expected, f"n_frames={n}: {r} should be {expected}"
 
 
-def _group(n_frames, slug_target="M16"):
+# The real archive's two geometries, as _read_frame_info records them
+# (NAXIS2, NAXIS1): the S30 Pro's 8.3 MP frame holds 40 tiles at 512/32, the
+# S50's 2.1 MP frame only 12 -- which matters because every deep group in the
+# archive is an S50 one.
+_S30_SHAPE = (3840, 2160)
+_S50_SHAPE = (1920, 1080)
+
+
+def _group(n_frames, slug_target="M16", sensor="s30", shape=_S30_SHAPE):
     frames = tuple(
         FrameInfo(f"/src/{slug_target}/f{i:04d}.fit", f"f{i:04d}.fit", slug_target,
-                  slug_target, "s30", "S30 Pro", "", (2160, 3840), "LP", 10.0,
+                  slug_target, sensor, "S30 Pro", "", shape, "LP", 10.0,
                   "2026-08-09", f"2026-08-09T00:00:{i % 60:02d}", 275.1, -13.8, None)
         for i in range(n_frames)
     )
-    return FrameGroup("s30", slug_target, "LP", 10.0, "2026-08-09", frames)
+    return FrameGroup(sensor, slug_target, "LP", 10.0, "2026-08-09", frames)
 
 
-def _stub_build(monkeypatch, tmp_path, group, *, pre_made=()):
+def _stub_build(monkeypatch, tmp_path, group, *, pre_made=(), cfg=None, lines=None):
     """Run build_dataset against one group with the expensive parts faked.
 
     Returns (calls, manifest): `calls` is one entry per generate_training_pairs
@@ -147,18 +155,29 @@ def _stub_build(monkeypatch, tmp_path, group, *, pre_made=()):
 
     def fake_generate(source, output, *, config, **kwargs):
         calls.append(config)
+        # The real generate_training_pairs announces each group it registers
+        # through on_progress. The stub must too, or an assertion about what is
+        # printed BEFORE building has nothing to sit in front of.
+        kwargs["on_progress"](f"preparing 1/1 {group.slug} ({len(group.frames)} frames)")
         rungs = config.rungs or tuple(
             (n_in, config.target_count) for n_in in config.input_counts
         )
-        for n_in, n_tgt in rungs:
-            _write(n_in, n_tgt, config.pairs_per_group)
+        for rung in rungs:
+            n_in, n_tgt = rung[0], rung[1]
+            _write(n_in, n_tgt,
+                   rung[2] if len(rung) > 2 else config.pairs_per_group)
         return [{"group": group.slug, "pairs": []}]
 
     monkeypatch.setattr(bd, "generate_training_pairs", fake_generate)
+    # deep_from=1 makes every rung "deep", i.e. the flat per-group count the
+    # tests that predate the depth weighting were written against.
+    full = {"name": "ds", "source": str(tmp_path / "src"), "sensor": "s30",
+            "pairs_per_depth": 2, "method": "sigma_clip",
+            "deep_from": 1, "pairs_deep": 2, "pairs_shallow": 2}
+    full.update(cfg or {})
     manifest = bd.build_dataset(
-        {"name": "ds", "source": str(tmp_path / "src"), "sensor": "s30",
-         "pairs_per_depth": 2, "method": "sigma_clip"},
-        on_line=lambda *a: None,
+        full,
+        on_line=(lines.append if lines is not None else (lambda *a: None)),
     )
     return calls, manifest
 
@@ -177,7 +196,7 @@ def test_a_group_is_registered_once_however_many_target_depths_it_has(tmp_path, 
     calls, manifest = _stub_build(monkeypatch, tmp_path, group)
 
     assert len(calls) == 1, f"{len(calls)} registrations for one group"
-    assert set(calls[0].rungs) == {(r.n_in, r.n_tgt) for r in ladder}
+    assert {(r[0], r[1]) for r in calls[0].rungs} == {(r.n_in, r.n_tgt) for r in ladder}
     assert manifest["summary"].get("pairs_failed", 0) == 0
     assert manifest["summary"]["pairs_generated"] == 2 * len(ladder)
 
@@ -193,8 +212,126 @@ def test_rungs_already_on_disk_are_not_rebuilt(tmp_path, monkeypatch):
     calls, manifest = _stub_build(monkeypatch, tmp_path, group, pre_made=[done])
 
     assert len(calls) == 1
-    assert done not in set(calls[0].rungs)
-    assert set(calls[0].rungs) == {(r.n_in, r.n_tgt) for r in ladder} - {done}
+    assert done not in {(r[0], r[1]) for r in calls[0].rungs}
+    assert {(r[0], r[1]) for r in calls[0].rungs} == {(r.n_in, r.n_tgt) for r in ladder} - {done}
     assert manifest["summary"]["pairs_already_present"] == 2
     assert manifest["summary"]["pairs_generated"] == 2 * (len(ladder) - 1)
     assert manifest["summary"].get("pairs_failed", 0) == 0
+
+
+# ------------------------------------------------- weighting the set by depth
+#
+# Measured on the finished n2n_v1 dataset (2026-08-24): 85% of its tiles had an
+# input of fewer than 128 frames and about two thirds came from stacks of 32 or
+# fewer, while the rungs matching how the user actually shoots (239/256/301/395)
+# were 6.5% between them. Nobody chose that -- a flat pairs_per_depth did.
+# Every group can afford the shallow rungs, so they get replicated once per
+# group; only the biggest groups can afford the deep ones.
+
+def _selected(manifest, group_slug):
+    """{(n_in, n_tgt): pairs actually planned} for one group."""
+    entry = next(g for g in manifest["groups"] if g["group"] == group_slug)
+    out = {}
+    for rec in entry["pairs"]:
+        key = (rec["input_count"], rec["target_count"])
+        out[key] = out.get(key, 0) + 1
+    return out
+
+
+def test_a_deep_rung_gets_more_pairs_than_a_shallow_one(tmp_path, monkeypatch):
+    group = _group(366)
+    _, manifest = _stub_build(
+        monkeypatch, tmp_path, group,
+        cfg={"deep_from": 128, "pairs_deep": 4, "pairs_shallow": 1,
+             "shallow_depths": [1, 16, 64]},
+    )
+    got = _selected(manifest, group.slug)
+    assert all(n == 4 for (n_in, _), n in got.items() if n_in >= 128), got
+    assert all(n == 1 for (n_in, _), n in got.items() if n_in < 128), got
+    assert manifest["summary"].get("pairs_failed", 0) == 0
+
+
+def test_a_shallow_rung_outside_shallow_depths_is_never_built(tmp_path, monkeypatch):
+    """The part that actually fixes the weighting. Keeping every power of two
+    below 128 at one pair each still leaves shallow material at about a third
+    of the set, because there are seven of them per group and three deep rungs.
+    A rung that is not selected must not reach generate_training_pairs at all --
+    not be built and then dropped."""
+    group = _group(366)
+    ladder = bd.plan_ladder(366, min_ratio=4.0, min_target=16, min_n2n_target=64)
+    dropped = {r.n_in for r in ladder if r.n_in < 128} - {1, 16, 64}
+    assert dropped, "fixture must have shallow rungs outside shallow_depths"
+
+    calls, manifest = _stub_build(
+        monkeypatch, tmp_path, group,
+        cfg={"deep_from": 128, "pairs_deep": 4, "pairs_shallow": 1,
+             "shallow_depths": [1, 16, 64]},
+    )
+    asked = {r[0] for r in calls[0].rungs}
+    assert not (asked & dropped), f"built rungs it was told to skip: {asked & dropped}"
+    assert {n_in for n_in, _ in _selected(manifest, group.slug)} & {1, 16, 64} == {1, 16, 64}
+    assert manifest["summary"].get("pairs_failed", 0) == 0
+
+
+def test_shallow_material_is_kept_but_not_weighted_towards(tmp_path, monkeypatch):
+    """Andreas' ruling: focus on 128 and up, but still cater for the brand-new
+    Seestar owner whose only stack is shallow. So shallow must be present and
+    must be the minority -- an assertion on both sides, because dropping it
+    entirely would satisfy a one-sided 'deep dominates' test."""
+    group = _group(366)
+    _, manifest = _stub_build(
+        monkeypatch, tmp_path, group,
+        cfg={"deep_from": 128, "pairs_deep": 4, "pairs_shallow": 1,
+             "shallow_depths": [1, 16, 64]},
+    )
+    got = _selected(manifest, group.slug)
+    shallow = sum(n for (n_in, _), n in got.items() if n_in < 128)
+    deep = sum(n for (n_in, _), n in got.items() if n_in >= 128)
+    assert shallow > 0, "a shallow stack must still be represented"
+    assert deep > 2 * shallow, f"deep {deep} vs shallow {shallow}"
+
+
+# ----------------------------------------------------- the tile-share estimate
+
+def test_one_s50_pair_yields_far_fewer_tiles_than_one_s30_pair():
+    """The trap in estimating with a single tiles-per-pair number: 29 was
+    measured on n2n_v1, which is entirely S30 (3840x2160 -> 40 tiles). Every
+    deep group in the archive is an S50 one at 1920x1080, which holds 12. Using
+    29 for both would overstate the deep share by roughly three times."""
+    s30 = bd._tiles_per_pair(_S30_SHAPE, 512, 32)
+    s50 = bd._tiles_per_pair(_S50_SHAPE, 512, 32)
+    assert 28 <= s30 <= 30, s30          # the measured 29.3 per pair
+    assert s50 < s30 / 3.0, (s30, s50)
+
+
+def test_the_tile_share_estimate_splits_deep_from_shallow():
+    plans = [
+        bd.GroupPlan(_group(366), [], [(Rung(1, 256, "truth"), 1),
+                                       (Rung(128, 237, "n2n"), 4)]),
+    ]
+    rows = bd.tile_share_estimate(plans, deep_from=128, tile_size=512, tile_overlap=32)
+    by_label = {r["depth"]: r for r in rows}
+    assert by_label["1"]["pairs"] == 1 and not by_label["1"]["deep"]
+    assert by_label["128-255"]["pairs"] == 4 and by_label["128-255"]["deep"]
+    assert abs(sum(r["share"] for r in rows) - 1.0) < 1e-6
+    assert abs(by_label["128-255"]["share"] - 0.8) < 1e-6
+
+
+def test_the_estimate_is_printed_before_a_single_pair_is_built(tmp_path, monkeypatch):
+    """It has to be visible up front, or the weighting is discovered after the
+    hours are spent. Asserted on ordering, not just presence."""
+    lines = []
+    group = _group(366)
+    calls, _ = _stub_build(
+        monkeypatch, tmp_path, group, lines=lines,
+        cfg={"deep_from": 128, "pairs_deep": 4, "pairs_shallow": 1,
+             "shallow_depths": [1, 16, 64]},
+    )
+    text = [str(x) for x in lines]
+    estimate_at = next(i for i, l in enumerate(text) if "tile-share estimate" in l)
+    assert any("deep" in l and "%" in l for l in text[estimate_at:]), text
+    built_at = next((i for i, l in enumerate(text) if "preparing" in l), len(text))
+    assert estimate_at < built_at
+    # and it describes the plan that was actually built
+    deep_row = next(l for l in text[estimate_at:] if l.strip().startswith("deep"))
+    assert "12" in deep_row, deep_row      # 3 deep rungs x 4 pairs

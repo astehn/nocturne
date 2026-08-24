@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from noise import estimate_sigma  # noqa: E402
 from nocturne.training.pairs import (  # noqa: E402
     PairConfig,
+    _tile_starts,
     discover_frame_groups,
     generate_training_pairs,
 )
@@ -138,6 +139,119 @@ def plan_ladder(
     return rungs + sorted(n2n)
 
 
+# ------------------------------------------------ weighting the set by depth
+#
+# The ladder makes one rung per power of two, so every group -- however small --
+# can afford the shallow end while only the biggest can afford the deep end.
+# With a flat pairs_per_depth the shallow rungs are therefore replicated once
+# per group. Measured on the finished n2n_v1 dataset (2026-08-24): 85% of its
+# tiles had an input of fewer than 128 frames, roughly two thirds came from
+# stacks of 32 or fewer, and the rungs matching how the user actually shoots
+# (239/256/301/395) were 6.5% between them. Nobody chose that weighting.
+#
+# So: count pairs per RUNG, not per group. Deep rungs get several pairs each;
+# shallow rungs get one, and only at the handful of depths worth keeping at all
+# -- a brand-new Seestar owner does have a 30-frame stack, but the model should
+# not be trained as though most users do.
+
+_DEEP_FROM = 128
+_PAIRS_DEEP = 4
+_PAIRS_SHALLOW = 1
+# One per octave rather than all seven powers of two: at one pair each, keeping
+# every shallow rung still leaves shallow material near a third of the set.
+_SHALLOW_DEPTHS = (1, 16, 64)
+
+# Fraction of the geometrically possible tiles that actually clear
+# min_tile_coverage -- the rest are frame-edge tiles the dither never fully
+# covered. MEASURED on the completed n2n_v1 dataset (2026-08-24): 5040 tiles
+# across 172 pairs is 29.3 per pair, against the 40 a 3840x2160 pair holds at
+# tile 512 / overlap 32.
+_TILE_COVERAGE_RETENTION = 0.73
+
+GroupPlan = namedtuple("GroupPlan", "group ladder rungs")
+
+
+def pairs_for_rung(
+    n_in: int,
+    *,
+    deep_from: int = _DEEP_FROM,
+    pairs_deep: int = _PAIRS_DEEP,
+    pairs_shallow: int = _PAIRS_SHALLOW,
+    shallow_depths=_SHALLOW_DEPTHS,
+) -> int:
+    """How many pairs this rung is worth. 0 means do not build it at all."""
+    if n_in >= deep_from:
+        return pairs_deep
+    return pairs_shallow if n_in in set(shallow_depths) else 0
+
+
+def _tiles_per_pair(shape, tile_size: int, tile_overlap: int) -> float:
+    """Expected tiles from one pair of this frame geometry.
+
+    Uses materialize_tiles' own _tile_starts so the estimate cannot drift from
+    what the build actually writes. The two geometries in the archive are very
+    different -- the S30 Pro's 3840x2160 holds 40 tiles, the S50's 1920x1080
+    only 12 -- and since every deep group is an S50 one, a single flat
+    tiles-per-pair number would overstate the deep share about threefold.
+    """
+    step = tile_size - tile_overlap
+    rows = len(_tile_starts(int(shape[0]), tile_size, step))
+    cols = len(_tile_starts(int(shape[1]), tile_size, step))
+    return rows * cols * _TILE_COVERAGE_RETENTION
+
+
+def _depth_band(n_in: int, deep_from: int) -> tuple[int, str]:
+    """(sort key, label). Shallow rungs are named by their exact depth -- there
+    are only a handful by construction -- while deep inputs are arbitrary
+    integers (available - min_n2n_target), so they are bucketed by octave."""
+    if n_in < deep_from:
+        return n_in, str(n_in)
+    lo = deep_from
+    while lo * 2 <= n_in:
+        lo *= 2
+    return lo, f"{lo}-{lo * 2 - 1}"
+
+
+def tile_share_estimate(plans, *, deep_from: int, tile_size: int, tile_overlap: int) -> list[dict]:
+    """One row per depth band: how much of the finished set it will be."""
+    bands: dict[int, dict] = {}
+    for plan in plans:
+        per_pair = _tiles_per_pair(plan.group.frames[0].shape, tile_size, tile_overlap)
+        for rung, n_pairs in plan.rungs:
+            key, label = _depth_band(rung.n_in, deep_from)
+            row = bands.setdefault(key, {
+                "depth": label, "deep": rung.n_in >= deep_from,
+                "rungs": 0, "pairs": 0, "tiles": 0.0,
+            })
+            row["rungs"] += 1
+            row["pairs"] += n_pairs
+            row["tiles"] += n_pairs * per_pair
+    rows = [bands[k] for k in sorted(bands)]
+    total = sum(r["tiles"] for r in rows)
+    for row in rows:
+        row["share"] = row["tiles"] / total if total else 0.0
+    return rows
+
+
+def _tile_share_lines(rows, *, deep_from: int) -> list[str]:
+    head = (f"tile-share estimate ({_TILE_COVERAGE_RETENTION:.2f} of a pair's "
+            f"geometric tiles clear coverage; measured on n2n_v1)")
+    lines = ["", head, "",
+             f"  {'depth':>12}  {'rungs':>6}  {'pairs':>6}  {'tiles':>7}  {'share':>7}"]
+    for row in rows:
+        lines.append(f"  {row['depth']:>12}  {row['rungs']:>6}  {row['pairs']:>6}  "
+                     f"{row['tiles']:>7.0f}  {row['share']:>6.1%}")
+    lines.append("  " + "-" * 46)
+    for deep, label in ((False, f"shallow (<{deep_from})"), (True, f"deep (>={deep_from})")):
+        part = [r for r in rows if r["deep"] is deep]
+        lines.append(
+            f"  {label:>12}  {sum(r['rungs'] for r in part):>6}  "
+            f"{sum(r['pairs'] for r in part):>6}  {sum(r['tiles'] for r in part):>7.0f}  "
+            f"{sum(r['share'] for r in part):>6.1%}")
+    lines.append("")
+    return lines
+
+
 def _pair_dir(dataset_dir: Path, group_slug: str, pair_index: int, n_in: int, n_tgt: int) -> Path:
     # Must match nocturne.training.pairs._write_pair's naming exactly, or the
     # resumability check below can never find a pair that generate_training_pairs
@@ -199,6 +313,10 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
     min_ratio = float(cfg.get("min_ratio", 4.0))
     min_target = int(cfg.get("min_target", 16))
     pairs_per_depth = int(cfg.get("pairs_per_depth", 2))
+    deep_from = int(cfg.get("deep_from", _DEEP_FROM))
+    pairs_deep = int(cfg.get("pairs_deep", _PAIRS_DEEP))
+    pairs_shallow = int(cfg.get("pairs_shallow", _PAIRS_SHALLOW))
+    shallow_depths = tuple(int(d) for d in cfg.get("shallow_depths", _SHALLOW_DEPTHS))
     combine_nights = bool(cfg.get("combine_nights", False))
     exclude_mosaics = bool(cfg.get("exclude_mosaics", True))
     min_frames = int(cfg.get("min_frames", 3))
@@ -231,10 +349,15 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
     }
     summary = defaultdict(int)
 
-    processed_slugs: set[str] = set()
+    # Plan every group BEFORE building any of it. The ladder follows from frame
+    # counts alone, so the whole weighting is knowable up front -- and it has to
+    # be printed up front, or it is discovered only after the hours are spent.
+    plans: list[GroupPlan] = []
+    planned_slugs: set[str] = set()
     for index, group in enumerate(groups, start=1):
-        if group.slug in processed_slugs:
+        if group.slug in planned_slugs:
             continue
+        planned_slugs.add(group.slug)
         ladder = plan_ladder(
             len(group.frames),
             min_ratio=min_ratio,
@@ -242,14 +365,40 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             min_n2n_target=min_n2n_target,
             max_input=max_input,
         )
-        on_line(
-            f"[{index}/{len(groups)}] {group.slug} ({len(group.frames)} frames): "
-            + (", ".join(f"{r.n_in}->{r.n_tgt}[{r.kind}]" for r in ladder) if ladder else "no valid pairs, skipped")
-        )
+        selected = [
+            (rung, n_pairs)
+            for rung in ladder
+            for n_pairs in [pairs_for_rung(
+                rung.n_in, deep_from=deep_from, pairs_deep=pairs_deep,
+                pairs_shallow=pairs_shallow, shallow_depths=shallow_depths)]
+            if n_pairs > 0
+        ]
+        plans.append(GroupPlan(group, ladder, selected))
+        if selected:
+            detail = ", ".join(f"{r.n_in}->{r.n_tgt}[{r.kind}]x{n}" for r, n in selected)
+        elif ladder:
+            detail = "no rung survived the depth weighting, skipped"
+        else:
+            detail = "no valid pairs, skipped"
+        on_line(f"[{index}/{len(groups)}] {group.slug} ({len(group.frames)} frames): {detail}")
+
+    for line in _tile_share_lines(
+        tile_share_estimate(plans, deep_from=deep_from, tile_size=tile_size,
+                            tile_overlap=tile_overlap),
+        deep_from=deep_from,
+    ):
+        on_line(line)
+
+    processed_slugs: set[str] = set()
+    for plan in plans:
+        group, ladder = plan.group, plan.ladder
+        if group.slug in processed_slugs:
+            continue
         processed_slugs.add(group.slug)
         summary["groups_seen"] += 1
-        if not ladder:
-            summary["groups_skipped_too_small"] += 1
+        if not plan.rungs:
+            summary["groups_skipped_too_small" if not ladder
+                    else "groups_skipped_by_weighting"] += 1
             continue
 
         # ALL of the group's missing rungs in ONE call, whatever their target
@@ -259,9 +408,9 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
         # under the derived ladder, where the old fixed ladder had only ever
         # produced one. PreparedStack was built for exactly this reuse.
         need = [
-            (r.n_in, r.n_tgt) for r in ladder
+            (r.n_in, r.n_tgt, n_pairs) for r, n_pairs in plan.rungs
             if not _pairs_fully_present(
-                dataset_dir, group.slug, r.n_in, r.n_tgt, pairs_per_depth
+                dataset_dir, group.slug, r.n_in, r.n_tgt, n_pairs
             )
         ]
         group_pairs: list[dict] = []
@@ -313,10 +462,10 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
                          "of this group's filter matching more than one session; see combine_nights"}
                     )
 
-        requested = set(need)
-        for rung in ladder:
+        requested = {(n_in, n_tgt) for n_in, n_tgt, _ in need}
+        for rung, n_pairs in plan.rungs:
             n_in, n_tgt = rung.n_in, rung.n_tgt
-            for pair_index in range(pairs_per_depth):
+            for pair_index in range(n_pairs):
                 pdir = _pair_dir(dataset_dir, group.slug, pair_index, n_in, n_tgt)
                 if not (pdir / "manifest.json").is_file():
                     summary["pairs_failed"] += 1
@@ -337,7 +486,10 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             "filter": group.filter_name,
             "night": group.night,
             "frame_count": len(group.frames),
-            "ladder": [list(r) for r in ladder],
+            # The rungs actually built, each with the pair count the depth
+            # weighting gave it -- the plain ladder no longer describes the set.
+            "ladder": [list(r) + [n_pairs] for r, n_pairs in plan.rungs],
+            "ladder_planned": [list(r) for r in ladder],
             "pairs": group_pairs,
         })
 

@@ -565,11 +565,20 @@ def prepare_stack(
 class PairConfig:
     input_counts: tuple[int, ...] = (16,)
     target_count: int = 128
-    # Explicit (input, target) rungs.  When set it supersedes input_counts
-    # and target_count, which between them can only describe one target
-    # depth -- and a group whose ladder has four of them would otherwise need
-    # four calls, i.e. four full re-registrations of the same frames.
-    rungs: tuple[tuple[int, int], ...] | None = None
+    # Explicit rungs, each ``(input, target)`` or ``(input, target, n_pairs)``.
+    # When set it supersedes input_counts and target_count, which between them
+    # can only describe one target depth -- and a group whose ladder has four
+    # of them would otherwise need four calls, i.e. four full re-registrations
+    # of the same frames.
+    #
+    # The optional third element is how a caller weights the dataset by depth.
+    # A flat pairs_per_group cannot: every group can afford the shallow rungs
+    # and only the biggest can afford the deep ones, so a uniform count
+    # replicates the shallow end once per group. Measured on the finished
+    # n2n_v1 set (2026-08-24), that put 85% of its tiles below a 128-frame
+    # input. A 2-tuple keeps falling back to pairs_per_group, because that is
+    # what every existing caller and the dataset already on disk assume.
+    rungs: tuple[tuple[int, ...], ...] | None = None
     pairs_per_group: int = 4
     seed: int = 20260821
     method: str = "average"
@@ -720,8 +729,14 @@ def _group_pair_specs(
     if rungs is None:
         rungs = tuple((n_in, config.target_count) for n_in in config.input_counts)
     specs: list[dict] = []
-    for input_count, target_count in rungs:
-        for pair_index in range(config.pairs_per_group):
+    for rung in rungs:
+        input_count, target_count = int(rung[0]), int(rung[1])
+        # The pair count is deliberately absent from _stable_seed below: pair
+        # 0 of a rung must draw the same frames whether the rung was asked for
+        # one pair or four, or the resumability check would be comparing
+        # on-disk pairs against a partition the rebuild no longer produces.
+        pair_count = int(rung[2]) if len(rung) > 2 else config.pairs_per_group
+        for pair_index in range(pair_count):
             if input_count + target_count > len(pool):
                 continue
             seed = _stable_seed(

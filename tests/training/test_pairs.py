@@ -533,3 +533,64 @@ def test_one_call_writes_every_rung_from_a_single_registration(tmp_path):
     group_dir = output / results[0]["group"]
     assert (group_dir / "pair_0000_in1_target3" / "manifest.json").is_file()
     assert (group_dir / "pair_0000_in2_target4" / "manifest.json").is_file()
+
+
+# --------------------------------------------------- per-rung pair counts
+
+def test_a_rung_can_carry_its_own_pair_count():
+    """The weighting fix needs one number per RUNG, not one per group.
+
+    Measured on the finished n2n_v1 dataset (2026-08-24): 85% of its tiles
+    have an input of fewer than 128 frames, because every group can afford the
+    shallow rungs and only the biggest can afford the deep ones -- so a flat
+    pairs_per_group replicates the shallow end ten times over. Nobody chose
+    that; a uniform count is what produced it.
+    """
+    specs = _specs(((1, 16, 1), (4, 8, 3)), pairs_per_group=2)
+    counts = {}
+    for s in specs:
+        counts[(s["input_count"], s["target_count"])] = counts.get(
+            (s["input_count"], s["target_count"]), 0) + 1
+    assert counts == {(1, 16): 1, (4, 8): 3}
+
+
+def test_a_two_tuple_rung_still_falls_back_to_pairs_per_group():
+    """The 2-tuple form is what the built n2n_v1 dataset and every existing
+    caller use; extending the tuple must not quietly re-count them."""
+    specs = _specs(((1, 16), (4, 8)), pairs_per_group=2)
+    assert [(s["input_count"], s["target_count"]) for s in specs] == [
+        (1, 16), (1, 16), (4, 8), (4, 8)
+    ]
+
+
+def test_a_rungs_partition_does_not_move_when_its_pair_count_changes():
+    """pair_0000 of a rung must draw the same frames whether the rung asked
+    for one pair or four. The seed keys on (n_in, n_tgt, pair_index), and if a
+    pair count leaked into it the resumability check would compare on-disk
+    pairs against a partition the rebuild no longer produces -- silently
+    rebuilding, or worse, half-matching, the dataset already on the drive."""
+    one = _specs(((4, 8, 1),))
+    four = _specs(((4, 8, 4),))
+    assert len(one) == 1 and len(four) == 4
+    assert one[0]["seed"] == four[0]["seed"]
+    assert one[0]["noisy"] == four[0]["noisy"]
+    assert one[0]["clean"] == four[0]["clean"]
+
+
+def test_a_three_tuple_rung_reaches_generate_training_pairs(tmp_path):
+    """End to end, not just the planner: the count has to survive into the
+    directories actually written."""
+    root = _write_synthetic_group(tmp_path / "source")
+    output = tmp_path / "pairs"
+    results = generate_training_pairs(
+        root,
+        output,
+        config=PairConfig(rungs=((1, 3, 2), (2, 4, 1)), pairs_per_group=4),
+        workers=1,
+    )
+    group_dir = output / results[0]["group"]
+    assert (group_dir / "pair_0000_in1_target3" / "manifest.json").is_file()
+    assert (group_dir / "pair_0001_in1_target3" / "manifest.json").is_file()
+    assert not (group_dir / "pair_0002_in1_target3").exists()
+    assert (group_dir / "pair_0000_in2_target4" / "manifest.json").is_file()
+    assert not (group_dir / "pair_0001_in2_target4").exists()
