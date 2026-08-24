@@ -237,15 +237,15 @@ def _tile_share_lines(rows, *, deep_from: int) -> list[str]:
     head = (f"tile-share estimate ({_TILE_COVERAGE_RETENTION:.2f} of a pair's "
             f"geometric tiles clear coverage; measured on n2n_v1)")
     lines = ["", head, "",
-             f"  {'depth':>12}  {'rungs':>6}  {'pairs':>6}  {'tiles':>7}  {'share':>7}"]
+             f"  {'depth':>14}  {'rungs':>6}  {'pairs':>6}  {'tiles':>7}  {'share':>7}"]
     for row in rows:
-        lines.append(f"  {row['depth']:>12}  {row['rungs']:>6}  {row['pairs']:>6}  "
+        lines.append(f"  {row['depth']:>14}  {row['rungs']:>6}  {row['pairs']:>6}  "
                      f"{row['tiles']:>7.0f}  {row['share']:>6.1%}")
-    lines.append("  " + "-" * 46)
+    lines.append("  " + "-" * 48)
     for deep, label in ((False, f"shallow (<{deep_from})"), (True, f"deep (>={deep_from})")):
         part = [r for r in rows if r["deep"] is deep]
         lines.append(
-            f"  {label:>12}  {sum(r['rungs'] for r in part):>6}  "
+            f"  {label:>14}  {sum(r['rungs'] for r in part):>6}  "
             f"{sum(r['pairs'] for r in part):>6}  {sum(r['tiles'] for r in part):>7.0f}  "
             f"{sum(r['share'] for r in part):>6.1%}")
     lines.append("")

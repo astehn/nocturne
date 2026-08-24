@@ -384,3 +384,49 @@ def test_the_model_name_is_not_what_selects_the_material(tmp_path, monkeypatch):
     _, built = _stub_multi(monkeypatch, tmp_path, groups,
                            {"sensor": "s30", "sensors": ["s30", "s50"]})
     assert built == {groups[0].slug}
+
+
+# ------------------------------------------------------------ the v2 config
+
+def _config(name):
+    import json
+    import pathlib
+    return json.loads(
+        (pathlib.Path(__file__).resolve().parents[1] / "configs" / name).read_text())
+
+
+def test_n2n_v2_builds_both_sensors_but_still_ships_an_s30_model():
+    """The distinction the whole config turns on. `sensors` is the material --
+    widening it is the point -- while `sensor` names the file Nocturne ships
+    (denoise_s30_v1); the S30 Pro is the camera the app targets."""
+    cfg = _config("n2n_v2.json")
+    assert cfg["sensors"] == ["s30", "s50"]
+    assert cfg["sensor"] == "s30"
+
+
+def test_n2n_v2_weights_the_set_towards_the_depths_the_user_shoots():
+    cfg = _config("n2n_v2.json")
+    assert cfg["deep_from"] == 128
+    assert cfg["pairs_deep"] == 4
+    assert cfg["pairs_shallow"] == 1
+    assert cfg["shallow_depths"] == [1, 16, 64]
+
+
+def test_n2n_v2_changes_only_the_data_selection_from_v1():
+    """Two variables at once is how a training run stops being an experiment.
+    v2 exists to test a different DATASET, so everything about the model and
+    the run has to stay exactly where v1 left it."""
+    v1, v2 = _config("n2n_v1.json"), _config("n2n_v2.json")
+    unchanged = ("combine_nights", "min_ratio", "min_target", "min_n2n_target",
+                 "method", "kappa", "tiles", "exclude_mosaics", "epochs",
+                 "strength", "gate_tolerance", "source", "sensor")
+    for key in unchanged:
+        assert v2[key] == v1[key], f"{key}: {v1[key]!r} -> {v2[key]!r}"
+    assert v2["name"] == "n2n_v2"
+
+
+def test_n2n_v2_does_not_carry_the_superseded_flat_pair_count():
+    """`pairs_per_depth` no longer reaches anything build_dataset emits -- every
+    rung carries its own count. Leaving it in the config would read as though
+    it still set the weighting."""
+    assert "pairs_per_depth" not in _config("n2n_v2.json")
