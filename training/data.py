@@ -87,6 +87,20 @@ S50_TRAIN = ("M42", "SH2-142", "NGC6995", "M101")
 S50_VAL = ("NGC7023",)
 S50_TEST = ()
 
+# Never training material, in ANY dataset this project builds.
+#
+# M8 and M45 are Andreas' own masters and the only honest tests this project
+# has: a model that trained on them could not be judged by them, and every
+# conclusion of the 2026-08-24 postmortem rests on that separation. NGC6888 and
+# NGC281 are the do-no-harm gate's held-out pairs -- the one thing standing
+# between an unattended run and the model the app ships.
+#
+# Deliberately NOT the same as S30_TEST: the ladder dataset trains on M8 and
+# M45 tiles (S30_TRAIN), which is exactly the exposure the injection path must
+# not repeat. Kept here rather than in build_injection.py because this is where
+# the project's split rules already live.
+HELD_OUT = ("M8", "M45", "NGC6888", "NGC281")
+
 # The sensors whose tiles feed training. NOT the sensor the model ships as:
 # Nocturne targets the S30 Pro and the exported model is still denoise_s30_v1.
 # Only the training MATERIAL widens.
