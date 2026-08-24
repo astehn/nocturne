@@ -282,12 +282,10 @@ def _deep_end_result(model, device, strength: float):
     Returns None only if the master is not on this machine -- the caller must
     treat that as "not verified", never as a pass.
 
-    The sky mask is taken from the INPUT and reused for the model output, so
-    both sides are measured over the same pixels; a mask recomputed on the
-    output would let a model that flattens the nebula move the goalposts under
-    itself. The stretch matters too: the bias is invisible in linear data --
-    that is what every prior relative-to-truth test missed -- and only becomes
-    the visible blotching once stretched the way a user would see it.
+    The comparison is against a Gaussian blur matched to the model's OWN noise
+    reduction, not against the untouched master -- gate.deep_end_result carries
+    the measurements for why comparing to the input measured noise removal
+    rather than harm, and rejected every working denoiser.
     """
     if not os.path.isfile(_M8_MASTER):
         return None
@@ -296,18 +294,12 @@ def _deep_end_result(model, device, strength: float):
     import evaluate
     import gate
     from evaluate import _hwc
-    from nocturne.core.autostretch import linked_stretch
 
     inp = _hwc(fits.getdata(_M8_MASTER))
     a = D._ASINH_A
     out = D.from_model_space(
         evaluate.apply_model(D.to_model_space(inp, a), model, device, strength=strength), a)
-    sky = gate.sky_mask(inp)
-    return DepthResult(
-        "M8-deep-proxy", _M8_DEPTH,
-        gate.patch_chroma_bias(linked_stretch(inp, 0.25), sky),
-        gate.patch_chroma_bias(linked_stretch(out, 0.25), sky),
-    )
+    return gate.deep_end_result(inp, out, "M8-deep-proxy", _M8_DEPTH)
 
 
 def _with_deep_end(depth_results, deep, on_line=print):

@@ -43,6 +43,13 @@ def test_a_model_that_helps_everywhere_passes():
 
 # --- Step 5: the gate must have teeth against the REAL regression ---------
 #
+# READ THE 2026-08-24 CORRECTION FIRST (above the v2 replay, below): the
+# reasoning in this block is sound about WHAT to measure and wrong about what
+# to measure it AGAINST. Comparing to the untouched input made the number a
+# measure of noise removal, so it convicted a plain Gaussian blur too, and
+# the conclusion it draws about this checkpoint does not survive a control.
+# Kept as written because the correction only makes sense against it.
+#
 # The M 8 master that was actually damaged (docs/superpowers/specs/
 # 2026-08-22-denoise-training-system-design.md) has no deep-stack "truth" of
 # its own -- it IS the deepest stack there is, 405 frames. So this cannot use
@@ -150,13 +157,49 @@ def _apply_unconditioned(img_hwc, model, device, strength, tile=256, overlap=32)
     return out / np.maximum(wsum, 1e-6)
 
 
-# The proxy now lives in gate.py, where nightly.py can call it on every run
-# instead of it existing only inside this one replay test. Aliased rather than
-# rewritten at the call sites so the v2 positive control below stays literally
-# the test that was proven to catch the real regression.
-from gate import patch_chroma_bias as _patch_chroma_bias  # noqa: E402
+# The proxy lives in gate.py, where nightly.py can call it on every run instead
+# of it existing only inside this one replay test. The replay below no longer
+# calls patch_chroma_bias directly: it goes through gate.deep_end_result, so
+# what it exercises is what the gate exercises -- a replay measured with a
+# metric the gate has stopped using proves nothing about the gate.
 
 
+# THE TEETH THIS TEST WAS BELIEVED TO HAVE WERE THE BUG.
+#
+# It was the project's positive control: the incident checkpoint, the real
+# master, "if this ever starts passing a human needs to look." Measured
+# 2026-08-24, against a noise-matched blur control instead of the untouched
+# input (see DEEP_END_TOLERANCE and the section at the foot of this file),
+# model / control on that master:
+#
+#     s30_v2  @0.75 / @1.0 / @1.5      1.043, 1.009, 1.014   <- the bad one
+#     n2n_v1  @0.75 / @1.0 / @1.5      1.041, 1.032, 1.093   <- the clean one
+#     plain blur, any sigma            1.000
+#
+# The incident checkpoint is indistinguishable from a working denoiser, and
+# at two of three strengths it scores BETTER. So the old form of this test
+# did not detect the damage: it detected NOISE REMOVAL. v2 removed 71% of
+# the noise at strength 0.75 and read +24%; n2n_v1 removes 86% and reads
+# +28%, which is why the gate rejected the good model. Ranking by how much
+# noise a model removed happened to convict the guilty model, and would have
+# convicted a Gaussian blur just as hard.
+#
+# Kept, switched to the metric the gate actually uses now, and marked
+# xfail(strict) rather than deleted, because the question it asks is still
+# the right one and an XPASS is worth a human's time: if a future change to
+# the deep-end metric makes this checkpoint fail again -- for a reason that
+# is about the damage rather than about noise removal -- this test turns red
+# and says so. What is NOT available today is a real-checkpoint positive
+# control for the deep-end proxy; the injection test at the foot of this file
+# is synthetic, and that is the honest state of it.
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "the deep-end chroma proxy cannot separate the incident checkpoint "
+        "from a working denoiser once the noise-removal confound is removed: "
+        "s30_v2 reads 1.043 against a noise-matched control where n2n_v1 "
+        "reads 1.032 (2026-08-24). Remove this marker only with a measurement."),
+)
 @pytest.mark.skipif(
     not (os.path.isfile(_M8_MASTER) and os.path.isfile(_V2_RUN)),
     reason=(
@@ -170,15 +213,13 @@ def test_v2_model_fails_the_gate_on_the_real_m8_master():
     default, 0.75) to the exact master that was damaged. If this ever starts
     passing, either the metric stopped detecting the known damage or a future
     checkpoint genuinely fixed it -- either way it needs a human to look."""
-    import numpy as np
     import torch
     from astropy.io import fits
 
     import data as D
     from evaluate import _hwc
     from model import DenoiseUNet
-    from gate import check_no_harm, DepthResult
-    from nocturne.core.autostretch import linked_stretch
+    from gate import check_no_harm, deep_end_result
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     ck = torch.load(_V2_RUN, map_location=device)
@@ -195,18 +236,12 @@ def test_v2_model_fails_the_gate_on_the_real_m8_master():
     model_space_out = _apply_unconditioned(D.to_model_space(inp, a), model, device, strength=0.75)
     out = D.from_model_space(model_space_out, a)
 
-    lum = inp.mean(axis=2)
-    sky = lum <= np.percentile(lum, 60)  # matches noise.py's own dark-region convention
-
-    input_err = _patch_chroma_bias(linked_stretch(inp, 0.25), sky)
-    model_err = _patch_chroma_bias(linked_stretch(out, 0.25), sky)
-
-    result = DepthResult("M8", 405, input_err, model_err)
+    result = deep_end_result(inp, out, "M8", 405)
     g = check_no_harm([result])
 
     assert not g.passed, (
         f"expected the do-no-harm gate to catch the known M8 regression, but "
-        f"it passed: input_err={input_err:.5f} model_err={model_err:.5f}"
+        f"it passed: control={result.input_err:.5f} model={result.model_err:.5f}"
     )
     assert any("M8" in f and "405" in f for f in g.failures)
 
@@ -259,3 +294,192 @@ def test_the_sky_mask_selects_the_dark_end_and_leaves_the_bright_end_out():
     assert mask.mean() == pytest.approx(0.60, abs=0.01)
     assert mask[:, 0].all()               # the darkest column is sky
     assert not mask[:, -1].any()          # the brightest column is not
+
+
+# --- the deep end, measured against a noise-matched control ---------------
+#
+# The bug this section exists for: `patch_chroma_bias` compared against the
+# UNTOUCHED input, and that comparison is invalid. Removing pixel noise makes
+# pre-existing low-frequency colour structure MORE visible -- it was always
+# there, hidden under the speckle. Measured 2026-08-24 on the real M8 master
+# with a plain Gaussian blur, which invents nothing and has no opinion about
+# colour:
+#
+#     untouched master                    0.0407    --
+#     blur sigma=0.6   (29% noise gone)   0.0437   1.07x
+#     blur sigma=0.9   (48%)              0.0458   1.13x
+#     blur sigma=1.3   (66%)              0.0478   1.18x
+#     blur sigma=1.8   (79%)              0.0495   1.22x
+#     n2n_v1 @1.0      (86%)              0.0520   1.28x
+#
+# The proxy rises monotonically with HOW MUCH noise was removed, whatever
+# removed it, so the gate read "noise was removed" as "harm was done" and
+# could not pass any working denoiser. (About a third of that rise is the
+# display stretch re-deriving its own shadow clip from a less noisy image;
+# the rest is genuine exposure of real structure. Matching the noise level
+# fixes both at once, since two images with the same noise get near-identical
+# stretch parameters.)
+
+
+def _synthetic_deep_sky(seed: int = 0, h: int = 512, w: int = 512):
+    """A deep-stack-like frame: faint large-scale colour structure under noise.
+
+    The structure is what makes this fixture able to reproduce the bug at all
+    -- on a scene with no low-frequency colour there is nothing for noise
+    removal to expose, and a blur would score 1.00 under the old comparison
+    too. Here it scores 5.3x, which is the bug, larger than life.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(seed)
+
+    def lf(scale):
+        return gaussian_filter(rng.normal(0, 1, (h, w)).astype(np.float32), scale)
+
+    base = 0.02 + 0.004 * lf(60)
+    img = np.stack([base + 0.0015 * lf(45) for _ in range(3)], axis=2)
+    img += rng.normal(0, 0.002, img.shape).astype(np.float32)
+    return img.astype(np.float32)
+
+
+def test_noise_matched_blur_reaches_the_noise_level_it_was_asked_for():
+    import numpy as np
+    from gate import noise_matched_blur
+    from noise import estimate_sigma
+
+    img = _synthetic_deep_sky()
+    target = estimate_sigma(img) * 0.4
+    blurred, s = noise_matched_blur(img, target)
+
+    assert estimate_sigma(blurred) == pytest.approx(target, rel=0.05)
+    assert 0.2 < s < 6.0
+    assert blurred.shape == img.shape
+    # and it is a plain blur of the input, inventing nothing
+    from scipy.ndimage import gaussian_filter
+    assert np.allclose(blurred, gaussian_filter(img, (s, s, 0)))
+
+
+def test_noise_matched_blur_returns_the_nearest_bound_when_the_target_is_out_of_reach():
+    """Both ends are legitimate answers, not errors: a model may denoise less
+    than the gentlest blur in the range, or more than the strongest. The caller
+    still needs a control to compare against, so this clamps rather than
+    raising -- an exception here would take down the whole gate on an
+    otherwise fine model."""
+    from gate import noise_matched_blur
+    from noise import estimate_sigma
+
+    img = _synthetic_deep_sky()
+    sigma = estimate_sigma(img)
+
+    _, s_hi = noise_matched_blur(img, 0.0, lo=0.2, hi=6.0)       # unreachably quiet
+    _, s_lo = noise_matched_blur(img, sigma * 2, lo=0.2, hi=6.0)  # noisier than the input
+    assert s_hi == 6.0
+    assert s_lo == 0.2
+
+
+def test_a_plain_blur_passes_the_deep_end_gate_that_the_untouched_input_fails():
+    """THE regression test for this bug. A Gaussian blur invents nothing and
+    has no opinion about colour, so it is the one thing that cannot be doing
+    chroma damage -- if the deep-end gate fails it, the gate is measuring
+    noise removal, not harm. Measured on this fixture: against the untouched
+    input a sigma=1.5 blur reads 5.26x and fails; against a noise-matched
+    control it reads 1.00 and passes."""
+    from scipy.ndimage import gaussian_filter
+
+    from gate import check_no_harm, deep_end_result, patch_chroma_bias, sky_mask, DepthResult
+    from nocturne.core.autostretch import linked_stretch
+
+    img = _synthetic_deep_sky()
+    blurred = gaussian_filter(img, (1.5, 1.5, 0))
+    sky = sky_mask(img)
+
+    old = DepthResult("synthetic", 405,
+                      patch_chroma_bias(linked_stretch(img, 0.25), sky),
+                      patch_chroma_bias(linked_stretch(blurred, 0.25), sky))
+    assert old.model_err / old.input_err > 3.0, "fixture no longer reproduces the bug"
+    assert not check_no_harm([old]).passed, "the old comparison failed a plain blur"
+
+    new = deep_end_result(img, blurred, "synthetic", 405)
+    assert new.model_err / new.input_err == pytest.approx(1.0, abs=0.05)
+    assert check_no_harm([new]).passed
+
+
+def test_the_deep_end_gate_still_fails_invented_patch_chroma():
+    """The positive control the tolerance is measured against. A model that
+    smooths AND paints 30px green/magenta patches must fail -- otherwise the
+    fix above would have removed the check rather than corrected it.
+
+    Amplitude 0.0002 linear here (a tenth of this fixture's noise sigma) reads
+    5.06x. On the real M8 master, on top of n2n_v1's own output, the crossing
+    point is 0.37x the sky sigma -- see DEEP_END_TOLERANCE."""
+    from scipy.ndimage import gaussian_filter
+    import numpy as np
+
+    from gate import check_no_harm, deep_end_result
+
+    img = _synthetic_deep_sky()
+    honest = gaussian_filter(img, (1.5, 1.5, 0))
+
+    rng = np.random.default_rng(99)
+    blob = gaussian_filter(rng.normal(0, 1, img.shape[:2]).astype(np.float32), 30)
+    blob /= blob.std()
+    harmful = honest.copy()
+    harmful[:, :, 1] += 0.0002 * blob            # green where the blob is positive,
+    harmful[:, :, 0] -= 0.0001 * blob            # magenta where it is negative
+    harmful[:, :, 2] -= 0.0001 * blob
+
+    r = deep_end_result(img, harmful, "synthetic", 405)
+    assert r.model_err / r.input_err > 3.0
+    g = check_no_harm([r])
+    assert not g.passed
+    assert any("synthetic" in f for f in g.failures)
+
+
+def test_a_results_own_tolerance_does_not_widen_the_others():
+    """The deep-end proxy carries a tolerance because it is measured against a
+    blur rather than against truth. The held-out pairs are measured against
+    real ground truth and must keep zero tolerance -- "slightly worse than the
+    truth-based input" is still worse."""
+    from gate import DepthResult, check_no_harm
+
+    proxy = DepthResult("M8-deep-proxy", 405, 1.00, 1.10, 0.15)
+    truth_based = DepthResult("NGC6888", 118, 1.00, 1.01)
+    assert check_no_harm([proxy]).passed
+    g = check_no_harm([proxy, truth_based])
+    assert not g.passed
+    assert g.failures == [f for f in g.failures if "NGC6888" in f]
+
+
+@pytest.mark.skipif(
+    not os.path.isfile(_M8_MASTER),
+    reason=f"needs the real M8 master ({_M8_MASTER}), not tracked in git",
+)
+def test_a_plain_blur_of_the_real_m8_master_passes_the_deep_end_gate():
+    """The same regression, on the image the gate actually runs on. This is
+    the one that would have caught the bug: the old comparison fails a blur at
+    every strength (1.07x at 29% noise removed, up to 1.22x at 79%), and each
+    of those blurs is by construction harmless."""
+    from scipy.ndimage import gaussian_filter
+    from astropy.io import fits
+
+    from evaluate import _hwc
+    from gate import check_no_harm, deep_end_result, patch_chroma_bias, sky_mask
+    from nocturne.core.autostretch import linked_stretch
+
+    inp = _hwc(fits.getdata(_M8_MASTER))
+    sky = sky_mask(inp)
+    base = patch_chroma_bias(linked_stretch(inp, 0.25), sky)
+
+    for blur_sigma, old_ratio in ((0.9, 1.13), (1.8, 1.22)):
+        blurred = gaussian_filter(inp, (blur_sigma, blur_sigma, 0))
+        against_input = patch_chroma_bias(linked_stretch(blurred, 0.25), sky) / base
+        assert against_input == pytest.approx(old_ratio, abs=0.02), (
+            "the old input-relative comparison no longer reads what it read on "
+            "2026-08-24; re-measure before trusting the rest of this test")
+
+        r = deep_end_result(inp, blurred, "M8-deep-proxy", 405)
+        assert r.model_err / r.input_err == pytest.approx(1.0, abs=0.02)
+        assert check_no_harm([r]).passed, (
+            f"a plain sigma={blur_sigma} blur must not fail a do-no-harm gate: "
+            f"control {r.input_err:.5f} vs model {r.model_err:.5f}")
