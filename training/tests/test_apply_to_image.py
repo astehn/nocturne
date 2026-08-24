@@ -61,3 +61,30 @@ def test_the_capture_metadata_survives_denoising(tmp_path):
     assert got["EXPTIME"] == 4050.0, "integration time lost"
     assert got["OBJECT"] == "M 8"
     assert got["NAXIS1"] == 8, "structural keys must describe the NEW array"
+
+
+def test_a_run_can_be_named_instead_of_pathed(tmp_path, monkeypatch):
+    """Typing a full /Volumes path to compare two models is friction, and
+    comparing models on a real master is the only check that has ever caught a
+    bad one. `--run n2n_v2` must work."""
+    import apply_to_image as A
+
+    root = tmp_path / "runs"
+    (root / "n2n_v2").mkdir(parents=True)
+    (root / "n2n_v2" / "best.pt").write_bytes(b"x")
+    monkeypatch.setattr(A, "_RUN_ROOT", root)
+
+    assert A.resolve_run("n2n_v2") == root / "n2n_v2"
+    assert A.resolve_run(str(root / "n2n_v2")) == root / "n2n_v2"
+    assert A.resolve_run("nope") is None
+
+
+def test_an_unknown_run_lists_what_exists(tmp_path, monkeypatch, capsys):
+    import apply_to_image as A
+    root = tmp_path / "runs"
+    (root / "ladder_v1").mkdir(parents=True)
+    (root / "ladder_v1" / "best.pt").write_bytes(b"x")
+    monkeypatch.setattr(A, "_RUN_ROOT", root)
+    img = tmp_path / "i.fits"; img.write_bytes(b"x")
+    assert A.main(["--image", str(img), "--run", "typo"]) == 2
+    assert "ladder_v1" in capsys.readouterr().err

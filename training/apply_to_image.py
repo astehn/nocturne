@@ -35,7 +35,8 @@ from astropy.io import fits
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_DEFAULT_RUN = "/Volumes/Work2/Images/Astro/denoise_runs/n2n_v1"
+_RUN_ROOT = Path("/Volumes/Work2/Images/Astro/denoise_runs")
+_DEFAULT_RUN = "n2n_v2"
 
 # Matches nocturne.core.denoise_model.denoise's own default, so what you see
 # here is what the app would do to the same image.
@@ -56,11 +57,28 @@ def output_path(image: str, run: str, strength: float, out: str | None = None) -
     return p.with_name(f"{p.stem}_denoised_{tag}_s{strength:g}.fits")
 
 
+def resolve_run(run: str) -> Path | None:
+    """Accept a bare run NAME as well as a full path.
+
+    Typing the whole /Volumes/... path to compare two models is friction that
+    stops the comparison being made, and comparing models on a real master is
+    the only check that has ever caught a bad one.
+    """
+    p = Path(run)
+    if (p / "best.pt").is_file():
+        return p
+    candidate = _RUN_ROOT / run
+    if (candidate / "best.pt").is_file():
+        return candidate
+    return None
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--image", required=True, help="a linear FITS master of yours")
-    ap.add_argument("--run", default=_DEFAULT_RUN, help="training run directory")
+    ap.add_argument("--run", default=_DEFAULT_RUN,
+                    help="run NAME (e.g. n2n_v2) or a full path to a run directory")
     ap.add_argument("--checkpoint", default="best.pt")
     ap.add_argument("--strength", type=float, default=_DEFAULT_STRENGTH)
     ap.add_argument("--out", default=None)
@@ -69,7 +87,14 @@ def main(argv=None) -> int:
     if not os.path.isfile(args.image):
         print(f"no such image: {args.image}", file=sys.stderr)
         return 2
-    ck_path = Path(args.run) / args.checkpoint
+    run_dir = resolve_run(args.run)
+    if run_dir is None:
+        names = sorted(d.name for d in _RUN_ROOT.iterdir()
+                       if d.is_dir() and (d / "best.pt").is_file()) if _RUN_ROOT.is_dir() else []
+        print(f"no run called {args.run!r}. Available: {', '.join(names) or '(none)'}",
+              file=sys.stderr)
+        return 2
+    ck_path = run_dir / args.checkpoint
     if not ck_path.is_file():
         print(f"no checkpoint at {ck_path}", file=sys.stderr)
         return 2
@@ -113,9 +138,9 @@ def main(argv=None) -> int:
                    "COMMENT", "HISTORY", ""}
     header = {k: src_header[k] for k in src_header
               if k not in _STRUCTURAL and not k.startswith("NAXIS")}
-    header["DENOISE"] = f"{Path(args.run).name}/{args.checkpoint} @ {args.strength:g}"
+    header["DENOISE"] = f"{run_dir.name}/{args.checkpoint} @ {args.strength:g}"
 
-    dest = output_path(args.image, args.run, args.strength, args.out)
+    dest = output_path(args.image, str(run_dir), args.strength, args.out)
     save_fits(AstroImage(np.asarray(out, np.float32), is_linear=True), str(dest),
               header=header)
     print(f"noise {before:.3e} -> {after:.3e}  ({1 - after / before:.0%} removed)")
