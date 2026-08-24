@@ -277,7 +277,14 @@ def _run_subprocess(cmd: list[str], *, on_line=print) -> None:
 # --------------------------------------------------------- the deep end
 
 def _deep_end_result(model, device, strength: float):
-    """The truth-free deep-end check, as a DepthResult the gate can consume.
+    """The truth-free deep-end checks, as DepthResults the gate can consume.
+
+    BOTH of them, and both must pass. They catch different failures and
+    neither subsumes the other: the chroma one sees invented colour but is
+    blind to the checkpoint that caused the 2026-08-22 incident, and the
+    detail one sees that checkpoint -- it smooths no better than a plain blur
+    -- but has no opinion about colour. Emitting only one would silently drop
+    half the gate. gate.deep_end_results carries the measurements.
 
     Returns None only if the master is not on this machine -- the caller must
     treat that as "not verified", never as a pass.
@@ -299,7 +306,7 @@ def _deep_end_result(model, device, strength: float):
     a = D._ASINH_A
     out = D.from_model_space(
         evaluate.apply_model(D.to_model_space(inp, a), model, device, strength=strength), a)
-    return gate.deep_end_result(inp, out, "M8-deep-proxy", _M8_DEPTH)
+    return list(gate.deep_end_results(inp, out, "M8-deep", _M8_DEPTH))
 
 
 def _with_deep_end(depth_results, deep, on_line=print):
@@ -311,12 +318,16 @@ def _with_deep_end(depth_results, deep, on_line=print):
     that gap is precisely how the 2026-08-22 model shipped. check_no_harm
     refuses an empty set, so returning [] fails the run rather than skipping
     the check.
+
+    `deep` is the whole list of deep-end results, not one of them; an empty
+    list means the same thing as None and must be refused the same way, or a
+    future check that quietly returned nothing would read as approval.
     """
-    if deep is None:
+    if not deep:
         on_line("WARNING: deep-end proxy unavailable (M8 master not mounted) "
                 "\u2014 gate cannot pass")
         return []
-    return list(depth_results) + [deep]
+    return list(depth_results) + list(deep)
 
 
 def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
@@ -380,8 +391,8 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
         rows.append((f"{target} @ {depth}f", tgt, [("noisy", inp), ("model", out), ("truth", tgt)]))
 
     deep = _deep_end_result(model, device, strength)
-    if deep is not None:
-        metrics.append(deep._asdict())
+    for r in (deep or []):
+        metrics.append(r._asdict())
     depth_results = _with_deep_end(depth_results, deep, on_line=on_line)
 
     gate_result = check_no_harm(depth_results, tolerance=float(cfg.get("gate_tolerance", 0.0)))

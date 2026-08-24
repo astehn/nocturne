@@ -59,6 +59,64 @@ import numpy as np
 # never as "not the 2026-08-22 failure".
 DEEP_END_TOLERANCE = 0.15
 
+# How much MORE fine luminance detail than the noise-matched blur control a
+# model must retain before it counts as a denoiser rather than a smoother.
+#
+# The chroma check above asks whether the model invented colour. This one asks
+# whether it did anything a plain blur could not. A Gaussian blur that removed
+# the same amount of noise is the trivial baseline, and by construction it
+# retains 1.000 -- it IS its own control -- so this floor has to sit ABOVE one:
+# a blur must fail. That is the whole demand.
+#
+# Measured 2026-08-24 on two real masters, model / noise-matched control, as
+# `highpass_detail` defines it (MAD of the 2px high-pass luminance over the
+# brighter 40% of the frame):
+#
+#                            M8 (405 frames)   M45 (280 frames)
+#   plain blur sigma 1.0          1.005             0.998
+#   plain blur sigma 2.3          1.001             1.002
+#   s30_v2  @0.75                 0.979             0.942    <- the incident
+#   s30_v2  @1.0                  1.249             1.258
+#   n2n_v1  @0.75                 1.196             1.189
+#   n2n_v1  @1.0                  1.589             1.450
+#
+# 1.10 sits 10% above every plain blur and 8% below the lowest reading any
+# working denoiser produced. It is the first deep-end check on this project
+# with a REAL positive control: at strength 0.75 -- the app's own default --
+# s30_v2, the checkpoint that blotched the M8 master, fails it on both masters
+# while n2n_v1 passes on both.
+#
+# READ THIS BEFORE TRUSTING IT, three limits, all measured:
+#
+# 1. The positive control is ONE checkpoint on two images -- n=1 in models.
+#    Two masters is not two models. Nothing here says an unseen bad model
+#    smooths the way this one does.
+# 2. It separates the two checkpoints at strength 0.75 but NOT at 1.0, which
+#    is the strength nightly's own config runs the gate at (configs/*.json,
+#    "strength"). At 1.0 s30_v2 strips 91% of the noise, so the matched
+#    control is a sigma 2.84 blur, and out-detailing a blur that heavy is easy
+#    -- it reads 1.249/1.258 and passes. The control gets weaker the harder a
+#    model denoises, and this metric does not correct for that.
+# 3. It can be fooled by leftover noise rather than kept detail. The noise
+#    match is made on the darker 60% (noise.estimate_sigma), so an output that
+#    is a plain blur with noise added back ONLY outside that mask sails
+#    through: measured on M8, a sigma 1.5 blur plus 0.5x the sky sigma over the
+#    bright 40% reads 1.585, and plus 1.0x reads 2.489.
+#
+# The 2px high-pass scale is load-bearing, not inherited by habit. Same
+# masters, same day, s30_v2 / n2n_v1 at strength 0.75: at 1px they read
+# 1.60/1.66 on M8 and 1.65/1.57 on M45 -- no separation at all, and the bad
+# model wins on M45. At 4px they read 0.77/1.00 and 0.73/1.04, which separates
+# but leaves n2n_v1 level with a blur, so no floor above 1.0 could pass a
+# working denoiser. Only 2px -- noise.py's own _HP_SIGMA -- does both.
+DETAIL_RETENTION_FLOOR = 1.10
+
+# The high-pass scale detail is measured at. Deliberately noise.py's, not a
+# second opinion: the control is matched on a sigma measured through exactly
+# this high-pass, so the leftover-noise term cancels between the two sides
+# instead of being one more thing that differs.
+_DETAIL_HP_SIGMA = 2.0
+
 DepthResult = namedtuple("DepthResult", "target depth input_err model_err tolerance",
                          defaults=(0.0,))
 GateResult = namedtuple("GateResult", "passed failures")
@@ -174,7 +232,8 @@ def noise_matched_blur(img_hwc, target_sigma: float, lo: float = 0.2, hi: float 
 
 
 def deep_end_result(inp_hwc, out_hwc, target: str, depth: int,
-                    stretch: float = 0.25, tolerance: float | None = None):
+                    stretch: float = 0.25, tolerance: float | None = None,
+                    control=None):
     """Deep-end DepthResult: the model's patch chroma against a blur's, not the input's.
 
     Comparing the model to the UNTOUCHED input is invalid, because removing
@@ -214,10 +273,112 @@ def deep_end_result(inp_hwc, out_hwc, target: str, depth: int,
     inp_hwc = np.asarray(inp_hwc, np.float32)
     out_hwc = np.asarray(out_hwc, np.float32)
     sky = sky_mask(inp_hwc)
-    control, _ = noise_matched_blur(inp_hwc, estimate_sigma(out_hwc))
+    if control is None:
+        control, _ = noise_matched_blur(inp_hwc, estimate_sigma(out_hwc))
     return DepthResult(
         target, depth,
         patch_chroma_bias(linked_stretch(control, stretch), sky),
         patch_chroma_bias(linked_stretch(out_hwc, stretch), sky),
         DEEP_END_TOLERANCE if tolerance is None else float(tolerance),
+    )
+
+
+# ------------------------------------- the deep end, part two: detail kept
+
+def highpass_detail(img_hwc, mask, hp_sigma: float = _DETAIL_HP_SIGMA) -> float:
+    """Typical fine-scale luminance amplitude of `img_hwc` WITHIN `mask`.
+
+    Note the direction, because it is the opposite of `patch_chroma_bias`
+    next door: that one is handed the SKY mask and measures inside it, this
+    one is handed the sky mask's complement -- the brighter 40%, where the
+    fine structure lives. The darker 60% is where `noise_matched_blur` did its
+    matching, so both sides of the comparison agree there by construction and
+    it carries no information.
+
+    MAD, not RMS, and that is the difference between a metric that separates
+    models and one that does not. RMS over this region is dominated by a
+    handful of bright star cores, which a heavy blur and a real denoiser both
+    keep most of in gross energy terms: measured 2026-08-24 on the M8 master at
+    strength 0.75, RMS reads 2.16 for the incident checkpoint and 2.13 for the
+    clean one -- no separation at all -- where MAD reads 0.98 and 1.20.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    img = np.asarray(img_hwc, np.float32)
+    lum = img.mean(axis=2) if img.ndim == 3 else img
+    hp = (lum - gaussian_filter(lum, hp_sigma))[mask]
+    if hp.size == 0:
+        return 0.0
+    return float(1.4826 * np.median(np.abs(hp - np.median(hp))))
+
+
+def detail_result(inp_hwc, out_hwc, target: str, depth: int,
+                  floor: float | None = None, control=None):
+    """Deep-end DepthResult: did the model beat a blur at KEEPING detail?
+
+    The other deep-end check cannot see the 2026-08-22 failure. Measured
+    2026-08-24 against a noise-matched control, the checkpoint that blotched
+    the M8 master scores 1.043/1.009/1.014 on the chroma proxy at strengths
+    0.75/1.0/1.5 where the clean model scores 1.041/1.032/1.093 -- three tenths
+    of a point apart, and at two strengths the bad model looks better. This is
+    the statistic that does separate them; DETAIL_RETENTION_FLOOR carries the
+    table and the three ways it can still be wrong.
+
+    THE DIRECTION, because getting it wrong yields a check that silently
+    passes everything: `check_no_harm` fails a result when its `model_err`
+    exceeds its `input_err`, so the retention goes in UPSIDE DOWN.
+
+        model_err = detail(control) / detail(model)   -- 1/retention. Rises as
+                                                         the model smooths more,
+                                                         so smoother is worse.
+        input_err = 1 / floor                         -- the bar, and nothing
+                                                         but the bar.
+
+    `model_err > input_err` is then exactly `detail(model) < floor *
+    detail(control)`. A plain blur retains 1.000 and therefore FAILS, at every
+    blur radius, which is the entire point of the check -- a blur is the thing
+    models are being asked to beat, not a passing grade.
+
+    Tolerance is 0.0, unlike the chroma result's 0.15: the floor already IS the
+    allowance, expressed where it can be read, and a second one on top would
+    move the bar without saying so.
+    """
+    from noise import estimate_sigma
+
+    inp_hwc = np.asarray(inp_hwc, np.float32)
+    out_hwc = np.asarray(out_hwc, np.float32)
+    floor = DETAIL_RETENTION_FLOOR if floor is None else float(floor)
+    if control is None:
+        control, _ = noise_matched_blur(inp_hwc, estimate_sigma(out_hwc))
+    structure = ~sky_mask(inp_hwc)
+    retained = (highpass_detail(out_hwc, structure)
+                / max(highpass_detail(control, structure), 1e-12))
+    return DepthResult(target, depth, 1.0 / floor, 1.0 / max(retained, 1e-12), 0.0)
+
+
+def deep_end_results(inp_hwc, out_hwc, target: str, depth: int,
+                     stretch: float = 0.25):
+    """Both truth-free deep-end checks, sharing ONE control. Both must pass.
+
+    Neither subsumes the other and dropping either loses a real failure mode.
+    A plain Gaussian blur invents no colour, so it clears the chroma check
+    correctly and fails the detail one. An output that keeps every star and
+    paints green and magenta patches over the background does the reverse --
+    and that second one is the 2026-08-22 incident.
+
+    One control, not two: `noise_matched_blur` stops at xtol=0.02px, so two
+    searches would be two slightly different blurs, and "both checks passed"
+    would quietly mean "against two different baselines". It is also a minute
+    of a 4K master's time per search.
+    """
+    from noise import estimate_sigma
+
+    inp_hwc = np.asarray(inp_hwc, np.float32)
+    out_hwc = np.asarray(out_hwc, np.float32)
+    control, _ = noise_matched_blur(inp_hwc, estimate_sigma(out_hwc))
+    return (
+        deep_end_result(inp_hwc, out_hwc, f"{target}-chroma", depth, stretch,
+                        control=control),
+        detail_result(inp_hwc, out_hwc, f"{target}-detail", depth,
+                      control=control),
     )

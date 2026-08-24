@@ -483,3 +483,376 @@ def test_a_plain_blur_of_the_real_m8_master_passes_the_deep_end_gate():
         assert check_no_harm([r]).passed, (
             f"a plain sigma={blur_sigma} blur must not fail a do-no-harm gate: "
             f"control {r.input_err:.5f} vs model {r.model_err:.5f}")
+
+
+# --- the deep end, part two: is it a denoiser or is it just a blur? --------
+#
+# The chroma check above cannot see the 2026-08-22 failure. Measured
+# 2026-08-24 against a noise-matched control, s30_v2 (the checkpoint that
+# blotched the M8 master) reads 1.043/1.009/1.014 at strengths 0.75/1.0/1.5
+# where clean n2n_v1 reads 1.041/1.032/1.093 -- three tenths of a point apart,
+# and at two strengths the BAD model scores better.
+#
+# What does separate them is a different question entirely: how much fine
+# luminance detail survived, relative to the same noise-matched blur. A blur
+# that removed the same noise is the trivial baseline; a denoiser earning its
+# name keeps more standing than that. s30_v2 does not -- in luminance terms it
+# IS a blur. See DETAIL_RETENTION_FLOOR for the full table.
+#
+# Both checks are kept and both must pass. Neither subsumes the other, and the
+# two tests below are what prove it: a plain blur passes chroma and fails
+# detail; an output that keeps every star and paints green blotches over the
+# background does the exact reverse.
+
+
+def _synthetic_deep_sky_with_detail(seed: int = 0, h: int = 512, w: int = 512,
+                                    noise: float = 0.002):
+    """(truth, noisy) -- a deep-sky-like frame with REAL fine structure in it.
+
+    `_synthetic_deep_sky` cannot serve the detail check: its scene varies only
+    at 45-60px, so at the 2px high-pass scale it is pure noise, and a blur
+    retains exactly as much of it as a perfect denoiser does. Fine filaments
+    and stars are the thing a blur destroys and a denoiser must not, so they
+    have to exist before the metric has anything to measure.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(seed)
+
+    def lf(scale):
+        return gaussian_filter(rng.normal(0, 1, (h, w)).astype(np.float32), scale)
+
+    base = 0.02 + 0.004 * lf(60)
+    truth = np.stack([base + 0.0015 * lf(45) for _ in range(3)], axis=2)
+    bright = np.clip((base - base.min()) / (base.max() - base.min()), 0, 1)
+    filaments = 0.0035 * lf(2.5) * bright
+    stars = np.zeros((h, w), np.float32)
+    ys, xs = rng.integers(6, h - 6, 500), rng.integers(6, w - 6, 500)
+    stars[ys, xs] = (rng.lognormal(0, 0.8, 500) * 0.01).astype(np.float32)
+    stars = gaussian_filter(stars, 1.1)
+    truth = truth + (filaments + stars)[:, :, None]
+    noisy = truth + rng.normal(0, noise, truth.shape).astype(np.float32)
+    return truth.astype(np.float32), noisy.astype(np.float32)
+
+
+def test_highpass_detail_falls_when_fine_structure_is_smoothed_away():
+    """Anchors the direction of the raw metric before anything inverts it:
+    more smoothing must read LOWER, or every conclusion drawn from it flips."""
+    from scipy.ndimage import gaussian_filter
+
+    from gate import highpass_detail, sky_mask
+
+    _, noisy = _synthetic_deep_sky_with_detail()
+    structure = ~sky_mask(noisy)
+    sharp = highpass_detail(noisy, structure)
+    soft = highpass_detail(gaussian_filter(noisy, (2.0, 2.0, 0)), structure)
+    assert 0.0 < soft < sharp
+
+
+def test_highpass_detail_measures_inside_the_mask_it_is_given():
+    """`patch_chroma_bias` takes the SKY mask and measures inside it; this one
+    takes the structure mask, which is the sky mask's complement. One inverted
+    argument at a call site would silently measure the wrong half of the frame
+    and still return a plausible number, so pin it."""
+    import numpy as np
+
+    from gate import highpass_detail
+
+    rng = np.random.default_rng(4)
+    img = np.full((128, 128, 3), 0.02, np.float32)
+    left = np.zeros((128, 128), bool)
+    left[:, :64] = True
+    img[:, :64] += rng.normal(0, 0.002, (128, 64, 3)).astype(np.float32)
+
+    assert highpass_detail(img, left) > 1e-4
+    assert highpass_detail(img, ~left) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_plain_blur_fails_the_detail_check_and_passes_the_chroma_one():
+    """Half of what proves the two deep-end checks are not the same check.
+
+    A Gaussian blur invents no colour, so the chroma check clears it -- and
+    that is correct, it is doing no chroma harm. It is also, in luminance
+    terms, nothing but a blur, which is exactly what the detail check exists
+    to reject. Measured on this fixture: chroma 1.000, retention 1.000."""
+    from scipy.ndimage import gaussian_filter
+
+    from gate import DETAIL_RETENTION_FLOOR, check_no_harm, deep_end_results
+
+    # A blur is its OWN noise-matched control, so it retains 1.000 by
+    # construction. A floor at or below 1.0 therefore demands nothing at all
+    # and the check passes everything -- assert it directly, because on a
+    # machine without the external volume the real-master test that would
+    # otherwise notice is skipped.
+    assert DETAIL_RETENTION_FLOOR > 1.0
+
+    _, noisy = _synthetic_deep_sky_with_detail()
+    blurred = gaussian_filter(noisy, (1.5, 1.5, 0))
+    chroma, detail = deep_end_results(noisy, blurred, "synthetic", 405)
+    assert 1.0 / detail.model_err == pytest.approx(1.0, abs=0.02)
+
+    assert check_no_harm([chroma]).passed, "a blur invents no colour"
+    g = check_no_harm([detail])
+    assert not g.passed, "a blur must never clear a check that demands more than a blur"
+    assert any("synthetic-detail" in f for f in g.failures)
+    assert not check_no_harm([chroma, detail]).passed
+
+
+def test_invented_chroma_over_preserved_detail_fails_chroma_and_passes_detail():
+    """The other half. This output keeps every star and filament -- the detail
+    check has no complaint -- and paints 30px green/magenta patches across the
+    background, which is the 2026-08-22 failure and the chroma check's job.
+    Neither check subsumes the other, and dropping either loses a real
+    failure mode."""
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    from gate import check_no_harm, deep_end_results
+
+    truth, noisy = _synthetic_deep_sky_with_detail()
+    rng = np.random.default_rng(11)
+    honest = (truth + rng.normal(0, 0.0006, truth.shape)).astype(np.float32)
+
+    blob = gaussian_filter(rng.normal(0, 1, truth.shape[:2]).astype(np.float32), 30)
+    blob /= blob.std()
+    harmful = honest.copy()
+    harmful[:, :, 1] += 0.0002 * blob
+    harmful[:, :, 0] -= 0.0001 * blob
+    harmful[:, :, 2] -= 0.0001 * blob
+
+    chroma, detail = deep_end_results(noisy, harmful, "synthetic", 405)
+    assert check_no_harm([detail]).passed, "it kept the detail; only the colour is wrong"
+    assert not check_no_harm([chroma]).passed
+    assert not check_no_harm([chroma, detail]).passed
+
+
+def test_a_detail_preserving_denoiser_passes_the_detail_check():
+    """The check must not simply fail everything -- that is the exact failure
+    it was built to correct in the chroma check next door. A denoiser that
+    keeps the structure and drops the noise reads 1.30 on this fixture."""
+    import numpy as np
+
+    from gate import DETAIL_RETENTION_FLOOR, check_no_harm, detail_result
+
+    truth, noisy = _synthetic_deep_sky_with_detail()
+    rng = np.random.default_rng(11)
+    honest = (truth + rng.normal(0, 0.0006, truth.shape)).astype(np.float32)
+
+    r = detail_result(noisy, honest, "synthetic", 405)
+    assert check_no_harm([r]).passed
+    retained = 1.0 / r.model_err              # model_err is 1/retention
+    assert r.input_err == pytest.approx(1.0 / DETAIL_RETENTION_FLOOR)
+    assert retained > DETAIL_RETENTION_FLOOR
+    assert retained == pytest.approx(1.30, abs=0.10)
+
+
+def test_the_detail_result_is_inverted_so_less_detail_reads_as_more_error():
+    """THE test for the direction of the inversion. `check_no_harm` fails when
+    model_err > input_err, so retention has to go in upside down -- and an
+    inversion that got the sign wrong would produce a check that passes
+    everything, silently, which is precisely the failure being fixed here.
+
+    Pinned by moving the floor across a FIXED measured retention: raise the bar
+    above what the output achieved and it must fail, lower it and it must pass.
+    A result that ignored the floor, or read the ratio the right way up, would
+    behave identically on both sides."""
+    import numpy as np
+
+    from gate import check_no_harm, detail_result
+
+    truth, noisy = _synthetic_deep_sky_with_detail()
+    rng = np.random.default_rng(11)
+    honest = (truth + rng.normal(0, 0.0006, truth.shape)).astype(np.float32)
+
+    at_one = detail_result(noisy, honest, "synthetic", 405, floor=1.0)
+    retained = at_one.model_err ** -1          # input_err is 1/1.0 == 1.0
+    assert retained == pytest.approx(1.30, abs=0.10)
+
+    assert check_no_harm([detail_result(noisy, honest, "s", 405,
+                                        floor=retained * 0.9)]).passed
+    assert not check_no_harm([detail_result(noisy, honest, "s", 405,
+                                            floor=retained * 1.1)]).passed
+    # ... and the tolerance carried on the result must not soften it, the way
+    # the chroma result's 0.15 legitimately does.
+    assert detail_result(noisy, honest, "s", 405).tolerance == 0.0
+
+
+def test_both_deep_end_checks_are_measured_against_one_shared_control():
+    """Two searches for the control would be two different blurs (brentq stops
+    at xtol=0.02px) and two minutes of a 4K master's time. More importantly the
+    two checks would then be answering about different baselines, and "both
+    must pass" would stop meaning one thing."""
+    import gate
+
+    _, noisy = _synthetic_deep_sky_with_detail()
+    from scipy.ndimage import gaussian_filter
+    blurred = gaussian_filter(noisy, (1.5, 1.5, 0))
+
+    calls = []
+    real = gate.noise_matched_blur
+    try:
+        gate.noise_matched_blur = lambda *a, **k: (calls.append(1) or real(*a, **k))
+        chroma, detail = gate.deep_end_results(noisy, blurred, "synthetic", 405)
+    finally:
+        gate.noise_matched_blur = real
+
+    assert len(calls) == 1
+    assert chroma.target == "synthetic-chroma" and detail.target == "synthetic-detail"
+    assert chroma.depth == detail.depth == 405
+
+
+# --- the real positive control this project has never had -----------------
+
+_M45_MASTER = "/Volumes/Work2/Images/Astro/Work/M 45_sub/M45_280x10s_47min.fits"
+_M45_DEPTH = 280
+_M8_DEPTH = 405
+_N2N_RUN = "/Volumes/Work2/Images/Astro/denoise_runs/n2n_v1/best.pt"
+
+# 0.75 is nocturne.core.denoise_model.denoise's default -- the strength a user
+# actually gets. It is NOT the strength nightly's configs run the gate at
+# (1.0), and that gap is a real limit of the separation below, written down in
+# DETAIL_RETENTION_FLOOR rather than hidden here.
+_APP_DEFAULT_STRENGTH = 0.75
+
+_REAL_MASTERS = ((_M8_MASTER, "M8", _M8_DEPTH), (_M45_MASTER, "M45", _M45_DEPTH))
+
+_needs_masters = pytest.mark.skipif(
+    not all(os.path.isfile(p) for p, _, _ in _REAL_MASTERS),
+    reason=("needs the real M8 and M45 masters on an external volume not "
+            "tracked in git -- not a code failure if that drive isn't mounted"),
+)
+
+
+def _load_master(path):
+    from astropy.io import fits
+
+    from evaluate import _hwc
+    return _hwc(fits.getdata(path))
+
+
+def _denoise_v2(inp, strength):
+    """s30_v2, the incident checkpoint: 3-channel, pre-conditioning."""
+    import torch
+
+    import data as D
+    from model import DenoiseUNet
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    ck = torch.load(_V2_RUN, map_location=device)
+    assert ck["model"]["enc.0.0.weight"].shape[1] == 3
+    m = DenoiseUNet(base=ck.get("args", {}).get("base", 32), in_ch=3).to(device)
+    m.load_state_dict(ck["model"])
+    m.eval()
+    a = D._ASINH_A
+    return D.from_model_space(
+        _apply_unconditioned(D.to_model_space(inp, a), m, device, strength), a)
+
+
+def _denoise_n2n(inp, strength):
+    """n2n_v1, the clean checkpoint: 4-channel, sigma-conditioned."""
+    import torch
+
+    import data as D
+    import evaluate
+    from model import DenoiseUNet
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    ck = torch.load(_N2N_RUN, map_location=device)
+    assert ck["model"]["enc.0.0.weight"].shape[1] == 4
+    m = DenoiseUNet(base=ck.get("args", {}).get("base", 32), in_ch=4).to(device)
+    m.load_state_dict(ck["model"])
+    m.eval()
+    a = D._ASINH_A
+    return D.from_model_space(
+        evaluate.apply_model(D.to_model_space(inp, a), m, device, strength=strength), a)
+
+
+@_needs_masters
+def test_a_plain_blur_of_the_real_masters_fails_the_detail_check():
+    """The degenerate case, on the images the gate really runs on. A blur is
+    its own noise-matched control, so it retains 1.000 by construction and must
+    fail -- if it ever passes, the check has stopped demanding anything. It
+    must still PASS the chroma check on the same images, which is what keeps
+    the two checks from collapsing into one."""
+    from scipy.ndimage import gaussian_filter
+
+    from gate import check_no_harm, deep_end_results
+
+    for path, name, depth in _REAL_MASTERS:
+        inp = _load_master(path)
+        for blur_sigma in (1.0, 2.3):
+            blurred = gaussian_filter(inp, (blur_sigma, blur_sigma, 0))
+            chroma, detail = deep_end_results(inp, blurred, name, depth)
+
+            assert check_no_harm([chroma]).passed, (
+                f"{name}: a sigma={blur_sigma} blur invents no colour")
+            retained = 1.0 / detail.model_err
+            assert retained == pytest.approx(1.0, abs=0.02), (
+                f"{name} sigma={blur_sigma}: a blur must read 1.000 against its "
+                f"own control, read {retained:.3f}")
+            g = check_no_harm([chroma, detail])
+            assert not g.passed
+            assert [f for f in g.failures if f"{name}-detail" in f]
+
+
+@_needs_masters
+@pytest.mark.skipif(not os.path.isfile(_V2_RUN),
+                    reason=f"needs the s30_v2 checkpoint ({_V2_RUN})")
+def test_the_incident_checkpoint_fails_the_deep_end_gate_on_both_real_masters():
+    """THE positive control, and the first one on this project made of a real
+    checkpoint rather than a synthetic injection.
+
+    s30_v2 is the model that broke the 405-frame M8 master into green and
+    magenta blotches. The chroma proxy cannot see it -- that is what the
+    xfail(strict) replay above records. The detail check can: at the app's own
+    default strength it retains LESS fine luminance detail than a plain
+    Gaussian blur that removed the same noise (0.979 on M8, 0.942 on M45,
+    measured 2026-08-24), which is to say that in luminance terms it is a blur.
+
+    Both masters, because one image is an anecdote. Read the limits in
+    DETAIL_RETENTION_FLOOR before reading this as a general harm detector: it
+    is one checkpoint, and the separation holds at strength 0.75 but not at
+    1.0."""
+    from gate import check_no_harm, deep_end_results
+
+    for path, name, depth in _REAL_MASTERS:
+        inp = _load_master(path)
+        out = _denoise_v2(inp, _APP_DEFAULT_STRENGTH)
+        chroma, detail = deep_end_results(inp, out, name, depth)
+
+        assert 1.0 / detail.model_err < 1.0, (
+            f"{name}: expected the incident checkpoint to retain less detail "
+            f"than a plain blur, got {1.0 / detail.model_err:.3f}")
+        assert check_no_harm([chroma]).passed, (
+            f"{name}: the chroma proxy is blind to this checkpoint -- if that "
+            f"has changed, the xfail(strict) replay above is now an XPASS and "
+            f"this test's premise needs re-reading")
+        g = check_no_harm([chroma, detail])
+        assert not g.passed
+        assert g.failures == [f for f in g.failures if f"{name}-detail" in f]
+
+
+@_needs_masters
+@pytest.mark.skipif(not os.path.isfile(_N2N_RUN),
+                    reason=f"needs the n2n_v1 checkpoint ({_N2N_RUN})")
+def test_the_clean_checkpoint_passes_the_deep_end_gate_on_both_real_masters():
+    """The negative control, without which the one above proves nothing: a
+    check that fails everything would satisfy it just as well. n2n_v1 is
+    visibly clean and better balanced than the input, and it must pass BOTH
+    deep-end checks on BOTH masters -- retention 1.196 on M8 and 1.189 on M45
+    against a 1.10 floor, which is also where that floor's headroom comes
+    from."""
+    from gate import DETAIL_RETENTION_FLOOR, check_no_harm, deep_end_results
+
+    for path, name, depth in _REAL_MASTERS:
+        inp = _load_master(path)
+        out = _denoise_n2n(inp, _APP_DEFAULT_STRENGTH)
+        chroma, detail = deep_end_results(inp, out, name, depth)
+
+        retained = 1.0 / detail.model_err
+        assert retained > DETAIL_RETENTION_FLOOR, (
+            f"{name}: the clean checkpoint reads {retained:.3f}, at or under "
+            f"the floor -- the floor has no headroom left")
+        g = check_no_harm([chroma, detail])
+        assert g.passed, g.failures

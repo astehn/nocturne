@@ -408,10 +408,13 @@ def test_the_deep_end_proxy_returns_nothing_when_the_master_is_absent(monkeypatc
     approval: it returns None, and run_one turns that into an empty result set,
     which check_no_harm already refuses to pass."""
     import nightly
-    from gate import check_no_harm
+    from gate import DepthResult, check_no_harm
 
     monkeypatch.setattr(nightly, "_M8_MASTER", "/nonexistent/master.fits")
     assert nightly._deep_end_result(object(), object(), 0.75) is None
+    # an EMPTY list of deep-end results means the same thing and is refused
+    # the same way -- "nothing to report" must never read as approval
+    assert nightly._with_deep_end([DepthResult("NGC6888", 8, 1e-4, 5e-5)], []) == []
     # and an empty result set is what run_one hands the gate in that case
     assert not check_no_harm([], tolerance=0.0).passed
 
@@ -440,12 +443,14 @@ def test_a_harmful_deep_end_fails_a_run_whose_held_out_pairs_all_pass():
     from gate import DepthResult, check_no_harm
 
     healthy = [DepthResult("NGC6888", 8, 1.0e-4, 0.5e-4)]
-    harmful = DepthResult("M8-deep-proxy", 405, 0.00318, 0.00462)
-    combined = nightly._with_deep_end(healthy, harmful)
-    assert combined == healthy + [harmful]
+    # both deep-end checks are handed over together; only one of them objects
+    chroma = DepthResult("M8-deep-chroma", 405, 0.0407, 0.0410, 0.15)
+    detail = DepthResult("M8-deep-detail", 405, 1.0 / 1.10, 1.0 / 0.98)
+    combined = nightly._with_deep_end(healthy, [chroma, detail])
+    assert combined == healthy + [chroma, detail]
     g = check_no_harm(combined)
     assert not g.passed
-    assert any("M8-deep-proxy" in f for f in g.failures)
+    assert any("M8-deep-detail" in f for f in g.failures)
 
 
 def test_the_deep_end_proxy_measures_both_sides_over_the_same_sky_pixels(tmp_path, monkeypatch):
@@ -480,9 +485,10 @@ def test_the_deep_end_proxy_measures_both_sides_over_the_same_sky_pixels(tmp_pat
     monkeypatch.setattr(gate, "patch_chroma_bias",
                         lambda img_hwc, mask, **kw: seen.append(mask.copy()) or real_bias(img_hwc, mask, **kw))
 
-    result = nightly._deep_end_result(object(), object(), 0.75)
-    assert result is not None
-    assert result.target == "M8-deep-proxy" and result.depth == nightly._M8_DEPTH
+    results = nightly._deep_end_result(object(), object(), 0.75)
+    assert results is not None
+    assert [r.target for r in results] == ["M8-deep-chroma", "M8-deep-detail"]
+    assert all(r.depth == nightly._M8_DEPTH for r in results)
     assert len(seen) == 2
     assert np.array_equal(seen[0], seen[1]), "input and output were masked differently"
     assert np.array_equal(seen[0], gate.sky_mask(img)), "the mask did not come from the input"
