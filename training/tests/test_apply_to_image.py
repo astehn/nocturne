@@ -28,3 +28,36 @@ def test_an_explicit_out_wins():
 def test_a_missing_image_fails_loudly_rather_than_writing_nothing():
     from apply_to_image import main
     assert main(["--image", "/nope/missing.fits"]) == 2
+
+
+def test_the_capture_metadata_survives_denoising(tmp_path):
+    """Without this the result opens in Nocturne with no frame count and no
+    integration time — the Import panel loses "1h 07m (405 x 10s), Frames 405"
+    and the provenance report has nothing to record. Caught by Andreas noticing
+    the missing line in the app, not by any test."""
+    import numpy as np
+    from astropy.io import fits
+
+    src = tmp_path / "master.fits"
+    hdu = fits.PrimaryHDU(np.zeros((3, 8, 8), np.float32))
+    for k, v in (("STACKCNT", 405), ("EXPTIME", 4050.0), ("OBJECT", "M 8"),
+                 ("FILTER", "LP"), ("INSTRUME", "ZWO Seestar S30 Pro")):
+        hdu.header[k] = v
+    hdu.writeto(src)
+
+    from nocturne.core.export import save_fits
+    from nocturne.core.image import AstroImage
+    with fits.open(src) as hdul:
+        h = hdul[0].header
+        keep = {k: h[k] for k in h
+                if k not in {"SIMPLE", "BITPIX", "EXTEND", "COMMENT", "HISTORY", ""}
+                and not k.startswith("NAXIS")}
+    dest = tmp_path / "out.fits"
+    save_fits(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), str(dest),
+              header=keep)
+
+    got = fits.getheader(dest)
+    assert got["STACKCNT"] == 405, "frame count lost"
+    assert got["EXPTIME"] == 4050.0, "integration time lost"
+    assert got["OBJECT"] == "M 8"
+    assert got["NAXIS1"] == 8, "structural keys must describe the NEW array"

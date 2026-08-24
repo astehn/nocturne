@@ -90,7 +90,9 @@ def main(argv=None) -> int:
     model.load_state_dict(ck["model"])
     model.eval()
 
-    img = _hwc(fits.getdata(args.image))
+    with fits.open(args.image) as hdul:
+        img = _hwc(np.asarray(hdul[0].data, np.float32))
+        src_header = hdul[0].header
     before = estimate_sigma(img)
     print(f"{Path(args.image).name}: {img.shape[1]}x{img.shape[0]}, noise {before:.3e}")
     print(f"applying {ck_path.parent.name}/{args.checkpoint} at strength {args.strength:g} "
@@ -101,8 +103,21 @@ def main(argv=None) -> int:
         apply_model(D.to_model_space(img, a), model, device, strength=args.strength), a)
     after = estimate_sigma(out)
 
+    # Carry the capture metadata across. Without it the result opens in Nocturne
+    # with no frame count and no integration time -- the Import panel goes from
+    # "1h 07m (405 x 10s), Frames 405" to nothing, and the provenance report has
+    # nothing to record. Structural keys are excluded because astropy writes
+    # those itself from the array; passing stale ones would describe the wrong
+    # shape.
+    _STRUCTURAL = {"SIMPLE", "BITPIX", "EXTEND", "BSCALE", "BZERO",
+                   "COMMENT", "HISTORY", ""}
+    header = {k: src_header[k] for k in src_header
+              if k not in _STRUCTURAL and not k.startswith("NAXIS")}
+    header["DENOISE"] = f"{Path(args.run).name}/{args.checkpoint} @ {args.strength:g}"
+
     dest = output_path(args.image, args.run, args.strength, args.out)
-    save_fits(AstroImage(np.asarray(out, np.float32), is_linear=True), str(dest))
+    save_fits(AstroImage(np.asarray(out, np.float32), is_linear=True), str(dest),
+              header=header)
     print(f"noise {before:.3e} -> {after:.3e}  ({1 - after / before:.0%} removed)")
     print(f"\nwrote {dest}")
     print("Open it in Nocturne next to the original and look at the WHOLE frame — "
