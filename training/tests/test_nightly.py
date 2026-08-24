@@ -543,3 +543,132 @@ def test_the_deep_end_is_judged_at_the_apps_strength_not_the_configs():
         assert not (isinstance(kw.value, ast.Name) and kw.value.id == "strength"), (
             "the deep end is using the config's strength — at 1.0 that lets the "
             "known-bad checkpoint through")
+
+
+# ------------------------------------------------------------- injection
+
+def test_an_injection_config_selects_the_injection_dataset():
+    """The gate must keep judging on REAL held-out pairs even when training is
+    manufactured. Manufactured data judging a model trained on manufactured
+    data would be a closed loop that cannot detect its own premise being wrong.
+    """
+    from pathlib import Path
+
+    cfg = json.loads(Path(_TRAINING, "configs", "inject_v1.json").read_text())
+    assert cfg.get("dataset") == "injection"
+    assert cfg["sensor"] == "s30"          # the model's identity, not its material
+    assert set(cfg["sensors"]) == {"s30", "s50"}
+    # The plan's draft asserted the held-out names were absent from a
+    # `train_targets` key. There is no such key -- the split is code, not
+    # config -- so that assertion passed on an empty list and proved nothing.
+    # What the file can honestly promise is that it RECORDS the holdout; the
+    # enforcement is tested against the split itself in test_data.py.
+    recorded = json.dumps(cfg.get("_comment_held_out", ""))
+    for held in ("M8", "M45", "NGC6888", "NGC281"):
+        assert held in recorded
+
+
+def test_the_gate_dataset_and_the_injection_tiles_are_different_places():
+    """One config, two datasets: real pairs for the gate, manufactured tiles
+    for training. If they were the same directory the gate could end up
+    scoring the model on the very material it was trained on."""
+    import build_injection
+    import nightly
+
+    cfg = {"name": "inject_v1", "dataset": "injection"}
+    gate_dir = nightly.gate_dataset_dir(cfg)
+    inject_dir = build_injection.injection_root(cfg)
+    assert gate_dir != inject_dir
+    assert str(inject_dir).startswith(str(gate_dir))   # kept together, not mixed
+
+
+def test_manufactured_tiles_can_never_be_read_as_held_out_pairs(tmp_path):
+    """scan_tiles is what feeds the gate its held-out pairs. Injection tiles
+    live under the same dataset directory, so this is the actual guarantee:
+    they are invisible to it."""
+    import data as D
+
+    inj = tmp_path / "injection" / "s30_M16_2026-08-09_LP_10s"
+    inj.mkdir(parents=True)
+    (inj / "tile_000000.npz").write_bytes(b"")
+
+    # Positive control, so this cannot pass merely because scan_tiles found
+    # nothing anywhere: a real pair in the layout it DOES read is picked up.
+    pair = tmp_path / "s30_NGC6888_2026-08-09_LP_10s" / "pair_0000_in16_target128"
+    (pair / "tiles").mkdir(parents=True)
+    (pair / "manifest.json").write_text(json.dumps(
+        {"pair": {"input_count": 16, "target_count": 128, "disjoint": True,
+                  "kind": "truth"}}))
+    (pair / "tiles" / "tile_000000.npz").write_bytes(b"")
+
+    found = D.scan_tiles(str(tmp_path))
+    assert [t.target for t in found] == ["NGC6888"]
+
+
+def test_the_train_command_selects_the_injection_dataset():
+    """train.py defaults to the ladder tiles, so an injection run that did not
+    say so would train on real pairs and report success -- the same trap
+    --pairs already had."""
+    import build_injection
+    from nightly import _train_command
+
+    cfg = {"name": "inject_v1", "sensor": "s30", "dataset": "injection"}
+    cmd = _train_command(cfg, dataset_dir="/d", run_dir="/r", smoke=False)
+    assert cmd[cmd.index("--dataset") + 1] == "injection"
+    assert cmd[cmd.index("--injection-tiles") + 1] == str(
+        build_injection.injection_root(cfg))
+
+
+def test_a_ladder_config_still_gets_the_tile_dataset():
+    """Every existing config omits `dataset`; none of them may change meaning."""
+    from nightly import _train_command
+
+    cmd = _train_command({"name": "n2n_v2", "sensor": "s30"},
+                         dataset_dir="/d", run_dir="/r", smoke=False)
+    assert cmd[cmd.index("--dataset") + 1] == "tiles"
+    assert "--injection-tiles" not in cmd
+
+
+def _fake_injection_tiles(root, groups=(("s30_M16_x_LP_10s", 3), ("s30_M27_x_LP_10s", 2))):
+    """Injection tiles in build_injection.py's layout: a target carrying its
+    own residual noise and four half-stack fields (sqrt(2) noisier)."""
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    for slug, n in groups:
+        d = root / slug
+        d.mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            level = 0.05 + np.linspace(0, 0.03, 128, dtype=np.float32)[None, :, None]
+            target = (level + rng.normal(0, 0.0006, (128, 128, 3))).astype(np.float32)
+            fields = rng.normal(0, 0.00085, (4, 128, 128, 3)).astype(np.float32)
+            np.savez(d / f"tile_{i:06d}.npz", target=target, fields=fields,
+                     coverage=np.ones((128, 128), np.float32), depth=np.int32(800))
+    return root
+
+
+def test_train_py_really_trains_on_the_injection_tiles(tmp_path):
+    """The wiring, end to end and for real: train.py must read the injection
+    root, split it, and drive InjectionDataset through a DataLoader. Everything
+    else in this section checks the COMMAND; a command that is right while the
+    script ignores the flag would train on the ladder and report success --
+    exactly the trap --pairs already had."""
+    import subprocess
+    import sys as _sys
+
+    _fake_injection_tiles(tmp_path / "ds" / "injection")
+    out = tmp_path / "run"
+    proc = subprocess.run(
+        [_sys.executable, os.path.join(_TRAINING, "train.py"),
+         "--pairs", str(tmp_path / "ds"), "--dataset", "injection",
+         "--out", str(out), "--smoke", "--batch", "2", "--crop", "64",
+         "--base", "8", "--workers", "0", "--sample-every", "0"],
+        capture_output=True, text=True, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
+    log = (out / "train.log").read_text()
+    assert "dataset       : injection" in log
+    assert "M16" in log and "M27" in log
+    assert (out / "best.pt").is_file()
+    cfg = json.load(open(out / "config.json"))
+    assert cfg["dataset"] == "injection"
+    assert cfg["split"] == {"train": ["M16"], "val": ["M27"], "test": []}

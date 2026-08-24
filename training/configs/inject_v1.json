@@ -1,0 +1,40 @@
+{
+  "name": "inject_v1",
+  "_comment": "Supervised training on MANUFACTURED pairs. A group's deepest stack is the target; the input is that target plus a scaled field of the camera's own noise, built by cancelling the sky between two disjoint half-stacks. This is no longer Noise2Noise -- see docs/superpowers/specs/2026-08-24-noise-injection-training-design.md. It exists because at 250-450 frames there was nothing in the archive cleaner than Andreas' own stacks, so the lesson was empty and n2n_v2 learned to do nothing (55% of the noise removed on M45 where GraXpert removes 85%).",
+  "dataset": "injection",
+  "_comment_dataset": "Selects data.InjectionDataset for TRAINING only. The do-no-harm gate keeps judging on the REAL held-out pairs the ladder below builds: manufactured data judging a model trained on manufactured data is a closed loop that cannot detect its own premise being wrong.",
+  "_comment_held_out": "NEVER training material: M8 and M45 are Andreas' own masters and the only honest tests this project has; NGC6888 and NGC281 are the gate's held-out pairs. build_injection.plan_groups refuses to build them and data.split_injection_tiles refuses to load them. NGC7023 moves from validation into TRAINING here -- its 821 frames make it one of only three groups able to supply a genuinely clean target -- and M27 validates alone.",
+  "_comment_sensor": "TWO DIFFERENT THINGS. `sensor` is the model's identity: stage() writes denoise_{sensor}_v1.onnx and the S30 Pro is the camera Nocturne targets. `sensors` is the training MATERIAL, and the S50 groups are the deep ones (M42 2361 frames, SH2-142 1357, NGC7023 821) -- which is exactly where a clean target has to come from.",
+  "sensor": "s30",
+  "sensors": [
+    "s30",
+    "s50"
+  ],
+  "source": "/Volumes/Work2/Images/Astro/Training",
+  "combine_nights": true,
+  "method": "sigma_clip",
+  "kappa": 2.5,
+  "exclude_mosaics": true,
+  "fields_per_group": 4,
+  "injection_min_frames": 16,
+  "tiles": true,
+  "tile_size": 512,
+  "tile_overlap": 32,
+  "min_tile_coverage": 0.9,
+  "_comment_ladder": "Everything below drives the LADDER build, which this run needs only for the gate's real held-out pairs. The values are n2n_v2's unchanged, so those pairs -- and therefore every per-target gate metric -- stay comparable run to run.",
+  "min_ratio": 4.0,
+  "min_target": 16,
+  "min_n2n_target": 64,
+  "deep_from": 128,
+  "pairs_deep": 4,
+  "pairs_shallow": 1,
+  "shallow_depths": [
+    1,
+    16,
+    64
+  ],
+  "max_input": 512,
+  "epochs": 300,
+  "strength": 1.0,
+  "gate_tolerance": 0.0
+}

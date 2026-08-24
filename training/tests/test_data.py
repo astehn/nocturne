@@ -430,3 +430,62 @@ def test_the_dataset_works_with_only_the_training_dir_on_the_path(tmp_path):
     proc = subprocess.run([_sys.executable, "-c", script], cwd=tmp_path,
                           capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ------------------------------------------- the injection split (Task 6)
+
+def _inj(target, sensor="s30", n=1):
+    return [D.InjectionTileRef(path=f"/x/{sensor}_{target}_n/tile_{i:06d}.npz",
+                               sensor=sensor, target=target,
+                               group=f"{sensor}_{target}_n") for i in range(n)]
+
+
+def test_no_held_out_target_can_reach_the_injection_split():
+    """The second line of defence. build_injection refuses to BUILD these, but
+    a stray directory copied in by hand, or a rename, must not be able to put
+    Andreas' own test masters into training -- every conclusion this week rests
+    on that separation, and nothing else downstream would notice."""
+    for held in D.HELD_OUT:
+        with pytest.raises(ValueError, match=held):
+            D.split_injection_tiles(_inj("M16") + _inj(held), ("s30", "s50"))
+
+
+def test_the_injection_validation_set_is_m27():
+    """M27 validates; NGC7023 moves into TRAINING, unlike the ladder split.
+    Its 821 frames are one of only three groups deep enough to give a genuinely
+    clean target, and target cleanliness is exactly what its depth now buys."""
+    train, val = D.split_injection_tiles(
+        _inj("M16") + _inj("M27") + _inj("NGC7023", sensor="s50"), ("s30", "s50"))
+    assert [t.target for t in val] == ["M27"]
+    assert {t.target for t in train} == {"M16", "NGC7023"}
+
+
+def test_the_injection_split_refuses_an_empty_side():
+    """An empty val set makes 'best checkpoint' meaningless and an empty train
+    set trains on nothing; both must fail before the hours, not after."""
+    with pytest.raises(ValueError, match="validation|no injection"):
+        D.split_injection_tiles(_inj("M16"), ("s30",))
+    with pytest.raises(ValueError, match="training|no injection"):
+        D.split_injection_tiles(_inj("M27"), ("s30",))
+
+
+def test_the_injection_split_honours_the_sensor_filter():
+    train, val = D.split_injection_tiles(
+        _inj("M16") + _inj("M27") + _inj("M42", sensor="s50"), ("s30",))
+    assert {t.target for t in train} == {"M16"}
+    assert [t.target for t in val] == ["M27"]
+
+
+def test_scan_injection_tiles_reads_the_layout_build_injection_writes(tmp_path):
+    import build_injection
+
+    for slug in ("s30_M16_2026-08-09_LP_10s", "s50_M42_x_IRCUT_20s"):
+        (tmp_path / slug).mkdir(parents=True)
+        for i in range(2):
+            (tmp_path / slug / f"tile_{i:06d}.npz").write_bytes(b"")
+    (tmp_path / "injection_manifest.json").write_text("{}")
+    found = D.scan_injection_tiles(str(tmp_path))
+    assert len(found) == 4
+    assert {t.target for t in found} == {"M16", "M42"}
+    assert {t.sensor for t in found} == {"s30", "s50"}
+    assert build_injection.injection_root({"name": "x"}).name == "injection"

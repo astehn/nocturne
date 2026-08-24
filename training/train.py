@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data as D
 from model import DenoiseUNet
+from noise import estimate_sigma
 
 
 class Tee:
@@ -139,6 +140,13 @@ def main() -> None:
     ap.add_argument("--sensor", default="s30")
     ap.add_argument("--sensors", default=",".join(D.TRAINING_SENSORS),
                     help="comma-separated sensors whose tiles feed training")
+    # Where a training PAIR comes from. "tiles" loads the ladder's real pairs;
+    # "injection" manufactures them per sample from a clean target and that
+    # camera's own noise (see data.InjectionDataset). Defaulting to "tiles"
+    # keeps every existing config meaning exactly what it meant.
+    ap.add_argument("--dataset", default="tiles", choices=("tiles", "injection"))
+    ap.add_argument("--injection-tiles", default=None,
+                    help="root of the injection tiles; default <pairs>/injection")
     ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--crop", type=int, default=256)
@@ -159,20 +167,34 @@ def main() -> None:
     print(f"Nocturne denoiser — {args.sensor}   {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 74)
 
-    tiles = D.scan_tiles(args.pairs)
     sensors = D.parse_sensors(args.sensors)
-    train_t, val_t, test_t = D.split_by_target(tiles, sensors)
+    injection = args.dataset == "injection"
+    if injection:
+        root = args.injection_tiles or os.path.join(args.pairs, "injection")
+        train_t, val_t = D.split_injection_tiles(D.scan_injection_tiles(root), sensors)
+        test_t = []
+    else:
+        tiles = D.scan_tiles(args.pairs)
+        train_t, val_t, test_t = D.split_by_target(tiles, sensors)
     if args.smoke:
         train_t, val_t = train_t[:16], val_t[:8]
         args.epochs = 2
 
     def targets(ts): return ", ".join(sorted({t.target for t in ts})) or "(none)"
     print(f"device        : {dev}")
+    print(f"dataset       : {args.dataset}"
+          + (f"   {root}" if injection else ""))
     print(f"train         : {len(train_t):>5} tiles   {targets(train_t)}")
     print(f"val           : {len(val_t):>5} tiles   {targets(val_t)}")
     print(f"test (unseen) : {len(test_t):>5} tiles   {targets(test_t)}   <- NOT touched here")
-    depths = sorted({(t.input_count, t.target_count) for t in train_t})
-    print(f"depths        : {', '.join(f'{a}->{b}' for a, b in depths)}")
+    if injection:
+        # The depth EACH GROUP's target actually has -- the ceiling on what it
+        # can be asked to imitate, since the dataset never claims a stack
+        # deeper than half of it.
+        print(f"held out      : {', '.join(D.HELD_OUT)}   <- never training material")
+    else:
+        depths = sorted({(t.input_count, t.target_count) for t in train_t})
+        print(f"depths        : {', '.join(f'{a}->{b}' for a, b in depths)}")
     print(f"crop {args.crop}  batch {args.batch}  lr {args.lr}  base {args.base}  epochs {args.epochs}")
 
     # Fail fast: touch every tile before committing hours to the run.
@@ -180,13 +202,27 @@ def main() -> None:
     t0 = time.time()
     for t in train_t + val_t:
         with np.load(t.path) as r:
-            if r["input"].shape != r["target"].shape or r["input"].ndim != 3:
+            if injection:
+                # A target that measures no noise at all cannot be asked for a
+                # depth -- and would otherwise raise inside a DataLoader worker
+                # mid-epoch, hours in, where the traceback is hardest to read.
+                if r["target"].ndim != 3 or r["fields"].ndim != 4:
+                    raise SystemExit(f"\nBAD TILE {t.path}: "
+                                     f"{r['target'].shape} / {r['fields'].shape}")
+                if int(r["depth"]) < 2 or not estimate_sigma(r["target"]) > 0:
+                    raise SystemExit(f"\nBAD TILE {t.path}: depth {int(r['depth'])}, "
+                                     f"sigma {estimate_sigma(r['target']):.6f}")
+            elif r["input"].shape != r["target"].shape or r["input"].ndim != 3:
                 raise SystemExit(f"\nBAD TILE {t.path}: {r['input'].shape} vs {r['target'].shape}")
     print(f" all {len(train_t)+len(val_t)} OK ({time.time()-t0:.0f}s)")
 
     cfg = D.DataConfig(crop=args.crop)
-    ds_tr = D.TileDataset(train_t, cfg, train=True)
-    ds_va = D.TileDataset(val_t, cfg, train=False)
+    if injection:
+        ds_tr = D.InjectionDataset([t.path for t in train_t], cfg, train=True)
+        ds_va = D.InjectionDataset([t.path for t in val_t], cfg, train=False)
+    else:
+        ds_tr = D.TileDataset(train_t, cfg, train=True)
+        ds_va = D.TileDataset(val_t, cfg, train=False)
     dl_tr = DataLoader(ds_tr, batch_size=args.batch, shuffle=True,
                        num_workers=args.workers, drop_last=True, persistent_workers=args.workers > 0)
     dl_va = DataLoader(ds_va, batch_size=args.batch, shuffle=False, num_workers=args.workers,
@@ -207,6 +243,7 @@ def main() -> None:
 
     with open(os.path.join(args.out, "config.json"), "w") as fh:
         json.dump({**vars(args), "data": asdict(cfg),
+                   "dataset": args.dataset,
                    "split": {"train": sorted({t.target for t in train_t}),
                              "val": sorted({t.target for t in val_t}),
                              "test": sorted({t.target for t in test_t})}}, fh, indent=2)

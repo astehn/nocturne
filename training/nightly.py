@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import build_dataset  # noqa: E402
+import build_injection  # noqa: E402
 import data as D  # noqa: E402
 from gate import DepthResult, check_no_harm  # noqa: E402
 from report import render_comparison_sheet, write_report  # noqa: E402
@@ -239,6 +240,18 @@ def _evaluate_pair_with_images(pair_dir, model, device, strength):
 
 # -------------------------------------------------------------- one config
 
+def gate_dataset_dir(cfg: dict) -> Path:
+    """The REAL-pair dataset: what the gate judges on, whatever training used.
+
+    Manufactured data judging a model trained on manufactured data is a closed
+    loop that cannot detect its own premise failing, so an injection run's gate
+    still reads the ladder's held-out pairs from here. The injection tiles live
+    in a subdirectory of it (build_injection.injection_root) whose name does not
+    match data.scan_tiles' group pattern, so they are invisible to this side.
+    """
+    return build_dataset._DEFAULT_DATASET_ROOT / cfg["name"]
+
+
 def _train_command(cfg: dict, dataset_dir, run_dir, smoke: bool) -> list[str]:
     """Build train.py's argv. `--pairs` is ALWAYS explicit here: train.py's
     own default points at the old, superseded dataset
@@ -251,7 +264,13 @@ def _train_command(cfg: dict, dataset_dir, run_dir, smoke: bool) -> list[str]:
         "--sensor", cfg.get("sensor", "s30"),
         "--sensors", ",".join(_split_sensors(cfg)),
         "--epochs", str(cfg.get("epochs", 300)),
+        # Explicit for the same reason --pairs is: train.py's default is the
+        # ladder, and an injection run that failed to say so would train on
+        # real pairs and report success.
+        "--dataset", str(cfg.get("dataset", "tiles")),
     ]
+    if cfg.get("dataset") == "injection":
+        cmd += ["--injection-tiles", str(build_injection.injection_root(cfg))]
     for flag, key in (("--batch", "batch"), ("--crop", "crop"), ("--lr", "lr"),
                        ("--base", "base"), ("--workers", "workers"),
                        ("--sample-every", "sample_every")):
@@ -354,7 +373,8 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
     run_dir = run_root / name
     on_line(f"=== {name} ===  smoke={smoke}")
 
-    dataset_dir = build_dataset._DEFAULT_DATASET_ROOT / cfg["name"]
+    dataset_dir = gate_dataset_dir(cfg)
+    injection = cfg.get("dataset") == "injection"
     if smoke:
         # Real registration/stacking of raw frames is minutes to hours, not
         # the "whole pipeline in under a minute" a smoke run promises -- so
@@ -366,8 +386,18 @@ def run_one(cfg: dict, *, on_line=print) -> ExperimentResult:
                 f"--smoke needs an already-built dataset at {dataset_dir}; "
                 "run this config for real first (a non-smoke nightly run, "
                 "or build_dataset.py directly).")
+        if injection and not build_injection.injection_root(cfg).is_dir():
+            raise RuntimeError(
+                f"--smoke needs already-built injection tiles at "
+                f"{build_injection.injection_root(cfg)}; run this config for real first.")
     else:
+        # BOTH halves. The ladder supplies the gate's real held-out pairs; the
+        # injection tiles supply training material. Each skips what it has
+        # already built, so re-running a config is cheap.
         build_dataset.build_dataset(cfg, max_groups=cfg.get("max_groups"), on_line=on_line)
+        if injection:
+            build_injection.build_injection(cfg, max_groups=cfg.get("max_groups"),
+                                            on_line=on_line)
 
     previous = _load_previous_metrics(run_dir)
 

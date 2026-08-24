@@ -439,3 +439,63 @@ class InjectionDataset:
                 torch.from_numpy(mask)[None],
                 torch.tensor(sigma, dtype=torch.float32),
                 torch.tensor(0.0, dtype=torch.float32))
+
+
+# ------------------------------------------------- the injection split
+
+# The injection path's own validation target. Deliberately NOT S30_VAL/S50_VAL:
+# NGC7023 validates the ladder because 821 frames give it deep RUNGS, but here
+# that same depth is what makes it one of only three groups able to supply a
+# genuinely clean TARGET -- so it moves into training and M27 validates alone.
+INJECTION_VAL = ("M27",)
+
+
+@dataclass
+class InjectionTileRef:
+    path: str
+    sensor: str
+    target: str
+    group: str
+
+
+def scan_injection_tiles(root: str) -> list[InjectionTileRef]:
+    """Every tile build_injection.py wrote under an injection root."""
+    out: list[InjectionTileRef] = []
+    for group in sorted(os.listdir(root)):
+        m = re.match(r"(s30|s50)_([^_]+)_", group)
+        if not m:
+            continue
+        sensor, target = m.groups()
+        for tile in sorted(glob.glob(os.path.join(root, group, "tile_*.npz"))):
+            out.append(InjectionTileRef(tile, sensor, target, group))
+    return out
+
+
+def split_injection_tiles(tiles: list[InjectionTileRef],
+                          sensors: str | tuple[str, ...] = TRAINING_SENSORS):
+    """(train, val) for the injection path, by target.
+
+    The held-out check is the second line of defence, not the first:
+    build_injection refuses to BUILD those targets. But a directory copied in
+    by hand or a renamed group would otherwise put Andreas' own test masters
+    into training, and nothing downstream would notice -- the model would still
+    train, still pass its gate, and still be judged on sky it had memorised.
+    """
+    wanted = {sensors} if isinstance(sensors, str) else set(sensors)
+    held = sorted({t.target for t in tiles} & set(HELD_OUT))
+    if held:
+        raise ValueError(
+            f"held-out targets found in the injection tiles: {', '.join(held)}. "
+            "These are the only honest tests this project has; a model trained "
+            "on them cannot be judged by them.")
+    sel = [t for t in tiles if t.sensor in wanted]
+    val = [t for t in sel if t.target in INJECTION_VAL]
+    train = [t for t in sel if t.target not in INJECTION_VAL]
+    if not train:
+        raise ValueError("no injection tiles left for training — check the "
+                         "sensor filter and that build_injection.py has run")
+    if not val:
+        raise ValueError(
+            f"no injection tiles for validation ({', '.join(INJECTION_VAL)}) — "
+            "without them 'best checkpoint' means nothing")
+    return train, val
