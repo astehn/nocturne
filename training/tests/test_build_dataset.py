@@ -54,7 +54,12 @@ def test_the_deepest_n2n_input_reaches_the_users_real_depth():
     within a few percent of his 405-frame master, or the conditioning channel
     goes on being fed a value outside its training range."""
     deepest = max(n_in for n_in, _ in _n2n(plan_ladder(460)))
-    assert deepest >= 390, f"deepest n2n input was only {deepest}"
+    # 381, not 395: the 3% registration reserve (see _RESERVE_FRACTION) costs 14
+    # frames here. Against his 405-frame master that is sqrt(405/381) = 1.03,
+    # i.e. 3% noisier — still comfortably inside the conditioning range, and far
+    # cheaper than losing every deep rung to one unregistrable frame, which is
+    # what happened to s50_M101 on 2026-08-24.
+    assert deepest >= 375, f"deepest n2n input was only {deepest}"
 
 
 def test_n2n_rungs_only_appear_above_the_truth_ceiling():
@@ -456,10 +461,48 @@ def test_the_real_held_out_targets_keep_a_deep_rung(capsys):
     """The two gate targets, at their real frame counts."""
     from build_dataset import pairs_for_rung, plan_ladder
 
-    for n_frames, expect in ((183, 118), (109, 44)):
+    for n_frames in (183, 109):
         ladder = plan_ladder(n_frames)
         deepest = max(r.n_in for r in ladder)
+        expect = deepest
         kept = [r.n_in for r in ladder
                 if pairs_for_rung(r.n_in, shallow_depths=[1, 16, 64],
                                   is_deepest=(r.n_in == deepest)) > 0]
         assert expect in kept, f"{n_frames}-frame group lost its deepest rung {expect}"
+
+
+def test_a_rung_survives_frames_that_fail_to_register():
+    """Every n2n rung used to consume exactly ALL available frames — n_tgt =
+    available - n_in — so one registration failure killed all of them.
+
+    Real case, 2026-08-24: s50_M101 planned 64->149, 128->85 and 149->64 from
+    214 frames (each summing to exactly 213), lost 2 frames to "List of matching
+    triangles exhausted" on a star-poor galaxy field, and ALL NINE of its deep
+    pairs failed. s50_M42's 512->1848 rung likewise uses all 2360 of its frames
+    and survived only because none failed — after a two-hour registration.
+    """
+    LOST = 2  # what M101 actually lost
+    for n_frames in (214, 366, 460, 821, 2361):
+        registered = n_frames - LOST
+        for r in plan_ladder(n_frames):
+            assert r.n_in + r.n_tgt + 1 <= registered, (
+                f"{n_frames}-frame group: {r} needs {r.n_in + r.n_tgt + 1} of "
+                f"{registered} surviving frames — one registration failure kills it")
+
+
+def test_the_reserve_scales_with_the_group():
+    """Checked on n2n rungs only — truth rungs deliberately get no reserve, so
+    that a 260-frame group still reaches a 256-frame target (Andreas, 2026-08-23).
+    A percentage rounds to nothing on a small group, hence the floor."""
+    for n_frames, least in ((109, 4), (2361, 70)):
+        n2n = [r for r in plan_ladder(n_frames) if r.kind == "n2n"]
+        assert n2n, f"{n_frames}-frame group produced no n2n rung"
+        used = max(r.n_in + r.n_tgt for r in n2n)
+        assert n_frames - 1 - used >= least, (
+            f"{n_frames}-frame group left only {n_frames - 1 - used} frames of headroom")
+
+
+def test_the_headroom_costs_little_depth():
+    """The reserve must not quietly gut the deep end it exists to protect."""
+    deepest = max(r.n_in for r in plan_ladder(460))
+    assert deepest >= 380, f"M8's deepest input fell to {deepest}"

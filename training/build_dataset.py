@@ -47,6 +47,22 @@ Rung = namedtuple("Rung", "n_in n_tgt kind")
 # rungs converge poorly.
 _MIN_N2N_TARGET = 64
 
+# Headroom for frames that plan fine and then fail to REGISTER.
+#
+# Every n2n rung consumed exactly all available frames -- n_tgt = available -
+# n_in -- so a single registration failure killed every one of them. On
+# 2026-08-24 s50_M101 lost 2 frames of 214 ("List of matching triangles
+# exhausted": a galaxy field with few stars) and all NINE of its deep pairs
+# failed. s50_M42's 512->1848 rung uses all 2360 of its frames and survived only
+# because none of them failed, after a two-hour registration -- luck, not design.
+#
+# 3% is about 3x the worst loss measured across the archive (0.93%, M101; every
+# other group lost none). The floor of 4 gives small groups absolute headroom
+# where a percentage rounds to nothing. Cost is ~3% shallower targets, which is
+# far cheaper than losing a group's entire deep end.
+_RESERVE_FRACTION = 0.03
+_MIN_RESERVE = 4
+
 
 def _rung_kind(n_in: int, n_tgt: int, min_ratio: float) -> str:
     """"truth" if the target is genuinely deeper, else "n2n".
@@ -76,6 +92,7 @@ def plan_ladder(
     min_target: int = 16,
     min_n2n_target: int = _MIN_N2N_TARGET,
     max_input: int | None = None,
+    reserve: int | None = None,
 ) -> list[Rung]:
     """Every (input, target) depth this group can afford, by increasing input.
 
@@ -96,7 +113,16 @@ def plan_ladder(
     One frame is always reserved as the registration reference and belongs to
     neither side.
     """
-    available = n_frames - 1
+    if reserve is None:
+        reserve = max(_MIN_RESERVE, math.ceil(n_frames * _RESERVE_FRACTION))
+    available = n_frames - 1          # one frame is the registration reference
+    # The reserve applies to n2n rungs ONLY. A truth rung takes the largest
+    # POWER OF TWO that fits, which already leaves slack; an n2n rung takes
+    # `available - n_in`, i.e. every remaining frame, which is the actual
+    # fragility. Reserving on both would break the rule Andreas set on
+    # 2026-08-23 -- "if a target has 260 it does 256 as well" -- since 260
+    # frames minus a 3% reserve can no longer reach a 256-frame target.
+    n2n_available = max(0, available - reserve)
     if available < 2:
         return []
     cap = available if max_input is None else min(available, max_input)
@@ -118,10 +144,10 @@ def plan_ladder(
 
     seen = {(r.n_in, r.n_tgt) for r in rungs}
     n2n: list[Rung] = []
-    for n_in in _powers_of_two_up_to(min(cap, available - min_n2n_target)):
+    for n_in in _powers_of_two_up_to(min(cap, n2n_available - min_n2n_target)):
         if n_in <= truth_ceiling:
             continue
-        n_tgt = available - n_in
+        n_tgt = n2n_available - n_in
         if n_tgt < min_n2n_target:
             continue
         if (n_in, n_tgt) not in seen:
@@ -131,7 +157,7 @@ def plan_ladder(
     # The max-depth rung: everything the group has, minus the smallest target
     # allowed. This is the rung that actually reaches the user's own stack
     # depth -- 395 frames on M8's 460 -- and no power of two would land there.
-    deep_in = min(cap, available - min_n2n_target)
+    deep_in = min(cap, n2n_available - min_n2n_target)
     if deep_in > truth_ceiling and deep_in >= 1 and (deep_in, min_n2n_target) not in seen:
         n2n.append(Rung(deep_in, min_n2n_target,
                         _rung_kind(deep_in, min_n2n_target, min_ratio)))
