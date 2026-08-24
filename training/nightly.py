@@ -276,6 +276,16 @@ def _run_subprocess(cmd: list[str], *, on_line=print) -> None:
 
 # --------------------------------------------------------- the deep end
 
+# The deep end is judged at the strength the APP actually applies, never at the
+# config's training strength. Measured 2026-08-24: the incident checkpoint s30_v2
+# FAILS the detail check at 0.75 (0.979 on M8, 0.942 on M45) and PASSES it at 1.0
+# (1.249 / 1.258) -- because at 1.0 it strips 91% of the noise, so its
+# noise-matched control is a far blurrier blur and out-detailing it is trivial.
+# Every config in this repo sets strength 1.0, so a gate reading the config would
+# have missed the exact regression it was built for.
+DEEP_END_STRENGTH = 0.75
+
+
 def _deep_end_result(model, device, strength: float):
     """The truth-free deep-end checks, as DepthResults the gate can consume.
 
@@ -305,7 +315,8 @@ def _deep_end_result(model, device, strength: float):
     inp = _hwc(fits.getdata(_M8_MASTER))
     a = D._ASINH_A
     out = D.from_model_space(
-        evaluate.apply_model(D.to_model_space(inp, a), model, device, strength=strength), a)
+        evaluate.apply_model(D.to_model_space(inp, a), model, device,
+                             strength=DEEP_END_STRENGTH), a)
     return list(gate.deep_end_results(inp, out, "M8-deep", _M8_DEPTH))
 
 

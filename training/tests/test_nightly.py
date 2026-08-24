@@ -514,3 +514,32 @@ def test_split_sensors_fall_back_to_the_single_sensor_key():
     assert _split_sensors({"sensor": "s30"}) == ("s30",)
     assert _split_sensors({"sensor": "s30", "sensors": ["s30", "s50"]}) == ("s30", "s50")
     assert _split_sensors({}) == ("s30",)
+
+
+def test_the_deep_end_is_judged_at_the_apps_strength_not_the_configs():
+    """Measured 2026-08-24: s30_v2 — the checkpoint that broke a real M8 master —
+    FAILS the detail check at strength 0.75 (0.979 on M8, 0.942 on M45) and
+    PASSES it at 1.0 (1.249 / 1.258). At 1.0 it strips 91% of the noise, so its
+    noise-matched control is a much blurrier blur and beating it is trivial.
+
+    Every config in this repo sets strength 1.0. A deep-end check that read the
+    config would therefore have missed the exact regression it exists to catch,
+    so the strength is pinned to what the app itself applies.
+    """
+    import ast
+    from pathlib import Path
+
+    import nightly
+
+    assert nightly.DEEP_END_STRENGTH == 0.75
+
+    src = Path(nightly.__file__).read_text()
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_deep_end_result")
+    kwargs = [kw for call in ast.walk(fn) if isinstance(call, ast.Call)
+              for kw in call.keywords if kw.arg == "strength"]
+    assert kwargs, "_deep_end_result never passes a strength"
+    for kw in kwargs:
+        assert not (isinstance(kw.value, ast.Name) and kw.value.id == "strength"), (
+            "the deep end is using the config's strength — at 1.0 that lets the "
+            "known-bad checkpoint through")
