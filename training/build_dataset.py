@@ -178,11 +178,24 @@ def pairs_for_rung(
     pairs_deep: int = _PAIRS_DEEP,
     pairs_shallow: int = _PAIRS_SHALLOW,
     shallow_depths=_SHALLOW_DEPTHS,
+    is_deepest: bool = False,
 ) -> int:
-    """How many pairs this rung is worth. 0 means do not build it at all."""
+    """How many pairs this rung is worth. 0 means do not build it at all.
+
+    `is_deepest` keeps a group's deepest affordable rung whatever its depth,
+    even when the weighting would otherwise drop it. Without it, thinning the
+    shallow end silently guts the GATE: neither held-out target is big enough
+    for a 128-frame rung, so NGC6888 would lose 118->64 and NGC281 both 44->64
+    and 32->76, taking the deepest truth-checked input from 118 frames down to
+    64. The do-no-harm gate is the only thing standing between an unattended run
+    and the model the app ships, and a group's deepest rung is the closest that
+    group can get to a real user's stack -- exactly what the gate needs to see.
+    """
     if n_in >= deep_from:
         return pairs_deep
-    return pairs_shallow if n_in in set(shallow_depths) else 0
+    if n_in in set(shallow_depths) or is_deepest:
+        return pairs_shallow
+    return 0
 
 
 def _tiles_per_pair(shape, tile_size: int, tile_overlap: int) -> float:
@@ -376,12 +389,14 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
             min_n2n_target=min_n2n_target,
             max_input=max_input,
         )
+        deepest = max((r.n_in for r in ladder), default=None)
         selected = [
             (rung, n_pairs)
             for rung in ladder
             for n_pairs in [pairs_for_rung(
                 rung.n_in, deep_from=deep_from, pairs_deep=pairs_deep,
-                pairs_shallow=pairs_shallow, shallow_depths=shallow_depths)]
+                pairs_shallow=pairs_shallow, shallow_depths=shallow_depths,
+                is_deepest=(rung.n_in == deepest))]
             if n_pairs > 0
         ]
         plans.append(GroupPlan(group, ladder, selected))

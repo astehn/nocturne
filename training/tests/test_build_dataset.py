@@ -430,3 +430,36 @@ def test_n2n_v2_does_not_carry_the_superseded_flat_pair_count():
     rung carries its own count. Leaving it in the config would read as though
     it still set the weighting."""
     assert "pairs_per_depth" not in _config("n2n_v2.json")
+
+
+def test_a_groups_deepest_rung_survives_the_depth_weighting():
+    """Thinning the shallow end must not gut the GATE.
+
+    Neither held-out target is big enough for a 128-frame rung, so with
+    shallow_depths=[1,16,64] alone NGC6888 (183 frames) loses 118->64 and
+    NGC281 (109) loses both 44->64 and 32->76 — taking the deepest input the
+    do-no-harm gate ever checks against real truth from 118 frames down to 64.
+    A group's deepest affordable rung is the closest that group can get to a
+    real user's stack, which is exactly what the gate needs to see.
+    """
+    from build_dataset import pairs_for_rung
+
+    # 118 is not in shallow_depths and is below deep_from — dropped unless deepest
+    assert pairs_for_rung(118, shallow_depths=[1, 16, 64]) == 0
+    assert pairs_for_rung(118, shallow_depths=[1, 16, 64], is_deepest=True) == 1
+    # a deep rung is unaffected by the flag
+    assert pairs_for_rung(256, shallow_depths=[1, 16, 64], is_deepest=True) == \
+           pairs_for_rung(256, shallow_depths=[1, 16, 64])
+
+
+def test_the_real_held_out_targets_keep_a_deep_rung(capsys):
+    """The two gate targets, at their real frame counts."""
+    from build_dataset import pairs_for_rung, plan_ladder
+
+    for n_frames, expect in ((183, 118), (109, 44)):
+        ladder = plan_ladder(n_frames)
+        deepest = max(r.n_in for r in ladder)
+        kept = [r.n_in for r in ladder
+                if pairs_for_rung(r.n_in, shallow_depths=[1, 16, 64],
+                                  is_deepest=(r.n_in == deepest)) > 0]
+        assert expect in kept, f"{n_frames}-frame group lost its deepest rung {expect}"

@@ -1,10 +1,11 @@
 {
   "name": "n2n_v2",
-
   "_comment_sensor": "TWO DIFFERENT THINGS. `sensor` is the model's identity: stage() writes denoise_{sensor}_v1.onnx and the S30 Pro is the camera Nocturne targets, so the shipped file is unchanged. `sensors` is the training MATERIAL. n2n_v1 used one key for both and so trained on 29% of the archive -- 5596 of 8408 frames are S50 -- and the S50 groups are the deep ones (M42 2361 frames, SH2-142 1357, NGC7023 821).",
   "sensor": "s30",
-  "sensors": ["s30", "s50"],
-
+  "sensors": [
+    "s30",
+    "s50"
+  ],
   "source": "/Volumes/Work2/Images/Astro/Training",
   "combine_nights": true,
   "min_ratio": 4.0,
@@ -14,15 +15,19 @@
   "kappa": 2.5,
   "tiles": true,
   "exclude_mosaics": true,
-
   "_comment_weighting": "Measured on the finished n2n_v1 set (2026-08-24): 85% of its tiles had an input of fewer than 128 frames and the rungs matching how the user actually shoots (239/256/301/395) were 6.5% between them. Nobody chose that -- the ladder makes one rung per power of two, every group can afford the shallow end, only the biggest can afford the deep end, and a flat pairs_per_depth replicates the shallow rungs once per group. So: pairs per RUNG. shallow_depths is one rung per octave rather than all seven, because keeping every power of two below 128 at one pair each still leaves shallow material near a third of the set. Shallow is kept, not weighted towards: a brand-new Seestar owner does have a 30-frame stack.",
   "deep_from": 128,
   "pairs_deep": 4,
   "pairs_shallow": 1,
-  "shallow_depths": [1, 16, 64],
+  "shallow_depths": [
+    1,
+    16,
+    64
+  ],
   "_comment_pairs_per_depth": "v1's flat `pairs_per_depth` is deliberately absent: with a per-rung count every rung now carries its own, and leaving the old key here would read as though it still controlled something.",
-
   "epochs": 300,
   "strength": 1.0,
-  "gate_tolerance": 0.0
+  "gate_tolerance": 0.0,
+  "_comment_max_input": "Cap input depth at 512 frames. Above this, two random draws from the same group overlap almost completely -- M42's 2296-frame rung draws 97% the same frames every time, so four 'different' pairs are four copies of one image for 9,440 frame-integrations. 512 already exceeds Andreas' deepest master (405), so the model still sees inputs cleaner than anything he owns.",
+  "max_input": 512
 }
