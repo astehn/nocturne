@@ -310,6 +310,24 @@ class TileDataset:
 #
 # A STARTING POINT, and the first thing to vary if the model comes out timid or
 # aggressive -- which is why it is one number in one place.
+#
+# MEASURED, 2026-08-24, and it is NOT what comes out the other end. Weighted by
+# each group's expected tile count over the 12 groups this archive plans, the
+# REALISED depth of a training sample is:
+#
+#     1-16   6.2% | 16-64  13.0% | 64-128  54.2%
+#     128-200 11.3% | 200-300 10.5% | 300-500  4.9%     median 107 frames
+#
+# The 70% asked for at 200-500 arrives as 15%. The cause is _MAX_DEPTH_FRACTION
+# below meeting the shape of the archive: the six S30 groups are 76% of all
+# tiles (a 3840x2160 frame holds 29 usable tiles against the S50's 9) and their
+# targets are 162-364 frames deep, so their ceilings are 81-182 and every deep
+# draw lands on one. Only M42, SH2-142, NGC7023 and NGC6995 -- all S50 -- can
+# honestly reach 200+, and they are outnumbered 3:1.
+#
+# Left as it is, deliberately: the alternative is claiming depths the group's
+# own frames cannot back. But it means the deep end is taught mostly by S50
+# material, and it is the first thing to look at if the model comes out timid.
 _DEEP_BAND = (200, 500)
 _SHALLOW_BAND = (8, 200)
 _DEEP_SHARE = 0.70
