@@ -54,3 +54,62 @@ def test_mismatched_shapes_are_refused():
             noise_field(good, bad)
         with pytest.raises(ValueError, match="differ in shape"):
             target_from_halves(good, bad)
+
+
+def test_the_manufactured_input_lands_on_the_requested_noise_level():
+    """The whole point of injection is CHOOSING the noise level, so 'close
+    enough' is not close enough — if the request and the result diverge, the
+    sigma conditioning is being told a number that is not true of the image."""
+    from nocturne.core.denoise_model import estimate_sigma
+    from nocturne.training.inject import inject, noise_field, scale_for_sigma
+
+    rng = np.random.default_rng(3)
+    scene = np.full((256, 256, 3), 0.2, np.float32)
+    # A DEEP master: the halves must be far cleaner than anything we ask for,
+    # because that is the real situation -- M is a 300-frame stack and every
+    # request manufactures a shallower one. At the plan's original 0.01 per
+    # half the target's own floor was 6.8e-3 and two of the three requests
+    # below were unreachable by construction.
+    sigma_half = 0.0005
+    a = scene + rng.normal(0, sigma_half, scene.shape).astype(np.float32)
+    b = scene + rng.normal(0, sigma_half, scene.shape).astype(np.float32)
+    m, d = target_from_halves(a, b), noise_field(a, b)
+
+    wanted_range = (0.002, 0.006, 0.02)         # the deployment range
+    floor = estimate_sigma(m)
+    assert floor < min(wanted_range), (
+        f"fixture is not clean enough to be asked for {min(wanted_range)}: "
+        f"its own floor is {floor:.3e}")
+
+    for wanted in wanted_range:
+        k = scale_for_sigma(d, wanted, estimate_sigma, base=m)
+        got = estimate_sigma(inject(m, d, k))
+        assert got == pytest.approx(wanted, rel=0.06), f"asked {wanted}, got {got}"
+
+
+def test_a_request_below_the_targets_own_noise_is_refused():
+    """You cannot make an image CLEANER by adding noise to it. Silently
+    returning k=0 would hand the trainer an example labelled far cleaner than it
+    is — the exact mislabelling that broke the conditioning channel before."""
+    from nocturne.core.denoise_model import estimate_sigma
+    from nocturne.training.inject import noise_field, scale_for_sigma
+
+    rng = np.random.default_rng(4)
+    scene = np.full((128, 128, 3), 0.2, np.float32)
+    a = scene + rng.normal(0, 0.01, scene.shape).astype(np.float32)
+    b = scene + rng.normal(0, 0.01, scene.shape).astype(np.float32)
+    m, d = target_from_halves(a, b), noise_field(a, b)
+    floor = estimate_sigma(m)
+    with pytest.raises(ValueError):
+        scale_for_sigma(d, floor * 0.5, estimate_sigma, base=m)
+
+
+def test_injection_leaves_the_target_untouched():
+    """inject() must not modify its input in place — the same target is reused
+    for every noise level and every epoch."""
+    from nocturne.training.inject import inject
+
+    m = np.full((16, 16, 3), 0.3, np.float32)
+    before = m.copy()
+    inject(m, np.ones_like(m), 0.5)
+    assert np.array_equal(m, before)

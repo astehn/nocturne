@@ -52,3 +52,49 @@ def target_from_halves(half_a: np.ndarray, half_b: np.ndarray) -> np.ndarray:
     """
     a, b = _checked(half_a, half_b)
     return (a + b) / 2.0
+
+
+def inject(target: np.ndarray, field: np.ndarray, k: float) -> np.ndarray:
+    """A noisy view of `target`, `k` times the noise field added.
+
+    Returns a new array; the same target is reused across every noise level and
+    every epoch, so modifying it in place would corrupt later samples.
+    """
+    t, f = _checked(target, field)
+    return t + np.float32(k) * f
+
+
+def scale_for_sigma(field, target_sigma, measure, *, base,
+                    tol: float = 0.02, max_iter: int = 40) -> float:
+    """Find k such that measure(base + k*field) == target_sigma.
+
+    Solved numerically, not in closed form: `estimate_sigma` is a MAD over a
+    high-pass restricted to a brightness-selected mask, so it is not a simple
+    function of the added variance -- and it is the estimator the APP uses, so
+    matching it is what makes the conditioning channel truthful.
+
+    Refuses a request below the target's own noise floor. Adding noise cannot
+    make an image cleaner, and silently returning 0 would label an example far
+    cleaner than it is.
+    """
+    floor = float(measure(base))
+    if target_sigma <= floor:
+        raise ValueError(
+            f"requested sigma {target_sigma:.3e} is at or below the target's own "
+            f"noise floor {floor:.3e} — adding noise cannot reach it")
+
+    lo, hi = 0.0, 1.0
+    for _ in range(max_iter):                      # bracket
+        if float(measure(inject(base, field, hi))) >= target_sigma:
+            break
+        hi *= 2.0
+    else:
+        raise ValueError("could not reach the requested sigma by scaling")
+
+    for _ in range(max_iter):                      # bisect
+        mid = 0.5 * (lo + hi)
+        got = float(measure(inject(base, field, mid)))
+        if abs(got - target_sigma) <= tol * target_sigma:
+            return mid
+        lo, hi = (mid, hi) if got < target_sigma else (lo, mid)
+    return 0.5 * (lo + hi)
