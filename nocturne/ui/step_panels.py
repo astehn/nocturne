@@ -22,6 +22,13 @@ _PROCESS_OPTIONS = {
     "noise_sharpen": ["light", "medium", "strong"],
 }
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
+
+# Which of those write 16 bits per channel and may therefore carry a wide gamut.
+# Named explicitly rather than sniffed from the label: this gate was
+# `fmt.startswith("TIFF")`, which silently excluded the starless+stars pair
+# because its label starts with "Starless" — two genuinely 16-bit TIFFs locked
+# to sRGB while the export path was converting and tagging correctly all along.
+SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"})
 # Target-type stretch presets → default aggressiveness (slider 0–100).
 STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
 # Inline "needs <tool>" note text per process stage that can be gated.
@@ -691,7 +698,7 @@ def build_panel(
             pulling the selection back, not by hiding them: a user who picks
             Adobe RGB and then PNG must not quietly get a banded file.
             """
-            wide_ok = fmt.startswith("TIFF")
+            wide_ok = fmt in SIXTEEN_BIT_FORMATS
             for i in range(space_box.count()):
                 allowed = wide_ok or space_box.itemText(i) in EIGHT_BIT_SPACES
                 space_box.model().item(i).setEnabled(allowed)

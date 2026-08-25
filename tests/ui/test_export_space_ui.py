@@ -11,7 +11,9 @@ import pytest
 pytest.importorskip("PySide6")
 from nocturne.core.colour import EIGHT_BIT_SPACES, SPACES  # noqa: E402
 from nocturne.ui.pipeline import path_stages  # noqa: E402
-from nocturne.ui.step_panels import build_panel  # noqa: E402
+from nocturne.ui.step_panels import (  # noqa: E402
+    EXPORT_FORMATS, SIXTEEN_BIT_FORMATS, build_panel,
+)
 
 
 def _panel(qtbot, **kw):
@@ -92,3 +94,26 @@ def test_the_saved_image_and_its_tag_always_agree(qtbot, tmp_path):
         assert icc == icc_bytes(space), f"{space}: wrong profile"
         assert np.allclose(out.data, convert(data, space), atol=1e-6), (
             f"{space}: the pixels were not converted to match the tag")
+
+
+def test_starless_and_stars_allows_every_space(qtbot):
+    """Starless + Stars writes two 16-bit TIFFs, so Andreas' rule — wide gamut
+    for 16-bit TIFF — covers it. It did not, because the gate tested
+    `fmt.startswith("TIFF")` and this format's label starts with "Starless".
+    The export path was always correct; only the widget disagreed.
+    """
+    p = _panel(qtbot)
+    p.space_box.setCurrentText("ProPhoto RGB")
+    p.format_box.setCurrentText("Starless + Stars (two TIFFs)")
+    assert p.space_box.currentText() == "ProPhoto RGB", "selection was pulled back to sRGB"
+    assert all(p.space_box.model().item(i).isEnabled()
+               for i in range(p.space_box.count()))
+
+
+def test_the_sixteen_bit_set_names_real_formats(qtbot):
+    """Guard on the constant itself. The wide-gamut gate now reads a set of
+    labels, so a format renamed in EXPORT_FORMATS and not here would silently
+    lose its wide gamut — the exact failure this replaced, in a new costume.
+    """
+    assert SIXTEEN_BIT_FORMATS <= set(EXPORT_FORMATS), (
+        f"not real formats: {SIXTEEN_BIT_FORMATS - set(EXPORT_FORMATS)}")
