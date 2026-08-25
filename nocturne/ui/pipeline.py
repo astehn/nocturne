@@ -18,7 +18,13 @@ _CORE = [
     Stage("background", "Background", "process"),
     Stage("color", "Color", "auto"),
     Stage("deconvolution", "Deconvolution", "process"),
-    Stage("ai_denoise", "AI Denoise", "process"),
+    # AI Denoise is BUILT but deliberately NOT SHIPPED. The only trained model,
+    # denoise_s30_v1, over-corrects deep stacks — it damaged the 405-frame M8
+    # master by +19.1%, and 250-450 frames is precisely what users bring. The
+    # step stays in STEP_NAME and steps/factory so a saved project that already
+    # names it still resolves; only its place in the visible pipeline is gone.
+    # Restore this Stage and its PROCESSING_ORDER entry when a model passes the
+    # deep-end gate. See docs/superpowers/specs/2026-08-24-n2n-v2-postmortem.md.
     Stage("stretch", "Stretch", "stretch"),
 ]
 
@@ -53,7 +59,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "tint", "remove_green", "deconvolution", "ai_denoise", "stretch",
+    "background", "color", "tint", "remove_green", "deconvolution", "stretch",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]

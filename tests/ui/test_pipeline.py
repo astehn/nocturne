@@ -5,14 +5,14 @@ from nocturne.ui.pipeline import (
 
 def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
-        "load", "crop", "background", "color", "deconvolution", "ai_denoise", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "stretch",
     ]
 
 
 def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "crop", "background", "color", "deconvolution", "ai_denoise", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "stretch",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction", "enhancements", "export",
     ]
@@ -32,7 +32,7 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "tint", "remove_green", "deconvolution", "ai_denoise",
+        "background", "color", "tint", "remove_green", "deconvolution",
         "stretch",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
@@ -82,8 +82,7 @@ def test_deconvolution_stage_and_order():
     assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
     i = PROCESSING_ORDER.index("deconvolution")
     assert PROCESSING_ORDER[i - 1] == "remove_green"
-    assert PROCESSING_ORDER[i + 1] == "ai_denoise"   # denoise is linear, before Stretch
-    assert PROCESSING_ORDER[i + 2] == "stretch"
+    assert PROCESSING_ORDER[i + 1] == "stretch"
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")
 
@@ -134,3 +133,24 @@ def test_green_fringe_placed_after_saturation():
     assert ids.index("green_fringe") < ids.index("noise_sharpen")
     assert STEP_NAME["green_fringe"] == "Remove Green Fringe"
     assert "green_fringe" in POST_STRETCH_IDS
+
+
+def test_ai_denoise_is_built_but_not_shipped():
+    """Deliberate absence, pinned so it cannot drift back in unnoticed.
+
+    The step and its model exist; the only trained model (denoise_s30_v1)
+    over-corrects deep stacks and damaged the 405-frame M8 master by +19.1%,
+    and 250-450 frames is what users actually bring. It stays out of the
+    visible pipeline until a model passes the deep-end gate.
+
+    STEP_NAME and steps/factory KEEP their entries on purpose: a saved project
+    that already names ai_denoise must still resolve rather than blow up.
+    """
+    from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME, core_stages, path_stages
+    assert "ai_denoise" not in [s.id for s in core_stages()]
+    assert "ai_denoise" not in [s.id for s in path_stages()]
+    assert "ai_denoise" not in PROCESSING_ORDER
+    assert STEP_NAME["ai_denoise"] == "AI Denoise", "keep the name for old projects"
+    from nocturne.steps.factory import make_step
+    from nocturne.settings import Settings
+    assert make_step("ai_denoise", Settings()) is not None, "factory must still build it"

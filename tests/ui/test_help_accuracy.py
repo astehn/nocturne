@@ -618,10 +618,15 @@ def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
     silently dropped must be named as dropped — Save Recipe warns about exactly
     these two."""
     from nocturne.recipe import _NAME_TO_STAGE, uncaptured_step_names
-    from nocturne.ui.pipeline import ENHANCE_NAMES, STEP_NAME
+    from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, STEP_NAME
     b = _body("recipes")
-    for name in STEP_NAME.values():
-        assert name in b, f"the topic never mentions the {name!r} step"
+    # Iterate the VISIBLE pipeline, not STEP_NAME. STEP_NAME deliberately keeps
+    # ai_denoise so a saved project naming it still resolves, but a step that is
+    # not in the stepper must not be advertised in the help — that is the drift
+    # this file exists to catch, pointing the other way.
+    for stage in PROCESSING_ORDER:
+        assert STEP_NAME[stage] in b, \
+            f"the topic never mentions the {STEP_NAME[stage]!r} step"
     for name in ("Crop", "Rotate", "Flip", "Narrowband", "Colour Balance"):
         assert name in b
     assert len(ENHANCE_NAMES) == 10 and "all ten <b>Enhancements</b>" in b
@@ -1142,10 +1147,10 @@ def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
     planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
                                                           astap_path="/bin/echo"))}
     omitted = [s for s in PROCESSING_ORDER if s not in planned]
-    assert omitted == ["tint", "remove_green", "deconvolution", "ai_denoise",
+    assert omitted == ["tint", "remove_green", "deconvolution",
                        "recover_core", "curves", "star_reduction"], \
         "the set of stages Auto Enhance skips changed"
-    for stage in ("deconvolution", "ai_denoise", "recover_core", "curves", "star_reduction"):
+    for stage in ("deconvolution", "recover_core", "curves", "star_reduction"):
         assert f"<b>{STEP_NAME[stage]}</b>" in b, \
             f"the topic does not say {STEP_NAME[stage]!r} is left out"
     assert "narrowband" not in planned and "<b>No narrowband palette, ever.</b>" in b
