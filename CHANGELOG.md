@@ -2,6 +2,22 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.18.0] — 2026-08-25
+
+A beta that says so, a Batch that cannot overwrite your masters, and help that matches the app
+
+### Added
+- Nocturne now tells you it is beta. A launch splash carries the logo and the beta marker, and the version reads as beta everywhere it is shown. The word had appeared nowhere on your own machine before — only on the website — so nothing in the application itself ever said what stage it is at.
+- Batch checks your recipe against the tools you have installed before it runs, and says which one is missing. A recipe containing Background needs GraXpert; without it every file in the folder used to fail in turn, under an error that never mentioned GraXpert. Recipes that do not use Background are unaffected — every other tool-backed step falls back to a free implementation and runs fine without RC-Astro.
+
+### Changed
+- Seven help topics rewritten against the dialogs that actually exist: Ha/OIII, Narrowband, Dualband, Recipes & Batch, Star Spikes, Upscale Crop and Auto Enhance. The Ha/OIII topic described a tool that is not in the application, the Recipes & Batch topic named none of its controls, Star Spikes gave neither a default nor a range for any of its sliders, and Auto Enhance promised a plan it does not always run.
+
+### Fixed
+- The Starless + Stars export was locked to sRGB. Both files it writes are 16-bit TIFFs, so they can carry Display P3, Adobe RGB or ProPhoto RGB exactly like any other 16-bit export — the colour space list simply refused to offer them.
+- Batch could write an export straight over the file it had just read. With the output folder set to the input folder and the format set to FITS, each processed image overwrote its own source. A stacked master is hours of capture, and there was no prompt and no undo.
+- Batch reported "Done — 0/0 succeeded" when pointed at a folder holding nothing it can read, which reads as success. It now refuses before starting and names both the folder it searched and the extensions it searched for — which also covers images sitting one level further down, since it does not search subfolders.
+
 ## [0.17.0] — 2026-08-20
 
 Colour-managed exports, a proper Curves editor, and setup that configures itself
