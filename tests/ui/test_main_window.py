@@ -1087,8 +1087,8 @@ def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win.apply_current(0.5)
     assert win._canvas_img.is_linear is False
     assert not win._clip_line.isHidden()
-    assert "highlights" in win._clip_line.text()
-    assert "shadows" in win._clip_line.text()
+    assert "blown to white" in win._clip_line.text()
+    assert "crushed to zero" in win._clip_line.text()
 
 
 def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
@@ -1098,7 +1098,9 @@ def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     win._show_preview(np.zeros((24, 24, 3), np.float32))   # everything crushed
-    assert "100.0% shadows" in win._clip_line.text()
+    # "every channel", not "red": all three died equally, and naming one of
+    # them would be a claim the picture does not support.
+    assert "100.0% of every channel crushed to zero" in win._clip_line.text()
 
 
 def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
@@ -1108,7 +1110,7 @@ def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     win._show_preview(np.ones((24, 24, 3), np.float32))
-    assert "100.0% highlights" in win._clip_line.text()
+    assert "100.0% of every channel blown to white" in win._clip_line.text()
 
 
 def _preview_with_clipped(win, black=0, white=0, side=200):
@@ -1159,7 +1161,7 @@ def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
 def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
     # The capability that does not exist today: clipping feedback on Curves.
     import numpy as np
-    from PySide6.QtGui import qRed, qBlue
+    from PySide6.QtGui import qRed, qGreen, qBlue
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
@@ -1168,7 +1170,65 @@ def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
     win._on_show_clipping(True)
     win._show_preview(np.zeros((24, 24, 3), np.float32))   # all shadow-clipped
     qi = win.image_view._item.pixmap().toImage()
-    assert qBlue(qi.pixel(5, 5)) > 200 and qRed(qi.pixel(5, 5)) < 120
+    # Every channel is at zero, so the mark is WHITE — the pixel really is
+    # black. A single hue would mean only that one channel had died.
+    px = qi.pixel(5, 5)
+    assert qRed(px) > 200 and qGreen(px) > 200 and qBlue(px) > 200
+
+
+def test_the_overlay_colours_the_channel_that_died(qtbot, tmp_path):
+    """The whole point of the change. One flat blue said "clipped here" and left
+    the user to discover in Photoshop that the pixel was a healthy teal — which
+    reads as a false alarm rather than as "your Ha is gone in this region".
+    A single hue now means that channel alone; white means the pixel is black.
+    """
+    import numpy as np
+    from PySide6.QtGui import qRed, qGreen, qBlue
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._on_show_clipping(True)
+
+    data = np.full((24, 24, 3), 0.5, np.float32)
+    data[..., 0] = 0.0                      # red alone crushed, G and B healthy
+    win._show_preview(data)
+
+    px = win.image_view._item.pixmap().toImage().pixel(5, 5)
+    assert qRed(px) > 200 and qGreen(px) < 130 and qBlue(px) < 130, \
+        "red-only clipping must be marked RED, not white and not blue"
+    assert "of red crushed to zero" in win._clip_line.text(), \
+        "and the summary must name the channel, not just say 'shadows'"
+
+
+def test_the_overlay_mark_is_additive_across_dead_channels(qtbot, tmp_path):
+    """Two dead channels must not be painted white. White is reserved for a
+    pixel that really IS black; red+green dead with blue alive is a dark blue
+    pixel, and saying "black" about it is the same overstatement, one step on,
+    that made the flat-blue overlay misleading in the first place.
+    """
+    import numpy as np
+    from PySide6.QtGui import qRed, qGreen, qBlue
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._on_show_clipping(True)
+
+    cases = {                       # dead channels -> expected mark
+        (0,):       (True,  False, False),      # red        -> red
+        (0, 1):     (True,  True,  False),      # red+green  -> yellow
+        (1, 2):     (False, True,  True),       # green+blue -> cyan
+        (0, 1, 2):  (True,  True,  True),       # all        -> white
+    }
+    for dead, expect in cases.items():
+        data = np.full((24, 24, 3), 0.5, np.float32)
+        for c in dead:
+            data[..., c] = 0.0
+        win._show_preview(data)
+        px = win.image_view._item.pixmap().toImage().pixel(5, 5)
+        got = (qRed(px) > 200, qGreen(px) > 200, qBlue(px) > 200)
+        assert got == expect, f"channels {dead} dead -> mark {got}, expected {expect}"
 
 
 def test_clipping_overlay_off_leaves_the_pixels_alone(qtbot, tmp_path):
@@ -3402,7 +3462,8 @@ def test_an_already_crushed_import_does_not_start_amber(qtbot, tmp_path):
     win.open_image(_crushed_image(), "processed.tif")
     win._update_clipping_line()
 
-    assert "30.0% shadows" in win._clip_line.text(), "the true total is still reported"
+    assert "30.0%" in win._clip_line.text(), "the true total is still reported"
+    assert "crushed to zero" in win._clip_line.text()
     assert "on import" in win._clip_line.text(), "and it says the damage predates you"
     assert "⚠" not in win._clip_line.text(), "nothing the user did — no alarm"
     assert WARNING not in win._clip_line.styleSheet()
@@ -3417,7 +3478,7 @@ def test_the_alarm_still_fires_for_damage_the_session_adds(qtbot, tmp_path):
 
     assert "⚠" in win._clip_line.text(), "30% -> 100% is the user's doing"
     assert WARNING in win._clip_line.styleSheet()
-    assert "100.0% shadows" in win._clip_line.text()
+    assert "100.0% of every channel crushed to zero" in win._clip_line.text()
 
 
 def test_a_raw_linear_import_gets_no_baseline(qtbot, tmp_path):

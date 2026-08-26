@@ -72,6 +72,15 @@ def clipping_from_histogram(hist) -> Clipping:
     hi_frac, hi_channel, _, _ = max(hi_fractions, key=lambda x: x[0])
     lo_frac, lo_channel, _, _ = max(lo_fractions, key=lambda x: x[0])
 
+    # When EVERY channel is clipped by the same fraction, naming one of them is
+    # a lie the caller then prints in full ("100% of red crushed to zero" when
+    # red, green and blue all died). "ALL" lets it say so instead. Only an exact
+    # tie across every channel counts: a near-tie is still worst-channel news.
+    if len(hi_fractions) > 1 and all(f == hi_frac for f, *_ in hi_fractions):
+        hi_channel = "ALL"
+    if len(lo_fractions) > 1 and all(f == lo_frac for f, *_ in lo_fractions):
+        lo_channel = "ALL"
+
     # Zero-valued clipping types get empty channel names
     if hi_frac == 0.0:
         hi_channel = ""
@@ -82,14 +91,21 @@ def clipping_from_histogram(hist) -> Clipping:
 
 
 def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """(shadow, highlight) boolean masks over a uint8 H×W×3 display array — any
-    channel pinned to 0 or 255. The OR form is deliberate: it measures 7 ms on an
-    8.3 MP frame against 78 ms for `.any(axis=2)`, which matters because this runs
-    inside the live-preview path."""
-    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    shadow = (r == 0) | (g == 0) | (b == 0)
-    highlight = (r == 255) | (g == 255) | (b == 255)
-    return shadow, highlight
+    """(shadow, highlight) boolean masks over a uint8 H×W×3 display array, PER
+    CHANNEL — same H×W×3 shape as the input, so `shadow[..., 0]` is "red is at
+    zero here".
+
+    Per channel rather than OR-ed flat, because which channel died is the whole
+    story and the flat form hid it. A background where only red is at zero still
+    looks a perfectly healthy teal, so a user checks whether the pixel is
+    #000000, finds it is not, and concludes the warning is wrong — it is not,
+    the Ha in that region is simply gone. The caller colours the overlay by
+    channel so the picture says which.
+
+    Two vectorised comparisons over the whole array; the caller combines them
+    with bitwise ops rather than `.any(axis=2)`, which measures 78 ms on an
+    8.3 MP frame against 7 ms, and this runs in the live-preview path."""
+    return rgb == 0, rgb == 255
 
 
 class BackgroundModel(NamedTuple):

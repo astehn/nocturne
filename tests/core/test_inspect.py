@@ -106,14 +106,30 @@ def test_clip_masks_flag_only_the_extreme_uint8_values():
     rgb[0, 1] = (0, 200, 200)     # shadow, red only
     rgb[0, 2] = (254, 1, 1)       # one step inside both — not clipped
     sh, hi = clip_masks(rgb)
-    assert hi.tolist() == [[True, False, False, False]]
-    assert sh.tolist() == [[False, True, False, False]]
+    assert hi[..., 0].tolist() == [[True, False, False, False]]
+    assert sh[..., 0].tolist() == [[False, True, False, False]]
+    assert not hi[..., 1].any() and not hi[..., 2].any()
+    assert not sh[..., 1].any() and not sh[..., 2].any()
 
 
-def test_clip_masks_return_2d_boolean_arrays():
+def test_clip_masks_say_WHICH_channel_is_clipped():
+    """The point of the per-channel form. A pixel whose red alone is at zero is
+    still a perfectly ordinary teal on screen — reporting only "this pixel is
+    clipped" made that look like a false alarm."""
+    rgb = np.full((1, 3, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 46, 54)       # red alone dead — looks teal, red is gone
+    rgb[0, 1] = (0, 0, 0)         # genuinely black
+    rgb[0, 2] = (10, 10, 0)       # blue alone dead
+    sh, _ = clip_masks(rgb)
+    assert sh[0, 0].tolist() == [True, False, False]
+    assert sh[0, 1].tolist() == [True, True, True]
+    assert sh[0, 2].tolist() == [False, False, True]
+
+
+def test_clip_masks_return_per_channel_boolean_arrays():
     sh, hi = clip_masks(np.zeros((3, 5, 3), np.uint8))
-    assert sh.shape == (3, 5) and sh.dtype == bool
-    assert hi.shape == (3, 5) and hi.dtype == bool
+    assert sh.shape == (3, 5, 3) and sh.dtype == bool
+    assert hi.shape == (3, 5, 3) and hi.dtype == bool
 
 
 def test_clipping_selects_worst_by_fraction_not_count():

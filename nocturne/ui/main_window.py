@@ -85,6 +85,24 @@ BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show no
 # without going quiet on a real mistake. Shadows trip at 0.05% (~2,500 px, around a
 # 0.065 black point) — 91x its floor, and tighter than highlights on purpose, since
 # crushed background destroys faint nebulosity that cannot be recovered.
+_CHANNEL_WORD = {"R": "red", "G": "green", "B": "blue", "L": "luminance",
+                 "ALL": "every channel"}
+
+
+def _clip_phrase(frac: float, channel: str, verb: str) -> str:
+    """"6.6% of red crushed to zero" rather than "6.6% shadows (R)".
+
+    The old form was accurate and unreadable. It never said the measurement is
+    PER CHANNEL, so the natural way to check it — is this pixel black? — tests
+    something the warning was never claiming, finds healthy colour, and makes
+    the tool look wrong. Naming the channel and what happened to it removes the
+    guess."""
+    pct = f"{frac * 100:.1f}%"
+    if frac > 0 and channel:
+        return f"{pct} of {_CHANNEL_WORD.get(channel, channel.lower())} {verb}"
+    return f"{pct} {verb}"
+
+
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
 _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 
@@ -2180,8 +2198,23 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
-    _CLIP_SHADOW = (40, 120, 255)
-    _CLIP_HIGHLIGHT = (255, 60, 40)
+    # The shadow mark is built ADDITIVELY from the channels that died: red,
+    # green or blue for one; yellow, magenta or cyan for two; white for all
+    # three. So the colour of the mark IS the answer to "which channel is gone",
+    # and white — every channel lit — is the only case where the pixel really is
+    # black. That matters: an earlier draft of this painted white for two dead
+    # channels too, which says "black" about a pixel that is still, say, dark
+    # blue. Andreas checked a flagged region against Photoshop, found healthy
+    # colour, and reasonably read the old flat blue as a false alarm. It was
+    # not: only red had died, and in an HOO palette red is Ha.
+    _CLIP_MARK_ON = 255       # a channel that is clipped
+    _CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
+    # Highlights stay a single colour. On this sensor they are vanishingly rare
+    # — 0.00002% measured on real captures, because Seestar star cores do not
+    # saturate — and a second three-hue palette would cost readability for the
+    # case that actually happens. Amber sits outside the shadow palette, so the
+    # two can never be read as each other.
+    _CLIP_HIGHLIGHT = (255, 160, 0)
 
     def _set_canvas(self, img) -> None:
         """The ONE path to the canvas. Paints the clipping overlay when it is on
@@ -2190,8 +2223,22 @@ class MainWindow(QMainWindow):
         rgb = to_rgb8(img)
         if self._show_clipping and not img.is_linear:
             sh, hi = clip_masks(rgb)
-            rgb[sh] = self._CLIP_SHADOW
-            rgb[hi] = self._CLIP_HIGHLIGHT
+            r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
+            any_sh = r0 | g0 | b0
+            # Nested np.where per channel, NOT `rgb[any_sh] = marks[any_sh]`.
+            # Measured on an 8.3 MP frame with 6.6% clipped: this form 38.5 ms
+            # against 63.4 for the fancy-index form and 40.2 for masked
+            # assignment, where the flat-blue paint it replaces cost 33.3. Five
+            # milliseconds for naming the channel is the whole price, and this
+            # runs on every live-preview tick.
+            for i, dead in enumerate((r0, g0, b0)):
+                rgb[..., i] = np.where(
+                    any_sh, np.where(dead, self._CLIP_MARK_ON, self._CLIP_MARK_OFF),
+                    rgb[..., i])
+            # Highlights painted last: a pixel can be 0 in one channel and 255
+            # in another, and a blown core is the more urgent of the two.
+            # Bitwise, not .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
+            rgb[hi[..., 0] | hi[..., 1] | hi[..., 2]] = self._CLIP_HIGHLIGHT
         self._canvas_img = img
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
 
@@ -3229,13 +3276,20 @@ class MainWindow(QMainWindow):
         self._clip_line.show()
         self._clip_check.show()
         c = clipping_from_histogram(self.histogram_view.hist())
-        hi = f"{c.hi_frac * 100:.1f}% highlights"
-        lo = f"{c.lo_frac * 100:.1f}% shadows"
-        if c.hi_frac > 0 and c.hi_channel:
-            hi += f" ({c.hi_channel})"
-        if c.lo_frac > 0 and c.lo_channel:
-            lo += f" ({c.lo_channel})"
-        text = f"{hi}  ·  {lo} clipped"
+        hi = _clip_phrase(c.hi_frac, c.hi_channel, "blown to white")
+        lo = _clip_phrase(c.lo_frac, c.lo_channel, "crushed to zero")
+        text = f"{hi}  ·  {lo}"
+        self._clip_line.setToolTip(
+            "Measured per CHANNEL, not per pixel. A pixel whose red alone sits "
+            "at zero still shows colour from green and blue — but the red "
+            "signal there is gone, and no later adjustment brings it back. In "
+            "an HOO palette, red carries Ha.")
+        self._clip_check.setToolTip(
+            "The mark's colour is the channel that died:\n"
+            "  red / green / blue — that one channel is at zero\n"
+            "  yellow / magenta / cyan — those two are\n"
+            "  white — all three, so the pixel really is black\n"
+            "Amber marks a channel blown to white instead.")
 
         # The TOTAL is always what's reported — those shadows really are gone,
         # and hiding that from someone editing an already-crushed file would be
@@ -3250,9 +3304,9 @@ class MainWindow(QMainWindow):
         # percentages says nothing about which one it belongs to.
         was = []
         if base_hi > 0:
-            was.append(f"{base_hi * 100:.1f}% highlights")
+            was.append(f"{base_hi * 100:.1f}% blown")
         if base_lo > 0:
-            was.append(f"{base_lo * 100:.1f}% shadows")
+            was.append(f"{base_lo * 100:.1f}% crushed")
         if was:
             text += f"  ({', '.join(was)} on import)"
 
