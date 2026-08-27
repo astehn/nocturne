@@ -1231,6 +1231,7 @@ def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
     d = NarrowbandDialog(Settings(), img)
     qtbot.addWidget(d)
     b = _body("narrowband")
+    from PySide6.QtWidgets import QCheckBox
     labels = []
     for i in range(d._controls.rowCount()):
         item = d._controls.itemAt(i, QFormLayout.ItemRole.LabelRole)
@@ -1238,6 +1239,12 @@ def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
             text = item.widget().text().strip()
             if text:
                 labels.append(text)
+        # Checkboxes carry their own text and are added with an EMPTY label, so
+        # walking LabelRole alone silently skipped them — which is the same hole
+        # this test exists to close, one level down.
+        field = d._controls.itemAt(i, QFormLayout.ItemRole.FieldRole)
+        if field is not None and isinstance(field.widget(), QCheckBox):
+            labels.append(field.widget().text().split("(")[0].strip())
     assert labels, "no labelled controls found — the walk is broken, not the help"
     for name in labels:
         assert name in b, f"the narrowband help never mentions the {name!r} control"

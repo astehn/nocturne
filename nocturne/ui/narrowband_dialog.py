@@ -118,6 +118,7 @@ class NarrowbandDialog(QDialog):
         self.sat_val = QLabel()
         self.bright_val = QLabel()
         self.tame_val = QLabel()
+        self.compare_check = QCheckBox("Compare with original")
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
         self.lightness_check.setChecked(pos["lightness"])
         self.reset_btn = QPushButton("Reset")
@@ -134,6 +135,7 @@ class NarrowbandDialog(QDialog):
                   self.bright_slider, self.protect_slider, self.tame_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
+        self.compare_check.toggled.connect(self._on_compare_toggled)
 
         def _row(slider, value_label):
             value_label.setMinimumWidth(48)
@@ -155,6 +157,7 @@ class NarrowbandDialog(QDialog):
         controls.addRow("Tame core", _row(self.tame_slider, self.tame_val))
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow("", self.lightness_check)
+        controls.addRow("", self.compare_check)
         controls.addRow("", self.reset_btn)
         self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()
@@ -205,6 +208,10 @@ class NarrowbandDialog(QDialog):
                   self._on_starless, self._on_error)
 
     def _on_starless(self, layers) -> None:
+        # A compare set up while "Removing stars..." was on screen would be left
+        # pointing at an image the dialog is about to replace.
+        self.compare_check.setChecked(False)
+        self.preview.view.set_compare(None)
         self._starless, self._stars = layers
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
@@ -248,6 +255,22 @@ class NarrowbandDialog(QDialog):
         self.blend_slider.setToolTip("" if active else (
             f"{palette} builds its green directly from one channel, so the blend "
             f"has no effect here. Switch to HOO to use it."))
+
+    def _on_compare_toggled(self, on: bool) -> None:
+        """Split-divider compare against the image as it arrived.
+
+        The SAME mechanism the main window's Before/After drives, so the handle
+        behaves the way it does everywhere else rather than being a second
+        comparison UI with its own habits.
+
+        Set ONCE here, never in _do_render: set_compare() re-centres the divider,
+        so calling it per render would yank the handle back to the middle every
+        time a slider moved — useless exactly while you are using it.
+        """
+        if not on or self._prev_starless is None:
+            self.preview.view.set_compare(None)
+            return
+        self.preview.view.set_compare(to_qimage(_downscale(self._base)))
 
     def _on_slider_change(self) -> None:
         self._update_value_labels()

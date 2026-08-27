@@ -316,3 +316,43 @@ def test_tame_core_resets_and_stays_inside_the_defaults_guard(qtbot):
     d.reset()
     assert d.tame_slider.value() == 0
     assert d._params() == NarrowbandParams(), "the new field must round-trip too"
+
+
+def test_compare_shows_the_original_alongside_the_recolour(qtbot):
+    """Judging a recolour against nothing is guesswork. Uses the same split
+    divider the main window's Before/After drives, rather than a second
+    comparison UI that behaves differently."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    assert d.preview.view.compare_active() is False
+    d.compare_check.setChecked(True)
+    assert d.preview.view.compare_active() is True
+    d.compare_check.setChecked(False)
+    assert d.preview.view.compare_active() is False
+
+
+def test_moving_a_slider_does_not_reset_the_compare_divider(qtbot):
+    """set_compare() re-centres the divider, so calling it on every render would
+    yank the handle back to the middle each time you touched a slider — which
+    would make the comparison useless exactly while you are using it."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    d.compare_check.setChecked(True)
+    d.preview.view._on_divider(3.0)             # drag the handle off centre
+    moved = d.preview.view._split_x
+    d.oiii_slider.setValue(80)
+    d._do_render()
+    assert d.preview.view.compare_active(), "compare must survive a re-render"
+    assert d.preview.view._split_x == moved, "the divider must stay where it was put"
+
+
+def test_compare_clears_when_the_star_layers_arrive(qtbot):
+    """A compare set up while "Removing stars..." was on screen would otherwise
+    be left pointing at an image the dialog has since replaced."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    d.compare_check.setChecked(True)
+    assert d.preview.view.compare_active()
+    d._on_starless((d._base, None))             # layers arrive/replace
+    assert d.preview.view.compare_active() is False
+    assert d.compare_check.isChecked() is False, "and the box must agree with reality"
