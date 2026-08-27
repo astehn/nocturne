@@ -16,6 +16,28 @@ from .preview import to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
 
+_ENGINE_DEFAULTS = NarrowbandParams()
+
+
+def _slider_positions(p: NarrowbandParams) -> dict:
+    """Slider positions for `p` — the exact inverse of NarrowbandDialog._params().
+
+    Declared once, because the constructor, Reset and the engine each used to
+    carry their own copy of these numbers and one had already drifted:
+    lightness_preserve shipped False here and True in NarrowbandParams, so the
+    same tool produced a different image from a recipe than it did by hand.
+    """
+    return {
+        "palette": p.palette,
+        "oiii": round(p.oiii_boost * 50),
+        "blend": round(p.blend_amount * 100),
+        "sat": round(p.saturation * 100),
+        "bright": round(p.brightness * 50),
+        "protect": round(p.protect_background * 100),
+        "lightness": p.lightness_preserve,
+    }
+
+
 _PREVIEW_MAX = 640
 _DEBOUNCE_MS = 90
 PALETTES = ["HOO", "Pseudo-SHO", "Pseudo-bicolor"]
@@ -65,24 +87,27 @@ class NarrowbandDialog(QDialog):
         self._last = None                 # last COMPOSED AstroImage (what the preview shows)
         self._fitted = False
         self._started = False
+        self._applying = False
 
         self.preview = FramePreview()
         self.preview.setMinimumSize(460, 460)
 
+        pos = _slider_positions(_ENGINE_DEFAULTS)
         self.palette_box = QComboBox()
         self.palette_box.addItems(PALETTES)
-        self.blend_slider = ResetSlider(60)
-        self.oiii_slider = ResetSlider(50)
-        self.sat_slider = ResetSlider(50)
-        self.bright_slider = ResetSlider(50)
-        self.protect_slider = ResetSlider(40)
+        self.palette_box.setCurrentText(pos["palette"])
+        self.blend_slider = ResetSlider(pos["blend"])
+        self.oiii_slider = ResetSlider(pos["oiii"])
+        self.sat_slider = ResetSlider(pos["sat"])
+        self.bright_slider = ResetSlider(pos["bright"])
+        self.protect_slider = ResetSlider(pos["protect"])
         self.oiii_val = QLabel()
         self.blend_val = QLabel()
         self.protect_val = QLabel()
         self.sat_val = QLabel()
         self.bright_val = QLabel()
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
-        self.lightness_check.setChecked(False)   # off = brighter combine; the better default
+        self.lightness_check.setChecked(pos["lightness"])
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.clicked.connect(self.reset)
         self.status = QLabel("")
@@ -176,13 +201,14 @@ class NarrowbandDialog(QDialog):
         self._on_starless((self._base, None))
 
     def reset(self) -> None:
-        self.palette_box.setCurrentIndex(0)
-        self.blend_slider.setValue(60)
-        self.oiii_slider.setValue(50)
-        self.sat_slider.setValue(50)
-        self.bright_slider.setValue(50)
-        self.protect_slider.setValue(40)
-        self.lightness_check.setChecked(False)
+        pos = _slider_positions(_ENGINE_DEFAULTS)
+        self.palette_box.setCurrentText(pos["palette"])
+        self.blend_slider.setValue(pos["blend"])
+        self.oiii_slider.setValue(pos["oiii"])
+        self.sat_slider.setValue(pos["sat"])
+        self.bright_slider.setValue(pos["bright"])
+        self.protect_slider.setValue(pos["protect"])
+        self.lightness_check.setChecked(pos["lightness"])
         self._update_value_labels()
         self._do_render()
 
@@ -242,16 +268,41 @@ class NarrowbandDialog(QDialog):
         return self._last
 
     def apply(self) -> None:
+        """Render at FULL resolution off the UI thread.
+
+        Measured: 2.9 s on a 39.5 MP master, 8.4 s with Preserve lightness on,
+        which round-trips through CIE Lab. Done inline that froze the window with
+        nothing on screen to say why — while star removal, three times slower
+        again, had run through run_async in this same dialog all along.
+        """
         if self._starless is None:
             self.status.setText("Still removing stars…")
             return
+        if self._applying:
+            return
+        self._applying = True
         params = self._params()
+        self.apply_btn.setEnabled(False)
+        self.status.setText("Applying at full resolution…")
+        run_async(self._pool, lambda: self._compose_full(params),
+                  lambda result: self._on_applied(result, params),
+                  self._on_apply_error)
+
+    def _compose_full(self, params: NarrowbandParams) -> AstroImage:
+        """Full-resolution recolour plus the star recombine. Runs on the pool."""
         nebula = render(self._starless, params)
         if self._stars is None:
-            result = nebula
-        else:
-            out = screen(nebula.data, np.clip(self._stars.data, 0.0, 1.0))
-            result = AstroImage(out, is_linear=False, metadata=dict(self._starless.metadata))
+            return nebula
+        out = screen(nebula.data, np.clip(self._stars.data, 0.0, 1.0))
+        return AstroImage(out, is_linear=False, metadata=dict(self._starless.metadata))
+
+    def _on_applied(self, result: AstroImage, params: NarrowbandParams) -> None:
+        self._applying = False
         if self._on_apply is not None:
             self._on_apply(result, params)
         self.accept()
+
+    def _on_apply_error(self, exc) -> None:
+        self._applying = False
+        self.apply_btn.setEnabled(True)
+        self.status.setText(f"Apply failed: {exc}")

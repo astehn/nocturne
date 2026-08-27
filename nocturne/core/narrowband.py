@@ -113,7 +113,10 @@ class NarrowbandParams:
     brightness: float = 1.0
     highlight_recover: float = 1.0
     saturation: float = 0.5
-    lightness_preserve: bool = True
+    # False, matching what the dialog has always shipped: the brighter combine
+    # is the better default. These disagreed, so a recipe or batch run with no
+    # explicit option rendered DIFFERENTLY from the same tool used by hand.
+    lightness_preserve: bool = False
     protect_background: float = 0.4
     scnr: bool = True
 

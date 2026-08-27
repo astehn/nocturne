@@ -4,6 +4,7 @@ import pytest
 pytest.importorskip("PySide6")
 from nocturne.core.image import AstroImage           # noqa: E402
 from nocturne.settings import Settings               # noqa: E402
+from nocturne.core.narrowband import NarrowbandParams  # noqa: E402
 from nocturne.ui.narrowband_dialog import NarrowbandDialog, PALETTES  # noqa: E402
 
 
@@ -75,6 +76,8 @@ def test_apply_screens_stars_back_and_calls_on_apply(qtbot):
     d = _dialog(qtbot, starless=_img(), stars=stars, on_apply=lambda r, p: got.append((r, p)))
     d._on_starless((d._base, stars))
     d.apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=8000)   # Apply is async since it
+    #                                                    renders at full resolution
     assert got and isinstance(got[0][0], AstroImage)
     assert got[0][0].data[5, 5].max() > 0.5          # star screened back
     assert got[0][1].palette == "HOO"                # params passed through
@@ -156,3 +159,69 @@ def test_a_missing_stars_layer_still_renders(qtbot):
     d._on_starless((img, None))
     d._do_render()
     assert d.preview.has_image()
+
+
+def test_apply_does_not_block_the_ui_thread(qtbot, monkeypatch):
+    """Apply renders at FULL resolution — measured at 8.4 s on a 39.5 MP master
+    with Preserve lightness on, 2.9 s without. Doing that on the UI thread
+    freezes the window with nothing on screen to say why. Star removal in this
+    same dialog already runs through run_async; Apply must too.
+    """
+    import time
+    import nocturne.ui.narrowband_dialog as nd
+    got = []
+    d = _dialog(qtbot, starless=_img(), stars=None, on_apply=lambda r, p: got.append(r))
+    d._on_starless((d._base, None))          # preview renders with the REAL function
+
+    real = nd.render
+    monkeypatch.setattr(nd, "render", lambda img, p: (time.sleep(0.5), real(img, p))[1])
+
+    t0 = time.perf_counter()
+    d.apply()
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.25, f"apply() blocked the UI thread for {elapsed:.2f}s"
+    assert not d.apply_btn.isEnabled(), "Apply must disable itself while it runs"
+    assert d.status.text(), "and say that something is happening"
+
+    qtbot.waitUntil(lambda: bool(got), timeout=8000)
+    assert isinstance(got[0], AstroImage)
+
+
+def test_the_dialog_defaults_are_the_engine_defaults(qtbot):
+    """One source of truth. The dataclass, the constructor and reset() each
+    declared these separately, and lightness_preserve had already drifted: the
+    dialog shipped False ("the better default") while NarrowbandParams said
+    True — so a recipe or batch run with no explicit option produced a DIFFERENT
+    image from the same tool used interactively.
+    """
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    assert d._params() == NarrowbandParams()
+
+
+def test_preserve_lightness_ships_OFF(qtbot):
+    """Pins the VALUE, not merely that the two agree.
+
+    test_the_dialog_defaults_are_the_engine_defaults cannot catch this: the
+    dialog now DERIVES its controls from NarrowbandParams, so flipping the
+    engine default flips the dialog with it and they still agree. Proven by
+    mutation — that test passed with the default put back to True. This one
+    fails, which is the whole point of writing it.
+
+    OFF is deliberate: the brighter combine is the better default, and the Lab
+    round-trip that Preserve lightness needs is also what makes Apply three
+    times slower.
+    """
+    assert NarrowbandParams().lightness_preserve is False
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    assert d.lightness_check.isChecked() is False
+
+
+def test_reset_restores_the_engine_defaults(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.palette_box.setCurrentText("Pseudo-SHO")
+    d.oiii_slider.setValue(90)
+    d.sat_slider.setValue(10)
+    d.protect_slider.setValue(5)
+    d.lightness_check.setChecked(True)
+    d.reset()
+    assert d._params() == NarrowbandParams()
