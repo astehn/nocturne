@@ -275,3 +275,44 @@ def test_a_disabled_green_blend_keeps_its_value(qtbot):
     assert d.blend_val.text() == "0.85"
     d.palette_box.setCurrentText("HOO")
     assert d.blend_slider.isEnabled() and d._params().blend_amount == 0.85
+
+
+def test_tame_core_is_off_by_default_and_renders_identically(qtbot):
+    """The reproducibility guard. A new control must not change what the tool
+    already produces, or every saved recipe and project quietly renders
+    differently the day it ships."""
+    from nocturne.core.narrowband import NarrowbandParams, render
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    assert d.tame_slider.value() == 0
+    assert d.tame_val.text() == "off"
+    assert d._params().highlight_reduction == 1.0
+    a = render(_img(), d._params(), has_stars=False).data
+    b = render(_img(), NarrowbandParams(), has_stars=False).data
+    assert np.array_equal(a, b), "off must be bit-identical to the old default"
+
+
+def test_tame_core_actually_pulls_the_blown_core_down(qtbot):
+    """Measured on a real NGC 281 render: near-white core pixels fall from 6.2%
+    at 1.0 to 2.1% at 5.0. This is the control for the white core, and it was
+    sitting in the engine at identity where nobody could reach it."""
+    from nocturne.core.narrowband import render
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    bright = AstroImage(np.stack([np.full((40, 40), 0.97, np.float32),
+                                  np.full((40, 40), 0.93, np.float32),
+                                  np.full((40, 40), 0.93, np.float32)], axis=2),
+                        is_linear=False)
+    off = render(bright, d._params(), has_stars=False).data.mean()
+    d.tame_slider.setValue(d.tame_slider.maximum())
+    assert d._params().highlight_reduction > 1.0
+    on = render(bright, d._params(), has_stars=False).data.mean()
+    assert on < off * 0.95, f"Tame core must darken the highlights: {on:.3f} vs {off:.3f}"
+    assert d.tame_val.text() != "off"
+
+
+def test_tame_core_resets_and_stays_inside_the_defaults_guard(qtbot):
+    from nocturne.core.narrowband import NarrowbandParams
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.tame_slider.setValue(70)
+    d.reset()
+    assert d.tame_slider.value() == 0
+    assert d._params() == NarrowbandParams(), "the new field must round-trip too"

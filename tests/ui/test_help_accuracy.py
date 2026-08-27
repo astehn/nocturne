@@ -1215,3 +1215,29 @@ def test_auto_enhance_help_is_right_that_saying_yes_destroys_the_old_edit():
     assert [n for n, _ in p.entries()] == ["Crop"]
     assert p.can_redo() is False, \
         "jump_back now keeps the states; the help says Redo cannot bring them back"
+
+
+def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
+    """The systemic guard, not a per-control one. Adding "Tame core" to the
+    dialog passed the whole suite while the help said nothing about it — help
+    drifts silently on this project, which is exactly why it gets audited every
+    release. Walk the real form layout instead of a list someone must remember
+    to update."""
+    from PySide6.QtWidgets import QFormLayout
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.narrowband_dialog import NarrowbandDialog
+    img = AstroImage(np.full((16, 16, 3), 0.4, np.float32), is_linear=False)
+    d = NarrowbandDialog(Settings(), img)
+    qtbot.addWidget(d)
+    b = _body("narrowband")
+    labels = []
+    for i in range(d._controls.rowCount()):
+        item = d._controls.itemAt(i, QFormLayout.ItemRole.LabelRole)
+        if item is not None and item.widget() is not None:
+            text = item.widget().text().strip()
+            if text:
+                labels.append(text)
+    assert labels, "no labelled controls found — the walk is broken, not the help"
+    for name in labels:
+        assert name in b, f"the narrowband help never mentions the {name!r} control"

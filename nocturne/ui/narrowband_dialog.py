@@ -18,6 +18,8 @@ from .preview import to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
 
+_TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
+
 _ENGINE_DEFAULTS = NarrowbandParams()
 
 
@@ -36,6 +38,10 @@ def _slider_positions(p: NarrowbandParams) -> dict:
         "sat": round(p.saturation * 100),
         "bright": round(p.brightness * 50),
         "protect": round(p.protect_background * 100),
+        # highlight_reduction is identity at 1.0 and rolls the highlights down
+        # above it, so the slider runs 0..100 over 1.0..5.0 with ZERO meaning off.
+        # Zero must land on exactly 1.0 or every existing recipe re-renders.
+        "tame": round((p.highlight_reduction - 1.0) / _TAME_SPAN * 100),
         "lightness": p.lightness_preserve,
     }
 
@@ -105,11 +111,13 @@ class NarrowbandDialog(QDialog):
         self.sat_slider = ResetSlider(pos["sat"])
         self.bright_slider = ResetSlider(pos["bright"])
         self.protect_slider = ResetSlider(pos["protect"])
+        self.tame_slider = ResetSlider(pos["tame"])
         self.oiii_val = QLabel()
         self.blend_val = QLabel()
         self.protect_val = QLabel()
         self.sat_val = QLabel()
         self.bright_val = QLabel()
+        self.tame_val = QLabel()
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
         self.lightness_check.setChecked(pos["lightness"])
         self.reset_btn = QPushButton("Reset")
@@ -123,7 +131,7 @@ class NarrowbandDialog(QDialog):
         self._render_timer.timeout.connect(self._do_render)
         self.palette_box.currentTextChanged.connect(self._on_palette_change)
         for s in (self.blend_slider, self.oiii_slider, self.sat_slider,
-                  self.bright_slider, self.protect_slider):
+                  self.bright_slider, self.protect_slider, self.tame_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
 
@@ -144,9 +152,11 @@ class NarrowbandDialog(QDialog):
         controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
         controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
         controls.addRow("Saturation", _row(self.sat_slider, self.sat_val))
+        controls.addRow("Tame core", _row(self.tame_slider, self.tame_val))
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow("", self.lightness_check)
         controls.addRow("", self.reset_btn)
+        self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()
         self._restrict_blend(self.palette_box.currentText())
 
@@ -213,6 +223,7 @@ class NarrowbandDialog(QDialog):
         self.sat_slider.setValue(pos["sat"])
         self.bright_slider.setValue(pos["bright"])
         self.protect_slider.setValue(pos["protect"])
+        self.tame_slider.setValue(pos["tame"])
         self.lightness_check.setChecked(pos["lightness"])
         self._update_value_labels()
         self._do_render()
@@ -250,6 +261,10 @@ class NarrowbandDialog(QDialog):
         self.blend_val.setText(f"{self.blend_slider.value() / 100.0:.2f}")
         self.sat_val.setText(f"{self.sat_slider.value() / 100.0:.2f}")
         self.protect_val.setText(f"{self.protect_slider.value()}%")
+        # "off", not "×1.00": the raw number means nothing outside the PixInsight
+        # formula it comes from, and zero genuinely does nothing at all.
+        tame = self.tame_slider.value()
+        self.tame_val.setText("off" if tame == 0 else f"{tame}%")
 
     def _params(self) -> NarrowbandParams:
         return NarrowbandParams(
@@ -259,6 +274,7 @@ class NarrowbandDialog(QDialog):
             saturation=self.sat_slider.value() / 100.0,
             brightness=max(0.3, self.bright_slider.value() / 50.0),
             protect_background=self.protect_slider.value() / 100.0,
+            highlight_reduction=1.0 + self.tame_slider.value() / 100.0 * _TAME_SPAN,
             lightness_preserve=self.lightness_check.isChecked(),
         )
 
