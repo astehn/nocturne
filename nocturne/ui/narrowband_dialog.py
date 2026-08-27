@@ -244,7 +244,10 @@ class NarrowbandDialog(QDialog):
         if self._prev_starless is None:
             return
         try:
-            nebula = render(self._prev_starless, self._params())
+            # has_stars=False only when a real split happened: without StarX the
+            # base frame IS the 'starless' layer and its stars are still in it.
+            nebula = render(self._prev_starless, self._params(),
+                            has_stars=self._prev_stars is None)
         except ValueError as exc:
             self.status.setText(str(exc))
             return
@@ -290,7 +293,7 @@ class NarrowbandDialog(QDialog):
 
     def _compose_full(self, params: NarrowbandParams) -> AstroImage:
         """Full-resolution recolour plus the star recombine. Runs on the pool."""
-        nebula = render(self._starless, params)
+        nebula = render(self._starless, params, has_stars=self._stars is None)
         if self._stars is None:
             return nebula
         out = screen(nebula.data, np.clip(self._stars.data, 0.0, 1.0))

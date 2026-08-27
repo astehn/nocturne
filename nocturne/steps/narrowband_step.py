@@ -41,7 +41,7 @@ class NarrowbandStep(Step):
             starless, stars = self._rc.remove_stars(img, runner=self._runner)
         else:
             starless, stars = img, None
-        nebula = render(starless, params)
+        nebula = render(starless, params, has_stars=stars is None)
         if stars is None:
             return nebula
         out = screen(nebula.data, np.clip(stars.data, 0.0, 1.0))

@@ -6,11 +6,19 @@ from skimage.filters import gaussian
 from .image import AstroImage
 
 
-def saturate(img: AstroImage, amount: float) -> AstroImage:
+def saturate(img: AstroImage, amount: float, *,
+             protect_highlights: bool = True) -> AstroImage:
     """Re-centred saturation: amount 0=greyscale, 0.5=native, 1=strong boost.
     The boost above native peaks in the nebula midtones and tapers toward BOTH
     the noisy background (so heavy boosts don't detonate colour noise) and bright
-    stars (so they keep natural colour); desaturation is uniform. Mono unchanged."""
+    stars (so they keep natural colour); desaturation is uniform. Mono unchanged.
+
+    `protect_highlights=False` drops the taper toward the bright end, making the
+    boost uniform above the shadow floor. Only for layers with NO STARS IN THEM:
+    the taper exists to keep star cores natural, and on a starless narrowband
+    frame the brightest thing is the nebula core itself — so the taper was
+    suppressing the boost exactly where the user was looking (measured 1.05x
+    gain at the brightest part against 1.50x in the outskirts)."""
     if not img.is_color:
         return img.copy()
     S_MAX = 2.5
@@ -24,7 +32,8 @@ def saturate(img: AstroImage, amount: float) -> AstroImage:
         # Weight the boost to the midtones: shadow-protect fades it out in the
         # dark (noisy) background; (1 - lum) fades it out toward the highlights.
         shadow_protect = np.clip((lum - 0.12) / 0.18, 0.0, 1.0)  # ~0 below .12, 1 by .30
-        s_px = 1.0 + (s - 1.0) * shadow_protect * (1.0 - lum)
+        highlight_taper = (1.0 - lum) if protect_highlights else 1.0
+        s_px = 1.0 + (s - 1.0) * shadow_protect * highlight_taper
     out = np.clip(lum + (data - lum) * s_px, 0.0, 1.0)
     return AstroImage(out.astype(np.float32), is_linear=img.is_linear,
                       metadata=dict(img.metadata))

@@ -174,7 +174,8 @@ def test_apply_does_not_block_the_ui_thread(qtbot, monkeypatch):
     d._on_starless((d._base, None))          # preview renders with the REAL function
 
     real = nd.render
-    monkeypatch.setattr(nd, "render", lambda img, p: (time.sleep(0.5), real(img, p))[1])
+    monkeypatch.setattr(nd, "render",
+                        lambda img, p, **kw: (time.sleep(0.5), real(img, p, **kw))[1])
 
     t0 = time.perf_counter()
     d.apply()
@@ -225,3 +226,24 @@ def test_reset_restores_the_engine_defaults(qtbot):
     d.lightness_check.setChecked(True)
     d.reset()
     assert d._params() == NarrowbandParams()
+
+
+def test_the_dialog_tells_the_engine_whether_the_layer_is_starless(qtbot, monkeypatch):
+    """The engine cannot work this out for itself. With a real StarX split the
+    taper must come off or the Saturation slider does nothing on the nebula
+    core; WITHOUT StarX the dialog recolours the whole frame, stars included,
+    and the taper is still protecting real star colour."""
+    import nocturne.ui.narrowband_dialog as nd
+    seen = []
+    real = nd.render
+    monkeypatch.setattr(nd, "render",
+                        lambda img, p, **kw: (seen.append(kw.get("has_stars")),
+                                              real(img, p, **kw))[1])
+    stars = AstroImage(np.zeros((40, 40, 3), np.float32), is_linear=False)
+    d = _dialog(qtbot, starless=_img(), stars=stars)
+    d._on_starless((d._base, stars))
+    assert seen[-1] is False, "a real split means the layer is starless"
+
+    d2 = _dialog(qtbot, starless=_img(), stars=None)
+    d2._on_starless((d2._base, None))
+    assert seen[-1] is True, "no split means the stars are still in the frame"

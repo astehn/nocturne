@@ -15,7 +15,7 @@ import numpy as np
 
 from .autostretch import _mtf
 from .image import AstroImage
-from .saturation import saturate
+from .saturation import _MASK_SIGMA_FRAC, saturate
 
 
 def screen(base: np.ndarray, top: np.ndarray) -> np.ndarray:
@@ -144,7 +144,8 @@ def _combine(ha: np.ndarray, oiii: np.ndarray, palette: str,
     raise ValueError(f"unknown palette: {palette}")
 
 
-def render_palette(img: AstroImage, params: NarrowbandParams) -> AstroImage:
+def render_palette(img: AstroImage, params: NarrowbandParams,
+                   has_stars: bool = True) -> AstroImage:
     ha, oiii = extract_ha_oiii(img)
     oiii_n = normalize_to_reference(oiii, ha, params.blackpoint, params.oiii_boost)
     r, g, b = _combine(ha, oiii_n, params.palette, params.blend_amount, params.scnr)
@@ -153,7 +154,7 @@ def render_palette(img: AstroImage, params: NarrowbandParams) -> AstroImage:
     rgb = highlight_recover(rgb, params.highlight_recover)
     tinted = AstroImage(np.clip(rgb, 0.0, 1.0).astype(np.float32),
                         is_linear=False, metadata=dict(img.metadata))
-    out = saturate(tinted, params.saturation)
+    out = saturate(tinted, params.saturation, protect_highlights=has_stars)
     return AstroImage(np.clip(out.data, 0.0, 1.0).astype(np.float32),
                       is_linear=False, metadata=dict(img.metadata))
 
@@ -178,16 +179,43 @@ def nebula_mask(rgb: np.ndarray, protect: float) -> np.ndarray:
     start = lo - 0.3 * (hi - lo) + float(protect) * (hi - lo) * 1.3
     width = max(1e-3, (hi - start) * 0.6)
     x = np.clip((lum - start) / width, 0.0, 1.0)
-    return (x * x * (3.0 - 2.0 * x)).astype(np.float32)             # smoothstep
+    m = (x * x * (3.0 - 2.0 * x)).astype(np.float32)                # smoothstep
+    # ...then FEATHER it. The smoothstep is per pixel, so the boundary followed
+    # the noise: on a real IC 1396A render the steepest step was a full 0->1 in
+    # ONE pixel and 4.00% of the frame jumped by more than 0.25, which reads as a
+    # hard edge around the nebula. Same constant saturation.py already uses, and
+    # a FRACTION of the short edge — so the 640 px preview and the full-resolution
+    # Apply get proportionally the same softness.
+    from scipy.ndimage import gaussian_filter
+    sigma = max(1.0, _MASK_SIGMA_FRAC * min(lum.shape))
+    if sigma >= 8.0:
+        # Blur at quarter resolution and scale back. The answer is a blur tens of
+        # pixels wide, so quarter-resolution sampling sits far above anything it
+        # can resolve. Measured on a real 8.3 MP mask: 87 ms against 775 for the
+        # direct blur, mean difference 0.003 — invisible in a blend, and it keeps
+        # this off the critical path of an Apply that had just been unfrozen.
+        from skimage.transform import resize
+        small = gaussian_filter(m[::4, ::4], sigma=sigma / 4.0)
+        m = resize(small, lum.shape, order=1, preserve_range=True)
+    else:
+        m = gaussian_filter(m, sigma=sigma)      # small frame: blur it directly
+    return np.clip(m, 0.0, 1.0).astype(np.float32)
 
 
-def render(img: AstroImage, params: NarrowbandParams) -> AstroImage:
+def render(img: AstroImage, params: NarrowbandParams, *,
+           has_stars: bool = True) -> AstroImage:
     """Render the palette, preserve lightness, and optionally confine the
-    recolour to the nebula. The single engine entry point the UI/step drive."""
+    recolour to the nebula. The single engine entry point the UI/step drive.
+
+    `has_stars=False` says this layer is starless, which lets the saturation
+    boost reach the nebula core instead of being tapered away from it. The
+    CALLER decides, because narrowband is not always starless: without StarX
+    configured both the dialog and the step recolour the whole frame, stars
+    included, and there the taper is still doing its job."""
     if not img.is_color:
         raise ValueError("Narrowband needs a colour image")
     original = np.clip(img.data, 0.0, 1.0)
-    out = render_palette(img, params)
+    out = render_palette(img, params, has_stars)
     if params.lightness_preserve:
         out = AstroImage(preserve_lightness(out.data, original),
                          is_linear=False, metadata=dict(img.metadata))

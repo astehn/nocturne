@@ -158,3 +158,59 @@ def test_protect_background_leaves_dark_sky_closer_to_original():
     # dark corner stays closer to the original with protection on
     orig_corner = img.data[0, 0]
     assert np.abs(protected[0, 0] - orig_corner).sum() < np.abs(whole[0, 0] - orig_corner).sum()
+
+
+def _noisy_nebula(n=200):
+    rng = np.random.default_rng(3)
+    lum = np.clip(0.25 + 0.05 * rng.standard_normal((n, n)), 0, 1).astype(np.float32)
+    lum[n // 3:2 * n // 3, n // 3:2 * n // 3] += 0.35      # a nebula with noisy edges
+    return np.repeat(np.clip(lum, 0, 1)[:, :, None], 3, axis=2).astype(np.float32)
+
+
+def test_the_protect_background_mask_is_feathered():
+    """It followed pixel-level noise straight into the picture. Measured on a
+    real IC 1396A render: the steepest step was a full 0->1 in ONE pixel, and
+    116,556 pixels (4.00% of the frame) jumped more than 0.25 — which is the
+    hard edge Andreas could see around the nebula.
+    """
+    from nocturne.core.narrowband import nebula_mask
+    m = nebula_mask(_noisy_nebula(), 0.4)
+    gy, gx = np.gradient(m)
+    grad = np.hypot(gx, gy)
+    assert grad.max() < 0.25, f"mask still steps hard: max gradient {grad.max():.3f}"
+    assert (grad > 0.25).sum() == 0
+    assert m.min() < 0.2 and m.max() > 0.8, "and it must still separate nebula from sky"
+
+
+def test_the_mask_feather_matches_the_one_saturation_already_uses():
+    """Same constant, not a second opinion. Feathering as a FRACTION of the short
+    edge is also what keeps the 640 px preview honest against the full-resolution
+    Apply — both get proportionally the same softness."""
+    from nocturne.core import narrowband
+    from nocturne.core.saturation import _MASK_SIGMA_FRAC
+    assert narrowband._MASK_SIGMA_FRAC == _MASK_SIGMA_FRAC
+
+
+def test_a_starless_layer_lets_saturation_reach_the_nebula_core():
+    """The core is the brightest thing in a starless narrowband frame, and
+    saturate()'s star-protection taper was suppressing the boost exactly there:
+    1.05x gain at the brightest part against 1.50x in the outskirts."""
+    from skimage.color import rgb2lab
+    from nocturne.core.narrowband import NarrowbandParams, render
+    ha = np.full((60, 60), 0.55, np.float32)
+    oiii = np.full((60, 60), 0.30, np.float32)
+    ha[20:40, 20:40] = 0.95                      # a bright core
+    oiii[20:40, 20:40] = 0.90
+    img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
+    core = np.zeros((60, 60), bool)
+    core[24:36, 24:36] = True
+
+    def chroma(out):
+        lab = rgb2lab(np.clip(out, 0, 1))
+        return float(np.hypot(lab[..., 1][core], lab[..., 2][core]).mean())
+
+    p = NarrowbandParams(saturation=1.0, protect_background=0.0)
+    with_stars = chroma(render(img, p, has_stars=True).data)
+    starless = chroma(render(img, p, has_stars=False).data)
+    assert starless > with_stars * 1.2, (
+        f"starless must reach the core: {starless:.2f} vs {with_stars:.2f}")

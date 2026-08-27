@@ -146,3 +146,48 @@ def test_nebula_saturate_mono_no_chroma_change():
     stars = AstroImage(np.zeros((16, 16), np.float32), is_linear=False)
     out = nebula_saturate(starless, stars, 1.0).data
     assert np.allclose(out, _screen(starless.data, stars.data))
+
+
+def _chroma(rgb, mask):
+    from skimage.color import rgb2lab
+    lab = rgb2lab(np.clip(rgb, 0, 1))
+    return float(np.hypot(lab[..., 1][mask], lab[..., 2][mask]).mean())
+
+
+def _two_tone():
+    """A dim patch and a BRIGHT one, both the same hue, so the only difference
+    the taper can act on is luminance."""
+    d = np.zeros((20, 40, 3), np.float32)
+    d[:, :20] = (0.45, 0.40, 0.55)      # mid brightness
+    d[:, 20:] = (0.92, 0.87, 1.00)      # bright, like a narrowband nebula core
+    return AstroImage(d, is_linear=False)
+
+
+def test_saturate_still_spares_bright_pixels_by_default():
+    """Regression guard for the Saturation STEP, where stars are present and the
+    taper is the whole point — bright things must keep natural colour."""
+    img = _two_tone()
+    dim, bright = np.zeros((20, 40), bool), np.zeros((20, 40), bool)
+    dim[:, :20] = True
+    bright[:, 20:] = True
+    base, boosted = img.data, saturate(img, 1.0).data
+    dim_gain = _chroma(boosted, dim) / _chroma(base, dim)
+    bright_gain = _chroma(boosted, bright) / _chroma(base, bright)
+    assert dim_gain > 1.5, f"mid tones should gain plenty, got {dim_gain:.2f}x"
+    assert bright_gain < 1.15, (
+        f"the default must still spare highlights, got {bright_gain:.2f}x")
+
+
+def test_saturate_can_reach_highlights_when_asked():
+    """On a STARLESS layer there is no star colour to protect, and the taper
+    only suppresses the boost on the nebula core — measured 1.05x gain at the
+    brightest part against 1.50x in the outskirts, which is why the slider felt
+    like it did nothing where it mattered."""
+    img = _two_tone()
+    bright = np.zeros((20, 40), bool)
+    bright[:, 20:] = True
+    base = _chroma(img.data, bright)
+    tapered = _chroma(saturate(img, 1.0).data, bright)
+    reached = _chroma(saturate(img, 1.0, protect_highlights=False).data, bright)
+    assert reached > tapered * 1.5, (
+        f"opting out must actually reach the highlights: {reached:.2f} vs {tapered:.2f}")

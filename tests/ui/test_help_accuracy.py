@@ -523,7 +523,7 @@ def test_narrowband_help_gets_the_direction_of_the_two_headline_sliders_right():
     rgb = np.dstack([ha, oiii, oiii])
     masks = [float(nebula_mask(rgb, p).mean()) for p in (0.0, 0.4, 1.0)]
     assert masks[0] > masks[1] > masks[2], "Protect background is inverted"
-    assert "a higher setting protects more" in b
+    assert "higher setting protects more" in b     # sentence case may vary
 
 
 def test_dualband_help_sends_you_to_the_right_tool_for_what_you_have():
