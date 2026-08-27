@@ -510,3 +510,72 @@ def test_no_split_is_reported_when_there_are_no_stars(qtbot):
     qtbot.addWidget(d)
     d.show()
     assert seen == [], "a split with no stars layer was cached as if it were real"
+
+
+def test_apply_uses_the_settings_from_when_you_pressed_it(qtbot):
+    """Apply runs off the UI thread and took 3.4-7.8 s on the M 31 mosaic, but
+    compose() read the WIDGETS rather than a snapshot — and only the Apply button
+    was disabled, so the sliders stayed live. Moving one mid-Apply changed what
+    got saved: an image matching neither the preview nor where the control was
+    left. (It is also a Qt widget read from a worker thread, which is undefined
+    behaviour whatever the values happen to be.)
+    """
+    import time
+    got = []
+    d = _dlg(qtbot, on_apply=lambda img, opt: got.append((img, opt)))
+    d.set_balance_for_test(tone="midtones", red=0.8)
+    pressed = d.options()["midtones"][0]
+    # what the IMAGE should be, composed from the values on screen right now
+    expected = d._compose_snapshot(d.balance(), *d.band(),
+                                   d.invert_check.isChecked()).data.copy()
+
+    real = d._compose_snapshot
+    d._compose_snapshot = lambda *a, **kw: (time.sleep(0.4), real(*a, **kw))[1]
+    d._apply()
+    d.sliders["red"].setValue(-80)                 # user drags it while Apply runs
+    qtbot.waitUntil(lambda: bool(got), timeout=8000)
+    img, opt = got[0]
+    assert np.array_equal(img.data, expected), (
+        "the saved IMAGE used the controls as they were mid-Apply, not as they "
+        "were when it was pressed")
+    assert opt["midtones"][0] == pressed, (
+        f"the recorded settings say {opt['midtones'][0]:+.2f} but {pressed:+.2f} "
+        f"was on screen when Apply was pressed")
+
+
+def test_the_controls_are_frozen_while_apply_runs(qtbot):
+    """Belt as well as braces: a snapshot makes a mid-Apply drag harmless, but
+    letting the user move controls that no longer affect anything is its own
+    small lie."""
+    import time
+    d = _dlg(qtbot)
+    real = d._compose_snapshot
+    d._compose_snapshot = lambda *a, **kw: (time.sleep(0.4), real(*a, **kw))[1]
+    done = []
+    d._on_apply = lambda img, opt: done.append(img)
+    d._apply()
+    assert not d.sliders["red"].isEnabled()
+    assert not d.handles.isEnabled()
+    assert not d.strength_slider.isEnabled()
+    # WAIT for the worker before the dialog is torn down. Without this it emits
+    # into a deleted object ("Signal source has been deleted") and the stray
+    # exception destabilises later tests — it made an unrelated haoiii test fail
+    # in full-suite ordering while passing on its own.
+    qtbot.waitUntil(lambda: bool(done), timeout=8000)
+
+
+def test_compare_shows_the_image_you_started_with(qtbot):
+    """The one control the other two tools have and this did not. 'Show the mask'
+    answers WHERE the adjustment lands; compare answers whether it helped."""
+    d = _dlg(qtbot)
+    assert d.preview.view.compare_active() is False
+    d.compare_check.setChecked(True)
+    assert d.preview.view.compare_active() is True
+    d.preview.view._on_divider(5.0)
+    moved = d.preview.view._split_x
+    d.sliders["red"].setValue(40)
+    d._do_render()
+    assert d.preview.view.compare_active(), "compare must survive a re-render"
+    assert d.preview.view._split_x == moved, "and the divider must stay put"
+    d.compare_check.setChecked(False)
+    assert d.preview.view.compare_active() is False

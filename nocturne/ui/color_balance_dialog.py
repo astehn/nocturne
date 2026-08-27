@@ -125,6 +125,11 @@ class ColorBalanceDialog(QDialog):
         self.invert_check.setToolTip(
             "Adjust everything OUTSIDE the band instead of inside it — the only way "
             "to say things like \u201ceverything except the galaxy\u201d")
+        self.compare_check = QCheckBox("Compare with original")
+        self.compare_check.setToolTip(
+            "Split the preview against the image you opened, with a divider you "
+            "drag across — the same handle the main window's Before/After uses")
+        self.compare_check.toggled.connect(self._on_compare_toggled)
         self.show_mask_check = QCheckBox("Show the mask")
         self.show_mask_check.setToolTip(
             "Light the parts of the picture the adjustment will reach, and dim the "
@@ -180,6 +185,7 @@ class ColorBalanceDialog(QDialog):
         controls.addRow("Feather", _row(self.feather_slider, self.feather_val))
         controls.addRow("", self.invert_check)
         controls.addRow("", self.show_mask_check)
+        controls.addRow("", self.compare_check)
         controls.addRow("", self.reset_btn)
 
         self.apply_btn = QPushButton("Apply")
@@ -348,6 +354,26 @@ class ColorBalanceDialog(QDialog):
         if self._prev_starless is not None:
             self._render_timer.start()
 
+    def _on_compare_toggled(self, on: bool) -> None:
+        """Split-divider compare against the frame as it arrived.
+
+        Set ONCE on toggle, never in _do_render: set_compare() re-centres the
+        divider, so calling it per render would drag the handle back to the
+        middle every time a slider moved.
+        """
+        if not on or self._prev_starless is None:
+            self.preview.view.set_compare(None)
+            return
+        self.preview.view.set_compare(to_qimage(_downscale(self._base)))
+
+    def _mask_from(self, img: AstroImage, lo: float, hi: float,
+                   feather: float, invert: bool) -> np.ndarray:
+        """The band from PLAIN VALUES, so a worker thread never has to ask a
+        widget what it says."""
+        lum = img.data.mean(axis=2) if img.data.ndim == 3 else img.data
+        m = range_mask(lum, lo, hi, feather=feather)
+        return (1.0 - m).astype(np.float32) if invert else m
+
     def mask_for(self, img: AstroImage) -> np.ndarray:
         """The band, or its complement when inverted.
 
@@ -356,9 +382,7 @@ class ColorBalanceDialog(QDialog):
         expression without this.
         """
         lo, hi, feather = self.band()
-        lum = img.data.mean(axis=2) if img.data.ndim == 3 else img.data
-        m = range_mask(lum, lo, hi, feather=feather)
-        return (1.0 - m).astype(np.float32) if self.invert_check.isChecked() else m
+        return self._mask_from(img, lo, hi, feather, self.invert_check.isChecked())
 
     def compose(self, starless: AstroImage | None = None,
                 stars: AstroImage | None = None) -> AstroImage:
@@ -411,6 +435,30 @@ class ColorBalanceDialog(QDialog):
             self._fitted = True
             self.preview.view.fit()
 
+    def _compose_snapshot(self, b: Balance, lo: float, hi: float,
+                          feather: float, invert: bool) -> AstroImage:
+        """Compose from PLAIN VALUES captured on the UI thread.
+
+        compose() reads the widgets, which is right for the preview and wrong
+        for Apply: that runs on the pool, so it both touches Qt objects off the
+        GUI thread — undefined behaviour — and reads whatever the controls say
+        at the instant it happens to look, which on the M 31 mosaic is 3.4-7.8 s
+        after the button was pressed.
+        """
+        base, st = self._starless, self._stars
+        adjusted = apply_balance(base, b, self._mask_from(base, lo, hi, feather, invert))
+        if st is None:
+            return adjusted
+        out = screen(adjusted.data, np.clip(st.data, 0.0, 1.0))
+        return AstroImage(out, is_linear=base.is_linear, metadata=dict(base.metadata))
+
+    def _set_controls_enabled(self, on: bool) -> None:
+        for w in (*self.sliders.values(), self.strength_slider, self.feather_slider,
+                  self.handles, self.tone_box, self.preset_box, self.preserve_check,
+                  self.invert_check, self.show_mask_check, self.compare_check,
+                  self.reset_btn):
+            w.setEnabled(on)
+
     def _apply(self) -> None:
         """Compose at full resolution OFF the UI thread.
 
@@ -422,15 +470,32 @@ class ColorBalanceDialog(QDialog):
         if self._starless is None:
             self.status.setText("Still removing stars…")
             return
+        # Read every control HERE, on the GUI thread, and hand the worker plain
+        # values. The controls are frozen too: with a snapshot a mid-Apply drag
+        # is harmless, but leaving controls live that no longer affect the result
+        # is its own small lie.
+        b = self.balance()
+        lo, hi, feather = self.band()
+        invert = self.invert_check.isChecked()
+        # The OPTIONS are snapshotted too. _on_composed used to build them when
+        # the work finished, so the log, the recipe and the provenance report
+        # recorded whatever the controls said seconds later — a record of
+        # settings that produced no image.
+        opts = self.options()
         self.apply_btn.setEnabled(False)
+        self._set_controls_enabled(False)
         self.status.setText("Applying at full resolution…")
-        run_async(self._pool, self.compose, self._on_composed, self._on_compose_error)
+        run_async(self._pool,
+                  lambda: self._compose_snapshot(b, lo, hi, feather, invert),
+                  lambda result: self._on_composed(result, opts),
+                  self._on_compose_error)
 
-    def _on_composed(self, result: AstroImage) -> None:
+    def _on_composed(self, result: AstroImage, options: dict) -> None:
         if self._on_apply is not None:
-            self._on_apply(result, self.options())
+            self._on_apply(result, options)
         self.accept()
 
     def _on_compose_error(self, exc) -> None:
+        self._set_controls_enabled(True)
         self.apply_btn.setEnabled(True)
         self.status.setText(f"Could not apply: {exc}")
