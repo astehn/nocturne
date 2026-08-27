@@ -881,9 +881,14 @@ def test_star_spikes_help_quotes_the_sliders_the_dialog_opens_with(qtbot):
     assert (d.intensity_slider.minimum(), d.intensity_slider.maximum()) == (0, 100)
     assert d.intensity_slider.value() == 100 and d.intensity_val.text() == "100%"
     assert "default <b>100%</b>, range 0 to 100%" in b
-    assert (d.stars_slider.minimum(), d.stars_slider.maximum()) == (0, 50)
-    assert d.stars_slider.value() == 6 and d.stars_val.text() == "6"
-    assert "default <b>6</b>, range 0 to 50" in b
+    # The star count's ceiling is _MAX_STARS, but the dialog lowers it to however
+    # many stars this image actually has — so read the ceiling from the constant
+    # and the instance's own max from the fixture, which holds only a few.
+    from nocturne.core.star_spikes import _MAX_STARS
+    assert d.stars_slider.minimum() == 0
+    assert d.stars_slider.maximum() == min(_MAX_STARS, len(d._stars))
+    assert d.stars_slider.value() == min(6, d.stars_slider.maximum())
+    assert f"default <b>6</b>, range 0 to {_MAX_STARS}" in b
     assert (d.angle_slider.minimum(), d.angle_slider.maximum()) == (0, 90)
     assert d.angle_slider.value() == 0 and d.angle_val.text() == "0°"
     assert "default <b>0°</b>, range 0 to 90°" in b

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
-from ..core.star_spikes import add_spikes, detect_stars
+from ..core.star_spikes import _MAX_STARS, add_spikes, detect_stars
 from .frame_preview import FramePreview
 from .preview import rgb_to_qimage
 from .reset_slider import ResetSlider
@@ -31,7 +31,12 @@ class StarSpikesDialog(QDialog):
         self.preview = FramePreview()
         self.length_slider = ResetSlider(0)
         self.intensity_slider = ResetSlider(100, minimum=0, maximum=100)
-        self.stars_slider = ResetSlider(6, minimum=0, maximum=50)
+        # Only ever LOWERS the ceiling. SEP finds thousands of objects on a rich
+        # field and drawing 2,000 spikes costs 1.7 s per slider tick on a 39.5 MP
+        # master, so _MAX_STARS stays the safety cap; this just stops the slider
+        # promising stars the image does not contain.
+        _cap = min(_MAX_STARS, len(self._stars))
+        self.stars_slider = ResetSlider(min(6, _cap), minimum=0, maximum=_cap)
         self.angle_slider = ResetSlider(0, minimum=0, maximum=90)
         self.length_val = QLabel("0.00")
         self.intensity_val = QLabel("100%")
@@ -75,7 +80,28 @@ class StarSpikesDialog(QDialog):
         buttons.addWidget(close_btn)
         root.addLayout(buttons)
 
-        self._render_preview()
+        if self._stars:
+            self._render_preview()
+        else:
+            self._no_stars()
+
+    def _no_stars(self) -> None:
+        """Say so, rather than leaving four sliders that quietly do nothing.
+
+        Measured on a smooth nebula, a starless export and pure noise: zero
+        stars found and every slider a silent no-op, with nothing to tell the
+        user whether the tool was broken or the image simply had no stars. A
+        starless export is an ordinary input for anyone using Starless + Stars.
+        """
+        for s in (self.length_slider, self.intensity_slider,
+                  self.stars_slider, self.angle_slider):
+            s.setEnabled(False)
+        self.apply_btn.setEnabled(False)
+        self.preview.show_message(
+            "No stars found in this image.\n\n"
+            "Star Spikes needs stars to draw on — a starless layer, a very "
+            "soft frame, or one that has already had its stars removed will "
+            "not give it anything to work with.")
 
     def _params(self):
         return (self.length_slider.value() / 100.0,

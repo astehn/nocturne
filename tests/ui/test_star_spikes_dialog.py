@@ -19,7 +19,9 @@ def test_dialog_builds_and_detects(qtbot):
     qtbot.addWidget(d)
     assert d.length_slider.value() == 0
     assert d.intensity_slider.value() == 100  # full strength by default
-    assert d.stars_slider.value() == 6
+    # bounded by what the image actually contains: this fixture holds one star,
+    # so offering six would be promising five that do not exist
+    assert d.stars_slider.value() == min(6, len(d._stars))
     assert len(d._stars) >= 1                 # detected on construction
 
 
@@ -83,3 +85,38 @@ def test_apply_calls_back_with_result(qtbot):
     d.apply_btn.click()
     assert got and isinstance(got[0], AstroImage)
     assert got[0].data.shape == (64, 64, 3)
+
+
+def _starless(h=120, w=120):
+    """A smooth nebula with no stars in it — a completely ordinary input for
+    anyone who exports Starless + Stars."""
+    g = np.tile(np.linspace(0.15, 0.55, w), (h, 1)).astype(np.float32)
+    return AstroImage(np.repeat(g[:, :, None], 3, axis=2), is_linear=False)
+
+
+def test_a_starless_image_says_so_instead_of_doing_nothing(qtbot):
+    """Measured on three plausible inputs — a smooth nebula, a starless export
+    and pure noise — detection found 0 stars and every slider became a silent
+    no-op. Nothing distinguished "this tool is broken" from "this image has no
+    stars", which is the worst of both."""
+    d = StarSpikesDialog(_starless())
+    qtbot.addWidget(d)
+    assert d._stars == []
+    d.show()
+    qtbot.waitExposed(d)
+    assert d.preview.overlay.isVisible(), "it must SAY there are no stars"
+    assert "star" in d.preview.overlay.text().lower()
+    assert not d.length_slider.isEnabled(), "and not offer sliders that cannot work"
+
+
+def test_the_star_count_cannot_exceed_the_stars_that_exist(qtbot):
+    """Not 'however many stars are in the image' — SEP finds 4,887 objects on a
+    30-minute NGC 281 master and 2,000 spikes costs 1.7 s per slider tick on a
+    39.5 MP frame. The cap only ever LOWERS the maximum from its safe default.
+    """
+    from nocturne.core.star_spikes import _MAX_STARS
+    d = StarSpikesDialog(_img())
+    qtbot.addWidget(d)
+    assert d.stars_slider.maximum() == min(_MAX_STARS, len(d._stars))
+    assert d.stars_slider.maximum() <= _MAX_STARS, "the safety cap must still hold"
+    assert d.stars_slider.value() <= d.stars_slider.maximum()

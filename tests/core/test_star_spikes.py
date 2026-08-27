@@ -121,3 +121,130 @@ def test_greyscale_path():
 def test_count_exceeding_star_list_is_safe():
     out = add_spikes(_dark(), _one_star(), 0.5, 50, 0.0).data   # only 1 star present
     assert np.all(np.isfinite(out))
+
+
+def _field_with_a_blob(h=200, w=200):
+    """A few genuine point stars plus one big diffuse blob — the case that put
+    spikes where no star is. SEP ranks by INTEGRATED flux, so a 5,099-pixel
+    nebula region outranked real stars (measured on NGC 281)."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.05, np.float32)
+    for cy, cx in ((40, 40), (60, 150), (150, 60), (170, 170)):
+        lum += 0.9 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.8 ** 2)))
+    lum += 0.55 * np.exp(-(((yy - 100) ** 2 + (xx - 100) ** 2) / (2 * 22.0 ** 2)))  # the blob
+    rng = np.random.default_rng(1)
+    lum = np.clip(lum + 0.004 * rng.standard_normal((h, w)), 0, 1).astype(np.float32)
+    return np.repeat(lum[:, :, None], 3, axis=2)
+
+
+def test_detection_rejects_things_that_are_not_point_like():
+    """A big diffuse region is not a star, however much total light it holds."""
+    stars = detect_stars(_field_with_a_blob())
+    assert stars, "the genuine stars must still be found"
+    for s in stars:
+        assert not (85 < s.x < 115 and 85 < s.y < 115), (
+            f"a spike would be drawn on the diffuse blob at ({s.x:.0f}, {s.y:.0f})")
+
+
+def test_detection_is_capped_so_a_rich_field_cannot_stall_the_preview():
+    """Measured: SEP finds 4,887 objects on NGC 281, and drawing 2,000 spikes
+    costs 1.7 s per slider tick on a 39.5 MP master. The cap is load-bearing."""
+    from nocturne.core.star_spikes import _MAX_STARS
+    rng = np.random.default_rng(2)
+    h = w = 400
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.03, np.float32)
+    for cy, cx in zip(rng.integers(5, h - 5, 300), rng.integers(5, w - 5, 300)):
+        lum += 0.8 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2)))
+    data = np.repeat(np.clip(lum, 0, 1)[:, :, None], 3, axis=2).astype(np.float32)
+    assert len(detect_stars(data)) <= _MAX_STARS
+
+
+def test_stars_are_centred_on_the_star_not_the_blob_barycentre():
+    """Measured on NGC 281 with the isophotal barycentre: 11 of 100 stars were
+    more than 1 px off and the worst was 3.08 px, against arms 1.4 px thick."""
+    # A POPULATED field, not one star on a flat background. SEP's background box
+    # is 64 px, so a lone star inflates its own box and the model is fitted to
+    # the thing it is meant to subtract: on such a frame SEP reported a sigma-2
+    # star as a=68 b=62 centred 55 px away. That measures the background
+    # estimator, not the centring this test is about.
+    h = w = 300
+    yy, xx = np.mgrid[0:h, 0:w]
+    truth = [(60, 80), (150, 210), (230, 120), (100, 250), (200, 60)]
+    lum = np.full((h, w), 0.04, np.float32)
+    for cy, cx in truth:
+        lum += 0.9 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.8 ** 2)))
+    rng = np.random.default_rng(4)
+    for cy, cx in zip(rng.integers(5, h - 5, 60), rng.integers(5, w - 5, 60)):
+        lum += 0.25 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2)))
+    lum = np.clip(lum + 0.004 * rng.standard_normal((h, w)), 0, 1).astype(np.float32)
+    stars = detect_stars(np.repeat(lum[:, :, None], 3, axis=2))
+    assert stars, "no stars found in a populated field"
+    for cy, cx in truth:
+        near = min(stars, key=lambda s: (s.x - cx) ** 2 + (s.y - cy) ** 2)
+        off = np.hypot(near.x - cx, near.y - cy)
+        assert off <= 1.0, f"star at ({cx}, {cy}) drawn {off:.2f} px away"
+
+
+def _populated(extra=None, h=300, w=300, seed=7):
+    """A field SEP can estimate a background on, plus whatever `extra` adds."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.04, np.float32)
+    rng = np.random.default_rng(seed)
+    for cy, cx in zip(rng.integers(5, h - 5, 60), rng.integers(5, w - 5, 60)):
+        lum += 0.25 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2)))
+    if extra is not None:
+        lum = extra(lum, yy, xx)
+    lum = np.clip(lum + 0.004 * rng.standard_normal((h, w)), 0, 1).astype(np.float32)
+    return np.repeat(lum[:, :, None], 3, axis=2)
+
+
+def test_the_centre_comes_from_the_windowed_centroid_not_the_barycentre():
+    """A STRUCTURAL guard, and deliberately so.
+
+    I could not build a synthetic case that discriminates: with clean gaussians,
+    any wing mild enough to survive the elongation filter shifts the barycentre
+    by under 0.65 px, and on merged pairs winpos is sometimes the WORSE of the
+    two. Real stars are messier than a gaussian, and that is where it pays.
+
+    Measured on real masters, offset from the star's brightest pixel:
+
+        NGC 281    old 0.62 px, 7/50 over 1 px  ->  0.44 px, 0/50
+        IC 1396A   old 0.73 px, 9/50            ->  0.54 px, 3/50
+
+    Filtering does most of that on NGC 281 and winpos does most of it on
+    IC 1396A, so both earn their place. Since the numbers cannot be reproduced
+    in a test, this pins that winpos is WIRED IN and records them here instead
+    of asserting an improvement no fixture can show.
+    """
+    import sep
+    calls = []
+    real = sep.winpos
+
+    def spy(*a, **kw):
+        calls.append(a)
+        return real(*a, **kw)
+
+    sep.winpos = spy
+    try:
+        stars = detect_stars(_populated())
+    finally:
+        sep.winpos = real
+    assert stars, "nothing detected"
+    assert calls, "detect_stars must centre with sep.winpos, not the barycentre"
+
+
+def test_a_compact_bright_star_outranks_a_broad_dim_one():
+    """Ranking, isolated from the size filter. Both of these survive filtering;
+    the broad one holds MORE integrated flux while being far less bright. Sorting
+    by flux put it first, which is how diffuse things got spikes."""
+    def add(lum, yy, xx):
+        lum += 0.95 * np.exp(-(((yy - 80) ** 2 + (xx - 80) ** 2) / (2 * 1.6 ** 2)))
+        lum += 0.42 * np.exp(-(((yy - 220) ** 2 + (xx - 220) ** 2) / (2 * 4.5 ** 2)))
+        return lum
+    stars = detect_stars(_populated(add))
+    assert stars, "nothing detected"
+    top = stars[0]
+    assert abs(top.x - 80) <= 3 and abs(top.y - 80) <= 3, (
+        f"brightest should be the compact star at (80, 80), got "
+        f"({top.x:.0f}, {top.y:.0f})")

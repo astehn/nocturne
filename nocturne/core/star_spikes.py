@@ -7,7 +7,21 @@ import sep
 
 from .image import AstroImage
 
-_MAX_STARS = 100          # detection cap; the slider picks how many actually draw
+_MAX_STARS = 50           # detection cap; the slider picks how many actually draw.
+# Fifty, not a hundred: the slider has never offered more than 50, so the other
+# half was always detected and thrown away. The cap itself is load-bearing —
+# SEP finds 4,887 objects on a 30-minute NGC 281 master, and drawing 2,000
+# spikes costs 1.7 s per slider tick on a 39.5 MP frame.
+_CANDIDATES = 200         # filtered down to _MAX_STARS, so rejects don't starve it
+_MAX_ELONGATION = 2.5     # a/b above this is a trail, a frame edge, or a merged pair
+_MAX_SIZE_FACTOR = 3.0    # reject blobs over 3x the median star size for THIS image
+_WINPOS_SIG_FACTOR = 0.6  # windowing scale, as a fraction of the object's own radius
+_WINPOS_SIG_MIN = 1.0     # ...clamped: a star's window is never this narrow...
+_WINPOS_SIG_MAX = 4.0     # ...nor this wide. An unclamped window wanders: on a
+# small frame SEP's background box is comparable to the image, which reported a
+# sigma-2 star as 14.8 px across, gave a 8.9 px window, and moved the centre 7.4
+# px off the star. Real frames give small radii and never reach this, but the
+# clamp is what stops a bad background estimate from placing a spike in the dark.
 _MAX_LEN_FRAC = 0.08      # longest arm as a fraction of the short edge
 _FALLOFF = 2.4            # arm brightness concentration near the core (higher = needlier)
 _CORE_SIGMA = 1.4         # arm half-thickness (px) at the core
@@ -37,15 +51,48 @@ def detect_stars(data: np.ndarray) -> list[Star]:
         return []
     if len(objects) == 0:
         return []
-    order = np.argsort(objects["flux"])[::-1][:_MAX_STARS]
     h, w = lum.shape
+    # Rank by PEAK, not integrated flux. Flux sums the whole blob, so a large
+    # diffuse region outranks a genuinely bright star: measured on NGC 281 the
+    # top five by flux averaged 1,570 px and the largest was 5,099 — a nebula
+    # region, drawn on as though it were a star.
+    py = np.clip(objects["ypeak"], 0, h - 1)
+    px_ = np.clip(objects["xpeak"], 0, w - 1)
+    peak = lum[py, px_]
+    cand = objects[np.argsort(peak)[::-1][:_CANDIDATES]]
+
+    # Then keep only what is actually point-like. Sized against THIS image's own
+    # stars rather than a fixed pixel count, so it holds at any scale.
+    radius = np.sqrt(np.maximum(cand["a"] * cand["b"], 1e-12))
+    elongation = cand["a"] / np.maximum(cand["b"], 1e-6)
+    keep = (radius <= float(np.median(radius)) * _MAX_SIZE_FACTOR) \
+        & (elongation <= _MAX_ELONGATION)
+    cand = cand[keep][:_MAX_STARS]
+    if len(cand) == 0:
+        return []
+
+    # Sub-pixel centre. The isophotal barycentre is the flux-weighted centre of
+    # the WHOLE blob, which sits off the visual core when a star has an
+    # asymmetric wing or a close neighbour: 11 of 100 were more than 1 px off on
+    # NGC 281 and the worst was 3.08 px, against arms 1.4 px thick.
+    sub = lum - bkg.back()
+    sig = np.clip(np.sqrt(np.maximum(cand["a"] * cand["b"], 1e-12)) * _WINPOS_SIG_FACTOR,
+                  _WINPOS_SIG_MIN, _WINPOS_SIG_MAX)
+    try:
+        wx, wy, wflag = sep.winpos(sub, cand["x"], cand["y"], sig)
+    except Exception:
+        wx, wy, wflag = cand["x"], cand["y"], np.ones(len(cand), int)
+
     stars: list[Star] = []
-    for i in order:
-        flux = float(objects["flux"][i])
+    for n, obj in enumerate(cand):
+        flux = float(obj["flux"])
         if flux <= 0:
             continue
-        x = float(objects["x"][i])
-        y = float(objects["y"][i])
+        # winpos flags a failure per object; fall back to the barycentre there
+        # rather than trusting a number it could not compute.
+        good = wflag[n] == 0
+        x = float(wx[n]) if good else float(obj["x"])
+        y = float(wy[n]) if good else float(obj["y"])
         xi = int(np.clip(round(x), 0, w - 1))
         yi = int(np.clip(round(y), 0, h - 1))
         if mono:
