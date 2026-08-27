@@ -132,6 +132,22 @@ PALETTES = ("HOO", "Pseudo-SHO", "Pseudo-bicolor")
 # this so the constant cannot drift away from what _combine actually does.
 PALETTES_USING_BLEND = frozenset({"HOO"})
 
+# What each palette does, in the user's terms rather than the formula's. The
+# dropdown reads HOO / Pseudo-SHO / Pseudo-bicolor, which tells a newcomer
+# nothing about what they are about to get. Colour words are MEASURED: rendering
+# pure Ha against pure OIII gives Ha 1.00/0.02/0.00 and OIII 0.00/0.42/0.95 in
+# HOO, 0.95/0.42/0.00 and 0.00/0.00/1.00 in Pseudo-SHO, and 0.88/0.00/0.88 and
+# 0.00/1.00/0.00 in Pseudo-bicolor — and a test re-measures it, because a
+# description that drifts from the picture is worse than no description.
+PALETTE_DESCRIPTIONS = {
+    "HOO": "Hydrogen red, oxygen teal. The most natural-looking of the three, "
+           "and the only one where Green blend does anything.",
+    "Pseudo-SHO": "Hubble-like: hydrogen gold, oxygen blue. Dualband data holds no "
+                  "real SII, so hydrogen stands in for it — hence \u201cpseudo\u201d.",
+    "Pseudo-bicolor": "Hydrogen magenta, oxygen green. The boldest and least "
+                      "natural of the three.",
+}
+
 
 def _combine(ha: np.ndarray, oiii: np.ndarray, palette: str,
              blend_amount: float, scnr: bool = True):

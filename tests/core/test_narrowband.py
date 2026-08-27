@@ -234,3 +234,39 @@ def test_which_palettes_use_the_green_blend_is_measured_not_asserted():
         assert moved == (palette in PALETTES_USING_BLEND), (
             f"{palette}: blend {'moves' if moved else 'does not move'} the picture, "
             f"but PALETTES_USING_BLEND says {palette in PALETTES_USING_BLEND}")
+
+
+def test_every_palette_has_a_description():
+    """A dropdown reading HOO / Pseudo-SHO / Pseudo-bicolor tells a newcomer
+    nothing about what they will get. Kept beside PALETTES so adding a palette
+    without describing it fails here rather than shipping a blank line."""
+    from nocturne.core.narrowband import PALETTE_DESCRIPTIONS
+    assert set(PALETTE_DESCRIPTIONS) == set(PALETTES)
+    for palette, text in PALETTE_DESCRIPTIONS.items():
+        assert len(text) > 30, f"{palette}: description too thin to be useful"
+        assert "hydrogen" in text.lower() and "oxygen" in text.lower(), (
+            f"{palette}: a description must say what happens to BOTH gases")
+
+
+def test_the_descriptions_match_what_the_palettes_actually_do():
+    """Measured, not trusted. Pure Ha on one side, pure OIII on the other, and
+    the description's colour words must match the channel that actually wins.
+    """
+    from nocturne.core.narrowband import PALETTE_DESCRIPTIONS
+    ha = np.full((40, 80), 0.10, np.float32); ha[:, :40] = 0.75
+    oiii = np.full((40, 80), 0.10, np.float32); oiii[:, 40:] = 0.75
+    img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
+    left, right = np.s_[:, 5:35], np.s_[:, 45:75]
+    # which channel dominates each gas, per palette, measured
+    expected = {"HOO": ("red", "teal"), "Pseudo-SHO": ("gold", "blue"),
+                "Pseudo-bicolor": ("magenta", "green")}
+    channel_of = {"red": 0, "gold": 0, "magenta": 0, "green": 1, "teal": 2, "blue": 2}
+    for palette, (ha_word, oiii_word) in expected.items():
+        out = render(img, NarrowbandParams(palette=palette, saturation=0.7,
+                                           protect_background=0.0), has_stars=False).data
+        assert ha_word in PALETTE_DESCRIPTIONS[palette].lower(), f"{palette}: Ha colour word"
+        assert oiii_word in PALETTE_DESCRIPTIONS[palette].lower(), f"{palette}: OIII colour word"
+        assert out[left][..., channel_of[ha_word]].mean() > 0.5, (
+            f"{palette}: description says Ha is {ha_word} but that channel is dark")
+        assert out[right][..., channel_of[oiii_word]].mean() > 0.4, (
+            f"{palette}: description says OIII is {oiii_word} but that channel is dark")

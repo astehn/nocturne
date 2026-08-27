@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
 
 from ..core.image import AstroImage
 from ..core.narrowband import (
-    PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND, NarrowbandParams, render, screen,
+    PALETTE_DESCRIPTIONS, PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
+    NarrowbandParams, render, screen,
 )
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
@@ -118,6 +119,9 @@ class NarrowbandDialog(QDialog):
         self.sat_val = QLabel()
         self.bright_val = QLabel()
         self.tame_val = QLabel()
+        self.palette_desc = QLabel()
+        self.palette_desc.setWordWrap(True)
+        self.palette_desc.setObjectName("hint")
         self.compare_check = QCheckBox("Compare with original")
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
         self.lightness_check.setChecked(pos["lightness"])
@@ -150,6 +154,7 @@ class NarrowbandDialog(QDialog):
 
         controls = QFormLayout()
         controls.addRow("Palette", self.palette_box)
+        controls.addRow("", self.palette_desc)
         controls.addRow("OIII boost", _row(self.oiii_slider, self.oiii_val))
         controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
         controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
@@ -161,6 +166,7 @@ class NarrowbandDialog(QDialog):
         controls.addRow("", self.reset_btn)
         self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()
+        self._describe_palette(self.palette_box.currentText())
         self._restrict_blend(self.palette_box.currentText())
 
         self.apply_btn = QPushButton("Apply")
@@ -236,8 +242,12 @@ class NarrowbandDialog(QDialog):
         self._do_render()
 
     def _on_palette_change(self, palette: str) -> None:
+        self._describe_palette(palette)
         self._restrict_blend(palette)
         self._schedule_render()
+
+    def _describe_palette(self, palette: str) -> None:
+        self.palette_desc.setText(PALETTE_DESCRIPTIONS.get(palette, ""))
 
     def _restrict_blend(self, palette: str) -> None:
         """Grey Green blend out where it cannot bite.

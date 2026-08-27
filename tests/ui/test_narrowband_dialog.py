@@ -356,3 +356,12 @@ def test_compare_clears_when_the_star_layers_arrive(qtbot):
     d._on_starless((d._base, None))             # layers arrive/replace
     assert d.preview.view.compare_active() is False
     assert d.compare_check.isChecked() is False, "and the box must agree with reality"
+
+
+def test_the_dialog_explains_the_selected_palette(qtbot):
+    from nocturne.core.narrowband import PALETTE_DESCRIPTIONS
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    for palette in PALETTES:
+        d.palette_box.setCurrentText(palette)
+        assert d.palette_desc.text() == PALETTE_DESCRIPTIONS[palette]
+    assert d.palette_desc.wordWrap(), "a one-line label would truncate the description"
