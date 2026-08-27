@@ -2,6 +2,32 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.19.0] — 2026-08-27
+
+Star Spikes, Narrowband and Colour Balance, gone over control by control
+
+### Added
+- Narrowband has a Tame core slider. A bright nebula core often comes out of the palette combine close to white with its colour squeezed out; this rolls those highlights back down so the colour underneath shows. On a 30-minute Pacman master it takes the near-white share of the core from 6% to 2%. It was in the engine all along, sitting at a value that did nothing, with no control able to reach it. Off by default, so nothing you have already made changes.
+- Star Spikes has Variation and Star colour. Real diffraction spikes are never identical: Variation gives each star its own arm length, angle and brightness, and lets the four arms differ from one another, so a field of them stops looking stamped. Star colour carries each star's own hue into its cross — a bright star's core is blown white in every channel, so the colour is now read from a ring around it instead of its centre.
+- Compare with original in all three dialogs — Narrowband, Star Spikes and Colour Balance. Splits the preview against the image you opened with, using the same draggable divider as the main window's Before/After. A recolour or an effect is hard to judge against nothing.
+- Star Spikes has a Reset, and finds its stars without freezing the window while it opens.
+
+### Changed
+- The clipping warning now says which colour channel died, and the overlay is coloured by it. It reads "6.6% of red crushed to zero" rather than "6.6% shadows (R)", and a mark's colour tells you which channel is gone — red, green or blue for one, yellow, magenta or cyan for two, white for all three, which is the only case where the pixel really is black. The measurement was always per channel; nothing said so, so checking whether the pixel looked black tested the wrong thing.
+- Star Spikes picks its stars far better. It ranked them by total light, which let a diffuse patch of nebula outrank a genuinely bright star and get a cross drawn on it — the largest such patch on a real master was 5,099 pixels. It now ranks by brightness and discards anything not shaped like a star, and the count slider will not offer more stars than the image holds.
+- Narrowband's Green blend is greyed out in Pseudo-SHO and Pseudo-bicolor, where it never did anything. Those palettes take green straight from one gas, so the slider moved and the picture did not. Your setting is kept and applies again in HOO.
+- The Narrowband palette list explains itself. Each palette now says what it does to each gas — hydrogen red and oxygen teal in HOO, gold and blue in Pseudo-SHO, magenta and green in Pseudo-bicolor — rather than leaving three names to guess at.
+
+### Fixed
+- Narrowband's Apply froze the window for up to eight seconds on a large master, with nothing on screen to say why. It now runs in the background and says what it is doing.
+- Narrowband's Saturation slider barely touched the nebula core — the part you are usually trying to colour. The boost was being tapered away from bright areas to protect star colour, on a layer whose stars had already been removed. On a real master the core now responds half again as strongly.
+- Narrowband's Protect background traced a hard edge around the nebula. The boundary followed the noise pixel by pixel; it is now softened, which removed every one of the 300,000 places where the mask jumped in a single step.
+- Narrowband produced a different image from a recipe or a Batch run than it did by hand, because the tool and the engine disagreed about whether Preserve lightness starts on. They now cannot disagree.
+- Star Spikes drew its crosses slightly beside the stars rather than on them — up to three pixels off, against arms less than one and a half pixels thick. It now finds each star's centre to a fraction of a pixel.
+- Star Spikes said nothing at all when an image had no stars in it: four sliders that moved and did nothing, with no way to tell a broken tool from an image with nothing to work on. It now says so.
+- Colour Balance could save an image built from settings you had already changed. Apply runs in the background, and the sliders stayed live while it worked, so nudging one during the seconds it takes on a large mosaic changed what was written — and the settings recorded in the log and the provenance report were read even later than that. Everything is now captured the moment you press Apply, and the controls are held while it runs.
+- The Narrowband panel cut off the end of its own text — the palette description was sliced mid-sentence and "Preserve lightness" lost its last word.
+
 ## [0.18.0] — 2026-08-25
 
 A beta that says so, a Batch that cannot overwrite your masters, and help that matches the app
