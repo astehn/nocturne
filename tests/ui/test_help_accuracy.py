@@ -875,6 +875,13 @@ def test_star_spikes_help_quotes_the_sliders_the_dialog_opens_with(qtbot):
         assert f'_row("{label}"' in sd, f"{label!r} is no longer a row"
         assert f"<b>{label}</b>" in b, f"the topic never names the {label!r} slider"
 
+    # ...and every OTHER row too, read off the source rather than this list.
+    # Two sliders were added and the whole suite stayed green while the help said
+    # nothing about them, which is the same hole the narrowband guard had.
+    import re
+    for label in re.findall(r'_row\(\s*"([^"]+)"', sd):
+        assert f"<b>{label}</b>" in b, f"the topic never names the {label!r} slider"
+
     assert (d.length_slider.minimum(), d.length_slider.maximum()) == (0, 100)
     assert d.length_slider.value() == 0 and d.length_val.text() == "0.00"
     assert "default <b>0.00</b>, range 0.00 to 1.00" in b

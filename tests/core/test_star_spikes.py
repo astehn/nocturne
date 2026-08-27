@@ -248,3 +248,54 @@ def test_a_compact_bright_star_outranks_a_broad_dim_one():
     assert abs(top.x - 80) <= 3 and abs(top.y - 80) <= 3, (
         f"brightest should be the compact star at (80, 80), got "
         f"({top.x:.0f}, {top.y:.0f})")
+
+
+def test_star_colour_comes_from_the_wings_not_the_blown_core():
+    """Measured on NGC 281: the colour spread of the tint sampled at the core is
+    0.001 — pure white — because 38 of 40 bright stars are saturated in all three
+    channels there. A 5-9 px annulus gives 0.109, about a hundred times more.
+    """
+    h = w = 200
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.03, np.float32)
+    rng = np.random.default_rng(11)
+    for cy, cx in zip(rng.integers(5, h - 5, 40), rng.integers(5, w - 5, 40)):
+        lum += 0.2 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2)))
+    # a RED star: blown white at the core, red in the wings — exactly the case
+    core = np.exp(-(((yy - 100) ** 2 + (xx - 100) ** 2) / (2 * 2.6 ** 2)))
+    # ALL THREE channels clip at the centre, so the core is pure white and the
+    # only colour left is in the wings — which is what a real bright star does
+    # (38 of 40 measured on NGC 281 were saturated in all three at the core).
+    data = np.stack([np.clip(lum + core * 3.0, 0, 1),
+                     np.clip(lum + core * 1.7, 0, 1),
+                     np.clip(lum + core * 1.25, 0, 1)], axis=2).astype(np.float32)
+    stars = detect_stars(data)
+    near = min(stars, key=lambda s: (s.x - 100) ** 2 + (s.y - 100) ** 2)
+    assert np.hypot(near.x - 100, near.y - 100) < 3, "the red star was not found"
+    r, g, b = near.color
+    assert r > g > b, f"a red star must give a red tint, got {near.color}"
+    assert (max(near.color) - min(near.color)) > 0.15, (
+        f"tint is almost white ({near.color}) — still sampling the blown core")
+
+
+def test_variation_is_deterministic_for_a_given_star():
+    """The jitter must come from the star's own position, not a fresh random
+    draw. A per-render seed would reshuffle every spike each time any OTHER
+    slider moved, and the preview would stop matching what Apply produces."""
+    from nocturne.core.star_spikes import add_spikes
+    stars = detect_stars(_populated())
+    img = AstroImage(_populated(), is_linear=False)
+    a = add_spikes(img, stars, 0.7, 8, 0.0, 1.0, variation=0.6).data
+    b = add_spikes(img, stars, 0.7, 8, 0.0, 1.0, variation=0.6).data
+    assert np.array_equal(a, b), "two identical renders must be identical"
+
+
+def test_variation_actually_makes_the_spikes_differ():
+    """At 0 they are stamped from one template, which is what reads as artificial."""
+    from nocturne.core.star_spikes import add_spikes
+    stars = detect_stars(_populated())
+    img = AstroImage(_populated(), is_linear=False)
+    flat = add_spikes(img, stars, 0.7, 8, 0.0, 1.0, variation=0.0).data
+    varied = add_spikes(img, stars, 0.7, 8, 0.0, 1.0, variation=0.8).data
+    assert not np.array_equal(flat, varied), "variation must change the drawing"
+    assert np.abs(varied - flat).max() > 0.05, "and change it visibly"

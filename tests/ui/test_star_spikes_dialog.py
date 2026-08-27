@@ -120,3 +120,42 @@ def test_the_star_count_cannot_exceed_the_stars_that_exist(qtbot):
     assert d.stars_slider.maximum() == min(_MAX_STARS, len(d._stars))
     assert d.stars_slider.maximum() <= _MAX_STARS, "the safety cap must still hold"
     assert d.stars_slider.value() <= d.stars_slider.maximum()
+
+
+def test_the_new_sliders_are_wired_and_default_to_something_visible(qtbot):
+    """Both default non-zero: white, identical spikes are the thing being fixed,
+    and Star Spikes stores a finished image rather than parameters, so no
+    existing project can be disturbed by changing them."""
+    from nocturne.core.star_spikes import _COLOUR_MAX_BOOST
+    d = StarSpikesDialog(_img())
+    qtbot.addWidget(d)
+    assert d.colour_slider.value() > 0 and d.variation_slider.value() > 0
+    length, count, angle, intensity, variation, colour = d._params()
+    assert 0.0 < colour <= _COLOUR_MAX_BOOST
+    assert 0.0 < variation <= 1.0
+
+
+def _many_stars(h=160, w=160):
+    """Several stars, because the jitter is seeded per star: with only ONE, its
+    single draw can land near zero and the test proves nothing."""
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.02, np.float32)
+    rng = np.random.default_rng(5)
+    for cy, cx in zip(rng.integers(10, h - 10, 12), rng.integers(10, w - 10, 12)):
+        lum += 0.9 * np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.7 ** 2)))
+    lum = np.clip(lum + 0.004 * rng.standard_normal((h, w)), 0, 1).astype(np.float32)
+    return AstroImage(np.repeat(lum[:, :, None], 3, axis=2), is_linear=False)
+
+
+def test_variation_changes_the_picture_and_stays_put(qtbot):
+    """Deterministic: nudging ANOTHER slider must not restyle every spike."""
+    d = StarSpikesDialog(_many_stars())
+    qtbot.addWidget(d)
+    d.length_slider.setValue(70)
+    d._render_preview()
+    a = d.result().data.copy()
+    d._render_preview()
+    assert np.array_equal(a, d.result().data), "a re-render must be identical"
+    d.variation_slider.setValue(0)
+    d._render_preview()
+    assert not np.array_equal(a, d.result().data), "variation must do something"

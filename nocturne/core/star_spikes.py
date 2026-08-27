@@ -15,6 +15,12 @@ _MAX_STARS = 50           # detection cap; the slider picks how many actually dr
 _CANDIDATES = 200         # filtered down to _MAX_STARS, so rejects don't starve it
 _MAX_ELONGATION = 2.5     # a/b above this is a trail, a frame edge, or a merged pair
 _MAX_SIZE_FACTOR = 3.0    # reject blobs over 3x the median star size for THIS image
+_COLOUR_R0 = 5.0          # inner radius of the ring the tint is sampled from (px)
+_COLOUR_R1 = 9.0          # outer radius. Measured on NGC 281, colour spread of the
+# tint: 0.001 at the core (pure white — 38 of 40 bright stars are saturated in all
+# three channels there), 0.064 at 3-6 px, 0.109 at 5-9, 0.118 at 8-14 where the ring
+# is mostly sky. 5-9 keeps real starlight and about a hundred times the colour.
+_COLOUR_MAX_BOOST = 4.0   # saturation multiplier at the slider's top
 _WINPOS_SIG_FACTOR = 0.6  # windowing scale, as a fraction of the object's own radius
 _WINPOS_SIG_MIN = 1.0     # ...clamped: a star's window is never this narrow...
 _WINPOS_SIG_MAX = 4.0     # ...nor this wide. An unclamped window wanders: on a
@@ -98,11 +104,35 @@ def detect_stars(data: np.ndarray) -> list[Star]:
         if mono:
             color = (1.0, 1.0, 1.0)
         else:
-            px = data[yi, xi].astype(np.float32)
-            m = float(px.max())
-            color = tuple((px / m).tolist()) if m > 1e-6 else (1.0, 1.0, 1.0)
+            color = _wing_colour(data, yi, xi)
         stars.append(Star(x, y, flux, color))
     return stars
+
+
+def _wing_colour(data: np.ndarray, yi: int, xi: int) -> tuple:
+    """The star's hue, taken from an annulus rather than its core.
+
+    A bright star's core is saturated in every channel, so sampling it returns
+    white however red or blue the star is — which is why the spikes came out
+    white on a plainly orange star. The wings are not blown and still carry the
+    colour. Falls back to the core pixel when the ring lands off the frame.
+    """
+    h, w = data.shape[:2]
+    y0, y1 = int(max(0, yi - _COLOUR_R1)), int(min(h, yi + _COLOUR_R1 + 1))
+    x0, x1 = int(max(0, xi - _COLOUR_R1)), int(min(w, xi + _COLOUR_R1 + 1))
+    patch = data[y0:y1, x0:x1]
+    if patch.size:
+        gy, gx = np.mgrid[y0:y1, x0:x1]
+        ring = (np.hypot(gy - yi, gx - xi) >= _COLOUR_R0) \
+            & (np.hypot(gy - yi, gx - xi) <= _COLOUR_R1)
+        if ring.sum() >= 6:
+            p = patch[ring].mean(axis=0).astype(np.float32)
+            m = float(p.max())
+            if m > 1e-6:
+                return tuple((p / m).tolist())
+    px = data[yi, xi].astype(np.float32)
+    m = float(px.max())
+    return tuple((px / m).tolist()) if m > 1e-6 else (1.0, 1.0, 1.0)
 
 
 def _bbox(cx, cy, tipx, tipy, pad, h, w):
@@ -154,8 +184,42 @@ def _splat_bloom(layer, cx, cy, wgt, col, radius):
     np.maximum(sub, contrib, out=sub)
 
 
+def _jitter(x: float, y: float, variation: float) -> dict:
+    """Per-star perturbations, seeded from the star's OWN POSITION.
+
+    Deterministic on purpose. A fresh random draw per render would reshuffle
+    every spike each time any other slider moved, so the preview would stop
+    matching what Apply produces and nudging Length would restyle the whole
+    field. Seeded this way, a star always draws the same and the picture is
+    stable while you work.
+    """
+    v = float(np.clip(variation, 0.0, 1.0))
+    seed = ((int(x * 16) & 0xFFFF) << 16) | (int(y * 16) & 0xFFFF)
+    rng = np.random.default_rng(seed)
+    return {
+        "length": 1.0 + v * 0.25 * rng.uniform(-1.0, 1.0),
+        "angle": v * np.deg2rad(4.0) * rng.uniform(-1.0, 1.0),
+        "weight": 1.0 + v * 0.20 * rng.uniform(-1.0, 1.0),
+        "arms": 1.0 + v * 0.15 * rng.uniform(-1.0, 1.0, 4),
+    }
+
+
+def _boost_colour(col: tuple, amount: float) -> tuple:
+    """Push the tint away from white. The colour is normalised so its brightest
+    channel is 1.0, which makes its distance from white exactly its saturation —
+    so scaling that distance is the whole operation. amount 1.0 is unchanged;
+    0.0 is white."""
+    c = np.asarray(col, np.float32)
+    m = float(c.max())
+    if m <= 1e-6:
+        return (1.0, 1.0, 1.0)
+    c = np.clip(1.0 - (1.0 - c / m) * float(amount), 0.0, 1.0)
+    return tuple(c.tolist())
+
+
 def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
-               angle: float, intensity: float = 1.0) -> AstroImage:
+               angle: float, intensity: float = 1.0, variation: float = 0.0,
+               colour: float = 1.0) -> AstroImage:
     """Draw 4-point diffraction spikes on the brightest `count` stars, tinted by
     each star's colour, and screen-blend onto the image. `intensity` (0..1) scales
     the whole spike layer's opacity — 1.0 is full strength, lower makes the spikes
@@ -178,14 +242,19 @@ def add_spikes(img: AstroImage, stars: list[Star], length: float, count: int,
     arm_angles = [np.deg2rad(angle) + k * np.pi / 2 for k in range(4)]
 
     for s in chosen:
+        j = _jitter(s.x, s.y, variation)
         wgt = float(np.clip(s.flux / fmax, 0.0, 1.0))
-        arm = max_len * (0.4 + 0.6 * wgt) * length
+        arm = max_len * (0.4 + 0.6 * wgt) * length * j["length"]
         if arm < 1.0:
             continue
+        wgt_j = float(np.clip(wgt * j["weight"], 0.0, 1.0))
+        col = _boost_colour(s.color, colour)
         bloom_r = float(np.clip(_BLOOM_FRAC * arm, _BLOOM_MIN, _BLOOM_MAX))
-        _splat_bloom(layer, s.x, s.y, wgt, s.color, bloom_r)
-        for a in arm_angles:
-            _splat_arm(layer, s.x, s.y, a, arm, wgt, s.color)
+        _splat_bloom(layer, s.x, s.y, wgt_j, col, bloom_r)
+        for k, a in enumerate(arm_angles):
+            # each arm its own length: four exactly equal arms is most of what
+            # reads as stamped rather than photographed
+            _splat_arm(layer, s.x, s.y, a + j["angle"], arm * j["arms"][k], wgt_j, col)
 
     screened = 1.0 - (1.0 - rgb) * (1.0 - np.clip(layer * intensity, 0.0, 1.0))
     out = np.clip(screened, 0.0, 1.0)

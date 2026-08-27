@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
-from ..core.star_spikes import _MAX_STARS, add_spikes, detect_stars
+from ..core.star_spikes import _COLOUR_MAX_BOOST, _MAX_STARS, add_spikes, detect_stars
 from .frame_preview import FramePreview
 from .preview import rgb_to_qimage
 from .reset_slider import ResetSlider
@@ -38,16 +38,21 @@ class StarSpikesDialog(QDialog):
         _cap = min(_MAX_STARS, len(self._stars))
         self.stars_slider = ResetSlider(min(6, _cap), minimum=0, maximum=_cap)
         self.angle_slider = ResetSlider(0, minimum=0, maximum=90)
+        self.variation_slider = ResetSlider(35, minimum=0, maximum=100)
+        self.colour_slider = ResetSlider(50, minimum=0, maximum=100)
         self.length_val = QLabel("0.00")
         self.intensity_val = QLabel("100%")
         self.stars_val = QLabel("6")
         self.angle_val = QLabel("0°")
+        self.variation_val = QLabel("35%")
+        self.colour_val = QLabel("×2.00")
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._render_preview)
         for s in (self.length_slider, self.intensity_slider,
-                  self.stars_slider, self.angle_slider):
+                  self.stars_slider, self.angle_slider,
+                  self.variation_slider, self.colour_slider):
             s.valueChanged.connect(self._on_change)
 
         self.apply_btn = QPushButton("Apply")
@@ -75,6 +80,10 @@ class StarSpikesDialog(QDialog):
         root.addLayout(_row("Intensity (faint → full)", self.intensity_slider, self.intensity_val))
         root.addLayout(_row("Number of stars", self.stars_slider, self.stars_val))
         root.addLayout(_row("Rotation", self.angle_slider, self.angle_val))
+        root.addLayout(_row("Variation (uniform → varied)",
+                            self.variation_slider, self.variation_val))
+        root.addLayout(_row("Star colour (white → full)",
+                            self.colour_slider, self.colour_val))
         buttons = QHBoxLayout()
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
@@ -94,7 +103,8 @@ class StarSpikesDialog(QDialog):
         starless export is an ordinary input for anyone using Starless + Stars.
         """
         for s in (self.length_slider, self.intensity_slider,
-                  self.stars_slider, self.angle_slider):
+                  self.stars_slider, self.angle_slider,
+                  self.variation_slider, self.colour_slider):
             s.setEnabled(False)
         self.apply_btn.setEnabled(False)
         self.preview.show_message(
@@ -107,18 +117,24 @@ class StarSpikesDialog(QDialog):
         return (self.length_slider.value() / 100.0,
                 self.stars_slider.value(),
                 float(self.angle_slider.value()),
-                self.intensity_slider.value() / 100.0)
+                self.intensity_slider.value() / 100.0,
+                self.variation_slider.value() / 100.0,
+                self.colour_slider.value() / 100.0 * _COLOUR_MAX_BOOST)
 
     def _on_change(self, *_):
         self.length_val.setText(f"{self.length_slider.value() / 100:.2f}")
         self.intensity_val.setText(f"{self.intensity_slider.value()}%")
         self.stars_val.setText(str(self.stars_slider.value()))
         self.angle_val.setText(f"{self.angle_slider.value()}°")
+        self.variation_val.setText(f"{self.variation_slider.value()}%")
+        self.colour_val.setText(
+            f"×{self.colour_slider.value() / 100.0 * _COLOUR_MAX_BOOST:.2f}")
         self._timer.start(90)
 
     def _render_preview(self) -> None:
-        length, count, angle, intensity = self._params()
-        self._result = add_spikes(self._base, self._stars, length, count, angle, intensity)
+        length, count, angle, intensity, variation, colour = self._params()
+        self._result = add_spikes(self._base, self._stars, length, count, angle,
+                                  intensity, variation, colour)
         data = np.clip(self._result.data, 0.0, 1.0)
         if data.ndim == 2:
             rgb = np.repeat((data * 255 + 0.5).astype(np.uint8)[:, :, None], 3, axis=2)
