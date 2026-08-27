@@ -866,6 +866,7 @@ def test_star_spikes_help_quotes_the_sliders_the_dialog_opens_with(qtbot):
     sd = _src("nocturne/ui/star_spikes_dialog.py")
     d = StarSpikesDialog(_planted_star_field())
     qtbot.addWidget(d)
+    qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)   # detection is async
 
     rows = {"Length (off → long)": (d.length_slider, d.length_val),
             "Intensity (faint → full)": (d.intensity_slider, d.intensity_val),

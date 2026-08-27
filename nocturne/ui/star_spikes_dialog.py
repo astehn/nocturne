@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThreadPool, QTimer
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
 from ..core.image import AstroImage
 from ..core.star_spikes import _COLOUR_MAX_BOOST, _MAX_STARS, add_spikes, detect_stars
 from .frame_preview import FramePreview
-from .preview import rgb_to_qimage
+from .preview import rgb_to_qimage, to_qimage
 from .reset_slider import ResetSlider
+from .worker import run_async
 
 
 class StarSpikesDialog(QDialog):
@@ -26,7 +27,8 @@ class StarSpikesDialog(QDialog):
         self._base = base
         self._on_apply = on_apply
         self._result = base
-        self._stars = detect_stars(base.data)          # one-time detection
+        self._pool = QThreadPool.globalInstance()
+        self._stars = None                 # None = still looking; [] = none found
 
         self.preview = FramePreview()
         self.length_slider = ResetSlider(0)
@@ -35,8 +37,9 @@ class StarSpikesDialog(QDialog):
         # field and drawing 2,000 spikes costs 1.7 s per slider tick on a 39.5 MP
         # master, so _MAX_STARS stays the safety cap; this just stops the slider
         # promising stars the image does not contain.
-        _cap = min(_MAX_STARS, len(self._stars))
-        self.stars_slider = ResetSlider(min(6, _cap), minimum=0, maximum=_cap)
+        # Sized properly once detection lands; _MAX_STARS is the ceiling it can
+        # never exceed, and _on_stars only ever lowers it.
+        self.stars_slider = ResetSlider(6, minimum=0, maximum=_MAX_STARS)
         self.angle_slider = ResetSlider(0, minimum=0, maximum=90)
         self.variation_slider = ResetSlider(35, minimum=0, maximum=100)
         self.colour_slider = ResetSlider(50, minimum=0, maximum=100)
@@ -46,6 +49,10 @@ class StarSpikesDialog(QDialog):
         self.angle_val = QLabel("0°")
         self.variation_val = QLabel("35%")
         self.colour_val = QLabel("×2.00")
+        self.compare_check = QCheckBox("Compare with original")
+        self.compare_check.toggled.connect(self._on_compare_toggled)
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.clicked.connect(self.reset)
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -84,15 +91,74 @@ class StarSpikesDialog(QDialog):
                             self.variation_slider, self.variation_val))
         root.addLayout(_row("Star colour (white → full)",
                             self.colour_slider, self.colour_val))
+        root.addWidget(self.compare_check)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.reset_btn)
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
         root.addLayout(buttons)
 
-        if self._stars:
-            self._render_preview()
-        else:
+        # Detection off the UI thread. It ran in __init__ and cost 0.28 s on an
+        # 8.3 MP frame, about 1.3 s on a 39.5 MP master, with a frozen window and
+        # nothing on screen saying why.
+        self._set_controls_enabled(False)
+        self.apply_btn.setEnabled(False)
+        self.preview.show_message("Finding stars…")
+        run_async(self._pool, lambda: detect_stars(self._base.data),
+                  self._on_stars, self._on_detect_error)
+
+    _SLIDER_DEFAULTS = {"length": 0, "intensity": 100, "angle": 0,
+                        "variation": 35, "colour": 50}
+
+    def _sliders(self):
+        return (self.length_slider, self.intensity_slider, self.stars_slider,
+                self.angle_slider, self.variation_slider, self.colour_slider)
+
+    def _set_controls_enabled(self, on: bool) -> None:
+        for s in self._sliders():
+            s.setEnabled(on)
+        self.reset_btn.setEnabled(on)
+        self.compare_check.setEnabled(on)
+
+    def _on_stars(self, stars) -> None:
+        self._stars = stars
+        if not stars:
             self._no_stars()
+            return
+        cap = min(_MAX_STARS, len(stars))
+        self.stars_slider.setMaximum(cap)
+        self.stars_slider.setValue(min(6, cap))
+        self._set_controls_enabled(True)
+        self.apply_btn.setEnabled(True)
+        self.preview.overlay.hide()
+        self._render_preview()
+
+    def _on_detect_error(self, exc) -> None:
+        self._stars = []
+        self._no_stars()
+
+    def reset(self) -> None:
+        d = self._SLIDER_DEFAULTS
+        self.length_slider.setValue(d["length"])
+        self.intensity_slider.setValue(d["intensity"])
+        self.angle_slider.setValue(d["angle"])
+        self.variation_slider.setValue(d["variation"])
+        self.colour_slider.setValue(d["colour"])
+        # bounded by what this image holds, exactly as _on_stars set it
+        self.stars_slider.setValue(min(6, self.stars_slider.maximum()))
+        self._on_change()
+
+    def _on_compare_toggled(self, on: bool) -> None:
+        """Split-divider compare against the frame as it arrived.
+
+        Set ONCE here, never in _render_preview: set_compare() re-centres the
+        divider, so calling it per render would drag the handle back to the
+        middle every time a slider moved.
+        """
+        if not on or self._stars is None:
+            self.preview.view.set_compare(None)
+            return
+        self.preview.view.set_compare(to_qimage(self._base))
 
     def _no_stars(self) -> None:
         """Say so, rather than leaving four sliders that quietly do nothing.
@@ -102,10 +168,7 @@ class StarSpikesDialog(QDialog):
         user whether the tool was broken or the image simply had no stars. A
         starless export is an ordinary input for anyone using Starless + Stars.
         """
-        for s in (self.length_slider, self.intensity_slider,
-                  self.stars_slider, self.angle_slider,
-                  self.variation_slider, self.colour_slider):
-            s.setEnabled(False)
+        self._set_controls_enabled(False)
         self.apply_btn.setEnabled(False)
         self.preview.show_message(
             "No stars found in this image.\n\n"
@@ -132,6 +195,8 @@ class StarSpikesDialog(QDialog):
         self._timer.start(90)
 
     def _render_preview(self) -> None:
+        if not self._stars:
+            return
         length, count, angle, intensity, variation, colour = self._params()
         self._result = add_spikes(self._base, self._stars, length, count, angle,
                                   intensity, variation, colour)

@@ -14,9 +14,18 @@ def _img():
     return AstroImage(a, is_linear=False)
 
 
-def test_dialog_builds_and_detects(qtbot):
-    d = StarSpikesDialog(_img())
+def _ready(qtbot, img):
+    """Build the dialog and WAIT for detection, which now runs off the UI thread
+    so a 39.5 MP master does not freeze the window for over a second while it
+    opens."""
+    d = StarSpikesDialog(img)
     qtbot.addWidget(d)
+    qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)
+    return d
+
+
+def test_dialog_builds_and_detects(qtbot):
+    d = _ready(qtbot, _img())
     assert d.length_slider.value() == 0
     assert d.intensity_slider.value() == 100  # full strength by default
     # bounded by what the image actually contains: this fixture holds one star,
@@ -26,8 +35,7 @@ def test_dialog_builds_and_detects(qtbot):
 
 
 def test_intensity_slider_dims_the_spikes(qtbot):
-    d = StarSpikesDialog(_img())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _img())
     d.length_slider.setValue(80)
     d._render_preview()
     full = d.result().data.copy()
@@ -41,8 +49,7 @@ def test_intensity_slider_dims_the_spikes(qtbot):
 
 
 def test_slider_change_renders_preview(qtbot):
-    d = StarSpikesDialog(_img())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _img())
     d.length_slider.setValue(60)
     d._render_preview()
     assert d.preview.has_image()
@@ -59,8 +66,7 @@ def test_preview_is_fitted_once_the_dialog_has_a_real_size(qtbot):
     ImageView re-fitting on resize, so the requirement is asserted here and the
     mechanism is tested in test_image_view. Deleting the workaround without
     keeping this would have removed the only check that the dialog opens usable."""
-    d = StarSpikesDialog(_img())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _img())
     d.resize(900, 700)
     d.show()
     qtbot.waitExposed(d)
@@ -80,6 +86,7 @@ def test_apply_calls_back_with_result(qtbot):
     got = []
     d = StarSpikesDialog(_img(), on_apply=got.append)
     qtbot.addWidget(d)
+    qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)   # detection is async
     d.length_slider.setValue(50)
     d._render_preview()
     d.apply_btn.click()
@@ -99,8 +106,7 @@ def test_a_starless_image_says_so_instead_of_doing_nothing(qtbot):
     and pure noise — detection found 0 stars and every slider became a silent
     no-op. Nothing distinguished "this tool is broken" from "this image has no
     stars", which is the worst of both."""
-    d = StarSpikesDialog(_starless())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _starless())
     assert d._stars == []
     d.show()
     qtbot.waitExposed(d)
@@ -115,8 +121,7 @@ def test_the_star_count_cannot_exceed_the_stars_that_exist(qtbot):
     39.5 MP frame. The cap only ever LOWERS the maximum from its safe default.
     """
     from nocturne.core.star_spikes import _MAX_STARS
-    d = StarSpikesDialog(_img())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _img())
     assert d.stars_slider.maximum() == min(_MAX_STARS, len(d._stars))
     assert d.stars_slider.maximum() <= _MAX_STARS, "the safety cap must still hold"
     assert d.stars_slider.value() <= d.stars_slider.maximum()
@@ -127,8 +132,7 @@ def test_the_new_sliders_are_wired_and_default_to_something_visible(qtbot):
     and Star Spikes stores a finished image rather than parameters, so no
     existing project can be disturbed by changing them."""
     from nocturne.core.star_spikes import _COLOUR_MAX_BOOST
-    d = StarSpikesDialog(_img())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _img())
     assert d.colour_slider.value() > 0 and d.variation_slider.value() > 0
     length, count, angle, intensity, variation, colour = d._params()
     assert 0.0 < colour <= _COLOUR_MAX_BOOST
@@ -149,8 +153,7 @@ def _many_stars(h=160, w=160):
 
 def test_variation_changes_the_picture_and_stays_put(qtbot):
     """Deterministic: nudging ANOTHER slider must not restyle every spike."""
-    d = StarSpikesDialog(_many_stars())
-    qtbot.addWidget(d)
+    d = _ready(qtbot, _many_stars())
     d.length_slider.setValue(70)
     d._render_preview()
     a = d.result().data.copy()
@@ -159,3 +162,52 @@ def test_variation_changes_the_picture_and_stays_put(qtbot):
     d.variation_slider.setValue(0)
     d._render_preview()
     assert not np.array_equal(a, d.result().data), "variation must do something"
+
+
+def test_compare_shows_the_image_you_started_with(qtbot):
+    """Same split divider the main window's Before/After drives, and set ONCE on
+    toggle — set_compare() re-centres the handle, so calling it per render would
+    yank it back to the middle every time a slider moved."""
+    d = _ready(qtbot, _many_stars())
+    assert d.preview.view.compare_active() is False
+    d.compare_check.setChecked(True)
+    assert d.preview.view.compare_active() is True
+    d.preview.view._on_divider(4.0)
+    moved = d.preview.view._split_x
+    d.length_slider.setValue(60)
+    d._render_preview()
+    assert d.preview.view.compare_active(), "compare must survive a re-render"
+    assert d.preview.view._split_x == moved, "and the divider must stay put"
+    d.compare_check.setChecked(False)
+    assert d.preview.view.compare_active() is False
+
+
+def test_reset_returns_every_slider_to_its_default(qtbot):
+    """Six sliders now, and no way back without closing the dialog."""
+    d = _ready(qtbot, _many_stars())
+    before = d._params()
+    for s in (d.length_slider, d.intensity_slider, d.stars_slider,
+              d.angle_slider, d.variation_slider, d.colour_slider):
+        s.setValue(max(s.minimum(), s.maximum() // 3))
+    assert d._params() != before, "the test must actually disturb something"
+    d.reset()
+    assert d._params() == before
+
+
+def test_detection_does_not_block_the_dialog_opening(qtbot):
+    """detect_stars ran in __init__ on the UI thread: 0.28 s on 8.3 MP, ~1.3 s on
+    a 39.5 MP master, with nothing on screen to say why the window was frozen."""
+    import time
+    import nocturne.ui.star_spikes_dialog as sd
+    real = sd.detect_stars
+    sd.detect_stars = lambda data: (time.sleep(0.5), real(data))[1]
+    try:
+        t0 = time.perf_counter()
+        d = StarSpikesDialog(_many_stars())
+        qtbot.addWidget(d)
+        elapsed = time.perf_counter() - t0
+    finally:
+        sd.detect_stars = real
+    assert elapsed < 0.25, f"the dialog blocked for {elapsed:.2f}s while detecting"
+    qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)
+    assert d._stars, "detection must still finish and land"
