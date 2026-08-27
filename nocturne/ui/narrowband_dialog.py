@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ..core.image import AstroImage
@@ -121,6 +121,12 @@ class NarrowbandDialog(QDialog):
         self.tame_val = QLabel()
         self.palette_desc = QLabel()
         self.palette_desc.setWordWrap(True)
+        # A wrapped label needs its height to follow its width, or the form row
+        # keeps the one-line height and slices the rest off — which is exactly
+        # what happened: three lines shown, the sentence cut mid-word.
+        self.palette_desc.setSizePolicy(QSizePolicy.Policy.Preferred,
+                                        QSizePolicy.Policy.MinimumExpanding)
+        self.palette_desc.setMinimumHeight(self.palette_desc.fontMetrics().height() * 3)
         self.palette_desc.setObjectName("hint")
         self.compare_check = QCheckBox("Compare with original")
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
@@ -154,15 +160,15 @@ class NarrowbandDialog(QDialog):
 
         controls = QFormLayout()
         controls.addRow("Palette", self.palette_box)
-        controls.addRow("", self.palette_desc)
+        controls.addRow(self.palette_desc)      # spans both columns: see below
         controls.addRow("OIII boost", _row(self.oiii_slider, self.oiii_val))
         controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
         controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
         controls.addRow("Saturation", _row(self.sat_slider, self.sat_val))
         controls.addRow("Tame core", _row(self.tame_slider, self.tame_val))
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
-        controls.addRow("", self.lightness_check)
-        controls.addRow("", self.compare_check)
+        controls.addRow(self.lightness_check)
+        controls.addRow(self.compare_check)
         controls.addRow("", self.reset_btn)
         self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()

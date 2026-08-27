@@ -365,3 +365,33 @@ def test_the_dialog_explains_the_selected_palette(qtbot):
         d.palette_box.setCurrentText(palette)
         assert d.palette_desc.text() == PALETTE_DESCRIPTIONS[palette]
     assert d.palette_desc.wordWrap(), "a one-line label would truncate the description"
+
+
+def test_wrapping_text_gets_the_whole_panel_width(qtbot):
+    """In the FIELD column these get roughly 230 px of a 340 px panel, which
+    clipped the palette description to three lines mid-sentence and truncated
+    "Preserve lightness (keep t...". A single-argument addRow() spans both
+    columns instead."""
+    from PySide6.QtWidgets import QFormLayout
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    spanning = []
+    for i in range(d._controls.rowCount()):
+        item = d._controls.itemAt(i, QFormLayout.ItemRole.SpanningRole)
+        if item is not None and item.widget() is not None:
+            spanning.append(item.widget())
+    for w, name in ((d.palette_desc, "palette description"),
+                    (d.lightness_check, "Preserve lightness"),
+                    (d.compare_check, "Compare with original")):
+        assert w in spanning, f"{name} must span both columns or its text is cut off"
+
+
+def test_the_palette_description_is_tall_enough_to_read(qtbot):
+    """The actual fault in the screenshot: the label wrapped to more lines than
+    the row gave it height for, so the last line was sliced off."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.show()
+    qtbot.waitExposed(d)
+    lbl = d.palette_desc
+    assert lbl.height() >= lbl.heightForWidth(lbl.width()), (
+        f"description clipped: {lbl.height()}px tall, needs "
+        f"{lbl.heightForWidth(lbl.width())}px at {lbl.width()}px wide")

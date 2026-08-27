@@ -1242,9 +1242,13 @@ def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
         # Checkboxes carry their own text and are added with an EMPTY label, so
         # walking LabelRole alone silently skipped them — which is the same hole
         # this test exists to close, one level down.
-        field = d._controls.itemAt(i, QFormLayout.ItemRole.FieldRole)
-        if field is not None and isinstance(field.widget(), QCheckBox):
-            labels.append(field.widget().text().split("(")[0].strip())
+        # Checkboxes carry their own text. They sit in FieldRole or, once they
+        # are given the full panel width, in SpanningRole — walk both, or this
+        # guard silently stops covering them the day the layout changes.
+        for role in (QFormLayout.ItemRole.FieldRole, QFormLayout.ItemRole.SpanningRole):
+            item = d._controls.itemAt(i, role)
+            if item is not None and isinstance(item.widget(), QCheckBox):
+                labels.append(item.widget().text().split("(")[0].strip())
     assert labels, "no labelled controls found — the walk is broken, not the help"
     for name in labels:
         assert name in b, f"the narrowband help never mentions the {name!r} control"
