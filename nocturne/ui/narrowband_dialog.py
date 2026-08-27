@@ -8,7 +8,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
-from ..core.narrowband import NarrowbandParams, render, screen
+from ..core.narrowband import (
+    PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND, NarrowbandParams, render, screen,
+)
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
@@ -40,7 +42,9 @@ def _slider_positions(p: NarrowbandParams) -> dict:
 
 _PREVIEW_MAX = 640
 _DEBOUNCE_MS = 90
-PALETTES = ["HOO", "Pseudo-SHO", "Pseudo-bicolor"]
+# Taken from the engine rather than retyped: this list and core.PALETTES were
+# two copies of the same fact, which is exactly how lightness_preserve drifted.
+PALETTES = list(_CORE_PALETTES)
 
 
 def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
@@ -117,7 +121,7 @@ class NarrowbandDialog(QDialog):
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(_DEBOUNCE_MS)
         self._render_timer.timeout.connect(self._do_render)
-        self.palette_box.currentTextChanged.connect(lambda _t: self._schedule_render())
+        self.palette_box.currentTextChanged.connect(self._on_palette_change)
         for s in (self.blend_slider, self.oiii_slider, self.sat_slider,
                   self.bright_slider, self.protect_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
@@ -144,6 +148,7 @@ class NarrowbandDialog(QDialog):
         controls.addRow("", self.lightness_check)
         controls.addRow("", self.reset_btn)
         self._update_value_labels()
+        self._restrict_blend(self.palette_box.currentText())
 
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
@@ -211,6 +216,27 @@ class NarrowbandDialog(QDialog):
         self.lightness_check.setChecked(pos["lightness"])
         self._update_value_labels()
         self._do_render()
+
+    def _on_palette_change(self, palette: str) -> None:
+        self._restrict_blend(palette)
+        self._schedule_render()
+
+    def _restrict_blend(self, palette: str) -> None:
+        """Grey Green blend out where it cannot bite.
+
+        Only HOO builds a synthetic green; the other two take green straight
+        from Ha or OIII, so the slider moved and the picture did not change —
+        which reads as a broken app in the moment, and the help saying so does
+        not undo that. Greyed rather than hidden, so the control stays
+        discoverable, and its VALUE is kept: it applies again the moment you
+        return to HOO.
+        """
+        active = palette in PALETTES_USING_BLEND
+        self.blend_slider.setEnabled(active)
+        self.blend_val.setEnabled(active)
+        self.blend_slider.setToolTip("" if active else (
+            f"{palette} builds its green directly from one channel, so the blend "
+            f"has no effect here. Switch to HOO to use it."))
 
     def _on_slider_change(self) -> None:
         self._update_value_labels()

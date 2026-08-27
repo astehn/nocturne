@@ -461,9 +461,14 @@ def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
     """The control the user is most likely to read as broken: it is live in HOO
     and does nothing at all in the other two palettes, because only HOO builds a
     synthetic green."""
-    from nocturne.core.narrowband import _combine
+    from nocturne.core.narrowband import PALETTES, PALETTES_USING_BLEND, _combine
     b = _body("narrowband")
-    assert "It does nothing in Pseudo-SHO or Pseudo-bicolor." in b
+    # The slider is greyed out there now, so the help must say THAT rather than
+    # "the slider moves and the picture does not", which stopped being true.
+    assert "greyed out in Pseudo-SHO and Pseudo-bicolor" in b
+    for palette in PALETTES:
+        if palette not in PALETTES_USING_BLEND:
+            assert palette in b, f"the help must name {palette} as one where it is inert"
     rng = np.random.default_rng(11)
     ha = rng.random((16, 16)).astype(np.float32)
     oiii = rng.random((16, 16)).astype(np.float32)

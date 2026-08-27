@@ -247,3 +247,31 @@ def test_the_dialog_tells_the_engine_whether_the_layer_is_starless(qtbot, monkey
     d2 = _dialog(qtbot, starless=_img(), stars=None)
     d2._on_starless((d2._base, None))
     assert seen[-1] is True, "no split means the stars are still in the frame"
+
+
+def test_green_blend_is_disabled_where_it_does_nothing(qtbot):
+    """A slider that moves and changes nothing reads as a broken app in the
+    moment, and the help text saying so does not undo that. Greyed rather than
+    hidden, so the capability stays discoverable."""
+    from nocturne.core.narrowband import PALETTES_USING_BLEND
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    for palette in PALETTES:
+        d.palette_box.setCurrentText(palette)
+        expected = palette in PALETTES_USING_BLEND
+        assert d.blend_slider.isEnabled() is expected, f"{palette}: slider"
+        assert d.blend_val.isEnabled() is expected, f"{palette}: value label"
+    d.palette_box.setCurrentText("Pseudo-SHO")
+    assert d.blend_slider.toolTip(), "and it must say WHY it is greyed"
+
+
+def test_a_disabled_green_blend_keeps_its_value(qtbot):
+    """The setting is preserved and bites again the moment you return to HOO;
+    blanking it would suggest it had been lost."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    d.blend_slider.setValue(85)
+    d.palette_box.setCurrentText("Pseudo-SHO")
+    assert d.blend_val.text() == "0.85"
+    d.palette_box.setCurrentText("HOO")
+    assert d.blend_slider.isEnabled() and d._params().blend_amount == 0.85

@@ -214,3 +214,23 @@ def test_a_starless_layer_lets_saturation_reach_the_nebula_core():
     starless = chroma(render(img, p, has_stars=False).data)
     assert starless > with_stars * 1.2, (
         f"starless must reach the core: {starless:.2f} vs {with_stars:.2f}")
+
+
+def test_which_palettes_use_the_green_blend_is_measured_not_asserted():
+    """The constant must match what the engine actually does, or greying the
+    slider out becomes its own lie. Measured: HOO changes by 0.081 between
+    blend 0.00 and 1.00; the other two by exactly 0.000000, because only HOO
+    builds a synthetic green — Pseudo-SHO takes green straight from Ha and
+    Pseudo-bicolor takes it straight from OIII.
+    """
+    from nocturne.core.narrowband import PALETTES_USING_BLEND
+    rng = np.random.default_rng(2)
+    img = AstroImage(np.clip(rng.random((60, 60, 3)).astype(np.float32) * 0.6 + 0.2, 0, 1),
+                     is_linear=False)
+    for palette in PALETTES:
+        a = render(img, NarrowbandParams(palette=palette, blend_amount=0.0)).data
+        b = render(img, NarrowbandParams(palette=palette, blend_amount=1.0)).data
+        moved = float(np.abs(a - b).max()) > 1e-6
+        assert moved == (palette in PALETTES_USING_BLEND), (
+            f"{palette}: blend {'moves' if moved else 'does not move'} the picture, "
+            f"but PALETTES_USING_BLEND says {palette in PALETTES_USING_BLEND}")

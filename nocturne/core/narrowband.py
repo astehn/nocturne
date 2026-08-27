@@ -123,6 +123,15 @@ class NarrowbandParams:
 
 PALETTES = ("HOO", "Pseudo-SHO", "Pseudo-bicolor")
 
+# Only HOO builds a synthetic green, so the Green blend amount reaches the
+# picture there and nowhere else: Pseudo-SHO takes green straight from Ha and
+# Pseudo-bicolor straight from OIII. Measured rather than assumed — between
+# blend 0.00 and 1.00, HOO moves by 0.081 and the other two by exactly
+# 0.000000. The dialog greys the slider out for the rest, and
+# test_which_palettes_use_the_green_blend_is_measured_not_asserted re-measures
+# this so the constant cannot drift away from what _combine actually does.
+PALETTES_USING_BLEND = frozenset({"HOO"})
+
 
 def _combine(ha: np.ndarray, oiii: np.ndarray, palette: str,
              blend_amount: float, scnr: bool = True):
