@@ -326,10 +326,20 @@ def test_haoiii_help_gets_the_channel_mapping_right():
     ha, oiii = extract_cfa_planes(cfa(1.0, 0.0, 0.0), "RGGB")
     assert ha.mean() == pytest.approx(1.0, abs=1e-3), "Ha is not the red sites"
     assert oiii.mean() == pytest.approx(0.0, abs=1e-3), "red is leaking into OIII"
-    # green-only and blue-only must each give HALF: OIII is their average, so a
-    # green-only or blue-only OIII would read 1.0 or 0.0 here.
-    assert extract_cfa_planes(cfa(0.0, 1.0, 0.0), "RGGB")[1].mean() == pytest.approx(0.5, abs=1e-3)
-    assert extract_cfa_planes(cfa(0.0, 0.0, 1.0), "RGGB")[1].mean() == pytest.approx(0.5, abs=1e-3)
+    # Green-only and blue-only must each land strictly between 0 and 1: OIII is a
+    # combination of the two, so a green-only or blue-only OIII would read 1.0 or
+    # 0.0 here. They are combined by SNR rather than evenly — green comes from
+    # twice the sites and measures the line better — so green carries the larger
+    # share, but blue must still count for something.
+    from nocturne.stacking.haoiii import _OIII_GREEN_WEIGHT as W
+    green_only = extract_cfa_planes(cfa(0.0, 1.0, 0.0), "RGGB")[1].mean()
+    blue_only = extract_cfa_planes(cfa(0.0, 0.0, 1.0), "RGGB")[1].mean()
+    assert green_only == pytest.approx(W / (W + 1.0), abs=1e-3)
+    assert blue_only == pytest.approx(1.0 / (W + 1.0), abs=1e-3)
+    assert 0.0 < blue_only < green_only < 1.0, (
+        "OIII must draw on both, with green weighted higher")
+    assert green_only + blue_only == pytest.approx(1.0, abs=1e-3), (
+        "the weights must be a proper average, not a gain")
 
 
 def test_haoiii_help_explains_why_the_master_is_not_red():
@@ -575,16 +585,24 @@ def test_dualband_help_agrees_with_both_engines_about_which_gas_is_where():
     ha, oiii = extract_ha_oiii(AstroImage(rgb, is_linear=False))
     assert ha.mean() == pytest.approx(1.0, abs=1e-6), "Ha is no longer the red channel"
     assert oiii.mean() == pytest.approx(0.5, abs=1e-6), \
-        "OIII is no longer the average of green and blue"
+        "OIII is no longer the even average of green and blue"
 
-    # Route 2: out of the raw Bayer grid, same convention
+    # Route 2: out of the raw Bayer grid. Same convention — Ha from red, OIII
+    # from green AND blue — but the two are combined by SNR here, not evenly,
+    # because at the CFA stage we know green came from twice as many sites and
+    # measures the line better. Narrowband sees an already-interpolated image
+    # and keeps the even split; whether it should is an open question in TODO.
+    from nocturne.stacking.haoiii import _OIII_GREEN_WEIGHT as W
     cfa = np.zeros((8, 8), np.float32)
     cfa[0::2, 0::2] = 1.0                      # RGGB red sites
     cfa[0::2, 1::2] = cfa[1::2, 0::2] = 0.4    # green sites
     cfa[1::2, 1::2] = 0.6                      # blue site
     ha2, oiii2 = extract_cfa_planes(cfa, "RGGB")
     assert ha2.mean() == pytest.approx(1.0, abs=1e-3)
-    assert oiii2.mean() == pytest.approx(0.5, abs=1e-3)
+    assert oiii2.mean() == pytest.approx((W * 0.4 + 0.6) / (W + 1.0), abs=1e-3)
+    # both sites must still reach it — "OIII is the blue channel" is the error
+    # this guard exists to catch
+    assert 0.4 < oiii2.mean() < 0.6, "OIII must draw on green AND blue"
 
 
 def test_dualband_help_is_right_that_sho_is_unavailable_and_names_the_real_palettes():
@@ -1311,3 +1329,20 @@ def test_the_haoiii_help_mentions_the_frame_preview():
     grader rejected something. Undocumented in Stack for its whole life."""
     b = _body("haoiii").lower()
     assert "click any row" in b, "the preview is not mentioned"
+
+
+def test_the_haoiii_help_does_not_claim_debayering_mixes_the_gases():
+    """The Siril/PixInsight argument for this tool is that demosaicing smears the
+    gases together. That is true of gradient-corrected demosaics, which infer red
+    and blue from the green gradient — and Nocturne deliberately does not use one
+    (see the BILINEAR ON PURPOSE block in core/fits_io.py; Malvar was reverted
+    2026-08-18). Bilinear never looks across colours, so there is no crosstalk
+    here for the tool to prevent, and the topic must not claim there is."""
+    import inspect
+    from nocturne.core import fits_io
+    src = inspect.getsource(fits_io)
+    assert "demosaicing_CFA_Bayer_bilinear" in src, (
+        "the demosaic changed — recheck whether the help's reasoning now holds")
+    b = _body("haoiii").lower()
+    assert "mixes the two together" not in b, (
+        "the help still claims debayering mixes Ha and OIII")

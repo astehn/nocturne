@@ -76,15 +76,38 @@ def _plane(cfa: np.ndarray, sites: list, shape: tuple) -> np.ndarray:
                    axis=0).astype(np.float32)
 
 
+# Green and blue both measure the same OIII line, so the OIII plane is a weighted
+# average of two estimates of one quantity — and the optimal weight for that is
+# the ratio of their SNR SQUARED, not an even split.
+#
+# Measured on 20-sub masters, green plane vs blue plane, SNR as (nebula - sky)/sky
+# noise:  M16 10.81 vs 5.39 (ratio 2.006), IC 1396A 8.28 vs 4.06 (ratio 2.039).
+# Squared, that predicts 4.02:1 and 4.16:1. Sweeping the weight found the optimum
+# at 4:1 on BOTH targets, so the constant is derived rather than fitted. The
+# plateau is broad — 3:1 to 6:1 all sit within 1% of the peak — and the even split
+# this replaced cost 26% of OIII SNR (M16 9.40 -> 11.79, IC 1396A 7.18 -> 9.09).
+#
+# Green beats blue by more than the sqrt(2) its extra CFA site would explain,
+# because blue also has lower QE toward 500.7nm.
+#
+# CAVEAT: both test sets are FILTER='LP', not dualband — the case this tool is
+# actually for. A dualband blue sees far less continuum, so the ratio could move.
+# Re-measure on dualband subs before trusting the exact value; the breadth of the
+# plateau is what makes 4:1 safe in the meantime.
+_OIII_GREEN_WEIGHT = 4.0
+
+
 def extract_cfa_planes(cfa: np.ndarray, pattern: str) -> tuple:
-    """(ha, oiii) full-res float32. Ha = red sites; OIII = (green + blue)/2,
-    each interpolated from where the sensor actually sampled it."""
+    """(ha, oiii) full-res float32. Ha = red sites; OIII = green and blue
+    combined by SNR, each interpolated from where the sensor actually sampled
+    it."""
     if cfa.ndim != 2:
         raise ValueError("extract_cfa_planes needs a 2D CFA frame")
     off = _site_offsets(pattern)
     shape = cfa.shape
     ha = _plane(cfa, off["R"], shape)
-    oiii = ((_plane(cfa, off["G"], shape) + _plane(cfa, off["B"], shape)) / 2.0)
+    w = _OIII_GREEN_WEIGHT
+    oiii = (w * _plane(cfa, off["G"], shape) + _plane(cfa, off["B"], shape)) / (w + 1.0)
     return ha, oiii.astype(np.float32)
 
 

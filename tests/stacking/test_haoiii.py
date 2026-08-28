@@ -3,6 +3,7 @@ import pytest
 from astropy.io import fits
 from nocturne.stacking.haoiii import (
     load_cfa, extract_cfa_planes, renorm_oiii, _site_offsets, _upsample_site,
+    _OIII_GREEN_WEIGHT,
 )
 from tests.stacking.synthetic import make_star_field, write_cfa_fits
 
@@ -24,7 +25,18 @@ def test_extract_cfa_planes_known_values():
     ha, oiii = extract_cfa_planes(cfa, "GRBG")
     assert ha.shape == (8, 8) and oiii.shape == (8, 8)
     assert np.allclose(ha, 0.8, atol=1e-4)              # Ha = red
-    assert np.allclose(oiii, 0.3, atol=1e-4)            # OIII = (G+B)/2 = 0.3
+    # OIII combines green and blue by SNR, not evenly
+    w = _OIII_GREEN_WEIGHT
+    assert np.allclose(oiii, (w * 0.4 + 0.2) / (w + 1.0), atol=1e-4)
+
+
+def test_the_oiii_green_weight_is_the_measured_one():
+    """Pinned by value, not just by formula: the test above would pass with any
+    weight at all, because it asks the code what it uses. 4:1 is SNR-squared
+    weighting — green measured 2.0x blue's SNR on both M16 and IC 1396A, and
+    sweeping confirmed the optimum at 4:1 on both, worth 26% of OIII SNR over
+    the even split. Changing it means re-measuring, not re-guessing."""
+    assert _OIII_GREEN_WEIGHT == 4.0
 
 
 def test_extract_cfa_planes_rejects_3d():
