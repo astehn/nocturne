@@ -23,11 +23,20 @@ def _check_cancel() -> None:
         tok.check()      # raises Cancelled if the user cancelled
 
 
-def master_header(ref_meta: dict, count: int, integ: float) -> dict:
+def master_header(ref_meta: dict, count: int, integ: float,
+                  trimmed: bool | None = None) -> dict:
     """FITS header for a written master: stack counts + the reference sub's
     astrometry cards (pointing + scale) and target, so the master plate-solves
-    like an original Seestar file instead of failing as a headerless image."""
+    like an original Seestar file instead of failing as a headerless image.
+
+    `trimmed` records the framing choice. Two masters of the same subs differ in
+    size by ~45% on a 56-minute alt-az run depending on that one checkbox, and
+    with nothing written down the only way to tell them apart is to remember —
+    which cost an afternoon on 2026-08-28.
+    """
     header = {"NSUBS": count, "STACKCNT": count, "EXPTIME": integ}
+    if trimmed is not None:
+        header["TRIMMED"] = bool(trimmed)
     header.update(ref_meta.get("solve_cards") or {})
     target = ref_meta.get("target")
     if target:
@@ -255,6 +264,7 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         metadata=master_metadata(ref_img.metadata, len(used), integ, cw, ch),
     )
     save_fits(image, opts.output_path,
-              header=master_header(ref_img.metadata, len(used), integ))
+              header=master_header(ref_img.metadata, len(used), integ,
+                                   trimmed=opts.autocrop))
     return StackResult(image, used, rejected, len(used), integ, opts.output_path,
                        peak)

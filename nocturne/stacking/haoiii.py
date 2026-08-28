@@ -6,12 +6,13 @@ import numpy as np
 from astropy.io import fits
 
 from ..core.export import save_fits
-from ..core.fits_io import _bayer_pattern, solve_cards_from_header
+from ..core.fits_io import _bayer_pattern, _parse_metadata
 from ..core.image import AstroImage
 from .coverage import full_coverage_bounds
 from .integrate import average_integrate, sigma_clip_integrate
 from .parallel import ordered_results, plan_workers
 from .register import RegistrationError, find_transform, warp_with_validity
+from .stacker import master_header
 
 
 def load_cfa(path: str) -> tuple:
@@ -274,9 +275,11 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
         is_linear=True,
         metadata={"frames": len(used), "exposure": integ, "width": cw, "height": ch},
     )
-    header = {"NSUBS": len(used), "STACKCNT": len(used), "EXPTIME": integ}
-    header.update(solve_cards_from_header(ref_header))       # pointing + scale, for solving
-    if ref_header.get("OBJECT"):
-        header["OBJECT"] = ref_header["OBJECT"]
+    # Same helper the normal stacker uses, so the two masters carry the same
+    # provenance by construction. Hand-rolling it here dropped FILTER and
+    # INSTRUME, which left a reloaded Ha/OIII master unable to name its own
+    # camera or filter while a normal stack of the same subs could.
+    ref_meta = _parse_metadata(ref_header, *ref_shape)
+    header = master_header(ref_meta, len(used), integ, trimmed=opts.autocrop)
     save_fits(image, opts.output_path, header=header)
     return HaOIIIResult(image, used, rejected, len(used), integ, opts.output_path)

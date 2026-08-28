@@ -320,3 +320,38 @@ def test_averaging_both_greens_actually_lowers_the_noise():
     assert oiii.std() < 0.85 * single.std(), (
         f"OIII noise {oiii.std():.3f} vs a single green site {single.std():.3f} — "
         "combining the sites is not buying anything")
+
+
+def test_the_master_names_its_camera_and_filter_like_a_normal_stack():
+    """A Ha/OIII master dropped FILTER and INSTRUME while a normal stack of the
+    same subs kept both, so a reloaded extract could not say what camera or
+    filter made it — and Nocturne identifies the instrument from that header.
+    The cause was a hand-rolled header beside a perfectly good master_header();
+    pin the two together so they cannot drift apart again."""
+    import inspect
+    from nocturne.stacking import haoiii
+    from nocturne.stacking.stacker import master_header
+
+    src = inspect.getsource(haoiii.run_haoiii_extract)
+    assert "master_header(" in src, "the extractor is hand-rolling its header again"
+
+    meta = {"solve_cards": {"RA": 275.1, "DEC": -13.8}, "target": "M 16",
+            "filter": "LP", "instrument": "ZWO Seestar S30 Pro"}
+    h = master_header(meta, 333, 3330.0, trimmed=True)
+    for card in ("FILTER", "INSTRUME", "OBJECT", "STACKCNT", "EXPTIME", "TRIMMED"):
+        assert card in h, f"{card} is missing from a written master"
+    assert h["FILTER"] == "LP" and h["INSTRUME"] == "ZWO Seestar S30 Pro"
+
+
+def test_the_master_records_whether_it_was_trimmed(tmp_path):
+    """Two masters of the same subs differ by ~45% in height depending on one
+    checkbox, and nothing on disk said which was which — that is what made two
+    of Andreas's masters look inexplicably different on 2026-08-28."""
+    from astropy.io import fits
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path)
+    for flag in (True, False):
+        out = tmp_path / f"m_{flag}.fits"
+        run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, str(out), autocrop=flag))
+        assert bool(fits.getheader(out)["TRIMMED"]) is flag, (
+            f"a master built with autocrop={flag} does not say so")
