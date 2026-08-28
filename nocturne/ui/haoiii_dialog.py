@@ -6,13 +6,15 @@ import os
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QRadioButton, QTableWidget,
+    QLineEdit, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..settings import start_dir
 from ..stacking.grade import grade_frames, judge
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+from .frame_preview import FramePreview
+from .frame_preview_controller import FramePreviewController
 from .worker import run_async
 from . import file_dialogs
 
@@ -106,6 +108,15 @@ class HaOIIIDialog(QDialog):
         self.kappa_box.setToolTip(
             "How far a pixel may stray before it is discarded. High rejects the most "
             "and is the one to reach for when trails survive; Low keeps more signal.")
+        self.preview = FramePreview()
+        self.preview.setMinimumSize(300, 220)
+        self._preview_ctl = FramePreviewController(
+            self.preview, self._pool,
+            lambda row: (self._stats[row].path
+                         if self._stats and 0 <= row < len(self._stats) else None))
+        self.table.currentCellChanged.connect(
+            lambda row, _c, _pr, _pc: self._preview_ctl.show_row(row))
+
         self.progress = QProgressBar()
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -150,10 +161,18 @@ class HaOIIIDialog(QDialog):
         buttons.addWidget(self._stack_btn)
         buttons.addWidget(close_btn)
 
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.addWidget(self.table)
+        self.splitter.addWidget(self.preview)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)   # preview absorbs extra width
+        self.splitter.setSizes([600, 500])
+        self.splitter.setChildrenCollapsible(False)
+
         root = QVBoxLayout(self)
         root.addWidget(self.blurb)
         root.addLayout(form)
-        root.addWidget(self.table)
+        root.addWidget(self.splitter)
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
@@ -219,6 +238,7 @@ class HaOIIIDialog(QDialog):
             self._updating_table = False
         kept = sum(1 for s in stats if s.included)
         self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
+        self._preview_ctl.resync(self.table.currentRow())
 
     def _fill_table(self, stats) -> None:
         self.table.setRowCount(len(stats))

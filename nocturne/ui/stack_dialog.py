@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import os
-from collections import OrderedDict
-
-import numpy as np
 
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QCheckBox, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
@@ -14,16 +11,16 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ..core.autostretch import unlinked_stretch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
-from ..stacking.frames import discover_subs, load_sub
+from ..stacking.frames import discover_subs
 from ..stacking.grade import pick_reference, grade_frames, judge
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
 from .frame_preview import FramePreview
+from .frame_preview_controller import FramePreviewController
 from .worker import run_async
 from . import file_dialogs
 
@@ -32,7 +29,6 @@ KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 # because it was a bare 5 in two places and adding the Round column moved it —
 # a literal index would have written verdicts into the Bg cell.
 _VERDICT_COL = 6
-PREVIEW_CACHE_LIMIT = 4   # full-res QImages (~24 MB each) — small LRU
 
 
 class _Signals(QObject):
@@ -107,9 +103,10 @@ class StackDialog(QDialog):
         self.preview = FramePreview()
         self.preview.setMinimumSize(300, 220)
 
-        self._preview_cache: OrderedDict[str, QImage] = OrderedDict()
-        self._preview_wanted = ""            # stale-result guard
-        self._preview_loader = self._load_preview_array   # injectable for tests
+        self._preview_ctl = FramePreviewController(
+            self.preview, self._pool,
+            lambda row: (self._stats[row].path
+                         if self._stats and 0 <= row < len(self._stats) else None))
         self.table.currentCellChanged.connect(
             lambda row, _c, _pr, _pc: self._show_preview(row))
 
@@ -327,16 +324,29 @@ class StackDialog(QDialog):
         self._auto_output_path()
         self._resync_preview()
 
+    # The preview machinery moved to FramePreviewController so Ha/OIII could have
+    # it too; these keep the dialog's own surface unchanged.
+    @property
+    def _preview_cache(self):
+        return self._preview_ctl.cache
+
+    @property
+    def _preview_loader(self):
+        return self._preview_ctl.loader
+
+    @_preview_loader.setter
+    def _preview_loader(self, fn):
+        self._preview_ctl.loader = fn
+
+    @property
+    def _preview_wanted(self):
+        return self._preview_ctl.wanted
+
+    def _show_preview(self, row: int) -> None:
+        self._preview_ctl.show_row(row)
+
     def _resync_preview(self) -> None:
-        """Re-grading can repopulate the table without moving the current cell
-        (currentCellChanged won't fire), so explicitly resync the preview to
-        whatever the current row now shows — or clear it if there is none."""
-        row = self.table.currentRow()
-        if 0 <= row < len(self._stats):
-            self._show_preview(row)
-        else:
-            self._preview_wanted = ""
-            self.preview.clear()
+        self._preview_ctl.resync(self.table.currentRow())
 
     def _on_item_changed(self, item) -> None:
         if self._updating_table or item.column() != 0:
@@ -421,51 +431,6 @@ class StackDialog(QDialog):
         if 0 < usable < 5:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
-
-    # --- preview ---
-    @staticmethod
-    def _load_preview_array(path: str) -> np.ndarray:
-        """Full-res, cast-neutral RGB array for a sub. Unlinked stretch so the
-        sky lands neutral grey whatever the LP/twilight cast; full resolution
-        so 1:1 zoom shows real star shapes."""
-        return unlinked_stretch(load_sub(path).data)
-
-    def _show_preview(self, row: int) -> None:
-        if not self._stats or not (0 <= row < len(self._stats)):
-            return
-        path = self._stats[row].path
-        self._preview_wanted = path
-        cached = self._preview_cache.get(path)
-        if cached is not None:
-            self._preview_cache.move_to_end(path)
-            self.preview.show_image(cached)
-            return
-        loader = self._preview_loader
-
-        def work():
-            return path, loader(path)
-
-        run_async(self._pool, work, self._on_preview,
-                  lambda exc: self._on_preview_error(path, exc))
-
-    def _on_preview(self, result) -> None:
-        path, arr = result
-        arr8 = (np.clip(arr, 0.0, 1.0) * 255).astype(np.uint8)
-        if arr8.ndim == 2:
-            arr8 = np.stack([arr8] * 3, axis=2)
-        arr8 = np.ascontiguousarray(arr8)
-        h, w = arr8.shape[:2]
-        image = QImage(arr8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-        self._preview_cache[path] = image
-        self._preview_cache.move_to_end(path)
-        while len(self._preview_cache) > PREVIEW_CACHE_LIMIT:
-            self._preview_cache.popitem(last=False)
-        if path == self._preview_wanted:
-            self.preview.show_image(image)
-
-    def _on_preview_error(self, path, exc) -> None:
-        if path == self._preview_wanted:
-            self.preview.show_message("Preview failed:\ncould not read frame")
 
     # --- run ---
     def _included_paths_best_first(self) -> list:

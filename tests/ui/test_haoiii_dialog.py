@@ -168,3 +168,53 @@ def test_strictness_moved_while_grading_is_honoured(qtbot):
     kept = sum(1 for r in range(d.table.rowCount())
                if d.table.item(r, 0).checkState() == Qt.CheckState.Checked)
     assert kept == 8, f"table must show the Strict verdict, showed {kept} of 10 kept"
+
+
+def test_selecting_a_row_previews_that_frame(qtbot):
+    """Andreas: "frame previews does not seem to work" — they did not exist here.
+    Stack has had one since it was written; Ha/OIII showed the same graded subs
+    next to an empty panel, which reads as broken rather than absent."""
+    import numpy as np
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    asked = []
+    d._preview_ctl.loader = lambda p: (asked.append(p),
+                                       np.zeros((8, 8, 3), np.float32))[1]
+    d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(3)])
+    d.table.setCurrentCell(1, 0)
+    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
+    assert asked == ["/x/1.fit"], f"previewed {asked}, wanted the selected row"
+
+
+def test_the_preview_sits_beside_the_table_in_a_splitter(qtbot):
+    """The empty area right of the table in the screenshot was unclaimed space.
+    It belongs to the preview, and the preview takes the extra width."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    assert d.splitter.count() == 2
+    assert d.splitter.widget(0) is d.table
+    assert d.splitter.widget(1) is d.preview
+    assert not d.splitter.childrenCollapsible(), "neither side may collapse to nothing"
+
+
+def test_changing_strictness_does_not_disturb_the_preview(qtbot):
+    """Re-thresholding rewrites every checkbox but not the frame list, so the
+    preview must keep showing the row the user is on rather than reload or clear."""
+    import numpy as np
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    loads = []
+    d._preview_ctl.loader = lambda p: (loads.append(p),
+                                       np.zeros((8, 8, 3), np.float32))[1]
+    fwhms = [3.0, 3.3, 2.7, 3.1, 2.9, 3.0, 3.2, 3.5, 3.75, 4.1]
+    from nocturne.stacking.grade import FrameStats
+    d._on_graded([FrameStats(path=f"/x/{i}.fit", star_count=100, fwhm=f,
+                             background=0.10, score=1.0, included=True)
+                  for i, f in enumerate(fwhms)])
+    d.table.setCurrentCell(2, 0)
+    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
+    before = list(loads)
+    d.strictness_box.setCurrentText("Strict")
+    qtbot.wait(50)
+    assert loads == before, f"strictness reloaded the preview: {loads[len(before):]}"
+    assert d.preview.has_image(), "and it must still be showing"
