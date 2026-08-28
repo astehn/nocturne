@@ -355,3 +355,83 @@ def test_the_master_records_whether_it_was_trimmed(tmp_path):
         run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, str(out), autocrop=flag))
         assert bool(fits.getheader(out)["TRIMMED"]) is flag, (
             f"a master built with autocrop={flag} does not say so")
+
+
+def test_channel_files_are_written_only_when_asked(tmp_path):
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract, channel_paths
+    import os
+    paths = _cfa_subs(tmp_path)
+    out = str(tmp_path / "m.fits")
+    run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, out))
+    assert not any(os.path.exists(p) for p in channel_paths(out)), \
+        "channel files appeared without being asked for"
+    run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, out, write_channels=True))
+    for p in channel_paths(out):
+        assert os.path.exists(p), f"{p} was not written"
+
+
+def test_channel_files_are_mono_and_keep_the_true_gas_ratio(tmp_path):
+    """Un-equalised is the whole point: OIII is genuinely fainter than Ha, and
+    the recombiner decides the lift. renorm_oiii forces the two to the same
+    median and spread, so if the fit leaked into these files the ratio would
+    read 1.0 and could never be recovered."""
+    from astropy.io import fits
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract, channel_paths
+    paths = _cfa_subs(tmp_path)
+    out = str(tmp_path / "m.fits")
+    r = run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, out, write_channels=True))
+    ha_path, oiii_path = channel_paths(out)
+    ha, oiii = fits.getdata(ha_path), fits.getdata(oiii_path)
+    assert ha.ndim == 2 and oiii.ndim == 2, "each gas must be a mono plane"
+    assert ha.shape == r.image.data.shape[:2], "channel files must match the master's framing"
+
+    def mad(x):
+        return float(np.median(np.abs(x - np.median(x))))
+    # the master's two gases are forced to the same spread; these must not be
+    assert mad(r.image.data[..., 0]) == pytest.approx(mad(r.image.data[..., 1]), rel=0.02)
+    assert mad(oiii) != pytest.approx(mad(ha), rel=0.02), \
+        "the OIII file has been equalised to Ha — the real ratio is lost"
+
+
+def test_a_written_channel_file_is_not_mistaken_for_a_raw_sub(tmp_path):
+    """The trap this feature walks into: a mono master is NAXIS=2, the same
+    shape as a raw CFA sub. Ungarded, the next grading run would take one as a
+    frame — and a stacked image is full of sharp stars, so it could grade BEST
+    and become the registration reference, then be Bayer-split into nonsense."""
+    from nocturne.core.fits_io import is_stacked_master
+    from nocturne.stacking.grade import grade_frame
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract, channel_paths
+    paths = _cfa_subs(tmp_path)
+    out = str(tmp_path / "m.fits")
+    run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, out, write_channels=True))
+    for p in channel_paths(out) + (out,):
+        assert is_stacked_master(p), f"{p} would be graded as a raw sub"
+        s = grade_frame(p)
+        assert not s.included and s.error, f"the grader accepted {p} as a frame"
+    # and a genuine raw sub is still a raw sub
+    assert not is_stacked_master(paths[0])
+    assert grade_frame(paths[0]).star_count > 0
+
+
+def test_channel_files_share_one_scale_so_the_gas_ratio_survives(tmp_path):
+    """Both planes must be divided by the SAME number. Scaling each by its own
+    peak would land both at 1.0 and silently destroy the Ha:OIII ratio — the one
+    quantity these files exist to carry, and the one you cannot recover
+    afterwards. A mutation doing exactly that passed every other test here.
+    """
+    from astropy.io import fits
+    from nocturne.stacking.haoiii import _write_channel_files, channel_paths
+
+    ha = np.full((8, 8), 0.80, np.float32)
+    ha[0, 0] = 1.0                      # a star, so the two planes peak differently
+    oiii = np.full((8, 8), 0.20, np.float32)
+    out = str(tmp_path / "m.fits")
+    _write_channel_files(ha, oiii, {"STACKCNT": 3}, out)
+
+    ha_path, oiii_path = channel_paths(out)
+    a, b = fits.getdata(ha_path), fits.getdata(oiii_path)
+    assert float(np.median(a)) / float(np.median(b)) == pytest.approx(0.80 / 0.20, rel=1e-3), (
+        f"ratio came out {np.median(a)/np.median(b):.3f}, should be 4.0 — "
+        "the planes were scaled independently")
+    assert a.max() <= 1.0 and b.max() <= 1.0, "both must still fit in [0, 1]"
+    assert b.max() < 0.9, "OIII must stay as faint as it really is, not be stretched to fill"

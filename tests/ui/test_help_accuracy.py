@@ -1346,3 +1346,15 @@ def test_the_haoiii_help_does_not_claim_debayering_mixes_the_gases():
     b = _body("haoiii").lower()
     assert "mixes the two together" not in b, (
         "the help still claims debayering mixes Ha and OIII")
+
+
+def test_the_haoiii_help_covers_the_separate_channel_files():
+    """A control the help does not mention is a control a beginner will not find
+    — and this one changes what lands in their folder."""
+    from nocturne.settings import Settings
+    from nocturne.ui.haoiii_dialog import HaOIIIDialog
+    b = _body("haoiii")
+    d = HaOIIIDialog(Settings())
+    assert d.channels_check.text() in b, "the checkbox label is not in the help"
+    assert "un-equalised" in b.lower(), "the help does not say the files are un-equalised"
+    assert "ratio survives" in b.lower(), "the help does not explain the shared scale"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -143,6 +145,7 @@ class HaOIIIOptions:
     include: list        # sub paths, best-first; include[0] is the reference
     output_path: str
     autocrop: bool = True
+    write_channels: bool = False
 
 
 @dataclass
@@ -153,6 +156,33 @@ class HaOIIIResult:
     frame_count: int
     integration_seconds: float
     output_path: str
+
+
+def channel_paths(output_path: str) -> tuple:
+    """(<stem>_Ha.fits, <stem>_OIII.fits) beside the master."""
+    stem = os.path.splitext(output_path)[0]
+    return f"{stem}_Ha.fits", f"{stem}_OIII.fits"
+
+
+def _write_channel_files(ha, oiii, header: dict, output_path: str) -> None:
+    """Write each gas as its own mono master, UN-EQUALISED.
+
+    The point of separate files is to recombine them yourself, so they hold what
+    was actually measured: OIII really is fainter than Ha here, as it is on the
+    sky, and renorm_oiii's lift is a decision the recombiner should get to make.
+    Both are divided by the SAME peak, so the Ha:OIII ratio — the one thing you
+    cannot recover once it is gone — survives the trip to [0, 1].
+
+    They carry STACKCNT like any master, which is what stops the grader reading
+    them back as raw subs (see is_stacked_master).
+    """
+    peak = float(max(ha.max(), oiii.max())) or 1.0
+    ha_path, oiii_path = channel_paths(output_path)
+    for path, plane, gas in ((ha_path, ha, "Ha"), (oiii_path, oiii, "OIII")):
+        cards = dict(header)
+        cards["GAS"] = gas          # which line this plane holds
+        save_fits(AstroImage((plane / peak).astype(np.float32), is_linear=True),
+                  path, header=cards)
 
 
 def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult:
@@ -259,12 +289,13 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     top, bottom, left, right = full_coverage_bounds(coverage, len(used))
     core = (slice(top, bottom), slice(left, right))
     fit = oiii_fit(ha_master[core], oiii_master[core])
-    oiii_master = apply_oiii_fit(oiii_master, fit)
+    oiii_matched = apply_oiii_fit(oiii_master, fit)
     if opts.autocrop:
         ha_master = ha_master[core]
         oiii_master = oiii_master[core]
+        oiii_matched = oiii_matched[core]
 
-    rgb = np.stack([ha_master, oiii_master, oiii_master], axis=2).astype(np.float32)
+    rgb = np.stack([ha_master, oiii_matched, oiii_matched], axis=2).astype(np.float32)
     peak = float(rgb.max())
     if peak > 0:
         rgb = rgb / peak
@@ -282,4 +313,6 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     ref_meta = _parse_metadata(ref_header, *ref_shape)
     header = master_header(ref_meta, len(used), integ, trimmed=opts.autocrop)
     save_fits(image, opts.output_path, header=header)
+    if opts.write_channels:
+        _write_channel_files(ha_master, oiii_master, header, opts.output_path)
     return HaOIIIResult(image, used, rejected, len(used), integ, opts.output_path)

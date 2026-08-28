@@ -297,3 +297,21 @@ def test_the_verdict_follows_the_strictness_you_choose(qtbot):
         verdict = d.table.item(row, 6).text()
         assert ticked == (verdict == "OK"), (
             f"row {row}: ticked={ticked} but verdict says {verdict!r}")
+
+
+def test_separate_channel_files_are_opt_in(qtbot, tmp_path):
+    """Off by default: most people want the master and nothing else, and these
+    land in the folder the grader reads."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    assert not d.channels_check.isChecked()
+    assert d.channels_check.toolTip()
+    captured = {}
+    d._extract_runner = lambda opts, **kw: (captured.setdefault("opts", opts),
+                                            _FakeResult())[1]
+    d.output_edit.setText(str(tmp_path / "m.fits"))
+    d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(4)])
+    d.channels_check.setChecked(True)
+    d.run()
+    qtbot.waitUntil(lambda: "opts" in captured, timeout=3000)
+    assert captured["opts"].write_channels is True

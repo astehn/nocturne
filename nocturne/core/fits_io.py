@@ -321,14 +321,28 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
 
 
 def is_stacked_master(path: str) -> bool:
-    """True if `path` is already a 3-plane RGB FITS cube (NAXIS=3) — e.g. a
-    previously written stacked master — as opposed to a raw single-plane
-    Bayer sub (NAXIS=2). Checked from the header only, before any debayer:
-    load_fits demosaics 2D Bayer data into a 3-channel array too, so
-    AstroImage.data.ndim is 3 for both a master AND a debayered raw sub —
-    only the on-disk NAXIS distinguishes them."""
+    """True if `path` is something already stacked rather than a raw sub.
+
+    Checked from the header only, before any debayer: load_fits demosaics 2D
+    Bayer data into a 3-channel array too, so AstroImage.data.ndim is 3 for both
+    a master AND a debayered raw sub — only the on-disk header distinguishes
+    them.
+
+    A colour master is NAXIS=3, which used to be the whole test. That is not
+    enough now the extractor can write single-gas Ha and OIII masters: those are
+    MONO, so NAXIS=2, and a mono master is shaped exactly like a raw CFA sub.
+    Left undetected one would be graded as a sub, and since a stacked frame is
+    full of sharp stars it could grade best and become the registration
+    reference — then _bayer_pattern would fall back to the instrument default
+    and Bayer-split a finished image into nonsense, silently.
+
+    STACKCNT is the discriminator: every master Nocturne writes carries it (see
+    master_header) and no raw sub does — verified against real Seestar subs,
+    whose headers have no such card.
+    """
     with fits.open(path) as hdul:
-        return int(hdul[0].header.get("NAXIS", 0)) == 3
+        header = hdul[0].header
+        return int(header.get("NAXIS", 0)) == 3 or "STACKCNT" in header
 
 
 def load_master(path: str) -> AstroImage:

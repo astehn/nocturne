@@ -90,6 +90,11 @@ class HaOIIIDialog(QDialog):
             "Frames drift between exposures, so the border is covered by only some of "
             "them. Trimming cuts back to where every frame contributed; untick it to "
             "keep those thinner pixels.")
+        self.channels_check = QCheckBox("Also write separate Ha and OIII files")
+        self.channels_check.setToolTip(
+            "Writes each gas as its own mono FITS beside the master, un-equalised "
+            "— OIII stays as faint as it really is, so you choose the balance when "
+            "you recombine them. For taking the channels into another tool.")
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
@@ -164,6 +169,7 @@ class HaOIIIDialog(QDialog):
         crop_wrap = QWidget()
         crop_wrap.setLayout(crop_row)
         form.addRow("Framing", crop_wrap)
+        form.addRow("", self.channels_check)
 
         self._stack_btn = QPushButton("Extract")
         self._stack_btn.setObjectName("primary")
@@ -345,7 +351,8 @@ class HaOIIIDialog(QDialog):
         method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
         opts = HaOIIIOptions(method, KAPPA[self.kappa_box.currentText()],
                              include, self.output_edit.text().strip(),
-                             autocrop=self.crop_check.isChecked())
+                             autocrop=self.crop_check.isChecked(),
+                             write_channels=self.channels_check.isChecked())
         runner = self._extract_runner
         self.status.setText("Extracting…")
         self._set_busy(True)
