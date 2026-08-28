@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 from nocturne.stacking.haoiii import (
-    load_cfa, extract_cfa_planes, renorm_oiii, _site_offsets,
+    load_cfa, extract_cfa_planes, renorm_oiii, _site_offsets, _upsample_site,
 )
 from tests.stacking.synthetic import make_star_field, write_cfa_fits
 
@@ -196,3 +196,115 @@ def test_the_oiii_fit_is_measured_where_every_frame_contributed(tmp_path):
         "average", 2.5, paths, str(tmp_path / "m.fits"), autocrop=True)).image.data
     gap = abs(float(np.median(master[..., 0])) - float(np.median(master[..., 1])))
     assert gap < 1e-5, f"OIII median must land on Ha's, off by {gap:.6f}"
+
+
+def _centroid(a):
+    """Intensity-weighted centre, in pixels."""
+    a = np.clip(a.astype(np.float64) - np.median(a), 0, None)
+    rows, cols = np.indices(a.shape)
+    tot = a.sum()
+    return (float((rows * a).sum() / tot), float((cols * a).sum() / tot))
+
+
+def test_ha_and_oiii_land_on_the_same_pixels():
+    """Ha comes off the red sites, OIII off the green and blue ones, and in a
+    GRBG tile those sit at (0,1), (0,0)+(1,1) and (1,0) — three differently
+    offset grids. Decimating each to half res and resizing them all onto the
+    full frame the same way put the two gases about 1px apart: predicted (0.75,
+    0.75) from the tile geometry, measured (0.84, 1.02) on two 20-sub M16
+    masters. A star was landing in a different place depending on which gas you
+    looked at, which is colour fringing and lost sharpness on every frame.
+
+    A grey scene samples identically at every site, so whatever Ha reconstructs
+    OIII must reconstruct in the same place.
+    """
+    yy, xx = np.mgrid[0:120, 0:120]
+    scene = np.exp(-(((yy - 60.3) ** 2 + (xx - 59.7) ** 2) / (2 * 2.5 ** 2)))
+    scene = (scene * 1000 + 10).astype(np.float32)
+
+    ha, oiii = extract_cfa_planes(scene, "GRBG")
+    hr, hc = _centroid(ha)
+    orow, ocol = _centroid(oiii)
+    assert abs(hr - orow) < 0.10 and abs(hc - ocol) < 0.10, (
+        f"Ha at ({hr:.3f}, {hc:.3f}) but OIII at ({orow:.3f}, {ocol:.3f}) — "
+        f"offset ({hr-orow:+.3f}, {hc-ocol:+.3f}) px")
+
+
+def test_each_gas_lands_where_the_scene_actually_is():
+    """Aligned with each other is necessary but not sufficient — both could be
+    shifted together off the true position, which would misalign the master
+    against a plate solve and against any other stack of the same subs."""
+    yy, xx = np.mgrid[0:120, 0:120]
+    scene = np.exp(-(((yy - 60.3) ** 2 + (xx - 59.7) ** 2) / (2 * 2.5 ** 2)))
+    scene = (scene * 1000 + 10).astype(np.float32)
+    truth = _centroid(scene)
+
+    ha, oiii = extract_cfa_planes(scene, "GRBG")
+    for name, plane in (("Ha", ha), ("OIII", oiii)):
+        r, c = _centroid(plane)
+        assert abs(r - truth[0]) < 0.15 and abs(c - truth[1]) < 0.15, (
+            f"{name} centred ({r:.3f}, {c:.3f}), scene is at "
+            f"({truth[0]:.3f}, {truth[1]:.3f})")
+
+
+def test_the_separable_upsample_matches_a_general_interpolator():
+    """_lerp_axis is an optimisation: two 1D passes standing in for a 2D
+    map_coordinates, worth 2.8x. Pin it to the reference so a future tweak
+    cannot quietly change the interpolation the masters are built from."""
+    from scipy.ndimage import map_coordinates
+    from nocturne.stacking.haoiii import _upsample_site
+
+    rng = np.random.default_rng(3)
+    cfa = rng.random((64, 48)).astype(np.float32) * 1000
+    for r, c in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        sub = cfa[r::2, c::2]
+        rows = (np.arange(cfa.shape[0], dtype=np.float32) - r) / 2.0
+        cols = (np.arange(cfa.shape[1], dtype=np.float32) - c) / 2.0
+        reference = map_coordinates(
+            sub, np.array(np.meshgrid(rows, cols, indexing="ij")),
+            order=1, mode="nearest")
+        assert np.allclose(_upsample_site(cfa, r, c, cfa.shape), reference,
+                           atol=1e-4), f"site ({r},{c}) diverges from the reference"
+
+
+def test_oiii_uses_every_green_site_not_just_one():
+    """A GRBG tile has two green sites, and using both is what halves the green
+    noise. Dropping one passed the whole suite: alignment tests still pass on a
+    single sub-plane, because one green site is just as well-aligned as two.
+    Poke each site in turn and require the output to notice."""
+    from nocturne.stacking.haoiii import _site_offsets
+    off = _site_offsets("GRBG")
+    assert len(off["G"]) == 2, "fixture assumes the two-green Bayer tile"
+
+    for site in off["G"]:
+        cfa = np.zeros((32, 32), np.float32)
+        r, c = site
+        cfa[10 * 2 + r, 10 * 2 + c] = 1000.0     # one sample, at this green site
+        _, oiii = extract_cfa_planes(cfa, "GRBG")
+        assert oiii.max() > 0, f"green site {site} never reaches the OIII plane"
+
+    cfa = np.zeros((32, 32), np.float32)
+    br, bc = off["B"][0]
+    cfa[10 * 2 + br, 10 * 2 + bc] = 1000.0
+    _, oiii = extract_cfa_planes(cfa, "GRBG")
+    assert oiii.max() > 0, "the blue site never reaches the OIII plane"
+
+    cfa = np.zeros((32, 32), np.float32)
+    rr, rc = off["R"][0]
+    cfa[10 * 2 + rr, 10 * 2 + rc] = 1000.0
+    ha, oiii = extract_cfa_planes(cfa, "GRBG")
+    assert ha.max() > 0, "the red site never reaches the Ha plane"
+    assert oiii.max() == 0, "red must not leak into OIII — that is the whole point"
+
+
+def test_averaging_both_greens_actually_lowers_the_noise():
+    """The structural test above proves both greens are read; this proves that
+    reading both is worth something. Two independent samples averaged should cut
+    the standard deviation by about root two."""
+    rng = np.random.default_rng(11)
+    cfa = rng.normal(100.0, 10.0, (256, 256)).astype(np.float32)
+    _, oiii = extract_cfa_planes(cfa, "GRBG")
+    single = _upsample_site(cfa, 0, 0, cfa.shape)      # one green site alone
+    assert oiii.std() < 0.85 * single.std(), (
+        f"OIII noise {oiii.std():.3f} vs a single green site {single.std():.3f} — "
+        "combining the sites is not buying anything")
