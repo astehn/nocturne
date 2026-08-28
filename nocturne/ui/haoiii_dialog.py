@@ -4,19 +4,24 @@ import glob
 import os
 
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
+    QHeaderView, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSplitter,
+    QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..settings import start_dir
 from ..stacking.grade import grade_frames, judge
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
 from .worker import run_async
 from . import file_dialogs
+
+_VERDICT_COL = 6
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 
@@ -85,11 +90,19 @@ class HaOIIIDialog(QDialog):
             "Frames drift between exposures, so the border is covered by only some of "
             "them. Trimming cuts back to where every frame contributed; untick it to "
             "keep those thinner pixels.")
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Use", "File", "Stars", "FWHM", "Bg"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(
+            ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
+        hdr = self.table.horizontalHeader()
+        for col in (0, 2, 3, 4, 5):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        for col in (1, _VERDICT_COL):         # File and Verdict share the slack
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
         self.table.setToolTip(
             "One row per sub: how many stars it showed, how sharp they were (FWHM, "
-            "lower is better) and how bright the sky was. Untick a frame to leave it out.")
+            "lower is better), how round (1.00 is circular, higher is trailed) and how "
+            "bright the sky was. Verdict says why a frame was left out. Untick a frame "
+            "to leave it out yourself.")
         self._user_touched: set = set()
         self._updating_table = False
         self.table.itemChanged.connect(self._on_item_changed)
@@ -240,6 +253,32 @@ class HaOIIIDialog(QDialog):
         self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
         self._preview_ctl.resync(self.table.currentRow())
 
+    @staticmethod
+    def _cell(text: str) -> QTableWidgetItem:
+        it = QTableWidgetItem(text)
+        it.setToolTip(text)                   # verdicts outrun the column width
+        return it
+
+    @staticmethod
+    def _verdict_text(s) -> str:
+        if s.reason:
+            return s.reason
+        if s.warning:
+            return s.warning
+        return "OK"
+
+    def _tint_row(self, row: int, s) -> None:
+        default = QColor(theme.TEXT)
+        colour = None
+        if s.reason:
+            colour = QColor(theme.TEXT_FAINT)   # rejected: dimmed
+        elif s.warning:
+            colour = QColor(theme.WARNING)      # kept with warning: amber
+        for col in range(1, self.table.columnCount()):
+            item = self.table.item(row, col)
+            if item is not None:
+                item.setForeground(colour if colour is not None else default)
+
     def _fill_table(self, stats) -> None:
         self.table.setRowCount(len(stats))
         for row, s in enumerate(stats):
@@ -247,10 +286,15 @@ class HaOIIIDialog(QDialog):
             check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
             self.table.setItem(row, 0, check)
-            self.table.setItem(row, 1, QTableWidgetItem(os.path.basename(s.path)))
-            self.table.setItem(row, 2, QTableWidgetItem(str(s.star_count)))
-            self.table.setItem(row, 3, QTableWidgetItem(f"{s.fwhm:.1f}"))
-            self.table.setItem(row, 4, QTableWidgetItem(f"{s.background:.3f}"))
+            self.table.setItem(row, 1, self._cell(os.path.basename(s.path)))
+            self.table.setItem(row, 2, self._cell(str(s.star_count)))
+            self.table.setItem(row, 3, self._cell(f"{s.fwhm:.1f}"))
+            # "Round" is elongation: 1.00 is circular, higher is trailed. Shown
+            # because a "stars trailed" rejection is unreadable without it.
+            self.table.setItem(row, 4, self._cell(f"{s.elongation:.2f}"))
+            self.table.setItem(row, 5, self._cell(f"{s.background:.3f}"))
+            self.table.setItem(row, _VERDICT_COL, self._cell(self._verdict_text(s)))
+            self._tint_row(row, s)
 
     def _on_item_changed(self, item) -> None:
         if not self._updating_table and item.column() == 0:
@@ -271,6 +315,8 @@ class HaOIIIDialog(QDialog):
                 else:
                     self.table.item(row, 0).setCheckState(
                         Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
+                self.table.item(row, _VERDICT_COL).setText(self._verdict_text(s))
+                self._tint_row(row, s)
         finally:
             self._updating_table = False
         kept = sum(1 for s in self._stats if s.included)

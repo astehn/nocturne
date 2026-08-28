@@ -1289,3 +1289,25 @@ def test_the_haoiii_help_describes_one_stacking_pass_not_two():
     body = TOPICS["haoiii"].body.lower()
     assert "stacking ha + oiii" in body, "the progress label in the help is the old one"
     assert "<b>stacking oiii</b>" not in body, "the help still names a separate OIII pass"
+
+
+def test_the_haoiii_help_describes_every_column_the_table_shows():
+    """The topic listed three columns while the table grew to six. Pin the help
+    to the header the dialog actually builds, so a new column cannot ship
+    undocumented the way Round and Verdict nearly did."""
+    from nocturne.settings import Settings
+    from nocturne.ui.haoiii_dialog import HaOIIIDialog
+    b = _body("haoiii")
+    d = HaOIIIDialog(Settings())
+    headers = [d.table.horizontalHeaderItem(c).text()
+               for c in range(d.table.columnCount())]
+    assert headers == ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"]
+    for col in ("Stars", "FWHM", "Round", "Bg", "Verdict"):
+        assert f"<b>{col}</b>" in b, f"the {col} column is not explained"
+
+
+def test_the_haoiii_help_mentions_the_frame_preview():
+    """Clicking a row shows the frame — the only way to see for yourself why the
+    grader rejected something. Undocumented in Stack for its whole life."""
+    b = _body("haoiii").lower()
+    assert "click any row" in b, "the preview is not mentioned"

@@ -2,6 +2,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats  # noqa: E402
 from nocturne.ui.haoiii_dialog import HaOIIIDialog  # noqa: E402
@@ -237,3 +238,62 @@ def test_the_frame_list_takes_the_extra_height_not_the_blurb(qtbot):
     natural = d.blurb.heightForWidth(d.blurb.width())
     assert d.blurb.height() <= natural + 12, (
         f"the blurb stretched to {d.blurb.height()}px, needs {natural}px")
+
+
+def test_a_rejected_frame_says_why(qtbot):
+    """The master Andreas had left in his subs folder showed as a row of zeros
+    with no reason given — the tool knew it was an already-stacked file and did
+    not say so. Stack has carried a Verdict column all along."""
+    from nocturne.stacking.grade import FrameStats
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    from nocturne.stacking.grade import REASON_NOT_RAW
+    # exactly what grade_frame() returns for a master sitting in the subs folder
+    stacked = FrameStats("/x/M16_314x10s.fit", 0, 0.0, 0.0, 0.0, False,
+                         reason_code="not_raw", reason=REASON_NOT_RAW, error=True)
+    good = _stats("/x/sub.fit", 1.0)
+    d._on_graded([stacked, good])
+    assert d.table.horizontalHeaderItem(6).text() == "Verdict"
+    assert d.table.item(0, 6).text() == REASON_NOT_RAW
+    assert d.table.item(1, 6).text() == "OK"
+    assert d.table.item(0, 6).toolTip(), "long verdicts must be readable on hover"
+
+
+def test_a_rejected_row_is_dimmed_and_a_warned_row_is_amber(qtbot):
+    """Colour is what makes a long list scannable — without it you have to read
+    every Verdict cell to find the frames that were dropped. Let the real grader
+    decide the verdicts rather than setting them by hand: judge() re-derives
+    them, so a hand-set reason would just be overwritten and prove nothing."""
+    from nocturne.stacking.grade import FrameStats
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    stats = [FrameStats(f"/x/{i}.fit", 100, 3.0, 0.10, 1.0, True) for i in range(8)]
+    stats.append(FrameStats("/x/bright.fit", 100, 3.0, 0.40, 0.8, True))  # bright sky
+    stats.append(FrameStats("/x/clouds.fit", 5, 3.0, 0.10, 0.1, True))    # few stars
+    d._on_graded(stats)
+    assert stats[9].reason and stats[8].warning, "fixture must produce both verdicts"
+
+    from nocturne.ui import theme
+    def colour(row):
+        return d.table.item(row, 1).foreground().color().name()
+    assert colour(9) == QColor(theme.TEXT_FAINT).name(), "rejected row must be dimmed"
+    assert colour(8) == QColor(theme.WARNING).name(), "warned row must be amber"
+    assert colour(0) == QColor(theme.TEXT).name(), "an ordinary row keeps normal text"
+
+
+def test_the_verdict_follows_the_strictness_you_choose(qtbot):
+    """Moving Strictness re-decides every frame. A checkbox that flips while the
+    Verdict beside it still reads OK is worse than no verdict at all."""
+    from nocturne.stacking.grade import FrameStats
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    fwhms = [3.0, 3.3, 2.7, 3.1, 2.9, 3.0, 3.2, 3.5, 3.75, 4.1]
+    d._on_graded([FrameStats(path=f"/x/{i}.fit", star_count=100, fwhm=f,
+                             background=0.10, score=1.0, included=True)
+                  for i, f in enumerate(fwhms)])
+    d.strictness_box.setCurrentText("Strict")
+    for row in range(d.table.rowCount()):
+        ticked = d.table.item(row, 0).checkState() == Qt.CheckState.Checked
+        verdict = d.table.item(row, 6).text()
+        assert ticked == (verdict == "OK"), (
+            f"row {row}: ticked={ticked} but verdict says {verdict!r}")
