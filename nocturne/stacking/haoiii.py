@@ -62,12 +62,24 @@ def _mad(x: np.ndarray) -> float:
     return float(np.median(np.abs(x - np.median(x))))
 
 
-def renorm_oiii(ha: np.ndarray, oiii: np.ndarray) -> np.ndarray:
-    """Linear-fit OIII to Ha (Siril ExtractHaOIII): match median and MAD."""
+def oiii_fit(ha: np.ndarray, oiii: np.ndarray) -> tuple:
+    """(scale, oiii median, ha median) for the linear match. Measured apart from
+    where it is applied, so a master the user chose not to trim can still be fitted
+    on its fully-covered core — median and MAD are the whole fit, and the ragged
+    fringe is built from fewer frames, so letting it in drags the pedestal off."""
     mad_o = _mad(oiii)
     a = (_mad(ha) / mad_o) if mad_o > 1e-9 else 1.0
-    out = a * (oiii - np.median(oiii)) + np.median(ha)
-    return np.clip(out, 0.0, None).astype(np.float32)
+    return a, float(np.median(oiii)), float(np.median(ha))
+
+
+def apply_oiii_fit(oiii: np.ndarray, fit: tuple) -> np.ndarray:
+    a, med_o, med_ha = fit
+    return np.clip(a * (oiii - med_o) + med_ha, 0.0, None).astype(np.float32)
+
+
+def renorm_oiii(ha: np.ndarray, oiii: np.ndarray) -> np.ndarray:
+    """Linear-fit OIII to Ha (Siril ExtractHaOIII): match median and MAD."""
+    return apply_oiii_fit(oiii, oiii_fit(ha, oiii))
 
 
 @dataclass
@@ -76,6 +88,7 @@ class HaOIIIOptions:
     kappa: float
     include: list        # sub paths, best-first; include[0] is the reference
     output_path: str
+    autocrop: bool = True
 
 
 @dataclass
@@ -190,9 +203,12 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     # Coverage crop (from the Ha integration — both channels share the same
     # transforms, so one coverage map describes both), then renorm and pack RGB.
     top, bottom, left, right = full_coverage_bounds(coverage, len(used))
-    ha_master = ha_master[top:bottom, left:right]
-    oiii_master = oiii_master[top:bottom, left:right]
-    oiii_master = renorm_oiii(ha_master, oiii_master)
+    core = (slice(top, bottom), slice(left, right))
+    fit = oiii_fit(ha_master[core], oiii_master[core])
+    oiii_master = apply_oiii_fit(oiii_master, fit)
+    if opts.autocrop:
+        ha_master = ha_master[core]
+        oiii_master = oiii_master[core]
 
     rgb = np.stack([ha_master, oiii_master, oiii_master], axis=2).astype(np.float32)
     peak = float(rgb.max())

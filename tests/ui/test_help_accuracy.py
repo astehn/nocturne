@@ -357,9 +357,9 @@ def test_haoiii_help_explains_why_the_master_is_not_red():
 
 def test_haoiii_help_does_not_borrow_controls_the_dialog_lacks():
     """It sits next to Stacking in the contents and grades with the same code,
-    which makes it easy to describe controls it does not have. It has no
-    Strictness selector and no framing checkbox, and it refuses fewer than
-    three frames."""
+    which makes it easy to describe controls it does not have. Strictness and the
+    framing checkbox were exactly that for a while — described as absent, then
+    added — so pin each one to the widget that draws it, in both directions."""
     import inspect
 
     from nocturne.stacking.coverage import full_coverage_bounds
@@ -369,13 +369,15 @@ def test_haoiii_help_does_not_borrow_controls_the_dialog_lacks():
     b = _body("haoiii")
     hd = _src("nocturne/ui/haoiii_dialog.py")
 
-    assert "no <b>Strictness</b> setting here" in b
-    assert "strictness" not in hd.lower(), "the dialog gained a Strictness control"
+    assert "strictness_box" in hd, "the dialog lost its Strictness control"
+    assert "<b>Strictness</b>" in b, "Strictness is not described"
     assert inspect.signature(grade_frames).parameters["strictness"].default == "normal"
 
-    assert "no framing choice" in b
-    assert "QCheckBox" not in hd, "the dialog gained a checkbox the help ignores"
+    assert "crop_check" in hd, "the dialog lost its trim checkbox"
+    assert "<b>Trim the ragged edges</b>" in b, "the trim checkbox is not described"
+    # frac=0.9 is why the help says NEARLY every frame, not every frame
     assert inspect.signature(full_coverage_bounds).parameters["frac"].default == 0.9
+    assert "nearly every frame covered" in b
 
     assert "at least three frames" in b
     assert "at least 3 frames to extract" in hd
@@ -1265,3 +1267,25 @@ def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
     assert labels, "no labelled controls found — the walk is broken, not the help"
     for name in labels:
         assert name in b, f"the narrowband help never mentions the {name!r} control"
+
+
+def test_the_haoiii_help_covers_strictness_and_trim():
+    """Both were added after the topic was written, and the topic actively said
+    neither existed. In-app help has drifted on every release so far; a control
+    the help denies is worse than one it omits."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["haoiii"].body.lower()
+    assert "there is no <b>strictness</b>" not in body, "the help still denies Strictness exists"
+    assert "no framing choice" not in body, "the help still denies the trim choice exists"
+    assert "strictness" in body, "Strictness is not documented"
+    assert "trim the ragged edges" in body, "the trim checkbox is not documented"
+
+
+def test_the_haoiii_help_describes_one_stacking_pass_not_two():
+    """The engine stacks both gases in a single pass now. The topic still walked
+    the user through 'stacking Ha' then 'stacking OIII' as separate phases, which
+    is not what the progress line says any more."""
+    from nocturne.ui.help_content import TOPICS
+    body = TOPICS["haoiii"].body.lower()
+    assert "stacking ha + oiii" in body, "the progress label in the help is the old one"
+    assert "<b>stacking oiii</b>" not in body, "the help still names a separate OIII pass"

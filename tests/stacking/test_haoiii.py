@@ -151,3 +151,48 @@ def test_both_channels_come_from_one_pass(tmp_path, monkeypatch):
     assert warps["n"] <= 2 * n, (
         f"{warps['n']} warps for {n} subs — should be at most 2 per sub, one per "
         f"sigma-clip pass, with both channels warped together")
+
+
+def test_autocrop_off_keeps_the_full_frame(tmp_path):
+    """Stack lets you keep the ragged border; on a 2 MP sensor those pixels are
+    worth having, and Ha/OIII used to crop with no say in it."""
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path)
+    trimmed = run_haoiii_extract(HaOIIIOptions(
+        "average", 2.5, paths, str(tmp_path / "a.fits"), autocrop=True)).image.data
+    kept = run_haoiii_extract(HaOIIIOptions(
+        "average", 2.5, paths, str(tmp_path / "b.fits"), autocrop=False)).image.data
+    assert kept.shape[:2] == (120, 120), "untrimmed must be the full sensor frame"
+    assert trimmed.shape[0] < 120 or trimmed.shape[1] < 120, (
+        "the frames are dithered, so trimming must actually remove something")
+
+
+def _widely_dithered_subs(tmp_path, n=4, shift=10.0):
+    """Deliberately coarse dithering, so the under-covered border is a real
+    fraction of the frame (43.8% of the pixels at shift=10 on 120x120) rather
+    than the two-pixel rim the 0.5px fixture leaves."""
+    from skimage.transform import SimilarityTransform, warp
+    base = make_star_field(shape=(120, 120), n_stars=60, seed=2)
+    paths = []
+    for i in range(n):
+        t = SimilarityTransform(translation=(i * shift, -i * shift))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"w{i}.fit"
+        write_cfa_fits(p, f, exptime=10.0)
+        paths.append(str(p))
+    return paths
+
+
+def test_the_oiii_fit_is_measured_where_every_frame_contributed(tmp_path):
+    """renorm is a median and a MAD over an array, and matching OIII's median to
+    Ha's is the whole guarantee. Measure it over the untrimmed frame and the
+    ragged border — built from a fraction of the frames — drags the pedestal off:
+    the medians came out 1.2e-4 apart instead of equal. So the fit is taken on the
+    covered core and only the *output* crop is the user's choice.
+    """
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _widely_dithered_subs(tmp_path)
+    master = run_haoiii_extract(HaOIIIOptions(
+        "average", 2.5, paths, str(tmp_path / "m.fits"), autocrop=True)).image.data
+    gap = abs(float(np.median(master[..., 0])) - float(np.median(master[..., 1])))
+    assert gap < 1e-5, f"OIII median must land on Ha's, off by {gap:.6f}"
