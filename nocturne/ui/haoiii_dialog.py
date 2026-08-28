@@ -172,7 +172,7 @@ class HaOIIIDialog(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(self.blurb)
         root.addLayout(form)
-        root.addWidget(self.splitter)
+        root.addWidget(self.splitter, 1)   # the frame list and preview take the height
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)

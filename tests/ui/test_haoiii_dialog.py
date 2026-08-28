@@ -218,3 +218,22 @@ def test_changing_strictness_does_not_disturb_the_preview(qtbot):
     qtbot.wait(50)
     assert loads == before, f"strictness reloaded the preview: {loads[len(before):]}"
     assert d.preview.has_image(), "and it must still be showing"
+
+
+def test_the_frame_list_takes_the_extra_height_not_the_blurb(qtbot):
+    """Maximised, the dialog handed ~700px of slack equally to the blurb, the
+    splitter and the status line: the blurb and the status line were 237px tall
+    each for one line of text, and the frame list and preview were squeezed into
+    238px. Only the splitter should grow."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    d.resize(1400, 1100)
+    d.show()
+    qtbot.waitUntil(lambda: d.height() > 900, timeout=2000)
+    assert d.splitter.height() > 0.5 * d.height(), (
+        f"splitter got {d.splitter.height()} of {d.height()}")
+    assert d.status.height() < 80, (
+        f"the one-line status label stretched to {d.status.height()}px")
+    natural = d.blurb.heightForWidth(d.blurb.width())
+    assert d.blurb.height() <= natural + 12, (
+        f"the blurb stretched to {d.blurb.height()}px, needs {natural}px")
