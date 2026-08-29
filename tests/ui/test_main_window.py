@@ -536,21 +536,43 @@ def test_status_cleared_on_navigation(qtbot, tmp_path):
     assert win._warning.text() == ""
 
 
-def test_tools_label_reflects_configured_paths(qtbot, tmp_path):
+def test_settings_shows_where_each_tool_stands_without_pressing_test(qtbot, tmp_path):
+    """The three status chips moved off the toolbar into Settings, which is
+    where the paths are. Moving them is only an improvement if the answer is
+    visible on opening — needing three Test presses to learn what a glance used
+    to tell you would be a step backwards."""
     from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
     gx = tmp_path / "graxpert"
     gx.write_text("#!/bin/sh\n")
-    gx.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
-    win = _window(qtbot, tmp_path)
-    win.settings = Settings(graxpert_path=str(gx))  # rc-astro left empty
-    win._update_tools_label()
-    text = win._tools_label.text()
-    assert "GraXpert" in text and "RC-Astro" in text     # names present
-    # Only the mark is coloured, not the label text.
-    assert 'color:#3fb950">✓</span>' in text             # works → green check
-    assert 'color:#f85149">✗</span>' in text             # not set → red cross
-    assert '#3fb950">GraXpert' not in text               # label itself is not coloured
-    assert '#f85149">RC-Astro' not in text
+    gx.chmod(0o755)                      # a real tool is EXECUTABLE, not merely present
+    dlg = SettingsDialog(Settings(graxpert_path=str(gx),
+                                  rcastro_path=str(tmp_path / "gone" / "starx"),
+                                  astap_path=""), None)
+    qtbot.addWidget(dlg)
+    assert "found" in dlg._gx_result.text(), "a working tool must say so on open"
+    assert "#3fb950" in dlg._gx_result.text()
+    assert "cannot be run" in dlg._rc_result.text(), "a broken path must say why"
+    assert "#f85149" in dlg._rc_result.text()
+    assert "Not set" in dlg._astap_result.text(), "an unset optional tool is not an error"
+    assert "#f85149" not in dlg._astap_result.text(), "unset must not read as broken"
+
+
+def test_settings_status_follows_the_path_as_you_type(qtbot, tmp_path):
+    """Typing a path and seeing nothing change is how you end up pressing Test
+    to find out whether the app agrees with you."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    gx = tmp_path / "graxpert"
+    gx.write_text("#!/bin/sh\n")
+    gx.chmod(0o755)
+    dlg = SettingsDialog(Settings(), None)
+    qtbot.addWidget(dlg)
+    assert "Not set" in dlg._gx_result.text()
+    dlg._gx.setText(str(gx))
+    assert "found" in dlg._gx_result.text()
+    dlg._gx.setText(str(tmp_path / "nope"))
+    assert "cannot be run" in dlg._gx_result.text()
 
 
 def test_log_records_applied_step(qtbot, tmp_path):
@@ -4833,3 +4855,69 @@ def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
         ["git", "ls-files", "--error-unmatch", "nocturne/assets/icons/combine.svg"],
         capture_output=True, cwd="/Volumes/Work/Code/Editor")
     assert tracked.returncode == 0, "combine.svg is not tracked by git"
+
+
+def _tools_act(win):
+    from PySide6.QtWidgets import QToolBar
+    for a in win.findChild(QToolBar).actions():
+        if a.objectName() == "toolsWarning":
+            return a
+    raise AssertionError("no tools warning action on the toolbar")
+
+
+def test_a_healthy_setup_says_nothing_on_the_toolbar(qtbot, tmp_path):
+    """The toolbar carried three permanent chips for a question you ask once
+    during setup. At the 1280x800 floor it is already 3735px of buttons in a
+    1280px window, so that space is not free."""
+    win = _window(qtbot, tmp_path)
+    tool = tmp_path / "graxpert"
+    tool.write_text("#!/bin/sh\n")
+    tool.chmod(0o755)
+    win.settings.graxpert_path = str(tool)
+    win.settings.rcastro_path = ""          # simply not owned
+    win.settings.astap_path = ""
+    win._update_tool_warning()
+    assert not _tools_act(win).isVisible(), "nothing is wrong, so say nothing"
+
+
+def test_a_tool_that_is_merely_absent_is_not_a_warning(qtbot, tmp_path):
+    """RC-Astro is paid and ASTAP optional. Warning that a tool you never chose
+    to install is 'missing' would be permanent noise, and noise is what makes
+    people stop reading warnings."""
+    win = _window(qtbot, tmp_path)
+    win.settings.graxpert_path = ""
+    win.settings.rcastro_path = ""
+    win.settings.astap_path = ""
+    win._update_tool_warning()
+    assert not _tools_act(win).isVisible()
+
+
+def test_a_configured_tool_that_has_stopped_working_does_warn(qtbot, tmp_path):
+    """The case worth interrupting for: it was set up and works no longer — a
+    moved binary, a failed update, a renamed folder. Without this the first sign
+    is a step failing in the middle of processing."""
+    win = _window(qtbot, tmp_path)
+    win.settings.graxpert_path = str(tmp_path / "gone" / "graxpert")
+    win.settings.rcastro_path = ""
+    win.settings.astap_path = ""
+    win._update_tool_warning()
+    act = _tools_act(win)
+    assert act.isVisible(), "a configured tool that cannot run must be visible"
+    assert "GraXpert" in act.toolTip(), f"the tooltip must name it: {act.toolTip()!r}"
+    # the button's own label, which is what is read at a glance — the tooltip
+    # needs a hover, and a warning you must hover to understand is half a warning
+    assert "GraXpert" in act.text(), f"the button must name it too: {act.text()!r}"
+
+
+def test_the_warning_names_every_broken_tool(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.settings.graxpert_path = str(tmp_path / "gone" / "graxpert")
+    win.settings.rcastro_path = str(tmp_path / "gone" / "starxterminator")
+    win.settings.astap_path = ""
+    win._update_tool_warning()
+    act = _tools_act(win)
+    tip, label = act.toolTip(), act.text()
+    assert "GraXpert" in tip and "RC-Astro" in tip
+    assert "GraXpert" in label and "RC-Astro" in label
+    assert "ASTAP" not in tip and "ASTAP" not in label, \
+        "a tool that was never configured is not broken"

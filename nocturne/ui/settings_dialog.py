@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..settings import (TOOL_CANDIDATES, Settings, astap_valid,
+from ..settings import (TOOL_CANDIDATES, Settings, astap_valid, is_tool,
                         detect_tool_paths, resolve_binary)
 from ..tools.probe import probe_binary
 from . import file_dialogs
@@ -100,6 +100,9 @@ class SettingsDialog(QDialog):
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"],
                               "Select ASTAP.app (or its executable)"))
+        for edit in (self._gx, self._rc, self._astap):
+            edit.textChanged.connect(self._refresh_status)
+        self._refresh_status()
         form.addRow("", self.rescan_btn)
         form.addRow("", self.rescan_result)
         form.addRow("Handle (for shares)", self._handle)
@@ -149,6 +152,31 @@ class SettingsDialog(QDialog):
             return
         ok, msg = probe_binary(resolve_binary(path.strip()), args, runner=self._probe_runner)
         label.setText(("✓ " if ok else "✗ ") + msg)
+
+    def _refresh_status(self) -> None:
+        """Say where each tool stands the moment the dialog opens.
+
+        The three status chips used to live on the toolbar, permanently, for a
+        question you answer once during setup. This is where the paths are, so
+        this is where the answer belongs — but it has to be there without
+        pressing Test three times, or moving it would just hide it.
+
+        Cheap check only (executable, not run): Test is what actually runs the
+        program, and this fires on every keystroke.
+        """
+        for edit, label, name in ((self._gx, self._gx_result, "GraXpert"),
+                                  (self._rc, self._rc_result, "RC-Astro"),
+                                  (self._astap, self._astap_result, "ASTAP")):
+            path = edit.text().strip()
+            if not path:
+                label.setText('<span style="color:#6b6f76">Not set — optional</span>'
+                              if name != "GraXpert" else
+                              '<span style="color:#6b6f76">Not set</span>')
+            elif is_tool(path):
+                label.setText(f'<span style="color:#3fb950">✓</span> {name} found')
+            else:
+                label.setText('<span style="color:#f85149">✗</span> Set, but cannot be '
+                              'run — moved, renamed, or not a program')
 
     def _test_graxpert(self) -> None:
         self._show_result(self._gx_result, self._gx.text(), ["-v"])

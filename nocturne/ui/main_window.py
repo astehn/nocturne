@@ -23,7 +23,8 @@ from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
 from ..settings import (
-    add_recent_project, astap_valid, graxpert_valid, load_settings, rcastro_valid,
+    add_recent_project, astap_valid, graxpert_valid, is_tool, load_settings,
+    rcastro_valid,
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
@@ -1394,23 +1395,40 @@ class MainWindow(QMainWindow):
         self._update_act = tb.addAction(load_icon("update", WARNING),
                                         "Update available", self._open_download)
         self._update_act.setVisible(False)   # revealed only when a newer release exists
-        self._tools_label = QLabel("")
-        tb.addWidget(self._tools_label)
-        self._update_tools_label()
+        self._tools_act = tb.addAction(load_icon("update", WARNING),
+                                       "External tool problem", self._open_settings)
+        self._tools_act.setObjectName("toolsWarning")
+        self._tools_act.setVisible(False)   # only when something is actually wrong
+        self._update_tool_warning()
 
-    def _update_tools_label(self) -> None:
-        def chip(name: str, ok: bool) -> str:
-            color = "#3fb950" if ok else "#f85149"  # green / red
-            mark = "✓" if ok else "✗"
-            # Label in the normal interface colour; only the mark is coloured.
-            return f'{name} <span style="color:{color}">{mark}</span>'
+    def _broken_tools(self) -> list:
+        """Tools that are configured but cannot be run.
 
-        self._tools_label.setText(
-            chip("GraXpert", graxpert_valid(self.settings))
-            + '  <span style="color:#6b6f76">·</span>  '
-            + chip("RC-Astro", rcastro_valid(self.settings))
-            + '  <span style="color:#6b6f76">·</span>  '
-            + chip("ASTAP", astap_valid(self.settings))
+        NOT the same as "not installed". GraXpert is free, RC-Astro is paid and
+        ASTAP optional, so most people legitimately have blanks here — warning
+        about those would be permanent, and a permanent warning is one nobody
+        reads. A path that is SET and does not work is different: it worked when
+        it was set, so something moved, failed to update or was renamed, and the
+        next sign of it would otherwise be a step failing mid-process.
+        """
+        return [name for name, path in (("GraXpert", self.settings.graxpert_path),
+                                        ("RC-Astro", self.settings.rcastro_path),
+                                        ("ASTAP", self.settings.astap_path))
+                if str(path).strip() and not is_tool(str(path))]
+
+    def _update_tool_warning(self) -> None:
+        broken = self._broken_tools()
+        self._tools_act.setVisible(bool(broken))
+        if not broken:
+            return
+        names = ", ".join(broken)
+        self._tools_act.setText(f"{names} not working")
+        self._tools_act.setToolTip(
+            f"{names} is set in Settings but cannot be run — the program may have "
+            "moved or been renamed. Click to check the path."
+            if len(broken) == 1 else
+            f"{names} are set in Settings but cannot be run — they may have moved "
+            "or been renamed. Click to check the paths."
         )
 
     # --- navigation ---
@@ -3042,7 +3060,7 @@ class MainWindow(QMainWindow):
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
             self._sync_solve_action_enabled()   # installing ASTAP lights it up now
-            self._update_tools_label()
+            self._update_tool_warning()
             self._rebuild_panel()
             self._refresh()
 
