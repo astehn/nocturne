@@ -2,6 +2,30 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.20.0] — 2026-08-29
+
+Ha/OIII extraction, rebuilt — and a way to use what it makes
+
+### Added
+- Combine Ha + OIII, a new tool. Give it a stacked Ha file and a stacked OIII file and it builds the same kind of two-gas master the extractor makes, ready for the normal steps. The files can come from Nocturne or from anywhere else — another program, a mono camera, someone else's data — so channels Nocturne could not open at all are now something it can process. A Balance slider decides how much to lift the oxygen toward the hydrogen while the data is still linear, which is the one thing you cannot do after a stretch, and a live preview shows the result as you move it. If the two files do not line up it says how far apart they are and offers to align them.
+- Ha/OIII can write each gas as its own file. Off by default; tick Also write separate Ha and OIII files and you get a mono Ha and a mono OIII beside the master, left un-equalised so the true ratio between the two gases survives for whoever recombines them.
+- Ha/OIII gained the controls Stack has always had: Strictness, Framing (trim the ragged edges, or keep the full frame), a frame preview — click any row to see that sub — and a Verdict column that says why a frame was left out instead of leaving you a row of zeros. Rejected rows are dimmed, and a frame kept with a caveat is amber.
+- Ha/OIII can be stopped. A 1,116-frame extract runs for a long time and there was no way out of it; grading is interruptible too.
+- The Ha/OIII dialog explains itself. It had no descriptive text and not one tooltip, which is why it was possible to commission the tool and still not know what subs it takes or what to do with the result.
+
+### Changed
+- Ha/OIII is 8.7x faster. Both gases now travel through one pass over the frames instead of one pass each, and registration runs across processes as the normal stacker has since v0.16.0. On 80 real subs a run went from 48.0 s to 15.4 s.
+- The oxygen channel is 35% stronger. Green and blue both measure the same oxygen line, and they were averaged evenly despite green coming from twice as many sensor pixels and measuring the line better. Weighting them by how well each actually sees it is worth 26% on its own.
+- An Ha/OIII master now names its camera, its filter and whether it was trimmed. It carried none of that, so a master loaded back in could not say what took it, and two masters of the same subs could differ in size by half with nothing on disk to say why.
+- The Ha/OIII help no longer claims that ordinary stacking mixes the two gases together. That is the standard argument for this kind of tool and it is true of most programs, but not of Nocturne, which debayers in a way that never looks across colours. What the tool actually gives you is the two gases brought to a comparable level while the data is still linear.
+
+### Fixed
+- The two gases came out about a pixel apart. Red, green and blue sit at different places in the sensor's colour grid, and each was being put back as though they sat in the same place. Every star carried a faint colour fringe and the master was softer than it should have been. Fixing it also made the hydrogen channel slightly sharper and cleaner than a normal stack of the same frames.
+- Field rotation was being drawn onto the picture. An untrimmed Ha/OIII master came out with bright wedges across it where a normal stack of the same subs was clean: frames were never brought to a common sky level, so every coverage boundary became a step in brightness. It was invisible for as long as the tool always cropped to the middle.
+- Ha/OIII and Stack framed the same subs differently, because they chose different reference frames. Ha/OIII picked by overall score, which favours a frame with many stars over a sharp one — on a night when transparency varies that can align a whole session to a soft frame.
+- The Ha/OIII window wasted its space when maximised: one line of text was given 237 pixels while the frame list and preview were squeezed into 238.
+- Wide-gamut colour profiles work when exporting Starless + Stars, which are 16-bit TIFFs like any other and were being refused one.
+
 ## [0.19.0] — 2026-08-27
 
 Star Spikes, Narrowband and Colour Balance, gone over control by control
