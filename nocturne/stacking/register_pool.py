@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .cfa import extract_cfa_planes, load_cfa
 from .frames import load_sub, luminance
 from .normalize import frame_stats
 from .register import RegistrationError, find_transform
@@ -49,7 +50,20 @@ _MIN_FOR_POOL = 8
 _REF: dict = {}
 
 
-def _init(ref_path: str) -> None:
+def _init(ref_path: str, gas: bool = False) -> None:
+    """Load the reference once per process.
+
+    `gas` selects the Ha/OIII path: register on the Ha plane pulled straight out
+    of the Bayer grid rather than on the luminance of a debayered frame. The
+    extractor did this in a plain serial loop, so its Phase A never got the
+    parallel rebuild the normal stacker had — 1116 frames took what it took.
+    """
+    _REF["gas"] = gas
+    if gas:
+        cfa, pattern, _ = load_cfa(ref_path)
+        _REF["lum"] = extract_cfa_planes(cfa, pattern)[0]
+        _REF["shape"] = cfa.shape
+        return
     img = load_sub(ref_path, normalize=False)
     _REF["lum"] = luminance(img.data)
     _REF["shape"] = img.data.shape[:2]
@@ -62,6 +76,8 @@ def _register_one(path: str) -> RegisterResult:
     loop used — those strings reach the user in the stacking report — rather
     than an exception, so one bad frame cannot take the pool down with it.
     """
+    if _REF.get("gas"):
+        return _register_one_gas(path)
     try:
         sub = load_sub(path, normalize=False)
     except Exception as exc:                      # noqa: BLE001 - any read failure
@@ -80,7 +96,31 @@ def _register_one(path: str) -> RegisterResult:
     )
 
 
-def _make_pool(workers: int, ref_path: str):
+def _register_one_gas(path: str) -> RegisterResult:
+    """One frame's Phase A for the Ha/OIII extractor.
+
+    The rejection wording is the extractor's own, verbatim — those strings reach
+    the user in its report, and the serial loop this replaces produced exactly
+    these.
+    """
+    try:
+        cfa, pattern, exposure = load_cfa(path)
+    except Exception as exc:                      # noqa: BLE001 - any read failure
+        return RegisterResult(path, reason=f"unreadable or not raw CFA: {exc}")
+    if cfa.shape != _REF["shape"]:
+        return RegisterResult(path, reason="dimension mismatch")
+    try:
+        ha, oiii = extract_cfa_planes(cfa, pattern)
+        matrix = find_transform(ha, _REF["lum"])
+    except RegistrationError as exc:
+        return RegisterResult(path, reason=f"registration failed: {exc}")
+    # Stats over BOTH gases together, matching what the integration phase
+    # normalises: a 2-channel stack, not a colour image.
+    return RegisterResult(path, matrix=matrix, exposure=float(exposure),
+                          stats=frame_stats(np.stack([ha, oiii], axis=2)))
+
+
+def _make_pool(workers: int, ref_path: str, gas: bool = False):
     """Separated so a test can make pool creation fail.
 
     The failure that matters cannot be reproduced in a test at all: macOS
@@ -90,11 +130,11 @@ def _make_pool(workers: int, ref_path: str):
     """
     from concurrent.futures import ProcessPoolExecutor
     return ProcessPoolExecutor(max_workers=workers, initializer=_init,
-                               initargs=(ref_path,))
+                               initargs=(ref_path, gas))
 
 
-def _serial(paths, ref_path, on_progress, check_cancel) -> list:
-    _init(ref_path)
+def _serial(paths, ref_path, on_progress, check_cancel, gas=False) -> list:
+    _init(ref_path, gas)
     out = []
     for i, p in enumerate(paths, start=1):
         if check_cancel is not None:
@@ -106,7 +146,7 @@ def _serial(paths, ref_path, on_progress, check_cancel) -> list:
 
 
 def register_frames(paths, ref_path: str, workers: int, *,
-                    on_progress=None, check_cancel=None) -> list:
+                    on_progress=None, check_cancel=None, gas: bool = False) -> list:
     """Register `paths` against `ref_path`, returning results IN PATH ORDER.
 
     Order is preserved so the caller's `used` list — and therefore the order the
@@ -118,12 +158,12 @@ def register_frames(paths, ref_path: str, workers: int, *,
     """
     paths = list(paths)
     if workers <= 1 or len(paths) < _MIN_FOR_POOL:
-        return _serial(paths, ref_path, on_progress, check_cancel)
+        return _serial(paths, ref_path, on_progress, check_cancel, gas)
 
     try:
-        pool = _make_pool(workers, ref_path)
+        pool = _make_pool(workers, ref_path, gas)
     except Exception:                             # noqa: BLE001 - see _make_pool
-        return _serial(paths, ref_path, on_progress, check_cancel)
+        return _serial(paths, ref_path, on_progress, check_cancel, gas)
 
     out = []
     try:

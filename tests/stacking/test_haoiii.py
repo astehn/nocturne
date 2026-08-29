@@ -605,3 +605,59 @@ def test_cancelling_after_registration_raises(tmp_path):
                 on_progress=on_progress)
     finally:
         clear_ambient()
+
+
+def test_registration_uses_the_process_pool():
+    """Phase A was a plain serial loop while the normal stacker had used a
+    process pool since v0.16.0. Measured on 80 real NGC 281 subs it was 84.8% of
+    the entire run — 40.6s of 48.0s — and the pool took the run to 15.4s.
+
+    astroalign matches triangles in Python, so this phase is GIL-bound and needs
+    processes, not threads; the token cannot cross a process boundary, so
+    check_cancel must still be handed in to be polled between results."""
+    import inspect
+    from nocturne.stacking import haoiii
+    src = inspect.getsource(haoiii.run_haoiii_extract)
+    assert "register_frames(" in src, "Phase A is serial again"
+    call = src[src.index("register_frames("):]
+    call = call[:call.index("):") + 2]
+    assert "gas=True" in call, "the pool must use the CFA path, not the debayered one"
+    assert "check_cancel=" in call, "a parallel Phase A must still be cancellable"
+
+
+def test_the_gas_worker_returns_what_the_serial_loop_did(tmp_path):
+    """Same fields, same rejection wording — those strings reach the user in the
+    extraction report."""
+    from nocturne.stacking import register_pool as rp
+    paths = _cfa_subs(tmp_path, n=3)
+    rp._init(paths[0], gas=True)
+
+    good = rp._register_one_gas(paths[1])
+    assert good.reason is None
+    assert good.matrix is not None and good.matrix.shape == (3, 3)
+    assert good.exposure == 10.0
+    loc, scale = good.stats
+    assert len(loc) == 2 and len(scale) == 2, "stats must cover BOTH gases"
+
+    # a colour cube is not a raw sub
+    from astropy.io import fits
+    rgb = tmp_path / "rgb.fits"
+    fits.PrimaryHDU(np.zeros((3, 8, 8), np.float32)).writeto(rgb, overwrite=True)
+    assert "not raw CFA" in rp._register_one_gas(str(rgb)).reason
+
+    # a CFA frame of the wrong size
+    small = tmp_path / "small.fit"
+    write_cfa_fits(small, np.zeros((40, 40), np.float32), exptime=10.0)
+    assert rp._register_one_gas(str(small)).reason == "dimension mismatch"
+
+
+def test_the_gas_reference_is_the_ha_plane_not_a_debayered_luminance(tmp_path):
+    """Registering the extractor's frames on a debayered luminance would align
+    them to a different picture than the one being stacked."""
+    from nocturne.stacking import register_pool as rp
+    from nocturne.stacking.cfa import extract_cfa_planes, load_cfa
+    paths = _cfa_subs(tmp_path, n=3)
+    rp._init(paths[0], gas=True)
+    cfa, pattern, _ = load_cfa(paths[0])
+    assert np.allclose(rp._REF["lum"], extract_cfa_planes(cfa, pattern)[0])
+    assert rp._REF["shape"] == cfa.shape
