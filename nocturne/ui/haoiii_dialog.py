@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
 from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
@@ -61,6 +62,7 @@ class HaOIIIDialog(QDialog):
         self._extract_runner = run_haoiii_extract  # injectable for tests
         self._stats = []
         self._busy = False
+        self._active_token = None
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
@@ -174,10 +176,15 @@ class HaOIIIDialog(QDialog):
         self._stack_btn = QPushButton("Extract")
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.clicked.connect(self._cancel_active)
+        self._cancel_btn.setEnabled(False)
+        self._cancel_btn.hide()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self._stack_btn)
+        buttons.addWidget(self._cancel_btn)
         buttons.addWidget(close_btn)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -221,6 +228,32 @@ class HaOIIIDialog(QDialog):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self._stack_btn.setEnabled(not busy)
+        self._cancel_btn.setEnabled(busy)
+        self._cancel_btn.setVisible(busy)
+
+    # --- cancellable async dispatch ---
+    def _start(self, work, on_done, status: str) -> None:
+        """Every long job goes through here so it can be stopped. Grading a
+        folder and extracting from it are both minutes of work; neither was
+        interruptible, and the token was ambient the whole time."""
+        token = CancelToken()
+        self._active_token = token
+        self.status.setText(status)
+        self._set_busy(True)
+
+        def wrapped():
+            set_ambient(token)
+            try:
+                return work()
+            finally:
+                clear_ambient()
+
+        run_async(self._pool, wrapped, on_done, self._on_error)
+
+    def _cancel_active(self) -> None:
+        tok = self._active_token
+        if tok is not None:
+            tok.cancel()
 
     # --- grade ---
     def grade(self) -> None:
@@ -230,10 +263,7 @@ class HaOIIIDialog(QDialog):
         if not paths:
             self.status.setText("No .fit subs found in that folder.")
             return
-        self.status.setText("Grading frames…")
-        self._set_busy(True)
         runner = self._grade_runner
-
         strictness = self.strictness_box.currentText().lower()
 
         def work():
@@ -241,7 +271,7 @@ class HaOIIIDialog(QDialog):
                           self._signals.progress.emit(i, n, "grading"),
                           strictness=strictness)
 
-        run_async(self._pool, work, self._on_graded, self._on_error)
+        self._start(work, self._on_graded, "Grading frames…")
 
     def _on_graded(self, stats) -> None:
         self._set_busy(False)
@@ -353,14 +383,12 @@ class HaOIIIDialog(QDialog):
                              autocrop=self.crop_check.isChecked(),
                              write_channels=self.channels_check.isChecked())
         runner = self._extract_runner
-        self.status.setText("Extracting…")
-        self._set_busy(True)
 
         def work():
             return runner(opts, on_progress=lambda i, n, label:
                           self._signals.progress.emit(i, n, label))
 
-        run_async(self._pool, work, self._on_done, self._on_error)
+        self._start(work, self._on_done, "Extracting…")
 
     def _on_progress(self, i: int, n: int, label: str) -> None:
         self.progress.setMaximum(max(1, n))
@@ -378,5 +406,9 @@ class HaOIIIDialog(QDialog):
         self.accept()
 
     def _on_error(self, exc) -> None:
+        self._active_token = None
         self._set_busy(False)
+        if isinstance(exc, Cancelled):
+            self.status.setText("Cancelled.")
+            return
         self.status.setText(f"Failed: {exc}")

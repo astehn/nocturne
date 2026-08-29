@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -356,3 +358,85 @@ def test_both_stackers_agree_on_the_registration_reference(qtbot):
         "the reference must be the sharpest frame, not the highest-scoring one")
     assert all(s.included for s in stats), (
         "every frame must survive grading, or the score-leader never competes")
+
+
+def test_cancel_appears_only_while_working(qtbot):
+    """A 1116-frame extract runs for a long time with no way out. Stack has had
+    a Cancel button since the task controller landed; this dialog had none."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    d.show()
+    assert not d._cancel_btn.isVisible(), "Cancel must be hidden when idle"
+    d._set_busy(True)
+    assert d._cancel_btn.isVisible() and d._cancel_btn.isEnabled()
+    d._set_busy(False)
+    assert not d._cancel_btn.isVisible()
+
+
+def test_cancelling_an_extract_reports_it_and_frees_the_dialog(qtbot, tmp_path):
+    """The whole point: press Cancel and the run stops, says so, and the dialog
+    becomes usable again rather than staying stuck busy."""
+    from nocturne.core.tasks import Cancelled, current
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    started = {}
+
+    def slow_extract(opts, **kw):
+        started["yes"] = True
+        # wait on the clock, not on an iteration count: a bare loop finishes in
+        # microseconds and the run is over before the test can press Cancel
+        # must expire before the test's 3s waitUntil, so a failing run never
+        # leaves a worker alive past teardown
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            tok = current()
+            if tok is not None:
+                tok.check()          # raises Cancelled once the button is hit
+            time.sleep(0.01)
+        raise AssertionError("was never cancelled")
+
+    d._extract_runner = slow_extract
+    d.output_edit.setText(str(tmp_path / "m.fits"))
+    d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(4)])
+    d.run()
+    qtbot.waitUntil(lambda: started.get("yes"), timeout=3000)
+    d._cancel_btn.click()
+    qtbot.waitUntil(lambda: d.status.text() == "Cancelled.", timeout=3000)
+    assert not d._busy, "the dialog must be usable again after cancelling"
+    assert d._stack_btn.isEnabled()
+
+
+def test_grading_is_cancellable_too(qtbot, tmp_path):
+    """Grading a folder is minutes of work on its own — 366 subs took long
+    enough to notice — and it ran outside any token."""
+    from nocturne.core.tasks import current
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    (tmp_path / "a.fit").write_bytes(b"")      # _discover only needs the names
+    (tmp_path / "b.fit").write_bytes(b"")
+    seen = {}
+
+    def slow_grade(paths, on_progress=None, **kw):
+        tok = current()
+        seen["token"] = tok
+        # Fail INSIDE the worker rather than letting the test assert and walk
+        # away: an assertion in the test body leaves this thread running, and
+        # tearing the dialog down under a live worker breaks unrelated tests in
+        # full-suite ordering.
+        if tok is None:
+            raise AssertionError("grading ran with no cancel token in scope")
+        # must expire before the test's 3s waitUntil
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            tok = current()
+            if tok is not None:
+                tok.check()
+            time.sleep(0.01)
+        raise AssertionError("was never cancelled")
+
+    d._grade_runner = slow_grade
+    d.folder_edit.setText(str(tmp_path))
+    d.grade()
+    qtbot.waitUntil(lambda: "token" in seen, timeout=3000)
+    d._cancel_btn.click()
+    qtbot.waitUntil(lambda: d.status.text() == "Cancelled.", timeout=3000)

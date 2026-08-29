@@ -8,6 +8,7 @@ import numpy as np
 from astropy.io import fits
 
 from ..core.export import save_fits
+from ..core.tasks import current
 from ..core.fits_io import _bayer_pattern, _parse_metadata
 from ..core.image import AstroImage
 from .coverage import full_coverage_bounds
@@ -159,6 +160,15 @@ class HaOIIIResult:
     output_path: str
 
 
+def _check_cancel() -> None:
+    """Raise if the user has asked to stop. A 1116-frame extract runs for a long
+    time and had no way out — the token was ambient the whole time and this
+    module simply never looked at it."""
+    tok = current()
+    if tok is not None:
+        tok.check()      # raises Cancelled if the user cancelled
+
+
 def channel_paths(output_path: str) -> tuple:
     """(<stem>_Ha.fits, <stem>_OIII.fits) beside the master."""
     stem = os.path.splitext(output_path)[0]
@@ -202,6 +212,7 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     ref_exp = 0.0
     remaining = list(paths)
     while remaining:
+        _check_cancel()
         candidate = remaining.pop(0)
         try:
             cfa, pat, exp = load_cfa(candidate)
@@ -232,6 +243,7 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
 
     # Phase A: register each remaining sub on its Ha plane.
     for i, path in enumerate(remaining, start=1):
+        _check_cancel()
         try:
             cfa, pat, exp = load_cfa(path)
         except Exception as exc:  # noqa: BLE001
@@ -293,6 +305,7 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
         label = f"stacking Ha + OIII (pass {pass_no['n']})"
         for i, out in enumerate(
                 ordered_results(used, _prepare, workers=plan.count), start=1):
+            _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
             yield out

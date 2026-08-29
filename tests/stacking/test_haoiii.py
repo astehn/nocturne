@@ -503,3 +503,105 @@ def test_frames_are_normalised_before_they_are_warped():
     norm_at = src.index("normalize_to(")
     warp_at = src.index("warp_with_validity(", norm_at - 400 if norm_at > 400 else 0)
     assert norm_at < warp_at, "frames must be normalised before warping, not after"
+
+
+def test_a_long_extract_can_be_cancelled(tmp_path):
+    """Andreas, 2026-08-29: a 1116-frame extract runs for a long time and there
+    was no way to stop it. Stack has had a Cancel button since the task
+    controller landed; the extractor never checked the ambient token at all.
+
+    Cancelled derives from BaseException on purpose, so an `except Exception`
+    anywhere in the pipeline cannot swallow it.
+    """
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path, n=6)
+    token = CancelToken()
+    token.cancel()                      # already cancelled before it starts
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_haoiii_extract(HaOIIIOptions(
+                "average", 2.5, paths, str(tmp_path / "m.fits")))
+    finally:
+        clear_ambient()
+
+
+def test_cancelling_partway_through_stops_the_run(tmp_path):
+    """Not just the trivial pre-cancelled case: cancel once work is under way
+    and it must stop rather than run to completion."""
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path, n=8)
+    token = CancelToken()
+    seen = {"n": 0}
+
+    def on_progress(i, n, label):
+        seen["n"] += 1
+        if seen["n"] == 3:
+            token.cancel()
+
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_haoiii_extract(HaOIIIOptions(
+                "average", 2.5, paths, str(tmp_path / "m.fits")),
+                on_progress=on_progress)
+    finally:
+        clear_ambient()
+    assert seen["n"] < 8 * 3, "the run kept going after being cancelled"
+
+
+def test_a_cancelled_extract_writes_no_master(tmp_path):
+    """A half-written master is worse than none — it would be graded as a real
+    one on the next run."""
+    import os
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path, n=6)
+    out = tmp_path / "m.fits"
+    token = CancelToken()
+    token.cancel()
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_haoiii_extract(HaOIIIOptions("average", 2.5, paths, str(out)))
+    finally:
+        clear_ambient()
+    assert not os.path.exists(out), "a cancelled run left a master behind"
+
+
+def test_cancelling_during_integration_stops_it_too():
+    """Registration is the short phase; integration is where the minutes go, and
+    it is what a user watching a stalled progress bar wants to stop. The first
+    version of the cancel test only ever cancelled during registration, so a
+    missing check in the integration loop went unnoticed."""
+    import inspect
+    from nocturne.stacking import haoiii
+    src = inspect.getsource(haoiii.run_haoiii_extract)
+    frames_fn = src[src.index("def frames("):src.index("if opts.method ==")]
+    assert "_check_cancel()" in frames_fn, (
+        "the integration loop never looks at the cancel token — only "
+        "registration does, so cancelling during the long phase does nothing")
+
+
+def test_cancelling_after_registration_raises(tmp_path):
+    """The behavioural half: let registration finish, then cancel on the first
+    stacking callback and require the run to stop."""
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs(tmp_path, n=8)
+    token = CancelToken()
+
+    def on_progress(i, n, label):
+        if label.startswith("stacking"):
+            token.cancel()
+
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            run_haoiii_extract(HaOIIIOptions(
+                "average", 2.5, paths, str(tmp_path / "m.fits")),
+                on_progress=on_progress)
+    finally:
+        clear_ambient()
