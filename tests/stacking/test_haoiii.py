@@ -661,3 +661,31 @@ def test_the_gas_reference_is_the_ha_plane_not_a_debayered_luminance(tmp_path):
     cfa, pattern, _ = load_cfa(paths[0])
     assert np.allclose(rp._REF["lum"], extract_cfa_planes(cfa, pattern)[0])
     assert rp._REF["shape"] == cfa.shape
+
+
+def test_combining_the_extractors_own_channel_files_reproduces_its_master(tmp_path):
+    """The invariant that keeps the two tools honest. The extractor writes Ha and
+    OIII un-equalised and separately packs a colour master; Combine at full
+    balance must arrive at the same place. If it drifts, one of them changed.
+
+    It holds because every step is scale-invariant: the channel files are the
+    same planes divided by a shared peak, oiii_fit's scale is a ratio of MADs,
+    and the master is normalised by its own peak either way.
+    """
+    from nocturne.core.combine import combine_gases
+    from nocturne.core.fits_io import load_mono_master
+    from nocturne.stacking.haoiii import (HaOIIIOptions, channel_paths,
+                                          run_haoiii_extract)
+    paths = _cfa_subs(tmp_path)
+    out = str(tmp_path / "m.fits")
+    master = run_haoiii_extract(HaOIIIOptions(
+        "average", 2.5, paths, out, write_channels=True)).image.data
+
+    ha_path, oiii_path = channel_paths(out)
+    rebuilt = combine_gases(load_mono_master(ha_path),
+                            load_mono_master(oiii_path), balance=1.0).data
+
+    assert rebuilt.shape == master.shape
+    assert np.allclose(rebuilt, master, atol=1e-4), (
+        f"max difference {np.abs(rebuilt - master).max():.6f} — the extractor and "
+        "the combiner no longer agree")
