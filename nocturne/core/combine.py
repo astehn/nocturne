@@ -11,8 +11,31 @@ import numpy as np
 from scipy.ndimage import shift as _ndshift
 from skimage.registration import phase_cross_correlation
 
-from ..stacking.haoiii import apply_oiii_fit, oiii_fit
 from .image import AstroImage
+
+
+def _mad(x: np.ndarray) -> float:
+    return float(np.median(np.abs(x - np.median(x))))
+
+
+def oiii_fit(ha: np.ndarray, oiii: np.ndarray) -> tuple:
+    """(scale, oiii median, ha median) for the linear match. Measured apart from
+    where it is applied, so a master the user chose not to trim can still be fitted
+    on its fully-covered core — median and MAD are the whole fit, and the ragged
+    fringe is built from fewer frames, so letting it in drags the pedestal off."""
+    mad_o = _mad(oiii)
+    a = (_mad(ha) / mad_o) if mad_o > 1e-9 else 1.0
+    return a, float(np.median(oiii)), float(np.median(ha))
+
+
+def apply_oiii_fit(oiii: np.ndarray, fit: tuple) -> np.ndarray:
+    a, med_o, med_ha = fit
+    return np.clip(a * (oiii - med_o) + med_ha, 0.0, None).astype(np.float32)
+
+
+def renorm_oiii(ha: np.ndarray, oiii: np.ndarray) -> np.ndarray:
+    """Linear-fit OIII to Ha (Siril ExtractHaOIII): match median and MAD."""
+    return apply_oiii_fit(oiii, oiii_fit(ha, oiii))
 
 
 # Above the (0.08, 0.26) px residual measured between a correct Ha/OIII pair on
