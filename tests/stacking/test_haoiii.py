@@ -435,3 +435,71 @@ def test_channel_files_share_one_scale_so_the_gas_ratio_survives(tmp_path):
         "the planes were scaled independently")
     assert a.max() <= 1.0 and b.max() <= 1.0, "both must still fit in [0, 1]"
     assert b.max() < 0.9, "OIII must stay as faint as it really is, not be stretched to fill"
+
+
+def _cfa_subs_varying_sky(tmp_path, n=8, shift=8.0):
+    """Subs that drift AND whose sky level changes between them — a real
+    session, where the target climbs and the moon moves. Measured across one
+    M31 session the sky varied 262% frame to frame (see normalize.py)."""
+    from skimage.transform import SimilarityTransform, warp
+    base = make_star_field(shape=(160, 160), n_stars=80, seed=3)
+    paths = []
+    for i in range(n):
+        t = SimilarityTransform(translation=(i * shift, -i * shift))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        f = f + (100.0 + 60.0 * i)          # each frame sits on a different sky
+        p = tmp_path / f"v{i}.fit"
+        write_cfa_fits(p, f, exptime=10.0)
+        paths.append(str(p))
+    return paths
+
+
+def test_the_rotation_envelope_is_not_drawn_onto_the_master(tmp_path):
+    """Andreas, 2026-08-29, on a 1116-frame NGC 281 stack with trim off: the
+    Ha/OIII master came out with bright wedges cutting across it while a normal
+    stack of the same subs was clean.
+
+    normalize.py already names this exactly — "every coverage boundary then
+    becomes a step in background level and the rotation envelope gets drawn onto
+    the finished picture as curved bands" — and the extractor never called it.
+    It was hidden for as long as the extractor always cropped to the
+    near-fully-covered middle; adding the Trim option exposed it.
+
+    Take the sky level where every frame contributed and where only some did:
+    they must match.
+    """
+    from nocturne.stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+    paths = _cfa_subs_varying_sky(tmp_path)
+    master = run_haoiii_extract(HaOIIIOptions(
+        "average", 2.5, paths, str(tmp_path / "m.fits"), autocrop=False)).image.data
+
+    ha = master[..., 0]
+    # the drift runs down-right, so the middle sees every frame and the
+    # top-left corner only the first few
+    core = ha[70:90, 70:90]
+    fringe = ha[4:24, 4:24]
+    core_sky, fringe_sky = float(np.median(core)), float(np.median(fringe))
+    step = abs(core_sky - fringe_sky) / max(core_sky, 1e-6)
+    assert step < 0.10, (
+        f"background steps {100 * step:.0f}% across a coverage boundary "
+        f"(core {core_sky:.4f}, fringe {fringe_sky:.4f}) — the rotation "
+        "envelope is being drawn onto the picture")
+
+
+def test_frames_are_normalised_before_they_are_warped():
+    """A structural guard, and honestly labelled as one: swapping the order
+    changes no pixel today, because coverage-aware integration excludes the
+    warp's out-of-frame fill through the validity mask either way. It is still
+    wrong, and run_stack says why — normalising afterwards turns that clean zero
+    fill into a plausible-looking sky value, so the correctness of every edge
+    pixel comes to depend on the mask being perfect rather than on the fill
+    being obviously invalid.
+
+    Asserting on output would prove nothing here, so assert on the order.
+    """
+    import inspect
+    from nocturne.stacking import haoiii
+    src = inspect.getsource(haoiii.run_haoiii_extract)
+    norm_at = src.index("normalize_to(")
+    warp_at = src.index("warp_with_validity(", norm_at - 400 if norm_at > 400 else 0)
+    assert norm_at < warp_at, "frames must be normalised before warping, not after"

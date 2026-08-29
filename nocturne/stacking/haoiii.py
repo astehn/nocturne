@@ -12,6 +12,7 @@ from ..core.fits_io import _bayer_pattern, _parse_metadata
 from ..core.image import AstroImage
 from .coverage import full_coverage_bounds
 from .integrate import average_integrate, sigma_clip_integrate
+from .normalize import frame_stats, normalize_to
 from .parallel import ordered_results, plan_workers
 from .register import RegistrationError, find_transform, warp_with_validity
 from .stacker import master_header
@@ -207,7 +208,8 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
         except Exception as exc:  # noqa: BLE001
             rejected.append((candidate, f"unreadable or not raw CFA: {exc}"))
             continue
-        ref_path, ref_ha = candidate, extract_cfa_planes(cfa, pat)[0]
+        ref_ha, ref_oiii = extract_cfa_planes(cfa, pat)
+        ref_path = candidate
         ref_shape, ref_exp = cfa.shape, exp
         ref_header = fits.getheader(candidate)   # for the master's astrometry cards
         break
@@ -216,6 +218,16 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
 
     transforms = {ref_path: np.eye(3)}
     exposures = {ref_path: ref_exp}
+    # Every frame is brought to the reference's sky level before it is warped.
+    # Without this, which frames a pixel happened to average sets its background,
+    # so every coverage boundary is a step and the rotation envelope is drawn
+    # onto the picture as bands — see normalize.py, which measured 262% of sky
+    # variation across one real session. The extractor never did this; the crop
+    # hid it, because a near-fully-covered pixel has nearly the same frames
+    # behind it as its neighbour. Turning Trim off exposed it immediately, on a
+    # 1116-frame NGC 281 stack (2026-08-29).
+    ref_stats = frame_stats(np.stack([ref_ha, ref_oiii], axis=2))
+    norm_stats = {ref_path: ref_stats}
     used = [ref_path]
 
     # Phase A: register each remaining sub on its Ha plane.
@@ -229,13 +241,14 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
             rejected.append((path, "dimension mismatch"))
             continue
         try:
-            ha, _ = extract_cfa_planes(cfa, pat)
+            ha, oiii = extract_cfa_planes(cfa, pat)
             matrix = find_transform(ha, ref_ha)
         except RegistrationError as exc:
             rejected.append((path, f"registration failed: {exc}"))
             continue
         transforms[path] = matrix
         exposures[path] = exp
+        norm_stats[path] = frame_stats(np.stack([ha, oiii], axis=2))
         used.append(path)
         if on_progress is not None:
             on_progress(i, n, "registering")
@@ -267,7 +280,13 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
     def _prepare(path):
         cfa, pat, _ = load_cfa(path)
         ha, oiii = extract_cfa_planes(cfa, pat)
-        return warp_with_validity(np.stack([ha, oiii], axis=2), transforms[path])
+        # Normalise BEFORE warping, as run_stack does: warp's out-of-frame fill
+        # then stays a clean zero that the validity mask keeps out of the
+        # average, where correcting afterwards would turn it into a plausible
+        # sky value.
+        both = normalize_to(np.stack([ha, oiii], axis=2),
+                            norm_stats[path], ref_stats)
+        return warp_with_validity(both, transforms[path])
 
     def frames():
         pass_no["n"] += 1
