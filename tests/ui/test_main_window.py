@@ -4816,3 +4816,20 @@ def test_the_open_large_editor_button_actually_opens_it(qtbot, tmp_path, monkeyp
     _base, points = opened[0]
     assert points == win._panel.curve_editor.points(), (
         "the dialog must open on the curve already in the pane")
+
+
+def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
+    """load_icon raises on a missing SVG, so an untracked asset breaks a fresh
+    clone while every local test passes — update.svg was missing from git for
+    four days in exactly this way."""
+    import subprocess
+    from PySide6.QtWidgets import QToolBar
+    from nocturne.ui.icons import ICON_NAMES
+    assert "combine" in ICON_NAMES
+    win = _window(qtbot, tmp_path)
+    titles = [a.text() for a in win.findChild(QToolBar).actions()]
+    assert any("Combine" in t for t in titles), f"no Combine action: {titles}"
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "nocturne/assets/icons/combine.svg"],
+        capture_output=True, cwd="/Volumes/Work/Code/Editor")
+    assert tracked.returncode == 0, "combine.svg is not tracked by git"

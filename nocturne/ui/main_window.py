@@ -773,6 +773,11 @@ class MainWindow(QMainWindow):
         StackDialog(self.settings, self,
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
 
+    def _open_combine(self) -> None:
+        from .combine_dialog import CombineDialog
+        CombineDialog(self.settings, self,
+                      on_master=lambda img: self.open_image(img, "combined narrowband")).exec()
+
     def _open_haoiii(self) -> None:
         try:
             from .haoiii_dialog import HaOIIIDialog
@@ -1331,6 +1336,8 @@ class MainWindow(QMainWindow):
         # cue — the glyphs do the work — and easy to tweak later.
         tint = {
             "haoiii": "#5b93d1",       # blue
+            "combine": "#6fb0a0",      # sea green, next to haoiii's blue since
+                                       # the two are halves of one job
             "star-spikes": "#7d8ed6",  # indigo
             "narrowband": "#a284c9",   # violet
             "auto-enhance": "#c99a5b",  # warm gold
@@ -1345,6 +1352,7 @@ class MainWindow(QMainWindow):
                                          # colour tool does not read as a share one
         }
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
+        tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
         tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
         self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]), "Auto Enhance",
