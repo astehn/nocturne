@@ -1293,6 +1293,35 @@ _TOPIC_LIST = (
        "to show as its own colour.</p>"),
 
     # ---- Recipes & Batch ----
+    _t("combine", "Combine Ha + OIII",
+       "Build a two-gas master from separate Ha and OIII files.",
+       "<h4>What it does</h4>"
+       "<p>Takes a <b>Ha</b> file and an <b>OIII</b> file — each a stacked mono image, not a "
+       "raw sub — and builds the same kind of two-gas master the Ha/OIII extractor produces: "
+       "linear, with Ha in red and OIII in green and blue. Process it like any other stack and "
+       "use <b>Narrowband</b> after the stretch to choose the palette.</p>"
+       "<p>The files can come from Nocturne's own extractor, which writes them when <b>Also "
+       "write separate Ha and OIII files</b> is ticked, or from anywhere else — another "
+       "program, a mono camera, someone else's data.</p>"
+       "<h4>Balance</h4>"
+       "<p><b>Balance</b> decides how much to lift the oxygen toward the hydrogen, and it does "
+       "it while the data is still linear, which is the one thing you cannot do later.</p>"
+       "<p>At <b>matched to Ha</b> — the default — the two gases are brought to the same "
+       "brightness and contrast, which is exactly what the extractor's own colour master "
+       "contains. At <b>as measured</b> the OIII is left as faint as it really is, so the true "
+       "ratio between the two gases is what you see. Anywhere between the two mixes them.</p>"
+       "<p>Once a master is stretched that ratio cannot be recovered, which is why this control "
+       "is here and not in Narrowband.</p>"
+       "<h4>If the two do not line up</h4>"
+       "<p>Files that came out of one extraction are already aligned and nothing is said about "
+       "it. If the two are offset — which happens when they come from different sessions or "
+       "different programs — Nocturne says how far apart they are and offers to <b>Align OIII "
+       "to Ha before combining</b>. Combining a misaligned pair puts a coloured fringe on every "
+       "star.</p>"
+       "<h4>It needs stacked channels, not raw subs</h4>"
+       "<p>A raw sub is a single-plane image too, so it looks the same from the outside. "
+       "Nocturne tells them apart by whether the file records how many frames went into it, and "
+       "refuses a <b>raw sub</b> with a message saying so. Stack it first.</p>"),
     _t("recipes", "Recipes & Batch",
        "Save the steps you applied as a file, and replay them over a folder of masters.",
        "<h4>What it does</h4>"
@@ -1399,7 +1428,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband",
                           "color_balance")),
     HelpSection("Sharing & Projects", ("share", "upscale", "saved-projects", "provenance")),
-    HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii")),
+    HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii", "combine")),
     HelpSection("Recipes & Batch", ("recipes",)),
     HelpSection("Troubleshooting", ("troubleshooting",)),
 )

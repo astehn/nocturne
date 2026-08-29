@@ -1358,3 +1358,36 @@ def test_the_haoiii_help_covers_the_separate_channel_files():
     assert d.channels_check.text() in b, "the checkbox label is not in the help"
     assert "un-equalised" in b.lower(), "the help does not say the files are un-equalised"
     assert "ratio survives" in b.lower(), "the help does not explain the shared scale"
+
+
+def test_the_combine_help_covers_every_control():
+    """A control the help does not mention is a control a beginner will not
+    find. Nocturne's help has drifted on most releases; pin it to the widgets."""
+    from nocturne.settings import Settings
+    from nocturne.ui.combine_dialog import CombineDialog
+    b = _body("combine")
+    d = CombineDialog(Settings())
+    assert d.align_check.text() in b, "the align checkbox is not documented"
+    for word in ("<b>Ha</b>", "<b>OIII</b>", "<b>Balance</b>", "Narrowband"):
+        assert word in b, f"{word} is not in the Combine topic"
+    assert "as measured" in b.lower() and "matched to ha" in b.lower(), \
+        "the help must explain what the two ends of Balance mean"
+
+
+def test_the_combine_help_says_it_needs_stacked_channels_not_subs():
+    """The refusal a user is most likely to hit, since a raw sub is 2D too."""
+    b = _body("combine").lower()
+    assert "raw sub" in b, "the help does not say raw subs are refused"
+
+
+def test_the_combine_help_matches_the_balance_labels_the_dialog_shows():
+    """The topic names both ends of the slider; if the dialog renames them the
+    help silently starts describing something the user cannot see."""
+    from nocturne.settings import Settings
+    from nocturne.ui.combine_dialog import CombineDialog
+    b = _body("combine")
+    d = CombineDialog(Settings())
+    d.balance_slider.setValue(0)
+    assert f"<b>{d.balance_label.text()}</b>" in b, "the 0% label is not in the help"
+    d.balance_slider.setValue(100)
+    assert f"<b>{d.balance_label.text()}</b>" in b, "the 100% label is not in the help"
