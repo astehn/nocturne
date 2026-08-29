@@ -59,7 +59,7 @@ def align_to(oiii: np.ndarray, shift: tuple) -> np.ndarray:
 
 
 def combine_gases(ha: np.ndarray, oiii: np.ndarray, balance: float = 1.0,
-                  metadata: dict | None = None) -> AstroImage:
+                  metadata: dict | None = None, fit: tuple | None = None) -> AstroImage:
     """Linear master: Ha in red, OIII in green and blue.
 
     `balance` runs from 0 (OIII exactly as measured, true ratio intact) to 1
@@ -69,11 +69,18 @@ def combine_gases(ha: np.ndarray, oiii: np.ndarray, balance: float = 1.0,
 
     Both channels are divided by ONE peak. Scaling them separately would land
     each at 1.0 and silently discard the ratio.
+
+    `fit` lets a caller supply the match measured elsewhere. The live preview
+    needs it: the fit is a median and a MAD, and block-averaging an image for a
+    preview lowers its MAD, so a fit measured on the shrunken planes disagrees
+    with the one Apply uses — 1.1% on plain noise, more with structure. The
+    preview measures once at full resolution and hands the answer down, so what
+    you see is the operation you get.
     """
     if ha.shape != oiii.shape:
         raise ValueError(f"Ha is {ha.shape} but OIII is {oiii.shape}")
     t = float(np.clip(balance, 0.0, 1.0))
-    matched = apply_oiii_fit(oiii, oiii_fit(ha, oiii))
+    matched = apply_oiii_fit(oiii, fit if fit is not None else oiii_fit(ha, oiii))
     out = (1.0 - t) * oiii + t * matched
     rgb = np.stack([ha, out, out], axis=2).astype(np.float32)
     peak = float(rgb.max()) or 1.0

@@ -3,16 +3,19 @@ from __future__ import annotations
 import os
 
 from astropy.io import fits
-from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
-from ..core.combine import OFFSET_TOLERANCE_PX, align_to, combine_gases, measure_offset
+from ..core.combine import (OFFSET_TOLERANCE_PX, align_to, combine_gases,
+                            measure_offset, oiii_fit)
 from ..core.fits_io import _parse_metadata, load_mono_master
 from ..settings import start_dir
 from . import file_dialogs
+from .frame_preview import FramePreview
+from .preview import downscale, to_qimage
 from .worker import run_async
 
 BLURB = (
@@ -23,9 +26,23 @@ BLURB = (
 )
 
 
+# Long enough that dragging the slider does not queue a render per pixel, short
+# enough that letting go feels immediate. Matches the narrowband dialog.
+_DEBOUNCE_MS = 90
+
+
 class _Signals(QObject):
     checked = Signal(float, float)
+    loaded = Signal(object)
     failed = Signal(str)
+
+
+def _shrink(plane):
+    """A gas plane small enough to recompute on every slider tick. Block
+    averaging, never striding: sampling one pixel in N deletes most of a star
+    field (measured at 253 of 300 synthetic stars lost at 8x)."""
+    from ..core.image import AstroImage
+    return downscale(AstroImage(plane, is_linear=True)).data
 
 
 def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
@@ -87,11 +104,28 @@ class CombineDialog(QDialog):
         row.addStretch(1)
         self.align_row.setVisible(False)
 
+        self.preview = FramePreview()
+        # 320, not more: at 420 the dialog opened 777px tall and did not fit the
+        # 1280x800 floor. It grows with the dialog, so a big screen still gets a
+        # big preview.
+        self.preview.setMinimumSize(320, 320)
+        self.preview.show_message("Pick a Ha file and an OIII file.")
+        # Small planes for the live preview, plus the fit measured ONCE on the
+        # full-resolution pair. Block-averaging lowers the MAD, so a fit taken
+        # from these would not be the fit Apply uses — see combine_gases.
+        self._small = None
+        self._fit = None
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(_DEBOUNCE_MS)
+        self._render_timer.timeout.connect(self._render_preview)
+
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
         self._signals = _Signals()
         self._signals.checked.connect(self._on_checked)
+        self._signals.loaded.connect(self._on_loaded)
         self._signals.failed.connect(self._on_failed)
 
         form = QFormLayout()
@@ -120,7 +154,7 @@ class CombineDialog(QDialog):
         root.addWidget(self.blurb)
         root.addLayout(form)
         root.addWidget(self.align_note)
-        root.addStretch(1)
+        root.addWidget(self.preview, 1)
         root.addWidget(self.status)
         root.addLayout(buttons)
 
@@ -137,6 +171,22 @@ class CombineDialog(QDialog):
         self.balance_label.setText(
             "matched to Ha" if value == 100
             else "as measured" if value == 0 else f"{value}% toward Ha")
+        self._render_timer.start()
+
+    # --- live preview ---
+    def _render_preview(self) -> None:
+        """Redraw at the current balance. Cheap: the planes are already small and
+        the fit is already measured, so this is a lerp and a stretch."""
+        if self._small is None:
+            return
+        ha, oiii = self._small
+        img = combine_gases(ha, oiii, self.balance_slider.value() / 100.0,
+                            fit=self._fit)
+        self.preview.show_image(to_qimage(img))
+
+    def _on_loaded(self, payload) -> None:
+        self._small, self._fit = payload
+        self._render_preview()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -163,8 +213,13 @@ class CombineDialog(QDialog):
             if ha.shape != oiii.shape:
                 raise ValueError(f"Ha is {ha.shape[1]}x{ha.shape[0]} but "
                                  f"OIII is {oiii.shape[1]}x{oiii.shape[0]}")
+            # One read serves both jobs: the offset, and the small planes plus
+            # full-resolution fit the preview needs.
+            small = (_shrink(ha), _shrink(oiii))
+            self._signals.loaded.emit((small, oiii_fit(ha, oiii)))
             return measure_offset(ha, oiii)
 
+        self.preview.show_message("Reading…")
         run_async(self._pool, work,
                   lambda s: self._signals.checked.emit(s[0], s[1]),
                   lambda exc: self._signals.failed.emit(str(exc)))
@@ -188,6 +243,8 @@ class CombineDialog(QDialog):
     def _on_failed(self, message: str) -> None:
         self._set_busy(False)
         self.align_row.setVisible(False)
+        self._small = self._fit = None
+        self.preview.show_message("Nothing to show yet.")
         self.status.setText(message)
 
     # --- run ---

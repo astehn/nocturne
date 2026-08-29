@@ -15,7 +15,7 @@ from ..core.narrowband import (
 from ..settings import rcastro_valid, resolve_binary
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
-from .preview import to_qimage
+from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
 
@@ -47,32 +47,10 @@ def _slider_positions(p: NarrowbandParams) -> dict:
     }
 
 
-_PREVIEW_MAX = 640
 _DEBOUNCE_MS = 90
 # Taken from the engine rather than retyped: this list and core.PALETTES were
 # two copies of the same fact, which is exactly how lightness_preserve drifted.
 PALETTES = list(_CORE_PALETTES)
-
-
-def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
-    """Shrink for the live preview by AVERAGING each block, not by sampling one
-    pixel in every N.
-
-    Striding is cheaper and destroys a star field: measured on 300 synthetic 3x3
-    stars decimated 8x, 253 vanished entirely and the 47 survivors were drawn at
-    full amplitude, which is the hard single-pixel look. Averaging keeps every
-    star and conserves flux exactly, for a few hundred milliseconds once — after
-    a star split that already takes seconds.
-    """
-    from skimage.transform import downscale_local_mean
-    h, w = img.data.shape[:2]
-    step = max(1, max(h, w) // max_edge)
-    if step == 1:
-        return img
-    blocks = (step, step, 1) if img.data.ndim == 3 else (step, step)
-    small = downscale_local_mean(img.data, blocks).astype(np.float32)
-    return AstroImage(np.ascontiguousarray(small),
-                      is_linear=img.is_linear, metadata=dict(img.metadata))
 
 
 class NarrowbandDialog(QDialog):

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import OrderedDict
 
 import numpy as np
-from PySide6.QtGui import QImage
+from .preview import rgb_to_qimage
 
 from ..core.autostretch import unlinked_stretch
 from ..stacking.frames import load_sub
@@ -27,12 +27,12 @@ def load_preview_array(path: str) -> np.ndarray:
 
 
 def to_qimage(arr: np.ndarray) -> QImage:
+    """An already-stretched float array as a QImage. The wrapping itself lives in
+    preview.rgb_to_qimage — this only has to get the array into uint8 RGB."""
     arr8 = (np.clip(arr, 0.0, 1.0) * 255).astype(np.uint8)
     if arr8.ndim == 2:
         arr8 = np.stack([arr8] * 3, axis=2)
-    arr8 = np.ascontiguousarray(arr8)
-    h, w = arr8.shape[:2]
-    return QImage(arr8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+    return rgb_to_qimage(arr8)
 
 
 class FramePreviewController:

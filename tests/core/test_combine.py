@@ -164,3 +164,23 @@ def test_the_tolerance_carries_its_measurement():
     colour fringing on stars."""
     from nocturne.core.combine import OFFSET_TOLERANCE_PX
     assert OFFSET_TOLERANCE_PX == 0.5
+
+
+def test_a_supplied_fit_is_used_instead_of_remeasuring():
+    """The live preview shrinks the planes to stay responsive, and shrinking by
+    block-averaging lowers the MAD — so a fit measured on the small planes is
+    not the fit Apply will use (1.1% adrift on plain noise, worse with
+    structure). The preview measures once at full resolution and passes the
+    answer in, which is the only way the preview can promise WYSIWYG."""
+    from nocturne.core.combine import combine_gases, oiii_fit
+    rng = np.random.default_rng(9)
+    ha = (0.80 + 0.05 * rng.standard_normal((64, 64))).astype(np.float32)
+    oiii = (0.20 + 0.05 * rng.standard_normal((64, 64))).astype(np.float32)
+
+    honest = combine_gases(ha, oiii, balance=1.0).data
+    same = combine_gases(ha, oiii, balance=1.0, fit=oiii_fit(ha, oiii)).data
+    assert np.allclose(honest, same), "passing the fit it would have measured must change nothing"
+
+    # a deliberately different fit must actually be used
+    other = combine_gases(ha, oiii, balance=1.0, fit=(2.0, 0.0, 0.0)).data
+    assert not np.allclose(honest, other), "the supplied fit was ignored"
