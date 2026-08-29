@@ -345,6 +345,26 @@ def is_stacked_master(path: str) -> bool:
         return int(header.get("NAXIS", 0)) == 3 or "STACKCNT" in header
 
 
+def load_mono_master(path: str) -> np.ndarray:
+    """A single stacked gas plane from a 2D FITS, in the file's own units.
+
+    Deliberately NOT normalised. Ha and OIII are scaled together by the caller
+    so the ratio between them survives; dividing each by its own peak here would
+    destroy exactly what the un-equalised channel files exist to preserve.
+
+    A raw CFA sub is also 2D, so shape cannot tell them apart. A file that names
+    a Bayer pattern and has never been stacked is a raw sub — the same
+    discriminator `is_stacked_master` uses.
+    """
+    with fits.open(path) as hdul:
+        header = hdul[0].header
+        if int(header.get("NAXIS", 0)) != 2:
+            raise ValueError("expected a mono (single-plane) image, not a colour cube")
+        if "BAYERPAT" in header and "STACKCNT" not in header:
+            raise ValueError("this is a raw sub, not a stacked channel — stack it first")
+        return np.asarray(hdul[0].data, dtype=np.float32)
+
+
 def load_master(path: str) -> AstroImage:
     """Load a processed master back to a linear AstroImage. Supports the formats
     the app writes: FITS (via load_fits) and 16-bit TIFF (via tifffile)."""
