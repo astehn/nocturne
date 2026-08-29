@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
 from ..stacking.frames import discover_subs
-from ..stacking.grade import pick_reference, grade_frames, judge
+from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
@@ -438,17 +438,7 @@ class StackDialog(QDialog):
         for row in range(self.table.rowCount()):
             if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
                 chosen.append(self._stats[row])
-        chosen.sort(key=lambda s: s.score, reverse=True)  # best first
-        # run_stack aligns EVERYTHING to paths[0], so whatever leads this list is
-        # the registration reference — and that is a different question from
-        # overall quality. Ordering by score alone put a soft frame first
-        # whenever transparency varied; see grade.pick_reference for the four
-        # sessions measured. The rest stay in score order, which is what the
-        # user reviewed.
-        ref = pick_reference(chosen)
-        if ref is not None:
-            chosen = [ref] + [s for s in chosen if s is not ref]
-        return [s.path for s in chosen]
+        return order_best_first(chosen)
 
     def run(self) -> None:
         if self._busy:

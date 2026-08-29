@@ -132,6 +132,25 @@ def upper_gate(values: list[float], k: float) -> float:
     return median + k * mad
 
 
+def order_best_first(stats: list["FrameStats"]) -> list:
+    """Frame paths in the order a stacker wants them: registration reference
+    first, then descending quality.
+
+    Both stackers align everything to paths[0], so whatever leads this list is
+    the reference — and that is a different question from overall quality, which
+    is why pick_reference exists. Shared because it was not: Stack promoted the
+    sharpest frame and Ha/OIII sorted by score alone, so the same subs with the
+    same settings came out framed differently (measured 2026-08-29: (3680, 1976)
+    against (3696, 1984), identical once they agreed on a reference). The rest
+    stay in score order, which is what the user reviewed.
+    """
+    chosen = sorted(stats, key=lambda s: s.score, reverse=True)
+    ref = pick_reference(chosen)
+    if ref is not None:
+        chosen = [ref] + [s for s in chosen if s is not ref]
+    return [s.path for s in chosen]
+
+
 def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     """Apply verdicts in place. Cheap — re-run freely when strictness changes."""
     k = STRICTNESS_K[strictness]

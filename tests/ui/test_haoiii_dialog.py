@@ -315,3 +315,44 @@ def test_separate_channel_files_are_opt_in(qtbot, tmp_path):
     d.run()
     qtbot.waitUntil(lambda: "opts" in captured, timeout=3000)
     assert captured["opts"].write_channels is True
+
+
+def test_both_stackers_agree_on_the_registration_reference(qtbot):
+    """Same subs, same settings, different framing — because Stack promoted the
+    sharpest frame to the front and Ha/OIII sorted by score alone. Measured on
+    80 real M16 subs: (3680, 1976) against (3696, 1984), and identical the
+    moment Ha/OIII was handed Stack's reference. Both now use one ordering.
+
+    The score is the wrong question for a reference: it multiplies an unbounded
+    star count by bounded quality terms, so at a 2.99x star-count spread its
+    correlation with FWHM inverts and it picks a soft frame to align a whole
+    session to.
+    """
+    from nocturne.stacking.grade import FrameStats
+    from nocturne.ui.stack_dialog import StackDialog
+
+    # A session where score and sharpness disagree. The FWHM spread is kept
+    # tight on purpose: an obviously soft frame is thrown out by judge() before
+    # it can compete, so a fixture with one would prove nothing — the first
+    # version of this test had FWHM 4.2 here and survived the mutation.
+    stats = [
+        FrameStats("/x/soft_but_rich.fit", 900, 2.60, 0.10, 0.99, True),
+        FrameStats("/x/sharp.fit", 300, 2.10, 0.10, 0.80, True),
+        FrameStats("/x/mid_a.fit", 400, 2.50, 0.10, 0.70, True),
+        FrameStats("/x/mid_b.fit", 380, 2.55, 0.10, 0.60, True),
+        FrameStats("/x/mid_c.fit", 360, 2.58, 0.10, 0.50, True),
+    ]
+    h = HaOIIIDialog(Settings()); qtbot.addWidget(h)
+    h._on_graded(stats)
+    s_dlg = StackDialog(Settings()); qtbot.addWidget(s_dlg)
+    s_dlg._on_graded(stats)
+
+    ha_order = h._included_best_first()
+    st_order = s_dlg._included_paths_best_first()
+    assert ha_order[0] == st_order[0], (
+        f"Ha/OIII would align to {ha_order[0]}, Stack to {st_order[0]}")
+    assert ha_order == st_order, "the two stackers must order frames identically"
+    assert ha_order[0] == "/x/sharp.fit", (
+        "the reference must be the sharpest frame, not the highest-scoring one")
+    assert all(s.included for s in stats), (
+        "every frame must survive grading, or the score-leader never competes")

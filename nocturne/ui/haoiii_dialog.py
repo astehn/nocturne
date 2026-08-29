@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..settings import start_dir
-from ..stacking.grade import grade_frames, judge
+from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from . import theme
 from .frame_preview import FramePreview
@@ -334,8 +334,7 @@ class HaOIIIDialog(QDialog):
         for row in range(self.table.rowCount()):
             if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
                 chosen.append(self._stats[row])
-        chosen.sort(key=lambda s: s.score, reverse=True)
-        return [s.path for s in chosen]
+        return order_best_first(chosen)
 
     def run(self) -> None:
         if self._busy:
