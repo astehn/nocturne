@@ -8,9 +8,31 @@ put through the extractor's own fit.
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import shift as _ndshift
+from skimage.registration import phase_cross_correlation
 
 from ..stacking.haoiii import apply_oiii_fit, oiii_fit
 from .image import AstroImage
+
+
+# Above the (0.08, 0.26) px residual measured between a correct Ha/OIII pair on
+# real M16 masters, and below the ~1 px error the extractor itself carried before
+# 7ce1c17 — which was visible as colour fringing on stars.
+OFFSET_TOLERANCE_PX = 0.5
+
+
+def measure_offset(ha: np.ndarray, oiii: np.ndarray) -> tuple:
+    """(dy, dx) to apply to OIII to put it on Ha. Sub-pixel."""
+    shift_yx, _, _ = phase_cross_correlation(
+        np.asarray(ha, np.float64), np.asarray(oiii, np.float64),
+        upsample_factor=20, normalization=None)
+    return float(shift_yx[0]), float(shift_yx[1])
+
+
+def align_to(oiii: np.ndarray, shift: tuple) -> np.ndarray:
+    """OIII resampled onto Ha's grid by the offset measure_offset found."""
+    return _ndshift(np.asarray(oiii, np.float32), shift,
+                    order=1, mode="nearest").astype(np.float32)
 
 
 def combine_gases(ha: np.ndarray, oiii: np.ndarray, balance: float = 1.0,

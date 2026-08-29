@@ -126,3 +126,41 @@ def test_combine_refuses_mismatched_shapes():
     from nocturne.core.combine import combine_gases
     with pytest.raises(ValueError, match="8"):
         combine_gases(np.zeros((8, 8), np.float32), np.zeros((4, 4), np.float32))
+
+
+def _blob(shape=(96, 96), cy=48.0, cx=48.0, sigma=3.0):
+    yy, xx = np.mgrid[0:shape[0], 0:shape[1]]
+    return (np.exp(-(((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * sigma ** 2)))
+            * 1000 + 10).astype(np.float32)
+
+
+def test_an_aligned_pair_reports_no_meaningful_offset():
+    """Every pair the extractor writes is aligned — measured residual on real
+    M16 masters was (0.08, 0.26) px. The tool must stay silent on those."""
+    from nocturne.core.combine import OFFSET_TOLERANCE_PX, measure_offset
+    dy, dx = measure_offset(_blob(), _blob())
+    assert max(abs(dy), abs(dx)) < OFFSET_TOLERANCE_PX
+
+
+def test_a_shifted_pair_is_measured_accurately():
+    from nocturne.core.combine import measure_offset
+    dy, dx = measure_offset(_blob(cy=48.0, cx=48.0), _blob(cy=51.0, cx=46.0))
+    assert abs(abs(dy) - 3.0) < 0.1 and abs(abs(dx) - 2.0) < 0.1, f"got ({dy}, {dx})"
+
+
+def test_alignment_puts_a_shifted_plane_back():
+    """Pins the sign convention as well as the correction: if the shift were
+    applied the wrong way the error would double instead of vanishing."""
+    from nocturne.core.combine import align_to, measure_offset
+    ref, moved = _blob(cy=48.0, cx=48.0), _blob(cy=51.0, cx=46.0)
+    fixed = align_to(moved, measure_offset(ref, moved))
+    dy, dx = measure_offset(ref, fixed)
+    assert max(abs(dy), abs(dx)) < 0.2, f"still off by ({dy}, {dx}) after aligning"
+
+
+def test_the_tolerance_carries_its_measurement():
+    """0.5 px sits above the (0.08, 0.26) residual of a correct pair and below
+    the ~1 px error the extractor itself had before 7ce1c17, which showed as
+    colour fringing on stars."""
+    from nocturne.core.combine import OFFSET_TOLERANCE_PX
+    assert OFFSET_TOLERANCE_PX == 0.5
