@@ -397,6 +397,7 @@ class InjectionDataset:
         self.tiles, self.cfg, self.train = list(tiles), cfg, train
         if not self.tiles:
             raise ValueError("no injection tiles — run build_injection.py first")
+        self._ceilings = None      # built on first use; see pick_tile
 
     def __len__(self) -> int:
         return len(self.tiles)
@@ -407,12 +408,56 @@ class InjectionDataset:
         lo, hi = _DEEP_BAND if rng.random() < _DEEP_SHARE else _SHALLOW_BAND
         return _log_uniform(rng, lo, hi)
 
+    @property
+    def ceilings(self) -> np.ndarray:
+        """The deepest stack each tile's own frames can back, per _MAX_DEPTH_FRACTION.
+
+        Read once from the tiles rather than carried in the filename, so a tile
+        cannot disagree with its own name. np.load on a .npz is lazy, so this
+        touches only the small `depth` member.
+        """
+        if self._ceilings is None:
+            out = []
+            for t in self.tiles:
+                with np.load(t) as rec:
+                    out.append(max(1, int(int(rec["depth"]) * _MAX_DEPTH_FRACTION)))
+            self._ceilings = np.asarray(out, dtype=np.int64)
+        return self._ceilings
+
+    def pick_tile(self, depth: int, rng) -> int:
+        """A tile whose own frames can back `depth` — the DRAW COMES FIRST.
+
+        The old order took tile i, drew a depth, and clamped it down to what that
+        tile could back. Measured 2026-08-30, that turns the design's 70% at
+        200-500 frames into 23.3%, and the arithmetic is exact: the achieved
+        share is (fraction of tiles that can go deep) x 0.70, which was
+        0.333 x 0.70. No amount of extra deep data fixes it, because the tiles
+        that CAN go deep are always a minority -- the ask has to choose the tile,
+        not the other way round.
+
+        When nothing can back the ask, the deepest tiles available are used and
+        the caller still clamps. Claiming a depth the frames cannot support is
+        the one thing this must not do: it is how the first model learned to
+        over-correct.
+        """
+        able = np.flatnonzero(self.ceilings >= int(depth))
+        if able.size == 0:
+            able = np.flatnonzero(self.ceilings == self.ceilings.max())
+        j = (int(rng.integers(able.size)) if hasattr(rng, "integers")
+             else int(rng.randint(able.size)))
+        return int(able[j])
+
     def __getitem__(self, i: int):
         import torch
 
         from nocturne.training.inject import inject, scale_for_sigma
 
         rng = np.random if self.train else np.random.default_rng(_VAL_SEED + i)
+        # The depth is drawn FIRST and then a tile that can back it is chosen.
+        # Index i is a draw counter, not a tile address -- see pick_tile. Val
+        # stays reproducible because its rng is seeded from i.
+        want = self.sample_depth(rng)
+        i = self.pick_tile(want, rng)
         with np.load(self.tiles[i]) as rec:
             target, fields = rec["target"], rec["fields"]
             cov, tile_depth = rec["coverage"], int(rec["depth"])
@@ -450,7 +495,7 @@ class InjectionDataset:
         # carries sqrt(tile_depth / n) times as much. Then solve for k
         # numerically against the same estimator the app uses at inference --
         # estimate_sigma is a MAD over a masked high-pass, not a closed form.
-        depth = _clamp_depth(self.sample_depth(rng), tile_depth)
+        depth = _clamp_depth(want, tile_depth)   # a floor, not the mechanism
         floor = estimate_sigma(target)
         if not floor > 0:
             raise ValueError(

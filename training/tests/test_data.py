@@ -499,3 +499,109 @@ def test_scan_injection_tiles_reads_the_layout_build_injection_writes(tmp_path):
     assert {t.target for t in found} == {"M16", "M42"}
     assert {t.sensor for t in found} == {"s30", "s50"}
     assert build_injection.injection_root({"name": "x"}).name == "injection"
+
+
+def test_deep_draws_land_on_tiles_that_can_back_them(tmp_path):
+    """Measured 2026-08-30: the sampler asks for 70% of examples at 200-500
+    frames and delivered 23.3% on the current archive (19.1% on the old one).
+    The arithmetic is exact -- achieved share is (fraction of tiles that CAN go
+    deep) x 0.70, and only two of six groups are deep, so 0.333 x 0.70 = 0.233.
+
+    Adding deeper groups can never fix that; the draw has to come first and the
+    tile second. Here two tiles of six can back a deep ask, so the old order
+    would clamp two thirds of deep draws down into the shallow bands.
+    """
+    from data import DataConfig, InjectionDataset
+
+    tiles = [_injection_tile(tmp_path / f"deep{i}.npz", depth=2400, seed=i)
+             for i in range(2)]
+    tiles += [_injection_tile(tmp_path / f"shallow{i}.npz", depth=320, seed=10 + i)
+              for i in range(4)]
+    ds = InjectionDataset(tiles, DataConfig(crop=64), train=True)
+    rng = np.random.default_rng(7)
+
+    deep = 0
+    for _ in range(3000):
+        want = ds.sample_depth(rng)
+        idx = ds.pick_tile(want, rng)
+        backed = int(np.load(ds.tiles[idx])["depth"]) * 0.5
+        assert backed >= want or want > 1200, (
+            f"asked {want}, picked a tile that can only back {backed:.0f}")
+        if 200 <= want < 500:
+            deep += 1
+    assert 0.60 < deep / 3000 < 0.80, f"deep band {100*deep/3000:.0f}%, wanted ~70%"
+
+
+def test_validation_still_gives_the_same_example_every_epoch(tmp_path):
+    """train.py keeps the best checkpoint by val loss, so a val set that redraws
+    makes 'best' mean 'luckiest'. Inverting the draw must not break that: the
+    tile is now chosen too, so BOTH have to be stable."""
+    from data import DataConfig, InjectionDataset
+
+    tiles = [_injection_tile(tmp_path / f"v{i}.npz", depth=d, seed=i)
+             for i, d in enumerate((2400, 900, 320, 260))]
+    a = InjectionDataset(tiles, DataConfig(crop=64), train=False)
+    b = InjectionDataset(tiles, DataConfig(crop=64), train=False)
+    for i in range(len(tiles)):
+        na, ca, *_ = a[i]
+        nb, cb, *_ = b[i]
+        assert np.array_equal(na.numpy(), nb.numpy()), f"val example {i} moved"
+
+
+def test_a_depth_no_tile_can_back_falls_back_rather_than_failing(tmp_path):
+    """Every tile shallow: the draw still has to return something. Clamping down
+    is the honest answer there -- what must not happen is a crash or a silent
+    claim the frames cannot support."""
+    from data import DataConfig, InjectionDataset
+
+    tiles = [_injection_tile(tmp_path / f"s{i}.npz", depth=100, seed=i) for i in range(3)]
+    ds = InjectionDataset(tiles, DataConfig(crop=64), train=True)
+    rng = np.random.default_rng(3)
+    idx = ds.pick_tile(499, rng)
+    assert 0 <= idx < len(tiles)
+    noisy, clean, *_ = ds[0]
+    assert np.isfinite(noisy.numpy()).all()
+
+
+def _tile_at_level(path, *, depth, level, size=64, sigma=0.0006, seed=0):
+    """A tile whose CONTENT identifies it, so a test can tell which one was
+    loaded without reaching inside the dataset."""
+    rng = np.random.default_rng(seed)
+    target = np.full((size, size, 3), level, np.float32) + rng.normal(
+        0, sigma, (size, size, 3)).astype(np.float32)
+    fields = rng.normal(0, sigma * np.sqrt(2.0), (4, size, size, 3)).astype(np.float32)
+    np.savez(path, target=target, fields=fields,
+             coverage=np.ones((size, size), np.float32), depth=np.int32(depth))
+    return str(path)
+
+
+def test_getitem_actually_follows_the_draw_to_another_tile(tmp_path):
+    """pick_tile choosing correctly is only half of it — __getitem__ has to USE
+    it. Deleting the call left every other test here green, because they all
+    exercise pick_tile directly. Index i is a draw counter, not a tile address.
+
+    tiles[0] is shallow and cannot back a deep ask; the deep tiles carry a
+    different brightness, so the returned target says which one was loaded.
+    """
+    from data import DataConfig, InjectionDataset
+
+    tiles = [_tile_at_level(tmp_path / "shallow.npz", depth=80, level=0.05, seed=0)]
+    tiles += [_tile_at_level(tmp_path / f"deep{i}.npz", depth=2400, level=0.80,
+                             seed=1 + i) for i in range(3)]
+    ds = InjectionDataset(tiles, DataConfig(crop=32), train=True)
+
+    # `clean` is the target in MODEL space, and the asinh stretch lifts both
+    # levels well above zero: raw 0.05 lands at 0.436 and raw 0.80 at 0.958.
+    # An earlier version of this test compared against 0.2, which BOTH clear,
+    # so it passed with the inversion deleted. Threshold measured, not guessed.
+    shallow_in_model_space, deep_in_model_space = 0.436, 0.958
+    cut = (shallow_in_model_space + deep_in_model_space) / 2
+
+    from_deep = 0
+    for _ in range(200):
+        _noisy, clean, *_ = ds[0]           # always index 0, the shallow tile
+        if float(clean.mean()) > cut:
+            from_deep += 1
+    assert from_deep > 100, (
+        f"only {from_deep}/200 examples came from a tile other than index 0 — "
+        "__getitem__ is not following the draw")
