@@ -198,3 +198,31 @@ def test_generated_data_lives_beside_the_archive_not_inside_it():
     import paths
     assert paths.ARCHIVE not in paths.WORK.parents and paths.WORK != paths.ARCHIVE, (
         f"training output {paths.WORK} is inside the archive {paths.ARCHIVE}")
+
+
+# --- pointing span ----------------------------------------------------------
+
+def test_one_stray_frame_does_not_condemn_a_group():
+    """Measured 2026-08-30: NGC 281's 1514 frames span 3.89 deg of RA and are
+    flagged a mosaic, so the deepest group released for training that same day
+    would not have been built at all. But only TWO of the 1514 sit more than
+    0.5 deg from the median pointing, and one beyond 1.5 — frames caught
+    mid-slew. max-minus-min is maximally sensitive to exactly that.
+    """
+    from nocturne.training.pairs import robust_span
+    tight = [100.0] * 500 + [100.02] * 500
+    assert robust_span(tight) < 0.1
+    with_stray = tight + [104.0]                 # one frame caught mid-slew
+    assert robust_span(with_stray) < 0.1, "a single outlier still sets the span"
+    genuine = [100.0] * 500 + [103.0] * 500      # a real two-panel mosaic
+    assert robust_span(genuine) > 2.5, "a real mosaic must still be seen"
+
+
+def test_ra_span_is_scaled_by_declination():
+    """At Dec +57, where both IC 1396A and NGC 281 sit, a degree of RA is about
+    half a degree of sky. Comparing raw RA against a sky-degree threshold
+    over-flags every high-declination target — the same mistake the shared-sky
+    check had before it moved to true angular separation."""
+    from nocturne.training.pairs import sky_ra_span
+    assert sky_ra_span(2.0, 0.0) == pytest.approx(2.0, abs=0.01)
+    assert sky_ra_span(2.0, 60.0) == pytest.approx(1.0, abs=0.02)

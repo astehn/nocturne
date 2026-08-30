@@ -123,6 +123,34 @@ S50_TEST = ()
 # NGC7000 replaces NGC281 here for the reason recorded at S30_TEST above.
 HELD_OUT = ("M8", "M45", "NGC6888", "NGC7000")
 
+
+# Every guard below compares target NAMES. That held while one archive used one
+# convention; it stopped holding on 2026-08-25, when the rebuild off the Seestar
+# named folders "M 8_sub" where these lists say "M8". Measured 2026-08-30: all
+# four held-out targets passed straight into training material and nothing said
+# so. Normalise both sides, so a rename is not a silent leak.
+_TRAILING = re.compile(r"[_\s-]*(sub|subs|lp|ircut|mosaic|timelapse)$", re.I)
+_NONALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def canonical(name: str) -> str:
+    """One identity for the many ways a target gets written down.
+
+    Strips the suffixes the archive picked up ("_sub") and the filter names that
+    ride along ("NGC 281 LP"), then removes spacing and case. Deliberately keeps
+    digits distinct, so M8 and M80 stay two targets — over-normalising would
+    quietly merge real data, which is the same class of bug pointing the other
+    way.
+    """
+    s = name.strip().lower()
+    while True:
+        stripped = _TRAILING.sub("", s).strip(" _-")
+        if stripped == s:
+            break
+        s = stripped
+    return _NONALNUM.sub("", s)
+
+
 # The sensors whose tiles feed training. NOT the sensor the model ships as:
 # Nocturne targets the S30 Pro and the exported model is still denoise_s30_v1.
 # Only the training MATERIAL widens.
@@ -559,7 +587,8 @@ def split_injection_tiles(tiles: list[InjectionTileRef],
     train, still pass its gate, and still be judged on sky it had memorised.
     """
     wanted = {sensors} if isinstance(sensors, str) else set(sensors)
-    held = sorted({t.target for t in tiles} & set(HELD_OUT))
+    held_canon = {canonical(h) for h in HELD_OUT}
+    held = sorted({t.target for t in tiles if canonical(t.target) in held_canon})
     if held:
         raise ValueError(
             f"held-out targets found in the injection tiles: {', '.join(held)}. "

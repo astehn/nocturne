@@ -204,3 +204,34 @@ def test_low_coverage_tiles_are_not_written(tmp_path):
     full = write_group_tiles(tmp_path / "all", out, tile_size=24, overlap=8,
                              min_coverage=0.0)
     assert 0 <= n < full
+
+
+def test_plan_groups_excludes_held_out_under_the_archives_own_naming():
+    """The exclusion that never fired. plan_groups compared target_dir to
+    HELD_OUT by equality, and the archive rebuilt off the Seestar names things
+    "M 8_sub" where the list says "M8" — so on 2026-08-30 a dry run showed all
+    four held-out targets queued for building, including Andreas' own masters.
+
+    Detecting that in a preflight was not enough; this is the code that decides.
+    """
+    from types import SimpleNamespace
+
+    from build_injection import plan_groups
+
+    def g(name, n=200):
+        return SimpleNamespace(target_dir=name, frames=tuple(range(n)), mosaic=False)
+
+    groups = [g("M 8_sub"), g("M 45_sub"), g("NGC 6888_sub"), g("NGC 7000 LP"),
+              g("IC 1396A_sub", 2535), g("NGC281_sub", 1514)]
+    kept = {x.target_dir for x in plan_groups(groups)}
+    assert kept == {"IC 1396A_sub", "NGC281_sub"}, f"kept {sorted(kept)}"
+
+
+def test_a_deep_group_is_not_condemned_by_one_stray_frame():
+    """NGC 281's 1514 frames were flagged a mosaic by a 3.89-degree RA span set
+    by ONE frame caught mid-slew, which would have dropped the second-deepest
+    group in the archive on the day it was released for training."""
+    from nocturne.training.pairs import robust_span, sky_ra_span
+    ra = [13.63] * 1512 + [9.95, 13.85]          # the real distribution
+    span = sky_ra_span(robust_span(ra), 56.77)
+    assert span < 1.5, f"NGC 281 still reads as a mosaic at {span:.2f} deg"

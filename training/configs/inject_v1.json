@@ -3,14 +3,13 @@
   "_comment": "Supervised training on MANUFACTURED pairs. A group's deepest stack is the target; the input is that target plus a scaled field of the camera's own noise, built by cancelling the sky between two disjoint half-stacks. This is no longer Noise2Noise -- see docs/superpowers/specs/2026-08-24-noise-injection-training-design.md. It exists because at 250-450 frames there was nothing in the archive cleaner than Andreas' own stacks, so the lesson was empty and n2n_v2 learned to do nothing (55% of the noise removed on M45 where GraXpert removes 85%).",
   "dataset": "injection",
   "_comment_dataset": "Selects data.InjectionDataset for TRAINING only. The do-no-harm gate keeps judging on the REAL held-out pairs the ladder below builds: manufactured data judging a model trained on manufactured data is a closed loop that cannot detect its own premise being wrong.",
-  "_comment_held_out": "NEVER training material: M8 and M45 are Andreas' own masters and the only honest tests this project has; NGC6888 and NGC281 are the gate's held-out pairs. build_injection.plan_groups refuses to build them and data.split_injection_tiles refuses to load them. NGC7023 moves from validation into TRAINING here -- its 821 frames make it one of only three groups able to supply a genuinely clean target -- and M27 validates alone.",
-  "_comment_sensor": "TWO DIFFERENT THINGS. `sensor` is the model's identity: stage() writes denoise_{sensor}_v1.onnx and the S30 Pro is the camera Nocturne targets. `sensors` is the training MATERIAL, and the S50 groups are the deep ones (M42 2361 frames, SH2-142 1357, NGC7023 821) -- which is exactly where a clean target has to come from.",
+  "_comment_held_out": "NEVER training material: M8 and M45 are Andreas' own masters and the only honest tests this project has; NGC6888 and NGC7000 are the gate's held-out pairs. NGC7000 replaced NGC281 on 2026-08-30 so NGC281's recovered 1514 frames could train -- the archive lost its deep S50 groups and NGC281 is the second-deepest thing left. NGC7000 keeps the light-polluted holdout the split needs (Helsingborg, SITELAT 56.150, against Crete's 35.3-35.5). M27 validates alone. build_injection.plan_groups refuses to build the held-out ones and data.split_injection_tiles refuses to load them.",
+  "_comment_sensor": "`sensor` is the model's identity: stage() writes denoise_{sensor}_v1.onnx and the S30 Pro is the camera Nocturne targets. `sensors` WAS ['s30','s50'] because the S50 groups were the deep ones -- M42 2361 frames, SH2-142 1357, NGC7023 821 -- and a clean target has to come from somewhere deep. Every one of them died with Work2 on 2026-08-25 and none is recoverable; the archive is now entirely S30 Pro. Kept as a list so re-adding borrowed data later is a config change, not a code change.",
   "sensor": "s30",
   "sensors": [
-    "s30",
-    "s50"
+    "s30"
   ],
-  "source": "/Volumes/Work2/Images/Astro/Training",
+  "source": "/Volumes/Work/Astro",
   "combine_nights": true,
   "method": "sigma_clip",
   "kappa": 2.5,
@@ -36,5 +35,7 @@
   "max_input": 512,
   "epochs": 300,
   "strength": 1.0,
-  "gate_tolerance": 0.0
+  "gate_tolerance": 0.0,
+  "_comment_source": "The local archive recovered off the Seestar after the 2026-08-25 disk loss. NEVER the NAS: it holds the only surviving copy and training writes gigabytes (check_splits.refuse_nas enforces this).",
+  "_comment_depth": "The 70% at 200-500 frames is now actually delivered. It was 19-23% until 2026-08-30 because the tile was chosen before the depth and every deep ask clamped down to what that tile could back; data.InjectionDataset.pick_tile inverts the order. Measured 70.1%, median depth 261 frames."
 }

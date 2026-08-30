@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import build_dataset  # noqa: E402
-from data import HELD_OUT  # noqa: E402  -- re-exported; the split rules live there
+from data import HELD_OUT, canonical  # noqa: E402  -- the split rules live there
 from noise import estimate_sigma  # noqa: E402
 from nocturne.training.inject import noise_field, target_from_halves  # noqa: E402
 from nocturne.training.pairs import (  # noqa: E402
@@ -78,7 +78,11 @@ def plan_groups(groups, min_frames: int = _MIN_FRAMES):
     """
     kept = []
     for group in groups:
-        if group.target_dir in HELD_OUT:
+        # Normalised, not raw. "M 8_sub" is "M8": exact matching let all four
+        # held-out targets through after the archive was rebuilt off the
+        # Seestar, and a model trained on Andreas' own masters cannot be judged
+        # by them.
+        if canonical(group.target_dir) in {canonical(h) for h in HELD_OUT}:
             continue
         if getattr(group, "mosaic", False):
             continue

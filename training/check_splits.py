@@ -45,26 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # with from evidence rather than defended.
 DEFAULT_RADIUS_DEG = 1.0
 
-_TRAILING = re.compile(r"[_\s-]*(sub|subs|lp|ircut|mosaic|timelapse)$", re.I)
-_NONALNUM = re.compile(r"[^a-z0-9]+")
-
-
-def canonical(name: str) -> str:
-    """One identity for the many ways a target gets written down.
-
-    Strips the suffixes the archive picked up ("_sub") and the filter names that
-    ride along ("NGC 281 LP"), then removes spacing and case. Deliberately keeps
-    digits distinct, so M8 and M80 stay two targets — over-normalising would
-    quietly merge real data, which is the same class of bug pointing the other
-    way.
-    """
-    s = name.strip().lower()
-    while True:
-        stripped = _TRAILING.sub("", s).strip(" _-")
-        if stripped == s:
-            break
-        s = stripped
-    return _NONALNUM.sub("", s)
+from data import canonical  # noqa: E402  -- the split rules' own normaliser
 
 
 def held_out_hits(names) -> list:

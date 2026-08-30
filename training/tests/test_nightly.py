@@ -557,14 +557,22 @@ def test_an_injection_config_selects_the_injection_dataset():
     cfg = json.loads(Path(_TRAINING, "configs", "inject_v1.json").read_text())
     assert cfg.get("dataset") == "injection"
     assert cfg["sensor"] == "s30"          # the model's identity, not its material
-    assert set(cfg["sensors"]) == {"s30", "s50"}
+    # WAS {"s30","s50"}: the S50 groups were the deep ones and a clean target
+    # had to come from somewhere deep. All three died with Work2 on 2026-08-25
+    # (M42 2361 frames, SH2-142 1357, NGC7023 821) and none is recoverable, so
+    # the archive is entirely S30 Pro now. Still a list, so re-adding borrowed
+    # data later stays a config change.
+    assert set(cfg["sensors"]) == {"s30"}
     # The plan's draft asserted the held-out names were absent from a
     # `train_targets` key. There is no such key -- the split is code, not
     # config -- so that assertion passed on an empty list and proved nothing.
     # What the file can honestly promise is that it RECORDS the holdout; the
     # enforcement is tested against the split itself in test_data.py.
     recorded = json.dumps(cfg.get("_comment_held_out", ""))
-    for held in ("M8", "M45", "NGC6888", "NGC281"):
+    # NGC7000 replaced NGC281 on 2026-08-30 so NGC281's 1514 frames could train;
+    # it keeps the light-polluted holdout the split needs. M8 and M45 are not
+    # negotiable — they are Andreas' own masters.
+    for held in ("M8", "M45", "NGC6888", "NGC7000"):
         assert held in recorded
 
 
