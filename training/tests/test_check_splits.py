@@ -147,3 +147,17 @@ def test_every_held_out_name_exists_in_the_archive_naming():
     canon = {C.canonical(a) for a in archive}
     missing = [h for h in D.HELD_OUT if C.canonical(h) not in canon]
     assert not missing, f"held-out names that match nothing in the archive: {missing}"
+
+
+def test_the_noise_floor_tool_guards_against_spawn_recursion():
+    """macOS spawns rather than forks, so a worker re-imports the script it was
+    launched from. Without a __main__ guard every worker re-runs the whole
+    experiment inside itself: the first version of this measurement printed its
+    banner nine times and burned 30 minutes doing eight recursive copies of the
+    work before I noticed. Cheap to assert, expensive to rediscover."""
+    import pathlib
+    src = pathlib.Path(__file__).parent.parent / "noise_floor.py"
+    text = src.read_text()
+    assert '__name__ == "__main__"' in text, "no spawn guard — workers will recurse"
+    body = text.split('def main()')[0]
+    assert "register_frames(" not in body, "work at import time re-runs in every worker"
