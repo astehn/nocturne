@@ -33,21 +33,28 @@ def _tile(target, group=None, sensor="s30"):
     )
 
 
-def test_ngc281_is_assigned_to_a_split():
-    """The design's own new requirement: a Bortle 6-7 target in TEST. Task 2
-    taught the generator to combine NGC281's two nights precisely so it would
-    produce pairs -- but a target that produces tiles and belongs to no split
-    makes split_by_target raise, which would take down train.py, evaluate.py
-    and nightly.py on the FIRST full ladder build."""
-    _, _, test = D.split_by_target([_tile("NGC281")], "s30")
-    assert [t.target for t in test] == ["NGC281"]
+def test_a_light_polluted_target_is_in_the_test_split():
+    """The design's own requirement: a Bortle 6-7 target in TEST, because both
+    val and test were dark-sky while most users are not.
+
+    NGC281 filled that role until 2026-08-30, when it moved to TRAIN for its
+    recovered 1514 frames -- the disk loss left IC 1396A as the archive's only
+    deep group and the injection premise needs a clean target. NGC7000 is the
+    archive's other Helsingborg target (SITELAT 56.150 against Crete's 35.3-35.5)
+    and takes the role at a comparable 186 frames to NGC6888's 183.
+
+    The requirement is unchanged; only which target satisfies it moved."""
+    _, _, test = D.split_by_target([_tile("NGC7000")], "s30")
+    assert [t.target for t in test] == ["NGC7000"]
+    train, _, _ = D.split_by_target([_tile("NGC281")], "s30")
+    assert [t.target for t in train] == ["NGC281"], "NGC281 now trains"
 
 
 def test_test_split_still_contains_the_v1_reference_target():
-    """NGC281 is added ALONGSIDE NGC6888, not instead of it: per-target metrics
-    keep v1/v2/v3 comparable on exactly the same dark-sky holdout."""
+    """NGC6888 has been the reference holdout since v1 so per-target metrics stay
+    comparable across runs on exactly the same dark-sky target. Whatever else
+    moves, it does not."""
     assert "NGC6888" in D.S30_TEST
-    assert "NGC281" in D.S30_TEST
 
 
 def test_every_archive_target_belongs_to_exactly_one_split():
@@ -129,8 +136,11 @@ def test_ngc7023_is_the_first_deep_validation_target():
 def test_the_s30_test_split_is_unchanged():
     """Assert-unchanged, not merely 'contains': the untouched holdout is only
     untouched if nothing was added to it either. Adding an S50 target here
-    would quietly change what every per-target metric is compared against."""
-    assert D.S30_TEST == ("NGC6888", "NGC281")
+    would quietly change what every per-target metric is compared against.
+
+    Changed once, deliberately, on 2026-08-30: NGC281 -> NGC7000, so NGC281's
+    1514 frames could train. See the v4 note in data.py."""
+    assert D.S30_TEST == ("NGC6888", "NGC7000")
 
 
 # ---------------------------------------------------------------- sky overlap

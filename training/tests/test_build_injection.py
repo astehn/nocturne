@@ -30,11 +30,17 @@ class _Group:
 # ------------------------------------------------------------- the holdout
 
 def test_the_test_masters_are_never_training_material():
-    """M8 and M45 are the only honest tests we have. NGC6888 and NGC281 are the
+    """M8 and M45 are the only honest tests we have. NGC6888 and NGC7000 are the
     gate's held-out pairs. A model trained on any of them cannot be judged by
-    them, and every conclusion this week rested on that separation.
+    them, and every conclusion of the 2026-08-24 postmortem rested on that
+    separation.
+
+    NGC7000 replaced NGC281 on 2026-08-30 so NGC281's recovered 1514 frames could
+    train; it keeps the light-polluted holdout the split needs. What must never
+    change is that M8 and M45 are in here.
     """
-    assert {"M8", "M45", "NGC6888", "NGC281"} <= set(HELD_OUT)
+    assert {"M8", "M45", "NGC6888", "NGC7000"} <= set(HELD_OUT)
+    assert {"M8", "M45"} <= set(HELD_OUT), "Andreas' own masters are not negotiable"
 
 
 def test_held_out_targets_are_excluded_from_the_plan():

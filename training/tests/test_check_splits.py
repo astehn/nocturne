@@ -31,10 +31,11 @@ def test_canonical_does_not_collapse_genuinely_different_targets():
 
 
 def test_held_out_names_are_matched_after_normalising():
-    held = C.held_out_hits(["M 8_sub", "M 45_sub", "NGC281_sub", "NGC 6888_sub",
-                            "IC 1396A_sub"])
-    assert sorted(held) == ["M 45_sub", "M 8_sub", "NGC 6888_sub", "NGC281_sub"]
+    held = C.held_out_hits(["M 8_sub", "M 45_sub", "NGC 7000 LP", "NGC 6888_sub",
+                            "IC 1396A_sub", "NGC281_sub"])
+    assert sorted(held) == ["M 45_sub", "M 8_sub", "NGC 6888_sub", "NGC 7000 LP"]
     assert "IC 1396A_sub" not in held
+    assert "NGC281_sub" not in held, "NGC281 trains as of 2026-08-30"
 
 
 # --- sky identity ----------------------------------------------------------
@@ -98,3 +99,51 @@ def test_the_nas_is_refused_as_a_source(tmp_path):
 def test_the_local_archive_is_allowed():
     C.refuse_nas("/Volumes/Work/Astro")          # must not raise
     C.refuse_nas("/Volumes/Work/Astro/M 16_sub")
+
+
+def test_the_test_set_keeps_a_light_polluted_target():
+    """NGC281 was held out because it is Helsingborg (Bortle 6-7) while every
+    other group is Crete dark sky — testing only on dark sky when most users are
+    not is a hole the v2 split note set out to close. Releasing it for its 1514
+    frames is only safe because NGC7000 is the archive's other light-polluted
+    target. If someone later moves NGC7000 too, this fails rather than quietly
+    leaving every holdout dark-sky.
+
+    Sites measured 2026-08-30 from SITELAT: Helsingborg 56.09-56.15,
+    Crete 35.34-35.52.
+    """
+    import data as D
+    light_polluted = {"NGC7000", "NGC281"}
+    assert set(D.S30_TEST) & light_polluted, (
+        f"no light-polluted target left in the test set: {D.S30_TEST}")
+    assert set(D.HELD_OUT) & light_polluted, (
+        f"no light-polluted target left held out: {D.HELD_OUT}")
+
+
+def test_the_ladder_and_injection_splits_stay_separate_rules():
+    """HELD_OUT overlapping S30_TRAIN looks like a bug and is not: they govern
+    DIFFERENT datasets. The ladder path trains on M8 and M45 tiles (S30_TRAIN);
+    the injection path must never repeat that exposure, which is what HELD_OUT
+    is for. An earlier version of this test asserted they could not overlap and
+    would have "fixed" a deliberate design.
+
+    What must actually hold: the three ladder splits are mutually exclusive, and
+    nothing held out is used to validate the injection run.
+    """
+    import data as D
+    assert not set(D.S30_TRAIN) & set(D.S30_TEST)
+    assert not set(D.S30_TRAIN) & set(D.S30_VAL)
+    assert not set(D.S30_VAL) & set(D.S30_TEST)
+    assert not set(D.HELD_OUT) & set(D.INJECTION_VAL), (
+        "a held-out target cannot also be the injection run's validation set")
+
+
+def test_every_held_out_name_exists_in_the_archive_naming():
+    """A guard that matches nothing is a guard that is off — which is exactly
+    how all four held-out targets leaked after the disk loss."""
+    import data as D
+    archive = ["M 8_sub", "M 45_sub", "NGC 6888_sub", "NGC 7000 LP",
+               "NGC281_sub", "IC 1396A_sub", "M 16_sub"]
+    canon = {C.canonical(a) for a in archive}
+    missing = [h for h in D.HELD_OUT if C.canonical(h) not in canon]
+    assert not missing, f"held-out names that match nothing in the archive: {missing}"

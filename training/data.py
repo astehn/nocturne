@@ -73,9 +73,22 @@ def from_model_space(y: np.ndarray, a: float = _ASINH_A) -> np.ndarray:
 # precisely so NGC281's 46+63 frames form one 109-frame group and can serve as
 # that light-polluted holdout -- a target that produces tiles but belongs to no
 # split makes split_by_target raise, taking down train/evaluate/nightly.
-S30_TRAIN = ("M16", "M17", "M8", "NGC6992", "M33", "M45", "NGC7000")
+# v4, 2026-08-30: NGC281 and NGC7000 swap roles. The disk loss took the three
+# deep S50 groups (M42 2361, SH2-142 1357, NGC7023 821) that were "exactly where
+# a clean target has to come from", leaving IC 1396A as the ONLY deep group in
+# the archive. NGC281's recovered 1514 frames are the second, and the injection
+# premise needs a clean target more than the test set needs its deepest member.
+#
+# What the swap protects: NGC281 was held out because it is light-polluted
+# (Helsingborg, Bortle 6-7) while everything else is Crete dark sky, and testing
+# only on dark sky when most users are not is the thing the v2 note above set out
+# to fix. NGC7000 is the archive's other Helsingborg target, and at 186 frames it
+# sits in the same depth class as NGC6888's 183 — so the test set keeps one
+# dark-sky and one light-polluted holdout at comparable depth, which is the
+# property that mattered. Measured, not assumed: SITELAT 56.150 vs 35.34-35.52.
+S30_TRAIN = ("M16", "M17", "M8", "NGC6992", "M33", "M45", "NGC281")
 S30_VAL = ("M27",)
-S30_TEST = ("NGC6888", "NGC281")   # untouched until the very end
+S30_TEST = ("NGC6888", "NGC7000")   # untouched until the very end
 
 # v3, 2026-08-24: the S50 half of the archive. n2n_v1 trained on 29% of what is
 # on the drive -- 5596 of 8408 frames are S50 and were excluded outright -- and
@@ -100,14 +113,15 @@ S50_TEST = ()
 # M8 and M45 are Andreas' own masters and the only honest tests this project
 # has: a model that trained on them could not be judged by them, and every
 # conclusion of the 2026-08-24 postmortem rests on that separation. NGC6888 and
-# NGC281 are the do-no-harm gate's held-out pairs -- the one thing standing
+# NGC7000 are the do-no-harm gate's held-out pairs -- the one thing standing
 # between an unattended run and the model the app ships.
 #
 # Deliberately NOT the same as S30_TEST: the ladder dataset trains on M8 and
 # M45 tiles (S30_TRAIN), which is exactly the exposure the injection path must
 # not repeat. Kept here rather than in build_injection.py because this is where
 # the project's split rules already live.
-HELD_OUT = ("M8", "M45", "NGC6888", "NGC281")
+# NGC7000 replaces NGC281 here for the reason recorded at S30_TEST above.
+HELD_OUT = ("M8", "M45", "NGC6888", "NGC7000")
 
 # The sensors whose tiles feed training. NOT the sensor the model ships as:
 # Nocturne targets the S30 Pro and the exported model is still denoise_s30_v1.
