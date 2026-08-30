@@ -4921,3 +4921,36 @@ def test_the_warning_names_every_broken_tool(qtbot, tmp_path):
     assert "GraXpert" in label and "RC-Astro" in label
     assert "ASTAP" not in tip and "ASTAP" not in label, \
         "a tool that was never configured is not broken"
+
+
+def test_auto_enhance_refuses_before_a_crop(qtbot, tmp_path):
+    """Auto Enhance builds its plan from the cropped frame. Andreas asked
+    2026-08-30 whether it needed gating so it could not be run on a partly
+    processed image; it is gated, and this pins the first half of that."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    before = [n for n, _o in win.project.entries()]
+    win._auto_enhance()
+    assert "Crop your image first" in win._warning.text()
+    assert [n for n, _o in win.project.entries()] == before, "it did work anyway"
+
+
+def test_cancelling_auto_enhance_keeps_your_processing(qtbot, tmp_path, monkeypatch):
+    """The destructive half. Saying Yes discards everything after the crop and
+    is covered; saying Cancel was not, and a regression there silently throws
+    away work the user was asked about and declined to lose."""
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import main_window as mw
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    before = [n for n, _o in win.project.entries()]
+    assert "Stretch" in before, "fixture must have processing to lose"
+
+    monkeypatch.setattr(mw.QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    win._auto_enhance()
+    assert [n for n, _o in win.project.entries()] == before, \
+        "Cancel threw the processing away anyway"
