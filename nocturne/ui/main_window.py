@@ -1361,23 +1361,27 @@ class MainWindow(QMainWindow):
             # it IS the primary action, not a tool among tools.
             "auto-enhance": ACCENT,
             # make an image — greens
-            "stack": "#5aa86e",
-            "haoiii": "#55a882",
-            "combine": "#5faa8c",
+            "stack": "#4fbf7b",
+            "haoiii": "#46bf95",
+            "combine": "#4dc2a4",
             # identify it — cyan
-            "plate-solve": "#5aa9c9",
+            "plate-solve": "#4cb8dd",
             # colour it — violets
-            "narrowband": "#a284c9",
-            "color-balance": "#b481c4",
+            "narrowband": "#ab7ee0",
+            "color-balance": "#c078d8",
             # finish it — roses, walked toward violet so the group reads as a run
-            "star-spikes": "#cf8f9b",
-            "trim": "#cb8fa9",
-            "upscale": "#c78fb6",
-            "share": "#c390c3",
-            # repeat it on other data — slate, muted on purpose: these are about
-            # the NEXT image, not this one
-            "save-recipe": "#7f8794",
-            "batch": "#8b93a0",
+            "star-spikes": "#e089a0",
+            "trim": "#dd87b1",
+            "upscale": "#d987c4",
+            "share": "#d489d6",
+            # repeat it on other data — warm amber. This was slate #7f8794 /
+            # #8b93a0, which is TEXT_DIM #8a9099 almost exactly: two fully
+            # ENABLED tools painted in the colour the app uses for de-emphasised
+            # text, sitting next to genuinely disabled icons at TEXT_FAINT
+            # #5e636b. They read as greyed out. Warm and clearly distinct from
+            # WARNING's brighter yellow #e3b341.
+            "save-recipe": "#d1975b",
+            "batch": "#dba86b",
         }
         # --- one tap ---
         self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]),
