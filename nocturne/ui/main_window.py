@@ -1329,9 +1329,21 @@ class MainWindow(QMainWindow):
         tb.addAction(load_icon("settings"), "Settings", self._open_settings)
         tb.addSeparator()
         # Tools (primary features tinted with the accent)
-        self._save_recipe_act = tb.addAction(load_icon("save-recipe"), "Save Recipe", self._save_recipe)
-        tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
-        tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
+        # Ordered by when a session reaches them, not by when they were written.
+        # It had grown by accretion — each tool appended beside whichever one it
+        # resembled — which left Trim between Plate Solve and Colour Balance, and
+        # Star Spikes between Combine and Narrowband. The groups now read:
+        #   one-tap | make an image | identify it | colour it | finish it | repeat it
+        #
+        # Auto Enhance leads. Its old ninth place implied a late-stage tool, when
+        # it is the opposite: it rebuilds from the crop and discards what follows.
+        # Being first says "start here", and someone who taps it too early is told
+        # "Crop your image first" — which teaches the order rather than hiding it.
+        #
+        # Order is not only cosmetic here: the bar overflows ~1058px at the
+        # 1280x800 floor, so whatever sits at the tail is behind the chevron on a
+        # small screen. Recipes and Batch are last because they are about the NEXT
+        # image, not this one.
         # Distinct glyph + a muted per-tool tint so these tools are easy to tell
         # apart (the shared icon caused mis-clicks). Colours are a gentle secondary
         # cue — the glyphs do the work — and easy to tweak later.
@@ -1352,27 +1364,41 @@ class MainWindow(QMainWindow):
                                          # warm where share/haoiii are cool, so a
                                          # colour tool does not read as a share one
         }
+        # --- one tap ---
+        self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]),
+                                              "Auto Enhance", self._auto_enhance)
+        self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
+        tb.addSeparator()
+        # --- make an image ---
+        tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
-        tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
-        tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
-        self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]), "Auto Enhance",
-                                              self._auto_enhance)
-        self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
+        tb.addSeparator()
+        # --- identify it ---
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
                                        self._open_plate_solve)
         self._solve_act.setCheckable(True)   # checked = the TOOL PANEL is open (the
                                               # canvas pill owns overlay visibility)
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
-        self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
+        tb.addSeparator()
+        # --- colour it ---
+        tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
         self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
                                     "Colour Balance", self._open_color_balance)
+        self._cb_act.setEnabled(False)     # a finishing tool needs a picture
+        tb.addSeparator()
+        # --- finish it ---
+        tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
-        self._cb_act.setEnabled(False)     # same gate: a finishing tool needs a picture
-        self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
-        self._share_act.setEnabled(False)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
         self._upscale_act.setEnabled(False)
+        self._share_act = tb.addAction(load_icon("share", tint["share"]), "Share", self._share)
+        self._share_act.setEnabled(False)
+        tb.addSeparator()
+        # --- repeat it on other data ---
+        self._save_recipe_act = tb.addAction(load_icon("save-recipe"), "Save Recipe", self._save_recipe)
+        tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)

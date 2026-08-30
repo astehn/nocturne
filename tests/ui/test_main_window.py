@@ -4954,3 +4954,45 @@ def test_cancelling_auto_enhance_keeps_your_processing(qtbot, tmp_path, monkeypa
     win._auto_enhance()
     assert [n for n, _o in win.project.entries()] == before, \
         "Cancel threw the processing away anyway"
+
+
+def test_the_toolbar_follows_the_order_a_session_happens_in(qtbot, tmp_path):
+    """The order had grown by accretion — each tool appended beside whichever one
+    it resembled — leaving Trim between Plate Solve and Colour Balance, and Star
+    Spikes between Combine and Narrowband. Andreas asked for it to follow the
+    real flow (2026-08-29).
+
+    This is not cosmetic: the bar overflows ~1058px at the 1280x800 floor, so
+    whatever sits at the tail is behind the chevron on a small screen.
+    """
+    from PySide6.QtWidgets import QToolBar
+    win = _window(qtbot, tmp_path)
+    names = [a.text() for a in win.findChild(QToolBar).actions() if a.text()]
+    pos = {n: i for i, n in enumerate(names)}
+
+    # Auto Enhance leads the tools: it rebuilds from the crop and discards what
+    # follows, so ninth place implied a late-stage tool, which is backwards.
+    for later in ("Stack…", "Narrowband…", "Trim", "Share", "Batch…"):
+        assert pos["Auto Enhance"] < pos[later], f"Auto Enhance must precede {later}"
+
+    # make an image -> identify -> colour -> finish -> repeat
+    assert pos["Stack…"] < pos["Ha/OIII…"] < pos["Combine…"], "the stackers stay together"
+    assert pos["Combine…"] < pos["Plate Solve"] < pos["Narrowband…"]
+    assert pos["Narrowband…"] < pos["Colour Balance"] < pos["Star Spikes…"]
+    assert pos["Star Spikes…"] < pos["Trim"] < pos["Upscale Crop"] < pos["Share"]
+    # Recipes and Batch are about the NEXT image, not this one
+    assert pos["Share"] < pos["Save Recipe"] < pos["Batch…"]
+
+
+def test_the_tool_groups_are_separated(qtbot, tmp_path):
+    """Thirteen tools ran together with no separator at all. Grouping may buy
+    more legibility than resequencing did."""
+    from PySide6.QtWidgets import QToolBar
+    win = _window(qtbot, tmp_path)
+    acts = win.findChild(QToolBar).actions()
+    first = next(i for i, a in enumerate(acts) if a.text() == "Auto Enhance")
+    last = next(i for i, a in enumerate(acts) if a.text() == "Batch…")
+    seps = sum(1 for a in acts[first:last] if a.isSeparator())
+    # Exactly five, one after each group: one-tap | make | identify | colour |
+    # finish. ">= 4" let a mutation delete one unnoticed.
+    assert seps == 5, f"{seps} separators across the tool groups, expected 5"
