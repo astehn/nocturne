@@ -610,7 +610,9 @@ def test_manufactured_tiles_can_never_be_read_as_held_out_pairs(tmp_path):
     (pair / "tiles" / "tile_000000.npz").write_bytes(b"")
 
     found = D.scan_tiles(str(tmp_path))
-    assert [t.target for t in found] == ["NGC6888"]
+    # Canonical since 2026-08-30: the target is normalised at scan time, because
+    # the archive writes "NGC 6888_sub" where every split list says "NGC6888".
+    assert [t.target for t in found] == ["ngc6888"]
 
 
 def test_the_train_command_selects_the_injection_dataset():
@@ -675,8 +677,8 @@ def test_train_py_really_trains_on_the_injection_tiles(tmp_path):
     assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
     log = (out / "train.log").read_text()
     assert "dataset       : injection" in log
-    assert "M16" in log and "M27" in log
+    assert "m16" in log and "m27" in log
     assert (out / "best.pt").is_file()
     cfg = json.load(open(out / "config.json"))
     assert cfg["dataset"] == "injection"
-    assert cfg["split"] == {"train": ["M16"], "val": ["M27"], "test": []}
+    assert cfg["split"] == {"train": ["m16"], "val": ["m27"], "test": []}

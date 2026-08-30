@@ -151,6 +151,34 @@ def canonical(name: str) -> str:
     return _NONALNUM.sub("", s)
 
 
+_GROUP_SLUG = re.compile(r"^(s30|s50)_(.+)_[^_]+_[^_]+_[^_]+$")
+
+
+def target_from_group_slug(slug: str) -> str | None:
+    """The target a dataset group directory belongs to, or None if not a group.
+
+    The old parser took `(s30|s50)_([^_]+)_` and stopped at the first
+    underscore. That worked while targets were written "M45"; the archive
+    rebuilt off the Seestar writes "M 8_sub", whose slug is `s30_M_8_sub_...`,
+    so it returned "M". Measured 2026-08-30 on the real tiles: every group
+    collapsed to "IC" or "M", which meant
+
+      * `INJECTION_VAL` matched nothing, so training had NO validation set and
+        died at startup with "best checkpoint means nothing";
+      * worse, `canonical("M")` is "m", which is in no HELD_OUT entry, so the
+        held-out guard became VACUOUS -- M 8's tiles were planted under it and
+        it did not fire. That is the same class of failure as 539e9dc, on the
+        one path that commit did not reach.
+
+    A slug is `sensor_target_night_filter_exposure` and only the target can
+    contain underscores, so the target is what is left after removing the
+    sensor and the last three fields. Returned canonical, because every caller
+    compares it against a hand-written list that spells it differently.
+    """
+    m = _GROUP_SLUG.match(slug)
+    return canonical(m.group(2)) if m else None
+
+
 # The sensors whose tiles feed training. NOT the sensor the model ships as:
 # Nocturne targets the S30 Pro and the exported model is still denoise_s30_v1.
 # Only the training MATERIAL widens.
@@ -183,10 +211,10 @@ def scan_tiles(root: str) -> list[TileRef]:
     """Every tile under a TrainingPairs root, tagged with the target it came from."""
     out: list[TileRef] = []
     for group in sorted(os.listdir(root)):
-        m = re.match(r"(s30|s50)_([^_]+)_", group)
-        if not m:
+        target = target_from_group_slug(group)
+        if target is None:
             continue
-        sensor, target = m.groups()
+        sensor = group.split("_", 1)[0]
         for pair_dir in sorted(glob.glob(os.path.join(root, group, "pair_*"))):
             man_path = os.path.join(pair_dir, "manifest.json")
             if not os.path.exists(man_path):
@@ -199,11 +227,15 @@ def scan_tiles(root: str) -> list[TileRef]:
                     "core.stretch derives its parameters per image, so the noisy and clean "
                     "sides received different transfer functions. Regenerate without --stretch."
                 )
+            # The manifest carries the group as it was built, so nothing has
+            # to be inferred from a directory name when it is present.
+            recorded = man.get("group", {}).get("target_dir")
+            tile_target = canonical(recorded) if recorded else target
             pair = man["pair"]
             if not pair.get("disjoint"):
                 raise ValueError(f"{pair_dir}: manifest does not claim disjoint frame sets")
             for tile in sorted(glob.glob(os.path.join(pair_dir, "tiles", "*.npz"))):
-                out.append(TileRef(tile, sensor, target, group,
+                out.append(TileRef(tile, sensor, tile_target, group,
                                    pair["input_count"], pair["target_count"],
                                    pair.get("kind", "truth")))
     return out
@@ -219,10 +251,10 @@ def parse_sensors(value) -> tuple[str, ...]:
 def _split_name(target: str) -> str | None:
     """Which split a target belongs to, or None. Reads the module globals on
     every call so a test can move a target and see the guards react."""
-    for name, members in (("train", set(S30_TRAIN) | set(S50_TRAIN)),
-                          ("val", set(S30_VAL) | set(S50_VAL)),
-                          ("test", set(S30_TEST) | set(S50_TEST))):
-        if target in members:
+    for name, members in (("train", (*S30_TRAIN, *S50_TRAIN)),
+                          ("val", (*S30_VAL, *S50_VAL)),
+                          ("test", (*S30_TEST, *S50_TEST))):
+        if canonical(target) in {canonical(m) for m in members}:
             return name
     return None
 
@@ -241,14 +273,17 @@ def split_by_target(tiles: list[TileRef], sensors: str | tuple[str, ...] = "s30"
         if len(distinct) > 1:
             raise ValueError(
                 f"these are the same sky and must share one split: {homes}")
-    train_targets = set(S30_TRAIN) | set(S50_TRAIN)
-    val_targets = set(S30_VAL) | set(S50_VAL)
-    test_targets = set(S30_TEST) | set(S50_TEST)
+    # Canonical on BOTH sides. The lists are hand-written ("NGC6888") and the
+    # tiles carry what the archive called the folder ("NGC 6888_sub"); comparing
+    # those raw is what let every held-out target into training on 2026-08-30.
+    train_targets = {canonical(t) for t in (*S30_TRAIN, *S50_TRAIN)}
+    val_targets = {canonical(t) for t in (*S30_VAL, *S50_VAL)}
+    test_targets = {canonical(t) for t in (*S30_TEST, *S50_TEST)}
     sel = [t for t in tiles if t.sensor in wanted]
-    train = [t for t in sel if t.target in train_targets]
-    val = [t for t in sel if t.target in val_targets]
-    test = [t for t in sel if t.target in test_targets]
-    seen = {t.target for t in sel}
+    train = [t for t in sel if canonical(t.target) in train_targets]
+    val = [t for t in sel if canonical(t.target) in val_targets]
+    test = [t for t in sel if canonical(t.target) in test_targets]
+    seen = {canonical(t.target) for t in sel}
     unassigned = seen - train_targets - val_targets - test_targets
     if unassigned:
         raise ValueError(f"targets not assigned to any split: {sorted(unassigned)}")
@@ -567,10 +602,10 @@ def scan_injection_tiles(root: str) -> list[InjectionTileRef]:
     """Every tile build_injection.py wrote under an injection root."""
     out: list[InjectionTileRef] = []
     for group in sorted(os.listdir(root)):
-        m = re.match(r"(s30|s50)_([^_]+)_", group)
-        if not m:
+        target = target_from_group_slug(group)
+        if target is None:
             continue
-        sensor, target = m.groups()
+        sensor = group.split("_", 1)[0]
         for tile in sorted(glob.glob(os.path.join(root, group, "tile_*.npz"))):
             out.append(InjectionTileRef(tile, sensor, target, group))
     return out
@@ -595,8 +630,9 @@ def split_injection_tiles(tiles: list[InjectionTileRef],
             "These are the only honest tests this project has; a model trained "
             "on them cannot be judged by them.")
     sel = [t for t in tiles if t.sensor in wanted]
-    val = [t for t in sel if t.target in INJECTION_VAL]
-    train = [t for t in sel if t.target not in INJECTION_VAL]
+    val_canon = {canonical(t) for t in INJECTION_VAL}
+    val = [t for t in sel if canonical(t.target) in val_canon]
+    train = [t for t in sel if canonical(t.target) not in val_canon]
     if not train:
         raise ValueError("no injection tiles left for training — check the "
                          "sensor filter and that build_injection.py has run")

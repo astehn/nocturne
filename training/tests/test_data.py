@@ -496,7 +496,7 @@ def test_scan_injection_tiles_reads_the_layout_build_injection_writes(tmp_path):
     (tmp_path / "injection_manifest.json").write_text("{}")
     found = D.scan_injection_tiles(str(tmp_path))
     assert len(found) == 4
-    assert {t.target for t in found} == {"M16", "M42"}
+    assert {t.target for t in found} == {"m16", "m42"}   # canonical since 2026-08-30
     assert {t.sensor for t in found} == {"s30", "s50"}
     assert build_injection.injection_root({"name": "x"}).name == "injection"
 
