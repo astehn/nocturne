@@ -343,6 +343,35 @@ def _pairs_fully_present(dataset_dir: Path, group_slug: str, n_in: int, n_tgt: i
     )
 
 
+def _keep_only_targets(groups, only_targets):
+    """Restrict the ladder to named targets, matched by canonical name.
+
+    An injection run reads almost none of what a full ladder builds: training
+    takes injection tiles, and the gate reads only the TEST split. Measured
+    2026-08-30, building every group cost an estimated 190 minutes of which the
+    run consumed 4 -- NGC 6888 and NGC 7000, the two targets in S30_TEST. The
+    rest was IC 1396A and NGC 281 integrating for an hour and a half each to be
+    written and never opened.
+
+    Matched through `canonical` rather than by equality, because the archive
+    names folders "NGC 6888_sub" where every split list says "NGC6888" -- the
+    exact mismatch that let all four held-out targets into training on
+    2026-08-30. A name that matches nothing is refused loudly here, since the
+    failure it would otherwise cause is an empty test split hours later.
+    """
+    if not only_targets:
+        return groups
+    from data import canonical
+    wanted = {canonical(t) for t in only_targets}
+    kept = [g for g in groups if canonical(g.target_dir) in wanted]
+    missing = wanted - {canonical(g.target_dir) for g in groups}
+    if missing:
+        raise ValueError(
+            f"only_targets names {sorted(missing)}, which match nothing in the "
+            f"archive. A filter that matches nothing builds nothing.")
+    return kept
+
+
 def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) -> dict:
     dataset_dir = _DEFAULT_DATASET_ROOT / cfg["name"]
     dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -390,6 +419,7 @@ def build_dataset(cfg: dict, *, max_groups: int | None = None, on_line=print) ->
         groups = [g for g in groups if g.sensor in sensors]
     if exclude_mosaics:
         groups = [g for g in groups if not g.mosaic]
+    groups = _keep_only_targets(groups, cfg.get("only_targets"))
     if max_groups is not None:
         groups = groups[: max(0, int(max_groups))]
 
