@@ -1348,21 +1348,36 @@ class MainWindow(QMainWindow):
         # apart (the shared icon caused mis-clicks). Colours are a gentle secondary
         # cue — the glyphs do the work — and easy to tweak later.
         tint = {
-            "haoiii": "#5b93d1",       # blue
-            "combine": "#6fb0a0",      # sea green, next to haoiii's blue since
-                                       # the two are halves of one job
-            "star-spikes": "#7d8ed6",  # indigo
-            "narrowband": "#a284c9",   # violet
-            "auto-enhance": "#c99a5b",  # warm gold
-            "plate-solve": "#5faa8c",  # teal-green
-            "share": "#5aa9c9",        # cyan
-            "upscale": "#cf8f9b",      # muted rose
-            "trim": "#b0a06a",         # muted olive — the gap in the wheel,
-                                        # and far from upscale's rose so the two
-                                        # finishing tools do not read as variants
-            "color-balance": "#c97f5b",  # burnt orange — the last unused hue, and
-                                         # warm where share/haoiii are cool, so a
-                                         # colour tool does not read as a share one
+            # One hue per toolbar group, shades within it, so colour says which
+            # group a tool belongs to rather than which tool it is. The old
+            # per-tool tints existed because a SHARED icon caused mis-clicks;
+            # every tool has its own glyph now, so colour is free to do this job
+            # instead. The glyphs still do the identifying.
+            #
+            # Two colours are reserved and must not appear here: ACCENT #4a90e2
+            # means "interactive" (sliders, focus, Next) and WARNING #e3b341
+            # means "something is wrong" (update available, tool problem).
+            # Auto Enhance is the deliberate exception — it takes ACCENT because
+            # it IS the primary action, not a tool among tools.
+            "auto-enhance": ACCENT,
+            # make an image — greens
+            "stack": "#5aa86e",
+            "haoiii": "#55a882",
+            "combine": "#5faa8c",
+            # identify it — cyan
+            "plate-solve": "#5aa9c9",
+            # colour it — violets
+            "narrowband": "#a284c9",
+            "color-balance": "#b481c4",
+            # finish it — roses, walked toward violet so the group reads as a run
+            "star-spikes": "#cf8f9b",
+            "trim": "#cb8fa9",
+            "upscale": "#c78fb6",
+            "share": "#c390c3",
+            # repeat it on other data — slate, muted on purpose: these are about
+            # the NEXT image, not this one
+            "save-recipe": "#7f8794",
+            "batch": "#8b93a0",
         }
         # --- one tap ---
         self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]),
@@ -1370,7 +1385,7 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         tb.addSeparator()
         # --- make an image ---
-        tb.addAction(load_icon("stack", ACCENT), "Stack…", self._open_stack)
+        tb.addAction(load_icon("stack", tint["stack"]), "Stack…", self._open_stack)
         tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
         tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
         tb.addSeparator()
@@ -1397,8 +1412,9 @@ class MainWindow(QMainWindow):
         self._share_act.setEnabled(False)
         tb.addSeparator()
         # --- repeat it on other data ---
-        self._save_recipe_act = tb.addAction(load_icon("save-recipe"), "Save Recipe", self._save_recipe)
-        tb.addAction(load_icon("batch"), "Batch…", self._open_batch)
+        self._save_recipe_act = tb.addAction(load_icon("save-recipe", tint["save-recipe"]),
+                                     "Save Recipe", self._save_recipe)
+        tb.addAction(load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -1417,7 +1433,6 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
-        self._about_btn_act = tb.addAction(load_icon("about"), "About", self._show_about)
         self._update_act = tb.addAction(load_icon("update", WARNING),
                                         "Update available", self._open_download)
         self._update_act.setVisible(False)   # revealed only when a newer release exists

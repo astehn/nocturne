@@ -636,12 +636,46 @@ def test_center_stack_switches_on_open(qtbot, tmp_path):
     assert win._center_stack.currentWidget() is win.image_view
 
 
-def test_toolbar_has_about_button(qtbot, tmp_path):
+def test_about_left_the_toolbar_but_is_still_reachable(qtbot, tmp_path):
+    """Andreas, 2026-08-30: About is "redundant... I don't think users would look
+    at the about so much that it actually warrants its own button". Agreed — it
+    is one of the last items, where the chevron hides things on a small screen,
+    for a dialog you open once. It must still be findable, which is the half
+    worth testing."""
     from PySide6.QtWidgets import QToolBar
     win = _window(qtbot, tmp_path)
     main = next(b for b in win.findChildren(QToolBar) if b.windowTitle() == "Main")
-    about = [a for a in main.actions() if a.text() == "About"]
-    assert about and not about[0].icon().isNull()
+    assert not [a for a in main.actions() if a.text() == "About"], \
+        "About is back on the toolbar"
+    menu_items = [a.text()
+                  for top in win.menuBar().actions() if top.menu() is not None
+                  for a in top.menu().actions()]
+    assert any("About" in t for t in menu_items), \
+        f"About must remain in a menu: {menu_items}"
+
+
+def test_every_tool_icon_is_tinted_by_its_group(qtbot, tmp_path):
+    """Andreas asked for colour to say which GROUP a tool belongs to rather than
+    which tool it is. Two tools were untinted entirely (Save Recipe, Batch), and
+    the rest carried a private hue chosen when the icons were shared and colour
+    was the only way to tell them apart."""
+    import inspect
+    from nocturne.ui import main_window as mw
+    src = inspect.getsource(mw.MainWindow._build_toolbar) \
+        if hasattr(mw.MainWindow, "_build_toolbar") else inspect.getsource(mw.MainWindow)
+    tint_src = src[src.index("tint = {"):src.index("}", src.index("tint = {"))]
+    for name in ("stack", "haoiii", "combine", "plate-solve", "narrowband",
+                 "color-balance", "star-spikes", "trim", "upscale", "share",
+                 "save-recipe", "batch", "auto-enhance"):
+        assert f'"{name}"' in tint_src, f"{name} has no group tint"
+    # the two reserved meanings must not be spent on a tool
+    assert '"#e3b341"' not in tint_src, "WARNING amber means 'something is wrong'"
+    # ACCENT is the one deliberate exception, and only for Auto Enhance. Count
+    # assignments, not mentions — the comment above it names ACCENT too.
+    assigned = [ln.strip() for ln in tint_src.splitlines()
+                if ln.strip().startswith('"') and "ACCENT" in ln]
+    assert assigned == ['"auto-enhance": ACCENT,'], \
+        f"ACCENT must tint Auto Enhance and nothing else: {assigned}"
 
 
 def test_show_about_opens_dialog(qtbot, tmp_path):
