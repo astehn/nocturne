@@ -21,9 +21,11 @@ from nocturne.tools.graxpert import GraXpert
 from nocturne.core.noise import reduce_noise
 import sep
 
+import paths
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--pair", required=True)
-ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v1")
+ap.add_argument("--run", default=str(paths.RUNS / "s30_v1"))
 ap.add_argument("--skip-graxpert", action="store_true")
 a = ap.parse_args()
 

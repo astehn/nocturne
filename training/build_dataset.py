@@ -27,15 +27,18 @@ from astropy.io import fits
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import paths  # noqa: E402
+
 from noise import estimate_sigma  # noqa: E402
 from nocturne.training.pairs import (  # noqa: E402
+
     PairConfig,
     _tile_starts,
     discover_frame_groups,
     generate_training_pairs,
 )
 
-_DEFAULT_DATASET_ROOT = Path("/Volumes/Work2/Images/Astro/denoise/datasets")
+_DEFAULT_DATASET_ROOT = paths.DATASETS
 
 
 Rung = namedtuple("Rung", "n_in n_tgt kind")

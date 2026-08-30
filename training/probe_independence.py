@@ -36,7 +36,10 @@ from scipy.ndimage import gaussian_filter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import paths  # noqa: E402
+
 from nocturne.training.pairs import (  # noqa: E402
+
     discover_frame_groups,
     partition_pair,
     prepare_stack,
@@ -154,7 +157,7 @@ def verdict(rho: float) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source", default="/Volumes/Work2/Images/Astro/Training")
+    ap.add_argument("--source", default=str(paths.ARCHIVE))
     ap.add_argument("--sensor", default="s30")
     ap.add_argument("--targets", nargs="*", default=["M8", "M16", "M45"])
     ap.add_argument("--method", default="average", choices=["average", "sigma_clip"])

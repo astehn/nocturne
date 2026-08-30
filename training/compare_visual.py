@@ -22,6 +22,8 @@ import data as D
 from evaluate import _hwc, apply_model
 from model import DenoiseUNet
 
+import paths
+
 
 def display_params(truth):
     """Shadow clip and midtone from the TRUTH, used for every panel.
@@ -47,7 +49,7 @@ def show(img, shadow, m):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pair", required=True)
-    ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v2")
+    ap.add_argument("--run", default=str(paths.RUNS / "s30_v2"))
     ap.add_argument("--out", default="/Users/andreasstehn/Desktop/denoise_comparison.png")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--zoom", type=int, default=2)

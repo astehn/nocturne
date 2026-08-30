@@ -32,10 +32,12 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
+import paths
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-_RUN_ROOT = Path("/Volumes/Work2/Images/Astro/denoise_runs")
+_RUN_ROOT = paths.RUNS
 _DEFAULT_RUN = "n2n_v2"
 
 # Matches nocturne.core.denoise_model.denoise's own default, so what you see

@@ -33,6 +33,8 @@ import data as D
 from model import DenoiseUNet
 from noise import estimate_sigma
 
+import paths
+
 
 class Tee:
     """stdout and a log file, so an unattended run leaves a trace."""
@@ -130,8 +132,8 @@ def save_samples(model, dataset, device, path, count=3):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pairs", default="/Volumes/Work2/Images/Astro/TrainingPairs")
-    ap.add_argument("--out", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v1")
+    ap.add_argument("--pairs", default=str(paths.PAIRS))
+    ap.add_argument("--out", default=str(paths.RUNS / "s30_v1"))
     # Two different things: --sensor names the RUN and the model Nocturne
     # ships (denoise_s30_v1 -- the S30 Pro is the camera the app targets),
     # while --sensors is the material trained on. The S50 groups are the

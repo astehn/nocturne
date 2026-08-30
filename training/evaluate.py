@@ -21,6 +21,8 @@ import data as D
 from model import DenoiseUNet
 from noise import estimate_sigma
 
+import paths
+
 try:
     import sep
 except ImportError:
@@ -146,8 +148,8 @@ def evaluate_pair(pair_dir, model, device, strength=1.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v1")
-    ap.add_argument("--pairs", default="/Volumes/Work2/Images/Astro/TrainingPairs")
+    ap.add_argument("--run", default=str(paths.RUNS / "s30_v1"))
+    ap.add_argument("--pairs", default=str(paths.PAIRS))
     # --sensor is the model/run identity; --sensors is the material. See
     # train.py for why they are not the same knob.
     ap.add_argument("--sensor", default="s30")

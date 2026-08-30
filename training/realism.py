@@ -41,6 +41,8 @@ import sys
 
 import numpy as np
 
+import paths
+
 # Same two lines as build_dataset.py: run as a script, `sys.path[0]` is
 # `training/`, so `nocturne` is not importable until the repo root is added.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -234,7 +236,7 @@ def verdict(result: dict) -> tuple[bool, list[str]]:
 # DISJOINT subsets of one group, and reports whether they are the same animal.
 # --------------------------------------------------------------------------
 
-_SOURCE = "/Volumes/Work2/Images/Astro/Training"
+_SOURCE = str(paths.ARCHIVE)
 # 366 frames: three disjoint subsets of 122 with a frame to spare for the
 # registration reference, and NOT one of M8/M45/NGC6888/NGC281, which are held
 # out so they can judge the finished model.

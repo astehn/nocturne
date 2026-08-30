@@ -161,3 +161,40 @@ def test_the_noise_floor_tool_guards_against_spawn_recursion():
     assert '__name__ == "__main__"' in text, "no spawn guard — workers will recurse"
     body = text.split('def main()')[0]
     assert "register_frames(" not in body, "work at import time re-runs in every worker"
+
+
+# --- where the data lives ---------------------------------------------------
+
+def test_no_module_hardcodes_the_dead_disk():
+    """29 literal /Volumes/Work2 paths across 15 files went dead when that disk
+    failed on 2026-08-25. Each was a default argument: it parses, it runs, and
+    it fails only when something reads it — which for nightly.py meant building
+    a dataset for two hours before dying on a missing directory.
+
+    They live in paths.py now. This fails if one creeps back."""
+    import pathlib
+    root = pathlib.Path(__file__).parent.parent
+    offenders = []
+    for f in sorted(root.glob("*.py")):
+        # the PATH, not the word: several modules now explain in comments why
+        # that disk is gone, and that history is worth keeping
+        if "/Volumes/Work2" in f.read_text():
+            offenders.append(f.name)
+    assert not offenders, f"dead /Volumes/Work2 paths are back in: {offenders}"
+
+
+def test_the_training_roots_are_not_on_the_nas():
+    """paths.py must never point training output at the NAS: it holds the only
+    surviving copy of an archive already lost once, and training writes
+    gigabytes."""
+    import paths
+    for p in (paths.ARCHIVE, paths.WORK, paths.PAIRS, paths.DATASETS, paths.RUNS):
+        C.refuse_nas(str(p))          # raises if it is a NAS mount
+
+
+def test_generated_data_lives_beside_the_archive_not_inside_it():
+    """A stray glob for '*_sub' or '*.fit' over the archive must not pick up
+    tiles or checkpoints the training itself wrote."""
+    import paths
+    assert paths.ARCHIVE not in paths.WORK.parents and paths.WORK != paths.ARCHIVE, (
+        f"training output {paths.WORK} is inside the archive {paths.ARCHIVE}")

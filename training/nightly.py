@@ -46,9 +46,11 @@ import data as D  # noqa: E402
 from gate import DepthResult, check_no_harm  # noqa: E402
 from report import render_comparison_sheet, write_report  # noqa: E402
 
+import paths
+
 _TRAINING_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _TRAINING_DIR.parent
-_DEFAULT_RUN_ROOT = Path("/Volumes/Work2/Images/Astro/denoise_runs")
+_DEFAULT_RUN_ROOT = paths.RUNS
 
 # Subprocesses must run under the SAME interpreter this process was launched
 # with (.venv-train, per CLAUDE.md) -- sys.executable IS that interpreter,
@@ -59,8 +61,8 @@ _PYTHON = sys.executable
 # IS the deepest stack there is), and it is the exact master the 2026-08-22
 # model damaged. Every run is checked against it, truth-free, via gate's
 # chroma proxy -- a held-out-pair gate cannot reach this depth by construction.
-_M8_MASTER = "/Volumes/Work2/Images/Astro/Work/M8 Total/lights/M8_405x10s_68min.fits"
-_M8_DEPTH = 405
+_M8_MASTER = str(paths.M8_MASTER)
+_M8_DEPTH = paths.M8_DEPTH
 
 _PAIR_DIR_RE = re.compile(r"_in(\d+)_target(\d+)$")
 _GROUP_DIR_RE = re.compile(r"^(?:s30|s50)_([^_]+)_")
@@ -255,7 +257,7 @@ def gate_dataset_dir(cfg: dict) -> Path:
 def _train_command(cfg: dict, dataset_dir, run_dir, smoke: bool) -> list[str]:
     """Build train.py's argv. `--pairs` is ALWAYS explicit here: train.py's
     own default points at the old, superseded dataset
-    (/Volumes/Work2/Images/Astro/TrainingPairs), not at what build_dataset.py
+    (paths.PAIRS), not at what build_dataset.py
     produces -- omitting it would silently train on the wrong data."""
     cmd = [
         _PYTHON, str(_TRAINING_DIR / "train.py"),
@@ -324,6 +326,12 @@ def _deep_end_result(model, device, strength: float):
     rather than harm, and rejected every working denoiser.
     """
     if not os.path.isfile(_M8_MASTER):
+        # None is NOT a silent skip, though it looks like one from here:
+        # _with_deep_end turns it into an empty result set, check_no_harm
+        # refuses an empty set, and a warning is printed. The run fails rather
+        # than passing on the shallow pairs' say-so. Read those two before
+        # "fixing" this — I replaced it with a raise on 2026-08-30 and was
+        # wrong.
         return None
     from astropy.io import fits
 

@@ -24,7 +24,7 @@ from nocturne.core.export import save_tiff
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--pair", required=True)
-ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v2")
+ap.add_argument("--run", default=str(paths.RUNS / "s30_v2"))
 ap.add_argument("--out", default="/Users/andreasstehn/Desktop/DenoiseComparison")
 ap.add_argument("--strengths", default="0.75,1.0")
 a = ap.parse_args()
@@ -48,6 +48,8 @@ def write(name, arr):
     print(f"  {name:<34} {os.path.getsize(p)/1e6:>6.1f} MB")
 
 import torch
+
+import paths
 dev = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 ck = torch.load(os.path.join(a.run, "best.pt"), map_location=dev)
 net = DenoiseUNet(base=ck.get("args", {}).get("base", 32)).to(dev)

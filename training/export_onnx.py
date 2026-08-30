@@ -13,7 +13,7 @@ import data as D
 from model import DenoiseUNet, SIGMA_SCALE
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--run", default="/Volumes/Work2/Images/Astro/denoise_runs/s30_v2")
+ap.add_argument("--run", default=str(paths.RUNS / "s30_v2"))
 ap.add_argument("--out", default="nocturne/assets/models/denoise_s30_v1.onnx")
 ap.add_argument("--tile", type=int, default=256)
 a = ap.parse_args()
@@ -55,6 +55,8 @@ def _random_tile(h: int, w: int, rng: np.random.Generator) -> np.ndarray:
 
 
 import onnxruntime as ort
+
+import paths
 sess = ort.InferenceSession(a.out, providers=["CPUExecutionProvider"])
 worst = 0.0
 rng = np.random.default_rng(0)
