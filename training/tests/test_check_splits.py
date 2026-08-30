@@ -226,3 +226,71 @@ def test_ra_span_is_scaled_by_declination():
     from nocturne.training.pairs import sky_ra_span
     assert sky_ra_span(2.0, 0.0) == pytest.approx(2.0, abs=0.01)
     assert sky_ra_span(2.0, 60.0) == pytest.approx(1.0, abs=0.02)
+
+
+# --- premise 5: the injected field must not correlate with the target --------
+
+def _probe_verdict(matched, null, amplitude=None):
+    import numpy as np
+
+    import independence as I
+    if amplitude is None:
+        amplitude = np.full_like(np.asarray(matched, float), 0.4)
+    said = []
+    ok = I.report(np.asarray(matched, float), np.asarray(null, float),
+                  np.asarray(amplitude, float), out=said.append)
+    return ok, "\n".join(said)
+
+
+def test_the_probe_judges_against_its_null_not_a_fixed_number():
+    """The 2026-08-23 probe read 0.78 and said proceed; it was counting stars,
+    not sensor noise. A correlation means nothing without knowing what the
+    estimator returns when the answer really IS independent — and that depends
+    on the data, so no hardcoded threshold can stand in for it.
+
+    Here the same matched values are read two ways. Against a tight null they
+    are a violation; against a loose one they are ordinary estimator scatter.
+    A probe with a fixed cutoff returns the same verdict for both.
+    """
+    import numpy as np
+    rng = np.random.default_rng(0)
+    matched = rng.normal(0, 0.15, 200)          # what was measured on real tiles
+
+    tight, _ = _probe_verdict(matched, rng.normal(0, 0.007, 200))
+    loose, _ = _probe_verdict(matched, rng.normal(0, 0.20, 200))
+    assert not tight, "0.15-wide values against a 0.007-wide null must fail"
+    assert loose, "the same values against an equally wide null must pass"
+
+
+def test_independent_fields_are_not_reported_as_a_violation():
+    """The expensive failure mode is the other one: crying violation on clean
+    data and rebuilding a dataset that was fine."""
+    import numpy as np
+    rng = np.random.default_rng(1)
+    ok, said = _probe_verdict(rng.normal(0, 0.006, 200), rng.normal(0, 0.007, 200))
+    assert ok, said
+
+
+def test_the_measured_real_data_reading_is_a_violation():
+    """The numbers actually measured on IC 1396A's tiles, 2026-08-30 — matched
+    sd 0.1528 / max 0.4591 against a null of sd 0.0073 / max 0.0330. This is
+    what the first training run was launched on top of, and it must keep reading
+    as a violation if anyone reruns the probe."""
+    import numpy as np
+    matched = np.concatenate([np.random.default_rng(2).normal(0, 0.1528, 103), [-0.4591]])
+    null = np.concatenate([np.random.default_rng(3).normal(0, 0.0073, 103), [0.0330]])
+    ok, said = _probe_verdict(matched, null)
+    assert not ok, said
+    assert "NOT INDEPENDENT" in said
+
+
+def test_a_field_whose_amplitude_ignores_intensity_is_flagged():
+    """corr(|D|, M) positive is the realism the design wants: shot noise grows
+    with signal. Flat amplitude means the injected noise is synthetic-looking,
+    which is a different failure from the correlation one and must not be
+    silently folded into the same verdict."""
+    import numpy as np
+    rng = np.random.default_rng(4)
+    _, said = _probe_verdict(rng.normal(0, 0.006, 100), rng.normal(0, 0.007, 100),
+                             amplitude=rng.normal(0, 0.005, 100))
+    assert "does not track intensity" in said
