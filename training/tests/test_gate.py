@@ -856,3 +856,33 @@ def test_the_clean_checkpoint_passes_the_deep_end_gate_on_both_real_masters():
             f"the floor -- the floor has no headroom left")
         g = check_no_harm([chroma, detail])
         assert g.passed, g.failures
+
+
+def test_a_plain_blur_still_fails_on_the_rebuilt_reference():
+    """The detail floor's whole demand is that a blur must fail. It was tuned on
+    a 405-frame M8 master that died with Work2; the reference is now 460 frames.
+
+    Re-measured 2026-08-30: a blur reads 1.003 where it read 1.005, because both
+    metrics are ratios against a control computed on the same image, so the
+    reference's depth cancels. This pins that a blur keeps failing, so a future
+    rebuild at yet another depth cannot quietly turn the gate toothless.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    import gate
+
+    rng = np.random.default_rng(4)
+    yy, xx = np.mgrid[0:512, 0:512]
+    scene = 0.02 + 0.5 * np.exp(-(((yy - 256) ** 2 + (xx - 256) ** 2) / (2 * 60.0 ** 2)))
+    img = np.repeat(scene[:, :, None], 3, axis=2).astype(np.float32)
+    for cy, cx in ((100, 120), (300, 380), (420, 90), (150, 400)):
+        img[cy - 2:cy + 3, cx - 2:cx + 3] += 0.4
+    img += rng.normal(0, 6e-5, img.shape).astype(np.float32)
+
+    for sigma in (1.0, 2.3):
+        blurred = np.stack([gaussian_filter(img[..., c], sigma) for c in range(3)], -1)
+        verdict = gate.check_no_harm(gate.deep_end_results(img, blurred, "T", 460))
+        assert not verdict.passed, (
+            f"a plain blur at sigma {sigma} PASSED the deep-end gate — the detail "
+            f"floor has lost its teeth: {verdict.failures}")

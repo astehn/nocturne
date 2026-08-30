@@ -57,6 +57,21 @@ import numpy as np
 # its lower bound comes from real models and its upper bound from synthetic
 # injection alone. Treat a pass as "not grossly unlike a neutral smoother",
 # never as "not the 2026-08-22 failure".
+# RE-MEASURED 2026-08-30 against the rebuilt 460-frame M8 reference, because the
+# 405-frame master these numbers came from died with Work2 and a threshold
+# calibrated on a master that no longer exists is a threshold nobody has checked.
+#
+#                              405-frame (2026-08-24)   460-frame (2026-08-30)
+#   chroma, plain blur 1.0              1.000                   1.000
+#   detail, plain blur 1.0              1.005                   1.003
+#   detail, plain blur 2.3              1.001                   0.999
+#   gate verdict on a blur               FAIL                    FAIL
+#
+# Unchanged, and now known to be unchanged rather than assumed. Both metrics are
+# RATIOS against a control computed on the SAME image, so the reference's own
+# depth cancels: a cleaner master gives a cleaner control in the same proportion.
+# That is why the reference could be rebuilt at a different depth without
+# re-tuning anything, and it is worth knowing before the next disk failure.
 DEEP_END_TOLERANCE = 0.15
 
 # How much MORE fine luminance detail than the noise-matched blur control a
