@@ -37,5 +37,12 @@
   "strength": 1.0,
   "gate_tolerance": 0.0,
   "_comment_source": "The local archive recovered off the Seestar after the 2026-08-25 disk loss. NEVER the NAS: it holds the only surviving copy and training writes gigabytes (check_splits.refuse_nas enforces this).",
-  "_comment_depth": "The 70% at 200-500 frames is now actually delivered. It was 19-23% until 2026-08-30 because the tile was chosen before the depth and every deep ask clamped down to what that tile could back; data.InjectionDataset.pick_tile inverts the order. Measured 70.1%, median depth 261 frames."
+  "_comment_depth": "The 70% at 200-500 frames is now actually delivered. It was 19-23% until 2026-08-30 because the tile was chosen before the depth and every deep ask clamped down to what that tile could back; data.InjectionDataset.pick_tile inverts the order. Measured 70.1%, median depth 261 frames.",
+  "workers": 3,
+  "_comment_workers": "3, not the machine's 8. A registration worker holds a debayered frame (~100 MB, several times that at peak) and eight of them took 61 GB of a 64 GB machine on 2026-08-30, making it unusable while Andreas was working. plan_workers budgets 500 MB per worker, which is 4-8x optimistic for this path. Raise it only for an overnight run on an idle machine.",
+  "only_targets": [
+    "NGC6888",
+    "NGC7000"
+  ],
+  "_comment_only_targets": "The LADDER half only. This is an injection run: train.py reads injection tiles, and the ladder exists solely to give the gate real held-out pairs, which are the S30_TEST split. Building every group instead costs an estimated 190 minutes to write ~186 that nothing opens. Keep this in step with data.S30_TEST \u2014 test_only_targets.py fails if they drift. Does NOT affect build_injection, which selects its own groups."
 }

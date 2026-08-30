@@ -125,3 +125,40 @@ def test_the_manifest_wins_over_the_directory_name(tmp_path):
     np.savez(pd / "tiles" / "t0.npz", a=np.zeros((4, 4)))
     tiles = D.scan_tiles(str(tmp_path))
     assert {t.target for t in tiles} == {"ngc6888"}
+
+
+# --- the gate's own labelling ----------------------------------------------
+
+def test_the_gate_labels_two_held_out_targets_distinctly():
+    """_pair_identity's docstring warned that a mismatch makes "a gate result
+    silently attach to the wrong target", and it did: `^(?:s30|s50)_([^_]+)_`
+    returned "NGC" for BOTH "NGC 6888_sub" and "NGC 7000 LP". Verified against
+    the real pair directories built 2026-08-30."""
+    import nightly as N
+    a = N._pair_identity("/d/s30_NGC_6888_sub_2026-08-11_LP_10s/pair_0000_in64_target112")
+    b = N._pair_identity("/d/s30_NGC_7000_LP_2026-07-15_LP_20s/pair_0000_in64_target115")
+    assert a == ("ngc6888", 64)
+    assert b == ("ngc7000", 64)
+    assert a[0] != b[0], "the two held-out targets must not share a label"
+
+
+def test_a_capped_gate_run_still_covers_every_held_out_target():
+    """select_gate_pairs round-robins across targets so a budget never skips a
+    held-out target. With both collapsing to "NGC" there was one bucket, so a
+    cap of 2 took two NGC 6888 pairs and no NGC 7000 at all."""
+    import nightly as N
+    dirs = [f"/d/s30_NGC_6888_sub_2026-08-11_LP_10s/pair_0000_in{d}_target128" for d in (1, 16, 64)] + \
+           [f"/d/s30_NGC_7000_LP_2026-07-15_LP_20s/pair_0000_in{d}_target128" for d in (1, 16, 64)]
+    chosen = N.select_gate_pairs(set(dirs), 2)
+    assert {N._pair_identity(c)[0] for c in chosen} == {"ngc6888", "ngc7000"}
+
+
+def test_metrics_history_keys_do_not_collide_between_targets():
+    """_save_metrics keys on "target:depth". Two targets reading as "NGC" at the
+    same depth overwrite each other, and the next run's report then compares one
+    target against the other's previous number."""
+    import nightly as N
+    keys = {f"{N._pair_identity(d)[0]}:{N._pair_identity(d)[1]}" for d in (
+        "/d/s30_NGC_6888_sub_2026-08-11_LP_10s/pair_0000_in1_target128",
+        "/d/s30_NGC_7000_LP_2026-07-15_LP_20s/pair_0000_in1_target128")}
+    assert len(keys) == 2, f"history keys collide: {keys}"

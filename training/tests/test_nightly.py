@@ -221,7 +221,9 @@ def test_pair_identity_parses_target_and_depth_from_the_directory_layout():
         "/Volumes/Work2/Images/Astro/denoise/datasets/ladder_v1/"
         "s30_NGC6888_2026-08-11_LP_10s/pair_0000_in8_target128"
     )
-    assert target == "NGC6888"
+    # Canonical since 2026-08-30, shared with data.target_from_group_slug so the
+    # gate, the ladder scanner and the injection scanner cannot disagree.
+    assert target == "ngc6888"
     assert depth == 8
 
 
@@ -380,7 +382,7 @@ def test_a_truncated_run_still_touches_every_held_out_target():
 
     chosen = select_gate_pairs(_fake_pair_dirs(), 3)
     assert len(chosen) == 3
-    assert {_pair_identity(d)[0] for d in chosen} == {"NGC281", "NGC6888"}
+    assert {_pair_identity(d)[0] for d in chosen} == {"ngc281", "ngc6888"}
 
 
 def test_truncation_prefers_the_deepest_rungs():

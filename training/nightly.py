@@ -65,7 +65,6 @@ _M8_MASTER = str(paths.M8_MASTER)
 _M8_DEPTH = paths.M8_DEPTH
 
 _PAIR_DIR_RE = re.compile(r"_in(\d+)_target(\d+)$")
-_GROUP_DIR_RE = re.compile(r"^(?:s30|s50)_([^_]+)_")
 
 
 @dataclass
@@ -179,15 +178,27 @@ def _pair_identity(pair_dir: str) -> tuple[str, int]:
     nocturne.training.pairs writes -- must match build_dataset._pair_dir's
     naming and FrameGroup.slug's "sensor_target_..." convention exactly, or a
     gate result silently attaches to the wrong target.
+
+    Which is what happened. This read the target with `^(?:s30|s50)_([^_]+)_`,
+    so on 2026-08-30's archive naming BOTH held-out targets -- "NGC 6888_sub"
+    and "NGC 7000 LP" -- came back as "NGC". Two consequences, neither of which
+    changes the gate's pass/fail but both of which corrupt what is reported:
+    `_save_metrics` keys history as "target:depth", so "NGC:1" collided and the
+    next run's report compared NGC 6888 against NGC 7000; and select_gate_pairs
+    round-robins across targets so that a capped run skips none, which with one
+    bucket instead of two silently drops a held-out target.
+
+    It now shares data.target_from_group_slug with both scanners, so the three
+    places that answer "which target is this?" cannot drift apart again.
     """
     pair_dir = str(pair_dir).rstrip("/")
     base = os.path.basename(pair_dir)
     group = os.path.basename(os.path.dirname(pair_dir))
     m_pair = _PAIR_DIR_RE.search(base)
-    m_group = _GROUP_DIR_RE.match(group)
-    if not (m_pair and m_group):
+    target = D.target_from_group_slug(group)
+    if not (m_pair and target):
         raise ValueError(f"cannot parse target/depth from pair dir: {pair_dir}")
-    return m_group.group(1), int(m_pair.group(1))
+    return target, int(m_pair.group(1))
 
 
 def select_gate_pairs(pair_dirs, max_pairs) -> list[str]:
