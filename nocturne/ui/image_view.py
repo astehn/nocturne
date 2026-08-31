@@ -531,14 +531,42 @@ class ImageView(QGraphicsView):
         self._aspect = aspect_ratio
 
     def apply_aspect(self, aspect_ratio) -> None:
-        """Lock to a ratio and immediately reshape the current box to it (centered)."""
+        """Lock to a ratio and immediately reshape the current box to it (centered).
+
+        Reshaped at CONSTANT AREA, then clamped to the image, so changing your
+        mind about the ratio does not change how much you had selected.
+
+        It used to keep the width and derive the height, which silently did
+        nothing whenever the result was too tall to fit: measured 2026-08-31 on a
+        300x200 frame, "1:1" and "4:5" both left the box at 300x200. Every
+        Seestar frame is 3840x2160, so on real images those two ratios had never
+        moved the box at all — in Crop or in Share.
+
+        Fitting the ratio inside the current box instead fixes that but shrinks
+        it every time: on the same frame, 1:1 then 16:9 then 4:5 walked a
+        full-frame box down to 90x112. Constant area is stable — switching back
+        and forth returns to the size you had.
+        """
         self._aspect = aspect_ratio
         if self._body is None or aspect_ratio is None:
             return
+        pm = self._item.pixmap()
+        iw, ih = float(pm.width()), float(pm.height())
         r = self._scene_rect()
-        cx, cy = r.center().x(), r.center().y()
-        w = r.width()
+        cw = max(1.0, min(r.width(), iw))
+        ch = max(1.0, min(r.height(), ih))
+        area = cw * ch
+        w = math.sqrt(area * aspect_ratio)
         h = w / aspect_ratio
+        if w > iw:                       # too wide for the frame
+            w, h = iw, iw / aspect_ratio
+        if h > ih:                       # too tall for the frame
+            w, h = ih * aspect_ratio, ih
+        # Keep the centre where it was, but never let the box leave the image —
+        # crop_bounds clamps to the pixmap, so a box hanging over the edge would
+        # report a different ratio than it draws.
+        cx = min(max(r.center().x(), w / 2), iw - w / 2)
+        cy = min(max(r.center().y(), h / 2), ih - h / 2)
         self._body.setPos(0, 0)
         self._body.setRect(QRectF(cx - w / 2, cy - h / 2, w, h))
         self._position_handles()

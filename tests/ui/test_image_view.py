@@ -831,3 +831,71 @@ def test_resizing_without_an_image_does_not_raise(qtbot):
     view.show()
     qtbot.waitExposed(view)
     view.resize(600, 500)                      # must not raise
+
+
+# --- aspect snapping (fixed 2026-08-31) --------------------------------------
+
+def _boxed(qtbot, h=2160, w=3840):
+    """A view with a full-frame crop box, at real Seestar dimensions."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.preview import to_qimage
+    v = ImageView()
+    qtbot.addWidget(v)
+    v.set_image(to_qimage(AstroImage((np.random.rand(h, w, 3) * .5).astype(np.float32))))
+    v.set_crop_overlay(True, content_bounds=(0, h, 0, w), aspect_ratio=None)
+    v.show_crop_box()
+    return v
+
+
+def test_a_ratio_taller_than_the_frame_still_reshapes_the_box(qtbot):
+    """apply_aspect kept the WIDTH and derived the height, so any ratio too tall
+    to fit silently did nothing. Every Seestar frame is 3840x2160 landscape, so
+    "1:1" and "4:5" had never moved the box on a real image — in Crop or Share.
+    Measured 2026-08-31: a 300x200 frame stayed 300x200 for both.
+    """
+    v = _boxed(qtbot)
+    for ratio in (1.0, 4 / 5):
+        v.apply_aspect(ratio)
+        t, b, l, r = v.crop_bounds()
+        got = (r - l) / max(1, b - t)
+        assert abs(got - ratio) < 0.02, f"wanted {ratio:.2f}, box is {r-l}x{b-t} ({got:.2f})"
+
+
+def test_every_offered_ratio_is_actually_honoured(qtbot):
+    """The whole dropdown, not one value — the bug hit exactly the two ratios
+    nobody had tried on a landscape frame."""
+    from nocturne.core.crop import ASPECT_RATIOS
+    v = _boxed(qtbot)
+    for name, ratio in ASPECT_RATIOS.items():
+        if ratio is None:
+            continue
+        v.apply_aspect(ratio)
+        t, b, l, r = v.crop_bounds()
+        assert abs((r - l) / max(1, b - t) - ratio) < 0.02, f"{name} not honoured"
+
+
+def test_the_box_never_leaves_the_image(qtbot):
+    """crop_bounds clamps to the pixmap, so a box hanging over the edge would
+    report a different shape than it draws — the ratio would look right in code
+    and wrong on screen."""
+    v = _boxed(qtbot, h=2160, w=3840)
+    for ratio in (1.0, 16 / 9, 4 / 5, 3 / 2):
+        v.apply_aspect(ratio)
+        t, b, l, r = v.crop_bounds()
+        assert 0 <= l < r <= 3840 and 0 <= t < b <= 2160, (t, b, l, r)
+
+
+def test_changing_your_mind_about_the_ratio_does_not_shrink_the_selection(qtbot):
+    """Fitting the ratio inside the current box fixes the first bug but shrinks
+    the box on every change: measured, 1:1 then 16:9 then 4:5 walked a full-frame
+    300x200 box down to 90x112. Reshaping at constant area is stable."""
+    v = _boxed(qtbot)
+    v.apply_aspect(1.0)
+    t, b, l, r = v.crop_bounds()
+    first = (r - l) * (b - t)
+    v.apply_aspect(16 / 9)
+    t, b, l, r = v.crop_bounds()
+    second = (r - l) * (b - t)
+    assert abs(second - first) / first < 0.02, (
+        f"area changed {first} -> {second} merely by switching ratio")

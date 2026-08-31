@@ -6,9 +6,18 @@ import numpy as np
 
 from .image import AstroImage
 
-# Aspect ratios as width / height. None == keep as-is.
-_ASPECT = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
-ASPECTS = list(_ASPECT)
+# Aspect ratios as width / height. None == keep as-is (free-form).
+# ONE definition. It was written out twice — here and as _ASPECT_RATIO in
+# main_window — and adding Trim would have made a third. Two dicts that must
+# agree, in different files, is how a 4:5 in one place becomes 5:4 in another.
+ASPECT_RATIOS = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5,
+                 "3:2": 3 / 2}
+ASPECTS = list(ASPECT_RATIOS)
+_ASPECT = ASPECT_RATIOS          # the older name, still used inside this module
+
+# Composition guides, label -> what ImageView.set_guides expects.
+GUIDE_KINDS = {"None": "none", "Rule of thirds": "thirds", "Center cross": "center"}
+GUIDES = list(GUIDE_KINDS)
 
 
 @dataclass

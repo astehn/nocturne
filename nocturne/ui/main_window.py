@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core.provenance import build_report
-from ..core.crop import CropParams, detect_content_bounds
+from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
@@ -74,7 +74,7 @@ from .busy_bar import BusyBar
 from .worker import run_async
 from . import file_dialogs
 
-_ASPECT_RATIO = {"Original": None, "1:1": 1.0, "16:9": 16 / 9, "4:5": 4 / 5, "3:2": 3 / 2}
+_ASPECT_RATIO = ASPECT_RATIOS    # one definition, in core.crop
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
 
 # Amber trip points, calibrated 2026-07-30 on the NGC 7000 master (161x20s, 5.1 MP).

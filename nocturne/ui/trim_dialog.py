@@ -26,8 +26,10 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
+
+from ..core.crop import ASPECT_RATIOS, ASPECTS, GUIDE_KINDS, GUIDES
 
 from .image_view import ImageView
 from .preview import to_qimage
@@ -64,6 +66,28 @@ class TrimDialog(QDialog):
         self.hint.setObjectName("stepExplainer")
         self.hint.setWordWrap(True)
 
+        # The same aspect and guide affordances the Crop step has. Trim was
+        # shipped with a bare rubber-band box, and Andreas (2026-08-31): "it's
+        # kind of difficult to do a meaningful trim". ImageView already has all
+        # of it — eight handles, apply_aspect, set_guides — Trim simply never
+        # wired a control to any of it.
+        self.aspect_box = QComboBox()
+        self.aspect_box.addItems(ASPECTS)
+        self.aspect_box.currentTextChanged.connect(
+            lambda t: self.view.apply_aspect(ASPECT_RATIOS[t]))
+        self.guides_box = QComboBox()
+        self.guides_box.addItems(GUIDES)
+        self.guides_box.currentTextChanged.connect(
+            lambda t: self.view.set_guides(GUIDE_KINDS[t]))
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Aspect ratio"))
+        controls.addWidget(self.aspect_box)
+        controls.addSpacing(16)
+        controls.addWidget(QLabel("Guides"))
+        controls.addWidget(self.guides_box)
+        controls.addStretch(1)
+
         self.apply_btn = QPushButton("Apply Trim")
         self.apply_btn.setObjectName("primary")
         self.apply_btn.clicked.connect(self._accept)
@@ -78,6 +102,7 @@ class TrimDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.addWidget(self.hint)
+        root.addLayout(controls)
         root.addWidget(self.view, 1)
         root.addLayout(buttons)
         self._refresh()

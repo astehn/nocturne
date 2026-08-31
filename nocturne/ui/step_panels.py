@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.color import ColorSettings
-from ..core.crop import ASPECTS
+from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
 
@@ -125,12 +125,10 @@ def build_panel(
         if on_crop_apply is not None:
             apply_btn.clicked.connect(lambda: on_crop_apply())
         guides = QComboBox()
-        guides.addItems(["None", "Rule of thirds", "Center cross"])
-        _GUIDE_KIND = {"None": "none", "Rule of thirds": "thirds",
-                       "Center cross": "center"}
+        guides.addItems(GUIDES)
         if on_guides_change is not None:
             guides.currentTextChanged.connect(
-                lambda t: on_guides_change(_GUIDE_KIND[t]))
+                lambda t: on_guides_change(GUIDE_KINDS[t]))
         lay.addWidget(QLabel("Aspect ratio"))
         lay.addWidget(aspect)
         lay.addWidget(QLabel("Guides"))
