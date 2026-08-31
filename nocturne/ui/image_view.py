@@ -4,11 +4,11 @@ import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
-    QBrush, QColor, QPainter, QPen, QPixmap, QRadialGradient,
+    QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QGraphicsDropShadowEffect, QGraphicsPixmapItem, QGraphicsRectItem,
-    QGraphicsScene, QGraphicsView,
+    QGraphicsDropShadowEffect, QGraphicsEllipseItem, QGraphicsPixmapItem,
+    QGraphicsRectItem, QGraphicsScene, QGraphicsView,
 )
 
 from .annotation_pill import AnnotationPill
@@ -21,18 +21,96 @@ _ACCENT = QColor("#2dd4bf")
 _HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
 
 
+# The divider in SCREEN pixels. Everything about it has to be converted through
+# the current zoom, because it lives in scene (image-pixel) coordinates: the old
+# divider was a fixed 3 SCENE pixels, which on a 3840x2160 frame fitted to a
+# 1000px canvas draws at 0.8 screen pixels — a hairline nobody can grab. That is
+# the whole of "#9 before/after divider hard to drag when zoomed out".
+_DIVIDER_LINE_PX = 2.0      # drawn width
+_DIVIDER_GRAB_PX = 14.0     # how close you must be to start a drag
+_DIVIDER_KNOB_PX = 26.0     # diameter of the round grab handle
+
+
+class _DividerKnob(QGraphicsEllipseItem):
+    """The round grab handle at the middle of the divider.
+
+    Constant screen size, like the crop handles — a knob that shrank with the
+    zoom would reintroduce the very problem it exists to solve.
+
+    Accepts no mouse buttons on purpose: every click passes through to the
+    divider itself, which owns the drag. Otherwise the knob would swallow
+    presses and the thing that looks most grabbable would be the one part that
+    does nothing.
+    """
+
+    def __init__(self, parent) -> None:
+        r = _DIVIDER_KNOB_PX / 2.0
+        super().__init__(-r, -r, _DIVIDER_KNOB_PX, _DIVIDER_KNOB_PX, parent)
+        self.setBrush(QBrush(QColor("#0b1220")))
+        self.setPen(QPen(_ACCENT, 2))
+        self.setZValue(7)
+        self.setFlag(self.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def paint(self, painter, option, widget=None) -> None:
+        super().paint(painter, option, widget)
+        # Two small arrows, so it reads as "drag me sideways" rather than as a
+        # dot someone left on the picture.
+        painter.setPen(QPen(_ACCENT, 1.6))
+        for direction in (-1, 1):
+            tip = direction * 6.5
+            painter.drawLine(QPointF(tip, 0), QPointF(tip - direction * 3.5, -3.5))
+            painter.drawLine(QPointF(tip, 0), QPointF(tip - direction * 3.5, 3.5))
+
+
 class _Divider(QGraphicsRectItem):
-    """Vertical Before/After divider; movable horizontally, reports its x."""
+    """Vertical Before/After divider; movable horizontally, reports its x.
+
+    Its drawn width and its grab area are both derived from the current zoom, so
+    the line stays visible and the handle stays reachable however far out you
+    are. `set_scale` must be called whenever the view zooms.
+    """
 
     def __init__(self, height: float, on_move) -> None:
-        super().__init__(-1.5, 0, 3, height)
+        super().__init__(-1.0, 0, 2, height)
         self._on_move = on_move
         self._max_x = 1.0
+        self._height = height
+        self._scale = 1.0
         self.setBrush(QBrush(_ACCENT))
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setZValue(6)
         self.setFlag(self.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setCursor(Qt.CursorShape.SplitHCursor)
+        self._knob = _DividerKnob(self)
+        self._knob.setPos(0.0, height / 2.0)
+
+    def set_scale(self, scale: float) -> None:
+        """Re-size the line and its grab area for a new zoom."""
+        self._scale = max(float(scale), 1e-6)
+        w = _DIVIDER_LINE_PX / self._scale
+        self.prepareGeometryChange()
+        self.setRect(-w / 2.0, 0, w, self._height)
+
+    def shape(self):
+        """A band wide enough to hit, plus the knob.
+
+        The drawn line is 2 screen pixels; hitting a 2px target with a mouse is
+        the complaint this change exists to answer. The grab area is 14, and the
+        knob's own circle is included because the knob passes its clicks down
+        here rather than handling them.
+        """
+        half = (_DIVIDER_GRAB_PX / 2.0) / self._scale
+        path = QPainterPath()
+        # WindingFill, not the default OddEven: the knob's circle overlaps the
+        # band, and under odd-even the overlap cancels — leaving a HOLE at the
+        # exact centre of the handle, which is where anyone would click.
+        path.setFillRule(Qt.FillRule.WindingFill)
+        path.addRect(QRectF(-half, 0, half * 2, self._height))
+        r = (_DIVIDER_KNOB_PX / 2.0) / self._scale
+        path.addEllipse(QPointF(0.0, self._height / 2.0), r, r)
+        return path
 
     def set_max_x(self, max_x: float) -> None:
         self._max_x = max_x
@@ -249,6 +327,7 @@ class ImageView(QGraphicsView):
         self._split_x = pm.width() / 2.0
         self._divider = _Divider(pm.height(), self._on_divider)
         self._divider.set_max_x(pm.width())
+        self._divider.set_scale(self.zoom())
         self._scene.addItem(self._divider)
         self._divider.setPos(self._split_x, 0)
         self._apply_split()
@@ -260,11 +339,35 @@ class ImageView(QGraphicsView):
         self._split_x = x
         self._apply_split()
 
+    def compare_rect(self) -> QRectF:
+        """Where the compare image is actually visible, in scene coordinates.
+
+        Empty when there is no compare image. Public because the hover code has
+        to ask: deciding before-vs-after from x alone attributes a hover BELOW
+        the compare image to it, and samples the wrong picture.
+        """
+        if self._compare_item is None or self._compare_clip is None:
+            return QRectF()
+        return self._compare_clip.rect()
+
     def _apply_split(self) -> None:
+        """Clip the compare image to the split AND to the frame on screen.
+
+        The height used to be the compare pixmap's own. A compare image LARGER
+        than the current one — crop, advance a step, then toggle before/after —
+        was therefore drawn at the scene origin at full size, spilling out into
+        the letterbox around the canvas. Those spilled pixels looked like part
+        of the picture and were not: hovering them gave no readout at all,
+        because they sit outside the scene rect the readout works in.
+        """
         if self._compare_item is None:
             return
-        h = self._compare_item.pixmap().height()
-        self._compare_clip.setRect(0, 0, max(0.0, self._split_x), h)
+        pm = self._item.pixmap()
+        frame_w = float(pm.width()) if not pm.isNull() else self._compare_item.pixmap().width()
+        frame_h = float(pm.height()) if not pm.isNull() else self._compare_item.pixmap().height()
+        w = min(max(0.0, self._split_x), frame_w)
+        h = min(float(self._compare_item.pixmap().height()), frame_h)
+        self._compare_clip.setRect(0, 0, w, h)
 
     def _teardown_compare(self) -> None:
         for it in (self._divider, self._compare_clip):
@@ -294,7 +397,9 @@ class ImageView(QGraphicsView):
         prev = getattr(self, "_last_zoom", 0.0)
         if z > 0 and (prev <= 0 or abs(z - prev) / max(prev, 1e-9) > 0.02):
             self._last_zoom = z
-            self.zoomChanged.emit(z)
+            if self._divider is not None:
+                self._divider.set_scale(z)   # the line and its grab area are
+            self.zoomChanged.emit(z)         # screen-sized, so they track zoom
 
     def zoom(self) -> float:
         """Current display scale: image pixels -> view pixels."""
@@ -440,8 +545,11 @@ class ImageView(QGraphicsView):
         if pixel is None:
             self.hoverLeft.emit()
             return
-        side = "compare" if (self._compare_item is not None
-                             and scene_pos.x() < self._split_x) else "main"
+        # Both axes, and the compare image's real bounds — not just x < split.
+        # A hover below a compare image shorter than the frame was still called
+        # "compare", so the caller sampled a picture that is not under the
+        # cursor and reported its pixel values as if it were.
+        side = "compare" if self.compare_rect().contains(scene_pos) else "main"
         self.hovered.emit(pixel[0], pixel[1], side)
 
     # --- crop overlay ---

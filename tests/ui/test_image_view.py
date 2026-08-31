@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
-from nocturne.ui.image_view import ImageView  # noqa: E402
+from nocturne.ui.image_view import _DIVIDER_GRAB_PX, ImageView  # noqa: E402
 
 
 def _qimage(w=20, h=10):
@@ -899,3 +899,118 @@ def test_changing_your_mind_about_the_ratio_does_not_shrink_the_selection(qtbot)
     second = (r - l) * (b - t)
     assert abs(second - first) / first < 0.02, (
         f"area changed {first} -> {second} merely by switching ratio")
+
+
+# --- before/after divider: grabbable at any zoom (2026-08-31) ----------------
+
+def _compared(qtbot, w=3840, h=2160, cw=None, ch=None):
+    """A view showing a `w`x`h` image with a compare image over it."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.preview import to_qimage
+    v = ImageView()
+    qtbot.addWidget(v)
+    main = AstroImage((np.random.rand(h, w, 3) * .5).astype(np.float32))
+    v.set_image(to_qimage(main))
+    comp = AstroImage((np.random.rand(ch or h, cw or w, 3) * .5).astype(np.float32))
+    v.set_compare(to_qimage(comp))
+    return v
+
+
+def test_the_divider_is_grabbable_when_zoomed_out(qtbot):
+    """THE bug. The divider was a fixed 3 SCENE pixels wide, so on a 3840x2160
+    frame fitted to a ~1000px canvas it drew at about 0.8 SCREEN pixels — a
+    hairline you cannot hit. Measured at the zoom a fitted Seestar frame
+    actually sits at, not at 100% where the old code passes.
+    """
+    v = _compared(qtbot)
+    zoom = 1000.0 / 3840.0                    # roughly a fitted full frame
+    v._divider.set_scale(zoom)
+    # Measured on the BAND, well away from the knob. Using the shape's bounding
+    # rect instead lets the knob dominate it, and the first version of this test
+    # passed with the band back to its original 3 scene pixels — you could grab
+    # the handle and nothing else.
+    y = v._divider._height * 0.2
+    reach = (5.0 / zoom)                      # 5 screen px from the centre line
+    assert v._divider.shape().contains(QPointF(reach, y)), (
+        f"cannot grab the divider 5 screen px off-centre at zoom {zoom:.3f}")
+    assert v._divider.shape().contains(QPointF(-reach, y))
+
+
+def test_the_grab_area_stays_the_same_on_screen_at_every_zoom(qtbot):
+    """Screen-sized, not scene-sized: that is the whole fix. If this tracked the
+    zoom the handle would be fine at 100% and unusable fitted, which is exactly
+    the state it shipped in."""
+    v = _compared(qtbot)
+    y = v._divider._height * 0.2              # away from the knob
+    for zoom in (0.05, 0.26, 1.0, 4.0):
+        v._divider.set_scale(zoom)
+        shape = v._divider.shape()
+        inside = (_DIVIDER_GRAB_PX / 2.0 - 1.0) / zoom
+        outside = (_DIVIDER_GRAB_PX / 2.0 + 4.0) / zoom
+        assert shape.contains(QPointF(inside, y)), (
+            f"grab area too narrow at zoom {zoom}")
+        assert not shape.contains(QPointF(outside, y)), (
+            f"grab area too wide at zoom {zoom} — it would swallow drags on the image")
+
+
+def test_the_knob_sits_at_the_middle_and_ignores_zoom(qtbot):
+    """A knob that shrank with the zoom would reintroduce the problem it exists
+    to solve."""
+    from PySide6.QtWidgets import QGraphicsItem
+    v = _compared(qtbot, w=800, h=600)
+    knob = v._divider._knob
+    assert knob.pos().y() == 300.0, "knob is not vertically centred"
+    assert knob.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+
+
+def test_the_knob_does_not_swallow_clicks(qtbot):
+    """It passes them to the divider, which owns the drag. Otherwise the part
+    that looks most grabbable is the one part that does nothing."""
+    from PySide6.QtCore import Qt as _Qt
+    v = _compared(qtbot)
+    assert v._divider._knob.acceptedMouseButtons() == _Qt.MouseButton.NoButton
+    assert v._divider.shape().contains(QPointF(0.0, v._divider._height / 2.0))
+
+
+# --- before/after with a compare image bigger than the canvas ----------------
+
+def test_a_larger_compare_image_is_clipped_to_the_frame(qtbot):
+    """Reachable by: crop, advance a step, toggle before/after. The compare
+    pixmap was drawn at the scene origin at FULL size, spilling into the
+    letterbox around the canvas — pixels that look like the picture, give no
+    readout, and are not part of it."""
+    v = _compared(qtbot, w=400, h=300, cw=900, ch=800)
+    r = v.compare_rect()
+    assert r.height() <= 300.0, f"compare spills {r.height() - 300:.0f}px below the frame"
+    assert r.width() <= 400.0, f"compare spills {r.width() - 400:.0f}px past the frame"
+
+
+def test_a_hover_below_a_short_compare_image_is_not_called_compare(qtbot):
+    """Side was decided from `x < split_x` alone, ignoring y and the compare
+    item's bounds — so a hover below the compare image sampled it anyway and
+    reported pixel values from a picture that is not under the cursor."""
+    seen = []
+    v = _compared(qtbot, w=400, h=300, cw=400, ch=100)
+    v.hovered.connect(lambda x, y, side: seen.append(side))
+    v._emit_hover_at_scene_pos(QPointF(50.0, 50.0))     # inside the compare
+    v._emit_hover_at_scene_pos(QPointF(50.0, 250.0))    # below it, still left
+    assert seen == ["compare", "main"], seen
+
+
+def test_zooming_resizes_the_divider(qtbot):
+    """The divider is sized once when compare starts. If nothing re-sizes it as
+    you zoom, it is correct at that one moment and a hairline everywhere else —
+    which is the original bug wearing a different hat. Mutating the zoomChanged
+    wiring away must fail here."""
+    import pytest as _pytest
+    v = _compared(qtbot)
+    v.actual_size()                                  # a known scale: 1.0
+    assert v._divider._scale == _pytest.approx(v.zoom(), rel=1e-6)
+    v.scale(4.0, 4.0)
+    v._note_zoom()
+    assert v._divider._scale == _pytest.approx(v.zoom(), rel=1e-6), (
+        "the divider kept its old scale after a zoom")
+    # and the grab area is still 14 screen px, not 14/4
+    y = v._divider._height * 0.2
+    assert v._divider.shape().contains(QPointF((_DIVIDER_GRAB_PX / 2 - 1) / v.zoom(), y))
