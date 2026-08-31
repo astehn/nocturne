@@ -294,3 +294,35 @@ def test_a_field_whose_amplitude_ignores_intensity_is_flagged():
     _, said = _probe_verdict(rng.normal(0, 0.006, 100), rng.normal(0, 0.007, 100),
                              amplitude=rng.normal(0, 0.005, 100))
     assert "does not track intensity" in said
+
+
+def test_every_training_cli_can_at_least_be_loaded():
+    """`export_onnx.py` referenced `paths.RUNS` in a default argument on line 16
+    and imported paths on line 60, so it raised NameError at IMPORT. Last night
+    the run trained for 41 minutes, PASSED its gate, and then died before it
+    could export or stage — the model was fine and unusable.
+
+    Same shape as the bug 58fd5b1 set out to fix (a default argument that parses
+    and fails only when reached), reintroduced by 58fd5b1 itself. Nothing
+    imports these scripts, so nothing ever executed their module level.
+
+    `--help` is the whole check, and deliberately so: the first version of this
+    guard asked the AST whether the name was imported ANYWHERE, which
+    export_onnx.py satisfied at line 60 while being broken. The second grew into
+    a scope-tracking static analyser. Running the thing is shorter than
+    modelling it, and it is the only version that actually failed on the real
+    bug.
+    """
+    import pathlib
+    import subprocess
+    import sys as _sys
+    root = pathlib.Path(__file__).parent.parent
+    broken = {}
+    for f in sorted(root.glob("*.py")):
+        if "argparse.ArgumentParser(" not in f.read_text():
+            continue                      # not a CLI; nothing to invoke
+        r = subprocess.run([_sys.executable, str(f), "--help"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            broken[f.name] = (r.stdout + r.stderr).strip().splitlines()[-1:]
+    assert not broken, f"training CLIs that cannot even print --help: {broken}"

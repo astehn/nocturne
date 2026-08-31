@@ -16,6 +16,7 @@ from astropy.io import fits
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data as D
+import paths
 from evaluate import _hwc, apply_model
 from model import DenoiseUNet
 from nocturne.core.autostretch import _stretch_params, _apply_params

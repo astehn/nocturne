@@ -10,6 +10,7 @@ import numpy as np, torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data as D
+import paths
 from model import DenoiseUNet, SIGMA_SCALE
 
 ap = argparse.ArgumentParser()
