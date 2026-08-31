@@ -34,7 +34,10 @@ import numpy as np  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 MASTER = sys.argv[1] if len(sys.argv) > 1 else (
-    "/Volumes/Work2/Images/Astro/Work/M 31_mosaic_sub/lights/M31_302x10s_50min.fits")
+    os.environ.get(
+        "NOCTURNE_PERF_MASTER",
+        # Work2 died 2026-08-25; this is the largest master on the live archive.
+        "/Volumes/Work/Astro/M 31_mosaic_sub/M31_302x10s_50min.fits"))
 
 
 class T:

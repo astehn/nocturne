@@ -19,6 +19,7 @@ drive mounted, and a release must not depend on that.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 import sys
@@ -30,8 +31,9 @@ MANIFEST = SITE / "_src" / "gallery.json"
 INDEX = SITE / "_src" / "index.html"
 PAGE = SITE / "_src" / "gallery.html"
 
-MASTER_ROOTS = [pathlib.Path("/Volumes/Work2/Images/Astro/Work"),
-                pathlib.Path("/Volumes/Work2/Images/Astro/Archive")]
+# Work2 died on 2026-08-25. The archive was recovered to /Volumes/Work/Astro;
+# overridable so a restore onto a different volume is a variable, not a patch.
+MASTER_ROOTS = [pathlib.Path(os.environ.get("NOCTURNE_ARCHIVE", "/Volumes/Work/Astro"))]
 
 GRID_EDGE = 900        # what the grid shows
 FULL_EDGE = 2000       # what the lightbox opens

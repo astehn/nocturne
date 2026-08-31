@@ -290,10 +290,30 @@ def import_summary(meta: dict, instrument=None,
     return html
 
 
+def image_hdu(hdul):
+    """The HDU that actually carries the image.
+
+    A plain FITS keeps it at index 0. A COMPRESSED one — RICE or GZIP tile
+    compression, often written as .fits.fz, and what several capture tools and
+    archives hand out — has an EMPTY primary HDU and the image in HDU 1 as a
+    CompImageHDU. Every reader here assumed index 0, so hdul[0].data was None
+    and a compressed file could not be opened at all.
+
+    Chosen on NAXIS from the header rather than by touching .data, because
+    reading .data decompresses the whole image, and three of the callers only
+    want to look at the header.
+    """
+    for hdu in hdul:
+        if int(hdu.header.get("NAXIS", 0)) > 0:
+            return hdu
+    return hdul[0]
+
+
 def load_fits(path: str, normalize: bool = True) -> AstroImage:
     with fits.open(path) as hdul:
-        raw = np.asarray(hdul[0].data)
-        header = hdul[0].header
+        hdu = image_hdu(hdul)
+        raw = np.asarray(hdu.data)
+        header = hdu.header
     if raw.ndim == 3:
         # FITS color cubes are typically (channels, H, W); some are already (H, W, 3).
         if raw.shape[0] == 3:
@@ -341,7 +361,7 @@ def is_stacked_master(path: str) -> bool:
     whose headers have no such card.
     """
     with fits.open(path) as hdul:
-        header = hdul[0].header
+        header = image_hdu(hdul).header
         return int(header.get("NAXIS", 0)) == 3 or "STACKCNT" in header
 
 
@@ -357,12 +377,13 @@ def load_mono_master(path: str) -> np.ndarray:
     discriminator `is_stacked_master` uses.
     """
     with fits.open(path) as hdul:
-        header = hdul[0].header
+        hdu = image_hdu(hdul)
+        header = hdu.header
         if int(header.get("NAXIS", 0)) != 2:
             raise ValueError("expected a mono (single-plane) image, not a colour cube")
         if "BAYERPAT" in header and "STACKCNT" not in header:
             raise ValueError("this is a raw sub, not a stacked channel — stack it first")
-        return np.asarray(hdul[0].data, dtype=np.float32)
+        return np.asarray(hdu.data, dtype=np.float32)
 
 
 def load_master(path: str) -> AstroImage:
@@ -374,7 +395,7 @@ def load_master(path: str) -> AstroImage:
         # raw-CFA frame, which load_fits would debayer into fake colour — reject
         # it instead so the caller gets an honest error, not garbage.
         with fits.open(path) as hdul:
-            if int(hdul[0].header.get("NAXIS", 0)) != 3:
+            if int(image_hdu(hdul).header.get("NAXIS", 0)) != 3:
                 raise ValueError("expected a colour (RGB) master, not a mono image")
         return load_fits(path)
     if ext in (".tif", ".tiff"):

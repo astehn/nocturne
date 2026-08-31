@@ -133,3 +133,4 @@ def test_startup_configures_ssl_before_anything_can_connect():
     body = src.split("def main()")[1]
     assert body.index("configure_ssl()") < body.index("QApplication(sys.argv)"), (
         "configure_ssl() must run before the app starts doing anything")
+

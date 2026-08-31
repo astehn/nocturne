@@ -64,3 +64,18 @@ def test_close_button_rejects(qtbot):
     d = _dlg(qtbot)
     d._close_btn.click()
     assert d.result() == QDialog.DialogCode.Rejected
+
+
+def test_the_engine_dropdown_is_hidden_while_there_is_only_one_engine(qtbot, tmp_path):
+    """A dropdown offering exactly one choice is a control that does nothing.
+    It exists because EDSR is meant to join Lanczos; until it does, it is noise."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.upscale_dialog import UpscaleDialog
+    from nocturne.settings import Settings
+    img = AstroImage((np.random.rand(64, 64, 3) * .5).astype(np.float32))
+    d = UpscaleDialog(img, Settings(), None)
+    qtbot.addWidget(d)
+    assert len(d._engines) == 1, "a second engine arrived — unhide the row"
+    assert not d._engine_box.isVisible()
+    assert not d._engine_label.isVisible()

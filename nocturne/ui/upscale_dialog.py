@@ -86,8 +86,15 @@ class UpscaleDialog(QDialog):
         self._upscale_btn.clicked.connect(self._on_upscale_clicked)
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Engine"))
+        # A dropdown offering exactly one choice is a control that does nothing.
+        # It exists because EDSR is meant to join Lanczos later; until it does,
+        # both the label and the box stay out of the way.
+        self._engine_label = QLabel("Engine")
+        controls.addWidget(self._engine_label)
         controls.addWidget(self._engine_box)
+        if len(self._engines) < 2:
+            self._engine_label.setVisible(False)
+            self._engine_box.setVisible(False)
         controls.addWidget(QLabel("2×"))
         controls.addWidget(self._upscale_btn)
         controls.addStretch(1)

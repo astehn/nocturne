@@ -3465,7 +3465,12 @@ class MainWindow(QMainWindow):
         self._sync_background_model_toggle()
         self._sync_stretch_preview()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
-        self._next_btn.setEnabled(next_enabled(self._stages, self._stage) != self._stage)
+        # Hidden, not merely disabled, on the last step. A greyed-out "Next →"
+        # sitting under Export reads as something you have failed to satisfy
+        # rather than the end of the pipeline.
+        has_next = next_enabled(self._stages, self._stage) != self._stage
+        self._next_btn.setEnabled(has_next)
+        self._next_btn.setVisible(has_next)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)
