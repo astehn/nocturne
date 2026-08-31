@@ -80,12 +80,34 @@ try:
 except Exception as e:
     print(f"odd size 200x328 FAILS: {type(e).__name__}: {str(e)[:90]}")
 
+def _actual_split(run_dir):
+    """What this run really trained on, from the config train.py wrote.
+
+    The static lists are the RULES, not the record. An injection run trains on
+    whatever injection tiles were built, which on 2026-08-30 was IC 1396A and
+    NGC 6995 -- neither of them in S30_TRAIN -- and emphatically NOT M8 or M45,
+    which are held out. Writing the rules into the model card made it claim two
+    held-out targets as training material and omit the largest contributor,
+    which is precisely the wrong direction for the one field a reader trusts to
+    tell them what the model has seen.
+    """
+    try:
+        with open(os.path.join(run_dir, "config.json")) as fh:
+            sp = json.load(fh)["split"]
+        return list(sp["train"]), list(sp["val"]), list(sp["test"])
+    except (OSError, KeyError, ValueError):
+        return list(D.S30_TRAIN), list(D.S30_VAL), list(D.S30_TEST)
+
+
+_train, _val, _test = _actual_split(a.run)
 meta = {"model": os.path.basename(a.out), "sensor": "s30", "run": os.path.basename(a.run),
         "epoch": int(ck.get("epoch", -1)), "val": float(ck.get("val", float("nan"))),
         "asinh_a": D._ASINH_A, "space": "linear, pre-stretch",
         "predicts": "noise residual; result = input - strength * noise",
-        "trained_on": list(D.S30_TRAIN), "validated_on": list(D.S30_VAL),
-        "held_out": list(D.S30_TEST), "tile": a.tile,
+        "trained_on": _train, "validated_on": _val,
+        # what was actually withheld, which for an injection run (test == []) is
+        # the HELD_OUT guarantee rather than the ladder's test split
+        "held_out": _test or list(D.HELD_OUT), "tile": a.tile,
         "in_channels": 4, "sigma_scale": SIGMA_SCALE,
         "input_layout": "[R,G,B,sigma_map] -- sigma_map is estimate_sigma(image)/sigma_scale"}
 with open(os.path.splitext(a.out)[0] + ".json", "w") as fh:

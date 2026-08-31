@@ -326,3 +326,42 @@ def test_every_training_cli_can_at_least_be_loaded():
         if r.returncode != 0:
             broken[f.name] = (r.stdout + r.stderr).strip().splitlines()[-1:]
     assert not broken, f"training CLIs that cannot even print --help: {broken}"
+
+
+def test_the_model_card_records_what_the_run_trained_on_not_the_rules(tmp_path):
+    """export_onnx wrote list(S30_TRAIN) into the shipped metadata's
+    "trained_on". Those are the RULES; an injection run trains on whatever tiles
+    were built. Last night's card therefore claimed M8 and M45 — both HELD OUT,
+    M8 being the master the 2026-08-22 model damaged — as training material, and
+    omitted IC 1396A, the largest contributor. That field is the one a reader
+    trusts to say what the model has seen."""
+    import json
+    import subprocess
+    import sys as _sys
+    import pathlib
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "config.json").write_text(json.dumps(
+        {"split": {"train": ["ic1396a", "m16"], "val": ["m27"], "test": []}}))
+    src = pathlib.Path(__file__).parent.parent / "export_onnx.py"
+    # exercise the real function, without needing a checkpoint to export
+    ns = {"os": __import__("os"), "json": json}
+    body = src.read_text().split("def _actual_split(run_dir):")[1].split("\n_train,")[0]
+    exec("def _actual_split(run_dir):" + body, ns)
+    train, val, test = ns["_actual_split"](str(run))
+    assert train == ["ic1396a", "m16"], train
+    assert val == ["m27"]
+    assert "m8" not in train and "M8" not in train, "a held-out target claimed as training material"
+
+
+def test_the_model_card_falls_back_to_the_rules_when_a_run_has_no_config(tmp_path):
+    """Older runs have no config.json; they must still export rather than crash."""
+    import json
+    import pathlib
+    src = pathlib.Path(__file__).parent.parent / "export_onnx.py"
+    import data as D
+    ns = {"os": __import__("os"), "json": json, "D": D}
+    body = src.read_text().split("def _actual_split(run_dir):")[1].split("\n_train,")[0]
+    exec("def _actual_split(run_dir):" + body, ns)
+    train, val, test = ns["_actual_split"](str(tmp_path))
+    assert train == list(D.S30_TRAIN)
