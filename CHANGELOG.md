@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.21.0] — 2026-08-31
+
+The app could never reach the internet — and a toolbar ordered around how you actually work
+
+### Added
+- Trim has the framing controls Crop has always had. An Aspect ratio box locks the box to a fixed shape and Guides draws the rule of thirds or a centre cross inside it, so a late trim can be composed rather than merely eyeballed. Both default to off, so trimming a few pixels off one edge works exactly as before.
+- Compressed FITS files open. A tile-compressed file (often .fits.fz, and what several capture programs and archives hand out) keeps its image in a different place inside the file, and Nocturne only ever looked in the first — so those files could not be opened at all.
+
+### Changed
+- The toolbar is ordered by when a session reaches each tool, its icons are tinted by group so related tools read as a set, and About has gone — it was a button spending permanent space on something you look at once.
+- The GraXpert / RC-Astro / ASTAP checkmarks have moved into Settings. They sat in the toolbar reporting good news forever; now the toolbar speaks only when a tool is configured but broken.
+
+### Fixed
+- Nocturne could not make a secure connection at all once built. Certificates were resolved against the machine the app was built on, so on any other Mac every attempt failed silently. The update check has therefore never once told anyone about a new version, and SPCC's star-catalogue lookup was failing the same way. Certificates now travel with the app, and a release is blocked if the built app cannot make a connection.
+- Aspect ratios 1:1 and 4:5 did nothing on a landscape image — which is every Seestar frame. Choosing them left the box exactly as it was, in Crop and in Share. Changing your mind about a ratio also no longer shrinks your selection.
+- The Export step no longer shows a greyed-out "Next →". It is the last step, and a disabled Next reads as something you have failed to do.
+- Upscale no longer shows an Engine dropdown containing a single choice.
+
 ## [0.20.0] — 2026-08-29
 
 Ha/OIII extraction, rebuilt — and a way to use what it makes
