@@ -27,6 +27,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# archive/ is the retired training-v1 system, kept for reference and never run.
+norecursedirs = ["archive", "dist", "build", ".venv", ".venv-train"]
 filterwarnings = [
     # colour-demosaicing imports the deprecated scipy.ndimage.filters namespace.
     "ignore:Please import .* from the .scipy.ndimage. namespace:DeprecationWarning",

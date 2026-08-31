@@ -1,17 +1,30 @@
 import numpy as np
 
 
-def test_app_and_training_sigma_are_identical():
-    """Not 'close' — IDENTICAL. The conditioning channel is a number the model
-    was trained against; two implementations that drift make it meaningless."""
-    import sys, pathlib
-    sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "training"))
-    from noise import estimate_sigma as train_sigma
-    from nocturne.core.denoise_model import estimate_sigma as app_sigma
-    rng = np.random.default_rng(7)
-    for _ in range(5):
-        img = (rng.random((128, 128, 3), dtype=np.float32) * 0.5 + 0.2)
-        assert app_sigma(img) == train_sigma(img)
+def test_only_one_definition_of_sigma_exists_outside_the_archive():
+    """The sigma fed to the model as a conditioning channel must be computed
+    identically when training and when running, or the model has been lied to.
+
+    Until 2026-08-31 that was enforced by keeping two verbatim copies and
+    asserting they matched. The app must not import training code — but the
+    reverse is fine, and training runs with the app importable, so the new
+    system imports THIS function instead of copying it. One definition cannot
+    drift from itself.
+
+    Deliberately a search, not an equality check: a second copy that happens to
+    agree today is the thing that goes stale later."""
+    import pathlib
+    root = pathlib.Path(__file__).parents[2]
+    # only the two trees that could drift: the shipped package and live
+    # training. dist/ holds build output (skimage has its own estimate_sigma)
+    # and archive/ is the retired system, kept for reference and never run.
+    found = sorted(
+        str(f.relative_to(root))
+        for tree in ("nocturne", "training")
+        for f in (root / tree).rglob("*.py") if (root / tree).is_dir()
+        if "def estimate_sigma" in f.read_text(errors="ignore"))
+    assert found == ["nocturne/core/denoise_model.py"], (
+        f"estimate_sigma must have exactly one live definition, found: {found}")
 
 
 def test_pre_conditioning_model_is_refused_not_silently_used(tmp_path, monkeypatch):

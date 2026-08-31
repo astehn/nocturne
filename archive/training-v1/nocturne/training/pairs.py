@@ -264,6 +264,42 @@ def scan_training_frames(root: str | os.PathLike[str]) -> list[FrameInfo]:
     return [f for f in frames if f is not None]
 
 
+# 1st-to-99th percentile, not max-minus-min. Measured 2026-08-30: NGC 281's 1514
+# frames span 3.89 degrees of RA end to end, which flags it a mosaic and drops
+# the deepest group in the archive — yet only TWO of those frames sit more than
+# 0.5 degrees from the median pointing, and one beyond 1.5. They are frames
+# caught mid-slew. A span that any single frame can set is not measuring the
+# thing it is named after.
+_SPAN_PCT = (1.0, 99.0)
+
+
+def robust_span(values) -> float:
+    """The spread of a pointing, ignoring the tails.
+
+    A real mosaic moves most of its frames; a bad goto moves one. This tells
+    them apart, where max-minus-min cannot.
+    """
+    import numpy as _np
+
+    vals = [v for v in values if v is not None]
+    if len(vals) < 2:
+        return 0.0
+    lo, hi = _np.percentile(_np.asarray(vals, dtype=float), _SPAN_PCT)
+    return float(hi - lo)
+
+
+def sky_ra_span(ra_span_deg: float, dec_deg: float) -> float:
+    """RA degrees converted to degrees ON THE SKY.
+
+    At Dec +57, where both IC 1396A and NGC 281 sit, a degree of RA is about
+    half a degree of sky. Comparing raw RA against a sky-degree threshold
+    over-flags every high-declination target.
+    """
+    import math as _math
+
+    return float(abs(ra_span_deg) * _math.cos(_math.radians(max(-89.9, min(89.9, dec_deg)))))
+
+
 def discover_frame_groups(
     root: str | os.PathLike[str],
     *,
@@ -310,13 +346,15 @@ def discover_frame_groups(
         groups[key].append(frame)
 
     result: list[FrameGroup] = []
-    for key, members in sorted(groups.items()):
+    for key, members in sorted(groups.items()):  # noqa: PLR1702
         if len(members) < min_frames:
             continue
         ra = [f.ra_deg for f in members if f.ra_deg is not None]
         dec = [f.dec_deg for f in members if f.dec_deg is not None]
-        ra_span = _circular_span(ra)
-        dec_span = max(dec) - min(dec) if len(dec) > 1 else 0.0
+        # Robust to a stray frame, and RA measured on the sky rather than in
+        # raw degrees -- see robust_span and sky_ra_span.
+        ra_span = sky_ra_span(robust_span(ra), float(np.median(dec)) if dec else 0.0)
+        dec_span = robust_span(dec)
         nights = sorted({f.night for f in members})
         night_label = nights[0] if len(nights) == 1 else f"{nights[0]}..{nights[-1]}"
         # Preserve the information even when the caller later decides to allow
