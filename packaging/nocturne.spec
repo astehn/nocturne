@@ -27,7 +27,7 @@ hiddenimports = ["PySide6.QtSvg"]                # SVG icon rendering
 # (/opt/homebrew/etc/openssl@3/cert.pem), which is absent on a Mac with no
 # Homebrew — every HTTPS call then fails CERTIFICATE_VERIFY_FAILED, silently,
 # because the update check and the Gaia lookup both catch and return None.
-for pkg in ("certifi", "skimage", "colour", "colour_demosaicing"):
+for pkg in ("certifi", "drizzle", "skimage", "colour", "colour_demosaicing"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

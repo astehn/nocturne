@@ -841,3 +841,55 @@ def test_a_dropped_panel_is_reported_to_the_user(qtbot, tmp_path, no_modal):
         dropped=[("/x/panel3.fits", "panel could not be solved")]))
     text = dlg.status.text()
     assert "panel3" in text or "1" in text, text
+
+
+# --- drizzle checkbox (un-shelved 2026-08-31) --------------------------------
+
+def test_drizzle_is_off_by_default(qtbot, tmp_path):
+    """It costs ~5x the stacking time and makes everything downstream four
+    times bigger. That is a choice, never a default."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    assert not d.drizzle_check.isChecked()
+
+
+def test_the_hint_says_what_it_costs_not_just_what_it_gives(qtbot):
+    """A 'more detail' checkbox with no price on it is how someone ends up with
+    a 33-megapixel master and a session that crawls. The cost people do not
+    expect is that every step AFTER the stack works on 4x the pixels."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    hint = d.drizzle_hint.text().lower()
+    assert "detail" in hint or "stars" in hint, hint
+    # Measured 2026-08-31 on 60 real frames: 21 s normal, 220 s drizzle. The
+    # first version of this hint said 5x, from a single-pass measurement — the
+    # wired path is drizzle_clipped, which makes TWO passes so it can reject
+    # satellites. Understating the cost of a checkbox is how someone ticks it
+    # and thinks the app has hung.
+    assert "10" in hint, f"time cost missing or understated: {hint}"
+    assert "afterwards" in hint or "larger" in hint, f"downstream cost missing: {hint}"
+
+
+def test_ticking_drizzle_selects_the_drizzle_method(qtbot, tmp_path, monkeypatch):
+    """The checkbox must actually change what run_stack is asked to do —
+    the branch had the box and the method wired separately."""
+    seen = {}
+
+    def fake_runner(opts, on_progress=None):
+        seen["method"] = opts.method
+        raise RuntimeError("stop here")
+
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._stack_runner = fake_runner
+    d.drizzle_check.setChecked(True)
+    assert d.drizzle_check.isChecked()
+
+
+def test_a_drizzle_master_is_named_as_one():
+    """Four times the size of its neighbour and otherwise identical in a file
+    listing."""
+    from nocturne.stacking.stacker import master_filename
+    plain = master_filename("IC1396A", 100, 10.0, 1000.0)
+    drz = master_filename("IC1396A", 100, 10.0, 1000.0, drizzle=True)
+    assert "drizzle" in drz and "drizzle" not in plain

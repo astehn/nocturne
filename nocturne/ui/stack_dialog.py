@@ -82,6 +82,8 @@ class StackDialog(QDialog):
         self.kappa_box = QComboBox()
         self.kappa_box.addItems(list(KAPPA.keys()))
         self.kappa_box.setCurrentText("Medium")
+        self.drizzle_check = QCheckBox("Drizzle ×2 — more detail, much bigger")
+        self.drizzle_check.toggled.connect(lambda *_: self._auto_output_path())
         self.mosaic_check = QCheckBox("Stack as mosaic")
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
@@ -154,6 +156,26 @@ class StackDialog(QDialog):
         mosaic_wrap = QWidget()
         mosaic_wrap.setLayout(mosaic_row)
         form.addRow("Mosaic", mosaic_wrap)
+
+        # Its own row, like Mosaic, and for the same reason: it is a real
+        # trade rather than a tick-for-free, and the hint has to have room to
+        # say so. Everything AFTER the stack works on four times the pixels
+        # too, which is the part people do not expect.
+        drizzle_row = QHBoxLayout()
+        drizzle_row.addWidget(self.drizzle_check)
+        self.drizzle_hint = QLabel(
+            "Rebuilds the image on a 2× grid instead of enlarging it — finer "
+            "detail and more stars from well-dithered subs. Stacking takes "
+            "about 10× longer, and every step afterwards works on an image four "
+            "times the size.")
+        self.drizzle_hint.setWordWrap(True)
+        drizzle_row.addWidget(self.drizzle_hint, 1)
+        drizzle_wrap = QWidget()
+        drizzle_wrap.setLayout(drizzle_row)
+        form.addRow("Detail", drizzle_wrap)
+        self.drizzle_note = QLabel("")
+        self.drizzle_note.setWordWrap(True)
+        form.addRow("", self.drizzle_note)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
 
         self._stack_btn = QPushButton("Stack")
@@ -189,6 +211,23 @@ class StackDialog(QDialog):
         self._output_user_edited = True
 
     # --- browse ---
+    def _update_drizzle_note(self) -> None:
+        """Say whether this particular set of subs would benefit.
+
+        Advice, never a block: the gate shipped in 2026-07 with FWHM_MAX = 2.0
+        while the S30 Pro sits at about 2.5 px, so it told every user their own
+        camera was unsuitable. It is 3.0 now, and it still only advises.
+        """
+        from ..stacking.drizzle_gate import drizzle_advice
+        if not self._stats:
+            self.drizzle_note.setText("")
+            return
+        advice = drizzle_advice(self._stats)
+        colour = {"recommended": theme.SUCCESS,
+                  "not_recommended": theme.WARNING}.get(advice.level, theme.TEXT_DIM)
+        self.drizzle_note.setText(advice.reason)
+        self.drizzle_note.setStyleSheet(f"color: {colour};")
+
     def _browse_folder(self) -> None:
         path = file_dialogs.choose_folder(self, "Folder of subs", start_dir(self._settings.base_dir))
         if path:
@@ -293,6 +332,7 @@ class StackDialog(QDialog):
         self._active_token = None
         self._set_busy(False)
         self._stats = stats
+        self._update_drizzle_note()
         self._user_touched = set()
         self._updating_table = True
 
@@ -394,7 +434,8 @@ class StackDialog(QDialog):
         target = next((s.target for s in kept if s.target), "")
         name = master_filename(target, len(kept), exposure,
                                sum(s.exposure for s in kept),
-                               mosaic=self.mosaic_check.isChecked())
+                               mosaic=self.mosaic_check.isChecked(),
+                               drizzle=self.drizzle_check.isChecked())
         self.output_edit.setText(os.path.join(folder, name))
 
     @staticmethod
@@ -451,7 +492,10 @@ class StackDialog(QDialog):
         if len(include) < 3:
             self.status.setText("Select at least 3 frames to stack.")
             return
-        method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
+        if self.drizzle_check.isChecked():
+            method = "drizzle"      # drizzle does its own sigma-clip rejection
+        else:
+            method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
 
         if self.mosaic_check.isChecked():
             mosaic_opts = MosaicOptions(

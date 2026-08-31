@@ -9,6 +9,7 @@ from ..core.export import save_fits
 from ..core.image import AstroImage
 from ..core.tasks import current
 from .coverage import full_coverage_bounds
+from .drizzle_stack import DRIZZLE_SCALE, PIXFRAC, drizzle_clipped
 from .frames import load_sub, luminance
 from .integrate import average_integrate, sigma_clip_integrate
 from .normalize import frame_stats, normalize_to
@@ -85,17 +86,21 @@ def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) ->
 
 
 def master_filename(target: str, count: int, exposure_s: float, total_s: float,
-                    mosaic: bool = False) -> str:
+                    mosaic: bool = False, drizzle: bool = False) -> str:
     """Descriptive default filename for a master, e.g. NGC7000_177x20s_59min.fits,
     or M31_mosaic_302x10s_50min.fits. Degrades gracefully as header info is
     missing; worst case master.fits.
 
     A mosaic says so in its name: it is the one property that distinguishes it
     from every other master in the same folder, and a frame count alone does
-    not hint at it."""
+    not hint at it. A drizzle master says so for the same reason, and a stronger
+    one — it is four times the size of its neighbour and otherwise looks
+    identical in a file listing."""
     obj = re.sub(r"[^A-Za-z0-9-]+", "", target or "") or "master"
     if mosaic:
         obj += "_mosaic"
+    if drizzle:
+        obj += "_drizzle"
     if exposure_s > 0:
         frames = f"{count}x{exposure_s:g}s"
     elif count > 0:
@@ -109,7 +114,7 @@ def master_filename(target: str, count: int, exposure_s: float, total_s: float,
 
 @dataclass
 class StackOptions:
-    method: str          # "average" | "sigma_clip"
+    method: str          # "average" | "sigma_clip" | "drizzle"
     kappa: float
     include: list         # paths, ordered best-first; include[0] is the reference
     output_path: str
@@ -118,6 +123,7 @@ class StackOptions:
     # fringe is correctly exposed, just built from fewer frames, so keeping it is
     # a legitimate preference — and on a 2 MP sensor the pixels are worth having.
     autocrop: bool = True
+    pixfrac: float = PIXFRAC     # drizzle only; see drizzle_stack.PIXFRAC
 
 
 @dataclass
@@ -237,7 +243,43 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
                 on_progress(i, total, label)
             yield out
 
-    if opts.method == "sigma_clip":
+    def drizzle_items():
+        """Frames NORMALISED but NOT warped, plus their transforms.
+
+        Drizzle does its own resampling — that is the entire point, and handing
+        it an already-warped frame would interpolate the data twice and throw
+        away the resolution drizzle exists to recover. So it cannot reuse
+        `frames()`.
+
+        It IS normalised, and that matters more than it looks. The 2026-07
+        branch fed raw frames, because per-frame sky normalisation did not exist
+        yet — it landed in d1d842e on 2026-08-04, eleven days AFTER drizzle was
+        shelved for drawing a background "patchwork". Unnormalised sky is
+        exactly what turns every coverage boundary into a step in background
+        level; full_coverage_bounds documents the same effect drawing "visible
+        curved BANDS" on real M31 data. Ordinary stacking hides it behind
+        interpolation, drizzle interpolates nothing and draws it. Re-measured
+        2026-08-31 with normalisation in place: the structure drizzle adds is
+        0.05% of background, against a 0.03% noise floor.
+        """
+        def prep(path):
+            data = normalize_to(load_sub(path, normalize=False).data,
+                                norm_stats[path], ref_stats)
+            return data, transforms[path]
+
+        for i, out in enumerate(ordered_results(used, prep, workers=plan.count),
+                                start=1):
+            _check_cancel()
+            if on_progress is not None:
+                on_progress(i, total, step_label(2, "drizzling frames"))
+            yield out
+
+    if opts.method == "drizzle":
+        channels = ref_img.data.shape[2] if ref_img.data.ndim == 3 else 1
+        master, coverage = drizzle_clipped(
+            drizzle_items, ref_shape, channels,
+            kappa=opts.kappa, pixfrac=opts.pixfrac)
+    elif opts.method == "sigma_clip":
         master, coverage = sigma_clip_integrate(frames, opts.kappa)
     else:
         master, coverage = average_integrate(frames())

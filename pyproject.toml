@@ -22,6 +22,10 @@ dependencies = [
     # with CERTIFICATE_VERIFY_FAILED — silently, since both callers catch and
     # return None. See nocturne/core/certs.py.
     "certifi>=2024.2",
+    # STScI drizzle (BSD-3, numpy only). Only reached when the user ticks the
+    # box, but it must be a declared dependency and bundled, or the frozen app
+    # raises ImportError the first time anyone tries it.
+    "drizzle>=2.0",
 ]
 
 [project.optional-dependencies]
