@@ -109,11 +109,25 @@ def _scaled(matrix: np.ndarray) -> np.ndarray:
     return scale @ np.asarray(matrix, dtype=np.float64)
 
 
-def _warp_to_grid(data: np.ndarray, matrix: np.ndarray, out_shape: tuple[int, int]) -> np.ndarray:
-    """Warp `data` (H, W, C) onto a grid of `out_shape` using `matrix` as the
-    input->output transform. Mirrors `register.warp_to`, which only supports
-    same-size (input-shape-preserving) warps, by adding an explicit
-    `output_shape` to `skimage.transform.warp`."""
+def _warp_to_grid(data: np.ndarray, matrix: np.ndarray, out_shape: tuple[int, int]):
+    """Warp `data` (H, W, C) onto `out_shape`, AND say which pixels it reached.
+
+    The validity mask is the whole point, and it was missing. `warp` fills
+    everything outside the source with zero, and zero is a legitimate pixel
+    value — register.warp_with_validity exists in the normal path for exactly
+    this reason and says so. Without it, pass 1's mean and variance counted a
+    zero for every frame that did not cover a pixel: at the rotation envelope a
+    pixel seen by 200 of 314 frames had its mean divided by 314 and its variance
+    inflated, so pass 2 judged real data against corrupted statistics and
+    rejected the wrong pixels. Each channel sits at a different level, so the
+    corruption differed per channel and drew COLOURED streaks along the coverage
+    boundaries — which is what Andreas saw on his first real drizzle stack, and
+    what the normal stack of the same subs does not do.
+
+    Threshold 0.999 rather than > 0, matching warp_with_validity: interpolation
+    makes a boundary pixel a blend of real data and the zero fill, so a
+    fractionally covered pixel counts as not covered.
+    """
     from skimage.transform import SimilarityTransform, warp
 
     tform = SimilarityTransform(matrix=np.asarray(matrix, dtype=np.float64))
@@ -121,7 +135,10 @@ def _warp_to_grid(data: np.ndarray, matrix: np.ndarray, out_shape: tuple[int, in
         warp(data[:, :, c], tform.inverse, output_shape=out_shape, order=1, preserve_range=True)
         for c in range(data.shape[2])
     ]
-    return np.stack(channels, axis=2).astype(np.float64)
+    ones = np.ones(data.shape[:2], dtype=np.float64)
+    valid = warp(ones, tform.inverse, output_shape=out_shape, order=1,
+                 preserve_range=True) >= 0.999
+    return np.stack(channels, axis=2).astype(np.float64), valid
 
 
 def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXFRAC):
@@ -170,23 +187,32 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
     # Accumulators are float32 (not float64): at full Seestar resolution the
     # 2x-scaled grid makes each float64 accumulator ~800 MB, and float32 is
     # more than precise enough for sigma-clip statistics.
-    mean = m2 = None
+    mean = m2 = seen = None
     count = 0
     for data, matrix in make_items():
-        warped = _warp_to_grid(_as_hwc(data).astype(np.float64), _scaled(matrix), out_shape)
+        warped, valid = _warp_to_grid(_as_hwc(data).astype(np.float64),
+                                      _scaled(matrix), out_shape)
         count += 1
         if mean is None:
             mean = np.zeros_like(warped, dtype=np.float32)
             m2 = np.zeros_like(warped, dtype=np.float32)
-        delta = warped - mean
-        mean += delta / count
-        m2 += delta * (warped - mean)
+            seen = np.zeros(out_shape, dtype=np.int32)
+        # Welford, but only over the frames that actually reached each pixel.
+        # Counting every frame everywhere is what corrupted the statistics at
+        # the coverage boundary — see _warp_to_grid.
+        seen += valid
+        v = valid[..., None]
+        n = np.maximum(seen, 1)[..., None].astype(np.float32)
+        delta = np.where(v, warped - mean, 0.0)
+        mean += (delta / n).astype(np.float32)
+        m2 += (delta * np.where(v, warped - mean, 0.0)).astype(np.float32)
     if mean is None:
         raise ValueError("no frames to integrate")
     # m2 is mathematically >= 0, but float32's coarser cancellation error can
     # push a near-constant pixel's m2 fractionally below zero; clamp before
     # sqrt so that doesn't produce NaNs (it didn't at float64's precision).
-    std = np.sqrt(np.maximum(m2, 0.0) / count)
+    # Divided by what actually contributed, not by the frame count.
+    std = np.sqrt(np.maximum(m2, 0.0) / np.maximum(seen, 1)[..., None])
     # Small-N note: single-pass frame-wise sigma-clip can only flag a lone
     # outlier once the deviation/std ratio (bounded by sqrt(N-1)) exceeds kappa
     # -- e.g. at kappa=2.5, N must be >=~8. This is inherent and identical to

@@ -158,3 +158,76 @@ def test_the_estimate_is_in_the_right_order_of_magnitude():
     assert 150 < estimate_seconds(60, (2160, 3840)) < 320
     assert estimate_seconds(600, (2160, 3840)) > 9 * estimate_seconds(60, (2160, 3840)) * 0.9
     assert 350 < estimate_megabytes((2160, 3840)) < 450     # a real one was 398 MB
+
+
+def test_frames_that_did_not_cover_a_pixel_do_not_count_as_zero_there():
+    """THE edge bug. Andreas' first real drizzle stack showed coloured streaks
+    along the rotation envelope that the normal stack of the same subs, framed
+    the same way, did not.
+
+    warp fills outside the source with ZERO, and zero is a legitimate pixel
+    value — register.warp_with_validity exists in the normal path for exactly
+    this reason. Drizzle's pass 1 had no mask, so a pixel seen by half the
+    frames had its mean halved and its variance inflated, and pass 2 then
+    rejected real data against corrupted statistics. Per channel differently,
+    hence the colour.
+
+    Constructed so the failure is arithmetic rather than aesthetic: half the
+    frames are shifted far enough that they do not reach the left edge at all.
+    """
+    import numpy as np
+    from nocturne.stacking.drizzle_stack import _warp_to_grid
+
+    data = np.full((32, 32, 1), 0.5, np.float64)
+    shifted = np.eye(3)
+    # Far enough to leave a 64-wide output entirely. +40 does NOT: the inverse
+    # maps output columns 40..63 back onto input 0..23, so 768 pixels are still
+    # legitimately covered. The first version of this test asserted otherwise
+    # and failed against correct code.
+    shifted[0, 2] = 200.0
+    warped, valid = _warp_to_grid(data, shifted, (64, 64))
+    assert not valid.any(), "a frame moved right off the grid still claims coverage"
+
+    warped, valid = _warp_to_grid(data, np.eye(3), (64, 64))
+    assert valid.any(), "an aligned frame covers nothing"
+    # Where the frame does NOT reach, warp filled zeros — which must not be
+    # mistaken for real dark sky.
+    assert (warped[~valid] == 0).all()
+    assert np.allclose(warped[valid], 0.5), "covered pixels lost their value"
+
+
+def test_a_thinly_covered_region_is_not_rejected_into_nothing():
+    """End to end, and calibrated so the bug actually fires.
+
+    A first version used half-covered pixels and PASSED against the broken code.
+    The reason is worth keeping: the corrupted mean only changes what pass 2
+    REJECTS, and rejection needs |value - mean| > kappa*std. For a pixel covered
+    by fraction f, the unmasked mean is f*V and its std V*sqrt(f(1-f)), so the
+    test only bites when (1-f)/f > kappa^2 — below about 14% coverage at
+    kappa 2.5. At f = 0.5 the wrong mean is not wrong ENOUGH, and the test
+    proved nothing.
+
+    So: one frame in twelve reaches the far strip. Unmasked, its mean there is
+    V/12 with a std that makes the real data look like a 12-sigma outlier — it
+    is rejected outright and the strip comes out as fill, which is what drew
+    streaks along Andreas' rotation envelope.
+    """
+    import numpy as np
+    from nocturne.stacking.drizzle_stack import drizzle_clipped
+
+    level = 0.4
+    full = np.full((32, 32, 1), level, np.float32)
+    frames = [(full.copy(), np.eye(3)) for _ in range(11)]
+    off = np.eye(3)
+    off[0, 2] = 34.0          # this one alone reaches beyond the others
+    frames.append((full.copy(), off))
+
+    out, _ = drizzle_clipped(lambda: list(frames), (32, 32), 1)
+    strip = out[20:44, 40:60, 0]           # only the twelfth frame covers this
+    live = strip[strip > 0]
+    assert live.size > 50, (
+        f"the thinly covered strip came out empty ({live.size} live pixels) — "
+        f"its data was rejected against statistics that counted the eleven "
+        f"frames which never saw it")
+    assert abs(float(np.median(live)) - level) < 0.1 * level, (
+        f"level came out {np.median(live):.4f} instead of {level}")
