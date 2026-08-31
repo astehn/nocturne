@@ -50,6 +50,28 @@ from nocturne.stacking.register import warp_with_validity
 from nocturne.stacking.register_pool import register_frames
 
 
+def time_order(paths) -> list:
+    """Frames oldest-first, by DATE-OBS, falling back to filename.
+
+    The header rather than the name because the name is a convention and the
+    header is a record; Seestar filenames do encode the timestamp, but a
+    renamed or re-exported frame would silently sort wrong and the failure would
+    look like noise.
+    """
+    from astropy.io import fits
+
+    def key(p):
+        try:
+            d = fits.getheader(p).get("DATE-OBS")
+            if d:
+                return (0, str(d))
+        except Exception:                    # noqa: BLE001 - unreadable header
+            pass
+        return (1, os.path.basename(p))
+
+    return sorted(paths, key=key)
+
+
 @dataclass
 class Prepared:
     """Frames registered once, ready to be stacked in any subset.
@@ -59,6 +81,7 @@ class Prepared:
     re-registered per rung, paying a full pass over the frames for each.
     """
     paths: list[str]
+    ordered: list = field(default_factory=list)   # the same frames, oldest first
     transforms: dict = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
     ref_stats: tuple = ()
@@ -101,7 +124,7 @@ def prepare(paths, *, workers: int = 3, strictness: str = "normal",
         on_line(f"  {len(paths) - len(keep)} of {len(paths)} excluded "
                 f"(already-stacked masters, or rejected by grading)")
     paths = order_best_first(keep)
-    ref_path = paths[0]
+    ref_path = paths[0]                      # best geometry leads: it IS the grid
     ref = load_sub(ref_path, normalize=False)
     ref_stats = frame_stats(ref.data)
 
@@ -117,21 +140,43 @@ def prepare(paths, *, workers: int = 3, strictness: str = "normal",
         stats[r.path] = r.stats
         kept.append(r.path)
     on_line(f"  registered {len(kept)}/{len(paths)}")
-    return Prepared(kept, transforms, stats, ref_stats, ref_path)
+    return Prepared(kept, time_order(kept), transforms, stats, ref_stats, ref_path)
 
 
-def split_disjoint(items, depth: int, rng):
+def split_disjoint(ordered, depth: int, rng):
     """Two lists of `depth` items each, sharing nothing.
 
-    Refuses rather than shortening: the depth is what the model is conditioned
-    on and what the manifest records, so a quietly shallower pair is a mislabel.
+    `ordered` must be oldest-first. A contiguous run of 2*depth frames is taken
+    from a random position and DEALT ALTERNATELY — A, B, A, B — rather than the
+    obvious random permutation.
+
+    That is not fussiness. Measured on IC 1396A, which spans 2026-08-11..08-26:
+
+                     random split                interleaved
+        depth 16   +0.210 +-0.319  max 0.637   +0.017 +-0.060  max 0.132
+        depth 32   -0.232 +-0.163  max 0.430   -0.007 +-0.036  max 0.070
+        depth 64   -0.002 +-0.303  max 0.534   -0.015 +-0.065  max 0.094
+
+    where the number is corr(A-B, (A+B)/2) against a null of +-0.0006. A random
+    draw across fifteen nights hands each half a different mix of sky
+    conditions, and a difference in average sky is a smooth gradient that tracks
+    the scene — so A-B carries structure rather than only noise, which is
+    exactly what a model will learn instead of denoising. The random split's
+    worst case, 0.637, is WORSE than the 0.46 that retired v1.
+
+    Dealing alternately from a contiguous run gives both halves the same
+    conditions, the same transparency, the same moon, the same dew.
+
+    Refuses rather than shortening: depth is what the model is conditioned on
+    and what the manifest records, so a quietly shallower pair is a mislabel.
     """
-    items = list(items)
-    if len(items) < 2 * depth:
+    ordered = list(ordered)
+    if len(ordered) < 2 * depth:
         raise ValueError(
-            f"a pair at depth {depth} needs {2 * depth} frames, only {len(items)} available")
-    picked = rng.permutation(len(items))[: 2 * depth]
-    return [items[i] for i in picked[:depth]], [items[i] for i in picked[depth:]]
+            f"a pair at depth {depth} needs {2 * depth} frames, only {len(ordered)} available")
+    start = int(rng.integers(0, len(ordered) - 2 * depth + 1))
+    block = ordered[start:start + 2 * depth]
+    return block[0::2], block[1::2]
 
 
 def _stack(prep: Prepared, paths):
@@ -195,7 +240,7 @@ def shared_scale(a, b) -> float:
 
 def make_pair(prep: Prepared, depth: int, rng, *, return_coverage: bool = False):
     """One Noise2Noise pair: (A, B), same grid, same scale, no shared frame."""
-    pa, pb = split_disjoint(prep.paths, depth, rng)
+    pa, pb = split_disjoint(prep.ordered or prep.paths, depth, rng)
     a, cov_a = _stack(prep, pa)
     b, cov_b = _stack(prep, pb)
 

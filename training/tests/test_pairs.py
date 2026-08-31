@@ -228,3 +228,69 @@ def test_frames_that_fail_to_register_are_dropped_not_stacked(tmp_path):
     prep = P.prepare(paths + [str(junk)], workers=1)
     assert str(junk) not in prep.paths
     assert len(prep.paths) >= 5
+
+
+# --- why the split is interleaved and not random -----------------------------
+
+def test_the_halves_are_dealt_alternately_from_a_contiguous_run():
+    """Both halves must sample the same sky conditions.
+
+    Measured on IC 1396A, which spans 2026-08-11..08-26, corr(A-B, mean) against
+    a null of +-0.0006:
+
+                     random split                interleaved
+        depth 16   +0.210 +-0.319  max 0.637   +0.017 +-0.060  max 0.132
+        depth 32   -0.232 +-0.163  max 0.430   -0.007 +-0.036  max 0.070
+        depth 64   -0.002 +-0.303  max 0.534   -0.015 +-0.065  max 0.094
+
+    A random draw across fifteen nights gives each half a different mix of
+    conditions; the difference in average sky is a smooth gradient that tracks
+    the scene, so A-B carries structure rather than only noise. The random
+    split's worst case is WORSE than the 0.46 that retired v1.
+    """
+    ordered = list(range(100))
+    a, b = P.split_disjoint(ordered, depth=8, rng=np.random.default_rng(0))
+    both = sorted(a + b)
+    assert both == list(range(both[0], both[0] + 16)), (
+        f"the 16 frames are not contiguous in time: {both}")
+    assert a == both[0::2] and b == both[1::2], (
+        f"not dealt alternately — A={a} B={b}")
+
+
+def test_neither_half_is_systematically_earlier_than_the_other():
+    """The point of dealing alternately: if half A were simply the first N
+    frames it would carry the start of the session and half B the end, which is
+    the very condition difference this avoids."""
+    for seed in range(6):
+        a, b = P.split_disjoint(list(range(200)), depth=10,
+                                rng=np.random.default_rng(seed))
+        assert abs(np.mean(a) - np.mean(b)) <= 1.0, (
+            f"halves sit at different points in the session: {np.mean(a)} vs {np.mean(b)}")
+
+
+def test_frames_are_ordered_by_the_header_not_the_filename(tmp_path):
+    """Seestar filenames do encode the timestamp, but a name is a convention and
+    a header is a record — a renamed or re-exported frame would sort wrong and
+    the damage would look like noise."""
+    from astropy.io import fits
+    base = make_star_field(shape=(96, 96), n_stars=20, seed=1)
+    paths = []
+    for name, when in (("z_last.fit", "2026-08-11T21:00:00"),
+                       ("a_first.fit", "2026-08-26T23:00:00"),
+                       ("m_mid.fit", "2026-08-20T22:00:00")):
+        p = tmp_path / name
+        write_cfa_fits(str(p), base)
+        with fits.open(str(p), mode="update") as h:
+            h[0].header["DATE-OBS"] = when
+        paths.append(str(p))
+    got = [os.path.basename(p) for p in P.time_order(paths)]
+    assert got == ["z_last.fit", "m_mid.fit", "a_first.fit"], got
+
+
+def test_a_frame_with_no_readable_date_still_sorts_somewhere(tmp_path):
+    """An unreadable header must not take the build down; it sorts last, by
+    name, and the pair is still usable."""
+    base = make_star_field(shape=(96, 96), n_stars=20, seed=1)
+    p = tmp_path / "no_date.fit"
+    write_cfa_fits(str(p), base)
+    assert P.time_order([str(p)]) == [str(p)]
