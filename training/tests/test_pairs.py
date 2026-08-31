@@ -17,26 +17,35 @@ import pytest  # noqa: E402
 
 import pairs as P  # noqa: E402
 
-from tests.stacking.synthetic import make_star_field, write_color_fits  # noqa: E402
+from tests.stacking.synthetic import (  # noqa: E402
+    make_star_field, write_cfa_fits, write_color_fits)
 
 
 def _subs(tmp_path, n=8, seed=0, shift=0.0, noise=0.01):
-    """n frames of one star field, each with its own noise.
+    """n frames of one star field, each with its own noise, as CFA subs.
 
-    `shift` moves the field a little per frame, which is what dithering does and
-    what makes the covered region differ between any two subsets.
+    CFA and not colour cubes, deliberately. `write_color_fits` produces a
+    (3, H, W) cube, which is what an already-stacked master looks like on disk —
+    `is_stacked_master` reads NAXIS=3 and says yes. Grading then rejects every
+    frame, and the first version of these tests bypassed grading entirely and so
+    never noticed. Real Seestar subs are 2D Bayer; the fixture is now too.
+
+    `shift` moves the field per frame, which is what dithering does.
+
+    Callers ask for more frames than they need: prepare() grades and rejects, as
+    the Stack tool does, so a fixture sized exactly to the depth fails the moment
+    grading throws one out.
     """
     rng = np.random.default_rng(seed)
-    base = make_star_field(shape=(64, 64), n_stars=12, seed=99)
+    base = make_star_field(shape=(96, 96), n_stars=25, seed=99)
     paths = []
     for i in range(n):
         img = base.copy()
         if shift:
-            k = int(round(shift * (i % 3 - 1)))
-            img = np.roll(img, k, axis=1)
+            img = np.roll(img, int(round(shift * (i % 3 - 1))), axis=1)
         img = np.clip(img + rng.normal(0, noise, img.shape), 0, 1).astype(np.float32)
-        p = tmp_path / f"sub_{i:03d}.fits"
-        write_color_fits(str(p), img)
+        p = tmp_path / f"sub_{i:03d}.fit"
+        write_cfa_fits(str(p), img)
         paths.append(str(p))
     return paths
 
@@ -71,7 +80,7 @@ def test_the_halves_land_on_the_same_pixel_grid(tmp_path):
     """v1 integrated each half to its own extent. Where one covered a pixel and
     the other did not, the difference between them was SCENE, not noise — which
     is how a noise field ended up correlated with its own target."""
-    paths = _subs(tmp_path, n=8, shift=3.0)
+    paths = _subs(tmp_path, n=14, shift=3.0)
     prep = P.prepare(paths, workers=1)
     a, b = P.make_pair(prep, depth=4, rng=np.random.default_rng(1))
     assert a.shape == b.shape
@@ -87,20 +96,46 @@ def test_the_crop_is_where_BOTH_halves_are_covered_not_either_one(tmp_path):
     extent, or their union, keeps a strip only one of them saw; there the
     difference between the halves is SCENE, and that is what v1 was training on.
     """
-    cov_a = np.ones((40, 40), np.float32)
-    cov_a[:, :6] = 0.0                       # A saw nothing in the left 6 columns
-    cov_b = np.ones((40, 40), np.float32)
-    cov_b[:, -5:] = 0.0                      # B saw nothing in the right 5
-    top, bottom, left, right = P.common_bounds(cov_a, cov_b)
+    depth = 8
+    cov_a = np.full((40, 40), depth, np.int32)
+    cov_a[:, :6] = 0                         # A saw nothing in the left 6 columns
+    cov_b = np.full((40, 40), depth, np.int32)
+    cov_b[:, -5:] = 0                        # B saw nothing in the right 5
+    top, bottom, left, right = P.common_bounds(cov_a, cov_b, depth)
     assert left >= 6, f"kept {6 - left} columns only half B saw"
     assert right <= 35, f"kept {right - 35} columns only half A saw"
     assert (top, bottom) == (0, 40)
 
 
+def test_a_pixel_short_of_the_full_depth_is_cropped_away():
+    """Coverage is a frame COUNT, not a fraction. Asking the app's own
+    full_coverage_bounds with n_frames=1 means "at least one frame touched this"
+    — and a real depth-16 pair came back containing pixels covered by a single
+    frame, four times noisier than the depth it was labelled with. The synthetic
+    dither was too tidy to show it; this is constructed so it cannot hide.
+    """
+    depth = 16
+    cov_a = np.full((30, 30), depth, np.int32)
+    cov_b = np.full((30, 30), depth, np.int32)
+    cov_b[:, :4] = depth - 1                 # one frame short, not zero
+    _, _, left, right = P.common_bounds(cov_a, cov_b, depth)
+    assert left >= 4, "kept a column one frame short of the claimed depth"
+
+
+def test_a_pair_with_no_common_ground_is_refused_not_returned_empty():
+    depth = 4
+    cov_a = np.zeros((20, 20), np.int32)
+    cov_a[:, :10] = depth
+    cov_b = np.zeros((20, 20), np.int32)
+    cov_b[:, 10:] = depth                    # the halves overlap nowhere
+    with pytest.raises(ValueError, match="no pixel is covered"):
+        P.common_bounds(cov_a, cov_b, depth)
+
+
 def test_a_pair_contains_no_partly_covered_pixel(tmp_path):
     """End to end: whatever survives the crop was seen by every frame of both
     halves, so its noise really is the depth the manifest claims."""
-    paths = _subs(tmp_path, n=8, shift=4.0)
+    paths = _subs(tmp_path, n=14, shift=4.0)
     prep = P.prepare(paths, workers=1)
     _, _, cov_a, cov_b = P.make_pair(prep, depth=4, rng=np.random.default_rng(2),
                                      return_coverage=True)
@@ -126,7 +161,7 @@ def test_the_scale_is_one_number_taken_from_both_halves():
 def test_a_brighter_half_stays_brighter_after_scaling(tmp_path):
     """End to end. Per-half scaling forces both peaks to exactly 1.0 and erases
     the difference between them; one shared divisor preserves it."""
-    paths = _subs(tmp_path, n=8, noise=0.01)
+    paths = _subs(tmp_path, n=14, noise=0.01)
     prep = P.prepare(paths, workers=1)
     a, b = P.make_pair(prep, depth=4, rng=np.random.default_rng(3))
     assert not (a.max() == pytest.approx(1.0, abs=1e-6)
@@ -142,7 +177,7 @@ def test_the_difference_between_halves_is_noise_not_scene(tmp_path):
     was bright, a structured noise-scene relationship a model can learn instead
     of denoising. Real disjoint halves must not do that.
     """
-    paths = _subs(tmp_path, n=16, shift=2.0, noise=0.02)
+    paths = _subs(tmp_path, n=24, shift=2.0, noise=0.02)
     prep = P.prepare(paths, workers=1)
     rs = []
     for s in range(6):
@@ -156,7 +191,7 @@ def test_the_difference_between_halves_is_noise_not_scene(tmp_path):
 
 def test_the_same_seed_gives_the_same_pair(tmp_path):
     """A pair that cannot be reproduced cannot be investigated later."""
-    paths = _subs(tmp_path, n=10)
+    paths = _subs(tmp_path, n=14)
     prep = P.prepare(paths, workers=1)
     a1, _ = P.make_pair(prep, depth=4, rng=np.random.default_rng(7))
     a2, _ = P.make_pair(prep, depth=4, rng=np.random.default_rng(7))
@@ -166,7 +201,7 @@ def test_the_same_seed_gives_the_same_pair(tmp_path):
 def test_registering_happens_once_for_any_number_of_pairs(tmp_path):
     """Registration is the expensive half. v1 re-registered per target depth,
     which cost a full pass over the frames for every rung."""
-    paths = _subs(tmp_path, n=10)
+    paths = _subs(tmp_path, n=14)
     calls = {"n": 0}
     real = P.register_frames
 
@@ -188,8 +223,8 @@ def test_frames_that_fail_to_register_are_dropped_not_stacked(tmp_path):
     """A frame with no transform cannot be placed on the grid. Including it
     would put an unregistered field into one half."""
     paths = _subs(tmp_path, n=6)
-    junk = tmp_path / "sub_junk.fits"
-    write_color_fits(str(junk), np.zeros((64, 64), np.float32))
+    junk = tmp_path / "sub_junk.fit"
+    write_cfa_fits(str(junk), np.zeros((96, 96), np.float32))
     prep = P.prepare(paths + [str(junk)], workers=1)
     assert str(junk) not in prep.paths
     assert len(prep.paths) >= 5

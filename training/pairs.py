@@ -41,8 +41,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nocturne.stacking.coverage import full_coverage_bounds
+from nocturne.stacking.coverage import _largest_true_rectangle
 from nocturne.stacking.frames import load_sub
+from nocturne.stacking.grade import grade_frames, judge, order_best_first
 from nocturne.stacking.integrate import average_integrate
 from nocturne.stacking.normalize import frame_stats, normalize_to
 from nocturne.stacking.register import warp_with_validity
@@ -64,13 +65,42 @@ class Prepared:
     ref_path: str = ""
 
 
-def prepare(paths, *, workers: int = 3, on_line=print) -> Prepared:
-    """Register every frame against the first one. Unregisterable frames are
-    dropped — a frame with no transform cannot be placed on the grid, and
-    including it would put an unaligned field into one half."""
+def prepare(paths, *, workers: int = 3, strictness: str = "normal",
+            on_line=print) -> Prepared:
+    """Grade, reject and register a target's frames, once.
+
+    Grading and reference choice come from `nocturne.stacking.grade`, the same
+    code the Stack tool runs, for two reasons beyond not writing it twice.
+
+    It excludes already-stacked masters. A target folder holds them: "M 16_sub"
+    contains HaOIII_master.fits and two full stacks alongside 366 subs, and
+    HaOIII_master.fits sorts FIRST alphabetically. Taking paths[0] as the
+    reference registered 3840x2160 subs against a 2896x1160 master and dropped
+    every single frame with "dimension mismatch". Measured, not imagined — it is
+    what happened the first time this ran on real data.
+
+    And it picks the reference on geometry rather than order. Both stackers
+    align to paths[0], so whatever leads the list IS the reference; Stack and
+    Ha/OIII once disagreed about it and produced differently-framed masters from
+    identical subs.
+
+    Frames that fail to register are dropped: one with no transform cannot be
+    placed on the grid, and including it would put an unaligned field into a half.
+    """
     paths = list(paths)
     if len(paths) < 2:
         raise ValueError(f"need at least 2 frames, got {len(paths)}")
+    stats = grade_frames(paths, strictness=strictness)
+    judge(stats, strictness)
+    keep = [s for s in stats if s.included and not s.error]
+    if len(keep) < 2:
+        raise ValueError(
+            f"only {len(keep)} of {len(paths)} frames are usable — "
+            f"masters and rejects excluded")
+    if len(keep) < len(paths):
+        on_line(f"  {len(paths) - len(keep)} of {len(paths)} excluded "
+                f"(already-stacked masters, or rejected by grading)")
+    paths = order_best_first(keep)
     ref_path = paths[0]
     ref = load_sub(ref_path, normalize=False)
     ref_stats = frame_stats(ref.data)
@@ -120,15 +150,36 @@ def _stack(prep: Prepared, paths):
     return average_integrate(frames())
 
 
-def common_bounds(cov_a, cov_b):
-    """The rectangle where BOTH halves are fully covered.
+def common_bounds(cov_a, cov_b, depth: int):
+    """The rectangle where EVERY frame of BOTH halves contributed.
 
     The intersection, not either half's own extent and not their union. v1 took
     each half's own, so at the rotation envelope one half covered a pixel the
     other did not and the difference between them was scene rather than noise —
     the mechanism behind a noise field correlating 0.46 with its own target.
+
+    Not `stacking.full_coverage_bounds`, though that is the same idea, for two
+    reasons found on real M 16 frames after the synthetic tests were happy:
+
+      * its `coverage` is an integer frame COUNT, so the threshold has to be the
+        depth. Called with n_frames=1 it means "at least one frame touched this
+        pixel", and a depth-16 pair came back containing pixels covered by ONE
+        frame — nominally 4x noisier than the depth claims.
+      * it searches a subsampled mask for speed and says so: "the kept rectangle
+        can dip a little under frac". A few stray edge pixels are invisible in a
+        picture and are a mislabel in training data.
+
+    So the mask is exact and the search runs at full resolution. It costs about
+    a second on a 3840x2160 frame, once per pair, which is nothing next to
+    stacking the frames in the first place.
     """
-    return full_coverage_bounds(np.minimum(cov_a, cov_b), 1)
+    both = np.minimum(np.asarray(cov_a), np.asarray(cov_b))
+    mask = both >= depth
+    if not mask.any():
+        raise ValueError(
+            f"no pixel is covered by all {depth} frames of both halves — "
+            f"the frames may be too widely dithered to pair at this depth")
+    return _largest_true_rectangle(mask)
 
 
 def shared_scale(a, b) -> float:
@@ -148,7 +199,7 @@ def make_pair(prep: Prepared, depth: int, rng, *, return_coverage: bool = False)
     a, cov_a = _stack(prep, pa)
     b, cov_b = _stack(prep, pb)
 
-    top, bottom, left, right = common_bounds(cov_a, cov_b)
+    top, bottom, left, right = common_bounds(cov_a, cov_b, depth)
     a, b = a[top:bottom, left:right], b[top:bottom, left:right]
     cov_a, cov_b = cov_a[top:bottom, left:right], cov_b[top:bottom, left:right]
 
