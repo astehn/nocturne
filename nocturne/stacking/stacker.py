@@ -267,11 +267,21 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
                                 norm_stats[path], ref_stats)
             return data, transforms[path]
 
+        # drizzle_clipped walks the frames TWICE — once to measure, once to
+        # reject and accumulate — so this generator is called twice and the
+        # progress bar legitimately runs to the end and starts again. Label the
+        # passes differently or it reads as one job restarting, which is how
+        # Andreas read it on the first real run (2026-08-31). The second pass is
+        # the slow one: it gathers pass-1 statistics at every input pixel, per
+        # channel, before it can drizzle anything.
+        drizzle_items.pass_no = getattr(drizzle_items, "pass_no", 0) + 1
+        what = ("measuring frames for rejection" if drizzle_items.pass_no == 1
+                else "drizzling frames")
         for i, out in enumerate(ordered_results(used, prep, workers=plan.count),
                                 start=1):
             _check_cancel()
             if on_progress is not None:
-                on_progress(i, total, step_label(2, "drizzling frames"))
+                on_progress(i, total, step_label(1 + drizzle_items.pass_no, what))
             yield out
 
     if opts.method == "drizzle":
