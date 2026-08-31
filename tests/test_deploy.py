@@ -548,3 +548,63 @@ samples_path = "/somewhere/else"
 ''')
     with pytest.raises(ValueError, match="samples_path"):
         load_config(cfg)
+
+
+# --- the bundle must be able to do HTTPS (added 2026-08-31) ------------------
+
+class _FakeRun:
+    """Stands in for subprocess.run, recording how it was called."""
+
+    def __init__(self, returncode, out=""):
+        self.returncode, self.out, self.calls = returncode, out, []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append((cmd, kw))
+        import types
+        return types.SimpleNamespace(returncode=self.returncode,
+                                     stdout=self.out, stderr="")
+
+
+def test_a_bundle_with_no_usable_certificates_is_refused(tmp_path):
+    """Exit 2 from --check-network means HTTPS cannot work on ANY machine. That
+    build must not ship: the update check and SPCC both fail quiet, so users see
+    nothing at all — which is how this went unnoticed for months."""
+    run = _FakeRun(2, "usable CA path: False")
+    with pytest.raises(SystemExit, match="NO USABLE CA BUNDLE"):
+        deploy._verify_bundle_https(tmp_path / "Nocturne", run=run)
+
+
+def test_an_unreachable_network_only_warns(tmp_path, capsys):
+    """Exit 1 means the certificates are fine and the request failed anyway —
+    no network, captive portal, GitHub down. Not a build defect, and a release
+    must not hinge on the connection at the moment it is cut."""
+    deploy._verify_bundle_https(tmp_path / "Nocturne", run=_FakeRun(1, "URLError"))
+    assert "could not reach the network" in capsys.readouterr().out
+
+
+def test_a_healthy_bundle_passes_silently(tmp_path, capsys):
+    deploy._verify_bundle_https(tmp_path / "Nocturne", run=_FakeRun(0, "https probe: OK"))
+    assert capsys.readouterr().out == ""
+
+
+def test_the_build_machines_certificate_environment_is_stripped(tmp_path, monkeypatch):
+    """THE point of the check. Leaving SSL_CERT_FILE in place would let the
+    bundle borrow the build machine's Homebrew cert store and report success for
+    a build that cannot do HTTPS anywhere else — which is exactly the invisible
+    failure being guarded against."""
+    monkeypatch.setenv("SSL_CERT_FILE", "/opt/homebrew/etc/openssl@3/cert.pem")
+    monkeypatch.setenv("SSL_CERT_DIR", "/opt/homebrew/etc/openssl@3/certs")
+    run = _FakeRun(0)
+    deploy._verify_bundle_https(tmp_path / "Nocturne", run=run)
+    env = run.calls[0][1]["env"]
+    assert "SSL_CERT_FILE" not in env and "SSL_CERT_DIR" not in env
+
+
+def test_a_self_test_that_cannot_run_does_not_break_the_release(tmp_path, capsys):
+    """A missing binary or a timeout is a broken check, not a broken build."""
+
+    def boom(*a, **k):
+        raise OSError("no such file")
+
+    deploy._verify_bundle_https(tmp_path / "Nocturne", run=boom)
+    assert "could not run" in capsys.readouterr().out

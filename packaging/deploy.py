@@ -428,6 +428,46 @@ def verify_build() -> None:
     exe = DIST / "Nocturne.app" / "Contents" / "MacOS" / "Nocturne"
     if not exe.exists() or exe.stat().st_size < 1_000_000:
         raise SystemExit("build verify: Nocturne.app executable missing or too small")
+    _verify_bundle_https(exe)
+
+
+def _verify_bundle_https(exe: Path, run=subprocess.run) -> None:
+    """Ask the BUILT app whether it can do HTTPS, as a user's Mac would.
+
+    Python bakes its CA path in at build time. Until 2026-08-31 that meant every
+    shipped bundle pointed at /opt/homebrew/etc/openssl@3/cert.pem, which does
+    not exist on a Mac without Homebrew — so the update check and SPCC's Gaia
+    lookup failed on every user's machine, silently, because both fail quiet by
+    design. It went unnoticed for months: from source the path is always there,
+    so the bundle looks healthy on the machine that built it.
+
+    SSL_CERT_FILE and SSL_CERT_DIR are stripped deliberately. Leaving the build
+    machine's environment in place is what makes this class of bug invisible.
+
+    Exit 2 means no usable CA bundle: that build cannot do HTTPS anywhere and is
+    blocked. Exit 1 means the certificates are fine but the request failed —
+    no network, a captive portal, GitHub down — which is not a build defect and
+    only warns, because a release should not hinge on the connection at the
+    moment it is cut.
+    """
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SSL_CERT_FILE", "SSL_CERT_DIR")}
+    try:
+        r = run([str(exe), "--check-network"], capture_output=True, text=True,
+                env=env, timeout=180)
+    except Exception as exc:                      # noqa: BLE001
+        print(f"warning: could not run the bundle's network self-test ({exc})")
+        return
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode == 2:
+        raise SystemExit(
+            "build verify: the bundle has NO USABLE CA BUNDLE — HTTPS cannot "
+            "work on any machine, so the update check and SPCC would fail "
+            "silently for every user.\n" + out)
+    if r.returncode != 0:
+        print("warning: the bundle could not reach the network. Certificates "
+              "look fine, so this is probably local:")
+        print(out)
 
 
 def zip_app(version: str, run=real_run) -> Path:

@@ -20,11 +20,20 @@ _ASSETS = Path(__file__).resolve().parent / "assets"
 def _check_network() -> int:
     """Print where SSL will look for certificates and whether HTTPS works.
 
-    Exit code 0 if a real request succeeded, 1 otherwise, so it can gate a
-    release. Both features that need the network — the update check and SPCC's
-    Gaia lookup — catch broadly and fail quiet, which is correct behaviour and
-    is exactly why a 0.18.0 build ran all day against a 0.20.0 release without
-    ever saying so.
+    Exit codes, so a release can be gated on the difference:
+
+        0  HTTPS works.
+        1  certificates are fine, the request failed anyway — no network, a
+           captive portal, GitHub down. Not a build defect.
+        2  NO USABLE CA BUNDLE. This build cannot do HTTPS on any machine and
+           must not ship.
+
+    The distinction matters because the failure being guarded against is silent:
+    both features that need the network — the update check and SPCC's Gaia
+    lookup — catch broadly and fail quiet, which is correct behaviour and is
+    exactly why a 0.18.0 build ran all day against a 0.20.0 release without ever
+    saying so. Blocking a release on a flaky connection would be a different
+    kind of wrong.
     """
     import ssl
     import urllib.request
@@ -32,18 +41,19 @@ def _check_network() -> int:
     from .core.certs import ca_path_is_usable
 
     paths = ssl.get_default_verify_paths()
+    usable = ca_path_is_usable()
     print(f"frozen        : {getattr(sys, 'frozen', False)}")
     print(f"SSL_CERT_FILE : {os.environ.get('SSL_CERT_FILE') or '(unset)'}")
     for name, val in (("cafile", paths.cafile), ("capath", paths.capath)):
         print(f"{name:14}: {val}  exists={bool(val) and os.path.exists(val)}")
-    print(f"usable CA path: {ca_path_is_usable()}")
+    print(f"usable CA path: {usable}")
     try:
         with urllib.request.urlopen("https://api.github.com/", timeout=15) as r:
             print(f"https probe   : OK (HTTP {r.status})")
         return 0
     except Exception as exc:                       # noqa: BLE001 - reporting tool
         print(f"https probe   : FAILED {type(exc).__name__}: {exc}")
-        return 1
+        return 1 if usable else 2
 
 
 def main() -> None:
