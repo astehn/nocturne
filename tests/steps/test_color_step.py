@@ -143,3 +143,21 @@ def test_an_unrecognised_gaia_failure_still_falls_back():
     out = step.apply(_img(), ColorSettings(method="photometric"))
     assert out.data.shape == (40, 40, 3)
     assert "sky balance" in step.last_message.lower()
+
+
+def test_a_certificate_failure_does_not_blame_the_users_network():
+    """The message is the whole point. "Couldn't reach Gaia" for what was
+    actually a missing CA bundle in our own build sent this to the backlog as a
+    Gaia problem and left it there — Andreas had simply learned to expect SPCC
+    not to work on that Mac."""
+    from nocturne.tools.gaia import GaiaTlsError
+
+    def boom(*a, **k):
+        raise GaiaTlsError("URLError: CERTIFICATE_VERIFY_FAILED")
+
+    step = ColorStep(astap=_FakeAstap(), gaia_query=boom)
+    out = step.apply(_img(), ColorSettings(method="photometric"))
+    assert out.data.shape == (40, 40, 3)                   # still falls back
+    msg = step.last_message.lower()
+    assert "certificate" in msg, step.last_message
+    assert "not a problem with your network" in msg, step.last_message

@@ -13,6 +13,7 @@ cheaper is real work with real consequences for which stars SPCC calibrates
 against; it is written up in TODO.md rather than guessed at here."""
 from __future__ import annotations
 
+import ssl
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -31,6 +32,24 @@ class GaiaError(Exception):
 
 class GaiaUnreachable(GaiaError):
     """The request itself failed — DNS, refused, timed out."""
+
+
+class GaiaTlsError(GaiaUnreachable):
+    """The connection was refused at the TLS layer — a certificate problem on
+    THIS computer, not a network one.
+
+    A subclass of GaiaUnreachable so any existing handler keeps working; the
+    point is only that a caller which cares can say something accurate.
+
+    Worth its own class because of what it cost. Until v0.21.0 the built app
+    shipped no CA certificates and resolved them against the build machine's
+    Homebrew path, so on every other Mac this failed — and was reported as
+    "Couldn't reach Gaia", which named a plausible cause instead of the real
+    one. It went into the backlog as a slow-catalogue problem and sat there for
+    weeks while Andreas simply learned to expect SPCC not to work on that
+    computer. Telling a user to check their network for a fault that is in the
+    application is worse than saying nothing.
+    """
 
 
 class GaiaNoStars(GaiaError):
@@ -70,6 +89,21 @@ _PROBE_TIMEOUT_S = 5
 _SERVICE_ROOT = "https://vizier.cds.unistra.fr/"
 
 
+def _unreachable_kind(exc: BaseException) -> type:
+    """GaiaTlsError if this failure was TLS, GaiaUnreachable otherwise.
+
+    urllib wraps the real cause: an SSLCertVerificationError arrives as a
+    URLError with the SSL error in `.reason`, so the type alone is not enough.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, ssl.SSLError):
+            return GaiaTlsError
+        exc = getattr(exc, "reason", None) or exc.__cause__
+    return GaiaUnreachable
+
+
 def _default_probe() -> None:
     """Raise if the service cannot be reached. Says nothing about whether the
     QUERY will succeed or be quick — only that something is answering."""
@@ -104,7 +138,7 @@ def query_field(ra_deg: float, dec_deg: float, radius_deg: float, *,
         try:
             probe()
         except Exception as exc:                  # noqa: BLE001 — any failure is "not there"
-            raise GaiaUnreachable(f"{type(exc).__name__}: {exc}") from exc
+            raise _unreachable_kind(exc)(f"{type(exc).__name__}: {exc}") from exc
     fetch = fetch or _default_fetch
     query = (
         "-source=I/355/gaiadr3"
@@ -119,7 +153,7 @@ def query_field(ra_deg: float, dec_deg: float, radius_deg: float, *,
     try:
         text = fetch(url)
     except Exception as exc:                      # noqa: BLE001 — any failure -> fallback
-        raise GaiaUnreachable(f"{type(exc).__name__}: {exc}") from exc
+        raise _unreachable_kind(exc)(f"{type(exc).__name__}: {exc}") from exc
     out = []
     for line in text.splitlines():
         # VizieR TSV: '#' comments, then header/units/separator rows, then tab-separated

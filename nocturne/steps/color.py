@@ -35,7 +35,7 @@ class ColorStep(Step):
         """Solve -> query Gaia -> gains -> apply. Returns the calibrated image, or
         None (and sets self.last_message) on any failure so apply() falls back."""
         from ..tools.gaia import (GaiaBadResponse, GaiaError, GaiaNoStars,
-                                  GaiaUnreachable)
+                                  GaiaTlsError, GaiaUnreachable)
         from ..core.spcc import photometric_gains, apply_gains
         if self._astap is None or self._gaia_query is None:
             self.last_message = "ASTAP not set — used sky balance."
@@ -71,6 +71,18 @@ class ColorStep(Step):
         # their network for faults that were not there.
         try:
             gaia = self._gaia_query(res.center_ra_deg, res.center_dec_deg, radius)
+        except GaiaTlsError as exc:
+            # Before GaiaUnreachable — it is a subclass, and the whole point is
+            # to stop this being reported as a network fault. Until v0.21.0 the
+            # built app carried no CA certificates, so this failed on every Mac
+            # that was not the build machine and said "Couldn't reach Gaia",
+            # which sent the problem to the backlog as a slow catalogue and left
+            # it there for weeks.
+            self.last_message = (
+                f"Couldn't verify a secure connection to the star catalogue — "
+                f"this is a certificate problem on this computer, not a problem "
+                f"with your network or with Gaia. Used sky balance. ({exc})")
+            return None
         except GaiaUnreachable as exc:
             self.last_message = (f"Couldn't reach Gaia ({exc}) — used sky balance.")
             return None

@@ -155,3 +155,63 @@ def test_injecting_a_fetch_skips_the_probe(monkeypatch):
     monkeypatch.setattr(gaia, "_default_probe", must_not_run)
     body = _VIZIER_HEADER + "274.4\t-14.1\t13.8\t1.0"
     assert len(gaia.query_field(274.7, -13.8, 0.5, fetch=lambda url: body)) == 1
+
+
+# --- a certificate failure is not a network failure (2026-08-31) -------------
+
+def _ssl_verify_error():
+    """What urllib actually raises: a URLError with the SSL error in .reason,
+    so the exception TYPE alone cannot tell you this was TLS."""
+    import ssl
+    import urllib.error
+    return urllib.error.URLError(ssl.SSLCertVerificationError(
+        1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+           "unable to get local issuer certificate"))
+
+
+def test_a_tls_failure_is_its_own_kind_of_failure():
+    """Until v0.21.0 the built app shipped no CA certificates, so this failed on
+    every Mac that was not the build machine — and was reported as "Couldn't
+    reach Gaia". That named a plausible cause instead of the real one, and the
+    problem sat in the backlog as a slow catalogue for weeks while SPCC simply
+    never worked on Andreas' MacBook Pro."""
+    from nocturne.tools.gaia import GaiaTlsError, query_field
+
+    def fetch(url):
+        raise _ssl_verify_error()
+
+    with pytest.raises(GaiaTlsError):
+        query_field(10.0, 41.0, 0.5, fetch=fetch)
+
+
+def test_a_tls_failure_in_the_reachability_probe_is_caught_too():
+    """The probe runs first, so on a machine with no certificates it is what
+    fails — the query never gets a chance."""
+    from nocturne.tools.gaia import GaiaTlsError, query_field
+
+    def probe():
+        raise _ssl_verify_error()
+
+    with pytest.raises(GaiaTlsError):
+        query_field(10.0, 41.0, 0.5, fetch=lambda u: "", probe=probe)
+
+
+def test_an_ordinary_outage_is_still_plain_unreachable():
+    """The new class must not swallow the common case: a real outage should
+    still say the catalogue could not be reached, not blame certificates."""
+    import urllib.error
+    from nocturne.tools.gaia import GaiaTlsError, GaiaUnreachable, query_field
+
+    with pytest.raises(GaiaUnreachable) as e:
+        query_field(10.0, 41.0, 0.5,
+                    fetch=lambda u: (_ for _ in ()).throw(
+                        urllib.error.URLError(TimeoutError("timed out"))))
+    assert not isinstance(e.value, GaiaTlsError)
+
+
+def test_a_certificate_error_still_satisfies_older_handlers():
+    """GaiaTlsError subclasses GaiaUnreachable deliberately: every caller
+    written before it existed must keep catching it."""
+    from nocturne.tools.gaia import GaiaError, GaiaTlsError, GaiaUnreachable
+    assert issubclass(GaiaTlsError, GaiaUnreachable)
+    assert issubclass(GaiaTlsError, GaiaError)
