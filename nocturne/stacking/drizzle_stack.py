@@ -13,6 +13,46 @@ PIXFRAC = 0.9          # drop shrink factor — the fraction of each input pixel
                        # is also what Siril and PixInsight users run.
 
 
+# Measured 2026-08-31 on this machine: 60 frames of 3840x2160 took 220 s end to
+# end through run_stack, against 21 s for a normal stack of the same subs. That
+# is 3.7 s per frame, and it scales with INPUT pixels because both passes walk
+# every input pixel — the warp-and-measure pass and the gather-and-drizzle pass.
+_SECONDS_PER_FRAME = 3.7
+_REFERENCE_PIXELS = 3840 * 2160
+
+
+def estimate_seconds(n_frames: int, shape) -> float:
+    """Roughly how long a drizzle stack will take, for the dialog to say BEFORE
+    the button is pressed.
+
+    Andreas asked for this after a 314-frame run: "it would also be good if the
+    tool could do an estimation of how much time a drizzle stack will take based
+    on the number of selected subs, that way the user can actually decide for
+    themselves if its worth it prior to actually pressing the button."
+
+    Deliberately a rough number on a fixed constant rather than a benchmark: it
+    only has to answer "minutes or an hour".
+
+    KNOWN TO UNDER-PREDICT AT SCALE, and returned as a floor for that reason.
+    The constant comes from 60 frames and is extrapolated linearly; Andreas ran
+    314 and reported it took considerably longer than the 19 minutes this
+    predicts. There is a mechanism, and it is not linear: BOTH passes read every
+    frame, which is ~1 GB at 60 subs and ~5 GB at 314. At 60 the page cache
+    holds them and the second pass reads nothing from disk; at 314 it cannot.
+    A measurement at full scale is pending — recalibrate this constant from it
+    rather than trusting the small-N number.
+    """
+    h, w = (shape[0], shape[1]) if shape else (2160, 3840)
+    return max(1.0, n_frames * _SECONDS_PER_FRAME * (h * w) / _REFERENCE_PIXELS)
+
+
+def estimate_megabytes(shape) -> float:
+    """Size of the master a drizzle stack writes: 4x the pixels, 3 channels,
+    float32. A real 3840x2160 stack came out at 398 MB."""
+    h, w = (shape[0], shape[1]) if shape else (2160, 3840)
+    return (h * DRIZZLE_SCALE) * (w * DRIZZLE_SCALE) * 3 * 4 / 1e6
+
+
 def build_pixmap(matrix: np.ndarray, in_shape: tuple[int, int], scale: int) -> np.ndarray:
     """Per-input-pixel output (x, y) coords for drizzle. `matrix` maps input (x,y)
     to reference (x,y); the drizzle output grid is the reference scaled by `scale`."""

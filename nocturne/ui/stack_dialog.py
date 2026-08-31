@@ -58,6 +58,7 @@ class StackDialog(QDialog):
         self._stack_runner = run_stack      # injectable for tests
         self._mosaic_runner = run_mosaic    # injectable for tests
         self._stats = []
+        self._frame_shape = None
         self._busy = False
         self._active_token: CancelToken | None = None
         self._output_user_edited = False
@@ -211,6 +212,20 @@ class StackDialog(QDialog):
         self._output_user_edited = True
 
     # --- browse ---
+    @staticmethod
+    def _read_frame_shape(stats):
+        """Sub dimensions, for the drizzle estimate. Header only — the estimate
+        is not worth decoding a frame for."""
+        from astropy.io import fits
+        for st in stats:
+            try:
+                h = fits.getheader(st.path)
+                if h.get("NAXIS1") and h.get("NAXIS2"):
+                    return (int(h["NAXIS2"]), int(h["NAXIS1"]))
+            except Exception:                    # noqa: BLE001 - estimate only
+                continue
+        return None
+
     def _update_drizzle_note(self) -> None:
         """Say whether this particular set of subs would benefit.
 
@@ -219,13 +234,31 @@ class StackDialog(QDialog):
         camera was unsuitable. It is 3.0 now, and it still only advises.
         """
         from ..stacking.drizzle_gate import drizzle_advice
+        from ..stacking.drizzle_stack import estimate_megabytes, estimate_seconds
         if not self._stats:
             self.drizzle_note.setText("")
             return
         advice = drizzle_advice(self._stats)
         colour = {"recommended": theme.SUCCESS,
                   "not_recommended": theme.WARNING}.get(advice.level, theme.TEXT_DIM)
-        self.drizzle_note.setText(advice.reason)
+
+        # What it will cost THIS stack, before the button is pressed — Andreas
+        # after a 314-frame run: "the user can actually decide for themselves if
+        # its worth it prior to actually pressing the button". A generic "10x
+        # longer" does not answer "do I have time for this tonight".
+        kept = [x for x in self._stats if x.included]
+        text = advice.reason
+        if kept:
+            mins = estimate_seconds(len(kept), self._frame_shape) / 60.0
+            # "At least", not "about": the constant is calibrated at 60 frames
+            # and is known to under-predict at scale, because both passes read
+            # every frame and a large set no longer fits the page cache. An
+            # estimate that reads low is worse than one that reads honest.
+            when = f"{mins:.0f} minutes" if mins >= 1.5 else "a minute"
+            text += (f"  ·  At least {when} for these {len(kept)} frames, "
+                     f"and a master of roughly "
+                     f"{estimate_megabytes(self._frame_shape):.0f} MB.")
+        self.drizzle_note.setText(text)
         self.drizzle_note.setStyleSheet(f"color: {colour};")
 
     def _browse_folder(self) -> None:
@@ -332,6 +365,7 @@ class StackDialog(QDialog):
         self._active_token = None
         self._set_busy(False)
         self._stats = stats
+        self._frame_shape = self._read_frame_shape(stats)
         self._update_drizzle_note()
         self._user_touched = set()
         self._updating_table = True

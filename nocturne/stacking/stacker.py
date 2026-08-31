@@ -24,8 +24,30 @@ def _check_cancel() -> None:
         tok.check()      # raises Cancelled if the user cancelled
 
 
+def _rescale_optics(cards: dict, scale: int) -> dict:
+    """Halve the pixel size (and any WCS scale) for a drizzled master.
+
+    A 2x master's pixel covers HALF the sky its subs' pixels did, so the
+    reference frame's XPIXSZ no longer describes it. Copying it verbatim tells
+    the solver the field is twice as wide as it is: measured 2026-08-31 on a
+    real 314-frame M 16 drizzle, ASTAP searched a "4.27 deg square search
+    window" for a field of about half that and reported "No solution found",
+    which cost SPCC its photometric calibration and the annotation everything.
+    """
+    if scale <= 1:
+        return cards
+    out = dict(cards)
+    for key in ("XPIXSZ", "YPIXSZ"):
+        if isinstance(out.get(key), (int, float)):
+            out[key] = out[key] / scale
+    for key in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"):
+        if isinstance(out.get(key), (int, float)):
+            out[key] = out[key] / scale
+    return out
+
+
 def master_header(ref_meta: dict, count: int, integ: float,
-                  trimmed: bool | None = None) -> dict:
+                  trimmed: bool | None = None, scale: int = 1) -> dict:
     """FITS header for a written master: stack counts + the reference sub's
     astrometry cards (pointing + scale) and target, so the master plate-solves
     like an original Seestar file instead of failing as a headerless image.
@@ -38,7 +60,7 @@ def master_header(ref_meta: dict, count: int, integ: float,
     header = {"NSUBS": count, "STACKCNT": count, "EXPTIME": integ}
     if trimmed is not None:
         header["TRIMMED"] = bool(trimmed)
-    header.update(ref_meta.get("solve_cards") or {})
+    header.update(_rescale_optics(ref_meta.get("solve_cards") or {}, scale))
     target = ref_meta.get("target")
     if target:
         header["OBJECT"] = target
@@ -56,7 +78,8 @@ def master_header(ref_meta: dict, count: int, integ: float,
     return header
 
 
-def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) -> dict:
+def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int,
+                    scale: int = 1) -> dict:
     """In-memory metadata for a master, mirroring what master_header writes to
     the file. The optics cards are the point: fov_hint reads focal_length and
     pixel_size, and without them it falls back to the SEESTAR_S30_PRO profile.
@@ -82,6 +105,14 @@ def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int) ->
                 "date", "solve_cards", "creator", "instrument"):
         if (value := ref_meta.get(key)) is not None:
             meta[key] = value
+    # ... EXCEPT the scale, when the master is on a finer grid than its subs.
+    # The comment above says "pointing and scale survive stacking", which is
+    # true of a rigid registration and false of drizzle.
+    if scale > 1:
+        if isinstance(meta.get("pixel_size"), (int, float)):
+            meta["pixel_size"] = meta["pixel_size"] / scale
+        if meta.get("solve_cards"):
+            meta["solve_cards"] = _rescale_optics(meta["solve_cards"], scale)
     return meta
 
 
@@ -294,6 +325,7 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     else:
         master, coverage = average_integrate(frames())
 
+    out_scale = DRIZZLE_SCALE if opts.method == "drizzle" else 1
     integ = sum(exposures[p] for p in used)
 
     # Auto-crop to the region covered by (nearly) all frames. Field rotation
@@ -313,10 +345,11 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     image = AstroImage(
         np.clip(master, 0.0, 1.0).astype(np.float32),
         is_linear=True,
-        metadata=master_metadata(ref_img.metadata, len(used), integ, cw, ch),
+        metadata=master_metadata(ref_img.metadata, len(used), integ, cw, ch,
+                                 scale=out_scale),
     )
     save_fits(image, opts.output_path,
               header=master_header(ref_img.metadata, len(used), integ,
-                                   trimmed=opts.autocrop))
+                                   trimmed=opts.autocrop, scale=out_scale))
     return StackResult(image, used, rejected, len(used), integ, opts.output_path,
                        peak)

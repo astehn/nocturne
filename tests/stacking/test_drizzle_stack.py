@@ -119,3 +119,42 @@ def test_drizzle_is_handed_unwarped_frames(tmp_path):
     body = src.split("def drizzle_items()")[1].split("if opts.method ==")[0]
     assert "warp_with_validity" not in body and "warp_to" not in body, (
         "drizzle is being fed pre-warped frames")
+
+
+# --- a 2x master describes its own scale (found on real data 2026-08-31) -----
+
+def test_a_drizzle_master_halves_its_pixel_size():
+    """A 2x master's pixel covers HALF the sky its subs' pixels did. Copying the
+    reference frame's XPIXSZ verbatim tells the solver the field is twice as
+    wide as it is — on a real 314-frame M 16 drizzle, ASTAP searched a "4.27 deg
+    square search window" for a field about half that and reported "No solution
+    found", which cost SPCC its photometric calibration."""
+    from nocturne.stacking.stacker import master_header, master_metadata
+    ref = {"pixel_size": 2.9, "focal_length": 160.0, "target": "M 16",
+           "solve_cards": {"XPIXSZ": 2.9, "YPIXSZ": 2.9, "FOCALLEN": 160.0,
+                           "CD1_1": 0.001, "RA": 274.7}}
+    h = master_header(ref, 314, 3140.0, trimmed=False, scale=2)
+    assert h["XPIXSZ"] == 1.45 and h["YPIXSZ"] == 1.45
+    assert h["FOCALLEN"] == 160.0, "focal length is unchanged — the optics did not move"
+    assert h["CD1_1"] == 0.0005, "the WCS scale must halve too"
+    assert h["RA"] == 274.7, "pointing is unchanged"
+    m = master_metadata(ref, 314, 3140.0, 7680, 4320, scale=2)
+    assert m["pixel_size"] == 1.45
+
+
+def test_a_normal_master_is_left_exactly_as_it_was():
+    """Every non-drizzle stack goes through the same code. Registration is a
+    rigid transform, so the reference's optics still describe the master."""
+    from nocturne.stacking.stacker import master_header, master_metadata
+    ref = {"pixel_size": 2.9, "solve_cards": {"XPIXSZ": 2.9, "CD1_1": 0.001}}
+    assert master_header(ref, 10, 100.0)["XPIXSZ"] == 2.9
+    assert master_metadata(ref, 10, 100.0, 3840, 2160)["pixel_size"] == 2.9
+
+
+def test_the_estimate_is_in_the_right_order_of_magnitude():
+    """It only has to answer "minutes or an hour". Measured: 60 frames of
+    3840x2160 took 220 s."""
+    from nocturne.stacking.drizzle_stack import estimate_megabytes, estimate_seconds
+    assert 150 < estimate_seconds(60, (2160, 3840)) < 320
+    assert estimate_seconds(600, (2160, 3840)) > 9 * estimate_seconds(60, (2160, 3840)) * 0.9
+    assert 350 < estimate_megabytes((2160, 3840)) < 450     # a real one was 398 MB
