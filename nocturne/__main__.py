@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME, __version__
+from .core.certs import configure_ssl
 from .settings import autoconfigure_tools, resolve_settings_path
 from .ui.main_window import MainWindow
 from .ui.splash import MIN_SPLASH_SECONDS, make_splash
@@ -15,7 +17,49 @@ from .ui.theme import apply_dark_theme
 _ASSETS = Path(__file__).resolve().parent / "assets"
 
 
+def _check_network() -> int:
+    """Print where SSL will look for certificates and whether HTTPS works.
+
+    Exit code 0 if a real request succeeded, 1 otherwise, so it can gate a
+    release. Both features that need the network — the update check and SPCC's
+    Gaia lookup — catch broadly and fail quiet, which is correct behaviour and
+    is exactly why a 0.18.0 build ran all day against a 0.20.0 release without
+    ever saying so.
+    """
+    import ssl
+    import urllib.request
+
+    from .core.certs import ca_path_is_usable
+
+    paths = ssl.get_default_verify_paths()
+    print(f"frozen        : {getattr(sys, 'frozen', False)}")
+    print(f"SSL_CERT_FILE : {os.environ.get('SSL_CERT_FILE') or '(unset)'}")
+    for name, val in (("cafile", paths.cafile), ("capath", paths.capath)):
+        print(f"{name:14}: {val}  exists={bool(val) and os.path.exists(val)}")
+    print(f"usable CA path: {ca_path_is_usable()}")
+    try:
+        with urllib.request.urlopen("https://api.github.com/", timeout=15) as r:
+            print(f"https probe   : OK (HTTP {r.status})")
+        return 0
+    except Exception as exc:                       # noqa: BLE001 - reporting tool
+        print(f"https probe   : FAILED {type(exc).__name__}: {exc}")
+        return 1
+
+
 def main() -> None:
+    # BEFORE anything can open a connection. A bundle inherits the build
+    # machine's OpenSSL cert path, which does not exist on a user's Mac, and
+    # every HTTPS call then fails silently — see core/certs.py.
+    configure_ssl()
+
+    # The check the packaged app could not do for itself. From source the build
+    # machine's Homebrew cert store is present, so a bundle that works only here
+    # looks perfectly healthy; the failure appears on a user's Mac as silence.
+    # One command, no GUI, so a build can be verified before it ships:
+    #     dist/Nocturne.app/Contents/MacOS/Nocturne --check-network
+    if "--check-network" in sys.argv:
+        raise SystemExit(_check_network())
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
 

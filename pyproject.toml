@@ -16,10 +16,17 @@ dependencies = [
     "Pillow>=10.0",
     "astroalign>=2.5",
     "sep>=1.2",
+    # CA certificates. NOT optional: a PyInstaller bundle inherits the BUILD
+    # machine's compiled-in OpenSSL cert path (/opt/homebrew/etc/openssl@3/...),
+    # which does not exist on a Mac without Homebrew. Every HTTPS call then dies
+    # with CERTIFICATE_VERIFY_FAILED — silently, since both callers catch and
+    # return None. See nocturne/core/certs.py.
+    "certifi>=2024.2",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-qt>=4.4"]
+train = ["torch>=2.2", "onnx>=1.16", "onnxruntime>=1.18"]
 
 [build-system]
 requires = ["setuptools>=68"]
