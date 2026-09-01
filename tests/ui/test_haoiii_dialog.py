@@ -133,18 +133,22 @@ def test_a_frame_you_ticked_yourself_survives_a_strictness_change(qtbot):
     assert d._stats[0].included is False, "and the stats must agree with the table"
 
 
-def test_trim_can_be_turned_off(qtbot, tmp_path):
-    """Stack lets you keep the ragged edge; on a 2 MP sensor those pixels are
-    worth having. Ha/OIII always cropped, with no say in it."""
+def test_trim_is_off_by_default_and_reaches_the_extractor(qtbot, tmp_path):
+    """Ha/OIII once always cropped with no say in it; now it offers the choice
+    and, since 2026-09-01, defaults to keeping the frame.
+
+    Trimming cannot be undone without re-extracting, while keeping the edges
+    costs one click of Trim afterwards — so the recoverable direction is the
+    default. Matches Stack, which matters: two dialogs doing the same job should
+    not disagree about what happens when you touch nothing."""
     d = HaOIIIDialog(Settings())
     qtbot.addWidget(d)
-    assert d.crop_check.isChecked(), "trimming stays the default"
+    assert not d.crop_check.isChecked(), "trimming must not be the default"
     captured = {}
     d._extract_runner = lambda opts, **kw: (captured.setdefault("opts", opts),
                                             _FakeResult())[1]
     d.output_edit.setText(str(tmp_path / "m.fits"))
     d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(4)])
-    d.crop_check.setChecked(False)
     d.run()
     qtbot.waitUntil(lambda: "opts" in captured, timeout=3000)
     assert captured["opts"].autocrop is False

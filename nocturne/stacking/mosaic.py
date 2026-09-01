@@ -180,7 +180,12 @@ def stack_panels(panels, workdir, *, method, kappa, min_panel_subs,
         if on_progress is not None:
             on_progress(i, len(panels), f"Step 1 of 5 — stacking panel {i}")
         try:
-            res = run_stack(StackOptions(method, kappa, list(panel.paths), out))
+            # autocrop EXPLICIT, not inherited. A panel must be trimmed before
+            # assembly or its ragged edges are baked into the mosaic's seams.
+            # It used to rely on StackOptions' default being True, which meant a
+            # decision about the DIALOG's default could silently break mosaics.
+            res = run_stack(StackOptions(method, kappa, list(panel.paths), out,
+                                         autocrop=True))
         except ValueError as exc:
             for p in panel.paths:
                 dropped.append((p, f"panel failed to stack: {exc}"))

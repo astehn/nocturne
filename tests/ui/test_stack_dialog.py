@@ -547,8 +547,10 @@ def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
     dlg.output_edit.setText(str(tmp_path / "m.fits"))
 
-    assert dlg.crop_check.isChecked(), "trimming stays the default"
-    dlg.crop_check.setChecked(False)
+    # Off by DEFAULT since 2026-09-01: trimming cannot be undone without
+    # re-stacking (hours, and most of a day for a drizzle), while keeping the
+    # edges costs one click of Trim later. The cheap direction wins.
+    assert not dlg.crop_check.isChecked(), "trimming must not be the default"
     dlg.run()
     qtbot.waitUntil(lambda: "autocrop" in seen, timeout=3000)
     assert seen["autocrop"] is False, "the framing choice never reached run_stack"
@@ -955,3 +957,22 @@ def test_the_gate_note_belongs_to_the_detail_row(qtbot):
     empty = [i for i, it in enumerate(labels)
              if it and it.widget() and not it.widget().text().strip()]
     assert not empty, f"form has label-less rows at {empty}"
+
+
+def test_nothing_optional_is_ticked_when_the_dialog_opens(qtbot):
+    """Andreas: "if the user always changes some settings then those settings
+    should probably not be preselected". Strictness and Integration keep sensible
+    defaults because there is no do-nothing option for them; every checkbox is a
+    choice the user should make deliberately.
+
+    Trim in particular: it cannot be undone without re-stacking, which is hours
+    on a large set and most of a day on a drizzle."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    ticked = [name for name, box in (("Trim", d.crop_check),
+                                     ("Mosaic", d.mosaic_check),
+                                     ("Drizzle", d.drizzle_check))
+              if box.isChecked()]
+    assert not ticked, f"preselected on open: {ticked}"
+    assert d.strictness_box.currentText() == "Normal"
+    assert d.sigma_radio.isChecked() and d.kappa_box.currentText() == "Medium"

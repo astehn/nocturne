@@ -132,8 +132,19 @@ class StackDialog(QDialog):
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
         self.mosaic_check.toggled.connect(lambda _on: self._auto_output_path())
+        # OFF by default. Trimming is NOT recoverable — the outer data is gone
+        # and getting it back means re-stacking, which is hours for a large set
+        # and most of a day for a drizzle. Leaving it is recoverable for the
+        # price of one click, because Trim exists for exactly that.
+        #
+        # The counter-argument is real and loses on that asymmetry: a novice
+        # opening an untrimmed master sees ragged edges and may think something
+        # is broken. But the one place it actually costs them — background
+        # extraction fitting its gradient over black corners — already warns and
+        # says to crop first (main_window._warn_uncovered), and no warning can
+        # undo a destructive default.
         self.crop_check = QCheckBox("Trim the ragged edges")
-        self.crop_check.setChecked(True)
+        self.crop_check.setChecked(False)
         self.strictness_box = QComboBox()
         self.strictness_box.addItems(["Relaxed", "Normal", "Strict"])
         self.strictness_box.setCurrentText("Normal")
