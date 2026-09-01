@@ -81,7 +81,23 @@ def metadata(sensor: str = "s30") -> dict:
 
 @lru_cache(maxsize=2)
 def _session(path: str):
-    import onnxruntime as ort
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        # onnxruntime is 64 MB and is NOT bundled: AI Denoise is built but not
+        # shipped (see ui/pipeline.py), and carrying an inference runtime for an
+        # unreachable step cost every launch. Measured 2026-09-01: excluding it
+        # took a cold start from 9.2 s to 1.0 s on this machine.
+        #
+        # The one way to arrive here is a saved project made before v0.18.0,
+        # when the step WAS in the pipeline. Say that, rather than letting an
+        # ImportError for a library the user never heard of reach them.
+        raise RuntimeError(
+            "This project uses AI Denoise, which is not part of this version of "
+            "Nocturne. The step was withdrawn in v0.18.0 because the model "
+            "damaged deep stacks. Every other step in the project will still "
+            "apply; remove this one to open it."
+        ) from exc
     opts = ort.SessionOptions()
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     return ort.InferenceSession(path, opts, providers=["CPUExecutionProvider"])

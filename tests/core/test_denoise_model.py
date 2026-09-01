@@ -64,3 +64,31 @@ def test_pre_conditioning_model_is_refused_not_silently_used(tmp_path, monkeypat
     with pytest.raises(RuntimeError, match="3 input channels"):
         dm.denoise(img, strength=0.5, sensor="faketest")
     dm._session.cache_clear()
+
+
+def test_a_project_naming_the_withdrawn_step_gets_an_explanation(monkeypatch):
+    """onnxruntime is not bundled — 64 MB for a step that cannot be reached, and
+    excluding it took a cold start from 9.2 s to 1.0 s.
+
+    The one route here is a project saved before v0.18.0, when AI Denoise was in
+    the pipeline. Such a user should be told what happened to the step, not
+    handed an ImportError for a library they have never heard of.
+    """
+    import builtins
+    import pytest
+    from nocturne.core import denoise_model
+
+    real = builtins.__import__
+
+    def no_ort(name, *a, **k):
+        if name == "onnxruntime":
+            raise ImportError("No module named 'onnxruntime'")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_ort)
+    denoise_model._session.cache_clear()
+    with pytest.raises(RuntimeError, match="not part of this version"):
+        denoise_model._session("/nonexistent/model.onnx")
+    msg = str(pytest.raises(RuntimeError,
+                            denoise_model._session, "/nonexistent/model.onnx").value)
+    assert "v0.18.0" in msg and "onnxruntime" not in msg.lower(), msg

@@ -43,7 +43,14 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    excludes=["tkinter", "PyQt5", "PyQt6"],   # matplotlib intentionally NOT excluded (see top-of-file note)
+    # onnxruntime is 64 MB and is NOT a runtime dependency — pyproject lists it
+    # only under the `train` extra. PyInstaller bundles it because it statically
+    # sees `import onnxruntime` inside a function in core/denoise_model.py, and
+    # AI Denoise is deliberately not shipped (see ui/pipeline.py). Every user
+    # was downloading, and every launch loading, an inference runtime for a step
+    # they cannot open. REMOVE THIS EXCLUDE the day AI Denoise ships.
+    excludes=["tkinter", "PyQt5", "PyQt6", "onnxruntime",
+              "onnx", "torch"],   # matplotlib intentionally NOT excluded (see top-of-file note)
     noarchive=False,
 )
 pyz = PYZ(a.pure)
