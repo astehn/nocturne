@@ -201,11 +201,29 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
     # Accumulators are float32 (not float64): at full Seestar resolution the
     # 2x-scaled grid makes each float64 accumulator ~800 MB, and float32 is
     # more than precise enough for sigma-clip statistics.
+    # The WARP is the expensive part of this pass — measured on a 2,037-frame
+    # run, pass 1 took about 410 minutes against pass 2's 143 — and skimage's
+    # warp releases the GIL, so it threads: measured 3.76x on four threads,
+    # with byte-identical output. The accumulation below stays serial because it
+    # shares state, so this is a producer/consumer: warp ahead, accumulate in
+    # order.
+    #
+    # A DELIBERATELY SMALL window. Each warped frame is 398 MB at 7680x4320x3,
+    # so ordered_results' default lookahead of workers+2 would hold gigabytes;
+    # this project already has a 396 GB stacking runaway in its history and a
+    # 15.5 GB drizzle run last night.
+    from .parallel import ordered_results, plan_workers
+
+    def warp_one(item):
+        data, matrix = item
+        return _warp_to_grid(_as_hwc(data).astype(np.float32),
+                             _scaled(matrix), out_shape)
+
+    threads = max(1, min(4, plan_workers().count))
     mean = m2 = seen = None
     count = 0
-    for data, matrix in make_items():
-        warped, valid = _warp_to_grid(_as_hwc(data).astype(np.float64),
-                                      _scaled(matrix), out_shape)
+    for warped, valid in ordered_results(make_items(), warp_one,
+                                         workers=threads, window=threads):
         count += 1
         if mean is None:
             mean = np.zeros_like(warped, dtype=np.float32)
