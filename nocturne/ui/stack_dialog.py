@@ -19,6 +19,48 @@ from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import theme
+
+# Hint text wraps here. ~65-75 characters is the comfortable measure; the old
+# inline hints ran to about 130.
+_HINT_WIDTH = 560
+
+
+class _Hint(QLabel):
+    """Wrapped explanatory text that will not be squeezed onto one line.
+
+    A word-wrapped QLabel reports ONE LINE as its minimumSizeHint, because it
+    can always shrink — so a QFormLayout short of room gives it that, and the
+    rows paint over each other. Measured on the first attempt at this: sizeHints
+    of 69/54/54/90 px were served 52/37/37/73, seventeen short in every case,
+    which is exactly one line.
+
+    Reporting the real wrapped height as the MINIMUM fixes it, and doing it in
+    minimumSizeHint rather than setMinimumHeight means it keeps working when the
+    text changes — which it does, for the drizzle gate note.
+    """
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self.setObjectName("stepExplainer")
+        self.setWordWrap(True)
+        self.setFixedWidth(_HINT_WIDTH)
+
+    def heightForWidth(self, _width: int) -> int:
+        """Always answer for the width this label ACTUALLY wraps at.
+
+        The containing row is wider than the label, so the layout asks
+        heightForWidth(1030) and a plain QLabel answers for text wrapped at
+        1030 — two lines where the label, fixed at 560, needs three. Every row
+        then came out exactly one line short and painted over its neighbour.
+        """
+        return super().heightForWidth(_HINT_WIDTH)
+
+    def minimumSizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(_HINT_WIDTH, self.heightForWidth(_HINT_WIDTH))
+
+    def sizeHint(self):
+        return self.minimumSizeHint()
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
 from .worker import run_async
@@ -113,70 +155,69 @@ class StackDialog(QDialog):
         self.table.currentCellChanged.connect(
             lambda row, _c, _pr, _pc: self._show_preview(row))
 
+        # Every option row is built the same way: the controls on one line, and
+        # any explanation on its OWN line beneath them, dimmed and wrapped to a
+        # readable measure.
+        #
+        # It used to append the hint to the same QHBoxLayout as the control, so
+        # each hint began wherever its control's label happened to end —
+        # Framing at ~460px, Mosaic at ~390, Detail at ~590 — leaving the left
+        # edge of the prose ragged down the whole form, and each hint sharing a
+        # baseline with its control so the two read as one run-on sentence.
+        # Framing's ran about 130 characters against a comfortable 65-75.
+        def option_row(*controls, hint="", extra=None) -> QWidget:
+            """`hint` may be text or a QLabel, so a caller that needs to reach
+            it later (a test, or code that rewrites it) can keep the handle."""
+            col = QVBoxLayout()
+            col.setContentsMargins(0, 0, 0, 0)
+            col.setSpacing(2)
+            line = QHBoxLayout()
+            line.setContentsMargins(0, 0, 0, 0)
+            for c in controls:
+                line.addWidget(c)
+            line.addStretch(1)
+            col.addLayout(line)
+            # FIXED width, not maximum. A word-wrapped QLabel cannot compute its
+            # height until it knows its width, so with only a maximum it reports
+            # a one-line sizeHint and the form lays the rows on top of each
+            # other — which is exactly what the first attempt at this did.
+            for label in (w for w in (hint, extra) if w is not None and w != ""):
+                col.addWidget(label if isinstance(label, QLabel) else _Hint(label))
+            wrap = QWidget()
+            wrap.setLayout(col)
+            return wrap
+
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        form.setVerticalSpacing(12)
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
-
-        strict_row = QHBoxLayout()
-        strict_row.addWidget(self.strictness_box)
-        strict_row.addWidget(QLabel("How picky the automatic frame selection is"))
-        strict_row.addStretch(1)
-        strict_wrap = QWidget()
-        strict_wrap.setLayout(strict_row)
-        form.addRow("Strictness", strict_wrap)
-
-        method_row = QHBoxLayout()
-        method_row.addWidget(self.avg_radio)
-        method_row.addWidget(self.sigma_radio)
-        method_row.addWidget(QLabel("κ:"))
-        method_row.addWidget(self.kappa_box)
-        method_row.addStretch(1)
-        method_wrap = QWidget()
-        method_wrap.setLayout(method_row)
-        form.addRow("Integration", method_wrap)
-
-        crop_row = QHBoxLayout()
-        crop_row.addWidget(self.crop_check)
-        crop_row.addWidget(QLabel(
-            "Off keeps the full frame — the edges are built from fewer frames, "
-            "so they are noisier, but you can always crop later"))
-        crop_row.addStretch(1)
-        crop_wrap = QWidget()
-        crop_wrap.setLayout(crop_row)
-        form.addRow("Framing", crop_wrap)
-
-        # Its own row, not squeezed alongside "Trim the ragged edges". Sharing a
-        # line truncated both hints and read as an either/or choice, when they
-        # are independent: a mosaic can be trimmed or not, exactly like a stack.
-        mosaic_row = QHBoxLayout()
-        mosaic_row.addWidget(self.mosaic_check)
-        self.mosaic_hint = QLabel(
+        form.addRow("Strictness", option_row(
+            self.strictness_box,
+            hint="How picky the automatic frame selection is."))
+        form.addRow("Integration", option_row(
+            self.avg_radio, self.sigma_radio, QLabel("κ:"), self.kappa_box,
+            hint="Sigma-clipped rejects outliers — satellites, cosmic rays — "
+                 "at the cost of a second pass over the frames."))
+        form.addRow("Framing", option_row(
+            self.crop_check,
+            hint="Off keeps the full frame. The edges are built from fewer "
+                 "frames, so they are noisier, but you can always crop later."))
+        self.mosaic_hint = _Hint(
             "Several pointings assembled into one wide image — needs ASTAP, "
-            "and takes considerably longer")
-        self.mosaic_hint.setWordWrap(True)
-        mosaic_row.addWidget(self.mosaic_hint, 1)
-        mosaic_wrap = QWidget()
-        mosaic_wrap.setLayout(mosaic_row)
-        form.addRow("Mosaic", mosaic_wrap)
-
-        # Its own row, like Mosaic, and for the same reason: it is a real
-        # trade rather than a tick-for-free, and the hint has to have room to
-        # say so. Everything AFTER the stack works on four times the pixels
-        # too, which is the part people do not expect.
-        drizzle_row = QHBoxLayout()
-        drizzle_row.addWidget(self.drizzle_check)
-        self.drizzle_hint = QLabel(
+            "and takes considerably longer.")
+        form.addRow("Mosaic", option_row(self.mosaic_check, hint=self.mosaic_hint))
+        # The gate's advice and the time estimate belong to this row, not to a
+        # label-less row of their own — which is where the dead vertical gap
+        # above Output came from.
+        self.drizzle_note = _Hint("")
+        self.drizzle_hint = _Hint(
             "Rebuilds the image on a 2× grid instead of enlarging it — finer "
             "detail and more stars from well-dithered subs. Stacking takes "
-            "about 10× longer, and every step afterwards works on an image four "
-            "times the size.")
-        self.drizzle_hint.setWordWrap(True)
-        drizzle_row.addWidget(self.drizzle_hint, 1)
-        drizzle_wrap = QWidget()
-        drizzle_wrap.setLayout(drizzle_row)
-        form.addRow("Detail", drizzle_wrap)
-        self.drizzle_note = QLabel("")
-        self.drizzle_note.setWordWrap(True)
-        form.addRow("", self.drizzle_note)
+            "about 10× longer, and every step afterwards works on an image "
+            "four times the size.")
+        form.addRow("Detail", option_row(self.drizzle_check,
+                                         hint=self.drizzle_hint,
+                                         extra=self.drizzle_note))
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
 
         self._stack_btn = QPushButton("Stack")

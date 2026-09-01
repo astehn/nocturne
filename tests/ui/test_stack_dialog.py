@@ -893,3 +893,65 @@ def test_a_drizzle_master_is_named_as_one():
     plain = master_filename("IC1396A", 100, 10.0, 1000.0)
     drz = master_filename("IC1396A", 100, 10.0, 1000.0, drizzle=True)
     assert "drizzle" in drz and "drizzle" not in plain
+
+
+# --- the option rows, restructured 2026-09-01 --------------------------------
+
+def test_no_option_row_is_squeezed_below_the_space_its_text_needs(qtbot):
+    """Every row must get at least its minimum height, or wrapped hints paint
+    over the row beneath them — which is what the first two attempts at this
+    did, in a way no test would have caught.
+
+    The cause is worth keeping: the row is wider than the hint label, so the
+    layout asked the label heightForWidth(1030) and a plain QLabel answered for
+    text wrapped at 1030 — two lines, where the label is fixed at 560 and needs
+    three. Every row came out exactly one line short.
+    """
+    from PySide6.QtWidgets import QFormLayout
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.resize(1150, 900)
+    d.show()
+    qtbot.waitExposed(d)
+    form = d.findChild(QFormLayout)
+    squeezed = []
+    for r in range(form.rowCount()):
+        field = form.itemAt(r, QFormLayout.ItemRole.FieldRole)
+        label = form.itemAt(r, QFormLayout.ItemRole.LabelRole)
+        if not (field and field.widget()):
+            continue
+        w = field.widget()
+        need = w.minimumSizeHint().height()
+        if w.height() < need:
+            name = label.widget().text() if label and label.widget() else f"row {r}"
+            squeezed.append(f"{name}: {w.height()}px given, {need} needed")
+    assert not squeezed, "option rows too short for their text: " + "; ".join(squeezed)
+
+
+def test_every_hint_starts_at_the_same_left_edge(qtbot):
+    """The original complaint. Each hint used to be appended to its control's
+    own row, so it began wherever that control's label happened to end —
+    Framing at ~460px, Mosaic at ~390, Detail at ~590 — leaving the prose
+    ragged down the whole form."""
+    from nocturne.ui.stack_dialog import _Hint
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.resize(1150, 900)
+    d.show()
+    qtbot.waitExposed(d)
+    lefts = {h.mapTo(d, h.rect().topLeft()).x()
+             for h in d.findChildren(_Hint) if h.isVisible()}
+    assert len(lefts) == 1, f"hints start at {len(lefts)} different x positions: {sorted(lefts)}"
+
+
+def test_the_gate_note_belongs_to_the_detail_row(qtbot):
+    """It used to be added as its own label-less form row, which is where the
+    dead vertical gap above Output came from."""
+    from PySide6.QtWidgets import QFormLayout
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    form = d.findChild(QFormLayout)
+    labels = [form.itemAt(r, QFormLayout.ItemRole.LabelRole) for r in range(form.rowCount())]
+    empty = [i for i, it in enumerate(labels)
+             if it and it.widget() and not it.widget().text().strip()]
+    assert not empty, f"form has label-less rows at {empty}"
