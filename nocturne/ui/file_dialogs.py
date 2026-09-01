@@ -24,7 +24,28 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog
 
 
+def _reachable_parent(parent):
+    """Re-parent onto the dialog that currently holds the modal session.
+
+    A sheet is window-modal, so it attaches to `parent` and blocks only that
+    window. If some OTHER dialog is application-modal at the time — Upscale
+    Crop and Stack both run with `.exec()` — then `parent` is itself blocked,
+    and a sheet on it can never receive the click that dismisses it: the same
+    unreachable-panel hang described above, reached a different way. Attaching
+    to the modal dialog instead keeps it in front of the window the user can
+    actually touch. A parent already inside that dialog is left alone.
+    """
+    from PySide6.QtWidgets import QApplication
+    modal = QApplication.activeModalWidget()
+    if modal is None or parent is None:
+        return parent
+    if parent is modal or modal.isAncestorOf(parent):
+        return parent
+    return modal
+
+
 def _prepare(parent, caption: str, directory: str, filters: str) -> QFileDialog:
+    parent = _reachable_parent(parent)
     dlg = QFileDialog(parent, caption, directory, filters)
     # The whole point: window-modal, so Qt attaches it to the parent window.
     # Without a parent Qt falls back to application-modal, which is the bug.

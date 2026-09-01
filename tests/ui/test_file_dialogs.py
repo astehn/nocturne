@@ -105,3 +105,31 @@ def test_no_static_file_dialogs_remain_in_the_ui():
     assert offenders == [], (
         "use nocturne.ui.file_dialogs instead — the static helpers are "
         f"application-modal and strand on the wrong screen: {offenders}")
+
+
+def test_a_sheet_goes_to_the_dialog_holding_the_modal_session(qtbot):
+    """Upscale Crop and Stack run application-modal. A sheet parented to the
+    main window behind one of them is blocked by it and can never be clicked —
+    the unreachable-panel hang, reached a different way."""
+    from PySide6.QtWidgets import QApplication, QDialog, QWidget
+    from PySide6.QtCore import Qt
+    from nocturne.ui.file_dialogs import _reachable_parent
+
+    behind = QWidget(); qtbot.addWidget(behind)
+    modal = QDialog(); modal.setWindowModality(Qt.WindowModality.ApplicationModal)
+    qtbot.addWidget(modal); modal.show()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is modal, timeout=2000)
+
+    assert _reachable_parent(behind) is modal      # retargeted onto what the user can reach
+    assert _reachable_parent(modal) is modal       # already right
+    inner = QWidget(modal)
+    assert _reachable_parent(inner) is inner       # inside the modal: leave alone
+    modal.close()
+
+
+def test_no_modal_session_leaves_the_parent_alone(qtbot):
+    from PySide6.QtWidgets import QWidget
+    from nocturne.ui.file_dialogs import _reachable_parent
+    w = QWidget(); qtbot.addWidget(w)
+    assert _reachable_parent(w) is w
+    assert _reachable_parent(None) is None
