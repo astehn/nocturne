@@ -200,7 +200,10 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     # restart is expected. The count lives HERE because only run_stack knows
     # that sigma-clip walks the frames twice; asking the dialog to know that
     # would be a second copy of the same fact.
-    steps = 1 + (2 if opts.method == "sigma_clip" else 1)
+    # Drizzle walks them twice as well — it measures for rejection, then
+    # drizzles — and adding that pass without updating this count is how a real
+    # 2,037-frame run spent hours announcing "Step 3 of 2".
+    steps = 1 + (2 if opts.method in ("sigma_clip", "drizzle") else 1)
 
     def step_label(step: int, what: str) -> str:
         return f"Step {step} of {steps} — {what}"

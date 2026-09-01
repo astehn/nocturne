@@ -138,7 +138,11 @@ def _warp_to_grid(data: np.ndarray, matrix: np.ndarray, out_shape: tuple[int, in
     ones = np.ones(data.shape[:2], dtype=np.float64)
     valid = warp(ones, tform.inverse, output_shape=out_shape, order=1,
                  preserve_range=True) >= 0.999
-    return np.stack(channels, axis=2).astype(np.float64), valid
+    # float32, not float64. At 7680x4320x3 the difference is 398 MB per array
+    # against 796, and EVERY temporary in the accumulation below inherits it.
+    # float32 is already what the accumulators use, and this module has always
+    # said so: "float32 is more than precise enough for sigma-clip statistics".
+    return np.stack(channels, axis=2).astype(np.float32), valid
 
 
 def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXFRAC):
@@ -197,15 +201,33 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
             mean = np.zeros_like(warped, dtype=np.float32)
             m2 = np.zeros_like(warped, dtype=np.float32)
             seen = np.zeros(out_shape, dtype=np.int32)
+            d1 = np.empty_like(mean)
+            d2 = np.empty_like(mean)
+            counted = np.empty(out_shape, dtype=np.float32)
         # Welford, but only over the frames that actually reached each pixel.
         # Counting every frame everywhere is what corrupted the statistics at
         # the coverage boundary — see _warp_to_grid.
         seen += valid
         v = valid[..., None]
-        n = np.maximum(seen, 1)[..., None].astype(np.float32)
-        delta = np.where(v, warped - mean, 0.0)
-        mean += (delta / n).astype(np.float32)
-        m2 += (delta * np.where(v, warped - mean, 0.0)).astype(np.float32)
+        np.maximum(seen, 1, out=counted)
+        # Welford over the covering frames only, in PREALLOCATED buffers.
+        #
+        # The first version of this wrote the arithmetic out plainly:
+        #     delta = np.where(v, warped - mean, 0.0)
+        #     mean += (delta / n).astype(np.float32)
+        #     m2 += (delta * np.where(v, warped - mean, 0.0)).astype(np.float32)
+        # which allocates five full-size float64 temporaries per frame. On a
+        # real 2,037-frame IC 1396A run that took resident memory to 15.5 GB
+        # against a predicted 2-3, and allocation churn at that scale costs real
+        # time on top. Same maths, two reused buffers.
+        np.subtract(warped, mean, out=d1)          # delta
+        d1 *= v                                    # only where the frame reached
+        np.divide(d1, counted[..., None], out=d2)
+        mean += d2
+        np.subtract(warped, mean, out=d2)          # delta2, after the update
+        d2 *= v
+        d1 *= d2
+        m2 += d1
     if mean is None:
         raise ValueError("no frames to integrate")
     # m2 is mathematically >= 0, but float32's coarser cancellation error can

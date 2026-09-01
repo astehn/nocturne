@@ -231,3 +231,42 @@ def test_a_thinly_covered_region_is_not_rejected_into_nothing():
         f"frames which never saw it")
     assert abs(float(np.median(live)) - level) < 0.1 * level, (
         f"level came out {np.median(live):.4f} instead of {level}")
+
+
+def test_the_progress_steps_add_up():
+    """A 2,037-frame run spent hours reporting "Step 3 of 2". Drizzle walks the
+    frames twice — measure, then drizzle — so it has three phases like
+    sigma-clip, and the count has to know that."""
+    import re
+    from unittest.mock import patch
+    import numpy as np
+    from nocturne.stacking.stacker import StackOptions, run_stack
+    from tests.stacking.synthetic import make_star_field, write_cfa_fits
+
+    def labels_for(method, tmp):
+        base = make_star_field(shape=(64, 64), n_stars=20, seed=2)
+        rng = np.random.default_rng(0)
+        paths = []
+        for i in range(6):
+            img = np.clip(base + rng.normal(0, 0.01, base.shape), 0, 1).astype(np.float32)
+            p = tmp / f"{method}_{i:03d}.fit"
+            write_cfa_fits(str(p), img)
+            paths.append(str(p))
+        seen = []
+        run_stack(StackOptions(method, 2.5, paths, str(tmp / f"{method}.fits"),
+                               autocrop=False),
+                  on_progress=lambda i, n, label: seen.append(label))
+        return seen
+
+    import tempfile
+    import pathlib
+    with tempfile.TemporaryDirectory() as d:
+        for method in ("drizzle", "sigma_clip", "average"):
+            labels = labels_for(method, pathlib.Path(d))
+            pairs = {(int(m.group(1)), int(m.group(2)))
+                     for lab in labels
+                     if (m := re.search(r"Step (\d+) of (\d+)", lab))}
+            assert pairs, f"{method} reported no numbered steps"
+            for step, total in pairs:
+                assert step <= total, (
+                    f"{method} reported 'Step {step} of {total}'")
