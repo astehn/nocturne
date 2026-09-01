@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.22.0] — 2026-09-01
+
+Drizzle — genuinely more detail from well-dithered subs — and a picture file that matches your screen
+
+### Added
+- Drizzle x2 stacking. Instead of enlarging the finished image, it rebuilds it on a grid twice as fine, recovering detail the pixel grid threw away. On 100 real frames it produced stars 22% tighter and found 64% more of them than a plain 2x enlargement. It is off by default, and the dialog says what it costs before you press anything: roughly 10x the stacking time, and every step afterwards works on an image four times the size. Nocturne also advises whether your particular subs will benefit, based on how sharp the stars are and how many frames you have.
+- Stacking tells you how long it will take and how big the file will be, for the frames you have actually selected, before you commit to it.
+
+### Changed
+- Trimming the ragged edges is no longer preselected, in Stack or in Ha/OIII. Trimming cannot be undone without stacking again — hours for a large set — while keeping the edges costs one click of Trim afterwards. The recoverable choice is now the default.
+- The Stack dialog's options were rebuilt so each one reads as a control with its explanation beneath it, rather than a line of run-on text.
+- A drizzled master is named _drizzle and records the finer pixel scale, so it plate-solves correctly and cannot be confused with an ordinary stack in the same folder.
+
+### Fixed
+- Exporting before you had stretched wrote a file about ten times darker than the picture on screen. A PNG, JPEG or TIFF is now exactly what the canvas showed. FITS still holds your linear data, as it should.
+- The before/after divider was a hairline you could not grab. It now has a round handle with arrows in the middle, and both the line and its grab area stay the same size on screen however far you zoom out. Comparing also works properly when the earlier image is larger than the current one.
+- SPCC blamed Gaia for what was a certificate problem on your own machine. It now says which it is, so a problem in Nocturne is not reported as a problem with your network.
+- A master is named for the frames it actually contains. Frames that fail to align after grading were not being counted, so a file could claim 2037 frames while holding 2034.
+
 ## [0.21.0] — 2026-08-31
 
 The app could never reach the internet — and a toolbar ordered around how you actually work
