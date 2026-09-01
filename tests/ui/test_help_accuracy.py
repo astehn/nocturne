@@ -1046,7 +1046,9 @@ def test_upscale_help_is_right_that_open_as_copy_starts_a_new_project(qtbot, tmp
     from nocturne.core.image import AstroImage
     from nocturne.ui.main_window import MainWindow
     b = _body("upscale")
-    assert "<b>your edit history is gone</b>" in b and "<b>save your project first</b>" in b
+    assert "<b>your edit history is gone</b>" in b and "<b>save first</b>" in b
+    assert "Nocturne asks first and offers" in b, \
+        "the app now prompts before discarding unsaved edits; the help must say so"
 
     path = tmp_path / "stack.fits"
     fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16)).writeto(str(path))
