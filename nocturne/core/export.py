@@ -27,16 +27,37 @@ def _to_uint(data: np.ndarray, bits: int) -> np.ndarray:
 _ICC_TAG = 34675
 
 
+def display_data(img: AstroImage) -> np.ndarray:
+    """What a PICTURE format should contain: exactly what the canvas shows.
+
+    A linear image is autostretched here for the same reason preview.to_rgb8
+    autostretches it — because that is what the user is looking at. Without it,
+    reaching Export without having run Stretch wrote a file about 10x darker
+    than the canvas (measured on a faint linear frame: canvas mean 61.7 of 255,
+    file mean 6.4). It looks like a black picture and nothing says why.
+
+    CLAUDE.md: "The preview at any step must equal what export would produce.
+    'Probably the same' is a bug." This is that rule, in the one place both
+    sides can share, so they cannot drift.
+
+    NOT used by save_fits, deliberately. FITS carries DATA, and linear data
+    should stay linear in it; a picture format is the only place the question
+    arises.
+    """
+    from .autostretch import autostretch
+    return autostretch(img) if img.is_linear else np.clip(img.data, 0.0, 1.0)
+
+
 def save_tiff(img: AstroImage, path: str, icc: bytes | None = None) -> None:
     # 16-bit TIFF for both mono and color (preserves dynamic range for further
     # editing). Pillow cannot write 16-bit RGB reliably, so use tifffile.
     extratags = [(_ICC_TAG, 1, len(icc), icc, True)] if icc else None
-    tifffile.imwrite(path, _to_uint(img.data, 16), extratags=extratags)
+    tifffile.imwrite(path, _to_uint(display_data(img), 16), extratags=extratags)
 
 
 def save_jpeg(img: AstroImage, path: str, quality: int = 95,
               icc: bytes | None = None) -> None:
-    arr = _to_uint(img.data, 8)
+    arr = _to_uint(display_data(img), 8)
     mode = "L" if arr.ndim == 2 else "RGB"
     extra = {"icc_profile": icc} if icc else {}
     Image.fromarray(arr, mode=mode).save(path, format="JPEG", quality=quality,
@@ -44,7 +65,7 @@ def save_jpeg(img: AstroImage, path: str, quality: int = 95,
 
 
 def save_png(img: AstroImage, path: str, icc: bytes | None = None) -> None:
-    arr = _to_uint(img.data, 8)
+    arr = _to_uint(display_data(img), 8)
     mode = "L" if arr.ndim == 2 else "RGB"
     extra = {"icc_profile": icc} if icc else {}
     Image.fromarray(arr, mode=mode).save(path, format="PNG", **extra)

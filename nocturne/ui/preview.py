@@ -3,7 +3,8 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtGui import QImage
 
-from ..core.autostretch import autostretch
+from ..core.autostretch import autostretch  # noqa: F401 - re-exported
+from ..core.export import display_data
 from ..core.image import AstroImage, finite_or_zero
 
 
@@ -52,7 +53,9 @@ def to_rgb8(img: AstroImage) -> np.ndarray:
     it can only paint a NaN pixel black, and until _stretch_params was made
     NaN-aware it faithfully painted a whole autostretch-poisoned channel black
     instead."""
-    data = autostretch(img) if img.is_linear else np.clip(img.data, 0.0, 1.0)
+    # The SAME function the picture exporters use, so the canvas and the file
+    # cannot drift apart — see core.export.display_data.
+    data = display_data(img)
     if data.ndim == 2:
         data = np.repeat(data[:, :, None], 3, axis=2)
     return (finite_or_zero(data) * 255 + 0.5).astype(np.uint8)
