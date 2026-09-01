@@ -5030,3 +5030,143 @@ def test_the_tool_groups_are_separated(qtbot, tmp_path):
     # Exactly five, one after each group: one-tap | make | identify | colour |
     # finish. ">= 4" let a mutation delete one unnoticed.
     assert seps == 5, f"{seps} separators across the tool groups, expected 5"
+
+
+# --- deriving a new image from the open one (Upscale "Open as copy") ---
+#
+# `open_image` starts a brand new Project. Undo cannot cross it, the log clears,
+# _clear_cache drops the outgoing project's snapshots and Provenance restarts.
+# Two things followed from doing that silently: unsaved edits vanished with no
+# prompt, and _project_path survived the swap, so the next Cmd-S wrote the NEW
+# project over the OLD bundle while the title still showed the old name.
+
+def _dirty_window(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    assert win._dirty, "fixture is meant to have unsaved edits"
+    return win
+
+
+def _upscaled():
+    return AstroImage(np.zeros((48, 48, 3), np.float32), is_linear=False)
+
+
+def test_open_as_copy_asks_before_discarding_unsaved_edits(qtbot, tmp_path, monkeypatch):
+    """Cancel must leave the session EXACTLY as it was — asserting merely that
+    the copy is not open would pass while the swap half-happened."""
+    from PySide6.QtWidgets import QMessageBox
+    win = _dirty_window(qtbot, tmp_path)
+    before_project, before_steps = win.project, win.project.entries()
+    before_label, before_shape = win._source_label, win.project.current().data.shape
+    win._project_path = before_path = str(tmp_path / "m45.nocturne")
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    assert win._open_upscaled(_upscaled()) is False   # tells the dialog to stay open
+    assert win.project is before_project
+    assert win.project.entries() == before_steps
+    assert win.project.current().data.shape == before_shape
+    assert win._source_label == before_label
+    assert win._dirty is True
+    assert win._project_path == before_path   # still its own bundle, still Cmd-S-able
+
+
+def test_open_as_copy_proceeds_when_the_edits_are_discarded(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    win = _dirty_window(qtbot, tmp_path)
+    before_project = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    assert win._open_upscaled(_upscaled()) is not False
+    assert win.project is not before_project
+    assert win.project.current().data.shape[:2] == (48, 48)
+
+
+def test_open_as_copy_does_not_ask_when_there_is_nothing_to_lose(qtbot, tmp_path, monkeypatch):
+    """A prompt on every copy would train the user to click through it."""
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(True))
+    assert win._open_upscaled(_upscaled()) is not False
+    assert asked == []
+
+
+def test_a_derived_image_is_not_tied_to_the_previous_bundle(qtbot, tmp_path):
+    """The silent one: Cmd-S after "Open as copy" overwrote the .nocturne the
+    session came from, with a different image, under the old name."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._project_path = str(tmp_path / "m45.nocturne")
+    win._open_upscaled(_upscaled())
+    assert win._project_path is None, "the copy would have been saved over m45.nocturne"
+
+
+def test_reset_still_saves_back_to_its_own_bundle(qtbot, tmp_path, monkeypatch):
+    """Reset restarts the SAME project, so unlike every other open_image caller
+    it keeps its bundle path. Guards the fix above from over-reaching."""
+    from PySide6.QtWidgets import QMessageBox
+    win = _dirty_window(qtbot, tmp_path)
+    path = str(tmp_path / "m45.nocturne")
+    win._project_path = path
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._reset_image()
+    assert win._project_path == path
+    assert win._dirty is True          # the bundle on disk no longer matches
+
+
+def test_choosing_save_at_the_prompt_saves_and_then_proceeds(qtbot, tmp_path, monkeypatch):
+    """Runs with _async_enabled TRUE on purpose: the guard read `not self._dirty`
+    the instant after queueing an off-thread save, so in the shipped app Save
+    always looked like a cancel and the action was abandoned. Under the tests'
+    usual `_async_enabled = False` the save is inline and the bug is invisible —
+    which is why it shipped."""
+    import os
+    from PySide6.QtWidgets import QMessageBox
+    win = _dirty_window(qtbot, tmp_path)
+    win._async_enabled = True
+    bundle = str(tmp_path / "m45.nocturne")
+    win._project_path = bundle          # so Save saves, rather than opening Save As
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+
+    assert win._open_upscaled(_upscaled()) is not False    # it proceeded
+    assert os.path.exists(bundle), "the edits were not actually written"
+    assert win.project.current().data.shape[:2] == (48, 48)   # and the copy is open
+    assert win._project_path is None                          # not tied to that bundle
+
+
+def test_the_save_is_finished_before_the_workspace_is_replaced(qtbot, tmp_path, monkeypatch):
+    """The reason the guard must WAIT rather than proceed optimistically:
+    open_image -> _clear_cache() deletes the snapshot files the save worker is
+    still reading, so a save in flight would race a half-written bundle."""
+    from PySide6.QtWidgets import QMessageBox
+    win = _dirty_window(qtbot, tmp_path)
+    win._async_enabled = True
+    win._project_path = str(tmp_path / "m45.nocturne")
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+
+    cleared = []
+    real_clear = win._clear_cache
+    def spy():
+        cleared.append(win._active_token)    # None once the save has released
+        real_clear()
+    win._clear_cache = spy
+    win._open_upscaled(_upscaled())
+    assert cleared == [None], f"cache cleared with a save still in flight: {cleared}"
+
+
+def test_opening_a_fits_over_a_bundle_forgets_the_bundle(qtbot, tmp_path):
+    """open_fits used to clear _project_path itself; that line is gone now that
+    open_image does it. Without this test, moving the clear back out would
+    silently restore "Cmd-S writes the new image over the old bundle"."""
+    win = _window(qtbot, tmp_path)
+    path = _make_fits(tmp_path)
+    win.open_fits(path)
+    win._project_path = str(tmp_path / "m45.nocturne")
+    win.open_fits(path)
+    assert win._project_path is None

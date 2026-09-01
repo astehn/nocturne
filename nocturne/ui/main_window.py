@@ -4,7 +4,8 @@ import datetime
 import os
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import (QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer, QUrl,
+                            Signal)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
@@ -572,9 +573,40 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         if resp == QMessageBox.StandardButton.Save:
-            self._save_project()
-            return not self._dirty   # False if the Save/Save-As was itself cancelled
+            return self._save_and_wait()
         return resp == QMessageBox.StandardButton.Discard
+
+    def _save_and_wait(self) -> bool:
+        """Save, and do not return until the write has actually finished.
+
+        Every caller of the guard above goes on to REPLACE the workspace, and
+        `open_image` -> `_clear_cache()` deletes the snapshot files the save
+        worker is still reading — so returning while the save is in flight
+        races a half-written bundle.
+
+        The old code read `not self._dirty` immediately after `_save_project()`.
+        That is only true when saves run inline, i.e. under the tests'
+        `_async_enabled = False`. In the shipped app `_run_busy` queues the work
+        and `_dirty` clears later in `on_result`, so the guard read True-dirty
+        and reported "cancelled" every time: choosing **Save** at the prompt
+        quietly abandoned the Open / Close / quit you were doing. Found by
+        review 2026-09-01; it had shipped that way.
+
+        Waiting in a nested event loop rather than blocking, because the busy
+        panel this puts on screen needs an event loop to paint or it is frozen,
+        not visible.
+        """
+        self._save_project()          # may go to Save As, which the user can cancel
+        if self._async_enabled and self._active_token is not None:
+            loop = QEventLoop()
+            poll = QTimer(self)
+            poll.setInterval(50)
+            poll.timeout.connect(
+                lambda: loop.quit() if self._active_token is None else None)
+            poll.start()
+            loop.exec()
+            poll.stop()
+        return not self._dirty        # False if the save was cancelled or failed
 
     def _build_menu(self) -> None:
         project_menu = self.menuBar().addMenu("Project")
@@ -1538,8 +1570,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._show_warning(f"Could not open file: {exc}")
             return
-        self._project_path = None  # a freshly-opened FITS is not tied to any prior bundle
-        self.open_image(base, os.path.basename(path))
+        self.open_image(base, os.path.basename(path))   # clears _project_path itself
 
     def open_image(self, base, label: str) -> None:
         # Retire the outgoing workspace FIRST: _clear_cache below deletes the
@@ -1551,6 +1582,12 @@ class MainWindow(QMainWindow):
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir)
+        self._project_path = None   # a new Project is not the bundle we came from:
+                                    # leaving the old path here meant the next
+                                    # Cmd-S wrote this image over that bundle,
+                                    # under its name. Reset is the one caller
+                                    # that restarts the SAME project; it puts
+                                    # its path back.
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
@@ -2757,9 +2794,10 @@ class MainWindow(QMainWindow):
         # fact the project already holds at index 0, and _open_project restored
         # _source_label without it — so Reset raised AttributeError on every
         # loaded bundle while working fine on a freshly-opened FITS.
-        was_project = self._project_path is not None
+        bundle = self._project_path
         self.open_image(self.project.state_at(0), self._source_label)
-        if was_project:
+        if bundle:
+            self._project_path = bundle   # same project, still its own file
             # The bundle on disk still holds the edits we just discarded, so the
             # session no longer matches it. open_image clears _dirty for the
             # freshly-opened case, which is not this one.
@@ -2908,8 +2946,19 @@ class MainWindow(QMainWindow):
         UpscaleDialog(img, meta, self.settings, rc=rc,
                       on_open_copy=self._open_upscaled, parent=self).exec()
 
-    def _open_upscaled(self, result) -> None:
+    def _open_upscaled(self, result) -> bool:
+        """Open the upscaled copy as a new project. Returns False if the user
+        cancelled, so the dialog knows to stay open rather than close on a swap
+        that never happened.
+
+        The copy is a NEW project: undo cannot cross it, the log clears and
+        Provenance restarts. That is fine to do to an image with nothing at
+        stake, and not fine to do silently to unsaved edits.
+        """
+        if not self._confirm_save_if_dirty():
+            return False
         self.open_image(result, f"{os.path.splitext(self._source_label or 'image')[0]}_2x")
+        return True
 
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)

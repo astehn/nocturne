@@ -59,6 +59,20 @@ def test_open_as_copy_closes_the_dialog(qtbot):
     assert d.result() == QDialog.DialogCode.Accepted   # dialog closed -> main window (with the copy) is revealed
 
 
+def test_a_declined_open_leaves_the_dialog_up(qtbot):
+    """The main window returns False when the user cancels its "save your
+    unsaved edits first?" prompt. Closing anyway would look like the copy had
+    opened, over a main window still showing the old project."""
+    from PySide6.QtWidgets import QDialog
+    asked = []
+    d = _dlg(qtbot, on_open_copy=lambda img: asked.append(True) or False)
+    d._run_upscale()
+    assert d._open_copy_btn.isEnabled()          # reachable at all, once there is a result
+    d._open_copy_btn.click()                     # through the real wiring, not the handler
+    assert asked == [True]                              # it did try
+    assert d.result() != QDialog.DialogCode.Accepted    # and did not close on the refusal
+
+
 def test_close_button_rejects(qtbot):
     from PySide6.QtWidgets import QDialog
     d = _dlg(qtbot)

@@ -236,7 +236,11 @@ class UpscaleDialog(QDialog):
         self.status.setText(f"Saved {os.path.basename(path)}")
 
     def _do_open_copy(self) -> None:
+        """`on_open_copy` returns False if it declined to swap — it asks first
+        when the open project has unsaved edits. Anything else (including the
+        None a caller that never declines returns) counts as opened."""
         if self._result is not None and self._on_open_copy is not None:
-            self._on_open_copy(self._result)
+            if self._on_open_copy(self._result) is False:
+                return         # they kept their project; leave the dialog up
             self.accept()      # close so the user lands on the main window showing the copy
                                # (the swap was invisible behind the modal dialog, esp. full screen)
