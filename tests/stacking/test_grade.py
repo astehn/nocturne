@@ -431,3 +431,110 @@ def test_pick_reference_copes_when_nothing_qualifies():
     ref = pick_reference(stats)
     assert ref is not None and ref.path == "b.fit"
     assert pick_reference([]) is None
+
+
+# --- a rejection must be meaningful, not merely relative (2026-09-01) --------
+
+def _frames(fwhms, elong=None):
+    from nocturne.stacking.grade import FrameStats
+    elong = elong or [1.10] * len(fwhms)
+    return [FrameStats(f"/x/{i}.fit", 900, f, 0.02, 1.0, True, elongation=e)
+            for i, (f, e) in enumerate(zip(fwhms, elong))]
+
+
+def test_a_uniformly_good_session_loses_nothing():
+    """THE bug. The gate was median + k*MAD with no floor, so a session where
+    every frame is excellent still lost its worst few — 'rejecting frames in
+    order to have some rejections'.
+
+    Measured on Andreas' M 45: MAD of 0.0299 px, and one frame rejected for
+    exceeding the gate by 0.001 px. These FWHMs span 0.1 px, which is what a
+    good night actually looks like.
+    """
+    import numpy as np
+    from nocturne.stacking.grade import judge
+    rng = np.random.default_rng(0)
+    # Shaped so the RELATIVE gate WOULD reject: a tight core plus a handful a
+    # few percent softer, which is what M 45 looks like. A plain normal draw
+    # does not reliably produce one, and the first version of this test passed
+    # with the floor removed — proving nothing.
+    fwhms = list(np.round(rng.normal(2.45, 0.02, 194), 3)) + [2.58] * 6
+    stats = _frames(fwhms)
+    judge(stats, "normal")
+    soft = [s for s in stats if s.reason_code == "soft_stars"]
+    assert not soft, (
+        f"{len(soft)} frames rejected from a session spanning "
+        f"{max(s.fwhm for s in stats) - min(s.fwhm for s in stats):.2f} px")
+
+
+def test_a_genuinely_soft_frame_is_still_rejected():
+    """The floor must not turn the gate off. M 45's worst frame is 3.74 px
+    against a 2.45 median — 53% softer — and that one should go."""
+    from nocturne.stacking.grade import judge
+    stats = _frames([2.45] * 199 + [3.74])
+    judge(stats, "normal")
+    assert stats[-1].reason_code == "soft_stars", stats[-1].reason
+    assert sum(1 for s in stats if not s.included) == 1
+
+
+def test_a_uniformly_round_session_is_not_called_trailed():
+    """Same flaw in the roundness gate: on M 16 it rejected 46 frames (12.6%),
+    the mildest only 7.1% more elongated than the session median."""
+    import numpy as np
+    from nocturne.stacking.grade import judge
+    rng = np.random.default_rng(1)
+    e = list(np.round(rng.normal(1.16, 0.02, 200), 3))
+    stats = _frames([2.45] * 200, e)
+    judge(stats, "normal")
+    trailed = [s for s in stats if s.reason_code == "trailed"]
+    assert not trailed, f"{len(trailed)} frames called trailed on a round session"
+
+
+def test_a_genuinely_trailed_frame_is_still_rejected():
+    from nocturne.stacking.grade import judge
+    stats = _frames([2.45] * 199 + [2.45], [1.16] * 199 + [1.70])
+    judge(stats, "normal")
+    assert stats[-1].reason_code == "trailed", stats[-1].reason
+
+
+def test_the_verdict_says_enough_to_check_it():
+    """It printed one decimal on a decision made in hundredths, so two frames
+    both showing 'FWHM 2.6' got opposite verdicts and the explanation read
+    'FWHM 2.6 vs limit 2.6'."""
+    from nocturne.stacking.grade import judge
+    stats = _frames([2.45] * 199 + [3.74])
+    judge(stats, "normal")
+    reason = stats[-1].reason
+    assert "3.74" in reason, reason
+    assert "%" in reason, f"no sense of how far over: {reason}"
+
+
+def test_strictness_still_means_something_with_a_floor():
+    """A FIXED floor silently overrode the knob: an edge frame 13.7% softer than
+    its session was kept even on Strict, which is the setting for someone who
+    wants to trade frames for resolution. The floor scales with strictness."""
+    from nocturne.stacking.grade import judge
+    base = [2.4 + 0.3 * i / 29 for i in range(30)]
+    kept = {}
+    for level in ("relaxed", "normal", "strict"):
+        stats = _frames(base + [2.9])
+        judge(stats, level)
+        kept[level] = stats[-1].included
+    assert kept["relaxed"] is True, "relaxed should keep an edge frame"
+    assert kept["strict"] is False, "strict should still be able to reject one"
+
+
+def test_relaxed_keeps_more_than_strict_on_real_shaped_data():
+    """The knob must move monotonically, not just differ at one value."""
+    import numpy as np
+    from nocturne.stacking.grade import judge
+    rng = np.random.default_rng(3)
+    fwhms = list(np.round(rng.normal(2.45, 0.02, 180), 3)) + \
+            [2.62] * 10 + [2.85] * 6 + [3.6] * 4
+    counts = {}
+    for level in ("relaxed", "normal", "strict"):
+        stats = _frames(fwhms)
+        judge(stats, level)
+        counts[level] = sum(1 for s in stats if not s.included)
+    assert counts["relaxed"] <= counts["normal"] <= counts["strict"], counts
+    assert counts["strict"] > counts["relaxed"], f"the knob does nothing: {counts}"

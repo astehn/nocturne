@@ -151,9 +151,56 @@ def order_best_first(stats: list["FrameStats"]) -> list:
     return [s.path for s in chosen]
 
 
+# A rejection must be BOTH a statistical outlier AND meaningfully worse. The
+# gates were purely relative — median + k*MAD — which finds the worst frames of
+# any session however good they all are. Andreas, 2026-09-01: "I have really
+# tried to verify that visually but i can't... i don't want us to reject frames
+# just in order to have some rejections."
+#
+# He was right, and the numbers are stark. Measured on his own sessions:
+#
+#   M 45     FWHM MAD 0.0299 px; the mildest rejection was 5.5% softer than the
+#            session median, and one frame exceeded the gate by 0.001 px
+#   M 16     46 frames (12.6%) rejected as trailed, the mildest 7.1% more
+#            elongated than median
+#   NGC 6992 24 frames (10.8%) rejected for softness at 10% above median
+#
+# None of that is visible, and none of it can matter: a frame 10% softer in a
+# 266-frame average shifts the result by about 1/266 of that difference, while
+# rejecting it costs a whole frame of signal. The genuinely bad frames are not
+# close calls — M 45's worst is 53% softer and every floor still rejects it.
+#
+# The floor MOVES WITH STRICTNESS, and must. A fixed 15% silently overrode the
+# knob: an edge frame 13.7% softer than its session was kept even on Strict,
+# which is exactly the setting for someone who wants to trade frames for
+# resolution. Relaxed keeps almost everything, Strict can still be picky, and
+# Normal is the value chosen with Andreas 2026-09-01 — a starting point, not a
+# constant of nature. On his three sessions Normal takes softness rejections
+# from 8.9/1.6/10.8% of light to 2.0/1.6/4.9%.
+#
+# OPEN QUESTION, deliberately not settled here: trailing may deserve a TIGHTER
+# floor than softness. Soft frames average out benignly; trailed frames often
+# smear in a consistent direction (periodic error, drift) and can accumulate
+# rather than cancel. Needs evidence, not an opinion.
+STRICTNESS_FLOOR = {"relaxed": 0.25, "normal": 0.15, "strict": 0.05}
+MIN_MEANINGFUL_EXCESS = STRICTNESS_FLOOR["normal"]
+
+
+def reject_limit(values, k: float, floor: float = MIN_MEANINGFUL_EXCESS):
+    """The k-sigma gate, but never tighter than `floor` above the median.
+
+    Returns None for an empty input, matching upper_gate's callers.
+    """
+    if not len(values):
+        return None
+    return max(float(upper_gate(list(values), k)),
+               float(np.median(values)) * (1.0 + floor))
+
+
 def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     """Apply verdicts in place. Cheap — re-run freely when strictness changes."""
     k = STRICTNESS_K[strictness]
+    floor = STRICTNESS_FLOOR[strictness]
     usable = [s for s in stats if not s.error]
     for s in usable:
         s.included, s.reason_code, s.reason, s.warning = True, "", "", ""
@@ -163,13 +210,13 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     star_median = float(np.median([s.star_count for s in usable]))
     star_floor = 0.5 * star_median
     starred = [s.fwhm for s in usable if s.star_count > 0]
-    fwhm_gate = upper_gate(starred, k) if starred else None
+    fwhm_gate = reject_limit(starred, k, floor) if starred else None
     bg_gate = upper_gate([s.background for s in usable], k)
     # Same session-relative rule as the others: a uniformly trailed session has
     # no outlier and keeps everything, which is the right answer when the
     # alternative is handing the user nothing.
     shapes = [s.elongation for s in usable if s.star_count > 0]
-    round_gate = upper_gate(shapes, k) if shapes else None
+    round_gate = reject_limit(shapes, k, floor) if shapes else None
 
     for s in usable:
         if s.star_count < star_floor:
@@ -180,7 +227,11 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
         elif fwhm_gate is not None and s.fwhm > fwhm_gate:
             s.included = False
             s.reason_code = "soft_stars"
-            s.reason = f"{REASON_SOFT} (FWHM {s.fwhm:.1f} vs limit {fwhm_gate:.1f})"
+            # Two decimals AND the percentage. At one decimal this read
+            # "FWHM 2.6 vs limit 2.6", which is why two frames showing the same
+            # number appeared to get opposite verdicts for no reason.
+            s.reason = (f"{REASON_SOFT} (FWHM {s.fwhm:.2f} vs limit "
+                        f"{fwhm_gate:.2f} — {100 * (s.fwhm / fwhm_gate - 1):.0f}% over)")
         elif round_gate is not None and s.elongation > round_gate:
             s.included = False
             s.reason_code = "trailed"
