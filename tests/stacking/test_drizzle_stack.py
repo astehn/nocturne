@@ -151,17 +151,21 @@ def test_a_normal_master_is_left_exactly_as_it_was():
     assert master_metadata(ref, 10, 100.0, 3840, 2160)["pixel_size"] == 2.9
 
 
-def test_the_estimate_matches_the_run_it_was_calibrated_on():
-    """Pinned to the REAL measurement, not an extrapolation from a small one.
+def test_the_estimate_sits_above_the_measured_rate_not_below_it():
+    """Measured through run_stack on real frames: 3.29 / 3.26 / 3.34 s/frame at
+    40 / 80 / 160 frames — flat, as the design says it should be.
 
-    2,037 frames of 3840x2160 took 556 minutes end to end on 2026-09-01. The
-    previous constant came from 60 frames with a warm page cache and predicted
-    126 minutes for that run — off by 4.4x, because both passes read every frame
-    and 40 GB does not stay in cache where 1 GB does.
+    The constant is set above that on purpose. One real 2,037-frame run managed
+    16.4 s/frame for reasons never established (not reading — the disk does
+    1045 MB/s and preparation is 240 ms/frame; not scaling — see the table), so
+    the estimate is pessimistic by roughly 50%. Being told two hours and taking
+    one is fine; the reverse is not.
     """
     from nocturne.stacking.drizzle_stack import estimate_megabytes, estimate_seconds
-    got = estimate_seconds(2037, (2160, 3840)) / 60.0
-    assert 500 < got < 620, f"predicts {got:.0f} min for a run that took 556"
+    per_frame = estimate_seconds(100, (2160, 3840)) / 100.0
+    assert 3.4 < per_frame < 8.0, (
+        f"{per_frame:.1f} s/frame — measured 3.3, so this is either optimistic "
+        f"or wildly padded")
     assert 350 < estimate_megabytes((2160, 3840)) < 450     # a real one was 398 MB
 
 

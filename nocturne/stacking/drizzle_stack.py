@@ -13,21 +13,32 @@ PIXFRAC = 0.9          # drop shrink factor — the fraction of each input pixel
                        # is also what Siril and PixInsight users run.
 
 
-# Measured on real runs, and the two measurements disagree by 4.4x:
+# Measured through run_stack on real IC 1396A frames, 2026-09-01:
 #
-#     60 frames,   warm cache   220 s   ->  3.7 s/frame
-#   2037 frames,   cold, 40 GB  556 min -> 16.4 s/frame
+#     40 frames   132 s   3.29 s/frame
+#     80 frames   261 s   3.26 s/frame
+#    160 frames   534 s   3.34 s/frame
 #
-# The 2,037-frame number is the one to trust and the one used here. Both passes
-# read every frame, so a set that does not fit the page cache is read from disk
-# twice — ~1 GB at 60 subs against ~40 GB at 2,037 — and the small measurement
-# simply cannot see that. Extrapolating it told Andreas "at least 126 minutes"
-# for a run that took nine and a quarter hours.
+# FLAT. The cost does not grow with frame count, which is what the design says
+# should happen: the accumulators are fixed by the output grid and every frame is
+# warped and drizzled exactly once per pass.
 #
-# It will now read LONG for a small set on a fast disk. That is the right way to
-# be wrong: someone who is told two hours and takes one is pleased, and someone
-# told two hours who loses a working day is not.
-_SECONDS_PER_FRAME = 16.4
+# It is set slightly above that measurement rather than at it, because one real
+# 2,037-frame run took 16.4 s/frame — five times this — and the cause was never
+# established. Reading is not it: the disk does 1045 MB/s and full per-frame
+# preparation is 240 ms, so 0.48 s even done twice. Nor is it scaling, per the
+# table. Something environmental (indexing, backup, memory pressure at the
+# 15.5 GB that run reached) is the likeliest explanation and cannot be proven
+# after the fact.
+#
+# So this is deliberately pessimistic by about 50%, and the phases now log their
+# own timing — the next long run will say where its time went instead of leaving
+# it to be inferred from screenshots.
+#
+# A previous version of this constant was 16.4, set from that single anomalous
+# run. Recalibrating a constant from one measurement is the mistake this file
+# has now made in both directions.
+_SECONDS_PER_FRAME = 5.0
 _REFERENCE_PIXELS = 3840 * 2160
 
 
@@ -212,7 +223,12 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
     # so ordered_results' default lookahead of workers+2 would hold gigabytes;
     # this project already has a 396 GB stacking runaway in its history and a
     # 15.5 GB drizzle run last night.
+    import logging
+    import time as _time
     from .parallel import ordered_results, plan_workers
+
+    _log = logging.getLogger("nocturne.drizzle")
+    _t0 = _time.time()
 
     def warp_one(item):
         data, matrix = item
@@ -269,6 +285,10 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
     # integrate.sigma_clip_integrate; real stacks have hundreds of frames, so it
     # is a non-issue in practice.
 
+    _t1 = _time.time()
+    _log.info("drizzle pass 1 (measure): %d frames in %.0f s (%.2f s/frame)",
+              count, _t1 - _t0, (_t1 - _t0) / max(count, 1))
+
     # --- Pass 2: mask per-input-pixel outliers, then drizzle ---
     drizzlers = [Drizzle(kernel=KERNEL, out_shape=out_shape, fillval=0.0) for _ in range(n_channels)]
     for data, matrix in make_items():
@@ -293,6 +313,12 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
                 pixfrac=pixfrac,
                 in_units="counts",
             )
+
+    _t2 = _time.time()
+    _log.info("drizzle pass 2 (drizzle): %d frames in %.0f s (%.2f s/frame)",
+              count, _t2 - _t1, (_t2 - _t1) / max(count, 1))
+    _log.info("drizzle total: %.0f s (%.2f s/frame) for %d frames",
+              _t2 - _t0, (_t2 - _t0) / max(count, 1), count)
 
     chans = [d.out_img for d in drizzlers]
     out = np.stack(chans, axis=-1).astype(np.float32)
