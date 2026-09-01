@@ -62,7 +62,21 @@ def _import_demosaicing():
 # The sharpness is worth having, so this is unfinished rather than settled, but
 # the route is a CFA-aware one (a demosaic designed for point sources, e.g. RCD,
 # or stacking in the CFA domain) — not another interpolation kernel. See TODO.
-_demosaic = _import_demosaicing()
+# Imported on FIRST DEBAYER, not at module import. colour_demosaicing costs
+# 478 ms to load — measured 2026-09-01, roughly half the 1.01 s it takes to
+# import main_window — and it is needed only when a CFA frame is actually
+# debayered. Every launch paid it, including launches that never open an image.
+#
+# The care in _import_demosaicing above is unaffected: it still runs, just
+# later. The one-shot cache means the git-suppression still happens exactly once.
+_demosaic = None
+
+
+def _demosaic_fn():
+    global _demosaic
+    if _demosaic is None:
+        _demosaic = _import_demosaicing()
+    return _demosaic
 
 from .image import AstroImage, finite_or_zero
 from .instrument import DEFAULT_INSTRUMENT, SEESTAR_S30_PRO, identify
@@ -332,7 +346,7 @@ def load_fits(path: str, normalize: bool = True) -> AstroImage:
     # header (Seestar subs are 'GRBG', not 'RGGB'); a wrong pattern demosaics one
     # phase off and produces a green maze + false colour.
     base = _normalize(raw) if normalize else raw.astype(np.float32)
-    rgb = _demosaic(base, _bayer_pattern(header))
+    rgb = _demosaic_fn()(base, _bayer_pattern(header))
     if normalize:
         rgb = np.clip(rgb, 0.0, 1.0)
     h, w = rgb.shape[:2]
