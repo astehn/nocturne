@@ -178,11 +178,29 @@ def order_best_first(stats: list["FrameStats"]) -> list:
 # constant of nature. On his three sessions Normal takes softness rejections
 # from 8.9/1.6/10.8% of light to 2.0/1.6/4.9%.
 #
-# OPEN QUESTION, deliberately not settled here: trailing may deserve a TIGHTER
-# floor than softness. Soft frames average out benignly; trailed frames often
-# smear in a consistent direction (periodic error, drift) and can accumulate
-# rather than cancel. Needs evidence, not an opinion.
+# TRAILING GETS A TIGHTER FLOOR THAN SOFTNESS, for two independent reasons that
+# agree. Physically, soft frames average out benignly while trailed ones smear
+# in a CONSISTENT direction — periodic error, drift — so they accumulate rather
+# than cancel. And Andreas, 2026-09-01, from use: trailing rejection "works good
+# as it is", and he can see the trailing in a finished stack, "sometimes you
+# really have to zoom in".
+#
+# 5% is where that costs nothing he values. Frames over the roundness limit, by
+# floor:
+#
+#                0% (old)    5%    10%   15%
+#     M 45          28       28     12     8
+#     M 16          52       52     32    21
+#     NGC 6992      37       37     37    37
+#     IC 1396A      35       28     15     7
+#
+# At 5% three of four sessions are IDENTICAL to the old purely-relative gate, so
+# it removes only the plainly absurd case — M 45's mildest trailing rejection
+# sat at exactly 5.0% more elongated than the session median — while leaving the
+# behaviour he trusts intact. 15% would have cut M 16 from 52 to 21, a change
+# nobody asked for.
 STRICTNESS_FLOOR = {"relaxed": 0.25, "normal": 0.15, "strict": 0.05}
+STRICTNESS_FLOOR_ROUND = {"relaxed": 0.10, "normal": 0.05, "strict": 0.02}
 MIN_MEANINGFUL_EXCESS = STRICTNESS_FLOOR["normal"]
 
 
@@ -216,7 +234,8 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     # no outlier and keeps everything, which is the right answer when the
     # alternative is handing the user nothing.
     shapes = [s.elongation for s in usable if s.star_count > 0]
-    round_gate = reject_limit(shapes, k, floor) if shapes else None
+    round_gate = (reject_limit(shapes, k, STRICTNESS_FLOOR_ROUND[strictness])
+                  if shapes else None)
 
     for s in usable:
         if s.star_count < star_floor:

@@ -538,3 +538,34 @@ def test_relaxed_keeps_more_than_strict_on_real_shaped_data():
         counts[level] = sum(1 for s in stats if not s.included)
     assert counts["relaxed"] <= counts["normal"] <= counts["strict"], counts
     assert counts["strict"] > counts["relaxed"], f"the knob does nothing: {counts}"
+
+
+def test_trailing_is_judged_more_tightly_than_softness():
+    """Two independent reasons agreeing. Physically, soft frames average out
+    while trailed ones smear in a consistent direction and accumulate. And from
+    use — Andreas, 2026-09-01 — trailing rejection "works good as it is", and
+    the trailing IS visible in a finished stack.
+
+    Measured: at a 5% roundness floor three of his four sessions reject exactly
+    what the old purely-relative gate did; at 15% M 16 would drop from 52 to 21.
+    """
+    from nocturne.stacking.grade import (STRICTNESS_FLOOR, STRICTNESS_FLOOR_ROUND)
+    for level in ("relaxed", "normal", "strict"):
+        assert STRICTNESS_FLOOR_ROUND[level] < STRICTNESS_FLOOR[level], level
+
+
+def test_a_mildly_elongated_frame_is_still_rejected():
+    """The roundness floor must stay tight enough to keep catching what it
+    caught. 8% more elongated than the session median is over the 5% floor."""
+    from nocturne.stacking.grade import judge
+    stats = _frames([2.45] * 60, [1.16] * 59 + [1.16 * 1.08])
+    judge(stats, "normal")
+    assert stats[-1].reason_code == "trailed", stats[-1].reason
+
+
+def test_a_frame_barely_rounder_than_its_neighbours_is_kept():
+    """But 3% is still noise, and that was M 45's complaint."""
+    from nocturne.stacking.grade import judge
+    stats = _frames([2.45] * 60, [1.16] * 59 + [1.16 * 1.03])
+    judge(stats, "normal")
+    assert stats[-1].included, stats[-1].reason
