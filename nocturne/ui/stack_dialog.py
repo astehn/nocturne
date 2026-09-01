@@ -652,9 +652,44 @@ class StackDialog(QDialog):
             text += f"\n{len(other)} frame(s) skipped: {names}"
         return text
 
+    def _rename_to_true_count(self, result) -> None:
+        """Rename an auto-generated master to the frames it ACTUALLY contains.
+
+        The name is built when grading finishes, from the frames grading kept.
+        Registration then drops more — three of 2,037 on a real IC 1396A run —
+        so the file was called ..._2037x10s_340min.fits while its own header
+        said 2034 frames and 339 minutes. A descriptive filename that
+        disagrees with the data is worse than a plain one, because comparing two
+        masters by name is exactly what it exists for.
+
+        Only a name this dialog generated is touched. If the path was typed or
+        browsed to, it is the user's and stays as chosen.
+        """
+        if self._output_user_edited or not self._stats:
+            return
+        target = next((s.target for s in self._stats if s.included and s.target), "")
+        kept = [s for s in self._stats if s.included]
+        exposures = [s.exposure for s in kept if s.exposure > 0]
+        exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
+        want = master_filename(target, result.frame_count, exposure,
+                               result.integration_seconds,
+                               mosaic=self.mosaic_check.isChecked(),
+                               drizzle=self.drizzle_check.isChecked())
+        old_path = result.output_path
+        new_path = os.path.join(os.path.dirname(old_path), want)
+        if new_path == old_path or not os.path.exists(old_path):
+            return
+        try:
+            os.replace(old_path, new_path)
+        except OSError:
+            return          # a rename is a nicety; never fail a finished stack
+        result.output_path = new_path
+        self.output_edit.setText(new_path)
+
     def _on_stacked(self, result) -> None:
         self._active_token = None
         self._set_busy(False)
+        self._rename_to_true_count(result)
         report = self._stack_report(result)
         self.status.setText(report)
         if getattr(result, "rejected", None) or getattr(result, "dropped", None):

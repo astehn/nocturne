@@ -1,3 +1,4 @@
+import os
 import pytest
 
 pytest.importorskip("PySide6")
@@ -976,3 +977,69 @@ def test_nothing_optional_is_ticked_when_the_dialog_opens(qtbot):
     assert not ticked, f"preselected on open: {ticked}"
     assert d.strictness_box.currentText() == "Normal"
     assert d.sigma_radio.isChecked() and d.kappa_box.currentText() == "Medium"
+
+
+# --- the filename must describe the file (found on real data 2026-09-01) -----
+
+def _stacked(tmp_path, kept, actually_used, user_edited=False):
+    """A finished stack where registration dropped some of the graded frames."""
+    from nocturne.stacking.stacker import StackResult
+    from nocturne.core.image import AstroImage
+    import numpy as np
+    d = StackDialog(Settings())
+    d._stats = [FrameStats(str(tmp_path / f"{i}.fit"), 800, 2.4, 0.02, 0.9, True,
+                           exposure=10.0, target="IC1396A") for i in range(kept)]
+    d._output_user_edited = user_edited
+    name = tmp_path / f"IC1396A_{kept}x10s_{round(kept*10/60)}min.fits"
+    name.write_bytes(b"x")
+    img = AstroImage(np.zeros((4, 4, 3), np.float32))
+    res = StackResult(img, [], [], actually_used, actually_used * 10.0, str(name))
+    return d, res, name
+
+
+def test_the_master_is_named_for_the_frames_it_actually_contains(qtbot, tmp_path):
+    """A real 2,037-frame run wrote IC1396A_drizzle_2037x10s_340min.fits whose
+    own header said 2034 frames and 339 minutes: the name is built when grading
+    finishes, and registration then drops more. A descriptive filename that
+    disagrees with the data is worse than a plain one."""
+    d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
+    qtbot.addWidget(d)
+    d._rename_to_true_count(res)
+    assert not original.exists(), "the misnamed file is still there"
+    assert "2034" in os.path.basename(res.output_path), res.output_path
+    assert os.path.exists(res.output_path)
+
+
+def test_a_name_the_user_chose_is_left_alone(qtbot, tmp_path):
+    """Renaming a path someone typed or browsed to would be taking their file
+    away from where they put it."""
+    d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034,
+                                user_edited=True)
+    qtbot.addWidget(d)
+    d._rename_to_true_count(res)
+    assert original.exists() and res.output_path == str(original)
+
+
+def test_nothing_is_renamed_when_the_count_already_matches(qtbot, tmp_path):
+    """The overwhelmingly common case: no frames dropped, no rename, no churn."""
+    d, res, original = _stacked(tmp_path, kept=100, actually_used=100)
+    qtbot.addWidget(d)
+    before = res.output_path
+    d._rename_to_true_count(res)
+    assert res.output_path == before and original.exists()
+
+
+def test_the_rename_is_actually_wired_into_the_finish(qtbot, tmp_path):
+    """Through _on_stacked, not by calling the helper directly.
+
+    The first three tests here all called _rename_to_true_count() themselves, so
+    deleting its call site left every one of them green — the function worked
+    and nothing used it. A unit test that never exercises the wiring proves the
+    unit, not the feature.
+    """
+    d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
+    qtbot.addWidget(d)
+    d._on_master = lambda _img: None
+    d._on_stacked(res)
+    assert not original.exists(), "finishing a stack left the misnamed file"
+    assert "2034" in os.path.basename(res.output_path), res.output_path
