@@ -13,11 +13,21 @@ PIXFRAC = 0.9          # drop shrink factor — the fraction of each input pixel
                        # is also what Siril and PixInsight users run.
 
 
-# Measured 2026-08-31 on this machine: 60 frames of 3840x2160 took 220 s end to
-# end through run_stack, against 21 s for a normal stack of the same subs. That
-# is 3.7 s per frame, and it scales with INPUT pixels because both passes walk
-# every input pixel — the warp-and-measure pass and the gather-and-drizzle pass.
-_SECONDS_PER_FRAME = 3.7
+# Measured on real runs, and the two measurements disagree by 4.4x:
+#
+#     60 frames,   warm cache   220 s   ->  3.7 s/frame
+#   2037 frames,   cold, 40 GB  556 min -> 16.4 s/frame
+#
+# The 2,037-frame number is the one to trust and the one used here. Both passes
+# read every frame, so a set that does not fit the page cache is read from disk
+# twice — ~1 GB at 60 subs against ~40 GB at 2,037 — and the small measurement
+# simply cannot see that. Extrapolating it told Andreas "at least 126 minutes"
+# for a run that took nine and a quarter hours.
+#
+# It will now read LONG for a small set on a fast disk. That is the right way to
+# be wrong: someone who is told two hours and takes one is pleased, and someone
+# told two hours who loses a working day is not.
+_SECONDS_PER_FRAME = 16.4
 _REFERENCE_PIXELS = 3840 * 2160
 
 

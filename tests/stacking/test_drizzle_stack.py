@@ -151,13 +151,27 @@ def test_a_normal_master_is_left_exactly_as_it_was():
     assert master_metadata(ref, 10, 100.0, 3840, 2160)["pixel_size"] == 2.9
 
 
-def test_the_estimate_is_in_the_right_order_of_magnitude():
-    """It only has to answer "minutes or an hour". Measured: 60 frames of
-    3840x2160 took 220 s."""
+def test_the_estimate_matches_the_run_it_was_calibrated_on():
+    """Pinned to the REAL measurement, not an extrapolation from a small one.
+
+    2,037 frames of 3840x2160 took 556 minutes end to end on 2026-09-01. The
+    previous constant came from 60 frames with a warm page cache and predicted
+    126 minutes for that run — off by 4.4x, because both passes read every frame
+    and 40 GB does not stay in cache where 1 GB does.
+    """
     from nocturne.stacking.drizzle_stack import estimate_megabytes, estimate_seconds
-    assert 150 < estimate_seconds(60, (2160, 3840)) < 320
-    assert estimate_seconds(600, (2160, 3840)) > 9 * estimate_seconds(60, (2160, 3840)) * 0.9
+    got = estimate_seconds(2037, (2160, 3840)) / 60.0
+    assert 500 < got < 620, f"predicts {got:.0f} min for a run that took 556"
     assert 350 < estimate_megabytes((2160, 3840)) < 450     # a real one was 398 MB
+
+
+def test_the_estimate_grows_with_the_work():
+    """Twice the frames is twice the reading, warping and drizzling."""
+    import pytest
+    from nocturne.stacking.drizzle_stack import estimate_seconds
+    one = estimate_seconds(100, (2160, 3840))
+    assert estimate_seconds(200, (2160, 3840)) == pytest.approx(2 * one, rel=0.01)
+    assert estimate_seconds(100, (4320, 7680)) > 3 * one, "bigger frames cost more"
 
 
 def test_frames_that_did_not_cover_a_pixel_do_not_count_as_zero_there():
