@@ -9,8 +9,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy,
-    QSplitter, QVBoxLayout, QWidget,
+    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..core.plate import PlateText, plate_text
@@ -35,6 +35,20 @@ def _set_box(box: QComboBox, value) -> None:
         box.blockSignals(True)
         box.setCurrentIndex(index)
         box.blockSignals(False)
+
+
+# Wide enough for "Humanist — Manrope" and "Bottom centre" without eliding,
+# narrow enough to leave the picture the rest of a 1000 px dialog.
+_SIDE_W = 290
+
+
+def _dim(text: str) -> QLabel:
+    """A quiet form label. Every control in the side column gets one — the row
+    layout had none, so a box reading "Medium" sat under one reading "2048 px"
+    with nothing to say which size was which."""
+    lb = QLabel(text)
+    lb.setStyleSheet("color: #8b8f96;")
+    return lb
 
 
 class ShareDialog(QDialog):
@@ -100,18 +114,19 @@ class ShareDialog(QDialog):
         # Checkable + one exclusive group, so the active aspect is visible. Six
         # plain push-buttons showed no state at all: after clicking around, the
         # only way to know what you would get was to read the preview's shape.
-        aspect_row = QHBoxLayout()
+        aspect_row = QGridLayout()
+        aspect_row.setSpacing(4)
         self._aspect_group = QButtonGroup(self)
         self._aspect_group.setExclusive(True)
         self._aspect_buttons: dict[str, QPushButton] = {}
-        for label, aspect in ASPECTS:
+        for _i, (label, aspect) in enumerate(ASPECTS):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(label == self._aspect_label)
             btn.clicked.connect(lambda _checked=False, a=aspect, lbl=label: self._select_aspect(a, lbl))
             self._aspect_group.addButton(btn)
             self._aspect_buttons[label] = btn
-            aspect_row.addWidget(btn)
+            aspect_row.addWidget(btn, _i // 3, _i % 3)   # 6 aspects, two rows of three
         # Output controls. Every one of these used to be a constant in the
         # source: 2048 px, JPEG, quality 92. For a tool that exists to produce a
         # file for somewhere else, not being able to say how big or what format
@@ -138,13 +153,21 @@ class ShareDialog(QDialog):
         self._annot_check.setChecked(self._annotations_on)
         self._annot_check.setVisible(annotated_rgb8 is not None)
         self._annot_check.toggled.connect(self._set_annotations)
-        aspect_row.addStretch(1)
-        aspect_row.addWidget(self._size_box)
-        aspect_row.addWidget(self._format_box)
-        aspect_row.addWidget(self._annot_check)
-        aspect_row.addWidget(self._caption_check)
+        out_form = QFormLayout()
+        out_form.setContentsMargins(0, 0, 0, 0)
+        out_form.setSpacing(6)
+        out_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        out_form.addRow(_dim("Image size"), self._size_box)
+        out_form.addRow(_dim("Format"), self._format_box)
+
+        frame_col = QVBoxLayout()
+        frame_col.setContentsMargins(0, 0, 0, 0)
+        frame_col.addLayout(aspect_row)
+        frame_col.addSpacing(8)
+        frame_col.addLayout(out_form)
+        frame_col.addWidget(self._annot_check)
         aspect_wrap = QWidget()
-        aspect_wrap.setLayout(aspect_row)
+        aspect_wrap.setLayout(frame_col)
 
         # Three fields rather than one line, because the plate is a composition
         # and not a strip: the object gets one weight, its common name another,
@@ -160,6 +183,11 @@ class ShareDialog(QDialog):
         self._credit_edit.setPlaceholderText("Exposure, date, @handle")
         for edit in (self._designation_edit, self._common_edit, self._credit_edit):
             edit.textChanged.connect(lambda _t: self._refresh_preview())
+            # Show the START of the line. A QLineEdit leaves the cursor at the
+            # end, so in the side column the credit opened reading
+            # "25m · 1233 × 10s · @andreas" — the tail of its own text, which
+            # looks like the beginning has been lost.
+            edit.setCursorPosition(0)
         reset_btn = QPushButton("↺")
         reset_btn.setFixedWidth(30)
         reset_btn.setToolTip("Restore the three lines this image's data gives")
@@ -222,28 +250,43 @@ class ShareDialog(QDialog):
 
         self._apply_annotation_treatment_default()
 
-        # Two rows: what the plate SAYS, then how it LOOKS. One row would have
-        # squeezed the text fields down to nothing once the styling controls were
-        # added, and the text is the part you actually type into.
+        # ONE LABELLED COLUMN, not three horizontal rows.
+        #
+        # The rows fought the shape of the window: the dialog is wide, the
+        # pictures are usually tall, and three rows of chrome came off the top
+        # of the pane where you judge the type. Worse, nothing was labelled — a
+        # box reading "Medium" sat two rows under one reading "2048 px" with
+        # nothing to say that one is the type size and the other the image's.
+        # Down the side there is room for a name beside every control.
         text_row = QHBoxLayout()
-        text_row.addWidget(self._designation_edit, 3)
-        text_row.addWidget(self._common_edit, 4)
-        text_row.addWidget(self._credit_edit, 5)
-        text_row.addWidget(reset_btn)
+        text_row.setContentsMargins(0, 0, 0, 0)
+        text_row.addWidget(self._credit_edit, 1)
+        text_row.addWidget(reset_btn)          # inline, not floating on its own line
 
-        style_row = QHBoxLayout()
-        style_row.addWidget(self._preset_box)
-        style_row.addWidget(self._family_box)
-        style_row.addWidget(self._cap_size_box)
-        style_row.addWidget(self._colour_btn)
-        style_row.addWidget(self._treatment_box)
-        style_row.addWidget(self._anchor_box)
-        style_row.addStretch(1)
+        plate_form = QFormLayout()
+        plate_form.setContentsMargins(0, 0, 0, 0)
+        plate_form.setSpacing(6)
+        plate_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        plate_form.addRow(_dim("Object"), self._designation_edit)
+        plate_form.addRow(_dim("Name"), self._common_edit)
+        plate_form.addRow(_dim("Credit"), text_row)
+
+        style_form = QFormLayout()
+        style_form.setContentsMargins(0, 0, 0, 0)
+        style_form.setSpacing(6)
+        style_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        style_form.addRow(_dim("Look"), self._preset_box)
+        style_form.addRow(_dim("Typeface"), self._family_box)
+        style_form.addRow(_dim("Type size"), self._cap_size_box)
+        style_form.addRow(_dim("Colour"), self._colour_btn)
+        style_form.addRow(_dim("Background"), self._treatment_box)
+        style_form.addRow(_dim("Position"), self._anchor_box)
 
         caption_row = QVBoxLayout()
         caption_row.setContentsMargins(0, 0, 0, 0)
-        caption_row.addLayout(text_row)
-        caption_row.addLayout(style_row)
+        caption_row.addLayout(plate_form)
+        caption_row.addSpacing(10)
+        caption_row.addLayout(style_form)
         self._caption_wrap = QWidget()
         self._caption_wrap.setLayout(caption_row)
         self._caption_wrap.setEnabled(self._caption_on)
@@ -267,11 +310,40 @@ class ShareDialog(QDialog):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([500, 500])
         self.splitter.setChildrenCollapsible(False)
+        # The left pane is the REFRAMING control, not a "before" view: it holds
+        # the crop box you drag to choose what gets framed. On "Original" the
+        # box is hidden and _current_crop falls through to the full frame, so
+        # the pane does nothing at all — and takes half the width from the pane
+        # where you are actually judging the result. Shown only when it earns
+        # the space. Andreas, 2026-09-02: "more valuable to have the preview as
+        # big as possible rather than show a before and after view."
+        self._sync_crop_pane()
+
+        def _rule():
+            f = QFrame()
+            f.setFrameShape(QFrame.Shape.HLine)
+            f.setStyleSheet("color: #33373d;")
+            return f
+
+        side = QVBoxLayout()
+        side.setContentsMargins(0, 0, 0, 0)
+        side.setSpacing(10)
+        side.addWidget(aspect_wrap)
+        side.addWidget(_rule())
+        side.addWidget(self._caption_check)
+        side.addWidget(self._caption_wrap)
+        side.addStretch(1)
+        self._side = QWidget()
+        self._side.setLayout(side)
+        self._side.setFixedWidth(_SIDE_W)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.addWidget(self._side)
+        body.addWidget(self.splitter, 1)
 
         root = QVBoxLayout(self)
-        root.addWidget(aspect_wrap)
-        root.addWidget(self._caption_wrap)
-        root.addWidget(self.splitter, 1)
+        root.addLayout(body, 1)
         root.addWidget(self.status)
         root.addLayout(buttons)
 
@@ -400,7 +472,19 @@ class ShareDialog(QDialog):
         else:
             self._image_view.show_crop_box()
             self._image_view.apply_aspect(aspect)
+        self._sync_crop_pane()
         self._refresh_preview()
+
+    def _sync_crop_pane(self) -> None:
+        """Show the reframing pane only while it can do something.
+
+        It holds the crop box; on "Original" that box is hidden and the crop
+        falls through to the full frame, so the pane is a static copy of the
+        picture taking half the width from the preview.
+        """
+        reframing = self._aspect is not None
+        self._image_view.setVisible(reframing)
+        self._paint_preview()
 
     def _set_size(self, _index: int) -> None:
         self._size = self._size_box.currentData()
@@ -421,6 +505,7 @@ class ShareDialog(QDialog):
                             (self._credit_edit, text.credit)):
             edit.blockSignals(True)
             edit.setText(value)
+            edit.setCursorPosition(0)      # show the start, not the tail
             edit.blockSignals(False)
         self._refresh_preview()            # one redraw, not three
 

@@ -526,8 +526,12 @@ def test_the_preview_fills_the_pane_it_is_given(qtbot):
     d.resize(1600, 1000)
     qtbot.waitUntil(lambda: d._preview_label.pixmap().width() > small.width(), timeout=2000)
     assert d._preview_label.pixmap().width() > small.width()
-    # and it must actually USE the pane, not sit at the old minimum
-    assert d._preview_label.pixmap().width() > d._preview_label.width() * 0.6
+    # ...and it must actually USE the pane. Fitting means filling ONE axis: a
+    # portrait share in a wide pane is limited by height, and asserting on
+    # width alone failed the moment the controls moved into a side column and
+    # left the preview much wider than it is tall.
+    pm, pane = d._preview_label.pixmap(), d._preview_label
+    assert pm.height() >= pane.height() * 0.95 or pm.width() >= pane.width() * 0.95
 
 
 def test_resizing_does_not_recompose(qtbot):
@@ -591,3 +595,60 @@ def test_a_build_with_no_bundled_fonts_says_so_instead_of_lying(qtbot, monkeypat
     assert not any(offered), f"offers type it cannot draw: {offered}"
     assert not d._family_box.isEnabled(), "the picker pretends to offer a choice"
     assert "unavailable" in d._family_box.itemText(0).lower()
+
+
+def test_the_reframing_pane_only_appears_when_it_can_do_something(qtbot):
+    """It holds the crop box, and on "Original" that box is hidden — the crop
+    falls through to the full frame. So at Original the pane is a static copy
+    of the picture taking half the width from the pane you are judging."""
+    d = _dlg(qtbot)
+    d.show(); qtbot.waitExposed(d)
+    assert d._image_view.isVisible() is False, "the crop pane shows with nothing to crop"
+    d._select_aspect(1.0, "1:1")
+    assert d._image_view.isVisible() is True, "no way to set the framing"
+    d._select_aspect(None, "Original")
+    assert d._image_view.isVisible() is False
+
+
+def test_the_pane_is_visible_exactly_when_the_crop_is_live(qtbot):
+    """The invariant that makes hiding it safe: the pane is hidden only in the
+    state where the crop box is hidden too, so there is never a live crop you
+    cannot see or reach. Asserting "the crop is unchanged at Original" would
+    NOT catch a regression — the full frame is the answer either way, so that
+    test passes however the pane behaves."""
+    d = _dlg(qtbot)
+    d.show(); qtbot.waitExposed(d)
+    h, w = d._source().shape[:2]
+
+    assert d._image_view.isVisible() is False
+    assert d._image_view.crop_box_visible() is False
+    assert d._current_crop() == (0, h, 0, w)          # the whole picture
+
+    d._select_aspect(1.0, "1:1")
+    assert d._image_view.isVisible() is True
+    assert d._image_view.crop_box_visible() is True
+    assert d._current_crop() != (0, h, 0, w), "a live crop with no pane to set it"
+
+
+def test_every_control_in_the_column_is_labelled(qtbot):
+    """The row layout had none: a box reading "Medium" sat two rows under one
+    reading "2048 px" with nothing to say one is the type size and the other
+    the image's."""
+    from PySide6.QtWidgets import QLabel
+    d = _dlg(qtbot)
+    labels = {lb.text() for lb in d._side.findChildren(QLabel)}
+    for wanted in ("Image size", "Format", "Object", "Name", "Credit",
+                   "Look", "Typeface", "Type size", "Colour", "Background", "Position"):
+        assert wanted in labels, f"{wanted!r} control has no label"
+
+
+def test_the_fields_show_the_start_of_their_text_not_the_tail(qtbot):
+    """A QLineEdit leaves the cursor at the end, so in the narrow side column
+    the credit opened reading "25m · 1233 × 10s · @andreas" — the tail of its
+    own text, which reads as though the beginning had been lost."""
+    d = _dlg(qtbot, meta={"target": "NGC 7000", "exposure": 10.0, "frames": 300,
+                          "date": "2026-08-31T22:10:00"})
+    assert d._credit_edit.cursorPosition() == 0
+    d._credit_edit.setText("x" * 200)
+    d._reset_slots()
+    assert d._credit_edit.cursorPosition() == 0, "reset leaves you looking at the tail"
