@@ -61,7 +61,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
 - ✂️ **Trim** — crop the edges off a *finished* image. A ragged stacking border is invisible until after the stretch, and going back to the Crop step would throw away everything done since; Trim appends instead, so the whole edit survives.
 - 🖥️ **Fullscreen inspection** — press `F` for a distraction-free canvas to pan and zoom around the frame.
-- 📤 **Share** — reframe to a social aspect ratio with an optional caption, then export or copy a JPEG — with or without your plate-solve annotations.
+- 📤 **Share** — reframe to a social aspect ratio and put a **title plate** on the picture: the object's catalogue designation, its common name and a credit line, filled in from the image itself and editable. Five looks to choose from, five typefaces that ship with the app so the result is the same on any machine, and nine placements. Export or copy a JPEG or PNG — with or without your plate-solve annotations.
 - ♻️ **Recipes & batch** — save your steps (Enhancements taps included) and apply them to a whole folder.
 - 💾 **Export** — 16-bit TIFF, 32-bit float FITS (WCS preserved), 8-bit PNG/JPEG, or a starless + stars pair.
 - 📋 **Provenance report** — export a readable Markdown record of every processing step applied.
