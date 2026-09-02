@@ -217,6 +217,41 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
     return f"{name} · {common}" if common else name
 
 
+def _lookup_key(designation_str: str) -> str:
+    """Normalise a designation to the form the cache is keyed on.
+
+    An OBJECT header is written by a human or by the mount, and openngc.csv
+    zero-pads to four digits, so the same object arrives spelled several ways:
+    "M 31", "M31", "NGC 224", "NGC0224". Measured on the real catalogue, 15 of
+    the 149 named rows are zero-padded, so an un-normalised lookup misses them
+    all — and every Messier number missed, because those rows are keyed NGC0224
+    with the number in a separate column.
+    """
+    key = (designation_str or "").replace(" ", "").upper()
+    m = re.match(r"^(NGC|IC)0*(\d+)([A-Z]*)$", key)
+    if m:
+        return f"{m.group(1)}{int(m.group(2)):04d}{m.group(3)}"
+    return key
+
+
+def _build_name_cache() -> dict[str, str]:
+    """designation -> colloquial name, under every spelling we might be handed.
+
+    Messier numbers get their own keys: the catalogue stores M 31 as NGC0224
+    with messier='31', so "M 31" — the single most likely thing in a Seestar
+    OBJECT header — resolved to nothing at all until this existed.
+    """
+    cache: dict[str, str] = {}
+    for row in load_catalog():
+        name, common, messier = row[0], row[1], row[8]
+        if not common:
+            continue
+        cache[_lookup_key(name)] = common
+        if messier:
+            cache[f"M{int(messier)}"] = common
+    return cache
+
+
 _NAME_CACHE: dict[str, str] | None = None
 
 
@@ -226,6 +261,5 @@ def common_name_for(designation_str: str) -> str:
     rows and the plate asks per keystroke."""
     global _NAME_CACHE
     if _NAME_CACHE is None:
-        _NAME_CACHE = {row[0].replace(" ", ""): row[1]
-                       for row in load_catalog() if row[1]}
-    return _NAME_CACHE.get((designation_str or "").replace(" ", ""), "")
+        _NAME_CACHE = _build_name_cache()
+    return _NAME_CACHE.get(_lookup_key(designation_str), "")

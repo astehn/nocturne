@@ -255,3 +255,54 @@ def test_common_name_for_reads_the_curated_table():
     assert common_name_for("NGC7000") == "North America Nebula"
     assert common_name_for("NGC 7000") == "North America Nebula"   # spaces tolerated
     assert common_name_for("NGC9999") == ""                        # absent, not an error
+
+
+# --- OBJECT-header lookups: the spelling problem ---
+#
+# Measured 2026-09-02 against the real catalogue: of the 149 rows carrying a
+# common name, 15 are zero-padded (NGC0224) and 28 are Messier objects keyed by
+# their NGC number with the M-number in a separate column. So an un-normalised
+# lookup missed every Messier designation — the single most likely thing in a
+# Seestar OBJECT header — and every padded NGC/IC. Andreas' own capture folders
+# are M 45, M 42, M 33, M 27, M 17, M 16, NGC 281, IC 1396A; before this, ALL of
+# them resolved to "" and the title plate's second line would have been blank
+# for essentially his whole library.
+
+def test_a_messier_number_resolves_to_the_name_people_use():
+    """The catalogue stores M 31 as NGC0224 with messier='31'. Nothing keyed on
+    'M31' at all, so the most common spelling found nothing."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("M 31") == "Andromeda Galaxy"
+    assert common_name_for("M31") == "Andromeda Galaxy"
+    assert common_name_for("M 42") == "Great Orion Nebula"
+    assert common_name_for("M 27") == "Dumbbell Nebula"
+
+
+def test_zero_padding_does_not_decide_whether_a_name_is_found():
+    """openngc.csv pads to four digits; a human types 'NGC 224'."""
+    from nocturne.core.catalog import common_name_for
+    for spelling in ("NGC 224", "NGC224", "NGC0224", "ngc 224"):
+        assert common_name_for(spelling) == "Andromeda Galaxy", spelling
+
+
+def test_an_unpadded_row_still_works():
+    """Guards the normalisation from breaking the rows that already worked."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("NGC 7000") == "North America Nebula"
+    assert common_name_for("vdB 142") == "Elephant's Trunk Nebula"
+
+
+def test_a_letter_suffix_is_preserved():
+    """IC 1396A must not normalise into IC 1396 — a different object, and the
+    curated file is explicit that a wrong name is worse than none."""
+    from nocturne.core.catalog import _lookup_key
+    assert _lookup_key("IC 1396A") == "IC1396A"
+    assert _lookup_key("IC 1396") == "IC1396"
+    assert _lookup_key("IC 1396A") != _lookup_key("IC 1396")
+
+
+def test_an_unknown_designation_is_still_empty_not_a_guess():
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("Backyard Fence") == ""
+    assert common_name_for("") == ""
+    assert common_name_for("NGC 99999") == ""
