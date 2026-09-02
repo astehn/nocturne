@@ -49,11 +49,18 @@ _RULE_MIN_W = 0.10      # fraction of the WIDTH, so a short designation still ru
 # is sum(alpha x area) < 59,000 px, and the ease spends it where it buys the
 # most contrast: at the edge, under the credit line. See the report on this
 # branch — this is a light scrim, and it wants judging on a real capture.
-_SCRIM_SPAN = 2.2
-_SCRIM_MIN = 0.22       # with all three slots empty there is still a gradient
-_SCRIM_ALPHA = 0.62
-_SCRIM_STOPS = ((0.0, 0.0), (0.5, 0.015), (0.7, 0.12), (0.85, 0.38),
-                (0.95, 0.74), (1.0, 1.0))
+# The scrim has to be strongest ACROSS THE TEXT, not at the frame edge. The
+# first tuning here put 62% of its alpha into the last 15% of the span, which
+# is the margin BELOW the block: measured on a 180-grey frame it removed 109
+# levels at the bottom edge and 4 where the text sits. Legibility is decided at
+# the block, so the ramp reaches most of its strength by the time it gets there
+# and then holds. Re-measured after the change: 46 levels at the block's top
+# edge, 78 by its baseline.
+_SCRIM_SPAN = 2.6       # of the block height — room to fade in above the text
+_SCRIM_MIN = 0.26       # with all three slots empty there is still a gradient
+_SCRIM_ALPHA = 0.78
+_SCRIM_STOPS = ((0.0, 0.0), (0.25, 0.14), (0.45, 0.42), (0.62, 0.72),
+                (0.8, 0.92), (1.0, 1.0))
 
 _BAND_ALPHA = 0.59      # DEFAULT_BAND_OPACITY — what today's caption band uses
 
@@ -68,6 +75,14 @@ _SHADOW_PASSES = 4
 _SHADOW_ALPHA = 235
 
 _MATTE_BG = QColor(11, 11, 13)   # a dark mount; the plate colours are off-white
+# The mount needs more air than a band does. At the shared _PAD the caption sat
+# ~30 px under a 1100 px frame and read as crowded against the picture rather
+# than mounted below it — the whole point of the treatment is the space.
+_MATTE_PAD = 0.075
+
+# The keyline sits at this fraction of the text margin, i.e. further out than the
+# text, so the caption is framed BY it rather than crossing it.
+_KEYLINE_INSET = 0.5
 
 _LAST: dict = {}
 
@@ -289,7 +304,7 @@ def draw_plate(image: QImage, text, style) -> QImage:
     if treatment == "matte":
         # Extends the canvas instead of covering the picture — the one treatment
         # that can sit under burned-in annotations without cutting a label in half.
-        extra = max(1, round(block_h + 2 * pad))
+        extra = max(1, round(block_h + 2 * h * _MATTE_PAD))
         out = QImage(w, h + extra, QImage.Format.Format_RGB888)
         out.fill(_MATTE_BG)
         p = QPainter(out)
@@ -324,11 +339,15 @@ def draw_plate(image: QImage, text, style) -> QImage:
     if getattr(style, "keyline", False):
         # A border, not a background: independent of the treatment, because the
         # Keyline preset wants it together with the shadow.
+        # Drawn OUTSIDE the text's own margin, not on it. Both used `mx`, so the
+        # border ran through the caption — on a real IC 1396A render the rule and
+        # the first letter of the credit line touched it.
+        inset = max(1, round(mx * _KEYLINE_INSET))
         pen = QPen(colour)
         pen.setWidth(max(1, round(h * 0.0015)))
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawRect(mx, mx, out.width() - 2 * mx - 1, out.height() - 2 * mx - 1)
+        p.drawRect(inset, inset, out.width() - 2 * inset - 1, out.height() - 2 * inset - 1)
     p.end()
 
     fits = block_h <= (h - 2 * mx) and block_w <= lay["avail"]

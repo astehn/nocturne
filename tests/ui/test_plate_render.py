@@ -36,6 +36,13 @@ def _dark(w=800, h=1000):
     return img
 
 
+def _px(img):
+    """Raw RGB rows — QImage pads each row to a 4-byte boundary, so slice to width."""
+    img = img.convertToFormat(QImage.Format.Format_RGB888)
+    w, h = img.width(), img.height()
+    return np.frombuffer(img.constBits(), np.uint8).reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3)
+
+
 def _mean(img):
     w, h = img.width(), img.height()
     img = img.convertToFormat(QImage.Format.Format_RGB888)
@@ -44,9 +51,48 @@ def _mean(img):
 
 
 def test_it_draws_something(qtbot):
+    """Look WHERE THE TEXT IS, not at the whole frame.
+
+    A frame-wide mean cannot tell "the glyphs are missing" from "the scrim is
+    doing its job": measured 2026-09-02, a scrim strong enough to make light
+    text readable over bright nebulosity removes more mean than the glyphs add,
+    so a frame-wide assertion silently caps the scrim at the point of being
+    useless. It had — the shipped tuning darkened the bottom edge by 109 levels
+    and the text's own background by 4.
+    """
     text = PlateText("IC 1396A", "Elephant's Trunk Nebula", "5 h 39 m · @andreas")
     out = draw_plate(_dark(), text, _Style())
-    assert _mean(out) > _mean(_dark()), "nothing was painted"
+    lay = last_layout()
+    a = _px(out)
+    top, bh = int(lay["block_top"]), int(lay["block_height"])
+    block = a[top:top + bh, :, 0]
+    assert block.size, "the layout reported an empty block"
+    # On a 0x101010 frame every bright pixel is a glyph.
+    assert (block > 100).sum() > 200, "no glyphs were drawn in the block"
+
+
+def test_the_scrim_darkens_the_text_and_not_just_the_frame_edge(qtbot):
+    """The bug this replaced: the gradient spent its budget below the text.
+
+    Legibility is decided at the block, so that is where the darkening has to
+    land — and on a BRIGHT frame, which is the case that actually fails."""
+    bright = QImage(600, 800, QImage.Format.Format_RGB888)
+    bright.fill(0xB4B4B4)
+    st = _Style(); st.treatment = "scrim"
+    draw_plate(bright, PlateText("IC 1396A", "Trunk", "c"), st)
+    lay = last_layout()
+    top, bh = int(lay["block_top"]), int(lay["block_height"])
+    out = draw_plate(bright, PlateText("", "", ""), st)   # scrim alone, no glyphs
+    rows = _px(out)[:, :, 0].mean(axis=1)
+    # Measured through the middle of the block: that is where the LARGE line
+    # sits, and it is the one whose legibility decides the picture. Before the
+    # re-tune this read 4 levels; it now reads ~86.
+    at_middle = 180.0 - rows[min(len(rows) - 1, top + bh // 2)]
+    assert at_middle > 55, (
+        f"only {at_middle:.0f} levels of darkening through the text block")
+    # ...and it must genuinely be a GRADIENT, not a band with an edge.
+    quarter = 180.0 - rows[min(len(rows) - 1, top + bh // 4)]
+    assert quarter < at_middle, "the scrim is flat, not a gradient"
 
 
 def test_long_text_wraps_instead_of_being_elided(qtbot):
@@ -159,3 +205,17 @@ def test_a_word_longer_than_the_line_keeps_every_character(qtbot):
     lay = last_layout()
     assert lay["sub_lines"] == [word]
     assert lay["overflow"] is True
+
+
+def test_the_keyline_does_not_run_through_the_text(qtbot):
+    """Both the border and the block were inset by the same margin, so on a real
+    IC 1396A render the rule and the credit line touched the frame. The border
+    has to sit outside the text's own margin."""
+    grey = QImage(600, 800, QImage.Format.Format_RGB888)
+    grey.fill(0x303030)
+    st = _Style(); st.treatment = "none"; st.keyline = True; st.anchor = "bottom-left"
+    draw_plate(grey, PlateText("IC 1396A", "Elephant's Trunk Nebula", "credit"), st)
+    lay = last_layout()
+    inset = round(st.margin * min(600, 800) * 0.5)
+    assert lay["block_left"] > inset + 2, (
+        f"text starts at {lay['block_left']}, keyline at {inset} — they collide")
