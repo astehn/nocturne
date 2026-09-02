@@ -521,6 +521,19 @@ class ShareDialog(QDialog):
         super().resizeEvent(event)
         self._paint_preview()
 
+    def showEvent(self, event) -> None:  # noqa: N802
+        """Paint once more after the layout has settled.
+
+        resizeEvent alone is not enough: the resizes that happen while the
+        dialog is being shown arrive before the splitter has taken its final
+        geometry, so the preview was still scaled to a stale, smaller pane —
+        measured 276x345 inside a 547x473 pane on first open. Same shape as the
+        workaround narrowband_dialog carries, and as ImageView.resizeEvent now
+        solves for the widget case.
+        """
+        super().showEvent(event)
+        self._paint_preview()
+
     # --- export / copy ---
     def _on_export_clicked(self) -> None:
         default_name = share_filename(self._metadata.get("source_label"),

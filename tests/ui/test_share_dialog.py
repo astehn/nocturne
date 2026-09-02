@@ -494,3 +494,17 @@ def test_a_solve_hands_the_plate_both_halves_directly(qtbot, tmp_path):
     src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
     assert "target_designation" in src and "identify_target_parts" in src, \
         "the solve does not write the pair; the plate is back to splitting a string"
+
+
+def test_the_preview_is_right_sized_on_FIRST_open(qtbot):
+    """resizeEvent alone was not enough: the resizes during show arrive before
+    the splitter has its final geometry, so first open showed 276x345 inside a
+    547x473 pane. You should not have to nudge the window to see your image."""
+    d = _dlg(qtbot)
+    d.resize(1120, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    pane = d._preview_label
+    pm = pane.pixmap()
+    assert pm.height() >= pane.height() * 0.95 or pm.width() >= pane.width() * 0.95, (
+        f"first open shows {pm.width()}x{pm.height()} in a {pane.width()}x{pane.height()} pane")
