@@ -1,25 +1,40 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog, QFileDialog,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider,
+    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSplitter, QVBoxLayout, QWidget,
 )
 
+from ..core.plate import PlateText, plate_text
+from ..core.presets import PRESETS, style_from_dict, style_to_dict
 from ..core.share import (
-    ALIGNMENTS, ASPECTS, CAPTION_SIZES, DEFAULT_SIZE, FORMATS, PLACEMENTS, SIZES,
-    caption_line, centered_crop, share_filename,
+    ASPECTS, CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
+    centered_crop, share_filename,
 )
 from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
 from ..settings import start_dir
+from .fonts import PLATE_FAMILIES, available_families
 from .image_view import ImageView
+from .plate_render import ANCHORS, TREATMENTS, last_layout
 from . import file_dialogs
+
+
+def _set_box(box: QComboBox, value) -> None:
+    """Move a combo to `value` WITHOUT emitting its signal — a value the code
+    chose must not be recorded as a value the user chose."""
+    index = box.findData(value)
+    if index >= 0:
+        box.blockSignals(True)
+        box.setCurrentIndex(index)
+        box.blockSignals(False)
 
 
 class ShareDialog(QDialog):
@@ -46,16 +61,25 @@ class ShareDialog(QDialog):
         self._caption_on = True
         self._size = DEFAULT_SIZE
         self._ext = "jpg"
-        self._cap_size = getattr(settings, "share_caption_size", 0.028)
-        self._cap_colour = getattr(settings, "share_caption_colour", "#ffffff")
-        self._cap_placement = getattr(settings, "share_caption_placement", "on")
-        # Has the USER chosen a placement this session? Until they do, annotations
-        # get to pick the safe one for them; afterwards their choice stands.
-        self._placement_touched = False
-        self._cap_align = getattr(settings, "share_caption_align", "left")
-        self._band_opacity = getattr(settings, "share_band_opacity", 0.59)
         self._save_runner = save_share            # injectable for tests
         self._clipboard_runner = to_clipboard    # injectable for tests
+        # Built first: _compose_current() writes the "will not fit" warning here,
+        # and the first compose happens while the rest of the dialog is still
+        # being assembled.
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+
+        # Type size stays in share_caption_size: it is the same quantity that
+        # field always held — caption size as a fraction of the composited
+        # height — and the plate has no size slot of its own to put it in.
+        self._cap_size = getattr(settings, "share_caption_size", DEFAULT_CAPTION_SIZE)
+        # Has the USER chosen a look this session? Until they do, annotations get
+        # to pick the safe treatment for them; afterwards their choice stands.
+        self._placement_touched = False
+
+        self._presets = self._preset_catalogue()
+        start = self._starting_style()
+        self._cap_colour = start.colour
 
         self._image_view = ImageView()
         self._image_view.setMinimumSize(360, 320)
@@ -98,9 +122,9 @@ class ShareDialog(QDialog):
         for label, ext in FORMATS:
             self._format_box.addItem(label, ext)
         self._format_box.currentIndexChanged.connect(self._set_format)
-        self._format_box.setToolTip("PNG is lossless — better for labels and the caption band")
+        self._format_box.setToolTip("PNG is lossless — better for labels and the title plate")
 
-        self._caption_check = QCheckBox("Caption")
+        self._caption_check = QCheckBox("Title plate")
         self._caption_check.setChecked(True)
         self._caption_check.toggled.connect(self._set_caption)
         # Only offered when a solution exists — a dead checkbox would imply the
@@ -117,25 +141,42 @@ class ShareDialog(QDialog):
         aspect_wrap = QWidget()
         aspect_wrap.setLayout(aspect_row)
 
-        # Free text rather than a checkbox per field. Deleting a field is just
-        # deleting words, and you also get "first light with the S30", which no
-        # set of toggles can express. Reset restores the generated line.
-        self._caption_edit = QLineEdit(caption_line(self._metadata, self._settings.handle))
-        self._caption_edit.setPlaceholderText("Caption — anything you like")
-        self._caption_edit.textChanged.connect(lambda _t: self._refresh_preview())
+        # Three fields rather than one line, because the plate is a composition
+        # and not a strip: the object gets one weight, its common name another,
+        # the exposure details a third. Each is free text and each is clearable —
+        # the auto-fill is a starting point, never a constraint. Reset restores
+        # what the image itself says.
+        text = plate_text(self._metadata, self._settings.handle)
+        self._designation_edit = QLineEdit(text.designation)
+        self._designation_edit.setPlaceholderText("Object")
+        self._common_edit = QLineEdit(text.common)
+        self._common_edit.setPlaceholderText("Common name")
+        self._credit_edit = QLineEdit(text.credit)
+        self._credit_edit.setPlaceholderText("Exposure, date, @handle")
+        for edit in (self._designation_edit, self._common_edit, self._credit_edit):
+            edit.textChanged.connect(lambda _t: self._refresh_preview())
         reset_btn = QPushButton("↺")
         reset_btn.setFixedWidth(30)
-        reset_btn.setToolTip("Restore the caption generated from this image's data")
-        reset_btn.clicked.connect(self._reset_caption)
+        reset_btn.setToolTip("Restore the three lines this image's data gives")
+        reset_btn.clicked.connect(self._reset_slots)
 
-        self._apply_annotation_placement_default()
-        self._place_box = QComboBox()
-        for label, key in PLACEMENTS:
-            self._place_box.addItem(label, key)
-        self._place_box.setCurrentIndex([k for _, k in PLACEMENTS].index(self._cap_placement)
-                                        if self._cap_placement in [k for _, k in PLACEMENTS] else 0)
-        self._place_box.currentIndexChanged.connect(self._set_placement)
-        self._place_box.setToolTip("Below the image never covers any of the picture")
+        self._preset_box = QComboBox()
+        for name in self._presets:
+            self._preset_box.addItem(name, name)
+        _set_box(self._preset_box, start.name)
+        self._preset_box.currentIndexChanged.connect(self._set_preset)
+        self._preset_box.setToolTip("A whole look in one click — type, treatment and placement")
+
+        # available_families() drops any face Qt refused, so the menu can never
+        # offer type the painter would silently substitute. Falling back to the
+        # full list keeps the control usable if nothing registered at all.
+        self._family_box = QComboBox()
+        for label, family in (available_families() or PLATE_FAMILIES):
+            self._family_box.addItem(label, family)
+        _set_box(self._family_box, start.family)
+        self._family_box.currentIndexChanged.connect(self._set_family)
+        self._family_box.setToolTip("Bundled with Nocturne, so the export looks the "
+                                    "same on every machine")
 
         self._cap_size_box = QComboBox()
         for label, frac in CAPTION_SIZES:
@@ -149,41 +190,42 @@ class ShareDialog(QDialog):
 
         self._colour_btn = QPushButton()
         self._colour_btn.setFixedWidth(34)
-        self._colour_btn.setToolTip("Caption colour")
+        self._colour_btn.setToolTip("Text colour")
         self._colour_btn.clicked.connect(self._pick_colour)
         self._paint_colour_btn()
 
-        self._align_box = QComboBox()
-        for label, key in ALIGNMENTS:
-            self._align_box.addItem(label, key)
-        keys = [k for _, k in ALIGNMENTS]
-        self._align_box.setCurrentIndex(keys.index(self._cap_align)
-                                        if self._cap_align in keys else 0)
-        self._align_box.currentIndexChanged.connect(self._set_align)
-        self._align_box.setToolTip("Where the caption sits along the band")
+        self._treatment_box = QComboBox()
+        for label, key in TREATMENTS:
+            self._treatment_box.addItem(label, key)
+        _set_box(self._treatment_box, start.treatment)
+        self._treatment_box.currentIndexChanged.connect(self._set_treatment)
+        self._treatment_box.setToolTip("What sits behind the text so it stays readable")
 
-        self._opacity = QSlider(Qt.Orientation.Horizontal)
-        self._opacity.setRange(0, 100)
-        self._opacity.setValue(round(self._band_opacity * 100))
-        self._opacity.setFixedWidth(110)
-        self._opacity.valueChanged.connect(self._set_opacity)
-        self._opacity_label = QLabel()
+        self._anchor_box = QComboBox()
+        for label, key in ANCHORS:
+            self._anchor_box.addItem(label, key)
+        _set_box(self._anchor_box, start.anchor)
+        self._anchor_box.currentIndexChanged.connect(self._set_anchor)
+        self._anchor_box.setToolTip("Where the plate sits on the picture")
 
-        # Two rows: what the caption SAYS, then how it LOOKS. One row would have
-        # squeezed the text field down to nothing once the styling controls were
+        self._apply_annotation_treatment_default()
+
+        # Two rows: what the plate SAYS, then how it LOOKS. One row would have
+        # squeezed the text fields down to nothing once the styling controls were
         # added, and the text is the part you actually type into.
         text_row = QHBoxLayout()
-        text_row.addWidget(self._caption_edit, 1)
+        text_row.addWidget(self._designation_edit, 3)
+        text_row.addWidget(self._common_edit, 4)
+        text_row.addWidget(self._credit_edit, 5)
         text_row.addWidget(reset_btn)
 
         style_row = QHBoxLayout()
-        style_row.addWidget(self._place_box)
-        style_row.addWidget(self._align_box)
+        style_row.addWidget(self._preset_box)
+        style_row.addWidget(self._family_box)
         style_row.addWidget(self._cap_size_box)
         style_row.addWidget(self._colour_btn)
-        style_row.addWidget(QLabel("Band"))
-        style_row.addWidget(self._opacity)
-        style_row.addWidget(self._opacity_label)
+        style_row.addWidget(self._treatment_box)
+        style_row.addWidget(self._anchor_box)
         style_row.addStretch(1)
 
         caption_row = QVBoxLayout()
@@ -193,14 +235,11 @@ class ShareDialog(QDialog):
         self._caption_wrap = QWidget()
         self._caption_wrap.setLayout(caption_row)
         self._caption_wrap.setEnabled(self._caption_on)
-        self._sync_opacity_enabled()
 
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._copy_btn = QPushButton("Copy to clipboard")
         self._copy_btn.clicked.connect(self._do_copy)
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
         buttons = QHBoxLayout()
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._copy_btn)
@@ -226,7 +265,97 @@ class ShareDialog(QDialog):
 
         self._refresh_preview()
 
-    # --- aspect / caption ---
+    # --- the look ---
+    def _preset_catalogue(self) -> dict:
+        """The shipped presets first, then the user's own saved looks.
+
+        A malformed saved look is skipped rather than raised on: a settings file
+        must never be able to stop Share from opening."""
+        catalogue = {p.name: p for p in PRESETS}
+        for data in list(getattr(self._settings, "plate_user_presets", None) or []):
+            try:
+                style = style_from_dict(dict(data))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            catalogue[style.name] = style
+        return catalogue
+
+    def _starting_style(self):
+        """Last session's look, or the saved preset, or the default.
+
+        `plate_style` is only trusted when it names the preset that is actually
+        selected — otherwise the two disagree and one of them silently loses."""
+        name = str(getattr(self._settings, "plate_preset", "") or "")
+        if name not in self._presets:
+            name = PRESETS[0].name
+        saved = dict(getattr(self._settings, "plate_style", None) or {})
+        if saved.get("name") == name:
+            try:
+                return style_from_dict(saved)
+            except (TypeError, ValueError):
+                pass
+        return self._presets[name]
+
+    def _base_preset(self):
+        return self._presets.get(self._preset_box.currentData(), PRESETS[0])
+
+    def _style(self):
+        """The style the preview and the export both use. One place, so the two
+        cannot disagree — the same reason _compose_current() is the only compose
+        path.
+
+        Sizes are scaled rather than set: the preset decides the relationship
+        between the three lines, and the size control decides how loud the whole
+        plate is. Setting one of them absolutely would flatten the hierarchy the
+        preset exists to express.
+        """
+        base = self._base_preset()
+        scale = float(self._cap_size) / DEFAULT_CAPTION_SIZE
+        return replace(base,
+                       family=self._family_box.currentData() or base.family,
+                       treatment=self._treatment_box.currentData() or base.treatment,
+                       anchor=self._anchor_box.currentData() or base.anchor,
+                       colour=self._cap_colour,
+                       size_title=base.size_title * scale,
+                       size_sub=base.size_sub * scale,
+                       size_credit=base.size_credit * scale)
+
+    def _plate(self) -> PlateText:
+        if not self._caption_on:
+            return PlateText("", "", "")
+        return PlateText(self._designation_edit.text().strip(),
+                         self._common_edit.text().strip(),
+                         self._credit_edit.text().strip())
+
+    def _sync_style_boxes(self, style) -> None:
+        """Point every control at `style` without any of them reporting a user
+        choice — a preset is one decision, not five."""
+        _set_box(self._family_box, style.family)
+        _set_box(self._treatment_box, style.treatment)
+        _set_box(self._anchor_box, style.anchor)
+        self._cap_colour = style.colour
+        self._paint_colour_btn()
+
+    def _set_preset(self, _i: int) -> None:
+        self._placement_touched = True     # a preset IS a chosen look
+        self._sync_style_boxes(self._base_preset())
+        self._persist_plate_style()
+        self._refresh_preview()
+
+    def _set_family(self, _i: int) -> None:
+        self._persist_plate_style()
+        self._refresh_preview()
+
+    def _set_treatment(self, _i: int) -> None:
+        self._placement_touched = True
+        self._persist_plate_style()
+        self._refresh_preview()
+
+    def _set_anchor(self, _i: int) -> None:
+        self._persist_plate_style()
+        self._refresh_preview()
+
+    # --- aspect / plate text ---
     def _source(self) -> np.ndarray:
         """The pixels every downstream step works from — clean or annotated."""
         if self._annotations_on and self._annotated_rgb8 is not None:
@@ -235,13 +364,7 @@ class ShareDialog(QDialog):
 
     def _set_annotations(self, on) -> None:
         self._annotations_on = bool(on)
-        before = self._cap_placement
-        self._apply_annotation_placement_default()
-        if self._cap_placement != before:
-            self._place_box.blockSignals(True)     # a default must not read as a user choice
-            self._place_box.setCurrentIndex([k for _, k in PLACEMENTS].index(self._cap_placement))
-            self._place_box.blockSignals(False)
-            self._sync_opacity_enabled()
+        self._apply_annotation_treatment_default()
         # Re-set the canvas so the crop box keeps its geometry while the pixels
         # underneath it change.
         box = self._image_view.crop_box() if hasattr(self._image_view, "crop_box") else None
@@ -279,92 +402,70 @@ class ShareDialog(QDialog):
         self._caption_wrap.setEnabled(self._caption_on)
         self._refresh_preview()
 
-    def _reset_caption(self) -> None:
-        self._caption_edit.setText(caption_line(self._metadata, self._settings.handle))
+    def _reset_slots(self) -> None:
+        text = plate_text(self._metadata, self._settings.handle)
+        for edit, value in ((self._designation_edit, text.designation),
+                            (self._common_edit, text.common),
+                            (self._credit_edit, text.credit)):
+            edit.blockSignals(True)
+            edit.setText(value)
+            edit.blockSignals(False)
+        self._refresh_preview()            # one redraw, not three
 
     def _paint_colour_btn(self) -> None:
         self._colour_btn.setStyleSheet(
             f"background:{self._cap_colour}; border:1px solid #666;")
 
     def _pick_colour(self) -> None:
-        c = QColorDialog.getColor(QColor(self._cap_colour), self, "Caption colour")
+        c = QColorDialog.getColor(QColor(self._cap_colour), self, "Plate colour")
         if c.isValid():
             self._cap_colour = c.name()
             self._paint_colour_btn()
-            self._persist_caption_style()
+            self._persist_plate_style()
             self._refresh_preview()
 
-    def _apply_annotation_placement_default(self) -> None:
-        """With annotations burned in, put the caption BELOW the image by default.
+    def _apply_annotation_treatment_default(self) -> None:
+        """With annotations burned in, put the plate on a MATTE by default.
 
-        On-image, the band is painted over the bottom of the picture — and with
-        an overlay present, that is whatever the overlay drew there. On a real
-        NGC 7000 export it swallowed the RA grid labels and cut the B 358 object
-        label in half. The two features were built independently and neither knew
-        about the other; below-image extends the canvas instead, so a collision
-        is not possible rather than merely unlikely.
+        Every other treatment paints over the bottom of the picture — and with an
+        overlay present, that is whatever the overlay drew there. On a real
+        NGC 7000 export the old caption band swallowed the RA grid labels and cut
+        the B 358 object label in half. The two features were built independently
+        and neither knew about the other; the matte extends the canvas instead,
+        so a collision is not possible rather than merely unlikely.
 
-        A DEFAULT, not a lock: the dropdown still offers on-image, and once the
-        user picks a placement themselves that choice is respected for the rest
-        of the session. Deliberately not persisted either — it belongs to "this
-        share has annotations", not to the user's house style.
+        A DEFAULT, not a lock: the dropdown still offers every treatment, and
+        once the user picks a look themselves that choice is respected for the
+        rest of the session. The combo is moved too, so it never reads
+        "Gradient" while the preview shows a matte. Deliberately not persisted —
+        it belongs to "this share has annotations", not to the user's house
+        style.
         """
-        if self._annotations_on and not self._placement_touched:
-            self._cap_placement = "below"
-
-    def _set_placement(self, _i: int) -> None:
-        self._placement_touched = True
-        self._cap_placement = self._place_box.currentData()
-        self._sync_opacity_enabled()
-        self._persist_caption_style()
-        self._refresh_preview()
-
-    def _sync_opacity_enabled(self) -> None:
-        """The band slider is always live. It was disabled for "Below image" on
-        the reasoning that a strip on fresh canvas has nothing to see through —
-        correct about alpha, wrong as a control. Disabling it left the user with
-        a slider that could not be moved and a tooltip nobody hovers, which reads
-        as broken rather than as unavailable. It now means "how dark the band is"
-        in both modes, so it always does something visible."""
-        on_image = self._cap_placement != "below"
-        self._opacity.setEnabled(True)
-        self._opacity_label.setText(f"{self._opacity.value()}%")
-        self._opacity.setToolTip(
-            "How much of the picture shows through the band" if on_image
-            else "How dark the strip under the image is (100% = black)")
-
-    def _set_align(self, _i: int) -> None:
-        self._cap_align = self._align_box.currentData()
-        self._persist_caption_style()
-        self._refresh_preview()
-
-    def _set_opacity(self, value: int) -> None:
-        self._band_opacity = value / 100.0
-        self._opacity_label.setText(f"{value}%")
-        self._persist_caption_style()
-        self._refresh_preview()
+        if self._placement_touched:
+            return
+        _set_box(self._treatment_box,
+                 "matte" if self._annotations_on else self._base_preset().treatment)
 
     def _set_cap_size(self, _i: int) -> None:
         self._cap_size = self._cap_size_box.currentData()
-        self._persist_caption_style()
+        self._persist_plate_style()
         self._refresh_preview()
 
-    def _persist_caption_style(self) -> None:
+    def _persist_plate_style(self) -> None:
         """Style is a personal house style, not a per-image choice — re-picking
         it on every share would be absurd. The TEXT is deliberately not saved:
         it belongs to this image."""
+        style = self._style()
+        if not self._placement_touched and self._annotations_on:
+            # The matte came from this image carrying annotations, not from the
+            # user. Saving it would make one annotated share change every share
+            # that followed.
+            style = replace(style, treatment=self._base_preset().treatment)
+        self._settings.plate_preset = style.name
+        self._settings.plate_style = style_to_dict(style)
         self._settings.share_caption_size = self._cap_size
-        self._settings.share_caption_colour = self._cap_colour
-        self._settings.share_caption_placement = self._cap_placement
-        self._settings.share_caption_align = self._cap_align
-        self._settings.share_band_opacity = self._band_opacity
         if self._settings_saver:
             self._settings_saver(self._settings)
-
-    def _current_caption(self) -> str:
-        if not self._caption_on:
-            return ""
-        return self._caption_edit.text()
 
     # --- crop / compose ---
     def _current_crop(self):
@@ -376,11 +477,17 @@ class ShareDialog(QDialog):
         return centered_crop(w, h, self._aspect)
 
     def _compose_current(self) -> QImage:
-        return compose_share(self._source(), self._current_crop(),
-                             self._current_caption(), longest_edge=self._size,
-                             size_frac=self._cap_size, colour=self._cap_colour,
-                             placement=self._cap_placement, align=self._cap_align,
-                             band_opacity=self._band_opacity)
+        plate = self._plate()
+        image = compose_share(self._source(), self._current_crop(), plate,
+                              longest_edge=self._size, style=self._style())
+        # last_layout() is written by the last draw_plate ANYWHERE, so an empty
+        # plate — which never reaches the painter — would otherwise report the
+        # previous image's overflow.
+        drawn = bool(plate.designation or plate.common or plate.credit)
+        self.status.setText(
+            "Some text will not fit and has been wrapped — shorten it or choose "
+            "a smaller size." if drawn and last_layout().get("overflow") else "")
+        return image
 
     def _refresh_preview(self) -> None:
         image = self._compose_current()
