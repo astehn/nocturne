@@ -11,6 +11,7 @@ from . import APP_NAME, __version__
 from .core.applog import configure_logging
 from .core.certs import configure_ssl
 from .settings import autoconfigure_tools, resolve_settings_path
+from .ui.fonts import load_bundled_fonts
 from .ui.main_window import MainWindow
 from .ui.splash import MIN_SPLASH_SECONDS, make_splash
 from .ui.theme import apply_dark_theme
@@ -80,6 +81,11 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+
+    # After the QApplication (addApplicationFont needs one) and before any
+    # window: a plate drawn before these families register silently substitutes
+    # a system face, and nothing anywhere says so.
+    load_bundled_fonts()
 
     icon_path = _ASSETS / "nocturne_icon.svg"
     if icon_path.exists():
