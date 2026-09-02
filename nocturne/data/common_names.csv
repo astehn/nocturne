@@ -6,12 +6,18 @@
 # nothing to fetch, so every row here was written by hand and is only as good as
 # the person who wrote it.
 #
-# Rules for adding: the designation must exist in openngc.csv (a dead row is
-# silently useless), the name must be one people actually say, and it must name
+# Rules for adding: the name must be one people actually say, and it must name
 # THAT object rather than the region around it. An earlier draft of this file
 # called Sh2-131 the "Elephant's Trunk Nebula" — Sh2-131 is the whole 170' IC
 # 1396 region; the trunk is vdB 142 inside it. Wrong names are worse than none,
 # because a common name outranks size in identify_target.
+#
+# A designation NOT in openngc.csv is no longer a dead row (2026-09-02). It
+# cannot be ANNOTATED — a label needs sky coordinates, and the catalogue is
+# where those come from — but `common_name_for` reads this file directly, so
+# the name still reaches the Share title plate. That is how M 45 and IC 1396A
+# get named: OpenNGC covers NGC and IC objects only, and M 45 has no NGC number
+# at all (it is Melotte 22), while IC 1396A is a sub-region OpenNGC omits.
 designation,common
 Sh2-155,Cave Nebula
 Sh2-142,Wizard Nebula
@@ -31,3 +37,7 @@ LDN935,Gulf of Mexico
 LDN1622,Boogeyman Nebula
 vdB141,Ghost Nebula
 vdB142,Elephant's Trunk Nebula
+# --- named for the title plate; not all of these can be annotated ---
+NGC0281,Pacman Nebula
+M45,Pleiades
+IC1396A,Elephant's Trunk Nebula

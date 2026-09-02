@@ -242,6 +242,14 @@ def _build_name_cache() -> dict[str, str]:
     OBJECT header — resolved to nothing at all until this existed.
     """
     cache: dict[str, str] = {}
+    # Curated names FIRST, so a row with no catalogue entry still resolves.
+    # `_curated_names` is applied inside load_catalog only to rows that exist
+    # there, which is right for annotation — a label needs sky coordinates. A
+    # NAME needs none, so M 45 (Melotte 22, no NGC number) and IC 1396A (a
+    # sub-region OpenNGC does not carry) can be named here even though neither
+    # can ever be annotated.
+    for designation_str, common in _curated_names().items():
+        cache[_lookup_key(designation_str)] = common
     for row in load_catalog():
         name, common, messier = row[0], row[1], row[8]
         if not common:
