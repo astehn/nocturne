@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.24.0] — 2026-09-02
+
+Half the download, and a Share dialog that gives the picture the room
+
+### Added
+- Masters record when they were taken, and at what gain. Neither was ever written to the file — the session that made a stack showed the date, and re-opening that same master tomorrow showed nothing. A stack that runs past midnight now records both ends of the night, so a title plate can say “26–27 Aug 2026” rather than picking one date and being wrong about half the frames.
+
+### Changed
+- The app is 264 MB instead of 491 MB. It was carrying 153 MB of a super-resolution model removed in the last release — nothing left in the app could load it — and 78 MB of an HTML test-coverage report that ships inside one of its libraries. Neither was reachable.
+- Share's controls moved into a labelled column beside the picture. Every one now has a name — Look, Typeface, Type size, Colour, Background, Position — where before a box reading “Medium” sat two rows under one reading “2048 px” with nothing to say which size was which. The preview is about 40% larger in the same window.
+- The reframing pane appears only when you are reframing. On Original there is nothing to crop, so the picture gets the whole width; pick a shape and the frame comes back. It is headed “Post as”, and says plainly that your image is not changed — only the shared copy.
+- Dates read as “31 Aug 2026” rather than “2026-08-31”, in the title plate and the Import panel alike.
+
+### Fixed
+- Mosaic and Drizzle can no longer both be selected. Together they produced an unusable master: on a real mosaic panel, 736×112 where the same frames stacked normally give 2112×3824. The run then failed at plate-solving AFTER stacking every panel — hours of work to reach an error message. Whichever you tick last now wins, and the reason is shown.
+- The Share preview opened at its smallest size and stayed there until you resized the window.
+- The credit field opened showing the end of its own text, as though the start had been lost.
+
 ## [0.23.0] — 2026-09-02
 
 Your picture, titled — the Share tool becomes a plate you'd be happy to print
