@@ -111,6 +111,80 @@ def test_share_help_is_not_still_describing_the_old_fixed_caption():
         assert feature in b.lower(), f"help does not mention {feature}"
 
 
+def test_share_help_names_every_preset_that_ships():
+    """A named look the help never mentions is a look nobody finds."""
+    from nocturne.core.presets import PRESETS
+    b = _body("share")
+    for preset in PRESETS:
+        assert f"<b>{preset.name}</b>" in b, \
+            f"preset {preset.name!r} is offered but not explained"
+    assert PRESETS[0].name == "Scrim" and "the default" in b
+
+
+def test_share_help_says_data_keeps_todays_look_and_the_preset_agrees():
+    """The one promise to an existing user: their exports need not change."""
+    from nocturne.core.presets import preset_by_name
+    b, data = _body("share"), preset_by_name("Data")
+    assert data.treatment == "band" and data.colour == "#ffffff"
+    assert "solid band" in b.lower() and "white" in b.lower()
+
+
+def test_share_help_names_every_treatment_and_counts_the_anchors_right():
+    from nocturne.ui.plate_render import ANCHORS, TREATMENTS
+    b = _body("share")
+    for label, _key in TREATMENTS:
+        assert f"<b>{label}</b>" in b, f"treatment {label!r} exists but the help omits it"
+    assert len(ANCHORS) == 9 and "nine positions" in b
+
+
+def test_share_help_names_the_type_that_is_actually_bundled():
+    """The claim is that an export looks the same on any machine. It holds only
+    for families that ship — a family merely requested substitutes in silence."""
+    from nocturne.ui.fonts import FONT_DIR, PLATE_FAMILIES
+    b = _body("share")
+    for _label, family in PLATE_FAMILIES:
+        assert f"<b>{family}</b>" in b, f"{family} is offered in Share but not named in the help"
+    assert len(list(FONT_DIR.glob("*.ttf"))) == len(PLATE_FAMILIES)
+    assert "looks the same" in b and "installed" in b
+
+
+def test_share_help_describes_the_three_slots_the_dialog_actually_has():
+    b, sd = _body("share"), _src("nocturne/ui/share_dialog.py")
+    for attr in ("_designation_edit", "_common_edit", "_credit_edit"):
+        assert attr in sd, f"{attr} is gone; the help still promises three slots"
+    for slot in ("<b>object</b>", "<b>common name</b>", "<b>credit</b>"):
+        assert slot in b, f"help does not describe the {slot} slot"
+    assert "\u21ba" in b and 'QPushButton("\u21ba")' in sd
+
+
+def test_share_help_says_where_the_two_title_lines_come_from():
+    """Solve first, OBJECT header second, catalogue for the colloquial name."""
+    b, plate = _body("share"), _src("nocturne/core/plate.py")
+    assert "plate solve" in b.lower() and "target_designation" in plate
+    assert "OBJECT" in b and 'metadata.get("target")' in plate
+    assert "catalogue" in b and "common_name_for(desig)" in plate
+
+
+def test_share_help_promises_wrapping_and_the_renderer_wraps():
+    """The regression the plate exists to kill: the old caption elided, and a
+    real IC 1396A export lost its date and handle to an ellipsis in silence."""
+    b = _body("share")
+    pr, sd = _src("nocturne/ui/plate_render.py"), _src("nocturne/ui/share_dialog.py")
+    assert "wrap" in b.lower() and "status line" in b
+    assert "def _wrap(" in pr
+    assert "elidedText" not in pr, "the renderer elides again; the help says it wraps"
+    assert "will not fit and has been wrapped" in sd
+
+
+def test_share_help_explains_the_matte_default_under_annotations():
+    """A default that overrules nothing once the user has chosen — the help has
+    to say both halves or the dropdown looks broken."""
+    b, sd = _body("share"), _src("nocturne/ui/share_dialog.py")
+    assert "Matte" in b and "annotations" in b.lower()
+    assert '"matte" if self._annotations_on' in sd
+    assert "steps aside" in b and "if self._placement_touched" in sd
+
+
 def test_plate_solve_help_mentions_the_star_database():
     """The single most common reason a solve fails, and it is a separate download
     from ASTAP itself."""
