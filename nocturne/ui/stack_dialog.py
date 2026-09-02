@@ -5,9 +5,9 @@ import os
 from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QCheckBox, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSplitter, QTableWidget,
-    QTableWidgetItem,
+    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLayout,
+    QLineEdit, QCheckBox, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy,
+    QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -200,17 +200,32 @@ class StackDialog(QDialog):
                 col.addWidget(label if isinstance(label, QLabel) else _Hint(label))
             wrap = QWidget()
             wrap.setLayout(col)
+            # The row must not be squeezed below the height its text needs. A
+            # QFormLayout short of vertical room shrinks its rows, and the hints
+            # were then cut mid-sentence and painted over the row beneath:
+            # measured 2026-09-02 at 1100x760, two of five clipped; at 900x700,
+            # four of five, the worst losing 29 of 51 px. It degrades as the
+            # window shrinks, so it is worst exactly where there is least room.
+            # Either of these alone is sufficient — measured by removing each
+            # in turn — and removing BOTH clips all five hints at 900x700.
+            col.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+            wrap.setSizePolicy(QSizePolicy.Policy.Preferred,
+                               QSizePolicy.Policy.Minimum)
             return wrap
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         form.setVerticalSpacing(12)
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
-        form.addRow("Strictness", option_row(
-            self.strictness_box,
-            hint="How picky the automatic frame selection is."))
-        form.addRow("Integration", option_row(
-            self.avg_radio, self.sigma_radio, QLabel("κ:"), self.kappa_box,
+        # Each control says what it IS in its own label, so the collapsed state
+        # is still readable: "Strictness: Normal" alone does not say what is
+        # being judged, and "k:" is jargon to the person this app is for.
+        form.addRow("Frame selection", option_row(
+            self.strictness_box, QLabel("— how picky to be about which subs to keep"),
+            hint="Stricter drops more frames for soft or trailed stars. Every "
+                 "frame's verdict is in the list below, and you can overrule it."))
+        form.addRow("Combining", option_row(
+            self.avg_radio, self.sigma_radio, QLabel("rejection:"), self.kappa_box,
             hint="Sigma-clipped rejects outliers — satellites, cosmic rays — "
                  "at the cost of a second pass over the frames."))
         form.addRow("Framing", option_row(
@@ -260,7 +275,22 @@ class StackDialog(QDialog):
         self.splitter.setChildrenCollapsible(False)
 
         root = QVBoxLayout(self)
+        # The same collapsible help the main window uses, bound to the same
+        # sticky setting — so turning it off here turns it off there, and a
+        # novice still gets it by default (help_expanded starts True).
+        #
+        # Not icons-with-popups: that optimises for the person who already
+        # knows, at the cost of the person who does not. An explanation you
+        # must know to go looking for is close to no explanation, and this app
+        # is for someone who has not met sigma-clipping before.
+        self._help_link = QLabel()
+        self._help_link.setObjectName("stepExplainer")
+        self._help_link.setTextFormat(Qt.TextFormat.RichText)
+        self._help_link.linkActivated.connect(self._toggle_hints)
+
         root.addLayout(form)
+        root.addWidget(self._help_link)
+        self._apply_hints_visible()
         root.addWidget(self.splitter, 1)
         root.addWidget(self.progress)
         root.addWidget(self.status)
@@ -394,6 +424,37 @@ class StackDialog(QDialog):
             "Stack each pointing separately, plate-solve them, and assemble one "
             "wide image")
         self._sync_exclusive()
+
+    def _toggle_hints(self) -> None:
+        self._settings.help_expanded = not self._settings.help_expanded
+        try:
+            from ..settings import resolve_settings_path, save_settings
+            save_settings(self._settings, resolve_settings_path())
+        except OSError:
+            pass          # a preference that will not save is not worth a dialog
+        self._apply_hints_visible()
+
+    def _apply_hints_visible(self) -> None:
+        """Show or hide every explanation, and say which state you are in.
+
+        Measured at 1180x820: collapsing them gives the frame list — the thing
+        you actually work in — 63% more height. That matters most on the small
+        screens where the explanations were being clipped anyway.
+        """
+        shown = bool(getattr(self._settings, "help_expanded", True))
+        # NOT every _Hint. `drizzle_note` carries the gate's advice and the
+        # "this will take N hours and write M MB" estimate, and
+        # `exclusive_note` says why a box you just ticked untucked another.
+        # Those are what you decide ON, not what explains the control — hiding
+        # them with the help would mean collapsing the explanations quietly
+        # removed the numbers you needed to choose.
+        always = {self.drizzle_note, self.exclusive_note}
+        for hint in self.findChildren(_Hint):
+            if hint not in always:
+                hint.setVisible(shown)
+        self._help_link.setText(
+            '<a href="#" style="color:#7fb2e5;text-decoration:none">'
+            + ("How this works ▾" if shown else "How this works ▸") + "</a>")
 
     def _clear_other(self, other, turned_on: bool) -> None:
         """Turning one on turns the other off, so the LAST click wins.

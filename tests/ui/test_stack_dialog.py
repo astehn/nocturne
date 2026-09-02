@@ -1090,3 +1090,71 @@ def test_nothing_is_said_when_a_mosaic_is_not_even_possible(qtbot, tmp_path):
     d.mosaic_check.setEnabled(False)
     d.drizzle_check.setChecked(True)
     assert d.exclusive_note.text() == ""
+
+
+def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
+    """Same control and same sticky setting as the main window's "How this
+    works", so turning it off here turns it off there. Measured at 1180x820:
+    collapsing gives the frame list 63% more height."""
+    from nocturne.ui.stack_dialog import _Hint
+    d = _dialog(qtbot, tmp_path)
+    d._settings.help_expanded = True
+    d._apply_hints_visible()
+    d.show(); qtbot.waitExposed(d)
+    assert d.mosaic_hint.isVisible() is True
+    assert "▾" in d._help_link.text()
+
+    d._toggle_hints()
+    assert d.mosaic_hint.isVisible() is False
+    assert "▸" in d._help_link.text()
+    assert d._settings.help_expanded is False, "the choice is not sticky"
+
+
+def test_collapsing_the_help_does_not_hide_what_you_decide_on(qtbot, tmp_path):
+    """drizzle_note carries the gate's advice and the "N hours, M MB" estimate;
+    exclusive_note says why a box you just ticked unticked another. Hiding
+    those with the help would mean collapsing the explanations quietly removed
+    the numbers you needed to choose."""
+    d = _dialog(qtbot, tmp_path)
+    d.drizzle_note.setText("About 5 h, and a 380 MB master.")
+    d.exclusive_note.setText("Mosaic and Drizzle cannot be combined.")
+    d.show(); qtbot.waitExposed(d)
+    d._settings.help_expanded = False
+    d._apply_hints_visible()
+    assert d.drizzle_note.isVisible() is True, "the time and size estimate went with the help"
+    assert d.exclusive_note.isVisible() is True, "the gate's reason went with the help"
+    assert d.mosaic_hint.isVisible() is False
+
+
+def test_each_control_still_says_what_it_is_when_collapsed(qtbot, tmp_path):
+    """The collapsed state has to stand alone. "Strictness: Normal" does not
+    say what is being judged, and "κ:" is jargon to the person this is for."""
+    from PySide6.QtWidgets import QLabel
+    d = _dialog(qtbot, tmp_path)
+    labels = {lb.text() for lb in d.findChildren(QLabel)}
+    assert "κ:" not in labels, "kappa is still shown as a Greek letter"
+    assert any("rejection" in t for t in labels)
+    assert any("which subs to keep" in t for t in labels)
+
+
+@pytest.mark.parametrize("size", [(1400, 900), (1280, 800), (1100, 760), (900, 700)])
+def test_no_explanation_is_ever_cut_off(qtbot, tmp_path, size):
+    """A QFormLayout short of vertical room shrinks its rows, and the hints were
+    cut mid-sentence and painted over the row beneath. Measured 2026-09-02
+    BEFORE the fix: 2 of 5 clipped at 1100x760, 4 of 5 at 900x700, the worst
+    losing 29 of the 51 px it needed. It got worse as the window shrank, so it
+    was worst exactly where there was least room — a laptop.
+
+    1280x800 is the small-screen floor this project targets.
+    """
+    from nocturne.ui.stack_dialog import _Hint
+    d = _dialog(qtbot, tmp_path)
+    d._settings.help_expanded = True
+    d._apply_hints_visible()
+    d.resize(*size)
+    d.show()
+    qtbot.waitExposed(d)
+    clipped = [(h.text()[:40], h.minimumSizeHint().height(), h.height())
+               for h in d.findChildren(_Hint)
+               if h.isVisible() and h.height() < h.minimumSizeHint().height() - 1]
+    assert not clipped, f"at {size}: {clipped}"
