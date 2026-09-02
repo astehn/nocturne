@@ -2,6 +2,30 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.23.0] — 2026-09-02
+
+Your picture, titled — the Share tool becomes a plate you'd be happy to print
+
+### Added
+- A title plate in Share. Instead of one line of data across the bottom, a share now carries up to three: the object's catalogue designation, its common name, and a credit line. Nocturne fills all three in from the image itself — from the plate solve if you ran one, otherwise from the file's own target header plus its catalogue — and every one of them is yours to edit or delete.
+- Five typefaces, shipped with the app: a geometric sans, a humanist one, an elegant serif, an inscription serif and a condensed face. They travel inside Nocturne rather than being borrowed from your Mac, so a share looks the same wherever it is opened.
+- Five looks, one click each. Scrim fades the sky under the text with no visible edge; Plate sets the text straight on the picture with a soft shadow; Keyline frames it; Matte mounts the picture above the caption instead of over it; and Data is the caption strip exactly as it was, for anyone who liked it.
+- Nine positions and five backgrounds for the plate, plus a warm off-white that sits on a night sky more comfortably than pure white.
+- Common names for the objects you actually shoot. Nocturne now recognises a target however it is spelled — M 31, M31, NGC 224 and NGC0224 all find “Andromeda Galaxy” — and knows objects the standard catalogue omits entirely, like M 45 and IC 1396A.
+- A log file at ~/.nocturne/nocturne.log, so an overnight stack can tell you afterwards where its time went.
+
+### Changed
+- Faster launch: 9.2 seconds to 1.0 on an M1, by not shipping an inference runtime the app never uses.
+- A share's caption wraps instead of being cut off. A real 2,037-frame export was losing its date and the photographer's handle to an ellipsis, silently.
+
+### Fixed
+- Choosing “Save” when asked about unsaved changes did nothing but cancel what you were doing — on every path: quitting, opening a file, opening or closing a project. The save was starting in the background, and the app treated “not finished yet” as “you cancelled”.
+- Upscale's “Open as copy” replaced your project without asking, discarding an unsaved edit history that undo cannot reach back across. It asks now.
+- Saving after “Open as copy” wrote the new image over your saved .nocturne file, under the old name, with that name still in the title bar.
+- Frame grading rejected frames for being fractionally worse than their neighbours. A rejection now has to be meaningfully worse, not merely relative.
+- The Share preview sat at its minimum size for the life of the dialog instead of filling the pane.
+- A file dialog opened from inside Upscale or Stack could be unreachable behind the window it belonged to.
+
 ## [0.22.0] — 2026-09-01
 
 Drizzle — genuinely more detail from well-dithered subs — and a picture file that matches your screen
