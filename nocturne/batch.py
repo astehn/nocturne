@@ -51,12 +51,21 @@ def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner
         sid = step["stage"]
         option = deserialize_option(sid, step["option"])
         if sid == "enhance":
-            from .core.enhance import ENHANCE_OPS, star_colour_layers
+            from .core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
+                                       star_colour_layers)
             op = option
-            if op == "Star Colour":
+            # Two taps work on the SPLIT layers rather than the whole frame:
+            # Star Colour lifts saturation on the stars, Sharpen Nebulosity
+            # sharpens the starless layer. Neither is in ENHANCE_OPS, so both
+            # need the split here — Sharpen Nebulosity was missing, and adding
+            # it to the recipe registry without this branch would have turned
+            # "this tap cannot be saved" into a KeyError mid-batch.
+            layered = {"Star Colour": star_colour_layers,
+                       "Sharpen Nebulosity": sharpen_nebulosity_layers}
+            if op in layered:
                 from .core.starless import split_stars
                 starless, stars = split_stars(img)     # free split in batch (per spec)
-                img = star_colour_layers(starless, stars)
+                img = layered[op](starless, stars)
             else:
                 img = ENHANCE_OPS[op](img)
             continue

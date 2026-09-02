@@ -21,7 +21,7 @@ from .normalize import frame_stats, normalize_to
 from .parallel import ordered_results, plan_workers
 from .register import RegistrationError, find_transform, warp_with_validity
 from .register_pool import register_frames
-from .stacker import master_header
+from .stacker import capture_span, master_header, master_metadata
 
 
 @dataclass
@@ -215,16 +215,25 @@ def run_haoiii_extract(opts: HaOIIIOptions, *, on_progress=None) -> HaOIIIResult
         rgb = rgb / peak
     integ = sum(exposures[p] for p in used)
     ch, cw = rgb.shape[:2]
+    # BOTH the file and the in-memory result come from the same reference
+    # metadata. The header already did; the in-memory dict was hand-rolled one
+    # line above the comment warning against exactly that, and carried only
+    # frames/exposure/dimensions. So a master handed straight to the app had no
+    # target, camera, filter, optics or coordinates, while the file it had just
+    # written had all of them — and since the Share title plate shipped, that
+    # was visible: combining and sharing gave a plate with no object and no
+    # name, where saving and reopening the same master filled it in.
+    ref_meta = _parse_metadata(ref_header, *ref_shape)
+    span = capture_span(used)
+    if span[0]:
+        ref_meta["date"] = span[0]
+    if span[1]:
+        ref_meta["date_end"] = span[1]
     image = AstroImage(
         np.clip(rgb, 0.0, 1.0).astype(np.float32),
         is_linear=True,
-        metadata={"frames": len(used), "exposure": integ, "width": cw, "height": ch},
+        metadata=master_metadata(ref_meta, len(used), integ, cw, ch),
     )
-    # Same helper the normal stacker uses, so the two masters carry the same
-    # provenance by construction. Hand-rolling it here dropped FILTER and
-    # INSTRUME, which left a reloaded Ha/OIII master unable to name its own
-    # camera or filter while a normal stack of the same subs could.
-    ref_meta = _parse_metadata(ref_header, *ref_shape)
     header = master_header(ref_meta, len(used), integ, trimmed=opts.autocrop)
     save_fits(image, opts.output_path, header=header)
     if opts.write_channels:

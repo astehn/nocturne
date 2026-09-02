@@ -738,7 +738,12 @@ def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
             f"the topic never mentions the {STEP_NAME[stage]!r} step"
     for name in ("Crop", "Rotate", "Flip", "Narrowband", "Colour Balance"):
         assert name in b
-    assert len(ENHANCE_NAMES) == 10 and "all ten <b>Enhancements</b>" in b
+    # Pinned to the REGISTRY, not to a hard-coded number: the help said "all
+    # ten" while the panel shipped eleven, and a literal 10 on both sides let
+    # that agree with itself and disagree with the app.
+    _WORDS = {10: "ten", 11: "eleven", 12: "twelve", 13: "thirteen"}
+    assert f"all {_WORDS[len(ENHANCE_NAMES)]} <b>Enhancements</b>" in b, \
+        f"the help does not say there are {len(ENHANCE_NAMES)} enhancements"
     assert not uncaptured_step_names([(n, "") for n in ENHANCE_NAMES]), \
         "the taps are no longer captured; the help says they are"
 

@@ -88,14 +88,21 @@ def test_vibrance_protects_shadows_and_mono():
 
 
 def test_enhance_ops_registry_matches_enhance_names():
-    # Every recipe-captured tap except Star Colour (which needs a star split and
-    # is special-cased by callers) must have a replay function in ENHANCE_OPS —
-    # otherwise batch replay of that tap KeyErrors at runtime. Drift-guard: if a
-    # future tap is added to ENHANCE_NAMES but forgotten in ENHANCE_OPS, this
-    # fails structurally instead of only at batch time.
+    # Every recipe-captured tap must be replayable, or batch KeyErrors at
+    # runtime. Two work on the SPLIT layers rather than the whole frame — Star
+    # Colour on the stars, Sharpen Nebulosity on the starless — so they are not
+    # in ENHANCE_OPS and are special-cased by callers instead. Drift-guard: a
+    # future tap added to ENHANCE_NAMES but forgotten in both places fails here
+    # structurally rather than only when someone runs a batch.
     from nocturne.ui.pipeline import ENHANCE_NAMES
     from nocturne.core.enhance import ENHANCE_OPS
-    assert set(ENHANCE_NAMES) - {"Star Colour"} == set(ENHANCE_OPS)
+    LAYERED = {"Star Colour", "Sharpen Nebulosity"}
+    assert set(ENHANCE_NAMES) - LAYERED == set(ENHANCE_OPS)
+    # ...and the layered pair really is handled where the frame-wide ops are not.
+    from pathlib import Path
+    batch_src = (Path(__file__).parents[2] / "nocturne" / "batch.py").read_text()
+    for name in LAYERED:
+        assert f'"{name}":' in batch_src, f"{name} has no replay path in batch"
 
 
 def _plain_recombine(base_val, stars):

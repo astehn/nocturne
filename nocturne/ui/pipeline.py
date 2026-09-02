@@ -69,8 +69,15 @@ PROCESSING_ORDER = [
 # NOT named "Crop" so the provenance report can tell the two apart, and so
 # _has_crop keeps meaning "the user cropped before processing".
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
+# Every enhancement the Enhancements panel offers. This tuple decides what a
+# recipe can serialise (recipe.py) and what counts as an enhancement in the
+# history (main_window.py), so a tap missing from it is dropped from recipes AND
+# reported as un-capturable — a shipped, supported action treated as
+# unsupported. "Sharpen Nebulosity" was missing exactly that way; there is a
+# test asserting this list matches the buttons the panel actually builds.
 ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky",
-                 "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure")
+                 "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure",
+                 "Sharpen Nebulosity")
 
 # Finishing steps that operate in display space and require a stretched image.
 # These are the in-app tail stages minus "export" (exporting a linear file is

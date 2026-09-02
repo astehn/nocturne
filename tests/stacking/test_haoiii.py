@@ -689,3 +689,52 @@ def test_combining_the_extractors_own_channel_files_reproduces_its_master(tmp_pa
     assert np.allclose(rebuilt, master, atol=1e-4), (
         f"max difference {np.abs(rebuilt - master).max():.6f} — the extractor and "
         "the combiner no longer agree")
+
+
+def test_the_master_you_get_matches_the_master_you_saved(tmp_path):
+    """The in-memory result was hand-rolled with frames/exposure/dimensions
+    only, while the FILE it wrote got a full header — so an Ha/OIII master
+    handed straight to the app could not name its own target, camera or filter,
+    and the same master reopened from disk could.
+
+    Since the Share title plate shipped (v0.23.0) that is user-visible:
+    combining and sharing gave a plate with no object and no common name, where
+    saving and reopening filled it in. Same image, two different plates.
+    """
+    from nocturne.stacking.stacker import master_header, master_metadata
+    ref = {"target": "NGC 7000", "instrument": "Sony IMX585", "filter": "LP",
+           "gain": 200, "focal_length": 160.0, "pixel_size": 2.9,
+           "date": "2026-08-26T20:06:02", "date_end": "2026-08-27T03:24:30"}
+    mem = master_metadata(ref, 300, 3000.0, 3840, 2160)
+    hdr = master_header(ref, 300, 3000.0)
+
+    assert mem["target"] == hdr["OBJECT"] == "NGC 7000"
+    assert mem["filter"] == hdr["FILTER"] == "LP"
+    assert mem["instrument"] == hdr["INSTRUME"] == "Sony IMX585"
+    assert mem["gain"] == hdr["GAIN"] == 200
+    assert mem["date"] == hdr["DATE-OBS"]
+    assert mem["date_end"] == hdr["DATE-END"]
+
+
+def test_the_share_plate_is_filled_in_either_way(tmp_path):
+    """The consequence, stated as the user meets it."""
+    from nocturne.core.plate import plate_text
+    from nocturne.stacking.stacker import master_metadata
+    ref = {"target": "NGC 7000", "exposure": 10.0,
+           "date": "2026-08-26T20:06:02", "date_end": "2026-08-27T03:24:30"}
+    mem = master_metadata(ref, 300, 3000.0, 3840, 2160)
+    t = plate_text(mem, "@Andreas Stehn")
+    assert t.designation == "NGC 7000"
+    assert t.common == "North America Nebula", "the plate cannot name the object"
+    assert "26–27 Aug 2026" in t.credit
+
+
+def test_haoiii_builds_both_from_one_reference():
+    """Guards the shape of the fix, not just its result: the file and the
+    in-memory master must be derived from the SAME ref_meta, or they drift
+    apart again the next time one of them gains a field."""
+    from pathlib import Path
+    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "haoiii.py").read_text()
+    assert "metadata=master_metadata(ref_meta" in src, \
+        "the in-memory master is hand-rolled again"
+    assert "master_header(ref_meta" in src

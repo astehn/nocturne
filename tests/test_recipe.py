@@ -229,3 +229,46 @@ def test_tint_step_with_no_option_leaves_the_image_alone():
     data = rng.random((8, 8, 3)).astype(np.float32)
     out = TintStep().apply(AstroImage(data.copy(), is_linear=True, metadata={}), None)
     assert np.array_equal(out.data, data)
+
+
+def test_every_enhancement_the_panel_offers_can_be_saved_in_a_recipe():
+    """ENHANCE_NAMES decides what a recipe serialises AND what counts as an
+    enhancement in the history. A tap missing from it is dropped from recipes
+    and reported as un-capturable — a shipped, supported action treated as
+    unsupported. "Sharpen Nebulosity" was missing exactly that way: the panel
+    offered 11, the tuple listed 10.
+    """
+    import re
+    from pathlib import Path
+    from nocturne.ui.pipeline import ENHANCE_NAMES
+    src = (Path(__file__).parent.parent / "nocturne" / "ui" / "step_panels.py").read_text()
+    # The triples are (attr, LABEL, OP) and it is the OP that must be
+    # registered — "Boost Cyan (OIII)" is what the button says, "Boost Cyan" is
+    # what the history records. Taking the label instead reported two false
+    # positives the first time this test was written.
+    offered = set(re.findall(r'\("[a-z_]+_btn",\s*"[^"]+",\s*"([^"]+)"', src))
+    assert offered, "could not find the panel's enhancement buttons"
+    missing = sorted(offered - set(ENHANCE_NAMES))
+    assert not missing, f"the panel offers taps a recipe cannot save: {missing}"
+
+
+def test_a_recipe_keeps_sharpen_nebulosity():
+    from nocturne.recipe import recipe_from_entries, uncaptured_step_names
+    entries = [("Stretch", 0.6), ("Sharpen Nebulosity", None)]
+    steps = recipe_from_entries(entries).steps
+    assert {"stage": "enhance", "option": "Sharpen Nebulosity"} in steps
+    assert uncaptured_step_names(entries) == [], \
+        "a supported action is still reported as un-capturable"
+
+
+def test_every_saveable_enhancement_can_actually_be_replayed():
+    """The half that matters. Registering a tap in ENHANCE_NAMES without a
+    replay path turns "this cannot be saved" into a KeyError mid-batch — worse
+    than the warning it replaces, because the batch is already running."""
+    from nocturne.core.enhance import ENHANCE_OPS
+    from nocturne.ui.pipeline import ENHANCE_NAMES
+    from pathlib import Path
+    batch_src = (Path(__file__).parent.parent / "nocturne" / "batch.py").read_text()
+    for name in ENHANCE_NAMES:
+        replayable = name in ENHANCE_OPS or f'"{name}":' in batch_src
+        assert replayable, f"{name!r} serialises into a recipe but batch cannot apply it"

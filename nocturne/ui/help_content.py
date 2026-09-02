@@ -1392,7 +1392,7 @@ _TOPIC_LIST = (
        "the stepper is recorded: Background, Color, Colour Tint, Remove Green, Deconvolution, "
        "Stretch, Recover Core, Levels, Curves, Saturation, Remove Green Fringe, "
        "Noise Reduction, Local Contrast and Star Reduction — plus Crop, Rotate and Flip, the "
-       "<b>Narrowband</b> and <b>Colour Balance</b> tools, and all ten <b>Enhancements</b> "
+       "<b>Narrowband</b> and <b>Colour Balance</b> tools, and all eleven <b>Enhancements</b> "
        "taps.</p>"
        "<p>Two steps cannot be recorded: <b>Star Spikes</b> and <b>Trim</b>. If either is in "
        "your history, Save Recipe stops first and names it — <i>this recipe can\u2019t "

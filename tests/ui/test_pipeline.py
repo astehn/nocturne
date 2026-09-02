@@ -89,8 +89,13 @@ def test_deconvolution_stage_and_order():
 
 def test_enhancements_stage_and_names():
     from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, path_stages
+    # Eleven, matching the buttons the Enhancements panel builds. It was ten:
+    # "Sharpen Nebulosity" shipped in the panel but was never registered, so a
+    # recipe dropped it and told the user it could not be captured — a
+    # supported action treated as unsupported.
     assert ENHANCE_NAMES == ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten Sky",
-                             "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure")
+                             "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure",
+                             "Sharpen Nebulosity")
     ids = [s.id for s in path_stages()]
     assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
     assert "enhancements" not in PROCESSING_ORDER   # append-only, not a truncating position
