@@ -63,6 +63,12 @@ _SCRIM_STOPS = ((0.0, 0.0), (0.25, 0.14), (0.45, 0.42), (0.62, 0.72),
                 (0.8, 0.92), (1.0, 1.0))
 
 _BAND_ALPHA = 0.59      # DEFAULT_BAND_OPACITY — what today's caption band uses
+# The solid band is the LEGACY treatment: it is here so the Data preset gives an
+# existing user the strip they already had. Its height is share_render's
+# formula, not the plate's. Deliberately not a PlateStyle field — a style field
+# would imply the band fraction is something people tune, and it is not; it is a
+# compatibility constant with exactly one job.
+BAND_FRAC = 0.07        # share_render.BAND_FRAC
 
 # A blurred black copy under the glyphs, composited four times. A blur conserves
 # its own mass, and the crisp glyphs drawn on top reclaim whatever sits directly
@@ -322,14 +328,23 @@ def draw_plate(image: QImage, text, style) -> QImage:
     if treatment == "scrim":
         _scrim(p, w, h, block_h, style.anchor)
     elif treatment == "band":
+        # Measured share_render's way and then the block centred in it, because
+        # the promise Data makes is that the band does not MOVE. Growing only
+        # when the block is taller than the legacy strip keeps a one-line
+        # caption pixel-aligned with what the old renderer drew, while a
+        # three-slot plate still gets a band big enough to sit in.
+        band_h = float(max(lay["px_max"] * 2, round(h * BAND_FRAC),
+                           round(block_h + pad)))
         vertical = str(style.anchor or "bottom-centre").partition("-")[0]
         if vertical == "top":
-            y0, y1 = 0.0, top + block_h + pad
+            y0 = 0.0
         elif vertical == "bottom":
-            y0, y1 = band_top, float(h)
+            y0 = h - band_h
         else:
-            y0, y1 = band_top, top + block_h + pad
-        p.fillRect(0, round(y0), w, max(1, round(y1 - y0)),
+            y0 = top + block_h / 2.0 - band_h / 2.0
+        top = y0 + (band_h - block_h) / 2.0      # AlignVCenter, as _burn_caption was
+        band_top = y0
+        p.fillRect(0, round(y0), w, max(1, round(band_h)),
                    QColor(0, 0, 0, round(255 * _BAND_ALPHA)))
     elif treatment == "shadow":
         _shadow(p, out.width(), out.height(), lay, left, top, style.anchor)
