@@ -98,7 +98,12 @@ def _capture_lines(metadata: dict) -> list[str]:
     return out
 
 
-def build_report(entries, metadata, *, app_version: str, date: datetime.date) -> str:
+def build_report(entries, metadata, *, app_version: str, date: datetime.date,
+                 settings=None) -> str:
+    """`settings` is optional so existing callers keep working; supply it and
+    the report gains an "Engines used" section naming which implementation
+    actually ran for the steps that have a choice. Without it that section is
+    omitted rather than guessed at."""
     ser_entries = []
     for name, option in entries:
         try:
@@ -133,6 +138,26 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date) ->
         for i, name, body in blocks:
             lines.append(f"### {i}. {name}")
             lines += body
+            lines.append("")
+
+    # Which implementation ran. Several steps have an external tool and a
+    # built-in fallback whose results differ materially, and from the outside
+    # the two are the same line in a history — so a report that lists "Star
+    # Reduction 0.40" without saying whether StarXTerminator or the free split
+    # produced it cannot answer "what made this image".
+    if settings is not None:
+        from .receipt import notes_for, render_lines
+        engine_lines = render_lines(notes_for([n for n, _ in entries], settings))
+        if engine_lines:
+            lines.append("## Engines")
+            lines.append("")
+            # Stated, not implied: nothing in a history records which tools were
+            # configured when a step ran, so this describes the CURRENT setup.
+            lines.append("_Which implementation these steps use with your current "
+                         "tool configuration. A step applied when a different tool "
+                         "was configured would have used that one._")
+            lines.append("")
+            lines += engine_lines
             lines.append("")
 
     lines.append("---")

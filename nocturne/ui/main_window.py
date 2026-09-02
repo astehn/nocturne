@@ -3505,7 +3505,8 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         report = build_report(self.project.entries(), self.project.current().metadata,
-                              app_version=__version__, date=datetime.date.today())
+                              app_version=__version__, date=datetime.date.today(),
+                              settings=self.settings)
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:
