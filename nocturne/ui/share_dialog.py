@@ -111,6 +111,14 @@ class ShareDialog(QDialog):
                                           QSizePolicy.Policy.Ignored)
         self._preview_image = None
 
+        self._reframe_hint = QLabel(
+            "Slide or resize the frame to choose what is included. "
+            "Your image is not changed — only this shared copy.")
+        self._reframe_hint.setStyleSheet("color: #8b8f96;")
+        self._reframe_hint.setWordWrap(True)
+        self._reframe_hint.setVisible(False)
+
+
         # Checkable + one exclusive group, so the active aspect is visible. Six
         # plain push-buttons showed no state at all: after clicking around, the
         # only way to know what you would get was to read the preview's shape.
@@ -160,8 +168,20 @@ class ShareDialog(QDialog):
         out_form.addRow(_dim("Image size"), self._size_box)
         out_form.addRow(_dim("Format"), self._format_box)
 
+        # "Post as", not "Crop". This is the third place in the app with a green
+        # handled box on an image, and Andreas read it as a third crop tool
+        # (2026-09-02). It is not one: the box only exists once a ratio is
+        # chosen and apply_aspect locks it to that ratio, so there is no
+        # free-form rectangle here — you slide a fixed shape over a finished
+        # picture, and the picture is not changed. Crop composes the image and
+        # Trim finishes it; this fits the result into somebody else's frame,
+        # once per destination.
+        post_as = QLabel("Post as")
+        post_as.setStyleSheet("color: #8b8f96;")
+
         frame_col = QVBoxLayout()
         frame_col.setContentsMargins(0, 0, 0, 0)
+        frame_col.addWidget(post_as)
         frame_col.addLayout(aspect_row)
         frame_col.addSpacing(8)
         frame_col.addLayout(out_form)
@@ -337,10 +357,16 @@ class ShareDialog(QDialog):
         self._side.setLayout(side)
         self._side.setFixedWidth(_SIDE_W)
 
+        picture = QVBoxLayout()
+        picture.setContentsMargins(0, 0, 0, 0)
+        picture.setSpacing(6)
+        picture.addWidget(self._reframe_hint)
+        picture.addWidget(self.splitter, 1)
+
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.addWidget(self._side)
-        body.addWidget(self.splitter, 1)
+        body.addLayout(picture, 1)
 
         root = QVBoxLayout(self)
         root.addLayout(body, 1)
@@ -484,6 +510,10 @@ class ShareDialog(QDialog):
         """
         reframing = self._aspect is not None
         self._image_view.setVisible(reframing)
+        # Said only while the box is up, and said where the box is. The
+        # reassurance that matters is not "here is a crop tool" but "this one
+        # does not change your picture" — the other two do.
+        self._reframe_hint.setVisible(reframing)
         self._paint_preview()
 
     def _set_size(self, _index: int) -> None:

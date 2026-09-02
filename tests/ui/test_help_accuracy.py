@@ -1477,3 +1477,29 @@ def test_the_combine_help_matches_the_balance_labels_the_dialog_shows():
     assert f"<b>{d.balance_label.text()}</b>" in b, "the 0% label is not in the help"
     d.balance_slider.setValue(100)
     assert f"<b>{d.balance_label.text()}</b>" in b, "the 100% label is not in the help"
+
+
+def test_share_help_explains_why_there_is_a_frame_after_cropping():
+    """Andreas, 2026-09-02: "now we have cropping in three places". The help
+    has to answer that, and answer it accurately — this one is NOT a crop:
+    the box only exists once a ratio is chosen, and apply_aspect locks it to
+    that ratio, so there is no free-form rectangle here."""
+    b = _body("share")
+    assert "not a crop" in b
+    assert "never altered" in b
+    assert "cannot " in b and "free rectangle" in b, \
+        "the help must say the frame is ratio-locked, not a free crop"
+    # ...and the claim must match the code that draws it.
+    sd = _src("nocturne/ui/share_dialog.py")
+    assert "self._image_view.setVisible(reframing)" in sd, \
+        "the help says there is no frame on Original; the dialog shows one"
+    iv = _src("nocturne/ui/image_view.py")
+    assert "def apply_aspect(" in iv and "Lock to a ratio" in iv, \
+        "the help says the frame is locked to the ratio; apply_aspect no longer does that"
+
+
+def test_share_help_does_not_promise_a_free_crop_box():
+    """It used to read "pick an aspect (or drag the crop box to frame it by
+    eye)", which described a box that does not exist until you pick one."""
+    b = _body("share")
+    assert "drag the crop box" not in b

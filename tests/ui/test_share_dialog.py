@@ -652,3 +652,38 @@ def test_the_fields_show_the_start_of_their_text_not_the_tail(qtbot):
     d._credit_edit.setText("x" * 200)
     d._reset_slots()
     assert d._credit_edit.cursorPosition() == 0, "reset leaves you looking at the tail"
+
+
+def test_the_ratio_buttons_say_what_they_are_for(qtbot):
+    """This is the third place in the app with a green handled box on an image,
+    and it read as a third crop tool. It is not one — Crop composes the image,
+    Trim finishes it, and this fits the finished result into somebody else's
+    frame without changing it."""
+    from PySide6.QtWidgets import QLabel
+    d = _dlg(qtbot)
+    assert "Post as" in {lb.text() for lb in d._side.findChildren(QLabel)}
+
+
+def test_the_reframe_hint_appears_only_with_the_box_and_says_it_is_safe(qtbot):
+    """The reassurance that matters is not "here is a crop tool" but "this one
+    does not change your picture" — because the other two do."""
+    d = _dlg(qtbot)
+    d.show(); qtbot.waitExposed(d)
+    assert d._reframe_hint.isVisible() is False, "explains a box that is not there"
+    d._select_aspect(1.0, "1:1")
+    assert d._reframe_hint.isVisible() is True
+    assert "not changed" in d._reframe_hint.text()
+    d._select_aspect(None, "Original")
+    assert d._reframe_hint.isVisible() is False
+
+
+def test_the_hint_is_not_a_lie(qtbot):
+    """It promises the image is untouched. Prove that on the real object rather
+    than trusting the sentence: reframing must not alter the source pixels."""
+    import numpy as np
+    d = _dlg(qtbot)
+    before = d._source().copy()
+    d._select_aspect(1.0, "1:1")
+    d._select_aspect(9 / 16, "9:16")
+    d._compose_current()
+    np.testing.assert_array_equal(d._source(), before)
