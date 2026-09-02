@@ -127,7 +127,11 @@ class StackDialog(QDialog):
         self.kappa_box.setCurrentText("Medium")
         self.drizzle_check = QCheckBox("Drizzle ×2 — more detail, much bigger")
         self.drizzle_check.toggled.connect(lambda *_: self._auto_output_path())
+        self.drizzle_check.toggled.connect(
+            lambda on: self._clear_other(self.mosaic_check, on))
         self.mosaic_check = QCheckBox("Stack as mosaic")
+        self.mosaic_check.toggled.connect(
+            lambda on: self._clear_other(self.drizzle_check, on))
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
@@ -213,10 +217,12 @@ class StackDialog(QDialog):
             self.crop_check,
             hint="Off keeps the full frame. The edges are built from fewer "
                  "frames, so they are noisier, but you can always crop later."))
+        self.exclusive_note = _Hint("")
         self.mosaic_hint = _Hint(
             "Several pointings assembled into one wide image — needs ASTAP, "
             "and takes considerably longer.")
-        form.addRow("Mosaic", option_row(self.mosaic_check, hint=self.mosaic_hint))
+        form.addRow("Mosaic", option_row(self.mosaic_check, hint=self.mosaic_hint,
+                                         extra=self.exclusive_note))
         # The gate's advice and the time estimate belong to this row, not to a
         # label-less row of their own — which is where the dead vertical gap
         # above Output came from.
@@ -387,6 +393,46 @@ class StackDialog(QDialog):
         self.mosaic_check.setToolTip(
             "Stack each pointing separately, plate-solve them, and assemble one "
             "wide image")
+        self._sync_exclusive()
+
+    def _clear_other(self, other, turned_on: bool) -> None:
+        """Turning one on turns the other off, so the LAST click wins.
+
+        A fixed precedence would mean the box you just pressed silently losing
+        to the one you pressed a minute ago; being shown what you get is better
+        than being refused.
+        """
+        if turned_on and other.isChecked():
+            other.blockSignals(True)          # not a user decision; do not recurse
+            other.setChecked(False)
+            other.blockSignals(False)
+        self._auto_output_path()
+        self._sync_exclusive()
+
+    def _sync_exclusive(self) -> None:
+        """Mosaic and Drizzle cannot both run — measured, not assumed.
+
+        A mosaic must trim each panel before assembly, or the ragged edges are
+        baked into the seams, so it forces autocrop on. Drizzle's coverage
+        estimate is far more eager than an ordinary stack's, and on a real M 31
+        panel (2026-09-02) the two together produced a master of 736x112 where
+        the SAME six subs stacked normally give 2112x3824 — 1.4% of the frame.
+        ASTAP then has nothing to solve, and the run dies four steps later with
+        "fewer than two panels could be placed on the sky", after stacking every
+        panel. On a 39-panel set that is hours of work to reach an error.
+
+        Whichever the user ticked LAST wins, rather than refusing the click:
+        being told "you cannot have that" by a control you just pressed is worse
+        than being shown what you get instead.
+
+        The underlying coverage bug is separate and still open — it over-trims
+        ordinary drizzle stacks too, just not fatally.
+        """
+        clash = self.mosaic_check.isChecked() or self.drizzle_check.isChecked()
+        self.exclusive_note.setText(
+            "Mosaic and Drizzle cannot be combined — a mosaic has to trim each "
+            "pointing, and a drizzled stack cannot be trimmed reliably yet."
+            if clash and self.mosaic_check.isEnabled() else "")
 
     # --- grade ---
     def grade(self) -> None:

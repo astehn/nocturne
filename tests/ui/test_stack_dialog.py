@@ -1043,3 +1043,50 @@ def test_the_rename_is_actually_wired_into_the_finish(qtbot, tmp_path):
     d._on_stacked(res)
     assert not original.exists(), "finishing a stack left the misnamed file"
     assert "2034" in os.path.basename(res.output_path), res.output_path
+
+
+def _mosaic_ready(d):
+    """Put the dialog in the state where Mosaic is selectable."""
+    d.mosaic_check.setEnabled(True)
+    return d
+
+
+def test_mosaic_and_drizzle_cannot_both_be_on(qtbot, tmp_path):
+    """Measured 2026-09-02, not assumed: a mosaic forces autocrop on each panel
+    (ragged edges would become seams), and drizzle's coverage estimate is far
+    more eager — on a real M 31 panel the pair produced a 736x112 master where
+    the same six subs stacked normally give 2112x3824. ASTAP then has nothing
+    to solve and the run dies with "fewer than two panels could be placed",
+    AFTER stacking every panel. Hours of work to reach an error."""
+    d = _mosaic_ready(_dialog(qtbot, tmp_path))
+    d.drizzle_check.setChecked(True)
+    d.mosaic_check.setChecked(True)
+    assert d.mosaic_check.isChecked() is True
+    assert d.drizzle_check.isChecked() is False, "both are on; the run would be wasted"
+
+
+def test_the_last_one_clicked_wins_either_way(qtbot, tmp_path):
+    """Being told "you cannot have that" by a control you just pressed is worse
+    than being shown what you get instead."""
+    d = _mosaic_ready(_dialog(qtbot, tmp_path))
+    d.mosaic_check.setChecked(True)
+    d.drizzle_check.setChecked(True)
+    assert d.drizzle_check.isChecked() is True
+    assert d.mosaic_check.isChecked() is False
+
+
+def test_the_reason_is_shown_not_just_the_behaviour(qtbot, tmp_path):
+    """A control that silently unticks itself reads as a bug."""
+    d = _mosaic_ready(_dialog(qtbot, tmp_path))
+    d.drizzle_check.setChecked(True)
+    assert "cannot be combined" in d.exclusive_note.text()
+    d.drizzle_check.setChecked(False)
+    assert d.exclusive_note.text() == ""
+
+
+def test_nothing_is_said_when_a_mosaic_is_not_even_possible(qtbot, tmp_path):
+    """One pointing: Mosaic is disabled, so explaining a clash with it is noise."""
+    d = _dialog(qtbot, tmp_path)
+    d.mosaic_check.setEnabled(False)
+    d.drizzle_check.setChecked(True)
+    assert d.exclusive_note.text() == ""
