@@ -8,6 +8,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME, __version__
+from .core.applog import configure_logging
 from .core.certs import configure_ssl
 from .settings import autoconfigure_tools, resolve_settings_path
 from .ui.main_window import MainWindow
@@ -61,6 +62,13 @@ def main() -> None:
     # machine's OpenSSL cert path, which does not exist on a user's Mac, and
     # every HTTPS call then fails silently — see core/certs.py.
     configure_ssl()
+
+    # A packaged app has no console, so the stacking phase timings had nowhere
+    # to go: they were logged at INFO on a logger with no handler, and Python's
+    # last-resort handler drops anything below WARNING. A 1233-frame drizzle ran
+    # overnight on 2026-09-02, took ~4x the estimate, and left no record of
+    # which phase was slow. ~/.nocturne/nocturne.log now holds it.
+    configure_logging()
 
     # The check the packaged app could not do for itself. From source the build
     # machine's Homebrew cert store is present, so a bundle that works only here
