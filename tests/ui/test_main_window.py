@@ -5170,3 +5170,190 @@ def test_opening_a_fits_over_a_bundle_forgets_the_bundle(qtbot, tmp_path):
     win._project_path = str(tmp_path / "m45.nocturne")
     win.open_fits(path)
     assert win._project_path is None
+
+
+# --- WYSIWYG: what you SEE is what Apply COMMITS -----------------------------
+#
+# The project's central rule. Audited 2026-09-02: the invariant HOLDS for every
+# live-preview step, but only tint was guarded — one test for nine steps. These
+# are the missing eight.
+#
+# Each applies a stretch FIRST so the pre-step and post-step images differ. That
+# is the lesson from the tint test: without a preceding change the two candidate
+# bases are identical, so the test cannot tell a preview built on the right base
+# from one built on the raw image, and it passes under exactly that mutation.
+
+_WYSIWYG_CASES = [
+    ("recover_core",   "_recover_pending", "_render_recover_preview",    0.5),
+    ("levels",         "_levels_pending",  "_render_levels_preview",     (0.02, 1.1, 0.98)),
+    ("curves",         "_curve_pending",   "_render_curve_preview",
+     [(0.0, 0.0), (0.4, 0.55), (1.0, 1.0)]),
+    ("local_contrast", "_lc_pending",      "_render_lc_preview",         0.6),
+    ("green_fringe",   "_fringe_pending",  "_render_fringe_preview",     0.7),
+    ("star_reduction", "_sr_pending",      "_render_sr_preview",         0.5),
+]
+
+
+def _other_option(option):
+    """A materially different value of the same shape, for the vacuity check."""
+    if isinstance(option, tuple):
+        return tuple(v * 0.4 for v in option)
+    if isinstance(option, list):
+        return [(x, y * 0.5) for x, y in option]
+    return option * 0.3
+
+
+def _starry_fits(tmp_path, n=64, nstars=14, seed=5):
+    """A frame with actual STARS in it.
+
+    The ordinary fixture is uniform noise, and `split_stars` finds nothing in
+    it — so the star layer is empty and Star Reduction's amount and Green
+    Fringe's strength are both inert. Measured 2026-09-02: on the 24x24 noise
+    fixture, reduce_stars at 0.5 and at 0.3 returned IDENTICAL pixels, so a
+    preview mutated to use a different amount still matched its commit and the
+    guard proved nothing. With 14 gaussian stars the same comparison moves by
+    0.108. Third time in one session a synthetic fixture could not express the
+    thing under test — see the fixture blind-spot note in CLAUDE.md.
+    """
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:n, 0:n]
+    img = rng.random((n, n)) * 600.0 + 3000.0
+    for _ in range(nstars):
+        cy, cx = rng.uniform(5, n - 5, 2)
+        img += rng.uniform(12000.0, 26000.0) * np.exp(
+            -((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.5 ** 2))
+    cube = np.stack([img, img * 0.9, img * 0.8]).clip(0, 65535).astype(np.uint16)
+    p = tmp_path / "starry.fits"
+    hdu = fits.PrimaryHDU(cube)
+    hdu.header["FILTER"] = "L"
+    hdu.writeto(str(p))
+    return str(p)
+
+
+def _prime_split(win, stage):
+    """Cache the star split some steps wait for.
+
+    Green Fringe and Star Reduction render NOTHING until their split has
+    landed, and their Apply is disabled for the same reason — so without this
+    the preview and the commit are both no-ops and the comparison below is
+    trivially true. Measured 2026-09-02: the green-fringe case passed while
+    mutating its preview to use half the strength, because neither side ever
+    ran.
+    """
+    from nocturne.core.starless import split_stars
+    if stage == "star_reduction":
+        base = win._preview_base("star_reduction")
+        starless, stars = split_stars(base)
+        win._sr_layers = (win._sr_sig(base), starless, stars)
+        win._sr_ready = True
+    elif stage == "green_fringe":
+        base = win._fringe_base()
+        starless, stars = split_stars(base)
+        win._fringe_layers = (win._sr_sig(base), "split", starless, stars)
+        win._fringe_ready = True
+
+
+@pytest.mark.parametrize("stage,attr,renderer,option", _WYSIWYG_CASES)
+def test_the_preview_equals_what_apply_commits(qtbot, tmp_path, stage, attr, renderer, option):
+    win = _window(qtbot, tmp_path)
+    # The two split-dependent steps need real stars or their option is inert.
+    needs_stars = stage in ("star_reduction", "green_fringe")
+    win.open_fits(_starry_fits(tmp_path) if needs_stars else _make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)                 # so the bases are not trivially equal
+    before = win.project.current().data.copy()
+    win._go_to_id(stage)
+    _prime_split(win, stage)
+
+    setattr(win, attr, option)
+    getattr(win, renderer)()
+    shown = win._displayed
+    assert shown is not None, f"{stage}: the preview did not render"
+    seen = shown.data.copy()
+
+    # ANTI-VACUITY, in two parts. Neither side may be a no-op, AND the option
+    # must actually change the result — otherwise a preview using the wrong
+    # value still matches its commit, which is exactly how two of these guards
+    # passed while being useless.
+    assert not np.array_equal(seen, before), (
+        f"{stage}: the preview changed nothing, so this proves nothing")
+    other = _other_option(option)
+    setattr(win, attr, other)
+    getattr(win, renderer)()
+    assert not np.array_equal(win._displayed.data, seen), (
+        f"{stage}: the option does not change the result on this fixture, "
+        f"so comparing preview to commit proves nothing")
+    setattr(win, attr, option)
+    getattr(win, renderer)()
+    seen = win._displayed.data.copy()
+
+    # Two steps do NOT commit through apply_current — the panel calls their own
+    # handler, and apply_current is a no-op for them. Using it made the
+    # green-fringe case pass while committing nothing at all.
+    if stage == "green_fringe":
+        win._apply_green_fringe(option)
+    elif stage == "star_reduction":
+        win._apply_star_reduction(option)
+    else:
+        win.apply_current(option)
+    committed = win.project.current().data
+    assert not np.array_equal(committed, before), (
+        f"{stage}: the commit changed nothing, so this proves nothing")
+    assert seen.shape == committed.shape, (
+        f"{stage}: preview is {seen.shape}, commit is {committed.shape}")
+    assert np.array_equal(seen, committed), (
+        f"{stage}: the committed image differs from the one shown — "
+        f"max delta {np.abs(seen.astype(float) - committed.astype(float)).max():.6f}")
+
+
+def test_saturation_preview_equals_what_its_handler_commits(qtbot, tmp_path):
+    """Separate because the panel emits a PAIR and calls _apply_saturation
+    directly rather than going through apply_current.
+
+    The star split is PRIMED first. The Nebula boost is lazy — inert until the
+    slider is first raised and `_sat_layers` is cached — so without priming, the
+    nebula argument does nothing and the test cannot tell a preview that honours
+    it from one that ignores it. Verified: zeroing nebula in the preview alone
+    changed no pixel until this priming existed.
+    """
+    from nocturne.core.starless import split_stars
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    win._go_to_id("saturation")
+
+    base = win._preview_base("saturation")
+    starless, stars = split_stars(base)
+    win._sat_layers = (win._sr_sig(base), starless, stars)
+
+    win._sat_pending = (1.4, 0.3)
+    win._render_saturation_preview()
+    seen = win._displayed.data.copy()
+
+    # ...and the nebula argument must actually MOVE something here, or the
+    # comparison below is vacuous.
+    assert not np.array_equal(win._sat_result(base, 1.4, 0.0).data,
+                              win._sat_result(base, 1.4, 0.3).data), \
+        "the fixture cannot express the nebula boost; the test proves nothing"
+
+    win._apply_saturation(1.4, 0.3)
+    assert np.array_equal(seen, win.project.current().data)
+
+
+def test_stretch_preview_equals_what_apply_commits(qtbot, tmp_path):
+    """Stretch is the first of the tail steps, so it gets a colour step before
+    it rather than a stretch."""
+    from nocturne.core.color import ColorSettings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win.apply_current(ColorSettings(method="sky"))
+    win._go_to_id("stretch")
+
+    win._stretch_pending = 0.75
+    win._render_stretch_preview()
+    seen = win._displayed.data.copy()
+
+    win.apply_current(0.75)
+    assert np.array_equal(seen, win.project.current().data)
