@@ -38,3 +38,19 @@ def test_about_html_lists_a_donor_when_present(tmp_path):
     html = about_html(load_contributors(str(p)))
     assert "Jane Nebula" in html
     assert "Be the first" not in html
+
+
+def test_about_credits_exactly_the_fonts_that_ship():
+    """The SIL OFL requires the licence to travel with the binaries; naming the
+    families is the other half of the courtesy. Pinned to what is actually
+    bundled, so a family added or dropped cannot leave About lying."""
+    from nocturne.ui.fonts import FONT_DIR, PLATE_FAMILIES
+
+    html = about_html()
+    assert "SIL Open Font License" in html
+    for _label, family in PLATE_FAMILIES:
+        assert family in html, f"{family} ships with the app but is not credited"
+        stem = family.replace(" ", "").lower()
+        assert (FONT_DIR / f"OFL-{stem}.txt").is_file(), f"no licence ships for {family}"
+    credited = {f["name"] for f in load_contributors()["fonts"]}
+    assert credited == {fam for _l, fam in PLATE_FAMILIES}

@@ -14,6 +14,7 @@ _FALLBACK = {
                         "not a developer, and proud of it"},
     "ai": "Code wrangled in collaboration with Claude (Anthropic)",
     "built_with": [],
+    "fonts": [],
     "works_with": [],
     "photon_donors": [],
 }
@@ -62,6 +63,14 @@ def about_html(data: dict | None = None) -> str:
         "<h3>✦ The crew</h3>"
         "<p>The open-source legends doing the real heavy lifting:</p>"
         f"<ul>{_rows(data.get('built_with', []))}</ul>"
+        # The SIL OFL asks for the licence to travel with the fonts, which it
+        # does in assets/fonts/. Naming the families is not required — it is
+        # simply what you do when someone's work is set into every share.
+        "<h3>✦ Type</h3>"
+        "<p>The title plate is set in type that ships with Nocturne, so a share "
+        "looks the same on any machine. All five under the "
+        "<b>SIL Open Font License</b>, whose full text travels with them:</p>"
+        f"<ul>{_rows(data.get('fonts', []))}</ul>"
         "<h3>✦ Plays nicely with</h3>"
         f"<ul>{_rows(data.get('works_with', []))}</ul>"
         "<h3>✦ Photon Donors</h3>"

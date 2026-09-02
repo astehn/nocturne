@@ -178,3 +178,98 @@ def test_the_band_slider_darkens_the_strip_below_the_image_too(qapp):
     # and the picture above is untouched at every setting
     for img_ in (dark, light, mid):
         assert img_.pixelColor(150, 299).red() == 200
+
+
+# --- the title plate ---------------------------------------------------------
+
+def _plate_rgb(w=400, h=500):
+    return (np.random.default_rng(7).random((h, w, 3)) * 255).astype(np.uint8)
+
+
+def _pixels(img):
+    from PySide6.QtGui import QImage
+    img = img.convertToFormat(QImage.Format.Format_RGB888)
+    w, h = img.width(), img.height()
+    return np.frombuffer(img.constBits(), np.uint8).reshape(h, img.bytesPerLine())[:, :w * 3].copy()
+
+
+def test_a_plain_string_caption_still_works(qapp):
+    """Backwards compatibility: every existing caller and test passes a str."""
+    arr = _plate_rgb()
+    out = compose_share(arr, (0, 500, 0, 400), "NGC 7000 · 5 h", longest_edge=None)
+    assert out.width() == 400
+
+
+def test_data_reproduces_the_old_renderers_LAYOUT(qapp):
+    """What the Data preset actually promises — and what it deliberately does not.
+
+    NOT pixel-identity. Measured 2026-09-02: the old `_burn_caption` draws with a
+    bare `QFont()`, which resolves to the system UI face here and to something
+    else entirely on Windows — so the old output was never reproducible across
+    machines in the first place. Data draws in bundled Manrope, and the same
+    string measures 200.5 px against the system font's 216.1 px at 14 px. The
+    glyphs differ BY DESIGN; that is the feature.
+
+    What must not change is the geometry: same canvas, same band in the same
+    place at the same height. Someone who never opens the new controls gets the
+    caption they had, in a face that now travels with the app.
+    """
+    from nocturne.core.plate import PlateText
+    from nocturne.core.presets import preset_by_name
+    from nocturne.ui.plate_render import last_layout
+    arr = _plate_rgb()
+    cap = "NGC 7000 · 5 h 39 m · @andreas"
+    old_img = compose_share(arr, (0, 500, 0, 400), cap, longest_edge=None)
+    new_img = compose_share(arr, (0, 500, 0, 400), PlateText("", "", cap),
+                            longest_edge=None, style=preset_by_name("Data"))
+    assert (new_img.width(), new_img.height()) == (old_img.width(), old_img.height())
+
+    # The band: same top edge and same height as the old renderer computes them.
+    # px = max(8, round(h * 0.028)); band = max(px * 2, round(h * BAND_FRAC))
+    h = old_img.height()
+    px = max(8, round(h * 0.028))
+    expected_band = max(px * 2, round(h * 0.07))
+    lay = last_layout()
+    assert abs(lay["band_top"] - (h - expected_band)) <= 1, (
+        f"band starts at {lay['band_top']}, old renderer put it at {h - expected_band}")
+
+    # And the pixels ABOVE the band are untouched — the picture is not disturbed.
+    top_old = _pixels(old_img)[: int(lay["band_top"]) - 2]
+    top_new = _pixels(new_img)[: int(lay["band_top"]) - 2]
+    assert np.array_equal(top_old, top_new), "Data altered the picture above the band"
+
+
+def test_the_plate_is_applied_after_the_downscale(qapp):
+    """Styling before the resize would shrink the plate with the image and land
+    it at the wrong size. Already true of the caption; must stay true.
+
+    Same source, two output sizes: the plate must occupy the same FRACTION of
+    each, not the same pixel count."""
+    from nocturne.core.plate import PlateText
+    from nocturne.core.presets import preset_by_name
+    from nocturne.ui.plate_render import last_layout
+    arr = _plate_rgb(1600, 2000)
+    style = preset_by_name("Scrim")
+    text = PlateText("IC 1396A", "Elephant's Trunk Nebula", "")
+    compose_share(arr, (0, 2000, 0, 1600), text, longest_edge=1000, style=style)
+    small = last_layout()["block_height"] / 1000
+    compose_share(arr, (0, 2000, 0, 1600), text, longest_edge=2000, style=style)
+    big = last_layout()["block_height"] / 2000
+    assert abs(small - big) < 0.01, "the plate does not scale with the output"
+
+
+def test_a_plate_never_upscales_either(qapp):
+    """A share is never enlarged — that adds pixels without adding detail."""
+    from nocturne.core.plate import PlateText
+    out = compose_share(_plate_rgb(200, 250), (0, 250, 0, 200),
+                        PlateText("M 31", "", ""), longest_edge=4096)
+    assert (out.width(), out.height()) == (200, 250)
+
+
+def test_an_entirely_empty_plate_leaves_the_picture_alone(qapp):
+    """Three blank slots must not paint a scrim over nothing — the old str path
+    had the same rule, and a bar with no text in it reads as a rendering bug."""
+    from nocturne.core.plate import PlateText
+    arr = _plate_rgb(120, 150)
+    out = compose_share(arr, (0, 150, 0, 120), PlateText("", "", ""), longest_edge=None)
+    assert np.array_equal(_pixels(out), _pixels(qimage_from_rgb8(arr)))

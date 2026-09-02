@@ -16,6 +16,13 @@
     { "name": "tifffile", "what": "16-bit TIFFs" },
     { "name": "Pillow", "what": "image loading & saving" }
   ],
+  "fonts": [
+    { "name": "Jost", "what": "geometric sans — the Plate and Matte looks" },
+    { "name": "Manrope", "what": "humanist sans — the default Scrim look" },
+    { "name": "Cormorant Garamond", "what": "the serif behind Keyline" },
+    { "name": "Marcellus", "what": "inscriptional capitals, for a carved look" },
+    { "name": "Barlow Condensed", "what": "narrow and light, for a long name" }
+  ],
   "works_with": [
     { "name": "GraXpert", "what": "background extraction (free)" },
     { "name": "RC-Astro", "what": "BlurX / NoiseX / StarX (optional)" },

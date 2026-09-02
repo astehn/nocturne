@@ -53,6 +53,12 @@ class Settings:
     share_caption_placement: str = "on"
     share_caption_align: str = "left"
     share_band_opacity: float = 0.59
+    # The plate replaces the caption line. The five share_caption_* fields above
+    # STAY: they are what the migration in load_settings reads to decide that an
+    # existing user belongs on the Data preset.
+    plate_preset: str = "Scrim"
+    plate_style: dict = field(default_factory=dict)          # user's edits to it
+    plate_user_presets: list = field(default_factory=list)   # their own saved looks
 
 
 def load_settings(path: str) -> Settings:
@@ -60,6 +66,17 @@ def load_settings(path: str) -> Settings:
         return Settings()
     with open(path) as f:
         data = json.load(f)
+    # A settings file carrying the caption keys was written by a build that
+    # shipped the caption band, so that user's shares already look like Data.
+    # Landing them on the new default would silently change every export they
+    # make, so they get Data — which reproduces what they had — and can move
+    # when they choose to. Presence of the keys, not their values: someone who
+    # was happy with the caption defaults is exactly as entitled to keep their
+    # look as someone who tuned it. A file written before those keys existed is
+    # not evidence of anything, and starts on Scrim.
+    caption_era = any(k in data for k in (
+        "share_caption_size", "share_caption_colour", "share_caption_placement",
+        "share_caption_align", "share_band_opacity"))
     return Settings(
         graxpert_path=data.get("graxpert_path", ""),
         rcastro_path=data.get("rcastro_path", ""),
@@ -77,6 +94,9 @@ def load_settings(path: str) -> Settings:
         share_caption_placement=data.get("share_caption_placement", "on"),
         share_caption_align=data.get("share_caption_align", "left"),
         share_band_opacity=float(data.get("share_band_opacity", 0.59)),
+        plate_preset=data.get("plate_preset", "Data" if caption_era else "Scrim"),
+        plate_style=data.get("plate_style", {}) or {},
+        plate_user_presets=data.get("plate_user_presets", []) or [],
     )
 
 

@@ -18,10 +18,12 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter
 
+from ..core.presets import preset_by_name
 from ..core.share import (
     DEFAULT_ALIGNMENT, DEFAULT_BAND_OPACITY, DEFAULT_CAPTION_COLOUR,
     DEFAULT_CAPTION_SIZE, DEFAULT_PLACEMENT, DEFAULT_SIZE,
 )
+from .plate_render import draw_plate
 
 _ALIGN_FLAGS = {
     "left": Qt.AlignmentFlag.AlignLeft,
@@ -42,9 +44,10 @@ def qimage_from_rgb8(rgb8: np.ndarray) -> QImage:
     return QImage(rgb8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
 
-def compose_share(rgb8: np.ndarray, crop, caption: str,
+def compose_share(rgb8: np.ndarray, crop, caption,
                   longest_edge: int | None = DEFAULT_SIZE,
-                  *, size_frac: float = DEFAULT_CAPTION_SIZE,
+                  *, style=None,
+                  size_frac: float = DEFAULT_CAPTION_SIZE,
                   colour: str = DEFAULT_CAPTION_COLOUR,
                   placement: str = DEFAULT_PLACEMENT,
                   align: str = DEFAULT_ALIGNMENT,
@@ -52,9 +55,15 @@ def compose_share(rgb8: np.ndarray, crop, caption: str,
     """`longest_edge=None` keeps the cropped resolution. Downscale only — a share
     is never upscaled, which would add pixels without adding detail.
 
-    Caption styling is applied AFTER the downscale, so the band and text are
-    sized against the pixels actually being written. Doing it before would make
-    the caption shrink with the image and land at the wrong size."""
+    `caption` is a `PlateText` (the title plate) or a plain `str` (every caller
+    that predates it, plus the legacy styling arguments that only a str uses).
+    Both go through this one function because it is what the preview and the
+    export both call — the WYSIWYG guarantee is structural, and a second compose
+    path is how it would stop being one.
+
+    Styling is applied AFTER the downscale, so the plate and text are sized
+    against the pixels actually being written. Doing it before would make them
+    shrink with the image and land at the wrong size."""
     top, bottom, left, right = crop
     if rgb8.ndim == 2:
         rgb8 = np.stack([rgb8] * 3, axis=2)
@@ -66,11 +75,15 @@ def compose_share(rgb8: np.ndarray, crop, caption: str,
         image = image.scaled(
             round(w * longest_edge / longest), round(h * longest_edge / longest),
             Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-    if caption:
-        image = _burn_caption(image, caption, size_frac=size_frac, colour=colour,
-                              placement=placement, align=align,
-                              band_opacity=band_opacity)
-    return image
+    if isinstance(caption, str):
+        if caption:
+            image = _burn_caption(image, caption, size_frac=size_frac, colour=colour,
+                                  placement=placement, align=align,
+                                  band_opacity=band_opacity)
+        return image
+    if not (caption.designation or caption.common or caption.credit):
+        return image                     # an empty plate is no plate, not a bar
+    return draw_plate(image, caption, style or preset_by_name("Scrim"))
 
 
 def _burn_caption(image: QImage, caption: str, *,
@@ -159,5 +172,12 @@ def save_share(image: QImage, path: str, quality: int = 92) -> None:
 
 
 def to_clipboard(image: QImage) -> None:
+    """Tagged sRGB, exactly as save_share does.
+
+    The clipboard path passed the raw image while the file got a profile, so
+    pasting into an editor handed it untagged pixels for the reader to guess at
+    — the same shape as the bug _tag_srgb was written for, where a correct
+    export rendered dark in Photoshop.
+    """
     from PySide6.QtWidgets import QApplication
-    QApplication.clipboard().setImage(image)
+    QApplication.clipboard().setImage(_tag_srgb(image))

@@ -190,14 +190,38 @@ def test_curated_names_fill_only_blanks_never_override_the_catalogue():
             pytest.fail(f"{d} has a catalogue name AND a curated one — remove the curated row")
 
 
+# Curated rows deliberately absent from openngc.csv. They cannot be ANNOTATED —
+# a label needs sky coordinates — but common_name_for reads the curated file
+# directly, so they still name the Share title plate. Each one is listed here
+# rather than allowed in bulk: the guard below exists to catch a TYPO, which
+# also produces a designation that matches nothing, and would be silent.
+NAME_ONLY = {
+    "M45",       # Melotte 22 — no NGC number, so OpenNGC has no row for it
+    "IC1396A",   # the trunk itself; OpenNGC carries the IC 1396 region only
+}
+
+
 def test_every_curated_designation_exists_in_the_catalogue():
     """A dead row is silently useless: it never matches, so the name never
-    appears and nothing complains. An earlier draft had four."""
+    appears and nothing complains. An earlier draft had four.
+
+    Since 2026-09-02 a row absent from the catalogue is legitimate IF it is a
+    deliberate name-only entry (see NAME_ONLY). Anything else absent is still a
+    mistake — most likely a mistyped designation."""
     import csv
     from nocturne.core.catalog import _curated_names
     have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv"))}
-    dead = [d for d in _curated_names() if d not in have]
+    dead = [d for d in _curated_names() if d not in have and d not in NAME_ONLY]
     assert not dead, f"curated names for objects not in the catalogue: {dead}"
+
+
+def test_the_name_only_allowlist_is_not_a_dumping_ground():
+    """Every entry must genuinely be absent. One that later gains a catalogue
+    row should drop off the list rather than sit here unexamined."""
+    import csv
+    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv"))}
+    stale = [d for d in NAME_ONLY if d in have]
+    assert not stale, f"these are in the catalogue now; remove them from NAME_ONLY: {stale}"
 
 
 def test_a_named_small_object_can_win_the_target_over_a_large_anonymous_one():
@@ -223,3 +247,111 @@ def test_the_elephants_trunk_is_named_on_vdb142_not_on_the_whole_region():
     names = _curated_names()
     assert names.get("vdB142") == "Elephant's Trunk Nebula"
     assert "Sh2-131" not in names
+
+
+def test_identify_target_parts_keeps_the_pair_apart():
+    """identify_target joins these with ' · '. The plate needs them separate —
+    and the join must stay, because target_solved, the info strip, the
+    provenance report and the FITS export all read the joined form."""
+    from nocturne.core.catalog import CatalogObject, identify_target, identify_target_parts
+    objs = [CatalogObject(name="IC 1396A", common="Elephant's Trunk Nebula",
+                          ra_deg=324.7, dec_deg=57.5, major_arcmin=20.0, x=50, y=50)]
+    assert identify_target_parts(objs, (100, 100)) == ("IC 1396A", "Elephant's Trunk Nebula")
+    assert identify_target(objs, (100, 100)) == "IC 1396A · Elephant's Trunk Nebula"
+
+
+def test_identify_target_parts_on_an_object_with_no_common_name():
+    from nocturne.core.catalog import CatalogObject, identify_target_parts
+    objs = [CatalogObject(name="NGC 7380", common="", ra_deg=341.8, dec_deg=58.1,
+                          major_arcmin=25.0, x=50, y=50)]
+    assert identify_target_parts(objs, (100, 100)) == ("NGC 7380", "")
+
+
+def test_identify_target_parts_on_an_empty_field():
+    from nocturne.core.catalog import identify_target_parts
+    assert identify_target_parts([], (100, 100)) == ("", "")
+
+
+def test_common_name_for_reads_the_curated_table():
+    """vdB142 has no common name in openngc.csv; common_names.csv supplies it."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("vdB142") == "Elephant's Trunk Nebula"
+    assert common_name_for("NGC7000") == "North America Nebula"
+    assert common_name_for("NGC 7000") == "North America Nebula"   # spaces tolerated
+    assert common_name_for("NGC9999") == ""                        # absent, not an error
+
+
+# --- OBJECT-header lookups: the spelling problem ---
+#
+# Measured 2026-09-02 against the real catalogue: of the 149 rows carrying a
+# common name, 15 are zero-padded (NGC0224) and 28 are Messier objects keyed by
+# their NGC number with the M-number in a separate column. So an un-normalised
+# lookup missed every Messier designation — the single most likely thing in a
+# Seestar OBJECT header — and every padded NGC/IC. Andreas' own capture folders
+# are M 45, M 42, M 33, M 27, M 17, M 16, NGC 281, IC 1396A; before this, ALL of
+# them resolved to "" and the title plate's second line would have been blank
+# for essentially his whole library.
+
+def test_a_messier_number_resolves_to_the_name_people_use():
+    """The catalogue stores M 31 as NGC0224 with messier='31'. Nothing keyed on
+    'M31' at all, so the most common spelling found nothing."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("M 31") == "Andromeda Galaxy"
+    assert common_name_for("M31") == "Andromeda Galaxy"
+    assert common_name_for("M 42") == "Great Orion Nebula"
+    assert common_name_for("M 27") == "Dumbbell Nebula"
+
+
+def test_zero_padding_does_not_decide_whether_a_name_is_found():
+    """openngc.csv pads to four digits; a human types 'NGC 224'."""
+    from nocturne.core.catalog import common_name_for
+    for spelling in ("NGC 224", "NGC224", "NGC0224", "ngc 224"):
+        assert common_name_for(spelling) == "Andromeda Galaxy", spelling
+
+
+def test_an_unpadded_row_still_works():
+    """Guards the normalisation from breaking the rows that already worked."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("NGC 7000") == "North America Nebula"
+    assert common_name_for("vdB 142") == "Elephant's Trunk Nebula"
+
+
+def test_a_letter_suffix_is_preserved():
+    """IC 1396A must not normalise into IC 1396 — a different object, and the
+    curated file is explicit that a wrong name is worse than none."""
+    from nocturne.core.catalog import _lookup_key
+    assert _lookup_key("IC 1396A") == "IC1396A"
+    assert _lookup_key("IC 1396") == "IC1396"
+    assert _lookup_key("IC 1396A") != _lookup_key("IC 1396")
+
+
+def test_an_unknown_designation_is_still_empty_not_a_guess():
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("Backyard Fence") == ""
+    assert common_name_for("") == ""
+    assert common_name_for("NGC 99999") == ""
+
+
+def test_a_curated_name_works_without_a_catalogue_row():
+    """The curated file's rule used to be that a designation absent from
+    openngc.csv made a dead row. True for ANNOTATION — a label needs sky
+    coordinates — but a NAME needs none, and OpenNGC covers NGC/IC only.
+    M 45 has no NGC number (it is Melotte 22) and IC 1396A is a sub-region
+    OpenNGC omits, so before this both were unnameable."""
+    from nocturne.core.catalog import common_name_for, load_catalog
+    assert common_name_for("M 45") == "Pleiades"
+    assert common_name_for("IC 1396A") == "Elephant's Trunk Nebula"
+    # ...and they are genuinely absent from the catalogue, so this is really
+    # testing the curated path and not an accidental catalogue hit.
+    names = {r[0].replace(" ", "") for r in load_catalog()}
+    assert "M45" not in names and "IC1396A" not in names
+
+
+def test_the_trunk_is_not_the_region_around_it():
+    """The mistake the curated file records: Sh2-131 / IC 1396 is the whole 170'
+    region; the trunk is IC 1396A (vdB 142) inside it. Naming the region after
+    the trunk would be wrong, and a common name outranks size in
+    identify_target, so a wrong name here changes what the app calls the image."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("IC 1396A") == "Elephant's Trunk Nebula"
+    assert common_name_for("IC 1396") == ""

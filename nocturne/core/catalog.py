@@ -182,16 +182,17 @@ def named_stars_in_field(wcs, shape, rows=None) -> list[NamedStar]:
     return out
 
 
-def identify_target(objects: list[CatalogObject], shape) -> str:
-    """The object the frame is most plausibly OF.
+def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str]:
+    """The object the frame is most plausibly OF, as (designation, common name).
 
-    Not simply the largest: once Sharpless and Lynds entries joined the
-    catalogue, an NGC 7000 frame reported 'Sh 2109' — a 18-degree diffuse
-    complex that merely overlaps the field. Rank by significance instead —
-    a Messier or common-named object beats an anonymous survey designation —
-    and only then by size and centrality."""
+    Split out of identify_target so the Share title plate can use the two lines
+    separately. The ranking is unchanged: not simply the largest, because once
+    Sharpless and Lynds entries joined the catalogue an NGC 7000 frame reported
+    'Sh 2109' — an 18-degree diffuse complex that merely overlaps the field. A
+    Messier or common-named object beats an anonymous survey designation, and
+    only then does size and centrality decide."""
     if not objects:
-        return ""
+        return ("", "")
     h, w = shape
     cx, cy = w / 2, h / 2
 
@@ -204,5 +205,69 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
 
     from .annotation_layout import designation
     best = max(objects, key=rank)
-    name = designation(best)        # "M 31", not "NGC 224" — same as the overlay
-    return f"{name} · {best.common}" if best.common else name
+    # "M 31", not "NGC 224" — same as the overlay.
+    return (designation(best), best.common or "")
+
+
+def identify_target(objects: list[CatalogObject], shape) -> str:
+    """Unchanged output — 'M 31 · Andromeda Galaxy'. Four surfaces read this
+    exact format (target_solved, the info strip, the provenance report, the
+    FITS export), so the join stays here rather than moving to the callers."""
+    name, common = identify_target_parts(objects, shape)
+    return f"{name} · {common}" if common else name
+
+
+def _lookup_key(designation_str: str) -> str:
+    """Normalise a designation to the form the cache is keyed on.
+
+    An OBJECT header is written by a human or by the mount, and openngc.csv
+    zero-pads to four digits, so the same object arrives spelled several ways:
+    "M 31", "M31", "NGC 224", "NGC0224". Measured on the real catalogue, 15 of
+    the 149 named rows are zero-padded, so an un-normalised lookup misses them
+    all — and every Messier number missed, because those rows are keyed NGC0224
+    with the number in a separate column.
+    """
+    key = (designation_str or "").replace(" ", "").upper()
+    m = re.match(r"^(NGC|IC)0*(\d+)([A-Z]*)$", key)
+    if m:
+        return f"{m.group(1)}{int(m.group(2)):04d}{m.group(3)}"
+    return key
+
+
+def _build_name_cache() -> dict[str, str]:
+    """designation -> colloquial name, under every spelling we might be handed.
+
+    Messier numbers get their own keys: the catalogue stores M 31 as NGC0224
+    with messier='31', so "M 31" — the single most likely thing in a Seestar
+    OBJECT header — resolved to nothing at all until this existed.
+    """
+    cache: dict[str, str] = {}
+    # Curated names FIRST, so a row with no catalogue entry still resolves.
+    # `_curated_names` is applied inside load_catalog only to rows that exist
+    # there, which is right for annotation — a label needs sky coordinates. A
+    # NAME needs none, so M 45 (Melotte 22, no NGC number) and IC 1396A (a
+    # sub-region OpenNGC does not carry) can be named here even though neither
+    # can ever be annotated.
+    for designation_str, common in _curated_names().items():
+        cache[_lookup_key(designation_str)] = common
+    for row in load_catalog():
+        name, common, messier = row[0], row[1], row[8]
+        if not common:
+            continue
+        cache[_lookup_key(name)] = common
+        if messier:
+            cache[f"M{int(messier)}"] = common
+    return cache
+
+
+_NAME_CACHE: dict[str, str] | None = None
+
+
+def common_name_for(designation_str: str) -> str:
+    """Colloquial name for a designation, or "" — for images that were never
+    plate-solved but carry an OBJECT header. Built once; the catalogue is 15,890
+    rows and the plate asks per keystroke."""
+    global _NAME_CACHE
+    if _NAME_CACHE is None:
+        _NAME_CACHE = _build_name_cache()
+    return _NAME_CACHE.get(_lookup_key(designation_str), "")

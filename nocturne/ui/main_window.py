@@ -1143,6 +1143,14 @@ class MainWindow(QMainWindow):
             # on-disk cache), so a mutation on it is lost immediately; write
             # through to the project's cached metadata for the current position.
             self.project.set_current_metadata("target_solved", name)
+            # ...and the two halves separately, for the Share title plate. The
+            # solve already has them apart; joining them here only to have the
+            # plate split the string again works, but it makes the separator
+            # load-bearing for no reason.
+            from ..core.catalog import identify_target_parts
+            desig, common = identify_target_parts(objs, (h, w))
+            self.project.set_current_metadata("target_designation", desig)
+            self.project.set_current_metadata("target_common", common)
         self._clear_warning()
         self._show_annotations(res, objs)
         self.solve_panel.set_state("solved")

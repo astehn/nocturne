@@ -8,8 +8,10 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME, __version__
+from .core.applog import configure_logging
 from .core.certs import configure_ssl
 from .settings import autoconfigure_tools, resolve_settings_path
+from .ui.fonts import load_bundled_fonts
 from .ui.main_window import MainWindow
 from .ui.splash import MIN_SPLASH_SECONDS, make_splash
 from .ui.theme import apply_dark_theme
@@ -62,6 +64,13 @@ def main() -> None:
     # every HTTPS call then fails silently — see core/certs.py.
     configure_ssl()
 
+    # A packaged app has no console, so the stacking phase timings had nowhere
+    # to go: they were logged at INFO on a logger with no handler, and Python's
+    # last-resort handler drops anything below WARNING. A 1233-frame drizzle ran
+    # overnight on 2026-09-02, took ~4x the estimate, and left no record of
+    # which phase was slow. ~/.nocturne/nocturne.log now holds it.
+    configure_logging()
+
     # The check the packaged app could not do for itself. From source the build
     # machine's Homebrew cert store is present, so a bundle that works only here
     # looks perfectly healthy; the failure appears on a user's Mac as silence.
@@ -72,6 +81,11 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+
+    # After the QApplication (addApplicationFont needs one) and before any
+    # window: a plate drawn before these families register silently substitutes
+    # a system face, and nothing anywhere says so.
+    load_bundled_fonts()
 
     icon_path = _ASSETS / "nocturne_icon.svg"
     if icon_path.exists():

@@ -50,9 +50,14 @@ DEFAULT_ALIGNMENT = "left"
 DEFAULT_BAND_OPACITY = 0.59
 
 
-def caption_line(metadata: dict, handle: str) -> str:
+def caption_line(metadata: dict, handle: str, *, include_target: bool = True) -> str:
     """One-line caption: target · integration · frames×sub · date · @handle.
-    Any field with no data is omitted; a blank handle drops the @ segment."""
+    Any field with no data is omitted; a blank handle drops the @ segment.
+
+    `include_target=False` is for the title plate, where the object already has
+    two slots of its own and repeating it here would print the name twice. The
+    default is unchanged so the Share dialog's Data preset stays byte-identical.
+    """
     segs: list[str] = []
     # `target_solved` too, matching the info strip (main_window), the provenance
     # report and the FITS export — every one of which reads the pair. Share was
@@ -60,7 +65,7 @@ def caption_line(metadata: dict, handle: str) -> str:
     # that you plate-solved to NGC 7000 showed "NGC 7000" everywhere in the app
     # and published with no target in the caption at all.
     target = str(metadata.get("target") or metadata.get("target_solved") or "").strip()
-    if target:
+    if target and include_target:
         segs.append(target)
     integ = resolve_integration(metadata)
     if integ is not None:
