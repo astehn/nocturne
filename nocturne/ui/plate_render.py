@@ -59,6 +59,7 @@ _RULE_MIN_W = 0.10      # fraction of the WIDTH, so a short designation still ru
 _SCRIM_SPAN = 2.6       # of the block height — room to fade in above the text
 _SCRIM_MIN = 0.26       # with all three slots empty there is still a gradient
 _SCRIM_ALPHA = 0.78
+_SCRIM_MIDDLE_SCALE = 0.6   # see _scrim: a two-sided ramp peaks where the text is
 _SCRIM_STOPS = ((0.0, 0.0), (0.25, 0.14), (0.45, 0.42), (0.62, 0.72),
                 (0.8, 0.92), (1.0, 1.0))
 
@@ -85,6 +86,11 @@ _MATTE_BG = QColor(11, 11, 13)   # a dark mount; the plate colours are off-white
 # ~30 px under a 1100 px frame and read as crowded against the picture rather
 # than mounted below it — the whole point of the treatment is the space.
 _MATTE_PAD = 0.075
+
+# Floor on the shrink above: past this the plate is unreadable anyway, and a
+# frame that narrow has no good answer. Better to overflow visibly than to
+# render type nobody can see.
+_MIN_FIT_SCALE = 0.25
 
 # The keyline sits at this fraction of the text margin, i.e. further out than the
 # text, so the caption is framed BY it rather than crossing it.
@@ -165,6 +171,30 @@ def _wrap(text: str, fm: QFontMetricsF, width: float) -> tuple[list[str], bool]:
     return lines, over
 
 
+def _fit_scale(text, style, avail: float, h: int) -> float:
+    """How much to shrink the type so the widest unbreakable word fits `avail`.
+
+    1.0 for any frame with room, so ordinary output is untouched. Measured on
+    the longest WORD rather than the longest line, because a line can wrap and a
+    word cannot — clamping on the line would shrink text that would have been
+    fine after wrapping.
+    """
+    worst = 0.0
+    for value, frac, weight, track in (
+        (text.designation, style.size_title, style.weight_title, style.tracking_title),
+        (text.common, style.size_sub, style.weight_sub, style.tracking_sub),
+        (text.credit, style.size_credit, style.weight_sub, style.tracking_sub),
+    ):
+        if not value:
+            continue
+        fm = QFontMetricsF(_font(style.family, max(6, round(h * float(frac))), weight, track))
+        for word in str(value).split():
+            worst = max(worst, fm.horizontalAdvance(word))
+    if worst <= avail or worst <= 0:
+        return 1.0
+    return max(_MIN_FIT_SCALE, avail / worst)
+
+
 def _measure(text, style, w: int, h: int) -> dict:
     """Stack the slots that have content, and give every drawable its own row.
 
@@ -176,6 +206,19 @@ def _measure(text, style, w: int, h: int) -> dict:
     mx = max(0, round(short * style.margin))
     avail = max(1.0, float(w - 2 * mx))
 
+    # Type is sized off the HEIGHT while the line wraps to the WIDTH, so an
+    # extremely tall frame asks for type far too large to fit across it: on
+    # 200x3000 the title came out 69 px and the block measured 560 px wide
+    # inside 180 px of room, putting 18 of 27 anchor/size combinations partly
+    # off-canvas — and the right- and centre-anchored ones ran off the LEFT
+    # edge, where "shorten it" is not the fix.
+    #
+    # None of the aspects the tool offers reaches this (9:16 is clean, and so
+    # is a 4320x7680 drizzle master), but "Original" passes through whatever a
+    # mosaic produced. Scale the whole plate down so its longest unbreakable
+    # word fits; normal frames never trigger it and keep their exact sizes.
+    scale = _fit_scale(text, style, avail, h)
+
     fonts, metrics = {}, {}
     for key, frac, weight, track in (
         ("title", style.size_title, style.weight_title, style.tracking_title),
@@ -184,7 +227,7 @@ def _measure(text, style, w: int, h: int) -> dict:
         # a preset stays one decision rather than four.
         ("credit", style.size_credit, style.weight_sub, style.tracking_sub),
     ):
-        fonts[key] = _font(style.family, max(6, round(h * float(frac))), weight, track)
+        fonts[key] = _font(style.family, max(6, round(h * float(frac) * scale)), weight, track)
         metrics[key] = QFontMetricsF(fonts[key])
 
     lines, over = {}, False
@@ -266,10 +309,43 @@ def _draw_items(p: QPainter, lay: dict, left: float, top: float,
             p.drawText(QPointF(x, top + it["y"] + it["ascent"]), it["text"])
 
 
-def _scrim(p: QPainter, w: int, h: int, block_h: float, anchor: str) -> None:
-    span = max(_SCRIM_MIN, _SCRIM_SPAN * block_h / max(1, h))
-    span = min(1.0, span)
-    from_top = str(anchor or "").startswith("top")
+def _scrim(p: QPainter, w: int, h: int, block_h: float, anchor: str,
+           block_top: float | None = None) -> None:
+    """Darken the sky under the text, wherever the text happens to be.
+
+    This used to branch only on `anchor.startswith("top")` — so all three MIDDLE
+    anchors got a gradient at the bottom of the frame while the text sat in the
+    vertical centre. Measured on an 0xB4B4B4 frame: 84 levels of darkening
+    through the block at top-centre, 83 at bottom-centre, and **0.0 at
+    middle-centre**. Scrim is the default preset, so choosing the middle
+    placement over bright nebulosity gave off-white text no help at all.
+
+    A middle block gets a symmetric fade centred on it, which is the only shape
+    that reads as sky rather than as a bar with two edges.
+    """
+    span = min(1.0, max(_SCRIM_MIN, _SCRIM_SPAN * block_h / max(1, h)))
+    vertical = str(anchor or "bottom-centre").partition("-")[0]
+
+    if vertical == "middle":
+        # Centred on the block, not on the frame: an anchor's margin can shift
+        # the block off centre and the gradient has to follow it.
+        mid = (block_top + block_h / 2.0) if block_top is not None else h / 2.0
+        half = max(block_h * 0.5 + h * span * 0.5, block_h)
+        y0, y1 = max(0.0, mid - half), min(float(h), mid + half)
+        # Both ramps meet at full alpha in the centre, which lands far darker
+        # than a top/bottom scrim does under its own text (140 levels against
+        # 83 on the same frame) and reads as a bar rather than as sky. Scaled to
+        # match what the edge anchors actually deliver at the block.
+        peak = _SCRIM_ALPHA * _SCRIM_MIDDLE_SCALE
+        grad = QLinearGradient(0.0, y0, 0.0, y1)
+        for stop, weight in _SCRIM_STOPS:            # fade IN to the middle...
+            grad.setColorAt(stop * 0.5, QColor(0, 0, 0, round(255 * peak * weight)))
+        for stop, weight in _SCRIM_STOPS:            # ...and back OUT again
+            grad.setColorAt(1.0 - stop * 0.5, QColor(0, 0, 0, round(255 * peak * weight)))
+        p.fillRect(0, round(y0), w, round(y1 - y0), grad)
+        return
+
+    from_top = vertical == "top"
     y0 = 0.0 if from_top else h * (1.0 - span)
     y1 = h * span if from_top else float(h)
     grad = QLinearGradient(0.0, y1 if from_top else y0, 0.0, y0 if from_top else y1)
@@ -326,7 +402,7 @@ def draw_plate(image: QImage, text, style) -> QImage:
 
     band_top = top - pad
     if treatment == "scrim":
-        _scrim(p, w, h, block_h, style.anchor)
+        _scrim(p, w, h, block_h, style.anchor, top)
     elif treatment == "band":
         # Measured share_render's way and then the block centred in it, because
         # the promise Data makes is that the band does not MOVE. Growing only

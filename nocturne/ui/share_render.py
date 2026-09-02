@@ -172,5 +172,12 @@ def save_share(image: QImage, path: str, quality: int = 92) -> None:
 
 
 def to_clipboard(image: QImage) -> None:
+    """Tagged sRGB, exactly as save_share does.
+
+    The clipboard path passed the raw image while the file got a profile, so
+    pasting into an editor handed it untagged pixels for the reader to guess at
+    — the same shape as the bug _tag_srgb was written for, where a correct
+    export rendered dark in Photoshop.
+    """
     from PySide6.QtWidgets import QApplication
-    QApplication.clipboard().setImage(image)
+    QApplication.clipboard().setImage(_tag_srgb(image))

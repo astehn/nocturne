@@ -173,11 +173,18 @@ class ShareDialog(QDialog):
         self._preset_box.setToolTip("A whole look in one click — type, treatment and placement")
 
         # available_families() drops any face Qt refused, so the menu can never
-        # offer type the painter would silently substitute. Falling back to the
-        # full list keeps the control usable if nothing registered at all.
+        # offer type the painter would silently substitute. It used to fall back
+        # to the full list when NOTHING registered — which put all five names in
+        # the menu and drew every one of them in the system font, with nothing
+        # said. That is the precise failure bundling exists to prevent: the
+        # export is wrong and the app looks fine. An empty menu is honest.
         self._family_box = QComboBox()
-        for label, family in (available_families() or PLATE_FAMILIES):
+        _families = available_families()
+        for label, family in _families:
             self._family_box.addItem(label, family)
+        if not _families:
+            self._family_box.addItem("System font — bundled type unavailable", "")
+            self._family_box.setEnabled(False)
         _set_box(self._family_box, start.family)
         self._family_box.currentIndexChanged.connect(self._set_family)
         self._family_box.setToolTip("Bundled with Nocturne, so the export looks the "
@@ -489,10 +496,26 @@ class ShareDialog(QDialog):
         # plate — which never reaches the painter — would otherwise report the
         # previous image's overflow.
         drawn = bool(plate.designation or plate.common or plate.credit)
-        self.status.setText(
-            "Some text will not fit and has been wrapped — shorten it or choose "
-            "a smaller size." if drawn and last_layout().get("overflow") else "")
+        # The flag means "this wrapped", not "this was lost" — it is set on ANY
+        # second line, and a two-line nebula name fits perfectly well. Saying
+        # "will not fit" claimed text had been dropped when nothing had, and
+        # contradicted the help, which already words it as wrapping.
+        self._wrapped = bool(drawn and last_layout().get("overflow"))
+        self._show_status()
         return image
+
+    def _show_status(self, message: str = "") -> None:
+        """One label, two channels: a transient result and a standing warning.
+
+        Export and Copy both wrote straight to `self.status`, so the wrap notice
+        vanished the moment you acted on it — the user reads "this wrapped",
+        exports, and the reason it wrapped disappears. The warning outlives the
+        message that shares its line.
+        """
+        warning = ("Long text has wrapped to a second line — shorten it or "
+                   "choose a smaller size if you would rather it did not."
+                   if getattr(self, "_wrapped", False) else "")
+        self.status.setText(" · ".join(x for x in (message, warning) if x))
 
     def _refresh_preview(self) -> None:
         self._preview_image = self._compose_current()
@@ -549,9 +572,9 @@ class ShareDialog(QDialog):
         self._save_runner(image, path)
         # Report the pixel size: it is the thing you check before posting, and
         # "Saved name.jpg" alone never answered it.
-        self.status.setText(
+        self._show_status(
             f"Saved {os.path.basename(path)} — {image.width()} × {image.height()}")
 
     def _do_copy(self) -> None:
         self._clipboard_runner(self._compose_current())
-        self.status.setText("Copied to clipboard.")
+        self._show_status("Copied to clipboard.")

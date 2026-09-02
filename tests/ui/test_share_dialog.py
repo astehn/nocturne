@@ -388,15 +388,58 @@ def test_the_chosen_size_reaches_the_renderer(qtbot):
 
 
 def test_the_preview_equals_the_export(qtbot, tmp_path):
-    """The project's stated principle, enforced at the one chokepoint: both
-    _refresh_preview and _do_export call _compose_current()."""
+    """The project's stated principle: the preview at any step must EQUAL what
+    export would produce; "probably the same" is a bug.
+
+    Compares PIXELS, not dimensions. The dimensions-only version of this test
+    was proven toothless by mutation on 2026-09-02 — replacing _do_export's
+    body with a compose of PlateText("WRONG","WRONG","WRONG") left all 42
+    dialog tests green, because the canvas size was unchanged. Text, style,
+    crop and font could all differ between what you saw and what you got.
+    """
+    import numpy as np
+    from PySide6.QtGui import QImage
+
+    def pixels(img):
+        img = img.convertToFormat(QImage.Format.Format_RGB888)
+        w, h = img.width(), img.height()
+        return np.frombuffer(img.constBits(), np.uint8).reshape(
+            h, img.bytesPerLine())[:, :w * 3].copy()
+
     d = _dlg(qtbot)
     d._preset_box.setCurrentIndex(1)
+    d._common_edit.setText("Elephant's Trunk Nebula")
     shown = d._compose_current()
     saved = {}
-    d._save_runner = lambda img, path, *a: saved.update(w=img.width(), h=img.height())
+    d._save_runner = lambda img, path, *a, **k: saved.update(img=QImage(img))
     d._do_export(str(tmp_path / "x.jpg"))
-    assert (saved["w"], saved["h"]) == (shown.width(), shown.height())
+    assert saved, "nothing was handed to the writer"
+    got = saved["img"]
+    assert (got.width(), got.height()) == (shown.width(), shown.height())
+    assert np.array_equal(pixels(got), pixels(shown)), \
+        "the exported pixels differ from the ones you were shown"
+
+
+def test_the_clipboard_gets_what_you_were_shown_too(qtbot):
+    """Copy is an output path like Export, and it goes through the same single
+    compose. Guarded because a second compose path is exactly how the preview
+    and the output drift apart."""
+    import numpy as np
+    from PySide6.QtGui import QImage
+
+    def pixels(img):
+        img = img.convertToFormat(QImage.Format.Format_RGB888)
+        w, h = img.width(), img.height()
+        return np.frombuffer(img.constBits(), np.uint8).reshape(
+            h, img.bytesPerLine())[:, :w * 3].copy()
+
+    d = _dlg(qtbot)
+    shown = d._compose_current()
+    got = {}
+    d._clipboard_runner = lambda img: got.update(img=QImage(img))
+    d._do_copy()
+    assert got, "nothing reached the clipboard"
+    assert np.array_equal(pixels(got["img"]), pixels(shown))
 
 
 def test_with_annotations_on_the_default_becomes_matte(qtbot):
@@ -419,11 +462,35 @@ def test_a_users_explicit_choice_survives_the_annotation_default(qtbot):
     assert d._style().treatment != "matte"
 
 
-def test_text_that_cannot_fit_says_so_rather_than_vanishing(qtbot):
-    """It used to elide in silence."""
+def test_long_text_says_it_wrapped_rather_than_vanishing(qtbot):
+    """It used to elide in silence. The notice says WRAPPED, not "did not fit":
+    the flag is set on any second line, and a two-line nebula name fits fine."""
     d = _dlg(qtbot)
     d._common_edit.setText("x" * 400)
-    assert "not fit" in d.status.text().lower()
+    assert "wrapped" in d.status.text().lower()
+    assert "will not fit" not in d.status.text().lower()
+
+
+def test_exporting_does_not_erase_the_wrap_notice(qtbot, tmp_path):
+    """One label, two channels. Export wrote straight over it, so the notice
+    vanished the moment you acted on it — you read "this wrapped", exported,
+    and the reason it wrapped was gone."""
+    d = _dlg(qtbot)
+    d._common_edit.setText("x" * 400)
+    assert "wrapped" in d.status.text().lower()
+    d._save_runner = lambda img, path, *a, **k: None
+    d._do_export(str(tmp_path / "x.jpg"))
+    assert "Saved" in d.status.text(), "the export result is gone"
+    assert "wrapped" in d.status.text().lower(), "the warning was erased by the result"
+
+
+def test_copying_does_not_erase_it_either(qtbot):
+    d = _dlg(qtbot)
+    d._common_edit.setText("x" * 400)
+    d._clipboard_runner = lambda img: None
+    d._do_copy()
+    assert "Copied" in d.status.text()
+    assert "wrapped" in d.status.text().lower()
 
 
 def test_the_warning_clears_when_the_text_fits_again(qtbot):
@@ -508,3 +575,19 @@ def test_the_preview_is_right_sized_on_FIRST_open(qtbot):
     pm = pane.pixmap()
     assert pm.height() >= pane.height() * 0.95 or pm.width() >= pane.width() * 0.95, (
         f"first open shows {pm.width()}x{pm.height()} in a {pane.width()}x{pane.height()} pane")
+
+
+def test_a_build_with_no_bundled_fonts_says_so_instead_of_lying(qtbot, monkeypatch):
+    """The fallback used to be `available_families() or PLATE_FAMILIES`, so a
+    build whose assets/fonts folder was missing offered all five families and
+    drew every one of them in the system font, silently. That is precisely the
+    failure bundling exists to prevent — fonts.py's own docstring calls it "the
+    worst failure available: the export is wrong and nothing says so."
+    """
+    import nocturne.ui.share_dialog as sd
+    monkeypatch.setattr(sd, "available_families", lambda: [])
+    d = _dlg(qtbot)
+    offered = [d._family_box.itemData(i) for i in range(d._family_box.count())]
+    assert not any(offered), f"offers type it cannot draw: {offered}"
+    assert not d._family_box.isEnabled(), "the picker pretends to offer a choice"
+    assert "unavailable" in d._family_box.itemText(0).lower()

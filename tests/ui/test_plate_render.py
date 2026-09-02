@@ -219,3 +219,55 @@ def test_the_keyline_does_not_run_through_the_text(qtbot):
     inset = round(st.margin * min(600, 800) * 0.5)
     assert lay["block_left"] > inset + 2, (
         f"text starts at {lay['block_left']}, keyline at {inset} — they collide")
+
+
+def test_the_scrim_reaches_the_text_at_every_anchor(qtbot):
+    """_scrim branched only on "top", so all three MIDDLE anchors got a
+    gradient at the BOTTOM of the frame while the text sat in the centre —
+    measured 84 levels of darkening at top-centre, 83 at bottom-centre and
+    0.0 at middle-centre. Scrim is the default preset."""
+    from dataclasses import replace
+    from nocturne.core.presets import preset_by_name
+    bright = QImage(800, 1000, QImage.Format.Format_RGB888)
+    bright.fill(0xB4B4B4)
+    text = PlateText("IC 1396A", "Elephant's Trunk Nebula", "credit")
+    for _label, anchor in ANCHORS:
+        st = replace(preset_by_name("Scrim"), anchor=anchor)
+        draw_plate(bright, text, st)
+        lay = last_layout()
+        mid = min(999, int(lay["block_top"]) + int(lay["block_height"]) // 2)
+        rows = _px(draw_plate(bright, PlateText("", "", ""), st))[:, :, 0].mean(axis=1)
+        assert 180.0 - rows[mid] > 55, (
+            f"{anchor}: only {180.0 - rows[mid]:.0f} levels under the text")
+
+
+def test_a_very_tall_frame_keeps_the_plate_on_the_canvas(qtbot):
+    """Type is sized off the height while the line wraps to the width, so an
+    extreme portrait asked for type too large to fit across it: on 200x3000,
+    18 of 27 anchor/size combinations put the block partly off-canvas, and the
+    right-anchored ones ran off the LEFT edge. None of the offered aspects
+    reaches this, but "Original" passes a mosaic through untouched."""
+    text = PlateText("IC 1396A", "Elephant's Trunk Nebula", "5h 39m · @andreas")
+    for w, h in ((200, 3000), (300, 2000), (120, 1400)):
+        img = QImage(w, h, QImage.Format.Format_RGB888)
+        img.fill(0x202020)
+        for _label, anchor in ANCHORS:
+            st = _Style(); st.anchor = anchor
+            draw_plate(img, text, st)
+            lay = last_layout()
+            assert lay["block_left"] >= -1, f"{w}x{h} {anchor}: left={lay['block_left']}"
+            assert lay["block_left"] + lay["block_width"] <= w + 1, (
+                f"{w}x{h} {anchor}: right edge at "
+                f"{lay['block_left'] + lay['block_width']} on a {w}px canvas")
+
+
+def test_an_ordinary_frame_is_not_shrunk_by_the_fit_clamp(qtbot):
+    """The clamp must be inert at every aspect the tool offers, or it would
+    quietly restyle normal exports."""
+    from nocturne.ui.plate_render import _fit_scale
+    from nocturne.core.presets import PRESETS
+    text = PlateText("IC 1396A", "Elephant's Trunk Nebula", "5h 39m · 2037 × 10s · @andreas")
+    for w, h in ((1080, 1920), (1080, 1350), (1080, 1080), (1920, 1080), (4320, 7680)):
+        for st in PRESETS:
+            avail = float(w - 2 * round(min(w, h) * st.margin))
+            assert _fit_scale(text, st, avail, h) == 1.0, f"{st.name} shrunk at {w}x{h}"

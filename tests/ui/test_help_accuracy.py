@@ -173,7 +173,17 @@ def test_share_help_promises_wrapping_and_the_renderer_wraps():
     assert "wrap" in b.lower() and "status line" in b
     assert "def _wrap(" in pr
     assert "elidedText" not in pr, "the renderer elides again; the help says it wraps"
-    assert "will not fit and has been wrapped" in sd
+    # The message must describe WRAPPING, not loss: the flag is set on any
+    # second line, so "will not fit" told the user text had been dropped when
+    # nothing had — and contradicted this very topic, which says "wrap".
+    assert "has wrapped to a second line" in sd
+    # Check the STRING THE USER SEES, not the file: the first version of this
+    # assertion searched the whole source and tripped on the comments explaining
+    # the very fix it was guarding.
+    from nocturne.ui.share_dialog import ShareDialog
+    import inspect
+    shown = inspect.getsource(ShareDialog._show_status)
+    assert "will not fit" not in shown, "the status line claims text was lost again"
 
 
 def test_share_help_explains_the_matte_default_under_annotations():
