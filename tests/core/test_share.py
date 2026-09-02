@@ -5,7 +5,8 @@ def test_caption_all_fields():
     meta = {"target": "NGC 7000", "livetime": 3600.0, "exposure": 20.0, "frames": 180,
             "date": "2026-07-16T01:31:01"}
     line = caption_line(meta, "andreas")
-    assert line == "NGC 7000 · 1h 00m · 180 × 20s · 2026-07-16 · @andreas"
+    # Human date, not ISO — Andreas 2026-09-02: "a caption is read by people".
+    assert line == "NGC 7000 · 1h 00m · 180 × 20s · 16 Jul 2026 · @andreas"
 
 def test_caption_omits_missing_and_blank_handle():
     assert caption_line({"target": "M31"}, "") == "M31"

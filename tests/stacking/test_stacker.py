@@ -380,3 +380,57 @@ def test_progress_still_counts_every_frame_once_in_order(tmp_path, monkeypatch):
               on_progress=lambda i, n, label=None: seen.append((i, label)))
     combining = [i for i, label in seen if label and "combining" in label]
     assert combining == list(range(1, 7)), combining
+
+
+def test_a_master_records_when_it_was_taken_and_at_what_gain(tmp_path):
+    """Both were copied into the in-memory dict and never written to the file,
+    so the session that made the stack showed "Captured 2026-08-26" and
+    "Gain 200" while the master on disk had no DATE card at all. Verified on
+    Andreas' real NGC 281 master 2026-09-02: subs had DATE-OBS and GAIN, the
+    master had neither."""
+    from nocturne.stacking.stacker import master_header
+    h = master_header({"date": "2026-08-26T20:06:02", "date_end": "2026-08-27T03:24:30",
+                       "gain": 200, "target": "NGC 281"}, 1233, 12330.0)
+    assert h["DATE-OBS"] == "2026-08-26T20:06:02"
+    assert h["DATE-END"] == "2026-08-27T03:24:30"
+    assert h["GAIN"] == 200
+
+
+def test_a_master_with_no_such_data_omits_the_cards(tmp_path):
+    """A blank card is worse than none — it reads as "we know it was nothing"."""
+    from nocturne.stacking.stacker import master_header
+    h = master_header({"target": "M 31"}, 10, 100.0)
+    assert "DATE-OBS" not in h and "DATE-END" not in h and "GAIN" not in h
+
+
+def test_capture_span_reads_the_run_not_the_reference_frame(tmp_path):
+    """The reference is ONE sub; its DATE-OBS is one moment in a run that may
+    have gone on for seven hours."""
+    import numpy as np
+    from astropy.io import fits
+    from nocturne.stacking.stacker import capture_span
+    paths = []
+    for i, stamp in enumerate(("2026-08-26T22:00:00", "2026-08-26T20:06:02",
+                               "2026-08-27T03:24:30", "2026-08-27T01:00:00")):
+        p = tmp_path / f"sub{i}.fit"
+        hdu = fits.PrimaryHDU(np.zeros((4, 4), np.uint16))
+        hdu.header["DATE-OBS"] = stamp
+        hdu.writeto(str(p))
+        paths.append(str(p))
+    assert capture_span(paths) == ("2026-08-26T20:06:02", "2026-08-27T03:24:30")
+
+
+def test_capture_span_survives_a_broken_sub(tmp_path):
+    """A master must not fail to be written because one file has a bad card."""
+    import numpy as np
+    from astropy.io import fits
+    from nocturne.stacking.stacker import capture_span
+    good = tmp_path / "good.fit"
+    hdu = fits.PrimaryHDU(np.zeros((4, 4), np.uint16))
+    hdu.header["DATE-OBS"] = "2026-08-26T20:06:02"
+    hdu.writeto(str(good))
+    bad = tmp_path / "bad.fit"
+    bad.write_bytes(b"not a fits file at all")
+    assert capture_span([str(good), str(bad), str(tmp_path / "missing.fit")]) == \
+        ("2026-08-26T20:06:02", "2026-08-26T20:06:02")
+    assert capture_span([]) == ("", "")

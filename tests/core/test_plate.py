@@ -50,13 +50,23 @@ def test_the_credit_slot_does_not_repeat_the_target():
     assert "300 × 10s" in t.credit, "the credit lost the data it exists to carry"
 
 
-def test_caption_line_is_unchanged_by_default():
-    """The Data preset reproduces today's output byte for byte, so this
-    function's default behaviour is frozen."""
+def test_caption_line_keeps_its_shape_and_its_target_by_default():
+    """The Data preset reproduces the old strip, so the SHAPE of this line is
+    frozen: target, integration, frames x sub, date, handle, joined by " · ".
+
+    The date's spelling deliberately changed on 2026-09-02 — "16 Jul 2026"
+    rather than "2026-07-16", because a caption is read by people — so this
+    pins the structure rather than the exact old bytes."""
     meta = {"target": "NGC 7000", "exposure": 10.0, "frames": 300,
             "date": "2026-08-31T22:10:00"}
     assert caption_line(meta, "andreas") == \
-        "NGC 7000 · 50m 00s · 300 × 10s · 2026-08-31 · @andreas"
+        "NGC 7000 · 50m 00s · 300 × 10s · 31 Aug 2026 · @andreas"
+
+
+def test_a_caption_shows_a_session_that_crossed_midnight_as_a_range():
+    meta = {"target": "NGC 281", "exposure": 10.0, "frames": 1233,
+            "date": "2026-08-26T20:06:02", "date_end": "2026-08-27T03:24:30"}
+    assert "26–27 Aug 2026" in caption_line(meta, "andreas")
 
 
 def test_caption_line_can_omit_the_target():

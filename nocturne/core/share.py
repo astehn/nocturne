@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from .fits_io import resolve_integration, format_integration
+from .fits_io import format_capture_span, format_integration, resolve_integration
 
 ASPECTS: list[tuple[str, float | None]] = [
     ("Original", None), ("1:1", 1.0), ("4:5", 4 / 5),
@@ -73,9 +73,12 @@ def caption_line(metadata: dict, handle: str, *, include_target: bool = True) ->
             segs.append(format_integration(integ.total_s))
         if integ.frames and integ.per_sub_s:
             segs.append(f"{integ.frames} × {round(integ.per_sub_s)}s")
-    date = str(metadata.get("date") or "").strip()
-    if len(date) >= 10:
-        segs.append(date[:10])           # ISO 'YYYY-MM-DDT..' → 'YYYY-MM-DD'
+    # "26-27 Aug 2026", not "2026-08-26". A caption is read by people, and a
+    # run that crosses midnight cannot be told by one date: NGC 281 ran
+    # 20:06 to 03:24 with 924 frames on one date and 590 on the other.
+    when = format_capture_span(metadata.get("date"), metadata.get("date_end"))
+    if when:
+        segs.append(when)
     handle = handle.strip()
     if handle:
         segs.append(handle if handle.startswith("@") else "@" + handle)

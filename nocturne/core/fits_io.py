@@ -128,6 +128,7 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "bitpix": ("BITPIX",),
         "temp": ("CCD-TEMP", "CCD_TEMP"),
         "date": ("DATE-OBS", "DATE"),
+        "date_end": ("DATE-END",),     # last sub of the run; see format_capture_span
         "livetime": ("LIVETIME",),
         "creator": ("CREATOR",),        # 'ZWO Seestar S50' — names the camera outright
         "instrument": ("INSTRUME",),    # 'imx585' or 'Seestar S50'; inconsistent, so secondary
@@ -208,6 +209,46 @@ def resolve_integration(meta: dict) -> "Integration | None":
     return None
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _ymd(value):
+    """(year, month, day) from an ISO-ish timestamp, or None."""
+    text = str(value or "").strip()
+    if len(text) < 10:
+        return None
+    try:
+        return int(text[0:4]), int(text[5:7]), int(text[8:10])
+    except ValueError:
+        return None
+
+
+def format_capture_span(start, end=None) -> str:
+    """When the data was taken, written the way a person would say it.
+
+    "26 Aug 2026", or "26-27 Aug 2026" when the session ran past midnight.
+    A real Seestar run does that routinely: NGC 281 went 2026-08-26 20:06 to
+    2026-08-27 03:24, 924 frames on one date and 590 on the other, so naming
+    either single date is quietly wrong about most of the night.
+
+    ISO on purpose avoided (Andreas, 2026-09-02): a caption is read by people,
+    and "2026-08-26 - 2026-08-27" is a machine talking.
+    """
+    a, b = _ymd(start), _ymd(end)
+    if a is None:
+        return ""
+    if b is None or b <= a:
+        return f"{a[2]} {_MONTHS[a[1] - 1]} {a[0]}"
+    if a[0] == b[0] and a[1] == b[1]:            # same month: "26-27 Aug 2026"
+        return f"{a[2]}\u2013{b[2]} {_MONTHS[a[1] - 1]} {a[0]}"
+    if a[0] == b[0]:                             # same year: "31 Aug - 1 Sep 2026"
+        return (f"{a[2]} {_MONTHS[a[1] - 1]} \u2013 "
+                f"{b[2]} {_MONTHS[b[1] - 1]} {a[0]}")
+    return (f"{a[2]} {_MONTHS[a[1] - 1]} {a[0]} \u2013 "
+            f"{b[2]} {_MONTHS[b[1] - 1]} {b[0]}")
+
+
 def format_integration(seconds: float) -> str:
     """Human total integration: 2900 -> '48m 20s', 8100 -> '2h 15m', 20 -> '20s'."""
     s = int(round(seconds))
@@ -282,7 +323,9 @@ def import_summary(meta: dict, instrument=None,
         except (TypeError, ValueError):
             pass
     if meta.get("date"):
-        stack.append(("Captured", str(meta["date"]).split("T")[0]))
+        # Same wording as the Share plate: one way of saying a date in the app.
+        stack.append(("Captured",
+                      format_capture_span(meta.get("date"), meta.get("date_end"))))
     if meta.get("width") and meta.get("height"):
         stack.append(("Dimensions", f"{meta['width']} × {meta['height']}"))
 

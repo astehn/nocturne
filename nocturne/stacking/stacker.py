@@ -46,6 +46,28 @@ def _rescale_optics(cards: dict, scale: int) -> dict:
     return out
 
 
+def capture_span(paths) -> tuple[str, str]:
+    """(earliest, latest) DATE-OBS across `paths`, as ("", "") when unknown.
+
+    Header-only reads: 0.24 ms a file measured on real subs, so ~0.3 s for a
+    1233-frame stack. Failures are skipped rather than raised — a master must
+    not fail to be written because one sub has a malformed card.
+    """
+    from astropy.io import fits
+
+    stamps = []
+    for path in paths or ():
+        try:
+            value = fits.getheader(path, 0).get("DATE-OBS")
+        except Exception:      # noqa: BLE001 — a bad card must not lose the stack
+            continue
+        if value:
+            stamps.append(str(value))
+    if not stamps:
+        return ("", "")
+    return (min(stamps), max(stamps))
+
+
 def master_header(ref_meta: dict, count: int, integ: float,
                   trimmed: bool | None = None, scale: int = 1) -> dict:
     """FITS header for a written master: stack counts + the reference sub's
@@ -75,6 +97,18 @@ def master_header(ref_meta: dict, count: int, integ: float,
     camera = ref_meta.get("instrument") or ref_meta.get("creator")
     if camera:
         header["INSTRUME"] = camera
+    # When the data was taken, and at what gain. Neither was written before
+    # 2026-09-02: master_metadata copied both into the IN-MEMORY dict, so the
+    # session that made the stack showed "Captured 2026-08-26" and "Gain 200"
+    # while the FILE had no DATE card at all — re-open it tomorrow and both are
+    # gone. DATE-END as well as DATE-OBS because a real run crosses midnight
+    # (NGC 281: 20:06 to 03:24, 924 frames on one date and 590 on the other),
+    # and one timestamp cannot say that.
+    for key, card in (("date", "DATE-OBS"), ("date_end", "DATE-END"),
+                      ("gain", "GAIN")):
+        value = ref_meta.get(key)
+        if value is not None:
+            header[card] = value
     return header
 
 
@@ -102,7 +136,7 @@ def master_metadata(ref_meta: dict, count: int, integ: float, w: int, h: int,
     # Pointing and scale survive stacking: registration is a rigid transform to
     # the reference frame, so the reference's own optics still describe the master.
     for key in ("focal_length", "pixel_size", "ra", "dec", "filter", "gain",
-                "date", "solve_cards", "creator", "instrument"):
+                "date", "date_end", "solve_cards", "creator", "instrument"):
         if (value := ref_meta.get(key)) is not None:
             meta[key] = value
     # ... EXCEPT the scale, when the master is on a finer grid than its subs.
@@ -341,6 +375,17 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         top, bottom, left, right = full_coverage_bounds(coverage, len(used))
         master = master[top:bottom, left:right]
 
+    # The reference frame is one sub, so its DATE-OBS is one moment in a run
+    # that may have gone on for seven hours. Read the span off the frames that
+    # actually made it into the master. Header-only, and measured at 0.24 ms a
+    # file — 0.3 s across 1233 subs, against a stack that runs for minutes.
+    span = capture_span(used)
+    ref_meta_for_master = dict(ref_img.metadata)
+    if span[0]:
+        ref_meta_for_master["date"] = span[0]
+    if span[1]:
+        ref_meta_for_master["date_end"] = span[1]
+
     ch, cw = master.shape[:2]
     peak = float(master.max())
     if peak > 0:
@@ -348,11 +393,11 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     image = AstroImage(
         np.clip(master, 0.0, 1.0).astype(np.float32),
         is_linear=True,
-        metadata=master_metadata(ref_img.metadata, len(used), integ, cw, ch,
+        metadata=master_metadata(ref_meta_for_master, len(used), integ, cw, ch,
                                  scale=out_scale),
     )
     save_fits(image, opts.output_path,
-              header=master_header(ref_img.metadata, len(used), integ,
+              header=master_header(ref_meta_for_master, len(used), integ,
                                    trimmed=opts.autocrop, scale=out_scale))
     return StackResult(image, used, rejected, len(used), integ, opts.output_path,
                        peak)
