@@ -360,3 +360,78 @@ def test_rescan_repairs_a_path_pointing_at_a_data_file(tmp_path):
     found = detect_tool_paths(Settings(graxpert_path=str(doc)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
     assert found.get("graxpert_path", "").endswith("GraXpert.app")
+
+
+# --- the title plate ------------------------------------------------------
+
+def test_a_user_who_had_tuned_the_old_caption_lands_on_data(tmp_path):
+    """Their settings describe today's band. Dropping them onto the new default
+    would silently change every export they make.
+
+    The file is built by DELETING the plate_* keys rather than by round-tripping
+    Settings: save_settings writes every field, so a saved new-build file names
+    plate_preset outright and never reaches the migration at all. Only a file
+    that predates these keys can exercise it."""
+    import json
+    from dataclasses import asdict
+    from nocturne.settings import load_settings, Settings
+    p = tmp_path / "settings.json"
+    data = asdict(Settings(share_caption_colour="#ffcc00", share_band_opacity=0.8))
+    for key in [k for k in data if k.startswith("plate_")]:
+        del data[key]
+    p.write_text(json.dumps(data))
+    s = load_settings(str(p))
+    assert s.plate_preset == "Data"
+    assert s.share_caption_colour == "#ffcc00"      # not thrown away
+
+
+def test_a_fresh_install_gets_scrim(tmp_path):
+    from nocturne.settings import load_settings
+    assert load_settings(str(tmp_path / "none.json")).plate_preset == "Scrim"
+
+
+def test_plate_settings_round_trip(tmp_path):
+    """load_settings lists every field explicitly, so a field added to the
+    dataclass alone would save via asdict and silently never load back. All
+    three plate fields are named here for that reason — the nested list in
+    particular, which nothing else exercises."""
+    from nocturne.settings import load_settings, save_settings, Settings
+    p = tmp_path / "s.json"
+    mine = [{"name": "Mine", "family": "Jost"}]
+    save_settings(Settings(plate_preset="Plate", plate_style={"family": "Jost"},
+                           plate_user_presets=mine), str(p))
+    s = load_settings(str(p))
+    assert s.plate_preset == "Plate" and s.plate_style["family"] == "Jost"
+    assert s.plate_user_presets == mine
+
+
+def test_plate_defaults_are_not_shared_mutables():
+    """field(default_factory=...) is required for both — a bare {} or [] default
+    would be shared by every Settings() instance."""
+    from nocturne.settings import Settings
+    a, b = Settings(), Settings()
+    a.plate_style["family"] = "Jost"
+    a.plate_user_presets.append({"name": "Mine"})
+    assert b.plate_style == {} and b.plate_user_presets == []
+
+
+def test_a_settings_file_from_before_the_caption_existed_gets_scrim(tmp_path):
+    """The other side of the migration, and the only one with teeth: all three
+    tests above pass just as happily against `plate_preset = "Data"` written
+    unconditionally. The caption keys arrived on 2026-08-01 (851fb1a); a file
+    older than that records no opinion about a band, so it starts on the new
+    default like a fresh install."""
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"graxpert_path": "/x/graxpert", "help_expanded": False}))
+    assert load_settings(str(p)).plate_preset == "Scrim"
+
+
+def test_a_chosen_preset_survives_the_migration(tmp_path):
+    """Someone who moved off Data must not be dragged back to it every launch —
+    their file still carries the caption keys forever."""
+    from nocturne.settings import load_settings, save_settings, Settings
+    p = tmp_path / "s.json"
+    save_settings(Settings(plate_preset="Keyline"), str(p))
+    assert load_settings(str(p)).plate_preset == "Keyline"
