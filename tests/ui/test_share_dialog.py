@@ -444,3 +444,53 @@ def test_an_empty_plate_does_not_inherit_the_last_warning(qtbot):
     assert d.status.text()
     d._caption_check.setChecked(False)
     assert d.status.text() == ""
+
+
+def test_the_preview_fills_the_pane_it_is_given(qtbot):
+    """__init__ composes before the layout has run, when the label is still at
+    its 240x220 minimum. Without a re-fit the preview stayed that size for the
+    life of the dialog — a small picture in a large empty box. Tolerable for
+    checking a crop, not for judging type, which is what this pane is now for."""
+    d = _dlg(qtbot)
+    d.resize(1200, 760)
+    d.show()
+    qtbot.waitExposed(d)
+    small = d._preview_label.pixmap().size()
+    d.resize(1600, 1000)
+    qtbot.waitUntil(lambda: d._preview_label.pixmap().width() > small.width(), timeout=2000)
+    assert d._preview_label.pixmap().width() > small.width()
+    # and it must actually USE the pane, not sit at the old minimum
+    assert d._preview_label.pixmap().width() > d._preview_label.width() * 0.6
+
+
+def test_resizing_does_not_recompose(qtbot):
+    """A drag emits a resize per frame; recomposing a 4096 px share on each one
+    would make the dialog crawl."""
+    d = _dlg(qtbot)
+    d.show(); qtbot.waitExposed(d)
+    calls = []
+    real = d._compose_current
+    d._compose_current = lambda: (calls.append(1), real())[1]
+    d.resize(1300, 820)
+    qtbot.wait(50)
+    assert calls == [], f"recomposed {len(calls)} times on resize"
+
+
+def test_a_solve_hands_the_plate_both_halves_directly(qtbot, tmp_path):
+    """The spec's intended path was dead code: the solve wrote only the joined
+    "M 31 · Andromeda Galaxy" and plate_text split it back apart. That works,
+    but it makes the " · " separator load-bearing for no reason when the solve
+    has the pair in hand."""
+    from nocturne.core.catalog import CatalogObject
+    from nocturne.core.plate import plate_text
+    objs = [CatalogObject(name="NGC 7000", common="North America Nebula",
+                          ra_deg=314.8, dec_deg=44.5, major_arcmin=120.0, x=50, y=50)]
+    from nocturne.core.catalog import identify_target_parts
+    desig, common = identify_target_parts(objs, (100, 100))
+    t = plate_text({"target_designation": desig, "target_common": common}, "")
+    assert (t.designation, t.common) == ("NGC 7000", "North America Nebula")
+    # and the wiring exists at the call site, not only in the helper
+    from pathlib import Path
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    assert "target_designation" in src and "identify_target_parts" in src, \
+        "the solve does not write the pair; the plate is back to splitting a string"

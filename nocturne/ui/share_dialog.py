@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -91,6 +91,11 @@ class ShareDialog(QDialog):
         self._preview_label = QLabel()
         self._preview_label.setMinimumSize(240, 220)
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Ignored, or the scaled pixmap becomes the label's size hint and a large
+        # preview walks the splitter wider every time it is repainted.
+        self._preview_label.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                          QSizePolicy.Policy.Ignored)
+        self._preview_image = None
 
         # Checkable + one exclusive group, so the active aspect is visible. Six
         # plain push-buttons showed no state at all: after clicking around, the
@@ -490,11 +495,31 @@ class ShareDialog(QDialog):
         return image
 
     def _refresh_preview(self) -> None:
-        image = self._compose_current()
-        pix = QPixmap.fromImage(image)
-        scaled = pix.scaled(self._preview_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
-        self._preview_label.setPixmap(scaled)
+        self._preview_image = self._compose_current()
+        self._paint_preview()
+
+    def _paint_preview(self) -> None:
+        """Scale the last composed image to whatever room the label has NOW.
+
+        Split from _refresh_preview because __init__ calls that before the
+        layout has run, when the label is still at its 240x220 minimum: the
+        preview was scaled to a fraction of the pane it eventually occupied and
+        never re-scaled, so it sat as a small picture in a large empty box for
+        the life of the dialog. That is tolerable for checking a crop and not
+        for judging type, which is what this pane is now for.
+        """
+        if getattr(self, "_preview_image", None) is None:
+            return
+        self._preview_label.setPixmap(QPixmap.fromImage(self._preview_image).scaled(
+            self._preview_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+
+    def resizeEvent(self, event) -> None:
+        # Re-scale from the stored image rather than recomposing: a drag emits a
+        # resize per frame, and composing a 4096 px share on each one would make
+        # the dialog crawl.
+        super().resizeEvent(event)
+        self._paint_preview()
 
     # --- export / copy ---
     def _on_export_clicked(self) -> None:
