@@ -182,16 +182,17 @@ def named_stars_in_field(wcs, shape, rows=None) -> list[NamedStar]:
     return out
 
 
-def identify_target(objects: list[CatalogObject], shape) -> str:
-    """The object the frame is most plausibly OF.
+def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str]:
+    """The object the frame is most plausibly OF, as (designation, common name).
 
-    Not simply the largest: once Sharpless and Lynds entries joined the
-    catalogue, an NGC 7000 frame reported 'Sh 2109' — a 18-degree diffuse
-    complex that merely overlaps the field. Rank by significance instead —
-    a Messier or common-named object beats an anonymous survey designation —
-    and only then by size and centrality."""
+    Split out of identify_target so the Share title plate can use the two lines
+    separately. The ranking is unchanged: not simply the largest, because once
+    Sharpless and Lynds entries joined the catalogue an NGC 7000 frame reported
+    'Sh 2109' — an 18-degree diffuse complex that merely overlaps the field. A
+    Messier or common-named object beats an anonymous survey designation, and
+    only then does size and centrality decide."""
     if not objects:
-        return ""
+        return ("", "")
     h, w = shape
     cx, cy = w / 2, h / 2
 
@@ -204,5 +205,27 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
 
     from .annotation_layout import designation
     best = max(objects, key=rank)
-    name = designation(best)        # "M 31", not "NGC 224" — same as the overlay
-    return f"{name} · {best.common}" if best.common else name
+    # "M 31", not "NGC 224" — same as the overlay.
+    return (designation(best), best.common or "")
+
+
+def identify_target(objects: list[CatalogObject], shape) -> str:
+    """Unchanged output — 'M 31 · Andromeda Galaxy'. Four surfaces read this
+    exact format (target_solved, the info strip, the provenance report, the
+    FITS export), so the join stays here rather than moving to the callers."""
+    name, common = identify_target_parts(objects, shape)
+    return f"{name} · {common}" if common else name
+
+
+_NAME_CACHE: dict[str, str] | None = None
+
+
+def common_name_for(designation_str: str) -> str:
+    """Colloquial name for a designation, or "" — for images that were never
+    plate-solved but carry an OBJECT header. Built once; the catalogue is 15,890
+    rows and the plate asks per keystroke."""
+    global _NAME_CACHE
+    if _NAME_CACHE is None:
+        _NAME_CACHE = {row[0].replace(" ", ""): row[1]
+                       for row in load_catalog() if row[1]}
+    return _NAME_CACHE.get((designation_str or "").replace(" ", ""), "")

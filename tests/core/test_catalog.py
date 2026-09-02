@@ -223,3 +223,35 @@ def test_the_elephants_trunk_is_named_on_vdb142_not_on_the_whole_region():
     names = _curated_names()
     assert names.get("vdB142") == "Elephant's Trunk Nebula"
     assert "Sh2-131" not in names
+
+
+def test_identify_target_parts_keeps_the_pair_apart():
+    """identify_target joins these with ' · '. The plate needs them separate —
+    and the join must stay, because target_solved, the info strip, the
+    provenance report and the FITS export all read the joined form."""
+    from nocturne.core.catalog import CatalogObject, identify_target, identify_target_parts
+    objs = [CatalogObject(name="IC 1396A", common="Elephant's Trunk Nebula",
+                          ra_deg=324.7, dec_deg=57.5, major_arcmin=20.0, x=50, y=50)]
+    assert identify_target_parts(objs, (100, 100)) == ("IC 1396A", "Elephant's Trunk Nebula")
+    assert identify_target(objs, (100, 100)) == "IC 1396A · Elephant's Trunk Nebula"
+
+
+def test_identify_target_parts_on_an_object_with_no_common_name():
+    from nocturne.core.catalog import CatalogObject, identify_target_parts
+    objs = [CatalogObject(name="NGC 7380", common="", ra_deg=341.8, dec_deg=58.1,
+                          major_arcmin=25.0, x=50, y=50)]
+    assert identify_target_parts(objs, (100, 100)) == ("NGC 7380", "")
+
+
+def test_identify_target_parts_on_an_empty_field():
+    from nocturne.core.catalog import identify_target_parts
+    assert identify_target_parts([], (100, 100)) == ("", "")
+
+
+def test_common_name_for_reads_the_curated_table():
+    """vdB142 has no common name in openngc.csv; common_names.csv supplies it."""
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for("vdB142") == "Elephant's Trunk Nebula"
+    assert common_name_for("NGC7000") == "North America Nebula"
+    assert common_name_for("NGC 7000") == "North America Nebula"   # spaces tolerated
+    assert common_name_for("NGC9999") == ""                        # absent, not an error
