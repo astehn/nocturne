@@ -272,3 +272,87 @@ def test_every_saveable_enhancement_can_actually_be_replayed():
     for name in ENHANCE_NAMES:
         replayable = name in ENHANCE_OPS or f'"{name}":' in batch_src
         assert replayable, f"{name!r} serialises into a recipe but batch cannot apply it"
+
+
+# --- preflight: what will actually happen, before anything runs -------------
+
+def _tool(tmp_path):
+    exe = tmp_path / "tool"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    return str(exe)
+
+
+def test_preflight_says_run_substitute_or_fail_for_every_step(tmp_path):
+    """missing_tools answers "can this run at all"; this is the other half. A
+    recipe that CAN run may still not do what its author did — six of the eight
+    tool-backed stages silently fall back to a free implementation."""
+    from nocturne.recipe import Recipe, preflight
+    from nocturne.settings import Settings
+    r = Recipe(steps=[{"stage": "stretch", "option": 0.6},
+                      {"stage": "star_reduction", "option": 0.4},
+                      {"stage": "background", "option": "strong"}])
+    plans = {p.step: p for p in preflight(r, Settings())}
+    assert plans["Stretch"].outcome == "run"
+    assert plans["Star Reduction"].outcome == "substitute"
+    assert "free star split" in plans["Star Reduction"].engine
+    assert plans["Background"].outcome == "fail"
+    assert plans["Background"].ok is False
+
+
+def test_preflight_says_everything_runs_when_the_tools_are_there(tmp_path):
+    from nocturne.recipe import Recipe, preflight, preflight_summary
+    from nocturne.settings import Settings
+    exe = _tool(tmp_path)
+    s = Settings(rcastro_path=exe, graxpert_path=exe, astap_path=exe)
+    r = Recipe(steps=[{"stage": "background", "option": "strong"},
+                      {"stage": "star_reduction", "option": 0.4}])
+    plans = preflight(r, s)
+    assert [p.outcome for p in plans] == ["run", "run"]
+    assert preflight_summary(plans) == "All 2 steps will run as saved."
+
+
+def test_the_summary_leads_with_what_stops_the_run(tmp_path):
+    """A failure and a substitution in the same recipe: the failure is what the
+    user has to act on, so it must not be buried behind the substitution."""
+    from nocturne.recipe import Recipe, preflight, preflight_summary
+    from nocturne.settings import Settings
+    r = Recipe(steps=[{"stage": "star_reduction", "option": 0.4},
+                      {"stage": "background", "option": "strong"}])
+    line = preflight_summary(preflight(r, Settings()))
+    assert line.startswith("1 step cannot run")
+    assert "Background" in line
+
+
+def test_the_preflight_agrees_with_missing_tools(tmp_path):
+    """Two independently computed answers about the same recipe must not
+    disagree — the stricter one wins, or the preflight promises a run the batch
+    then aborts."""
+    from nocturne.recipe import Recipe, missing_tools, preflight
+    from nocturne.settings import Settings
+    r = Recipe(steps=[{"stage": "background", "option": "strong"}])
+    blocked = missing_tools(r, Settings())
+    plans = preflight(r, Settings())
+    assert bool(blocked) == any(not p.ok for p in plans)
+
+
+def test_an_off_background_needs_nothing(tmp_path):
+    """"off" is a real option that does not call GraXpert, and missing_tools
+    already excludes it. The preflight must agree."""
+    from nocturne.recipe import Recipe, missing_tools, preflight
+    from nocturne.settings import Settings
+    r = Recipe(steps=[{"stage": "background", "option": "off"}])
+    assert missing_tools(r, Settings()) == []
+    # ...and so must the preflight. "off" returns the image untouched and never
+    # reaches GraXpert, so reporting a failure here would be a warning about
+    # something that cannot happen — and would contradict missing_tools about
+    # the same recipe. The first version of this test asserted "fail" and
+    # called it honest; it was not.
+    assert preflight(r, Settings())[0].outcome == "run"
+
+
+def test_an_enhancement_is_named_by_its_tap(tmp_path):
+    from nocturne.recipe import Recipe, preflight
+    from nocturne.settings import Settings
+    r = Recipe(steps=[{"stage": "enhance", "option": "Boost Gold"}])
+    assert preflight(r, Settings())[0].step == "Boost Gold"

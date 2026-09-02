@@ -212,3 +212,49 @@ def test_the_empty_folder_message_lists_the_extensions_the_glob_actually_uses(qt
     assert _INPUT_PATTERNS, "the glob patterns must be a shared constant"
     for pat in _INPUT_PATTERNS:
         assert pat.lstrip("*") in text, f"{pat} missing from: {text}"
+
+
+def _write_recipe(tmp_path, steps):
+    import json
+    p = tmp_path / "r.json"
+    p.write_text(json.dumps({"version": 1, "steps": steps}))
+    return str(p)
+
+
+def test_the_dialog_says_what_the_recipe_will_actually_do(qtbot, tmp_path):
+    """Not blocked is not the same as "will do what you saved". Six of the eight
+    tool-backed stages fall back to a free implementation without saying so, and
+    a batch is the worst place to find that out — a whole folder is already
+    done by then."""
+    d = _dialog(qtbot, tmp_path) if "_dialog" in globals() else None
+    if d is None:
+        from nocturne.ui.batch_dialog import BatchDialog
+        from nocturne.settings import Settings
+        d = BatchDialog(Settings())
+        qtbot.addWidget(d)
+    d.recipe_edit.setText(_write_recipe(tmp_path, [
+        {"stage": "stretch", "option": 0.6},
+        {"stage": "star_reduction", "option": 0.4}]))
+    text = d.status.text()
+    assert "substitute" in text and "Star Reduction" in text
+    assert d.run_btn.isEnabled(), "a substitution must not block the run"
+
+
+def test_a_recipe_that_runs_as_saved_says_so(qtbot, tmp_path):
+    from nocturne.ui.batch_dialog import BatchDialog
+    from nocturne.settings import Settings
+    d = BatchDialog(Settings())
+    qtbot.addWidget(d)
+    d.recipe_edit.setText(_write_recipe(tmp_path, [{"stage": "stretch", "option": 0.6}]))
+    assert "will run as saved" in d.status.text()
+
+
+def test_a_blocking_tool_still_wins_over_the_plan(qtbot, tmp_path):
+    """The block is the actionable message; the plan must not replace it."""
+    from nocturne.ui.batch_dialog import BatchDialog
+    from nocturne.settings import Settings
+    d = BatchDialog(Settings())
+    qtbot.addWidget(d)
+    d.recipe_edit.setText(_write_recipe(tmp_path, [{"stage": "background", "option": "strong"}]))
+    assert "GraXpert" in d.status.text()
+    assert d.run_btn.isEnabled() is False

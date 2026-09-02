@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..batch import overwrites_source, run_batch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
-from ..recipe import load_recipe, missing_tools
+from ..recipe import load_recipe, missing_tools, preflight, preflight_summary
 from ..settings import start_dir
 from .worker import run_async
 from . import file_dialogs
@@ -100,6 +100,7 @@ class BatchDialog(QDialog):
         Runs on every edit of the path — typed as well as browsed, since the
         field is a plain QLineEdit and a pasted path must gate the same way."""
         self._blocked = ""
+        self._plan = ""
         path = self.recipe_edit.text().strip()
         if path and os.path.isfile(path):
             try:
@@ -113,7 +114,13 @@ class BatchDialog(QDialog):
                         f"This recipe has a Background step, which needs "
                         f"{', '.join(missing)}. Install it and set the path in Settings, "
                         f"or use a recipe without one.")
-        self.status.setText(self._blocked)
+                else:
+                    # Not blocked is not the same as "will do what you saved".
+                    # Six of the eight tool-backed stages fall back to a free
+                    # implementation without saying so, and a batch is the worst
+                    # place to discover that — a whole folder is already done.
+                    self._plan = preflight_summary(preflight(recipe, self._settings))
+        self.status.setText(self._blocked or self._plan)
         self._sync_run_enabled()
 
     def _sync_run_enabled(self) -> None:

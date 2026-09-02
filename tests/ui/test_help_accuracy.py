@@ -916,7 +916,11 @@ def test_recipes_help_is_right_that_run_is_gated_on_the_recipe(qtbot, tmp_path):
     assert ran == [], "a blocked recipe still started a run"
 
     d.recipe_edit.setText(str(plain))            # needs nothing -> runnable
-    assert d.run_btn.isEnabled() and d.status.text() == ""
+    # The status line is no longer empty for a runnable recipe: since 2026-09-02
+    # it says what the recipe WILL do, because "not blocked" is not the same as
+    # "will do what you saved". What matters here is that nothing blocks it.
+    assert d.run_btn.isEnabled()
+    assert "GraXpert" not in d.status.text() and "cannot run" not in d.status.text()
     assert "Only a step that <i>cannot run at all</i> stops you" in b
 
     bad = tmp_path / "notes.json"                # not a recipe at all

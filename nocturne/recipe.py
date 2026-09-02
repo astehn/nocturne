@@ -185,6 +185,87 @@ def missing_tools(recipe: Recipe, settings) -> list[str]:
     return ["GraXpert"] if needs_gx and not graxpert_valid(settings) else []
 
 
+@dataclass(frozen=True)
+class StepPlan:
+    """What one step of a recipe will actually do, before anything runs."""
+
+    step: str        # the name the user sees
+    outcome: str     # "run" | "substitute" | "fail"
+    engine: str      # what will do it ("" when it will fail)
+    reason: str      # why, when it is not simply going to run
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome != "fail"
+
+
+def preflight(recipe: Recipe, settings) -> list[StepPlan]:
+    """Step by step: what will run, what will be substituted, what will fail.
+
+    `missing_tools` already answers "can this recipe run at all", and the batch
+    dialog blocks on it. This is the other half — the positive statement. A
+    recipe that CAN run may still not do what its author did: six of the eight
+    tool-backed stages silently fall back to a free implementation, and until
+    now nothing said so before a folder of files was processed with it.
+
+    Pure, and it reuses `core.receipt` so the answer here and the engine named
+    in a provenance report cannot disagree.
+    """
+    from .core.receipt import engine_for
+    from .ui.pipeline import STEP_NAME
+
+    blocked = set(missing_tools(recipe, settings))
+    plans: list[StepPlan] = []
+    for step in recipe.steps:
+        sid = step.get("stage")
+        name = (str(step.get("option")) if sid == "enhance"
+                else STEP_NAME.get(sid, sid or "?"))
+        # The OPTION can make the engine irrelevant: Background "off" returns
+        # the image untouched and never reaches GraXpert, which is why
+        # missing_tools excludes it. A preflight that ignored the option would
+        # report a failure that cannot happen, and the two answers about the
+        # same recipe would contradict each other.
+        if sid == "background" and step.get("option") == "off":
+            plans.append(StepPlan(name, "run", "", ""))
+            continue
+        note = engine_for(sid, settings)
+        if note is None:                       # no engine choice: it just runs
+            plans.append(StepPlan(name, "run", "", ""))
+        elif note.unavailable:
+            plans.append(StepPlan(name, "fail", "", note.reason))
+        elif note.is_fallback:
+            plans.append(StepPlan(name, "substitute", note.engine, note.reason))
+        else:
+            plans.append(StepPlan(name, "run", note.engine, ""))
+    # A blocked tool must show as a failure even if the stage-level check above
+    # thought otherwise — the two are computed differently and the stricter one
+    # wins, or the preflight would promise a run the batch then aborts.
+    if blocked:
+        plans = [p if p.outcome != "run" or not _needs_blocked(p, blocked) else
+                 StepPlan(p.step, "fail", "", f"{', '.join(sorted(blocked))} is not configured")
+                 for p in plans]
+    return plans
+
+
+def _needs_blocked(plan: StepPlan, blocked: set) -> bool:
+    return any(tool.lower() in (plan.engine or "").lower() for tool in blocked)
+
+
+def preflight_summary(plans) -> str:
+    """One line for a status bar: what a user needs to know before pressing Run."""
+    fails = [p for p in plans if p.outcome == "fail"]
+    subs = [p for p in plans if p.outcome == "substitute"]
+    if fails:
+        return f"{len(fails)} step{'s' if len(fails) > 1 else ''} cannot run: " \
+               + "; ".join(f"{p.step} — {p.reason}" for p in fails)
+    if subs:
+        return f"{len(subs)} step{'s' if len(subs) > 1 else ''} will use a built-in " \
+               f"substitute: " + ", ".join(f"{p.step} ({p.engine})" for p in subs)
+    n = len(plans)
+    return ("This step will run as saved." if n == 1
+            else f"All {n} steps will run as saved.")
+
+
 def save_recipe(recipe: Recipe, path: str) -> None:
     with open(path, "w") as f:
         json.dump({"version": 1, "steps": recipe.steps}, f, indent=2)
