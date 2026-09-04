@@ -305,7 +305,8 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         # bug. It is reproducibility by construction, for free — see
         # parallel.ordered_results for the measurement and why it stays.
         for i, out in enumerate(
-                ordered_results(used, _prepare, workers=plan.count), start=1):
+                ordered_results(used, _prepare, workers=plan.count,
+                                window=plan.window), start=1):
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, label)
@@ -345,8 +346,8 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
         drizzle_items.pass_no = getattr(drizzle_items, "pass_no", 0) + 1
         what = ("measuring frames for rejection" if drizzle_items.pass_no == 1
                 else "drizzling frames")
-        for i, out in enumerate(ordered_results(used, prep, workers=plan.count),
-                                start=1):
+        for i, out in enumerate(ordered_results(used, prep, workers=plan.count,
+                                                window=plan.window), start=1):
             _check_cancel()
             if on_progress is not None:
                 on_progress(i, total, step_label(1 + drizzle_items.pass_no, what))

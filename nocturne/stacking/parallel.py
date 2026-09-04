@@ -21,6 +21,55 @@ from dataclasses import dataclass
 # computed. With a window of 2 frames per worker that is ~500 MB each.
 _PER_WORKER_MB = 500
 
+# What one slot of `ordered_results`' window ACTUALLY costs, end to end.
+#
+# Measured 2026-09-04 on 16 real M 16 subs at 8 workers, sigma-clip, four window
+# values run interleaved (2, 4, 6, 10, twice each, to cancel drift and disk
+# cache):
+#
+#     window  2 -> 4973 MB    window  6 -> 7751 MB
+#     window  4 -> 6139 MB    window 10 -> 9100 MB
+#
+#     least squares: peak ~ 4128 MB + 520 MB * window, R^2 = 0.96
+#
+# 520 MB, not the 108 MB a queued frame retains: while the consumer holds
+# `window` finished frames, the workers are concurrently building more, and
+# their transients are resident too. Believing the 108 MB figure is what let the
+# default sit at a size nobody had costed.
+#
+# NOT used as a cap — see plan_workers for why a second RAM budget there would be
+# redundant. It is kept because it is the measurement that justifies the size of
+# `window`, and this file's constants are required to carry their evidence.
+_PER_SLOT_MB = 520
+
+# Past this many frames in flight, more lookahead stops buying speed and only
+# costs memory. Measured 2026-09-04 on 16 real M 16 subs, 3-5 repetitions each,
+# peak resident of the largest process:
+#
+#   8 workers   window  5  7064 MB  12.4 s     4 workers   window 2  4870 MB  19.8 s
+#               window  6  7792 MB  12.2 s                 window 3  5138 MB  16.1 s
+#               window  7  8530 MB  12.1 s                 window 4  6102 MB  13.8 s
+#               window  8  8992 MB  12.1 s                 window 6  6071 MB  12.9 s
+#               window 10  9099 MB  12.1 s
+#
+# Two things that a single measurement would have got wrong:
+#
+# Memory stops rising once the window passes the worker count — windows 8 and 10
+# are 74 MB apart, because slots beyond `workers` are rarely occupied. So the
+# old default of workers + 2 was not itself the waste; the waste is that 8
+# workers were given 10 slots when 6 run just as fast for 1.3 GB less.
+#
+# But the sweet spot is NOT a fraction of the worker count. At 4 workers,
+# window 4 is 7% SLOWER than window 6 at identical memory: with fewer producers
+# the consumer starves, and lookahead is what feeds it. A `window = workers`
+# rule was tried and measured out for exactly this reason. Hence a cap on top of
+# the old rule rather than a replacement for it.
+#
+# 6 is where both worker counts reach their best speed. Revisit it if the
+# per-frame cost changes much — a larger sensor or a drizzle canvas moves the
+# memory per slot, though not the point at which lookahead stops helping.
+_WINDOW_CAP = 6
+
 # Diminishing returns, measured: 6.80x at 8 threads against 6.42x at 12. This
 # machine's 14 logical CPUs are 10 performance + 4 efficiency cores, and past
 # the performance cores the work lands on the slower ones and adds contention.
@@ -78,6 +127,7 @@ class WorkerPlan:
     limiter: str            # "cores" | "memory" | "ceiling"
     cores: int
     ram_gb: float
+    window: int = 1         # frames `ordered_results` may hold; see plan_workers
 
     def describe(self) -> str:
         """One line for the log. The count is deliberately NOT a setting — nobody
@@ -85,7 +135,7 @@ class WorkerPlan:
         so the log is the only place a slow stack can be diagnosed from."""
         return (f"{self.count} worker{'s' if self.count != 1 else ''} "
                 f"({self.cores} performance cores, {self.ram_gb:.0f} GB RAM; "
-                f"limited by {self.limiter})")
+                f"limited by {self.limiter}), window {self.window}")
 
 
 def plan_workers() -> WorkerPlan:
@@ -100,13 +150,41 @@ def plan_workers() -> WorkerPlan:
     ram_cap = max(1, int(budget_mb // _PER_WORKER_MB))
 
     count = max(1, min(cpu_cap, ram_cap, _CEILING))
+
+    # How many frames may be in flight. Two facts set this, both measured above:
+    #
+    # More lookahead than workers buys NOTHING. At 8 workers, window 6 and
+    # window 10 both stacked in 13.4 s, while window 10 cost 1.35 GB more. The
+    # old default of workers + 2 was paying 1 GB for speed that was already
+    # saturated. `count` slots is enough to keep every worker fed, which is the
+    # only job this window has.
+    #
+    # How many frames may be in flight, which IS most of a stack's peak memory:
+    # draining the frame generator with no accumulation at all still peaked at
+    # 7774 MB of an 8930 MB stack, so the integrator is only ~13% of it.
+    #
+    # This is also how the window becomes RAM-aware, and it is the only way it
+    # needs to be: `count` is already capped by the RAM budget above, so a second
+    # budget check here would be a second computation of one fact. It WAS written
+    # that way first and measured out — with _PER_SLOT_MB (520) against
+    # _PER_WORKER_MB (500), a separate slot cap would bind only for total RAM
+    # between about 11.8 and 12.1 GB. A safety net with a 0.3 GB opening is not a
+    # safety net, it only reads like one.
+    #
+    # Floor of 2: at window 1 the consumer and the pool take strict turns and the
+    # stack loses its parallelism (19.8 s at window 2 on 4 workers against 12.9 s
+    # at 6, and below 2 it is worse). On a one-worker machine this floor beats
+    # everything else — holding one finished frame while the lone worker builds
+    # the next is still a pipeline, and costs one frame.
+    window = max(2, min(count + 2, _WINDOW_CAP))
     if count == ram_cap and ram_cap < cpu_cap and ram_cap < _CEILING:
         limiter = "memory"
     elif count == _CEILING and cpu_cap >= _CEILING and ram_cap >= _CEILING:
         limiter = "ceiling"
     else:
         limiter = "cores"
-    return WorkerPlan(count=count, limiter=limiter, cores=cores, ram_gb=ram_gb)
+    return WorkerPlan(count=count, limiter=limiter, cores=cores, ram_gb=ram_gb,
+                      window=window)
 
 
 def ordered_results(items, fn, workers: int, window: int | None = None):
@@ -130,11 +208,19 @@ def ordered_results(items, fn, workers: int, window: int | None = None):
     grounds that a test still passes without it.
 
     **Bounded lookahead.** `executor.map` and `Pool.imap` buffer without limit
-    when the consumer is slower than the producers. Each buffered frame here is
-    108 MB and this project already has a ~396 GB stacking runaway in its
-    history, so at most `window` results may be outstanding. The default,
-    workers + 2, is enough to keep every worker fed while smoothing jitter
-    without holding twice the frames in memory.
+    when the consumer is slower than the producers, and this project already has
+    a ~396 GB stacking runaway in its history, so at most `window` results may be
+    outstanding.
+
+    A slot costs ~520 MB, NOT the 108 MB a finished frame retains: while the
+    consumer holds `window` of them the workers are building more, and those
+    transients are resident too. See `_PER_SLOT_MB` for the measurement.
+
+    The default of workers + 2 keeps every worker fed while smoothing jitter.
+    Lowering it to `workers` was tried on 2026-09-04 and measured WORSE — 7%
+    slower on a 4-worker machine for 31 MB — so it stayed. Callers inside a
+    stack pass `plan_workers().window`, which caps it at `_WINDOW_CAP`; that is
+    where the memory is actually saved.
 
     Cancellation is the CALLER's job, from the thread that owns the token:
     `core.tasks` keeps the ambient token in a `threading.local`, so a worker

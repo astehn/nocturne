@@ -145,3 +145,69 @@ def test_abandoning_the_generator_does_not_leave_work_running():
     gen.close()
     time.sleep(0.1)
     assert len(started) < 50, "closing the generator must stop feeding the pool"
+
+
+# --- the in-flight window ----------------------------------------------------
+#
+# Peak memory is dominated by frames in flight, not by the integrator: draining
+# the frame generator with NO accumulation still peaked at 7774 MB of an 8930 MB
+# stack (16 real M 16 subs, 8 workers, 2026-09-04). So what this window is set
+# to IS the memory footprint, and it is worth guarding.
+
+
+def test_lookahead_is_capped_however_many_workers_there_are(monkeypatch):
+    """The whole saving. At 8 workers, window 6 stacks in 12.2 s and window 10
+    in 12.1 s — indistinguishable — but window 10 costs 1.3 GB more. Past ~6
+    frames in flight the extra lookahead is bought and never used."""
+    # The literal 6, deliberately NOT parallel._WINDOW_CAP. Asserting against the
+    # constant is what the first version of this test did, and it was vacuous:
+    # raising the cap to 10 moved the assertion with it and the test still
+    # passed. 6 is the measured value, so 6 is what the test holds.
+    for perf, ram in ((10, 64), (16, 128), (32, 256)):
+        p = _plan(monkeypatch, perf=perf, ram_gb=ram)
+        assert p.window <= 6, (perf, ram, p)
+
+
+def test_a_machine_with_few_workers_still_gets_lookahead(monkeypatch):
+    """The cap must not become a rule that starves small machines.
+
+    Measured at 4 workers: window 4 took 13.8 s and window 6 took 12.9 s at the
+    SAME memory (6102 vs 6071 MB). With fewer producers the consumer starves and
+    lookahead is what feeds it, so the window must be allowed to exceed the
+    worker count. A `window = workers` rule was written first and this is the
+    measurement that rejected it.
+    """
+    p = _plan(monkeypatch, perf=5, ram_gb=64)
+    assert p.count == 4
+    assert p.window > p.count, (
+        f"{p.count} workers got only {p.window} slots — measured 7% slower")
+
+
+def test_a_small_machine_gets_a_smaller_window(monkeypatch):
+    """It is RAM-aware through the worker count, which is already RAM-capped —
+    deliberately not through a second budget of its own."""
+    big = _plan(monkeypatch, perf=16, ram_gb=128)
+    small = _plan(monkeypatch, perf=16, ram_gb=4)
+    assert small.window < big.window, (small, big)
+
+
+def test_the_window_never_drops_to_one(monkeypatch):
+    """At window 1 the consumer and the pool take strict turns and the stack is
+    effectively serial — measured 19.8 s at window 2 against 12.9 s at 6 on four
+    workers, and below 2 it is worse. Better to spend 500 MB than lose the pool.
+    """
+    # Note this floor cannot fire under the CURRENT rule — `count` is at least 1,
+    # so count + 2 is at least 3. It is kept because it is one edit away from
+    # mattering: any rule that subtracts from the worker count puts a
+    # single-worker machine straight through it.
+    for perf, ram in ((1, 1), (0, 0), (16, 1), (1, 64)):
+        p = _plan(monkeypatch, perf=perf, ram_gb=ram)
+        assert p.window >= 2, (perf, ram, p)
+
+
+def test_the_window_is_in_the_log_line(monkeypatch):
+    """Same reason as the worker count: it is not a setting, so a stack that
+    swaps can only be diagnosed from the log."""
+    p = _plan(monkeypatch, perf=10, ram_gb=64)
+    assert "window" in p.describe().lower(), p.describe()
+    assert str(p.window) in p.describe()
