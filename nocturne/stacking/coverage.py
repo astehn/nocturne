@@ -65,7 +65,19 @@ def full_coverage_bounds(coverage: np.ndarray, n_frames: int,
     For speed on full-resolution masks the search runs on a subsampled copy and
     the bounds are scaled back (a few pixels of imprecision at the crop edge is
     irrelevant, and it is why the kept rectangle can dip a little under `frac`)."""
-    thresh = max(1, int(np.ceil(frac * n_frames)))
+    # NOT ceil()ed. For an integer coverage map — every method except drizzle —
+    # rounding up selects exactly the same pixels, because there are no integers
+    # between 0.9*n and ceil(0.9*n): verified for n = 3, 8, 12, 20, 100, 1233.
+    #
+    # For drizzle it was fatal. Its coverage is a continuous weight rescaled so
+    # the MEDIAN maps to the frame count, so at n=8 the interior sits at ~8.00
+    # while ceil(7.2) demanded >= 8 exactly — which by construction roughly half
+    # the interior fails, scattered like noise rather than as an envelope. The
+    # largest hole-free rectangle then collapsed: measured 2026-09-04 on real
+    # NGC 281 subs, 96 x 1712 out of 4320 x 7680, where the same mask at the
+    # unrounded threshold gives 4110 x 7572. On a mosaic panel it went to
+    # 736 x 112 and the panel could no longer be plate-solved at all.
+    thresh = max(1.0, frac * n_frames)
     mask = coverage >= thresh
     height, width = coverage.shape
     if not mask.any():

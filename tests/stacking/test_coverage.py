@@ -76,3 +76,58 @@ def test_a_sparse_fringe_is_still_cut_off():
     cov = np.full((30, 30), 3, np.int32)    # 7.5% — a sparse rim
     cov[5:25, 5:25] = n
     assert full_coverage_bounds(cov, n_frames=n) == (5, 25, 5, 25)
+
+
+def test_the_threshold_is_not_rounded_up():
+    """For an INTEGER coverage map, rounding up selects exactly the same pixels
+    — there are no integers between 0.9*n and ceil(0.9*n). For drizzle it was
+    fatal: its coverage is a continuous weight rescaled so the MEDIAN maps to
+    the frame count, so ceil(7.2)=8 at n=8 demanded >= 8 exactly, and by
+    construction about half the interior fell a hair short — scattered like
+    noise rather than forming an envelope, which collapses the largest
+    hole-free rectangle.
+
+    Measured on real NGC 281 subs 2026-09-04: 96 x 1712 out of 4320 x 7680,
+    against 4110 x 7572 for the same mask at the unrounded threshold.
+    """
+    import numpy as np
+    from nocturne.stacking.coverage import full_coverage_bounds
+
+    # A continuous coverage map like drizzle's: interior sits AT the frame
+    # count, half of it a hair below, with a genuine low-coverage border.
+    rng = np.random.default_rng(4)
+    cov = 8.0 + rng.normal(0, 0.03, size=(400, 600)).astype(np.float32)
+    cov[:25, :] = 3.0
+    cov[-25:, :] = 3.0
+    cov[:, :20] = 3.0
+    cov[:, -20:] = 3.0
+    top, bottom, left, right = full_coverage_bounds(cov, 8)
+    kept = (bottom - top) * (right - left)
+    assert kept > 0.7 * cov.size, (
+        f"kept only {100 * kept / cov.size:.1f}% — the interior is being "
+        f"rejected as noise, which is the drizzle auto-crop bug")
+    # ...and it really did find the border, rather than keeping everything.
+    assert top >= 20 and left >= 15
+
+
+def test_an_integer_coverage_map_is_unaffected_by_that():
+    """The change must be a no-op for every other stacking method."""
+    import numpy as np
+    from nocturne.stacking.coverage import full_coverage_bounds
+    for n in (3, 8, 12, 20, 100):
+        cov = np.full((200, 300), n, np.int32)
+        cov[:10, :] = 1
+        cov[:, :7] = 1
+        assert full_coverage_bounds(cov, n) == (10, 200, 7, 300), f"n={n}"
+
+
+def test_a_pixel_one_frame_short_is_still_excluded():
+    """The threshold must not become so loose that a genuinely under-covered
+    pixel survives — that is what draws the rotation envelope on the picture."""
+    import numpy as np
+    from nocturne.stacking.coverage import full_coverage_bounds
+    cov = np.full((200, 300), 10, np.int32)
+    cov[:, :50] = 9          # 9 of 10 frames = 90%, below the 0.9*10 bar? no: equal
+    cov[:, :20] = 8          # 8 of 10 = 80%, must be excluded
+    top, bottom, left, right = full_coverage_bounds(cov, 10)
+    assert left >= 20, "an 80%-covered strip was kept"
