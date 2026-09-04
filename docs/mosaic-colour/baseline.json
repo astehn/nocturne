@@ -1,0 +1,21 @@
+{
+  "measured": "2026-09-04",
+  "app_version": "0.25.0+",
+  "runs": [
+    {
+      "label": "starless (luminance-only offsets)",
+      "path": "/Users/andreasstehn/Desktop/Astro Images/M31/starless.tif",
+      "size": [
+        13683,
+        7530
+      ],
+      "brightness_spread_pct": 8.373,
+      "colour_ratio_spread_pct": {
+        "R": 1.588,
+        "G": 2.764,
+        "B": 2.775
+      },
+      "colour_spread_mean_pct": 2.376
+    }
+  ]
+}
