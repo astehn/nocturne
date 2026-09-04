@@ -214,9 +214,13 @@ def _astap_solver(astap_path: str):
     so it solves far more reliably, and it is one solve per panel instead of one
     per sub.
     """
+    from ..settings import resolve_binary
     from ..tools.astap import ASTAP, solve_with_scale_fallback
 
-    astap = ASTAP(astap_path)
+    # A macOS .app is a DIRECTORY; exec'ing it gives errno 13. Every other
+    # caller in the app resolves it first — this one did not, so a perfectly
+    # configured ASTAP.app would have failed here even after passing the check.
+    astap = ASTAP(resolve_binary(astap_path))
 
     def solve(master_path: str):
         img = load_fits(master_path, normalize=False)
@@ -241,8 +245,16 @@ def check_astap(astap_path: str) -> None:
     the benchmark showed what discovering that late costs: every panel stacked,
     twenty minutes spent, then an error. One stat call up front instead.
     """
-    if not (astap_path and os.path.isfile(astap_path)
-            and os.access(astap_path, os.X_OK)):
+    # `is_tool`, the SAME check Settings uses. Rolling its own isfile/X_OK here
+    # meant the two disagreed about a macOS .app bundle: Settings resolves it to
+    # the executable inside and showed "ASTAP found", while this saw a directory
+    # and refused to start. Andreas hit exactly that on 2026-09-04 — a green
+    # tick in Settings and "no runnable solver at '/Applications/ASTAP.app'" on
+    # the same path, one dialog apart. A preflight that exists to fail fast must
+    # not fail fast on a false negative.
+    from ..settings import is_tool
+
+    if not is_tool(astap_path):
         raise ValueError(
             f"mosaic stacking needs ASTAP to place the panels on the sky, and "
             f"there is no runnable solver at {astap_path!r} — set the ASTAP "
