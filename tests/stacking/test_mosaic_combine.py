@@ -275,3 +275,72 @@ def test_panels_that_cannot_overlap_are_not_compared_pixel_by_pixel():
     # 15 pairs exist; only the 5 adjacent ones can share pixels
     assert len(_CountingMask.calls) <= 6, (
         f"{len(_CountingMask.calls)} full-canvas comparisons for 5 real overlaps")
+
+
+# --- per-channel offsets -----------------------------------------------------
+#
+# Panels were matched on LUMINANCE and given one scalar for all three channels,
+# so brightness agreed across every overlap and COLOUR did not. Across a session
+# running several hours the sky's colour changes, and each panel kept its own
+# tint — on Andreas' 39-pointing M 31 mosaic that showed as a patchwork of
+# rectangular tiles, invisible at normal saturation and unmistakable at x3.
+
+
+def _colour_layer(values, box):
+    """A constant-colour layer covering `box` of a 40x40x3 canvas."""
+    data = np.zeros((40, 40, 3), np.float32)
+    valid = np.zeros((40, 40), bool)
+    y0, y1, x0, x1 = box
+    data[y0:y1, x0:x1] = np.asarray(values, np.float32)
+    valid[y0:y1, x0:x1] = True
+    return data, valid
+
+
+def test_a_per_channel_tilt_is_removed_not_just_its_average():
+    """The test that fails on luminance-only matching.
+
+    Panel b is offset by a DIFFERENT amount per channel. Averaging the three
+    into one number removes the mean tilt and leaves the colour difference
+    behind: matching on the mean would apply +0.0233 to every channel, which
+    leaves red 0.077 too bright and blue 0.073 too dark — the tile.
+    """
+    tilt = np.array([0.10, 0.02, -0.05], np.float32)
+    a, av = _colour_layer([0.50, 0.50, 0.50], (0, 40, 0, 25))
+    b, bv = _colour_layer(np.array([0.50, 0.50, 0.50]) + tilt, (0, 40, 15, 40))
+    offsets = match_offsets([a, b], [av, bv])
+    delta = np.asarray(offsets[1]) - np.asarray(offsets[0])
+    assert delta.shape == (3,), f"expected one offset per channel, got {delta!r}"
+    assert np.allclose(delta, -tilt, atol=1e-3), delta
+
+
+def test_the_overlap_agrees_in_every_channel_after_combining():
+    """End to end: measured per channel AND applied per channel. A per-channel
+    offset that combine_panels flattens back to one number is no fix at all."""
+    a, av = _colour_layer([0.50, 0.50, 0.50], (0, 40, 0, 25))
+    b, bv = _colour_layer([0.60, 0.52, 0.45], (0, 40, 15, 40))
+    offsets = match_offsets([a, b], [av, bv])
+    master, _cov = combine_panels([a, b], [av, bv], [1.0, 1.0], offsets)
+    # panel b's exclusive area is pulled onto panel a's colour, not merely its
+    # brightness — every channel, not the mean of them
+    assert np.allclose(master[0, 35], [0.50, 0.50, 0.50], atol=1e-3), master[0, 35]
+    assert np.allclose(master[0, 20], [0.50, 0.50, 0.50], atol=1e-3), master[0, 20]
+
+
+def test_a_colour_panel_with_no_overlap_keeps_its_own_colour():
+    """Anchoring, per channel. There is nothing to match a lone panel to, and
+    inventing an offset for it would move real signal — in three channels now
+    rather than one."""
+    a, av = _colour_layer([0.50, 0.50, 0.50], (0, 40, 0, 15))
+    b, bv = _colour_layer([0.65, 0.55, 0.45], (0, 40, 25, 40))     # disjoint
+    offsets = match_offsets([a, b], [av, bv])
+    assert np.allclose(np.asarray(offsets[0]), 0.0)
+    assert np.allclose(np.asarray(offsets[1]), 0.0)
+
+
+def test_mono_still_returns_one_number_per_panel():
+    """A mono mosaic has no colour to match, and must behave exactly as before —
+    the existing scalar tests above are the contract."""
+    a, av = _layer(0.50, (0, 40, 0, 25))
+    b, bv = _layer(0.65, (0, 40, 15, 40))
+    offsets = match_offsets([a, b], [av, bv])
+    assert np.isscalar(offsets[0]) or np.asarray(offsets[0]).ndim == 0, offsets[0]

@@ -384,12 +384,31 @@ def match_offsets(layers, valids, on_progress=None):
     component is anchored on its first panel, so the picture keeps its overall
     level and a panel overlapping nothing keeps its own: there is nothing to
     match it to, and inventing an offset would move real signal.
+
+    Solved PER CHANNEL on colour data, returning three offsets per panel.
+    Collapsing the overlap to luminance and applying one scalar to R, G and B
+    matched panel brightness across every seam and panel COLOUR across none of
+    them: over a session running several hours the sky's colour changes, and
+    each panel kept its own tint. On a 39-pointing M 31 mosaic that is a
+    patchwork of rectangular tiles, invisible at normal saturation and
+    unmistakable at x3 — and it is systematic, so more data does not dilute it.
+
+    The geometry is identical for all three channels — the same overlaps with
+    the same areas — so `A` is built once and only the right-hand side is per
+    channel. That also means this costs three medians instead of one, not three
+    solves of a 39x39 system.
+
+    Mono still gets a single number per panel: there is no colour to match, and
+    returning a length-1 vector would make every caller unpack something that
+    carries no information.
     """
     import numpy as np
 
     n = len(layers)
+    colour = np.asarray(layers[0]).ndim == 3
+    channels = int(np.asarray(layers[0]).shape[-1]) if colour else 1
     A = np.zeros((n, n), np.float64)
-    b = np.zeros(n, np.float64)
+    b = np.zeros((n, channels), np.float64)
     adjacency = {i: set() for i in range(n)}
 
     # Bounding box per panel. On a real mosaic this is the difference between
@@ -416,16 +435,20 @@ def match_offsets(layers, valids, on_progress=None):
             area = int(both.sum())
             if area < 50:
                 continue
+            # Boolean-indexing a colour layer with a 2D mask already gives
+            # (pixels, channels); mono gives (pixels,), so give it a channel
+            # axis and the rest of this is one code path rather than two.
             li, lj = layers[i][both], layers[j][both]
-            if li.ndim > 1:
-                li, lj = li.mean(axis=-1), lj.mean(axis=-1)
+            if not colour:
+                li, lj = li[:, None], lj[:, None]
             # A median over millions of pixels costs real time and buys no
-            # accuracy over a large sample of them.
-            if li.size > 200_000:
-                step = li.size // 200_000 + 1
+            # accuracy over a large sample of them. Stride the PIXEL axis only —
+            # striding a flat colour array would sample channels unevenly.
+            if li.shape[0] > 200_000:
+                step = li.shape[0] // 200_000 + 1
                 li, lj = li[::step], lj[::step]
             # want (li + o_i) == (lj + o_j), i.e. o_i - o_j = median(lj) - median(li)
-            d = float(np.median(lj) - np.median(li))
+            d = np.median(lj, axis=0) - np.median(li, axis=0)
             w = float(area)
             A[i, i] += w; A[j, j] += w
             A[i, j] -= w; A[j, i] -= w
@@ -434,7 +457,7 @@ def match_offsets(layers, valids, on_progress=None):
             adjacency[i].add(j)
             adjacency[j].add(i)
 
-    offsets = [0.0] * n
+    offsets = [(np.zeros(channels) if colour else 0.0) for _ in range(n)]
     seen = set()
     for root in range(n):
         if root in seen:
@@ -455,9 +478,11 @@ def match_offsets(layers, valids, on_progress=None):
         free = component[1:]
         sub_a = A[np.ix_(free, free)]
         sub_b = b[free]
+        # sub_b is (free, channels): lstsq takes multiple right-hand sides, so
+        # the three channels are solved in one call against the shared A.
         solution, *_ = np.linalg.lstsq(sub_a, sub_b, rcond=None)
         for idx, value in zip(free, solution):
-            offsets[idx] = float(value)
+            offsets[idx] = np.asarray(value, np.float64) if colour else float(value[0])
     return offsets
 
 
