@@ -61,7 +61,8 @@ from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
-from ..core.inspect import clip_masks, clipping_from_histogram, sample
+from ..core.inspect import (clip_masks, clipping_from_histogram, sample,
+                            structural_clipping)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
@@ -218,6 +219,11 @@ class MainWindow(QMainWindow):
         # (hi_frac, lo_frac) already clipped when this image was imported, or
         # None for a raw linear import. See _capture_clip_baseline.
         self._clip_baseline = None
+        # Clipping that is a dark REGION rather than single-pixel noise. This is
+        # what the warning ALARMS on; the raw histogram figure is what it
+        # REPORTS, because the overlay marks exactly those pixels.
+        self._structural_clip = None
+        self._structural_baseline = None
         # Set by the object list's X; cleared whenever annotations are toggled
         # or a fresh solve lands. See _sync_object_list_visibility.
         self._object_list_dismissed = False
@@ -2337,6 +2343,9 @@ class MainWindow(QMainWindow):
         and records what is on screen, so the hover readout can never disagree
         with the pixels the user is looking at."""
         rgb = to_rgb8(img)
+        # Free ride on the array the canvas needed anyway. Not computed for a
+        # linear image because the clipping line is hidden there.
+        self._structural_clip = None if img.is_linear else structural_clipping(rgb)
         if self._show_clipping and not img.is_linear:
             sh, hi = clip_masks(rgb)
             r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
@@ -3390,6 +3399,11 @@ class MainWindow(QMainWindow):
             return
         c = clipping_from_histogram(histogram(base))
         self._clip_baseline = (c.hi_frac, c.lo_frac)
+        # The alarm judges structure, so its baseline has to be structural too —
+        # comparing a structural figure against a raw one would report every
+        # already-processed import as damage the session caused.
+        sc = structural_clipping(to_rgb8(base))
+        self._structural_baseline = (sc.hi_frac, sc.lo_frac)
 
     def _update_clipping_line(self) -> None:
         """Clipped-pixel summary under the info strip. Hidden while the image is
@@ -3438,7 +3452,30 @@ class MainWindow(QMainWindow):
         if was:
             text += f"  ({', '.join(was)} on import)"
 
-        alarm = added_hi >= _CLIP_AMBER_HI or added_lo >= _CLIP_AMBER_LO
+        # ALARM ON STRUCTURE, REPORT THE RAW FIGURE. The two differ by a lot and
+        # both are wanted. Bin 0 of the histogram is dominated by isolated
+        # pixels whose noise dipped below the black point: on Andreas' M 31
+        # mosaic after Stretch + Auto Levels, 13.43% of blue sat at zero across
+        # 400,964 regions of median size ONE pixel, and a 3x3 mean left 0.020%.
+        # Alarming on that made the line amber on every stretched image, naming
+        # a channel, for damage Noise Reduction undoes — the cry-wolf failure
+        # this feature was designed to avoid, reported by Andreas 2026-09-04.
+        #
+        # The raw number stays the number shown, because "Show clipping" marks
+        # exactly those pixels (clip_masks tests `rgb == 0`); a headline that
+        # disagreed with the overlay beside it would be a WYSIWYG break.
+        sc = self._structural_clip
+        s_base_hi, s_base_lo = self._structural_baseline or (0.0, 0.0)
+        s_hi = max(0.0, (sc.hi_frac if sc else 0.0) - s_base_hi)
+        s_lo = max(0.0, (sc.lo_frac if sc else 0.0) - s_base_lo)
+        alarm = s_hi >= _CLIP_AMBER_HI or s_lo >= _CLIP_AMBER_LO
+
+        # Say so when the reported number is noise, rather than leaving a large
+        # percentage sitting there unexplained. Only when there is a real gap:
+        # repeating it on a clean frame would be noise of a different kind.
+        if not alarm and (added_lo >= _CLIP_AMBER_LO or added_hi >= _CLIP_AMBER_HI):
+            text += "  — scattered noise, not lost detail"
+
         colour = WARNING if alarm else TEXT_DIM
         self._clip_line.setStyleSheet(f"color: {colour};")
         self._clip_line.setText(f"{'⚠ ' if alarm else ''}{text}")

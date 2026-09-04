@@ -90,6 +90,74 @@ def clipping_from_histogram(hist) -> Clipping:
     return Clipping(hi_frac, hi_channel, lo_frac, lo_channel)
 
 
+# A clipped pixel that survives a mean this wide is a dark REGION; one that does
+# not is a single noise excursion below the black point. 3 is the smallest
+# window that distinguishes them, and matches what Noise Reduction does to those
+# pixels anyway.
+_STRUCTURE_BLOCK = 3
+
+# Enough blocks that a fraction is stable, few enough that this stays off the
+# live-preview budget. 250k blocks is ~2.25 M sampled pixels of any size frame.
+_STRUCTURE_BLOCKS = 250_000
+
+
+def structural_clipping(rgb: np.ndarray,
+                        block: int = _STRUCTURE_BLOCK,
+                        target_blocks: int = _STRUCTURE_BLOCKS) -> Clipping:
+    """Clipping that is a dark REGION, not a single pixel of noise.
+
+    The histogram measure counts bin 0, which on real data is dominated by
+    isolated pixels whose noise dipped below the black point. Measured on
+    Andreas' M 31 mosaic after Stretch + Auto Levels: 13.43% of blue at zero,
+    spread over 400,964 separate regions of median size ONE pixel, 75.6% of them
+    1-2 px — and a plain 3x3 mean leaves 0.020%. He spotted it himself, from the
+    report dropping to nothing after Noise Reduction.
+
+    So the raw figure is honest about the pixels and misleading about the harm,
+    and it is what made the warning cry wolf: it fires on every stretched image,
+    naming a channel, for damage that a later step undoes.
+
+    This is the number to ALARM on. The raw fraction stays the number reported,
+    because the "Show clipping" overlay marks exactly those pixels
+    (`clip_masks` tests `rgb == 0`) and a headline that disagreed with the
+    overlay would be a WYSIWYG break.
+
+    Blocks are strided rather than exhaustive: reshaping a contiguous array and
+    slicing the block grid is a VIEW, so only the sampled blocks are ever
+    materialised, and this runs on the live-preview path.
+    """
+    if rgb is None or rgb.ndim != 3 or rgb.shape[2] < 3:
+        return _NO_CLIPPING
+    h, w = rgb.shape[:2]
+    nby, nbx = h // block, w // block
+    if nby < 1 or nbx < 1:
+        return _NO_CLIPPING
+    grid = rgb[:nby * block, :nbx * block].reshape(nby, block, nbx, block, -1)
+    step = max(1, int((nby * nbx / max(1, target_blocks)) ** 0.5))
+    sub = grid[::step, :, ::step]
+    # `.all` over the two within-block axes: every pixel of the block is dead.
+    dead = (sub == 0).all(axis=(1, 3))
+    blown = (sub == 255).all(axis=(1, 3))
+    names = ("R", "G", "B")
+
+    def worst(flags) -> tuple[float, str]:
+        """Worst channel, or "ALL" on an exact tie — the same convention
+        `clipping_from_histogram` uses, so the two can never phrase the same
+        picture differently. A region dead in every channel really is black,
+        and naming one of them would be a lie the caller prints in full."""
+        fracs = [float(flags[..., c].mean()) for c in range(3)]
+        top = max(fracs)
+        if top == 0.0:
+            return 0.0, ""
+        if all(f == top for f in fracs):
+            return top, "ALL"
+        return top, names[fracs.index(top)]
+
+    hi_frac, hi_ch = worst(blown)
+    lo_frac, lo_ch = worst(dead)
+    return Clipping(hi_frac, hi_ch, lo_frac, lo_ch)
+
+
 def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """(shadow, highlight) boolean masks over a uint8 H×W×3 display array, PER
     CHANNEL — same H×W×3 shape as the input, so `shadow[..., 0]` is "red is at

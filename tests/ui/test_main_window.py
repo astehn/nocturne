@@ -1169,15 +1169,34 @@ def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
     assert "100.0% of every channel blown to white" in win._clip_line.text()
 
 
-def _preview_with_clipped(win, black=0, white=0, side=200):
-    """A mid-grey preview with exactly `black` crushed and `white` blown pixels,
-    so a known clipped fraction reaches the amber logic. 200x200 = 40,000 px, so
-    one pixel is 0.0025% — fine enough to sit either side of both trip points."""
+def _preview_with_clipped(win, black=0, white=0, side=200, scatter=False):
+    """A mid-grey preview carrying a crushed square of side `black` and a blown
+    square of side `white`, so a known clipped fraction reaches the amber logic.
+
+    SQUARES, not the first N pixels of the flattened array, which is what this
+    helper used to write. The alarm judges STRUCTURE — clipping that survives a
+    3x3 mean — so a one-pixel-tall run of 25 pixels is noise by definition and
+    correctly no longer trips it. Sides are given rather than counts because the
+    trip points are fractions and a solid square's structural fraction tracks
+    its pixel fraction closely: measured on this 200x200 canvas, 6x6 -> 0.092%,
+    9x9 -> 0.207%, 12x12 -> 0.367%.
+
+    `scatter=True` places the same number of pixels at random instead, which is
+    the noise case: 400 scattered pixels (1% of the frame) measure 0.000%.
+    """
     import numpy as np
     data = np.full((side, side, 3), 0.5, np.float32)
-    flat = data.reshape(-1, 3)
-    flat[:black] = 0.0
-    flat[black:black + white] = 1.0
+    if scatter:
+        rng = np.random.default_rng(0)
+        flat = data.reshape(-1, 3)
+        idx = rng.choice(side * side, black + white, replace=False)
+        flat[idx[:black]] = 0.0
+        flat[idx[black:]] = 1.0
+    else:
+        if black:
+            data[:black, :black] = 0.0
+        if white:
+            data[:white, side - white:] = 1.0
     win._show_preview(data)
     return win._clip_line.text()
 
@@ -1195,12 +1214,35 @@ def test_floor_level_clipping_stays_quiet(qtbot, tmp_path):
 
 
 def test_real_shadow_clipping_raises_the_amber_warning(qtbot, tmp_path):
-    # 25 of 40,000 = 0.0625%, just past the 0.05% shadow trip point.
+    # A 6x6 crushed square measures 0.092% structurally, just past the 0.05%
+    # shadow trip point. Structural, because scattered pixels are noise — see
+    # _preview_with_clipped.
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    assert "⚠" in _preview_with_clipped(win, black=25)
+    assert "⚠" in _preview_with_clipped(win, black=6)      # 6x6 -> 0.092%
+
+
+def test_scattered_noise_below_black_does_not_raise_the_warning(qtbot, tmp_path):
+    """The cry-wolf case, reported by Andreas 2026-09-04.
+
+    On his M 31 mosaic after Stretch + Auto Levels, 13.43% of blue sat at zero —
+    but across 400,964 regions of median size ONE pixel, and a 3x3 mean left
+    0.020%. He noticed the report dropped to nothing after Noise Reduction and
+    inferred the warning was firing on noise. It was.
+
+    400 scattered pixels here is 1% of the frame, twenty times the shadow trip
+    point, and must stay quiet. The number is still REPORTED — the overlay marks
+    exactly those pixels — but it is not a fault.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    text = _preview_with_clipped(win, black=400, scatter=True)
+    assert "⚠" not in text, text
+    assert "scattered noise" in text, text
 
 
 def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
@@ -1210,8 +1252,8 @@ def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    assert "⚠" not in _preview_with_clipped(win, white=20)     # 0.05%
-    assert "⚠" in _preview_with_clipped(win, white=45)         # 0.1125%
+    assert "⚠" not in _preview_with_clipped(win, white=3)      # 3x3 -> 0.023%
+    assert "⚠" in _preview_with_clipped(win, white=9)          # 9x9 -> 0.207%
 
 
 def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
