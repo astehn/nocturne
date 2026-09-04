@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.25.0] — 2026-09-04
+
+Nocturne tells you what it did — which tools ran, what a recipe will do, and where a stack's time went
+
+### Added
+- The processing report says which engine actually ran. Several steps have an external tool and a built-in fallback whose results differ materially, and until now a history line reading “Star Reduction 0.40” could not tell you whether StarXTerminator or the free split produced it. The report names the implementation and, when it is not the preferred one, why — “RC-Astro is not configured in Settings”.
+- Batch says what a recipe will do before you run it. Not blocked is not the same as will-do-what-you-saved: most tool-backed steps quietly fall back to a free implementation, and a batch is the worst place to discover that — a whole folder is already processed by then. It now tells you up front, leading with anything that cannot run at all.
+- A log file at ~/.nocturne/nocturne.log recording how long each stacking phase took.
+
+### Changed
+- The Stack dialog's explanations fold away, behind the same “How this works” control the main window uses and remembering your choice across both. Collapsed, the frame list — the part you actually work in — gets 63% more room. What never hides is what you decide ON: the drizzle time-and-size estimate, and the reason an option was unavailable.
+- The Stack dialog's labels stand alone: “Frame selection — how picky to be about which subs to keep” rather than “Strictness”, and “rejection” rather than a bare Greek “κ”.
+
+### Fixed
+- The Stack dialog was cutting its own explanations in half. A window short of height sliced them mid-sentence and painted them over the row below — 4 of 5 explanations at 900×700, and worse the smaller the window, so worst exactly where there was least room to begin with.
+- An Ha/OIII master could not name its own target until you saved and reopened it. The file on disk had the full header; the copy handed to the app had almost nothing, so a title plate on a freshly combined master came up blank where “NGC 7000 / North America Nebula” belonged.
+- Sharpen Nebulosity could not be saved in a recipe. The Enhancements panel offers eleven taps and the recipe registry listed ten, so that one was silently dropped and reported as un-capturable — a shipped feature treated as unsupported.
+
 ## [0.24.0] — 2026-09-02
 
 Half the download, and a Share dialog that gives the picture the room
