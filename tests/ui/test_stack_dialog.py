@@ -1051,35 +1051,33 @@ def _mosaic_ready(d):
     return d
 
 
-def test_mosaic_and_drizzle_cannot_both_be_on(qtbot, tmp_path):
-    """Measured 2026-09-02, not assumed: a mosaic forces autocrop on each panel
-    (ragged edges would become seams), and drizzle's coverage estimate is far
-    more eager — on a real M 31 panel the pair produced a 736x112 master where
-    the same six subs stacked normally give 2112x3824. ASTAP then has nothing
-    to solve and the run dies with "fewer than two panels could be placed",
-    AFTER stacking every panel. Hours of work to reach an error."""
+def test_mosaic_and_drizzle_can_both_be_on(qtbot, tmp_path):
+    """They were mutually exclusive 2026-09-02 to 2026-09-04, because together
+    they produced an unusable master — a real M 31 panel came out 736x112 where
+    the same subs stacked normally gave 2112x3824, so ASTAP had nothing to solve
+    and the run died after stacking every panel.
+
+    That was drizzle's auto-crop rejecting its own interior (coverage rounded
+    its threshold up, a no-op for an integer map and fatal for drizzle's
+    continuous one). With the cause fixed the pair works — the three-panel M 31
+    mosaic that failed now assembles in 88 s — so the gate is gone. It existed
+    because the pair was broken, not because it is expensive.
+    """
     d = _mosaic_ready(_dialog(qtbot, tmp_path))
     d.drizzle_check.setChecked(True)
     d.mosaic_check.setChecked(True)
-    assert d.mosaic_check.isChecked() is True
-    assert d.drizzle_check.isChecked() is False, "both are on; the run would be wasted"
-
-
-def test_the_last_one_clicked_wins_either_way(qtbot, tmp_path):
-    """Being told "you cannot have that" by a control you just pressed is worse
-    than being shown what you get instead."""
-    d = _mosaic_ready(_dialog(qtbot, tmp_path))
-    d.mosaic_check.setChecked(True)
-    d.drizzle_check.setChecked(True)
     assert d.drizzle_check.isChecked() is True
-    assert d.mosaic_check.isChecked() is False
+    assert d.mosaic_check.isChecked() is True, "the gate is back"
 
 
-def test_the_reason_is_shown_not_just_the_behaviour(qtbot, tmp_path):
-    """A control that silently unticks itself reads as a bug."""
+def test_the_combined_cost_is_stated(qtbot, tmp_path):
+    """Removing the gate does not make it cheap. Drizzle is ~10x an ordinary
+    stack and a mosaic runs one stack PER POINTING; the two multiply."""
     d = _mosaic_ready(_dialog(qtbot, tmp_path))
     d.drizzle_check.setChecked(True)
-    assert "cannot be combined" in d.exclusive_note.text()
+    assert d.exclusive_note.text() == "", "one alone is not the expensive case"
+    d.mosaic_check.setChecked(True)
+    assert "very long time" in d.exclusive_note.text()
     d.drizzle_check.setChecked(False)
     assert d.exclusive_note.text() == ""
 

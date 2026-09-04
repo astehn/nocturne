@@ -127,11 +127,10 @@ class StackDialog(QDialog):
         self.kappa_box.setCurrentText("Medium")
         self.drizzle_check = QCheckBox("Drizzle ×2 — more detail, much bigger")
         self.drizzle_check.toggled.connect(lambda *_: self._auto_output_path())
-        self.drizzle_check.toggled.connect(
-            lambda on: self._clear_other(self.mosaic_check, on))
+        self.drizzle_check.toggled.connect(lambda *_: self._sync_exclusive())
         self.mosaic_check = QCheckBox("Stack as mosaic")
-        self.mosaic_check.toggled.connect(
-            lambda on: self._clear_other(self.drizzle_check, on))
+        self.mosaic_check.toggled.connect(lambda *_: self._auto_output_path())
+        self.mosaic_check.toggled.connect(lambda *_: self._sync_exclusive())
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
@@ -456,44 +455,31 @@ class StackDialog(QDialog):
             '<a href="#" style="color:#7fb2e5;text-decoration:none">'
             + ("How this works ▾" if shown else "How this works ▸") + "</a>")
 
-    def _clear_other(self, other, turned_on: bool) -> None:
-        """Turning one on turns the other off, so the LAST click wins.
-
-        A fixed precedence would mean the box you just pressed silently losing
-        to the one you pressed a minute ago; being shown what you get is better
-        than being refused.
-        """
-        if turned_on and other.isChecked():
-            other.blockSignals(True)          # not a user decision; do not recurse
-            other.setChecked(False)
-            other.blockSignals(False)
-        self._auto_output_path()
-        self._sync_exclusive()
-
     def _sync_exclusive(self) -> None:
-        """Mosaic and Drizzle cannot both run — measured, not assumed.
+        """Mosaic AND Drizzle together: allowed, and expensive.
 
-        A mosaic must trim each panel before assembly, or the ragged edges are
-        baked into the seams, so it forces autocrop on. Drizzle's coverage
-        estimate is far more eager than an ordinary stack's, and on a real M 31
-        panel (2026-09-02) the two together produced a master of 736x112 where
-        the SAME six subs stacked normally give 2112x3824 — 1.4% of the frame.
-        ASTAP then has nothing to solve, and the run dies four steps later with
-        "fewer than two panels could be placed on the sky", after stacking every
-        panel. On a 39-panel set that is hours of work to reach an error.
+        These two were mutually exclusive from 2026-09-02 to 2026-09-04, because
+        together they produced an unusable master — a real M 31 panel came out
+        736x112 where the same subs stacked normally gave 2112x3824, ASTAP had
+        nothing to solve, and the run died four steps later after stacking every
+        panel.
 
-        Whichever the user ticked LAST wins, rather than refusing the click:
-        being told "you cannot have that" by a control you just pressed is worse
-        than being shown what you get instead.
+        That was drizzle's auto-crop rejecting its own interior as noise
+        (`coverage.full_coverage_bounds` rounded its threshold up, which is a
+        no-op for an integer coverage map and fatal for drizzle's continuous
+        one). With the cause fixed the combination works: the three-panel M 31
+        mosaic that failed now assembles in 88 s. So the gate is gone — it
+        existed because the pair was broken, not because it is expensive.
 
-        The underlying coverage bug is separate and still open — it over-trims
-        ordinary drizzle stacks too, just not fatally.
+        The cost is real and stays stated. Drizzle is roughly 10x an ordinary
+        stack and a mosaic runs one stack PER POINTING, so on a 39-panel set the
+        two multiply into something worth knowing before pressing Stack.
         """
-        clash = self.mosaic_check.isChecked() or self.drizzle_check.isChecked()
+        both = self.mosaic_check.isChecked() and self.drizzle_check.isChecked()
         self.exclusive_note.setText(
-            "Mosaic and Drizzle cannot be combined — a mosaic has to trim each "
-            "pointing, and a drizzled stack cannot be trimmed reliably yet."
-            if clash and self.mosaic_check.isEnabled() else "")
+            "Drizzle runs on every pointing, so a mosaic multiplies its cost — "
+            "expect this to take a very long time."
+            if both and self.mosaic_check.isEnabled() else "")
 
     # --- grade ---
     def grade(self) -> None:
