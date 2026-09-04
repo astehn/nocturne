@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Sessions the stacking benchmark runs against. Real S30 Pro captures on",
+    "Andreas' machine — paths are absolute and local by design: the corpus is a",
+    "developer artefact, and the data is far too large to live in the repo.",
+    "",
+    "Chosen to span what actually varies, not to be a big list:",
+    "  NGC 281   a long run that crosses midnight (1514 subs)",
+    "  M 16      a mid-size ordinary session (366)",
+    "  M 45      bright stars in reflection nebulosity — the case that broke",
+    "            two earlier sharpness metrics (304)",
+    "  M 8       a large session (460)",
+    "  IC 1396A  the largest, and the drizzle re-validation target (2535)",
+    "",
+    "READ-ONLY. The benchmark writes only into its --workdir; these folders hold",
+    "the only copies of several nights."
+  ],
+  "sessions": [
+    {"name": "NGC 281", "folder": "/Volumes/Work/Astro/NGC281_sub"},
+    {"name": "M 16",    "folder": "/Volumes/Work/Astro/M 16_sub"},
+    {"name": "M 45",    "folder": "/Volumes/Work/Astro/M 45_sub"},
+    {"name": "M 8",     "folder": "/Volumes/Work/Astro/M 8_sub"},
+    {"name": "IC 1396A","folder": "/Volumes/Work/Astro/IC 1396A_sub"}
+  ]
+}
