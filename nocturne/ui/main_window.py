@@ -2601,7 +2601,14 @@ class MainWindow(QMainWindow):
                                self._panel.curve_editor.points()),
                            parent=self,
                            on_apply=self._on_curves_dialog_apply)
-        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        # ApplicationModal, NOT WindowModal. A window-modal dialog with a parent
+        # is drawn by macOS as a SHEET, glued to the parent's title bar and
+        # immovable — which is right for a file picker and wrong for an editor
+        # you work in: Andreas could resize this window but not put it anywhere
+        # (2026-09-05, on a 14004 px mosaic). Application-modal keeps the same
+        # "finish here before going back" behaviour in an ordinary movable
+        # window. The file-dialog rule in ui/file_dialogs.py is unaffected.
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         dlg.exec()
 
     # --- green fringe live preview (cached StarX split) ---

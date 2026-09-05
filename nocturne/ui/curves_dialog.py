@@ -18,7 +18,7 @@ a window.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
                                QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
@@ -71,6 +71,87 @@ def _fit_to_screen(w: int, h: int) -> tuple:
     avail = screen.availableGeometry()
     return (min(w, max(640, avail.width() - 40)),
             min(h, max(480, avail.height() - 60)))
+
+
+class _ZoomPreview(QLabel):
+    """A preview you can pan and zoom, rendering from the FULL-resolution base.
+
+    A fixed decimated preview cannot serve a mosaic. Andreas' M 31 is 14004 px
+    wide, so the old 640 px preview showed it at a 22x reduction and he could
+    not see what a curve was doing. Simply raising the cap does not work either:
+    the render is a per-pixel LUT and its cost is linear in pixels — measured
+    18 ms at 640 px, 114 ms at 1600, 455 ms at 3200 — so a preview large enough
+    to be useful makes the curve drag stutter, and at 1600 px it is STILL a 9x
+    reduction of this image.
+
+    Rendering only what is visible fixes both at once: the cost is bounded by
+    the widget, not the image, so it stays ~40 ms at any zoom, and at 1:1 the
+    pixels are the real ones.
+    """
+
+    viewChanged = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMouseTracking(True)
+        self._zoom = 1.0                  # 1.0 = the whole image fits
+        self._centre = [0.5, 0.5]         # in normalised image coords
+        self._drag = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def zoom_level(self) -> float:
+        return self._zoom
+
+    def reset_view(self) -> None:
+        self._zoom, self._centre = 1.0, [0.5, 0.5]
+        self.viewChanged.emit()
+
+    def set_zoom(self, zoom: float) -> None:
+        self._zoom = max(1.0, min(64.0, float(zoom)))
+        self._clamp()
+        self.viewChanged.emit()
+
+    def visible_rect(self, shape) -> tuple:
+        """(x0, y0, x1, y1) of the base image currently on screen."""
+        h, w = shape[:2]
+        ww, wh = max(1, self.width()), max(1, self.height())
+        # base pixels per widget pixel, at fit then scaled by the zoom
+        s = max(w / ww, h / wh) / self._zoom
+        vw, vh = min(w, ww * s), min(h, wh * s)
+        cx, cy = self._centre[0] * w, self._centre[1] * h
+        x0 = min(max(0.0, cx - vw / 2), max(0.0, w - vw))
+        y0 = min(max(0.0, cy - vh / 2), max(0.0, h - vh))
+        return int(x0), int(y0), int(round(x0 + vw)), int(round(y0 + vh))
+
+    def _clamp(self) -> None:
+        self._centre = [min(1.0, max(0.0, c)) for c in self._centre]
+
+    def wheelEvent(self, event) -> None:
+        step = 1.0015 ** event.angleDelta().y()
+        self.set_zoom(self._zoom * step)
+
+    def mousePressEvent(self, event) -> None:
+        self._drag = event.position()
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mouseReleaseEvent(self, _event) -> None:
+        self._drag = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag is None:
+            return
+        pos = event.position()
+        dx, dy = pos.x() - self._drag.x(), pos.y() - self._drag.y()
+        self._drag = pos
+        # A drag moves the PICTURE with the pointer, so the view centre moves
+        # the other way. Scaled by the visible fraction, so a drag covers the
+        # same screen distance whatever the zoom.
+        self._centre[0] -= dx / max(1, self.width()) / self._zoom
+        self._centre[1] -= dy / max(1, self.height()) / self._zoom
+        self._clamp()
+        self.viewChanged.emit()
 
 
 def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
@@ -128,9 +209,9 @@ class CurvesDialog(QDialog):
         self.editor.set_points(self._slot_points())
         self.editor.curveChanged.connect(self._on_edited)
 
-        self.preview_label = QLabel()
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_label = _ZoomPreview()
         self.preview_label.setMinimumSize(_PREVIEW_MIN_W, _EDITOR_MIN)
+        self.preview_label.viewChanged.connect(self._queue_preview)
 
         presets = QGridLayout()
         self.preset_buttons = {}
@@ -156,10 +237,18 @@ class CurvesDialog(QDialog):
         self.channel_buttons = {}
         chan_row = QHBoxLayout()
         chan_row.addWidget(QLabel("Channel"))
+        # R, G and B carry their own colour: with five look-alike buttons the
+        # one that is selected is the only thing telling you which channel you
+        # are shaping, and that is a lot of weight for one highlight to carry.
+        tint = {"r": "#ff6b6b", "g": "#5ad469", "b": "#5aa9ff"}
         for ch in CURVE_CHANNELS:
             b = QPushButton(self._CHANNEL_LABELS[ch])
             b.setCheckable(True)
             b.setChecked(ch == "rgb")
+            if ch in tint:
+                b.setStyleSheet(f"QPushButton {{ color: {tint[ch]}; font-weight: 600; }}"
+                                f"QPushButton:checked {{ color: #10131a; "
+                                f"background: {tint[ch]}; }}")
             b.clicked.connect(lambda _=False, c=ch: self._set_channel(c))
             chan_row.addWidget(b)
             self.channel_buttons[ch] = b
@@ -195,9 +284,31 @@ class CurvesDialog(QDialog):
         left.addWidget(self.active_label)
         left.addLayout(reset_row)
         left.addLayout(presets)
+        # Scroll to zoom, drag to pan — plus explicit buttons, because a
+        # trackpad gesture is not discoverable and this is the one surface where
+        # a large mosaic is unusable without it.
+        self.zoom_label = QLabel("1.0x")
+        fit_btn = QPushButton("Fit")
+        fit_btn.clicked.connect(self.preview_label.reset_view)
+        in_btn = QPushButton("+")
+        in_btn.clicked.connect(
+            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() * 1.5))
+        out_btn = QPushButton("−")
+        out_btn.clicked.connect(
+            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() / 1.5))
+        self.fit_btn, self.zoom_in_btn, self.zoom_out_btn = fit_btn, in_btn, out_btn
+        zoom_row = QHBoxLayout()
+        zoom_row.addWidget(QLabel("Preview"))
+        zoom_row.addStretch(1)
+        zoom_row.addWidget(self.zoom_label)
+        zoom_row.addWidget(out_btn)
+        zoom_row.addWidget(in_btn)
+        zoom_row.addWidget(fit_btn)
+
         right = QVBoxLayout()
-        right.addWidget(QLabel("Preview"))
+        right.addLayout(zoom_row)
         right.addWidget(self.preview_label, 1)
+        right.addWidget(QLabel("Scroll to zoom · drag to pan"))
 
         row = QHBoxLayout()
         lw, rw = QWidget(), QWidget()
@@ -294,8 +405,26 @@ class CurvesDialog(QDialog):
         self.editor.set_points(fn(self._base.data))
 
     def _render(self):
-        out = self.compose(self._small)
-        self.preview_label.setPixmap(_pixmap_for(out, self.preview_label.size()))
+        """Render only what is on screen, from the FULL-resolution base.
+
+        `_small` is still used at fit, where the whole image is visible and a
+        decimated copy is exactly right. Zoomed in, the crop comes from the base
+        so the pixels are the real ones — and because the crop is reduced to the
+        widget's size first, the cost is bounded by the widget rather than by
+        the image.
+        """
+        view = self.preview_label
+        if view.zoom_level() <= 1.0:
+            src = self._small
+        else:
+            x0, y0, x1, y1 = view.visible_rect(self._base.data.shape)
+            crop = self._base.data[y0:y1, x0:x1]
+            src = _downscale(AstroImage(crop, is_linear=self._base.is_linear,
+                                        metadata=dict(self._base.metadata)),
+                             max_edge=max(view.width(), view.height()))
+        out = self.compose(src)
+        self.preview_label.setPixmap(_pixmap_for(out, view.size()))
+        self.zoom_label.setText(f"{view.zoom_level():.1f}x")
 
     def _apply(self):
         if self._on_apply is not None:

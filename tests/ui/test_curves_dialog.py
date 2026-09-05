@@ -6,6 +6,7 @@ difficult to see and control what you are actually doing."
 """
 import numpy as np
 import pytest
+from PySide6.QtGui import qGray
 
 pytest.importorskip("PySide6")
 from nocturne.core.curves import apply_curve, apply_curves  # noqa: E402
@@ -286,3 +287,119 @@ def test_the_dialog_opens_on_a_matrix_it_was_given(qtbot):
     dlg = CurvesDialog(_base(), curves=given); qtbot.addWidget(dlg)
     assert list(dlg.editor.points()) == _BOOST
     assert dlg.curves() == given
+
+
+def test_the_large_editor_is_a_movable_window_not_a_sheet(qtbot, tmp_path):
+    """macOS draws a WINDOW-modal dialog with a parent as a sheet: glued to the
+    parent's title bar and immovable. That is right for a file picker and wrong
+    for an editor you work in — Andreas could resize this one but not place it
+    (2026-09-05, while grading a 14004 px mosaic)."""
+    from PySide6.QtCore import Qt
+    from nocturne.ui import curves_dialog as cd
+    seen = {}
+
+    class _Stub:
+        def __init__(self, *a, **k): pass
+        def setWindowModality(self, m): seen["mode"] = m
+        def exec(self): return 0
+
+    import tests.ui.test_main_window as tmw
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr("nocturne.ui.curves_dialog.CurvesDialog", _Stub)
+    win = tmw._window(qtbot, tmp_path)
+    win.open_fits(tmw._make_fits(tmp_path))
+    for _ in range(20):
+        if win.current_stage_id() == "curves":
+            break
+        win.go_next()
+    win._panel.expand_btn.click()
+    monkey.undo()
+    assert seen.get("mode") == Qt.WindowModality.ApplicationModal, seen
+
+
+# --- the zoomable preview ----------------------------------------------------
+
+def _detailed_base(side=1400):
+    """A dark frame with a few single-pixel stars. At fit these are averaged
+    away; at 1:1 they are the whole point."""
+    data = np.full((side, side, 3), 0.10, np.float32)
+    for y, x in ((700, 700), (702, 706), (698, 694)):
+        data[y, x] = 0.95
+    return AstroImage(data, is_linear=False, metadata={})
+
+
+def test_fit_shows_the_whole_image_and_zoom_shows_a_part_of_it(qtbot):
+    dlg = CurvesDialog(_detailed_base()); qtbot.addWidget(dlg)
+    dlg.resize(1100, 700)
+    view = dlg.preview_label
+    shape = dlg._base.data.shape
+    assert view.visible_rect(shape) == (0, 0, shape[1], shape[0]), "fit must show it all"
+    view.set_zoom(8.0)
+    x0, y0, x1, y1 = view.visible_rect(shape)
+    assert (x1 - x0) < shape[1] and (y1 - y0) < shape[0], "zoom must narrow the view"
+    assert 0 <= x0 and x1 <= shape[1] and 0 <= y0 and y1 <= shape[0], "stay inside"
+
+
+def test_panning_to_a_corner_cannot_walk_off_the_image(qtbot):
+    dlg = CurvesDialog(_detailed_base()); qtbot.addWidget(dlg)
+    dlg.resize(1100, 700)
+    view = dlg.preview_label
+    view.set_zoom(6.0)
+    # Deliberately NOT calling _clamp here: visible_rect is what actually keeps
+    # the crop inside the array, and a test that clamps first cannot tell
+    # whether it does. _clamp is belt and braces, covered separately below.
+    view._centre = [-5.0, 9.0]          # as if dragged far past the edge
+    x0, y0, x1, y1 = view.visible_rect(dlg._base.data.shape)
+    h, w = dlg._base.data.shape[:2]
+    assert 0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h, (x0, y0, x1, y1)
+
+
+def test_zooming_in_reaches_the_full_resolution_pixels(qtbot):
+    """The whole reason this exists. The decimated copy averages a single-pixel
+    star down to near the background; the base still has it. If a zoomed render
+    still came from `_small`, the star would stay washed out however far you
+    zoomed — which is the state Andreas reported on his 14004 px mosaic.
+    """
+    dlg = CurvesDialog(_detailed_base()); qtbot.addWidget(dlg)
+    dlg.resize(1100, 700)
+    assert float(dlg._small.data.max()) < 0.9, (
+        "fixture is wrong: the decimated copy must LOSE the star, or this "
+        "test cannot tell the two sources apart")
+
+    dlg.preview_label.set_zoom(12.0)
+    dlg.preview_label._centre = [0.5, 0.5]
+    dlg._render()
+
+    # Look at what is actually ON SCREEN, not at what the source could have
+    # been. The first version of this test asserted only that a crop of the base
+    # contained the star and that _render did not raise — both true even when
+    # the render still came from the decimated copy, so it proved nothing.
+    img = dlg.preview_label.pixmap().toImage()
+    brightest = max(qGray(img.pixel(x, y))
+                    for y in range(0, img.height(), 2)
+                    for x in range(0, img.width(), 2))
+    assert brightest > 200, (
+        f"brightest pixel on screen is {brightest}: the zoomed preview is still "
+        "being rendered from the decimated copy")
+    assert dlg.zoom_label.text().startswith("12"), dlg.zoom_label.text()
+
+
+def test_the_zoom_buttons_and_fit_agree_with_the_view(qtbot):
+    dlg = CurvesDialog(_detailed_base()); qtbot.addWidget(dlg)
+    dlg.zoom_in_btn.click()
+    assert dlg.preview_label.zoom_level() > 1.0
+    dlg.fit_btn.click()
+    assert dlg.preview_label.zoom_level() == 1.0
+    dlg.zoom_out_btn.click()
+    assert dlg.preview_label.zoom_level() == 1.0, "fit is the floor; never smaller"
+
+
+def test_the_centre_clamp_keeps_the_view_anchor_on_the_image(qtbot):
+    """Belt and braces beside visible_rect's own clamping: a centre outside
+    [0,1] is meaningless, and letting it drift means a later drag starts from
+    somewhere the image is not."""
+    dlg = CurvesDialog(_detailed_base()); qtbot.addWidget(dlg)
+    view = dlg.preview_label
+    view._centre = [-3.0, 7.5]
+    view._clamp()
+    assert view._centre == [0.0, 1.0], view._centre
