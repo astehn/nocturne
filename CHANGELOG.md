@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.26.0] — 2026-09-05
+
+Mosaic panels match colour, and Curves gets a curve per channel and per colour
+
+### Added
+- Curves has a channel and a colour selector. Pick RGB for the tone curve you already had, R, G or B to move one channel on its own, or S for a saturation curve — then narrow any of them to one family of colours, reds for Ha, gold for the star field, cyan for OIII. Grey pixels are never affected, so the background does not drift while you push a colour. Each combination is its own curve and they all stay set; an "Active curves" line lists the ones doing something.
+- Mosaic and Drizzle work together again. The two were locked apart in 0.24.0 because the combination produced an unusable master — that turned out to be a bug in drizzle's auto-crop rather than anything about mosaics, and with it fixed the gate had nothing left to protect.
+
+### Changed
+- Stacking holds about 13% less memory — 8.9 GB down to 7.8 GB on a real session — by not holding more frames in flight than it can work on. Measured: the extra ones bought no speed at all. The master is bit-identical.
+- The large curve editor is a window you can move, with a preview you can zoom and pan. It renders whatever is on screen from the full-resolution image, so on a 14,000-pixel mosaic you can now inspect a detail at 1:1 instead of judging a curve from a thumbnail.
+- The Share dialog says which of the two pictures in front of you is the accurate one. The exported file is colour-managed and the preview is not, so on a wide-gamut screen the file comes out very slightly less saturated than the preview — small, mostly in warm tones, and the file is the one to trust.
+
+### Fixed
+- Mosaic panels matched brightness but not colour. Over a session running several hours the sky's colour changes, and each panel kept its own tint — a patchwork of rectangular tiles, invisible at normal saturation and unmistakable when you push it. Panels are now matched per channel: measured on a 39-pointing M 31 session, the colour difference between panels fell 87%.
+- Drizzle's auto-crop was throwing the picture away. It kept only the region covered by a whole number of frames, which on drizzle's continuous coverage discarded most of the interior: an NGC 281 master came out 96×1712 where it should have been 4112×7568.
+- The clipping warning cried wolf. It counted every single pixel whose noise dipped below black and called them crushed — 13% of a channel on a normal image, all of it recovered by Noise Reduction. It now reports the same number but only warns when the clipping is a real region of lost detail.
+- A mosaic could report no plate solver while Settings showed ASTAP found. The two disagreed about what an .app bundle is.
+
 ## [0.25.0] — 2026-09-04
 
 Nocturne tells you what it did — which tools ran, what a recipe will do, and where a stack's time went
