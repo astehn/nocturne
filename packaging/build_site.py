@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 BASE = "https://nocturne.stehn.com"
@@ -235,10 +236,37 @@ def render(name: str, meta: dict, body: str) -> str:
 '''
 
 
+RELEASE_RE = re.compile(r'<p class="ver">(v[0-9][0-9.]*)</p>')
+ENTRY_RE = re.compile(r'<article class="release">')
+
+
+def fill_release_stats(body: str) -> str:
+    """Substitute {{releases}} and {{latest_release}} in the changelog.
+
+    deploy.py PREPENDS each new release into the changelog source, so any figure
+    about the release history typed by hand goes stale the next time a version
+    ships -- silently, because nothing reads it back. Derived here instead, from
+    the entries actually on the page.
+
+    The count comes from the ENTRIES, not the version lines: the five oldest
+    entries predate versioned releases and carry no <p class="ver">, so counting
+    those undercounts the history by five and calls the sixth-oldest release the
+    first one.
+    """
+    if "{{releases}}" not in body and "{{latest_release}}" not in body:
+        return body
+    vers = RELEASE_RE.findall(body)
+    if not vers:
+        return body
+    return (body.replace("{{releases}}", str(len(ENTRY_RE.findall(body))))
+                .replace("{{latest_release}}", vers[0]))
+
+
 def build(check: bool = False) -> list[str]:
     changed = []
     for src in sorted(SRC.glob("*.html")):
         meta, body = parse_front_matter(src.read_text())
+        body = fill_release_stats(body)
         out = render(src.name, meta, body)
         dst = SITE / src.name
         if dst.exists() and dst.read_text() == out:
