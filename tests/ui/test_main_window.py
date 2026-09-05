@@ -4894,8 +4894,9 @@ def test_the_open_large_editor_button_actually_opens_it(qtbot, tmp_path, monkeyp
     opened = []
 
     class _Stub:
-        def __init__(self, base, points=None, parent=None, on_apply=None):
-            opened.append((base, points))
+        def __init__(self, base, points=None, parent=None, on_apply=None,
+                     curves=None):
+            opened.append((base, points, curves))
         def setWindowModality(self, _m): pass
         def exec(self): return 0
 
@@ -4911,9 +4912,18 @@ def test_the_open_large_editor_button_actually_opens_it(qtbot, tmp_path, monkeyp
     win._panel.expand_btn.click()
 
     assert opened, "the button is not connected to anything"
-    _base, points = opened[0]
-    assert points == win._panel.curve_editor.points(), (
-        "the dialog must open on the curve already in the pane")
+    _base, _points, curves = opened[0]
+    # Since 2026-09-05 the dialog is handed the whole MATRIX of curves, and the
+    # inline pane can only show one slot of it. Opening it on anything but the
+    # curve already in the pane would lose the user's place; opening it without
+    # the other slots would quietly drop every per-channel curve they had set.
+    from nocturne.core.curves import curve_key, normalize_curves
+    expected = normalize_curves(win._curve_option(win._panel.curve_editor.points()))
+    assert curves == expected, (curves, expected)
+    inline = win._panel.curve_editor.points()
+    if normalize_curves(inline):
+        assert curves.get(curve_key("rgb", "all")) == list(inline), (
+            "the dialog must open on the curve already in the pane")
 
 
 def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
@@ -5399,3 +5409,49 @@ def test_stretch_preview_equals_what_apply_commits(qtbot, tmp_path):
 
     win.apply_current(0.75)
     assert np.array_equal(seen, win.project.current().data)
+
+
+def test_the_inline_curve_editor_does_not_discard_per_channel_curves(qtbot, tmp_path):
+    """The hazard the matrix creates.
+
+    The inline pane holds ONE curve (RGB over all colours) and knows nothing
+    about the per-channel and per-hue-range slots set in the large editor. If a
+    tweak in the pane replaced the whole option, every one of those would vanish
+    — and nothing would say so: the step still applies, the batch still
+    succeeds, and only the picture is wrong. So the pane's curve is MERGED into
+    the matrix, never substituted for it.
+    """
+    from nocturne.core.curves import curve_key
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    for _ in range(20):
+        if win.current_stage_id() == "curves":
+            break
+        win.go_next()
+    assert win.current_stage_id() == "curves"
+
+    boost = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
+    dip = [(0.0, 0.0), (0.5, 0.3), (1.0, 1.0)]
+    # as if the large editor had been used to set a red curve
+    win._on_curves_dialog_apply({curve_key("rgb", "all"): boost,
+                                 curve_key("r", "reds"): dip})
+    assert win._curve_matrix == {curve_key("r", "reds"): dip}
+    assert list(win._panel.curve_editor.points()) == boost
+
+    # now a plain tweak in the pane
+    option = win._curve_option([(0.0, 0.0), (0.4, 0.5), (1.0, 1.0)])
+    assert option[curve_key("r", "reds")] == dip, "the red curve was thrown away"
+    assert option[curve_key("rgb", "all")] == [(0.0, 0.0), (0.4, 0.5), (1.0, 1.0)]
+
+
+def test_a_new_image_does_not_inherit_the_last_ones_channel_curves(qtbot, tmp_path):
+    """Per-channel curves belong to one picture. Carrying them into the next
+    image would apply an invisible edit nobody asked for."""
+    from nocturne.core.curves import curve_key
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._curve_matrix = {curve_key("s", "blues"): [(0.0, 0.0), (0.5, 0.8), (1.0, 1.0)]}
+    second = tmp_path / "second"
+    second.mkdir()
+    win.open_fits(_make_fits(second))
+    assert win._curve_matrix == {}

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("PySide6")
-from nocturne.core.curves import apply_curve  # noqa: E402
+from nocturne.core.curves import apply_curve, apply_curves  # noqa: E402
 from nocturne.core.image import AstroImage  # noqa: E402
 from nocturne.ui.curves_dialog import PRESETS, CurvesDialog, _downscale  # noqa: E402
 
@@ -29,8 +29,11 @@ def test_the_preview_equals_what_apply_commits(qtbot):
     dlg._on_apply = committed.append
     shown = dlg.compose(dlg._base)
     dlg._apply()
-    assert committed, "Apply did not hand the points back"
-    assert np.array_equal(apply_curve(dlg._base, committed[0]).data, shown.data)
+    assert committed, "Apply did not hand the curves back"
+    # apply_curveS: since 2026-09-05 the dialog commits the whole MATRIX of
+    # curves (channel x hue range), not one list of points. The rule under test
+    # is unchanged — the preview must equal what Apply produces.
+    assert np.array_equal(apply_curves(dlg._base, committed[0]).data, shown.data)
 
 
 def test_every_preset_reaches_the_editor(qtbot):
@@ -212,3 +215,74 @@ def test_the_dialog_shows_the_data_behind_the_curve(qtbot):
     dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
     assert dlg.editor._hist is not None, "no histogram behind the curve"
     assert float(np.max(dlg.editor._hist)) > 0, "the histogram is empty"
+
+
+# --- the curve matrix in the dialog ------------------------------------------
+
+_BOOST = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
+_DIP = [(0.0, 0.0), (0.5, 0.3), (1.0, 1.0)]
+
+
+def test_switching_channel_keeps_the_curve_you_just_drew(qtbot):
+    """The first thing anyone does with two selectors is change one. If the edit
+    lived only in the editor widget it would evaporate at that moment, and the
+    user would have no way to know it had."""
+    from nocturne.core.curves import curve_key
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    dlg.editor.set_points(_BOOST)
+    dlg._set_channel("r")
+    dlg.editor.set_points(_DIP)
+    dlg._set_channel("rgb")
+    assert list(dlg.editor.points()) == _BOOST, "the RGB curve came back wrong"
+    curves = dlg.curves()
+    assert curves[curve_key("rgb", "all")] == _BOOST
+    assert curves[curve_key("r", "all")] == _DIP
+
+
+def test_the_target_selects_a_separate_slot_from_the_same_channel(qtbot):
+    from nocturne.core.curves import curve_key
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    dlg._set_channel("s")
+    dlg.editor.set_points(_BOOST)                     # S / all colours
+    dlg.target_box.setCurrentIndex(list(range(dlg.target_box.count()))[
+        [dlg.target_box.itemData(i) for i in range(dlg.target_box.count())].index("reds")])
+    assert list(dlg.editor.points()) == [(0.0, 0.0), (1.0, 1.0)], \
+        "a fresh slot must start at identity, not inherit the last one"
+    dlg.editor.set_points(_DIP)                       # S / reds
+    curves = dlg.curves()
+    assert curves[curve_key("s", "all")] == _BOOST
+    assert curves[curve_key("s", "reds")] == _DIP
+
+
+def test_the_active_line_names_what_is_actually_shaping_the_picture(qtbot):
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    assert "none" in dlg.active_label.text().lower()
+    dlg.editor.set_points(_BOOST)
+    dlg._set_channel("b")
+    dlg.editor.set_points(_DIP)
+    text = dlg.active_label.text()
+    assert "RGB" in text and "B" in text, text
+
+
+def test_reset_this_curve_leaves_the_others_alone(qtbot):
+    from nocturne.core.curves import curve_key
+    dlg = CurvesDialog(_base()); qtbot.addWidget(dlg)
+    dlg.editor.set_points(_BOOST)
+    dlg._set_channel("g")
+    dlg.editor.set_points(_DIP)
+    dlg._reset_slot()
+    curves = dlg.curves()
+    assert curve_key("g", "all") not in curves
+    assert curves[curve_key("rgb", "all")] == _BOOST, "Reset hit the wrong curve"
+    dlg._reset_all()
+    assert dlg.curves() == {}
+
+
+def test_the_dialog_opens_on_a_matrix_it_was_given(qtbot):
+    """It is handed the whole matrix by main_window, and must not drop the slots
+    it is not currently showing."""
+    from nocturne.core.curves import curve_key
+    given = {curve_key("rgb", "all"): _BOOST, curve_key("s", "reds"): _DIP}
+    dlg = CurvesDialog(_base(), curves=given); qtbot.addWidget(dlg)
+    assert list(dlg.editor.points()) == _BOOST
+    assert dlg.curves() == given

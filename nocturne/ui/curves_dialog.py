@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
                                QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
 
-from ..core.curves import (apply_curve, deepen_sky_points, gentle_s_points,
-                           lift_faint_points, strong_s_points,
+from ..core.curves import (CURVE_CHANNELS, CURVE_RANGES, active_curves,
+                           apply_curves, curve_key, deepen_sky_points,
+                           gentle_s_points, lift_faint_points,
+                           normalize_curves, strong_s_points,
                            tame_highlights_points)
 from ..core.image import AstroImage
 from .curve_editor import CurveEditor
@@ -98,14 +100,22 @@ class CurvesDialog(QDialog):
     mapping is identical at any resolution.
     """
 
+    _CHANNEL_LABELS = {"rgb": "RGB", "r": "R", "g": "G", "b": "B", "s": "S"}
+    _IDENTITY = [(0.0, 0.0), (1.0, 1.0)]
+
     def __init__(self, base: AstroImage, points=None, parent=None,
-                 on_apply=None) -> None:
+                 on_apply=None, curves=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Curves")
         self.resize(*_fit_to_screen(*_PREFERRED))
         self._base = base
         self._small = _downscale(base)
         self._on_apply = on_apply
+        # `points` is the old single-curve argument, still accepted so nothing
+        # that passes a bare list breaks; `curves` is the matrix.
+        self._curves = normalize_curves(curves if curves is not None else points)
+        self._channel = "rgb"
+        self._target = "all"
 
         self.editor = CurveEditor()
         self.editor.setMinimumSize(_EDITOR_MIN, _EDITOR_MIN)
@@ -115,9 +125,8 @@ class CurvesDialog(QDialog):
         # once. From the FULL-resolution base, so the shape matches the image
         # rather than a decimated approximation of it.
         self.editor.set_histogram(base.data)
-        if points:
-            self.editor.set_points(points)
-        self.editor.curveChanged.connect(self._queue_preview)
+        self.editor.set_points(self._slot_points())
+        self.editor.curveChanged.connect(self._on_edited)
 
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -141,10 +150,50 @@ class CurvesDialog(QDialog):
         buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._apply)
         buttons.rejected.connect(self.reject)
 
+        # The two selectors. A channel and a hue range together pick one slot
+        # of the matrix, which is what makes 35 curves reachable without 35
+        # controls — see docs/HSL_DESIGN_QUESTION.md.
+        self.channel_buttons = {}
+        chan_row = QHBoxLayout()
+        chan_row.addWidget(QLabel("Channel"))
+        for ch in CURVE_CHANNELS:
+            b = QPushButton(self._CHANNEL_LABELS[ch])
+            b.setCheckable(True)
+            b.setChecked(ch == "rgb")
+            b.clicked.connect(lambda _=False, c=ch: self._set_channel(c))
+            chan_row.addWidget(b)
+            self.channel_buttons[ch] = b
+
+        self.target_box = QComboBox()
+        for r in CURVE_RANGES:
+            self.target_box.addItem("All colours" if r == "all" else r.capitalize(), r)
+        self.target_box.currentIndexChanged.connect(self._set_target)
+        tgt_row = QHBoxLayout()
+        tgt_row.addWidget(QLabel("Target"))
+        tgt_row.addWidget(self.target_box, 1)
+
+        # A matrix this size hides its own state: without this line a curve set
+        # on Reds twenty minutes ago is still shaping the picture invisibly.
+        self.active_label = QLabel()
+        self.active_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        reset_slot = QPushButton("Reset this curve")
+        reset_slot.clicked.connect(self._reset_slot)
+        reset_all = QPushButton("Reset all curves")
+        reset_all.clicked.connect(self._reset_all)
+        reset_row = QHBoxLayout()
+        reset_row.addWidget(reset_slot)
+        reset_row.addWidget(reset_all)
+        self.reset_slot_btn, self.reset_all_btn = reset_slot, reset_all
+
         left = QVBoxLayout()
         left.addWidget(QLabel("Drag the curve. Click to add a point, "
                               "double-click to remove one."))
         left.addWidget(self.editor, 1)
+        left.addLayout(chan_row)
+        left.addLayout(tgt_row)
+        left.addWidget(self.active_label)
+        left.addLayout(reset_row)
         left.addLayout(presets)
         right = QVBoxLayout()
         right.addWidget(QLabel("Preview"))
@@ -165,22 +214,77 @@ class CurvesDialog(QDialog):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._render)
+        self._refresh_active()
         self._render()
 
     # --- model ---
     def points(self):
+        """The CURRENT slot's points. Kept for callers that only ever wanted the
+        one curve; `curves()` is the whole picture."""
         return self.editor.points()
+
+    def curves(self) -> dict:
+        """The whole matrix, with the slot being edited folded in."""
+        out = dict(self._curves)
+        out[self._slot()] = list(self.editor.points())
+        return normalize_curves(out)
+
+    def _slot(self) -> str:
+        return curve_key(self._channel, self._target)
+
+    def _slot_points(self):
+        return self._curves.get(self._slot(), list(self._IDENTITY))
 
     def compose(self, img: AstroImage | None = None) -> AstroImage:
         """The single path. Preview and Apply both come through here."""
-        return apply_curve(img if img is not None else self._base, self.points())
+        return apply_curves(img if img is not None else self._base, self.curves())
 
     # --- interaction ---
+    def _on_edited(self, *_):
+        """Store the edit into its slot BEFORE previewing. Holding it only in
+        the editor would lose it the moment the user changed channel — which is
+        the first thing anyone does with two selectors."""
+        self._curves[self._slot()] = list(self.editor.points())
+        self._refresh_active()
+        self._queue_preview()
+
+    def _set_channel(self, channel: str) -> None:
+        self._channel = channel
+        for ch, b in self.channel_buttons.items():
+            b.setChecked(ch == channel)
+        self._load_slot()
+
+    def _set_target(self, *_):
+        self._target = self.target_box.currentData()
+        self._load_slot()
+
+    def _load_slot(self) -> None:
+        """Show the selected slot. blockSignals so swapping the displayed curve
+        does not register as an edit of the slot just arrived at."""
+        self.editor.blockSignals(True)
+        self.editor.set_points(self._slot_points())
+        self.editor.blockSignals(False)
+        self._refresh_active()
+        self._queue_preview()
+
+    def _refresh_active(self) -> None:
+        names = active_curves(self.curves())
+        self.active_label.setText("Active curves: "
+                                  + (", ".join(names) if names else "none"))
+
+    def _reset_slot(self) -> None:
+        self._curves.pop(self._slot(), None)
+        self._load_slot()
+
+    def _reset_all(self) -> None:
+        self._curves = {}
+        self._load_slot()
+
     def _queue_preview(self, *_):
         self._timer.start(60)
 
     def _reset(self):
-        self.editor.set_points([(0.0, 0.0), (1.0, 1.0)])
+        self._reset_slot()
 
     def _preset(self, fn):
         # Presets are measured from the FULL-resolution base, not the decimated
@@ -195,7 +299,7 @@ class CurvesDialog(QDialog):
 
     def _apply(self):
         if self._on_apply is not None:
-            self._on_apply(self.points())
+            self._on_apply(self.curves())
         self.accept()
 
 

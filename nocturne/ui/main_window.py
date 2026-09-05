@@ -51,7 +51,7 @@ from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import remove_green, remove_green_fringe, remove_green_fringe_masked
 from ..core.color_balance import describe as cb_describe
-from ..core.curves import apply_curve, gentle_s_points
+from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
 from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
 from ..steps.green_fringe import FRINGE_MASK_SCALE
@@ -292,6 +292,13 @@ class MainWindow(QMainWindow):
         self._recover_timer.timeout.connect(self._render_recover_preview)
         # Curves live-preview: a debounced (90 ms) non-committing render.
         self._curve_pending = None
+        # Curve slots OTHER than RGB/all — the per-channel and per-hue-range
+        # curves set in the large editor. The inline editor holds RGB/all and
+        # knows nothing about these, so they live here and are merged in at the
+        # one place the option is committed. Without that, a tweak in the inline
+        # editor after setting a red curve in the dialog would silently discard
+        # it: the step would still apply and only the picture would be wrong.
+        self._curve_matrix: dict = {}
         self._curve_timer = QTimer(self)
         self._curve_timer.setSingleShot(True)
         self._curve_timer.timeout.connect(self._render_curve_preview)
@@ -1592,6 +1599,7 @@ class MainWindow(QMainWindow):
         # Project must not receive a callback belonging to the old one.
         self._swap_workspace()
         self._source_label = label
+        self._curve_matrix = {}      # per-channel curves belong to one picture
         self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
@@ -1842,6 +1850,8 @@ class MainWindow(QMainWindow):
             self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
             self._refresh()
             return
+        if stage_id == "curves":
+            option = self._curve_option(option)
         step = self._step_for(stage_id)
         base = self.project.current()
         self._clear_warning()
@@ -2537,6 +2547,23 @@ class MainWindow(QMainWindow):
         self._show_preview(recover_core(img, amount).data)
 
     # --- curves live preview ---
+    def _curve_option(self, points):
+        """The whole matrix: the inline editor's RGB curve plus every other slot
+        set in the large editor. ONE place, used by the preview and by the
+        commit, so what is on screen is what Apply produces."""
+        option = dict(self._curve_matrix)
+        option[curve_key("rgb", "all")] = list(points)
+        return normalize_curves(option)
+
+    def _on_curves_dialog_apply(self, curves) -> None:
+        """The large editor returns the whole matrix. Split it: RGB/all goes
+        back to the inline editor (which is the only slot it can show), the rest
+        is held here."""
+        curves = normalize_curves(curves)
+        rgb = curves.pop(curve_key("rgb", "all"), [(0.0, 0.0), (1.0, 1.0)])
+        self._curve_matrix = curves
+        self._panel.curve_editor.set_points(rgb)   # emits -> preview
+
     def _on_curve_change(self, points) -> None:
         """The curve was edited: stash the points and (re)start debounce."""
         self._curve_pending = list(points)
@@ -2549,7 +2576,7 @@ class MainWindow(QMainWindow):
         img = self._preview_base("curves")
         points = (self._curve_pending if self._curve_pending is not None
                   else self._panel.curve_editor.points())
-        self._show_preview(apply_curve(img, points).data)
+        self._show_preview(apply_curves(img, self._curve_option(points)).data)
 
     def _on_curve_preset(self, kind: str) -> None:
         """Reset or Add-contrast preset button: seed the editor's points."""
@@ -2569,9 +2596,11 @@ class MainWindow(QMainWindow):
             return
         from .curves_dialog import CurvesDialog
         base = self._preview_base("curves")
-        dlg = CurvesDialog(base, points=self._panel.curve_editor.points(),
+        dlg = CurvesDialog(base,
+                           curves=self._curve_option(
+                               self._panel.curve_editor.points()),
                            parent=self,
-                           on_apply=self._panel.curve_editor.set_points)
+                           on_apply=self._on_curves_dialog_apply)
         dlg.setWindowModality(Qt.WindowModality.WindowModal)
         dlg.exec()
 

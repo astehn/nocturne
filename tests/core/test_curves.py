@@ -323,3 +323,145 @@ def test_tame_highlights_actually_reaches_this_image_s_highlights():
     lut = build_lut(tame_highlights_points(data))
     at = float(lut[int(0.75 * (len(lut) - 1))])
     assert at < 0.75 - 0.005, f"highlights at 0.75 barely moved: {at:.4f}"
+
+
+# --- the curve matrix: channel x hue range -----------------------------------
+#
+# Andreas asked for per-channel Hue/Saturation/Luminance on 2026-09-04 and sent
+# AstroWizard screenshots the next morning showing the shape he meant: a curves
+# dialog with a CHANNEL selector (RGB/R/G/B/S) and a TARGET hue range, so
+# "S + Reds" is a saturation curve applied only to the reds. See
+# docs/HSL_DESIGN_QUESTION.md.
+
+import colorsys
+
+from nocturne.core.curves import (CURVE_CHANNELS, CURVE_RANGES, active_curves,
+                                  apply_curve, apply_curves, curve_key,
+                                  normalize_curves, range_weight)
+
+_IDENT = [(0.0, 0.0), (1.0, 1.0)]
+_BOOST = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
+
+
+def _hue_strip(hues, value=0.8, sat=1.0):
+    import numpy as np
+    return np.array([[colorsys.hsv_to_rgb(h, sat, value) for h in hues]], np.float32)
+
+
+def _img(data):
+    from nocturne.core.image import AstroImage
+    return AstroImage(data, is_linear=False, metadata={})
+
+
+def test_a_bare_list_of_points_still_means_what_it_always_meant():
+    """Every project and recipe written before 2026-09-05 stores this step as a
+    bare list. A saved recipe that silently stopped applying its curve is the
+    worst kind of regression — the batch still succeeds and only the pictures
+    are wrong."""
+    import numpy as np
+    img = _img(np.random.default_rng(0).random((6, 6, 3)).astype(np.float32))
+    assert np.allclose(apply_curves(img, _BOOST).data, apply_curve(img, _BOOST).data)
+
+
+def test_the_six_ranges_are_a_partition_of_unity():
+    """A curve applied identically to all six ranges must equal the same curve
+    applied to "all", or the range boundaries show as seams. That holds only if
+    the weights sum to exactly 1 at every hue."""
+    import numpy as np
+    strip = _hue_strip(np.linspace(0, 1, 37, endpoint=False))
+    total = sum(range_weight(strip, r) for r in CURVE_RANGES if r != "all")
+    assert np.allclose(total, 1.0, atol=1e-5), (total.min(), total.max())
+
+
+def test_a_grey_pixel_belongs_to_no_hue_range():
+    """Without weighting by saturation, a hue-targeted curve would grab the
+    whole background — which on an astro frame is most of the picture — and
+    "Reds" would behave like "All colours" on everything but a bright nebula."""
+    import numpy as np
+    grey = np.full((4, 4, 3), 0.4, np.float32)
+    for r in CURVE_RANGES:
+        if r == "all":
+            continue
+        assert float(range_weight(grey, r).max()) == 0.0, r
+
+
+def test_a_targeted_curve_leaves_other_hues_alone():
+    import numpy as np
+    strip = _hue_strip([0.0, 1 / 3, 2 / 3])          # pure red, green, blue
+    out = apply_curves(_img(strip), {curve_key("rgb", "reds"): _BOOST}).data
+    assert not np.allclose(out[0, 0], strip[0, 0]), "the red pixel should move"
+    assert np.allclose(out[0, 1], strip[0, 1], atol=1e-6), "green must not"
+    assert np.allclose(out[0, 2], strip[0, 2], atol=1e-6), "blue must not"
+
+
+def test_the_rgb_channel_preserves_hue_and_a_single_channel_does_not():
+    """Two deliberately different behaviours in one dialog. RGB rescales the
+    whole pixel by the luminance ratio, as it always has; moving R alone is how
+    you shift a colour, and is the reason that channel exists."""
+    import numpy as np
+    from nocturne.core.curves import _hue_sat
+    # Dim and only half saturated ON PURPOSE. Hue preservation is a property of
+    # the RATIO rescale, and the final clip to [0,1] breaks it: a bright
+    # saturated pixel boosted past 1.0 in its strongest channel comes back with
+    # a different hue. apply_curve has always behaved that way; this test is
+    # about the rescale, so it stays inside the range where the clip is inert.
+    px = _hue_strip([0.08], value=0.30, sat=0.6)     # an orange-ish pixel
+    rgb_out = apply_curves(_img(px), {curve_key("rgb", "all"): _BOOST}).data
+    r_out = apply_curves(_img(px), {curve_key("r", "all"): _BOOST}).data
+    h0 = float(_hue_sat(px)[0][0, 0])
+    assert abs(float(_hue_sat(rgb_out)[0][0, 0]) - h0) < 1e-3, "RGB must hold hue"
+    assert abs(float(_hue_sat(r_out)[0][0, 0]) - h0) > 1e-3, "R alone must shift it"
+
+
+def test_the_saturation_curve_changes_saturation_and_not_luminance():
+    import numpy as np
+    from nocturne.core.curves import _hue_sat
+    px = _hue_strip([0.02, 0.4, 0.7], value=0.6, sat=0.5)
+    out = apply_curves(_img(px), {curve_key("s", "all"): _BOOST}).data
+    assert float(_hue_sat(out)[1].mean()) > float(_hue_sat(px)[1].mean())
+    assert np.allclose(out.mean(axis=2), px.mean(axis=2), atol=1e-3), \
+        "chroma is scaled about luminance, so luminance must survive"
+
+
+def test_curves_are_applied_in_a_fixed_order_whatever_the_dict_order():
+    """These do not commute. A dialog that applied them in whatever order the
+    user happened to edit would give two different pictures from identical
+    settings, and a recipe would not reproduce."""
+    import numpy as np
+    # sat=0.6, NOT the default 1.0. At full saturation the S curve maps 1.0 to
+    # 1.0 and is a no-op, so the two orders agree trivially and this test proves
+    # nothing — it passed with the ordering removed until the fixture was fixed.
+    px = _hue_strip([0.02, 0.35, 0.62], value=0.7, sat=0.6)
+    a = {curve_key("r", "all"): _BOOST, curve_key("s", "all"): _BOOST}
+    b = {curve_key("s", "all"): _BOOST, curve_key("r", "all"): _BOOST}
+    assert np.array_equal(apply_curves(_img(px), a).data,
+                          apply_curves(_img(px), b).data)
+
+
+def test_identity_slots_cost_nothing_and_report_nothing():
+    import numpy as np
+    img = _img(np.random.default_rng(1).random((5, 5, 3)).astype(np.float32))
+    only_identities = {curve_key(c, "all"): _IDENT for c in CURVE_CHANNELS}
+    assert np.array_equal(apply_curves(img, only_identities).data, img.data)
+    assert normalize_curves(only_identities) == {}
+    assert active_curves(only_identities) == []
+
+
+def test_active_curves_names_the_slots_in_channel_order():
+    """The matrix has 35 slots and hides its own state: without this line the
+    user cannot tell that a curve set on Reds twenty minutes ago is still
+    shaping the picture."""
+    got = active_curves({curve_key("s", "reds"): _BOOST,
+                         curve_key("rgb", "all"): _BOOST,
+                         curve_key("b", "cyans"): _BOOST})
+    assert got == ["RGB", "B·Cyans", "S·Reds"], got
+
+
+def test_a_mono_frame_takes_the_tone_curve_and_ignores_the_rest():
+    """A mono frame can legitimately reach a recipe written on a colour one.
+    Ignoring the colour slots beats raising."""
+    import numpy as np
+    mono = _img(np.linspace(0, 1, 64, dtype=np.float32).reshape(8, 8))
+    out = apply_curves(mono, {curve_key("rgb", "all"): _BOOST,
+                              curve_key("s", "reds"): _BOOST}).data
+    assert np.allclose(out, apply_curve(mono, _BOOST).data)

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from ..core.curves import apply_curve
+from ..core.curves import apply_curves
 from ..core.image import AstroImage
 from ..history.step import Step
-
-_IDENTITY = [(0.0, 0.0), (1.0, 1.0)]
 
 
 class CurvesStep(Step):
@@ -17,5 +15,8 @@ class CurvesStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        points = option if option else _IDENTITY
-        return apply_curve(img, points)
+        """`option` is either a MATRIX of curves keyed "channel/target", or a
+        bare list of points from before 2026-09-05. `apply_curves` accepts both
+        — a bare list means the RGB curve over all colours, which is what it
+        has always meant — so old projects and recipes keep reproducing."""
+        return apply_curves(img, option)

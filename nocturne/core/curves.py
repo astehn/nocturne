@@ -229,3 +229,175 @@ def tame_highlights_points(data: np.ndarray) -> list[tuple[float, float]]:
     raw = [(0.0, 0.0), (sky, sky), (a1, a1), (a2, a2),
            (knee, knee), (1.0, max(knee, 1.0 - drop))]
     return sanitize_points(raw)
+
+
+# --- channel and hue-range curves --------------------------------------------
+#
+# AstroWizard's Curves dialog, which is what Andreas asked for on 2026-09-05,
+# has two selectors rather than one: a CHANNEL (RGB, R, G, B, or S for
+# saturation) and a TARGET hue range. "S + Reds" is a saturation curve applied
+# only to the reds. Five channels times seven targets is a matrix of curves
+# reached through two small controls instead of a wall of sliders.
+#
+# See docs/HSL_DESIGN_QUESTION.md for why this shape, and why "hue per RGB
+# channel" — the literal request — is not a definable thing.
+
+CURVE_CHANNELS = ("rgb", "r", "g", "b", "s")
+
+# Six ranges, not Lightroom's eight: orange/aqua/purple carve up hues this data
+# barely contains, and every extra target is another hidden state the user has
+# to remember they touched. These six are what actually appears in OSC astro —
+# Ha, the warm star population, the green nobody wants, OIII, reflection
+# nebulosity, and the magenta halo cast.
+CURVE_RANGES = ("all", "reds", "yellows", "greens", "cyans", "blues", "magentas")
+
+# Hue angle of each range's centre, in turns. Evenly spaced by construction:
+# with a triangular falloff one width wide, the six weights sum to exactly 1 at
+# every hue, so a curve applied identically to all six equals the same curve
+# applied to "all". A partition of unity is what stops the boundaries showing.
+_RANGE_CENTRE = {"reds": 0.0, "yellows": 1 / 6, "greens": 2 / 6,
+                 "cyans": 3 / 6, "blues": 4 / 6, "magentas": 5 / 6}
+_RANGE_WIDTH = 1 / 6
+
+
+def _hue_sat(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Hue in turns [0,1) and HSV saturation [0,1], per pixel.
+
+    Saturation matters as much as hue here: a grey pixel has no meaningful hue,
+    and without weighting by saturation a hue-targeted curve would grab the
+    entire background — which on an astro frame is most of the picture, and
+    would make "Reds" behave like "All colours" on anything but a bright nebula.
+    """
+    cmax = data.max(axis=2)
+    cmin = data.min(axis=2)
+    chroma = cmax - cmin
+    safe = np.maximum(chroma, 1e-6)
+    r, g, b = data[..., 0], data[..., 1], data[..., 2]
+    hue = np.where(cmax == r, ((g - b) / safe) % 6.0,
+                   np.where(cmax == g, (b - r) / safe + 2.0,
+                            (r - g) / safe + 4.0)) / 6.0
+    hue = np.where(chroma <= 1e-6, 0.0, hue % 1.0)
+    return hue.astype(np.float32), (chroma / np.maximum(cmax, 1e-6)).astype(np.float32)
+
+
+def range_weight(data: np.ndarray, name: str) -> np.ndarray | None:
+    """Per-pixel 0..1 weight for one hue range, or None for "all" (meaning no
+    mask at all, which lets the caller skip the multiply entirely)."""
+    if name == "all":
+        return None
+    centre = _RANGE_CENTRE[name]
+    hue, sat = _hue_sat(data)
+    d = np.abs(hue - centre)
+    d = np.minimum(d, 1.0 - d)                       # wrap around the wheel
+    return (np.clip(1.0 - d / _RANGE_WIDTH, 0.0, 1.0) * sat).astype(np.float32)
+
+
+def _through_lut(values: np.ndarray, lut: np.ndarray) -> np.ndarray:
+    """`values` in [0,1] mapped through `lut`, linearly interpolated."""
+    idx = np.clip(values, 0.0, 1.0) * (len(lut) - 1)
+    lo = np.clip(np.floor(idx).astype(np.int64), 0, len(lut) - 2)
+    frac = (idx - lo).astype(np.float32)
+    return lut[lo] * (1.0 - frac) + lut[lo + 1] * frac
+
+
+def _is_identity(points) -> bool:
+    """A curve that does nothing. Worth detecting rather than applying: the
+    matrix has 35 slots and all but one or two are normally untouched, so this
+    is what keeps the cost proportional to what the user actually edited."""
+    return all(abs(float(y) - float(x)) < 1e-6 for x, y in points)
+
+
+def curve_key(channel: str, target: str) -> str:
+    """One slot of the matrix, as a string — because this is stored in recipes
+    and project bundles, which are JSON, where a tuple key cannot survive."""
+    return f"{channel}/{target}"
+
+
+def normalize_curves(option) -> dict:
+    """Accept every shape the Curves option has ever had, return the matrix.
+
+    A BARE LIST OF POINTS is how every project and recipe written before
+    2026-09-05 stored this step, and those must keep working: a saved recipe
+    that silently stopped applying its curve would be the worst kind of
+    regression, because the batch still succeeds and only the pictures are
+    wrong. A bare list means what it always meant — the RGB curve over all
+    colours.
+    """
+    if option is None or option == "":
+        return {}
+    if isinstance(option, dict):
+        return {k: [(float(x), float(y)) for x, y in v]
+                for k, v in option.items() if v and not _is_identity(v)}
+    pts = [(float(x), float(y)) for x, y in option]
+    return {} if _is_identity(pts) else {curve_key("rgb", "all"): pts}
+
+
+def active_curves(option) -> list[str]:
+    """Labels of the slots that actually do something, for the dialog's
+    "Active curves:" line. A matrix this size hides its own state — without
+    this the user cannot tell that a curve they set on Reds twenty minutes ago
+    is still shaping the picture."""
+    labels = {"rgb": "RGB", "r": "R", "g": "G", "b": "B", "s": "S"}
+    out = []
+    for key in sorted(normalize_curves(option),
+                      key=lambda k: CURVE_CHANNELS.index(k.split("/")[0])):
+        channel, target = key.split("/")
+        label = labels[channel]
+        out.append(label if target == "all" else f"{label}·{target.capitalize()}")
+    return out
+
+
+def _curved(data: np.ndarray, channel: str, lut: np.ndarray) -> np.ndarray:
+    """`data` with one channel's curve applied, unmasked."""
+    if channel == "rgb":
+        # Hue-preserving, exactly as apply_curve has always been: the whole
+        # pixel is rescaled by the luminance ratio.
+        lum = data.mean(axis=2)
+        ratio = _through_lut(lum, lut) / np.maximum(lum, 1e-6)
+        return data * ratio[..., None]
+    if channel in ("r", "g", "b"):
+        # Deliberately NOT hue-preserving — moving one channel alone is how you
+        # shift a colour, and it is the reason this channel exists.
+        out = data.copy()
+        i = "rgb".index(channel)
+        out[..., i] = _through_lut(data[..., i], lut)
+        return out
+    # saturation: chroma scaled about luminance, the same definition
+    # core.saturation.saturate uses, so the two tools cannot disagree about
+    # what "more saturated" means.
+    lum = data.mean(axis=2, keepdims=True)
+    cmax, cmin = data.max(axis=2), data.min(axis=2)
+    sat = (cmax - cmin) / np.maximum(cmax, 1e-6)
+    gain = _through_lut(sat, lut) / np.maximum(sat, 1e-6)
+    return lum + (data - lum) * gain[..., None]
+
+
+def apply_curves(img: AstroImage, option) -> AstroImage:
+    """Every curve in the matrix, in a FIXED order: RGB, then R/G/B, then S.
+
+    Fixed because these do not commute — a red curve followed by a saturation
+    curve is not the same picture as the reverse — and a dialog that applied
+    them in whatever order the user happened to edit would give two different
+    results from identical settings, and a recipe would not reproduce.
+    """
+    curves = normalize_curves(option)
+    if not curves:
+        return img.copy()
+    data = np.clip(img.data, 0.0, 1.0).astype(np.float32)
+    mono = data.ndim == 2
+    if mono:
+        # Only the RGB (tone) curve means anything without colour. Silently
+        # ignoring the rest beats raising: a mono frame can legitimately reach a
+        # recipe written on a colour one.
+        pts = curves.get(curve_key("rgb", "all"))
+        return apply_curve(img, pts) if pts else img.copy()
+
+    for key in sorted(curves, key=lambda k: CURVE_CHANNELS.index(k.split("/")[0])):
+        channel, target = key.split("/")
+        lut = build_lut(curves[key])
+        curved = _curved(data, channel, lut)
+        w = range_weight(data, target)
+        data = curved if w is None else data + (curved - data) * w[..., None]
+        data = np.clip(data, 0.0, 1.0)
+    return AstroImage(data.astype(np.float32), is_linear=img.is_linear,
+                      metadata=dict(img.metadata))
