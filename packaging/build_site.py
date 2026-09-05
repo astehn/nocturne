@@ -147,6 +147,16 @@ def head_html(name: str, meta: dict) -> str:
     out = [
         '  <meta charset="UTF-8">',
         '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+        # Fonts in the HEAD, not @import inside styles.css. An @import cannot
+        # start until the stylesheet has been fetched AND parsed, so it serialises
+        # two round trips before a single glyph is requested and the page renders
+        # in the fallback face first. preconnect opens the connections early;
+        # fonts.gstatic.com needs crossorigin because font files are CORS.
+        '  <link rel="preconnect" href="https://fonts.googleapis.com">',
+        '  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        '  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+        'family=Familjen+Grotesk:wght@400;600;700&amp;'
+        'family=IBM+Plex+Mono:wght@400;500&amp;display=swap">',
         f"  <title>{title}</title>",
         f'  <meta name="description" content="{desc}">',
         '  <meta property="og:type" content="website">',
