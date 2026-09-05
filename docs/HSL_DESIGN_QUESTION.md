@@ -10,6 +10,40 @@ merits. **It is decided. Only the shape is open.**
 
 ---
 
+## ANSWERED 2026-09-05 — and the answer was "both axes"
+
+Andreas sent screenshots of AstroWizard's Curves dialog. It resolves the
+question below by not choosing: it is a CURVES tool with two independent
+selectors.
+
+| control | values |
+|---|---|
+| **Channel** | RGB · R · G · B · **S** (a saturation curve) |
+| **Target** | All colours · Reds · Yellows · … (a hue range) |
+
+So "Channel = S, Target = Reds" is *a saturation curve applied only to the
+reds*. Five channels x N targets is a matrix of curves reached through two small
+controls rather than a wall of sliders. It also carries an **"Active curves:
+R, S"** line, so you can see at a glance which of that matrix you have actually
+touched — the thing that would otherwise be invisible and is the obvious failure
+mode of a design with this many hidden states.
+
+Hue is not a slider anywhere in it. That is how the wrinkle below dissolves:
+you do not rotate a channel's hue, you apply a curve to a channel *within* a hue
+range. Both of my options were narrower than what he wanted.
+
+**The important consequence: this is an EXTENSION OF THE CURVES STEP Nocturne
+already has, not a new step.** `core/curves.apply_curve` is today a luminance
+curve that preserves hue by rescaling RGB; `ui/curves_dialog.py` is 206 lines
+with an editor, five presets and a live preview. The delta is the two selectors,
+a per-channel and per-range application path, and storing a matrix of curves
+instead of one list of points.
+
+The options below are kept because they record what was considered and why the
+literal reading could not deliver all three sliders.
+
+---
+
 ## The wrinkle
 
 **Hue is not defined for an RGB channel.** A channel is one number per pixel. It
