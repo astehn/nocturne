@@ -1049,9 +1049,17 @@ _TOPIC_LIST = (
        "treatment yourself and that default steps aside — your choice stands for the rest of "
        "the session.</p>"
        "<p>Share needs a stretched image: it exports what you see, and a linear frame would come "
-       "out black.</p>"),
-
-    _t("upscale", "Upscale Crop",
+       "out black.</p>"
+       "<h4>Colour</h4>"
+       "<p>The exported file is <b>colour-managed</b>: it is tagged sRGB, which is what "
+       "browsers and phones assume, so it looks the same wherever it is opened. The "
+       "preview beside the controls is <i>not</i> managed — on a wide-gamut screen it "
+       "paints those same numbers a little more vividly than they really are. The "
+       "difference is small and sits mostly in warm colours; the <b>file is the "
+       "accurate one</b>, so judge saturation by what you export rather than by the "
+       "preview.</p>"
+       ),
+_t("upscale", "Upscale Crop",
        "Enlarge a region 2\u00d7 for a closer view — as a separate picture, not an edit.",
        "<h4>What it does</h4>"
        "<p>Takes a region of your finished image and rebuilds it at <b>twice the size</b>, so a "

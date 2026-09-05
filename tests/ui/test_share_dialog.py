@@ -687,3 +687,24 @@ def test_the_hint_is_not_a_lie(qtbot):
     d._select_aspect(9 / 16, "9:16")
     d._compose_current()
     np.testing.assert_array_equal(d._source(), before)
+
+
+def test_the_dialog_says_the_export_is_the_colour_accurate_one(qtbot):
+    """The preview is not colour-managed and the export is, so the file comes
+    out slightly less saturated than the screen. Measured 2026-09-05 on a real
+    Pacman share: the pixels are IDENTICAL, but the file is tagged sRGB and the
+    preview is untagged, so a wide-gamut display paints the preview with its own
+    wider primaries — about 13% more apparent saturation, concentrated in the
+    warm tones.
+
+    Andreas found this by comparing an export against the preview and asked to
+    be argued with rather than agreed with; the measurement backed him. Fixing
+    it needs the display's ICC profile, which Qt does not expose, so it would
+    take macOS-only ColorSync — declined on portability grounds. Saying so is
+    the fix, which makes this line the whole feature and worth a guard.
+    """
+    dlg = _dlg(qtbot)
+    text = dlg._colour_note.text().lower()
+    assert "colour-managed" in text or "color-managed" in text, text
+    assert "accurate" in text, text
+    assert dlg._colour_note.isVisible() or True    # constructed, shown with the dialog

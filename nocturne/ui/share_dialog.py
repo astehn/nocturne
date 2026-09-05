@@ -24,6 +24,7 @@ from ..settings import start_dir
 from .fonts import PLATE_FAMILIES, available_families
 from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, last_layout
+from .theme import TEXT_DIM
 from . import file_dialogs
 
 
@@ -311,6 +312,28 @@ class ShareDialog(QDialog):
         self._caption_wrap.setLayout(caption_row)
         self._caption_wrap.setEnabled(self._caption_on)
 
+        # The preview is NOT colour-managed and the export is, so the exported
+        # file is slightly less saturated than what is on screen — measured
+        # 2026-09-05 on a Pacman share: identical pixels, but the file is tagged
+        # sRGB and the preview is untagged, so a wide-gamut display paints the
+        # preview with its own wider primaries. About 13% more apparent
+        # saturation, concentrated in the warm tones; neutral sky is unaffected.
+        #
+        # Said here rather than fixed, deliberately. Fixing it properly needs
+        # the display's ICC profile, which Qt does not expose (no
+        # QScreen.colorSpace, no QWindow.setColorSpace in 6.11), so it would
+        # take ColorSync through ctypes — macOS-only, and Andreas' reason for
+        # declining it is portability: Nocturne would need a per-platform
+        # equivalent before it could move off macOS. Assuming Display P3 was
+        # rejected as trading a known error for an invisible one on an external
+        # sRGB monitor.
+        self._colour_note = QLabel(
+            "The exported file is colour-managed; this preview is not, so the "
+            "file will look very slightly less saturated. The file is the "
+            "accurate one.")
+        self._colour_note.setWordWrap(True)
+        self._colour_note.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._copy_btn = QPushButton("Copy to clipboard")
@@ -370,6 +393,7 @@ class ShareDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.addLayout(body, 1)
+        root.addWidget(self._colour_note)
         root.addWidget(self.status)
         root.addLayout(buttons)
 
