@@ -58,7 +58,24 @@ def _check_network() -> int:
         return 1 if usable else 2
 
 
-DEFAULT_WINDOW = (1280, 760)
+# The main toolbar's sizeHint is 1698 points wide (27 items, measured
+# 2026-09-06). Below that it collapses into an overflow chevron and most of the
+# tools stop being one click away — which is what the old 1280 default did, on
+# every screen, to everyone. 1760 clears it with room for the window frame.
+#
+# Clamped to the screen at startup, so this is a PREFERENCE, not a demand: on a
+# 1280x800 MacBook Air the window still fits the display and the toolbar still
+# overflows, which is the small-screen problem and not this one.
+DEFAULT_WINDOW = (1760, 1040)
+
+
+def fit_to_screen(size: tuple[int, int], app) -> tuple[int, int]:
+    """Shrink `size` to the available screen area, never grow it."""
+    screen = app.primaryScreen()
+    if screen is None:
+        return size
+    avail = screen.availableGeometry()
+    return (min(size[0], avail.width()), min(size[1], avail.height()))
 
 
 def window_size(argv: list[str]) -> tuple[int, int]:
@@ -134,7 +151,7 @@ def main() -> None:
     autoconfigure_tools(settings_path)
 
     win = MainWindow(settings_path=settings_path)
-    win.resize(*window_size(sys.argv))
+    win.resize(*fit_to_screen(window_size(sys.argv), app))
     if "--size" in sys.argv:
         # Report it. Andreas' first use of the flag was "I have no way of
         # knowing if my window is 1600x1000" (2026-09-06), and he was right:
