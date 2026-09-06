@@ -172,9 +172,6 @@ def main() -> None:
     autoconfigure_tools(settings_path)
 
     win = MainWindow(settings_path=settings_path)
-    requested = window_size(sys.argv)
-    win.resize(*(fit_to_screen(requested, app) if requested
-                 else preferred_size(win, app)))
 
     if splash is not None:
         # THE CLOCK STARTS HERE, once loading is finished — not when the splash
@@ -202,6 +199,23 @@ def main() -> None:
         loop.exec()
         splash.finish(win)
 
+    # AFTER show(), and this is not a style choice.
+    #
+    # The splash holds a NESTED QEventLoop while the window is built but not yet
+    # shown, and that loop resets an un-shown top-level widget to Qt's default
+    # 640x480 — discarding any earlier resize completely. Measured 2026-09-06:
+    #
+    #     after resize             2364 x 1100
+    #     after the nested loop     640 x 480
+    #     after show                640 x 480
+    #
+    # So `win.resize(1280, 760)` has been dead since the splash was added, and
+    # every window since has opened at 640x480 regardless. It is why three
+    # successive --size values made no visible difference at all, and why the
+    # toolbar looked so cramped: nothing was ever setting a size.
+    requested = window_size(sys.argv)
+    win.resize(*(fit_to_screen(requested, app) if requested
+                 else preferred_size(win, app)))
     win.show()
 
     if "--size" in sys.argv:
@@ -211,10 +225,17 @@ def main() -> None:
         # Andreas was looking at a window that plainly did not match.
         def _report() -> None:
             s = win.size()
+            # From the SCREEN, not the widget. At singleShot(0) the window has
+            # no screen yet and devicePixelRatio() answers 1.0, so the line
+            # claimed a retina capture would be 2364 px wide when it is 4728 —
+            # a readout that is wrong is worse than none, which is the whole
+            # reason this line exists.
+            screen = win.screen()
+            dpr = screen.devicePixelRatio() if screen is not None else 1.0
             print(f"window: {s.width()} x {s.height()} points "
-                  f"({s.width() * win.devicePixelRatio():.0f} x "
-                  f"{s.height() * win.devicePixelRatio():.0f} px when captured)")
-        QTimer.singleShot(0, _report)
+                  f"({s.width() * dpr:.0f} x {s.height() * dpr:.0f} px "
+                  f"when captured)")
+        QTimer.singleShot(120, _report)
 
     sys.exit(app.exec())
 
