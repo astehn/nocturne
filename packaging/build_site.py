@@ -148,16 +148,28 @@ def head_html(name: str, meta: dict) -> str:
     out = [
         '  <meta charset="UTF-8">',
         '  <meta name="viewport" content="width=device-width, initial-scale=1">',
-        # Fonts in the HEAD, not @import inside styles.css. An @import cannot
-        # start until the stylesheet has been fetched AND parsed, so it serialises
-        # two round trips before a single glyph is requested and the page renders
-        # in the fallback face first. preconnect opens the connections early;
-        # fonts.gstatic.com needs crossorigin because font files are CORS.
-        '  <link rel="preconnect" href="https://fonts.googleapis.com">',
-        '  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-        '  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-        'family=Familjen+Grotesk:wght@400;600;700&amp;'
-        'family=IBM+Plex+Mono:wght@400;500&amp;display=swap">',
+        # The two faces are SELF-HOSTED, declared in styles.css. They were
+        # linked from fonts.googleapis.com for a day, which broke
+        # test_no_external_resource_calls -- a test that names fonts.googleapis
+        # explicitly, so the site's no-third-party rule was deliberate and I
+        # walked through it. Self-hosting also removes the failure mode the
+        # design doc itself listed ("if Google Fonts is slow or blocked the page
+        # falls back"), and stops an EU site handing every visitor's IP to
+        # Google for a font.
+        #
+        # Preloaded rather than merely declared: an @font-face in the stylesheet
+        # is not requested until the CSS is parsed AND a glyph needs it, which
+        # is the same two-round-trip delay the old comment here complained about
+        # @import causing. Only the two Latin faces the first screenful uses.
+        # NOT asset_url(): the @font-face in styles.css asks for the plain
+        # path, and a preload of a DIFFERENT url (…woff2?v=hash) is not the
+        # same request. The browser would fetch both and warn that the
+        # preloaded font went unused. Fonts do not need the cache-busting
+        # anyway -- changing one means a new filename.
+        '  <link rel="preload" href="fonts/familjen-grotesk-400-latin.woff2"'
+        ' as="font" type="font/woff2" crossorigin>',
+        '  <link rel="preload" href="fonts/ibm-plex-mono-400-latin.woff2"'
+        ' as="font" type="font/woff2" crossorigin>',
         f"  <title>{title}</title>",
         f'  <meta name="description" content="{desc}">',
         '  <meta property="og:type" content="website">',
