@@ -258,3 +258,52 @@ def test_a_blocking_tool_still_wins_over_the_plan(qtbot, tmp_path):
     d.recipe_edit.setText(_write_recipe(tmp_path, [{"stage": "background", "option": "strong"}]))
     assert "GraXpert" in d.status.text()
     assert d.run_btn.isEnabled() is False
+
+
+def test_a_recipe_path_that_is_not_a_file_says_so_and_disables_run(qtbot, tmp_path):
+    """The silent case: a path SET but unreadable.
+
+    It used to fall through every branch of the pre-check, so _blocked and _plan
+    both stayed "" — the status line went blank and Run stayed enabled. The user
+    got silence and a live button, pressed it, and lost the run to a load error.
+    That is what the pre-check exists to prevent, and it is how a website
+    screenshot came out with a mysteriously empty status line (2026-09-06).
+    """
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.recipe_edit.setText(str(tmp_path / "gone.json"))
+    assert dlg.status.text(), "no message at all for an unreadable recipe"
+    assert not dlg.run_btn.isEnabled(), "Run is live on a recipe that cannot load"
+
+
+def test_a_directory_is_not_mistaken_for_a_recipe(qtbot, tmp_path):
+    """os.path.isfile is False for a directory too, and a folder path is an easy
+    thing to paste into that field."""
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.recipe_edit.setText(str(tmp_path))
+    assert dlg.status.text()
+    assert not dlg.run_btn.isEnabled()
+
+
+def test_clearing_a_bad_path_clears_the_complaint(qtbot, tmp_path):
+    """The blocked state must not stick once the cause is gone — otherwise the
+    dialog stays dead after the user corrects their own typo."""
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.recipe_edit.setText(str(tmp_path / "gone.json"))
+    assert not dlg.run_btn.isEnabled()
+    dlg.recipe_edit.setText("")
+    assert dlg.status.text() == ""
+    assert dlg.run_btn.isEnabled()
+
+
+def test_a_good_recipe_still_reports_its_plan(qtbot, tmp_path):
+    """The new branch must not shadow the working one."""
+    r = tmp_path / "r.json"
+    r.write_text('{"version":1,"steps":[{"stage":"stretch","option":0.5}]}')
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.recipe_edit.setText(str(r))
+    assert "will run as saved" in dlg.status.text()
+    assert dlg.run_btn.isEnabled()

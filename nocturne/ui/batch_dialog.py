@@ -102,7 +102,17 @@ class BatchDialog(QDialog):
         self._blocked = ""
         self._plan = ""
         path = self.recipe_edit.text().strip()
-        if path and os.path.isfile(path):
+        if path and not os.path.isfile(path):
+            # A path that is set but unreadable used to fall through EVERY
+            # branch: _blocked and _plan both stayed "", so the status line went
+            # blank and Run stayed enabled. The user got silence and a live
+            # button, pressed it, and lost the run to a load error — the exact
+            # shape the comment above this wiring says the pre-check exists to
+            # prevent. Found 2026-09-06, from a website screenshot whose status
+            # line was mysteriously empty.
+            self._blocked = ("No recipe file at that path — check it has not "
+                             "been moved or renamed.")
+        elif path:
             try:
                 recipe = load_recipe(path)
             except Exception:
