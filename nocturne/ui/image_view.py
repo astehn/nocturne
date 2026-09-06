@@ -7,7 +7,7 @@ from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
 )
 from PySide6.QtWidgets import (
-    QGraphicsDropShadowEffect, QGraphicsEllipseItem, QGraphicsPixmapItem,
+    QGraphicsEllipseItem, QGraphicsPixmapItem,
     QGraphicsRectItem, QGraphicsScene, QGraphicsView,
 )
 
@@ -26,6 +26,12 @@ _HANDLES = ("tl", "tr", "bl", "br", "t", "b", "l", "r")
 # divider was a fixed 3 SCENE pixels, which on a 3840x2160 frame fitted to a
 # 1000px canvas draws at 0.8 screen pixels — a hairline nobody can grab. That is
 # the whole of "#9 before/after divider hard to drag when zoomed out".
+# The hand-drawn edge shadow: 24 one-pixel strokes, matching the 24px blur
+# radius of the QGraphicsDropShadowEffect this replaces.
+_MAX_ZOOM = 32.0   # a single image pixel as a 32px block
+_SHADOW_STEPS = 24
+_SHADOW_ALPHA = 130   # the effect's own alpha
+
 _DIVIDER_LINE_PX = 2.0      # drawn width
 _DIVIDER_GRAB_PX = 14.0     # how close you must be to start a drag
 _DIVIDER_KNOB_PX = 26.0     # diameter of the round grab handle
@@ -183,11 +189,15 @@ class ImageView(QGraphicsView):
         self.setScene(self._scene)
         self._item = QGraphicsPixmapItem()
         self._scene.addItem(self._item)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 0)
-        shadow.setColor(QColor(0, 0, 0, 130))
-        self._item.setGraphicsEffect(shadow)
+        # NO QGraphicsDropShadowEffect here. A QGraphicsEffect makes Qt
+        # rasterise the WHOLE item into an offscreen buffer at device
+        # resolution before compositing, so its cost is the zoomed area of the
+        # entire image and the viewport does not bound it. Measured on a
+        # 5.25 Mpx frame: 409 MB at 0.45x, 2.3 GB at 1.73x, growing as zoom^2 —
+        # seven wheel clicks. On 2026-09-06 that took Andreas' 64 GB machine to
+        # a 215.9 GB footprint and an unresponsive desktop while he was simply
+        # zooming in. The same drawn in drawBackground costs the viewport,
+        # once, at any zoom: 389 MB flat out to 236,000x.
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -440,7 +450,32 @@ class ImageView(QGraphicsView):
         painter.save()
         painter.resetTransform()
         painter.fillRect(vp, QBrush(grad))
+        self._draw_edge_shadow(painter, vp)
         painter.restore()
+
+    def _draw_edge_shadow(self, painter, vp) -> None:
+        """The soft edge the drop-shadow effect used to give, drawn by hand.
+
+        Concentric strokes of falling alpha around the image rect, in VIEWPORT
+        coordinates — so the cost is a handful of rectangle outlines whatever
+        the zoom, where the effect it replaces re-rendered the entire image.
+
+        Skipped once the image covers the viewport, which is the only time the
+        edge is off-screen anyway, and skipped in crop mode where drawForeground
+        already dims everything outside the box.
+        """
+        if self._item.pixmap().isNull() or self._crop_mode:
+            return
+        box = self.mapFromScene(self._item.boundingRect()).boundingRect()
+        if box.contains(vp):
+            return
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(_SHADOW_STEPS):
+            # Squared falloff, so the edge fades the way a blur does rather
+            # than as a visible stack of lines.
+            alpha = int(_SHADOW_ALPHA * (1.0 - i / _SHADOW_STEPS) ** 2)
+            painter.setPen(QPen(QColor(0, 0, 0, alpha), 1))
+            painter.drawRect(box.adjusted(-i, -i, i, i))
 
     def drawForeground(self, painter, rect) -> None:
         """When the crop box is visible: dim the viewport outside the crop rect
@@ -484,7 +519,17 @@ class ImageView(QGraphicsView):
         painter.restore()
 
     def zoom_in(self) -> None:
-        if not self._item.pixmap().isNull():
+        """Zoom in one step, up to `_MAX_ZOOM`.
+
+        The ceiling is defence in depth rather than the fix for the 2026-09-06
+        memory blow-up — that was the drop-shadow effect, removed above. But
+        zoom was unbounded, and 1.25 per wheel click reaches 236,000x in sixty:
+        far past anything a person can use, and a standing invitation for the
+        next overlay that costs something per zoomed pixel. 32x shows a single
+        image pixel as a 32px block, which is more than the pixel readout and
+        the crosshair need.
+        """
+        if not self._item.pixmap().isNull() and self.zoom() < _MAX_ZOOM:
             self.scale(1.25, 1.25)
             self._fitted = False
             self._note_zoom()
