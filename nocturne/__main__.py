@@ -135,6 +135,17 @@ def main() -> None:
 
     win = MainWindow(settings_path=settings_path)
     win.resize(*window_size(sys.argv))
+    if "--size" in sys.argv:
+        # Report it. Andreas' first use of the flag was "I have no way of
+        # knowing if my window is 1600x1000" (2026-09-06), and he was right:
+        # the size is in POINTS, so on a wide external display a correctly
+        # sized window looks like a fraction of the screen and there is nothing
+        # to check it against. A flag whose effect cannot be observed is
+        # indistinguishable from a flag that does nothing.
+        s = win.size()
+        print(f"window: {s.width()} x {s.height()} points "
+              f"({s.width() * win.devicePixelRatio():.0f} x "
+              f"{s.height() * win.devicePixelRatio():.0f} px when captured)")
 
     if splash is not None:
         # THE CLOCK STARTS HERE, once loading is finished — not when the splash
