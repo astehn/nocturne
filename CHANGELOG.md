@@ -2,6 +2,20 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.27.0] — 2026-09-06
+
+Zooming no longer eats memory, stacking anchors on the middle of the drift, and the window opens the size it was always meant to
+
+### Changed
+- Star Spikes puts its preview beside the sliders instead of above them, matching Curves, Narrowband, Share, Upscale, Stack and Colour Balance. Stacked, the preview got a letterbox strip of the window while six slider tracks ran the full width to carry a control that needs about 200 pixels; side by side on a 1080-wide dialog the preview is 722x678.
+- Stacking anchors the master on the middle of the session's drift rather than on the first frame, so re-stacking data you already have will produce a different — larger and cleaner — master than before. Nothing about your existing files changes; only new stacks.
+
+### Fixed
+- Zooming in could exhaust the machine's memory. A drop-shadow effect on the image made Qt redraw the WHOLE picture into an offscreen buffer at the zoomed size, so the cost grew as the square of the zoom and the visible area never bounded it. On a 5-megapixel frame that reached 2.3 GB by the seventh click of the wheel, and on a real session it took a 64 GB machine to a 215 GB footprint and an unresponsive desktop. The shadow is drawn directly now: memory stays flat at any zoom, and zoom is capped at 32x.
+- The stacked master was anchored on the first frame of the session, which is the worst choice available. The field drifts over a night, so the first frame sits at one end of that drift and half of its footprint is covered only by the earliest frames — leaving a wide band of barely-stacked data that no amount of noise reduction can rescue, because the samples are not there. Anchoring on the frame nearest the middle of the drift raised the fully-covered area of a real 186-frame NGC 7000 session from 54% to 83%, and the largest clean rectangle from 2.97 to 4.98 megapixels.
+- The main window has been opening at 640x480 since the splash screen was added, whatever size the code asked for: the splash holds an event loop while the window is built but not yet shown, and that discards the size. A third of the toolbar was folded behind an overflow chevron as a result. The window now opens wide enough for its own toolbar — measured from the layout rather than hardcoded — and is clamped to the screen, so a small display still gets a window that fits it.
+- Batch said nothing at all when the recipe path could not be read. A path that was set but missing, renamed, or a folder matched none of the checks, so the status line stayed empty and Run stayed enabled — you pressed it and lost the run to a load error. It now names the problem and refuses to run, which is what the pre-check exists to do.
+
 ## [0.26.0] — 2026-09-05
 
 Mosaic panels match colour, and Curves gets a curve per channel and per colour
