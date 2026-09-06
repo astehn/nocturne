@@ -206,6 +206,49 @@ class StackResult:
     peak: float = 0.0
 
 
+def _recentre(transforms: dict, used: list) -> None:
+    """Re-anchor the output canvas on the MIDDLE of the drift, in place.
+
+    The canvas is the reference frame's footprint, and the reference is
+    `paths[0]` — the first sub of the session. Over a night the field drifts,
+    so frame 0 sits at one END of that drift and half its footprint is only
+    ever covered by the early frames. The result is a wide, thin wing of
+    barely-stacked data that no amount of noise reduction can rescue, because
+    the samples are genuinely not there.
+
+    Measured on Andreas' 186-frame NGC 7000 set (2026-09-06), which drifts
+    703 px in x and 669 px in y — frame 0 lands at the 3rd percentile of x:
+
+        anchor            >=90% coverage    largest clean rectangle
+        frame 0 (before)       53.9%        920 x 3232   (2.97 Mpx)
+        frame 70 (after)       82.8%       1400 x 3560   (4.98 Mpx)
+
+    A 68% larger clean master from the same frames. He noticed it as "a lot of
+    noise and artifacts on the left side"; Siril, which builds a union canvas
+    instead, had no such wing on the same data.
+
+    This is arithmetic, not a second registration pass. Every frame is already
+    registered against frame 0, so composing with the chosen anchor's inverse
+    re-expresses the same relative alignment about a different origin. The
+    anchor's own estimation error is COMMON to every frame, so it displaces the
+    whole canvas rather than misaligning frames within it.
+
+    A set with no drift is unaffected: the frame nearest the median position is
+    then frame 0 or its equal, and the composition is the identity.
+    """
+    paths = [p for p in used if p in transforms]
+    mats = np.stack([np.asarray(transforms[p], dtype=np.float64) for p in paths])
+    # Translation is the whole story here: the drift is where the field went,
+    # and rotation about the field centre does not move the footprint's centre.
+    tx, ty = mats[:, 0, 2], mats[:, 1, 2]
+    centre = int(np.argmin((tx - np.median(tx)) ** 2 + (ty - np.median(ty)) ** 2))
+    if centre == 0:
+        return
+    inv = np.linalg.inv(mats[centre])
+    for path, m in zip(paths, mats):
+        transforms[path] = inv @ m
+
+
 def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
     paths = list(opts.include)
     if len(paths) < 3:
@@ -272,6 +315,8 @@ def run_stack(opts: StackOptions, *, on_progress=None) -> StackResult:
             "not enough frames could be registered — the reference may be too "
             "star-sparse to align (need at least 3)"
         )
+
+    _recentre(transforms, used)
 
     # Phase B: integrate (streaming — reload + warp per frame, low memory).
     # Emit per-frame progress so the (longest) integration step isn't a frozen
