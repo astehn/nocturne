@@ -29,6 +29,7 @@ captures, not as part of a deploy.
 from __future__ import annotations
 
 import collections
+import io
 import pathlib
 import re
 import sys
@@ -41,6 +42,13 @@ DEFAULT_SOURCE = "~/Desktop/Nocturne site shots"
 # 2200 wide, and the enh-* pairs 1536. A pair is shown smaller than a full-width
 # screenshot, so it does not need the same pixels.
 EDGES = {"ui": 2200, "pic": 2200, "ba": 1600}
+
+# Pairs whose whole point is detail at 100%. Downsizing a 4000 px frame to 1600
+# averages away the very noise the "before" is meant to show, so these are CROPPED
+# from the centre at native resolution instead of scaled. Both halves get the
+# identical rectangle by construction, which is also the manifest's rule.
+DETAIL_PAIRS = ("ba-denoise", "ba-drizzle")
+DETAIL_CROP = (1600, 1000)
 QUALITY = 88          # above the gallery's 82: these carry UI text, not just sky
 SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
 
@@ -87,16 +95,51 @@ def check_pairs(files: list[pathlib.Path]) -> list[str]:
     return problems
 
 
+def _to_srgb(im, icc: bytes | None):
+    """Convert to sRGB and return the profile to embed.
+
+    Nocturne can export sRGB, Display P3, Adobe RGB or ProPhoto (the colour
+    management work of 2026-08-20), and a browser shown untagged pixels assumes
+    sRGB. So stripping a ProPhoto profile does not lose a nicety — it renders
+    the picture with the wrong primaries, badly desaturated, with nothing on the
+    page to say so. Convert rather than merely tag, because the web wants sRGB.
+    """
+    from PIL import ImageCms
+    srgb = ImageCms.createProfile("sRGB")
+    srgb_bytes = ImageCms.ImageCmsProfile(srgb).tobytes()
+    if not icc:
+        return im.convert("RGB"), srgb_bytes
+    src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+    if ImageCms.getProfileDescription(src).strip().lower().startswith("srgb"):
+        return im.convert("RGB"), icc
+    out = ImageCms.profileToProfile(im, src, srgb, outputMode="RGB")
+    return out, srgb_bytes
+
+
+def is_detail(stem: str) -> bool:
+    return any(stem.startswith(d) for d in DETAIL_PAIRS)
+
+
+def _centre_crop(im, size):
+    cw, ch = min(size[0], im.width), min(size[1], im.height)
+    left, top = (im.width - cw) // 2, (im.height - ch) // 2
+    return im.crop((left, top, left + cw, top + ch))
+
+
 def derive(src: pathlib.Path, edge: int) -> tuple[pathlib.Path, tuple[int, int]]:
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = None
     with Image.open(src) as im:
-        im = im.convert("RGB")
-        # thumbnail only ever shrinks, so a capture that arrives smaller than
-        # the target is left alone rather than blown up into softness.
-        im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
+        im, profile = _to_srgb(im, im.info.get("icc_profile"))
+        if is_detail(src.stem):
+            im = _centre_crop(im, DETAIL_CROP)
+        else:
+            # thumbnail only ever shrinks, so a capture that arrives smaller
+            # than the target is left alone rather than blown up into softness.
+            im.thumbnail((edge, edge), Image.Resampling.LANCZOS)
         dest = OUT / f"{src.stem}.jpg"
-        im.save(dest, "JPEG", quality=QUALITY, optimize=True, progressive=True)
+        im.save(dest, "JPEG", quality=QUALITY, optimize=True,
+                progressive=True, icc_profile=profile)
         return dest, im.size
 
 
