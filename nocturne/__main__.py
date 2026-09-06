@@ -58,15 +58,16 @@ def _check_network() -> int:
         return 1 if usable else 2
 
 
-# The main toolbar's sizeHint is 1698 points wide (27 items, measured
-# 2026-09-06). Below that it collapses into an overflow chevron and most of the
-# tools stop being one click away — which is what the old 1280 default did, on
-# every screen, to everyone. 1760 clears it with room for the window frame.
-#
-# Clamped to the screen at startup, so this is a PREFERENCE, not a demand: on a
-# 1280x800 MacBook Air the window still fits the display and the toolbar still
-# overflows, which is the small-screen problem and not this one.
-DEFAULT_WINDOW = (1760, 1040)
+# Height only. The WIDTH is asked of the window itself at startup — see
+# preferred_size. Two hardcoded guesses at it were wrong in a row (1280 shipped
+# for months; 1600 and 1760 were measured on the offscreen platform, which
+# substitutes fonts and under-reported the toolbar by 642 points), so the number
+# is no longer written down anywhere.
+DEFAULT_HEIGHT = 1100
+
+# Breathing room past the layout's exact requirement, so a one-point rounding
+# difference does not push the last toolbar item into the overflow chevron.
+_MARGIN = 24
 
 
 def fit_to_screen(size: tuple[int, int], app) -> tuple[int, int]:
@@ -78,26 +79,46 @@ def fit_to_screen(size: tuple[int, int], app) -> tuple[int, int]:
     return (min(size[0], avail.width()), min(size[1], avail.height()))
 
 
-def window_size(argv: list[str]) -> tuple[int, int]:
+def preferred_size(win, app) -> tuple[int, int]:
+    """Wide enough for the window's own layout, and no wider than the screen.
+
+    The main toolbar carries 27 items and wants 2340 points with the fonts the
+    app actually loads. Under the default 1280 only 16 of them were one click
+    away; the rest lived behind the overflow chevron, on every screen, for every
+    user, for months. Nobody reported it because a chevron is slow rather than
+    broken.
+
+    Asking the window rather than hardcoding a number is the point. Measured
+    offscreen — which substitutes fonts and warns that it does — the same
+    toolbar reports 1698, and a default set from that figure looks fixed while
+    hiding a third of the tools. Andreas found both wrong versions by opening
+    the app: "I cant even reach most of the tools."
+
+    On a display too small for the layout the clamp wins and the chevron comes
+    back. That is the small-screen problem, and this does not make it worse.
+    """
+    return fit_to_screen((win.sizeHint().width() + _MARGIN, DEFAULT_HEIGHT), app)
+
+
+def window_size(argv: list[str]) -> tuple[int, int] | None:
     """`--size 1600x1000`, for captures that have to match each other.
 
+    None means "no override" — the window is sized from its own layout instead.
     The website's screenshots are taken in sittings weeks apart, and a set shot
     at two window sizes cannot be topped up later without the new frames looking
-    wrong beside the old. The default is what the app has always opened at; this
-    only makes that size nameable, so "same as last time" is a command rather
-    than a memory. Anything unparseable falls back rather than refusing to
-    start — a bad flag must not stop the app opening.
+    wrong beside the old. Anything unparseable falls back rather than refusing
+    to start: a typo in a flag must not stop the app opening.
     """
     if "--size" not in argv:
-        return DEFAULT_WINDOW
+        return None
     i = argv.index("--size")
     if i + 1 >= len(argv):
-        return DEFAULT_WINDOW
+        return None
     try:
         w, h = argv[i + 1].lower().split("x")
         return max(640, int(w)), max(480, int(h))
     except ValueError:
-        return DEFAULT_WINDOW
+        return None
 
 
 def main() -> None:
@@ -151,18 +172,9 @@ def main() -> None:
     autoconfigure_tools(settings_path)
 
     win = MainWindow(settings_path=settings_path)
-    win.resize(*fit_to_screen(window_size(sys.argv), app))
-    if "--size" in sys.argv:
-        # Report it. Andreas' first use of the flag was "I have no way of
-        # knowing if my window is 1600x1000" (2026-09-06), and he was right:
-        # the size is in POINTS, so on a wide external display a correctly
-        # sized window looks like a fraction of the screen and there is nothing
-        # to check it against. A flag whose effect cannot be observed is
-        # indistinguishable from a flag that does nothing.
-        s = win.size()
-        print(f"window: {s.width()} x {s.height()} points "
-              f"({s.width() * win.devicePixelRatio():.0f} x "
-              f"{s.height() * win.devicePixelRatio():.0f} px when captured)")
+    requested = window_size(sys.argv)
+    win.resize(*(fit_to_screen(requested, app) if requested
+                 else preferred_size(win, app)))
 
     if splash is not None:
         # THE CLOCK STARTS HERE, once loading is finished — not when the splash
@@ -191,6 +203,19 @@ def main() -> None:
         splash.finish(win)
 
     win.show()
+
+    if "--size" in sys.argv:
+        # AFTER show, from a timer, so it reports the window that EXISTS. The
+        # first version printed win.size() straight after resize() — which
+        # echoes the request, not the result, and so agreed with itself while
+        # Andreas was looking at a window that plainly did not match.
+        def _report() -> None:
+            s = win.size()
+            print(f"window: {s.width()} x {s.height()} points "
+                  f"({s.width() * win.devicePixelRatio():.0f} x "
+                  f"{s.height() * win.devicePixelRatio():.0f} px when captured)")
+        QTimer.singleShot(0, _report)
+
     sys.exit(app.exec())
 
 
