@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import QThreadPool, QTimer
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..core.image import AstroImage
@@ -23,7 +23,10 @@ class StarSpikesDialog(QDialog):
     def __init__(self, base: AstroImage, parent=None, on_apply=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Star Spikes")
-        self.setMinimumSize(720, 560)
+        # Side-by-side like every other preview dialog, so these are the
+        # family's proportions rather than this one's own.
+        self.setMinimumSize(760, 540)
+        self.resize(1080, 700)
         self._base = base
         self._on_apply = on_apply
         self._result = base
@@ -77,26 +80,43 @@ class StarSpikesDialog(QDialog):
             outer.addWidget(widget)
             return outer
 
-        root = QVBoxLayout(self)
-        root.addWidget(self.preview, 1)
+        # Preview LEFT, controls RIGHT — the shape Curves, Narrowband, Share,
+        # Upscale, Stack and Colour Balance all use. This dialog was the only
+        # one stacked vertically, and Andreas named the cost (2026-09-06):
+        # "thats a poor usage of screen realestate". Stacked, the preview got a
+        # letterbox strip of the height while six slider tracks ran the full
+        # width of the window to carry a control that needs about 200px.
         note = QLabel("Add diffraction spikes to the brightest stars. Length 0 = off. "
                       "Keep the star count low so it looks intentional.")
         note.setWordWrap(True)
-        root.addWidget(note)
-        root.addLayout(_row("Length (off → long)", self.length_slider, self.length_val))
-        root.addLayout(_row("Intensity (faint → full)", self.intensity_slider, self.intensity_val))
-        root.addLayout(_row("Number of stars", self.stars_slider, self.stars_val))
-        root.addLayout(_row("Rotation", self.angle_slider, self.angle_val))
-        root.addLayout(_row("Variation (uniform → varied)",
+
+        side = QVBoxLayout()
+        side.addWidget(note)
+        side.addLayout(_row("Length (off → long)", self.length_slider, self.length_val))
+        side.addLayout(_row("Intensity (faint → full)", self.intensity_slider, self.intensity_val))
+        side.addLayout(_row("Number of stars", self.stars_slider, self.stars_val))
+        side.addLayout(_row("Rotation", self.angle_slider, self.angle_val))
+        side.addLayout(_row("Variation (uniform → varied)",
                             self.variation_slider, self.variation_val))
-        root.addLayout(_row("Star colour (white → full)",
+        side.addLayout(_row("Star colour (white → full)",
                             self.colour_slider, self.colour_val))
-        root.addWidget(self.compare_check)
+        side.addWidget(self.compare_check)
+        side.addStretch(1)
         buttons = QHBoxLayout()
         buttons.addWidget(self.reset_btn)
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
-        root.addLayout(buttons)
+        side.addLayout(buttons)
+
+        side_wrap = QWidget()
+        side_wrap.setLayout(side)
+        # The same cap narrowband_dialog uses. Without it the column takes half
+        # the window and the preview is no better off than it was stacked.
+        side_wrap.setMaximumWidth(340)
+
+        body = QHBoxLayout(self)
+        body.addWidget(self.preview, 1)
+        body.addWidget(side_wrap)
 
         # Detection off the UI thread. It ran in __init__ and cost 0.28 s on an
         # 8.3 MP frame, about 1.3 s on a 39.5 MP master, with a frozen window and

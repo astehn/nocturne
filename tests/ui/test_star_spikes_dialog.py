@@ -211,3 +211,33 @@ def test_detection_does_not_block_the_dialog_opening(qtbot):
     assert elapsed < 0.25, f"the dialog blocked for {elapsed:.2f}s while detecting"
     qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)
     assert d._stars, "detection must still finish and land"
+
+
+def test_the_preview_sits_beside_the_controls_not_under_them(qtbot):
+    """Star Spikes was the only preview dialog stacked vertically.
+
+    Andreas, 2026-09-06: "On all other dialogs windows we have the switches and
+    sliders either to the left or right, this one is the only one with the image
+    on top and switches and sliders below, i think thats a poor usage of screen
+    realestate." Stacked, the preview got a letterbox strip of the height while
+    six slider tracks ran the full window width to carry a control that needs
+    about 200px.
+
+    The guard is the PROPERTY, not the layout class: the preview must get more
+    width than the control column. A QHBoxLayout with the stretch factors left
+    off would satisfy "is horizontal" and still hand the preview half the window.
+    """
+    from PySide6.QtWidgets import QHBoxLayout
+
+    d = _ready(qtbot, _img())
+    d.resize(1080, 700)
+    d.show()
+    qtbot.waitExposed(d)
+
+    assert isinstance(d.layout(), QHBoxLayout), "controls are stacked again"
+    side = d.layout().itemAt(1).widget()
+    assert d.preview.width() > side.width() * 1.5, (
+        f"preview {d.preview.width()}px vs controls {side.width()}px — "
+        "the control column is eating the window")
+    assert d.preview.height() > d.preview.width() * 0.5, (
+        "the preview is a letterbox strip again")
