@@ -58,6 +58,31 @@ def _check_network() -> int:
         return 1 if usable else 2
 
 
+DEFAULT_WINDOW = (1280, 760)
+
+
+def window_size(argv: list[str]) -> tuple[int, int]:
+    """`--size 1600x1000`, for captures that have to match each other.
+
+    The website's screenshots are taken in sittings weeks apart, and a set shot
+    at two window sizes cannot be topped up later without the new frames looking
+    wrong beside the old. The default is what the app has always opened at; this
+    only makes that size nameable, so "same as last time" is a command rather
+    than a memory. Anything unparseable falls back rather than refusing to
+    start — a bad flag must not stop the app opening.
+    """
+    if "--size" not in argv:
+        return DEFAULT_WINDOW
+    i = argv.index("--size")
+    if i + 1 >= len(argv):
+        return DEFAULT_WINDOW
+    try:
+        w, h = argv[i + 1].lower().split("x")
+        return max(640, int(w)), max(480, int(h))
+    except ValueError:
+        return DEFAULT_WINDOW
+
+
 def main() -> None:
     # BEFORE anything can open a connection. A bundle inherits the build
     # machine's OpenSSL cert path, which does not exist on a user's Mac, and
@@ -109,7 +134,7 @@ def main() -> None:
     autoconfigure_tools(settings_path)
 
     win = MainWindow(settings_path=settings_path)
-    win.resize(1280, 760)
+    win.resize(*window_size(sys.argv))
 
     if splash is not None:
         # THE CLOCK STARTS HERE, once loading is finished — not when the splash
