@@ -1,5 +1,7 @@
+import numpy as np
 import pytest
 
+from nocturne.stacking import grade as g
 from nocturne.stacking.grade import (
     REASON_CLOUDS, REASON_MEASURE, REASON_SOFT, WARN_SKY,
     FrameStats, grade_frame, grade_frames, judge, upper_gate,
@@ -569,3 +571,127 @@ def test_a_frame_barely_rounder_than_its_neighbours_is_kept():
     stats = _frames([2.45] * 60, [1.16] * 59 + [1.16 * 1.03])
     judge(stats, "normal")
     assert stats[-1].included, stats[-1].reason
+
+
+# --- obstruction: something large in the frame -----------------------------
+#
+# Andreas' scope tracked into his house at the end of two nights (2026-09-07).
+# 196 of 2,535 frames — 33 minutes of a 340-minute session — are photographs of
+# a roof, and grading called them OK. Nothing measured could see it: a roof is
+# DARK, so globalback read 1161-1192 against a clean frame's 1174, and the stars
+# that remain are perfectly round and sharp.
+
+def _stats(spreads, **kw):
+    return [g.FrameStats(f"/x/{i}.fit", kw.get("stars", 500), 3.0, 0.02, 1.0, True,
+                         elongation=1.1, bg_spread=float(s))
+            for i, s in enumerate(spreads)]
+
+
+def test_an_obstructed_frame_is_rejected_and_says_why():
+    stats = _stats([0.25] * 40 + [4.2])
+    g.judge(stats, "normal")
+    bad = stats[-1]
+    assert not bad.included
+    assert bad.reason_code == "obstructed"
+    assert "roof" in bad.reason          # names what it might be, in plain words
+    assert "4.2" in bad.reason           # and the measurement that decided it
+    assert all(s.included for s in stats[:-1]), "clean frames were caught too"
+
+
+def test_a_uniformly_structured_session_keeps_everything():
+    """The rule the other gates already follow, and the reason this gate can
+    never be an absolute threshold.
+
+    Measured across 14 of Andreas' sessions: deep-sky background spread sits at
+    0.19-1.62, but wide-field Milky Way frames sit at 22 and 176 — the galactic
+    plane across the frame IS real background structure. Any fixed number that
+    catches a roof would delete every Milky Way frame he owns. Verified against
+    the real 316-frame session: 0 rejected.
+    """
+    stats = _stats([170.0, 175.0, 176.0, 178.0, 180.0, 191.0] * 8)
+    g.judge(stats, "normal")
+    assert all(s.included for s in stats)
+
+
+def test_strict_does_not_cut_into_a_tight_clean_core():
+    """This metric's normal population is unusually tight, which breaks a
+    k-sigma gate at low k.
+
+    The fixture matches the shape MEASURED on the real 2,535-frame session — a
+    dense core around 0.27 plus an obstructed tail — because the shape is the
+    whole point. A first version used five tidy values and no tail; its MAD was
+    small enough that the k=2 gate cleared every one of them, so it passed
+    whichever floor was in force and could not tell the two apart.
+
+    With the real shape, k=2 puts the gate at ~0.43, INSIDE the clean core: 432
+    frames (17%) went, including ones that are visibly clean noise. FLOOR_SPREAD
+    holds it at twice the session median instead.
+    """
+    rng = np.random.default_rng(0)
+    core = list(np.clip(rng.normal(0.27, 0.06, 200), 0.15, None))
+    tail = [1.3, 2.4, 4.0, 4.2, 5.5, 8.5]          # the roof
+    clean_but_high = 0.45                           # rendered and checked: clean
+    stats = _stats(core + tail + [clean_but_high])
+    g.judge(stats, "strict")
+    victim = stats[-1]
+    assert victim.included, (
+        f"Strict rejected a clean frame at {clean_but_high} in a session whose "
+        "median is 0.27 — the gate has fallen into the normal population")
+    assert sum(1 for s in stats if s.reason_code == "obstructed") == len(tail), \
+        "the obstructed tail should still go"
+
+
+def test_the_obstruction_gate_is_not_a_quality_dial():
+    """Relaxed, normal and strict must agree closely. This gate answers
+    'is something in the frame', not 'how good is this frame'; if it varied
+    sharply with strictness, choosing Strict would start eating clean data."""
+    spreads = [0.25] * 60 + [4.0, 4.2, 5.1]
+    counts = []
+    for strictness in ("relaxed", "normal", "strict"):
+        stats = _stats(spreads)
+        g.judge(stats, strictness)
+        counts.append(sum(1 for s in stats if s.reason_code == "obstructed"))
+    assert counts[0] == counts[1] == counts[2] == 3, counts
+
+
+def test_an_obstructed_frame_is_not_chosen_as_the_reference():
+    """Everything registers against one frame, and it must not be a roof.
+
+    The guarantee comes from the GATE, not from scoring: pick_reference filters
+    on `included`, so excluding a frame removes it from candidacy. bg_spread was
+    briefly added to _score as well, on the assumption that it was needed; it
+    was not, and checking that assumption is what removed it.
+    """
+    stats = _stats([0.25] * 20)
+    # The roofed frame is otherwise the BEST candidate: sharpest and roundest,
+    # so it would win pick_reference outright if the gate did not exclude it.
+    roofed = g.FrameStats("/x/roof.fit", 900, 1.5, 0.02, 99.0, True,
+                          elongation=1.0, bg_spread=4.2)
+    stats.append(roofed)
+    g.judge(stats, "normal")
+    assert not roofed.included
+    assert g.pick_reference(stats) is not roofed
+
+
+def test_spread_is_measured_and_carried():
+    """A flat frame reads low; a frame with a big soft gradient reads high."""
+    rng = np.random.default_rng(0)
+    n = g._SPREAD_MIN_EDGE * 2
+    flat = rng.normal(100.0, 5.0, (n, n)).astype(np.float32)
+    ramp = flat + np.linspace(0, 120, n, dtype=np.float32)[None, :]
+    assert g._measure(flat)[4] < g._measure(ramp)[4] / 5
+
+
+def test_a_frame_too_small_to_measure_reports_nothing_rather_than_noise():
+    """sep fits the background on 64px boxes, so a small frame gives a handful
+    contaminated by star flux: the suite's own 80x80 fixtures read 4 to 29 where
+    a real sub reads 0.19. Reporting that as an obstruction would reject
+    synthetic and small-sensor frames wholesale, so it reports 0 — not measured —
+    and judge() skips it."""
+    rng = np.random.default_rng(1)
+    small = rng.normal(100.0, 5.0, (80, 80)).astype(np.float32)
+    assert g._measure(small)[4] == 0.0
+
+    stats = _stats([0.0] * 30)          # a whole session of unmeasured frames
+    g.judge(stats, "strict")
+    assert all(s.included for s in stats), "unmeasured frames were rejected"

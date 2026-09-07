@@ -26,6 +26,7 @@ _MAD_TO_SIGMA = 1.4826
 REASON_CLOUDS = "Very few stars — likely clouds or trailing"
 REASON_SOFT = "Stars softer than the rest of the session"
 REASON_TRAILED = "Stars trailed — wind, a nudge, or a tracking slip"
+REASON_OBSTRUCTED = "Something large in the frame — a roof, a tree, or cloud"
 WARN_SKY = "Brighter sky (twilight, moon or light pollution) — kept"
 REASON_MEASURE = "Couldn't measure this frame — excluded"
 REASON_NOT_RAW = "Already-stacked image (not a raw sub) — excluded"
@@ -44,6 +45,12 @@ class FrameStats:
     # geometric mean of the axes, so a star stretched along one axis and
     # squeezed along the other scores an identical FWHM to a round one.
     elongation: float = 1.0
+    # Background non-uniformity: (p99-p1) of sep's background map over the
+    # frame's noise. Kept separate from `background` because that CANNOT see
+    # it: globalback is one scalar for the whole frame, so a dark roof across a
+    # third of it leaves the number unchanged. Same shape of blindness as fwhm
+    # to elongation.
+    bg_spread: float = 0.0
     exposure: float = 0.0
     target: str = ""
     reason_code: str = ""   # "clouds" | "soft_stars" | "trailed" | "measure_failed" | "not_raw" | ""
@@ -52,10 +59,34 @@ class FrameStats:
     error: bool = False     # measurement failed; excluded from statistics
 
 
-def _measure(lum: np.ndarray) -> tuple[int, float, float, float]:
+def _measure(lum: np.ndarray) -> tuple[int, float, float, float, float]:
     lum = np.ascontiguousarray(lum, dtype=np.float32)
     bkg = sep.Background(lum)
-    sub = lum - bkg.back()
+    back = bkg.back()
+    # How much the background VARIES across the frame, in units of the frame's
+    # own noise. sep already fitted this surface in order to subtract it; we
+    # were throwing it away and keeping only globalback, its LEVEL.
+    #
+    # That is why a roof was invisible. Andreas' scope tracked into his house at
+    # the end of two nights, and those frames have globalback 1161-1192 against
+    # a clean 1174 — a roof is dark, so it does not move the median at all —
+    # while this reads 4.0-4.2 against a clean 0.19. Measured across his
+    # 2,535-frame IC 1396A session: 196 frames, 7.7%, 33 minutes of the 340.
+    #
+    # p99-p1 rather than max-min: a satellite trail or a single hot column
+    # should not read as an obstruction.
+    # 0.0 means NOT MEASURED, and judge() skips those frames. sep fits the
+    # background on a grid of 64px boxes, so a small frame yields a handful of
+    # boxes heavily contaminated by star flux and the number is noise: the
+    # 80x80 synthetic fixtures in the test suite read 4 to 29, where a real
+    # 1080x1920 sub reads 0.19. Requiring 6 boxes per axis is the difference
+    # between describing a surface and describing four stars.
+    if min(lum.shape[:2]) < _SPREAD_MIN_EDGE:
+        bg_spread = 0.0
+    else:
+        bg_spread = float((np.percentile(back, 99) - np.percentile(back, 1))
+                          / max(float(bkg.globalrms), 1e-9))
+    sub = lum - back
     objects = sep.extract(sub, 5.0, err=bkg.globalrms)
     star_count = int(len(objects))
     if star_count:
@@ -67,7 +98,7 @@ def _measure(lum: np.ndarray) -> tuple[int, float, float, float]:
     else:
         fwhm = 0.0
         elongation = 1.0
-    return star_count, fwhm, float(bkg.globalback), elongation
+    return star_count, fwhm, float(bkg.globalback), elongation, bg_spread
 
 
 def _score(star_count: int, fwhm: float, background: float, elongation: float) -> float:
@@ -81,6 +112,12 @@ def _score(star_count: int, fwhm: float, background: float, elongation: float) -
     return (star_count
             * (1.0 / (1.0 + fwhm))
             * (1.0 / (1.0 + background * 10.0))
+            # bg_spread deliberately NOT here. It was, on the argument that a
+            # roofed frame is a poor thing to align a session to — but
+            # pick_reference already filters on `included`, so the obstruction
+            # gate excludes it from reference candidacy anyway. Adding it only
+            # made the score unstable on small frames, where the metric is not
+            # meaningful (see _measure), and inverted a real regression test.
             * (1.0 / max(elongation, 1e-6)))
 
 
@@ -91,10 +128,10 @@ def grade_frame(path: str) -> FrameStats:
                               reason_code="not_raw", reason=REASON_NOT_RAW,
                               error=True)
         img = load_sub(path, normalize=False)
-        star_count, fwhm, background, elongation = _measure(luminance(img.data))
+        star_count, fwhm, background, elongation, bg_spread = _measure(luminance(img.data))
         score = _score(star_count, fwhm, background, elongation)
         return FrameStats(path, star_count, fwhm, background, float(score), True,
-                          elongation=elongation,
+                          elongation=elongation, bg_spread=bg_spread,
                           exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
                           target=str(img.metadata.get("target") or ""))
     except Exception:
@@ -200,6 +237,24 @@ def order_best_first(stats: list["FrameStats"]) -> list:
 # behaviour he trusts intact. 15% would have cut M 16 from 52 to 21, a change
 # nobody asked for.
 STRICTNESS_FLOOR = {"relaxed": 0.25, "normal": 0.15, "strict": 0.05}
+
+# The obstruction gate's floor: never reject below TWICE the session's own
+# typical background variation. Much more generous than the floors above, and
+# deliberately the same at every strictness, because this gate answers "is
+# something in the frame" and not "how good is this frame" — it must not become
+# a quality dial that eats clean data when someone picks Strict.
+#
+# Needed because this metric's normal population is unusually tight. On Andreas'
+# IC 1396A session the clean core is 0.23-0.39 with a robust sigma of 0.082, so
+# k=2 puts the k-sigma gate at 0.43 — INSIDE the core, rejecting 17% including
+# frames that are clean noise. That is the same failure upper_gate's docstring
+# describes, arriving by a different route: there the gate walked below the
+# median, here the median is fine and the spread is too small for k to clear it.
+FLOOR_SPREAD = 1.0
+
+# sep's background box is 64px; below six boxes per axis the map describes stars
+# rather than sky. Real subs are far above this — the Seestar's are 1080x1920.
+_SPREAD_MIN_EDGE = 384
 STRICTNESS_FLOOR_ROUND = {"relaxed": 0.10, "normal": 0.05, "strict": 0.02}
 MIN_MEANINGFUL_EXCESS = STRICTNESS_FLOOR["normal"]
 
@@ -236,6 +291,15 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     shapes = [s.elongation for s in usable if s.star_count > 0]
     round_gate = (reject_limit(shapes, k, STRICTNESS_FLOOR_ROUND[strictness])
                   if shapes else None)
+    # Session-relative, and it MUST stay that way. An absolute threshold was
+    # measured across 14 of Andreas' sessions: deep-sky sits at 0.19-1.62 but
+    # wide-field Milky Way frames sit at 22 and 176, because the galactic plane
+    # across the frame IS real background structure. Any fixed number that
+    # catches a roof deletes every Milky Way frame he owns. Relative, a
+    # uniformly structured session has no outlier and keeps everything — the
+    # same rule the gates above follow.
+    spreads = [s.bg_spread for s in usable if s.bg_spread > 0]
+    spread_gate = reject_limit(spreads, k, FLOOR_SPREAD) if spreads else None
 
     for s in usable:
         if s.star_count < star_floor:
@@ -256,6 +320,11 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
             s.reason_code = "trailed"
             s.reason = (f"{REASON_TRAILED} (stars {s.elongation:.2f}x longer than "
                         f"wide, limit {round_gate:.2f})")
+        elif spread_gate is not None and s.bg_spread > spread_gate:
+            s.included = False
+            s.reason_code = "obstructed"
+            s.reason = (f"{REASON_OBSTRUCTED} (background varies "
+                        f"{s.bg_spread:.1f}x the noise, limit {spread_gate:.1f})")
         elif s.background > bg_gate:
             s.warning = WARN_SKY
 
