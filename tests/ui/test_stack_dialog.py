@@ -143,7 +143,9 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
     assert dlg.table.columnCount() == 7
     from nocturne.ui.stack_dialog import _VERDICT_COL
-    assert "softer" in dlg.table.item(0, _VERDICT_COL).text()
+    cell = dlg.table.item(0, _VERDICT_COL)
+    assert "Soft" in cell.text()
+    assert "softer" in cell.toolTip()      # the long form is one hover away
     assert "Brighter sky" in dlg.table.item(1, _VERDICT_COL).text()
     assert dlg.table.item(2, _VERDICT_COL).text() == "OK"
 

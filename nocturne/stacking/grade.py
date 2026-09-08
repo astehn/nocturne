@@ -23,13 +23,32 @@ STRICTNESS_K = {"relaxed": 4.0, "normal": 3.0, "strict": 2.0}
 # its usual "how many sigma" meaning without inheriting sigma's fragility.
 _MAD_TO_SIGMA = 1.4826
 
-REASON_CLOUDS = "Very few stars — likely clouds or trailing"
-REASON_SOFT = "Stars softer than the rest of the session"
-REASON_TRAILED = "Stars trailed — wind, a nudge, or a tracking slip"
-REASON_OBSTRUCTED = "Something large in the frame — a roof, a tree, or cloud"
+# VERDICT_MAX_CHARS is the budget every cell string above must respect.
+# Measured 2026-09-08 under cocoa (NOT offscreen -- that substitutes the font
+# and every width comes out wrong): the Verdict column is 285px in the default
+# 1100px dialog and the table's font runs 5.92px per character, so 48 characters
+# is what fits. The longest string here is 44. Over budget, Qt elides from the
+# right and the NUMBERS go first -- which are the part a user cannot get
+# anywhere else. tests/stacking/test_grade.py guards this.
+VERDICT_MAX_CHARS = 48
+
+# Two forms of every verdict. The SHORT one goes in the table cell, the long one
+# in its tooltip. Measured 2026-09-08 under cocoa: the Verdict column is 209px
+# in the default dialog and the old single strings needed 437-584px, so EVERY
+# verdict was truncated -- not just the longest. The numbers are what a user
+# cannot get anywhere else, and eliding from the right took them first.
+REASON_CLOUDS = "Few stars — clouds or trailing"
+REASON_SOFT = "Soft stars"
+REASON_TRAILED = "Stars trailed"
+REASON_OBSTRUCTED = "Roof, tree or cloud"
+
+DETAIL_CLOUDS = "Very few stars — likely clouds or trailing"
+DETAIL_SOFT = "Stars softer than the rest of the session"
+DETAIL_TRAILED = "Stars trailed — wind, a nudge, or a tracking slip"
+DETAIL_OBSTRUCTED = "Something large in the frame — a roof, a tree, or cloud"
 WARN_SKY = "Brighter sky (twilight, moon or light pollution) — kept"
 REASON_MEASURE = "Couldn't measure this frame — excluded"
-REASON_NOT_RAW = "Already-stacked image (not a raw sub) — excluded"
+REASON_NOT_RAW = "Already stacked — not a raw sub"
 
 
 @dataclass
@@ -54,6 +73,9 @@ class FrameStats:
     exposure: float = 0.0
     target: str = ""
     reason_code: str = ""   # "clouds" | "soft_stars" | "trailed" | "measure_failed" | "not_raw" | ""
+    # The unabbreviated verdict, for the cell's tooltip. Empty means there is
+    # nothing more to say than `reason` already says.
+    reason_detail: str = ""
     reason: str = ""        # human-readable, non-empty iff rejected
     warning: str = ""       # human-readable, kept-with-warning (bright sky)
     error: bool = False     # measurement failed; excluded from statistics
@@ -277,6 +299,7 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     usable = [s for s in stats if not s.error]
     for s in usable:
         s.included, s.reason_code, s.reason, s.warning = True, "", "", ""
+        s.reason_detail = ""
     if len(usable) < 5:
         return  # too few frames to grade reliably — keep everything
 
@@ -305,26 +328,31 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
         if s.star_count < star_floor:
             s.included = False
             s.reason_code = "clouds"
-            s.reason = (f"{REASON_CLOUDS} "
-                        f"({s.star_count} stars vs session median {star_median:.0f})")
+            s.reason = f"{REASON_CLOUDS} ({s.star_count} vs {star_median:.0f})"
+            s.reason_detail = (f"{DETAIL_CLOUDS} — {s.star_count} stars against a "
+                               f"session median of {star_median:.0f}.")
         elif fwhm_gate is not None and s.fwhm > fwhm_gate:
             s.included = False
             s.reason_code = "soft_stars"
             # Two decimals AND the percentage. At one decimal this read
             # "FWHM 2.6 vs limit 2.6", which is why two frames showing the same
             # number appeared to get opposite verdicts for no reason.
-            s.reason = (f"{REASON_SOFT} (FWHM {s.fwhm:.2f} vs limit "
-                        f"{fwhm_gate:.2f} — {100 * (s.fwhm / fwhm_gate - 1):.0f}% over)")
+            s.reason = f"{REASON_SOFT} (FWHM {s.fwhm:.2f}, limit {fwhm_gate:.2f})"
+            s.reason_detail = (f"{DETAIL_SOFT} — FWHM {s.fwhm:.2f} against a limit of "
+                               f"{fwhm_gate:.2f}, {100 * (s.fwhm / fwhm_gate - 1):.0f}% over.")
         elif round_gate is not None and s.elongation > round_gate:
             s.included = False
             s.reason_code = "trailed"
-            s.reason = (f"{REASON_TRAILED} (stars {s.elongation:.2f}x longer than "
-                        f"wide, limit {round_gate:.2f})")
+            s.reason = f"{REASON_TRAILED} ({s.elongation:.2f}× long, limit {round_gate:.2f})"
+            s.reason_detail = (f"{DETAIL_TRAILED} — stars are {s.elongation:.2f}× longer "
+                               f"than they are wide; the limit is {round_gate:.2f}.")
         elif spread_gate is not None and s.bg_spread > spread_gate:
             s.included = False
             s.reason_code = "obstructed"
-            s.reason = (f"{REASON_OBSTRUCTED} (background varies "
-                        f"{s.bg_spread:.1f}x the noise, limit {spread_gate:.1f})")
+            s.reason = f"{REASON_OBSTRUCTED} ({s.bg_spread:.1f}× uneven, limit {spread_gate:.1f})"
+            s.reason_detail = (f"{DETAIL_OBSTRUCTED} — the background varies "
+                               f"{s.bg_spread:.1f}× the frame's noise across the picture; "
+                               f"the limit is {spread_gate:.1f}.")
         elif s.background > bg_gate:
             s.warning = WARN_SKY
 

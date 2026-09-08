@@ -199,7 +199,7 @@ def test_grade_frame_excludes_already_stacked_master(tmp_path):
     assert stats.error is True
     assert stats.included is False
     assert stats.reason_code == "not_raw"
-    assert "Already-stacked" in stats.reason
+    assert "Already stacked" in stats.reason
 
 
 def test_grade_frame_unreadable_returns_error_verdict(tmp_path):
@@ -506,9 +506,14 @@ def test_the_verdict_says_enough_to_check_it():
     from nocturne.stacking.grade import judge
     stats = _frames([2.45] * 199 + [3.74])
     judge(stats, "normal")
+    # The cell carries the two numbers a user checks the decision against; the
+    # percentage moved to the tooltip when the column turned out to hold 36
+    # characters and the single string needed 77. Both are still guarded.
     reason = stats[-1].reason
     assert "3.74" in reason, reason
-    assert "%" in reason, f"no sense of how far over: {reason}"
+    assert "2." in reason, f"no limit to compare against: {reason}"
+    detail = stats[-1].reason_detail
+    assert "%" in detail, f"no sense of how far over: {detail}"
 
 
 def test_strictness_still_means_something_with_a_floor():
@@ -593,7 +598,10 @@ def test_an_obstructed_frame_is_rejected_and_says_why():
     bad = stats[-1]
     assert not bad.included
     assert bad.reason_code == "obstructed"
-    assert "roof" in bad.reason          # names what it might be, in plain words
+    # Plain words are what makes this verdict usable by someone who has never
+    # heard of a background model; they live in the tooltip now because the
+    # column cannot hold them, but they must still exist.
+    assert "roof" in bad.reason_detail   # names what it might be, in plain words
     assert "4.2" in bad.reason           # and the measurement that decided it
     assert all(s.included for s in stats[:-1]), "clean frames were caught too"
 
@@ -695,3 +703,54 @@ def test_a_frame_too_small_to_measure_reports_nothing_rather_than_noise():
     stats = _stats([0.0] * 30)          # a whole session of unmeasured frames
     g.judge(stats, "strict")
     assert all(s.included for s in stats), "unmeasured frames were rejected"
+
+
+def test_every_verdict_fits_the_column_it_is_shown_in():
+    """The Verdict cell elides from the RIGHT, and the numbers are on the right.
+
+    Measured 2026-09-08 under cocoa: the column is 285px in the default dialog
+    and the font runs 5.92px/char, so 48 characters fit. Before this, every
+    verdict overflowed — the shortest needed 437px against 209px of column —
+    and what a user lost was always the measurement that justified the verdict.
+
+    Driven from judge() rather than from the constants, so a longer *number*
+    (a four-digit star count, a two-decimal gate) fails here too, not just a
+    longer phrase.
+    """
+    from nocturne.stacking.grade import VERDICT_MAX_CHARS, judge
+
+    # One session containing every rejection the grader can produce at once.
+    stats = _frames([2.4] * 60)
+    for s in stats:
+        s.star_count, s.elongation, s.bg_spread = 4000, 1.00, 0.30
+    stats[0].star_count = 12                        # clouds
+    stats[1].fwhm = 9.87                            # soft
+    stats[2].elongation = 3.99                      # trailed
+    stats[3].bg_spread = 99.9                       # obstructed
+    judge(stats, "normal")
+
+    seen = {s.reason_code for s in stats if s.reason_code}
+    assert seen >= {"clouds", "soft_stars", "trailed", "obstructed"}, seen
+
+    for s in stats:
+        for text in (s.reason, s.warning):
+            if text:
+                assert len(text) <= VERDICT_MAX_CHARS, (
+                    f"{len(text)} chars, budget {VERDICT_MAX_CHARS}: {text}")
+
+
+def test_the_long_form_survives_where_the_short_one_cannot():
+    """Shortening the cell must not delete the explanation, only relocate it."""
+    from nocturne.stacking.grade import judge
+
+    stats = _frames([2.4] * 60)
+    for s in stats:
+        s.star_count, s.bg_spread = 500, 0.30
+    stats[0].bg_spread = 99.9
+    judge(stats, "normal")
+
+    bad = stats[0]
+    assert bad.reason_code == "obstructed"
+    assert len(bad.reason_detail) > len(bad.reason)
+    assert "roof" in bad.reason_detail
+    assert "noise" in bad.reason_detail

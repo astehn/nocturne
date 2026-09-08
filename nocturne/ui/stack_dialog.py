@@ -114,11 +114,22 @@ class StackDialog(QDialog):
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
+        # Seestar filenames differ only in the trailing timestamp
+        # (Light_IC 1396A_10.0s_LP_20260825-040735.fit), so eliding from the
+        # right drops the only part that tells two rows apart.
+        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         hdr = self.table.horizontalHeader()
         for col in (0, 2, 3, 4, 5):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        for col in (1, 6):                    # File and Verdict share the slack
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        # Verdict takes exactly what it needs; File absorbs the rest. Sharing
+        # the slack meant the column's width moved with the CONTENT of the
+        # numeric columns and with whether a scrollbar was showing -- measured
+        # 285px empty and 250px with 60 rows of four-digit star counts -- so no
+        # fixed budget could hold. A verdict is prose that cannot be
+        # reconstructed once cut; a filename mid-elides and stays identifiable,
+        # and its full form is in the tooltip either way.
+        hdr.setSectionResizeMode(_VERDICT_COL, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.avg_radio = QRadioButton("Average")
         self.sigma_radio = QRadioButton("Sigma-clipped")
         self.sigma_radio.setChecked(True)
@@ -268,9 +279,15 @@ class StackDialog(QDialog):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.table)
         self.splitter.addWidget(self.preview)
-        self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)   # preview absorbs extra width
-        self.splitter.setSizes([600, 500])
+        # The TABLE absorbs extra width, not the preview. It was the other way
+        # round, which meant the Verdict column was stuck at 209px however wide
+        # the user made the dialog -- the one control that could have fixed the
+        # truncation did nothing. The frame list is the surface being READ; the
+        # preview is a thumbnail with a 300px minimum and does not improve much
+        # past it.
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setSizes([800, 300])
         self.splitter.setChildrenCollapsible(False)
 
         root = QVBoxLayout(self)
@@ -535,7 +552,9 @@ class StackDialog(QDialog):
                 # without the number that caused it.
                 self.table.setItem(row, 4, _cell(f"{s.elongation:.2f}"))
                 self.table.setItem(row, 5, _cell(f"{s.background:.3f}"))
-                self.table.setItem(row, _VERDICT_COL, _cell(self._verdict_text(s)))
+                verdict = _cell(self._verdict_text(s))
+                verdict.setToolTip(self._verdict_tooltip(s))
+                self.table.setItem(row, _VERDICT_COL, verdict)
                 self._tint_row(row, s)
         finally:
             self._updating_table = False
@@ -596,7 +615,7 @@ class StackDialog(QDialog):
                                   == Qt.CheckState.Checked)
                 verdict = self.table.item(row, _VERDICT_COL)
                 verdict.setText(self._verdict_text(s))
-                verdict.setToolTip(verdict.text())
+                verdict.setToolTip(self._verdict_tooltip(s))
                 self._tint_row(row, s)
         finally:
             self._updating_table = False
@@ -624,6 +643,12 @@ class StackDialog(QDialog):
         if s.warning:
             return s.warning
         return "OK"
+
+    @staticmethod
+    def _verdict_tooltip(s) -> str:
+        """The unabbreviated verdict. The cell shows the short form because the
+        column cannot hold the long one; hovering must still explain it."""
+        return s.reason_detail or StackDialog._verdict_text(s)
 
     def _tint_row(self, row: int, s) -> None:
         default = QColor(theme.TEXT)
