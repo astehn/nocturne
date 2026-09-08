@@ -1576,3 +1576,40 @@ def test_the_stacking_topic_documents_drizzle():
     assert str(g.GOOD_FRAMES) in text, "the comfortable frame count is not stated"
     # And the cost, which is the whole reason it is a choice.
     assert "four times" in text.lower()
+
+
+def test_no_step_topic_offers_options_its_step_does_not_have():
+    """Local Contrast and Star Reduction both told the user to "pick light,
+    medium or strong" long after both controls became sliders. That is worse
+    than a thin topic: it is an instruction that cannot be followed.
+
+    Word boundaries matter here — a substring check calls "slightly" a claim
+    about a light preset and "strongest" a claim about a strong one.
+    """
+    from nocturne.settings import Settings
+    from nocturne.steps.factory import make_step
+    from nocturne.ui.pipeline import path_stages, STEP_NAME
+
+    settings = Settings()
+    offenders = []
+    for stage in path_stages():
+        topic_id = h.stage_topic_id(stage.id)
+        if topic_id is None or h.topic(topic_id) is None:
+            continue
+        try:
+            options = {o.lower() for o in make_step(stage.id, settings).options() if o}
+        except Exception:
+            continue
+        if options:
+            continue                      # it really does have presets
+        text = re.sub(r"<[^>]+>", " ", h.topic(topic_id).body).lower()
+        # The INSTRUCTION shape, not the words. "off to strong" is a slider's own
+        # label and is fine; "pick light, medium or strong" is a lie about the UI.
+        instruction = re.search(
+            r"\b(pick|choose|select)\b[^.]{0,60}?"
+            r"\b(light|medium|strong)\b[^.]{0,30}?\b(light|medium|strong)\b", text)
+        if instruction:
+            offenders.append(
+                f"{stage.id} ({STEP_NAME.get(stage.id, '?')}) instructs "
+                f"{instruction.group(0).strip()!r} but the control is a slider")
+    assert not offenders, "help offers presets that do not exist:\n  " + "\n  ".join(offenders)

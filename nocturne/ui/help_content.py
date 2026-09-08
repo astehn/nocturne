@@ -249,14 +249,28 @@ _TOPIC_LIST = (
     _t("crop", "Crop, rotate & flip",
        "Trim the ragged stacking edges and frame your target.",
        "<h4>What it does</h4>"
-       "<p>Removes the uneven edges left by stacking (where subs didn't fully overlap) and lets "
-       "you frame, rotate, and flip the image.</p>"
+       "<p>Removes the ragged edges stacking leaves behind — where the subs did "
+       "not all overlap — and lets you frame, rotate and flip the picture. This "
+       "is the FIRST crop, done on linear data, and it is destructive: what you "
+       "cut here is gone from every step that follows.</p>"
        "<h4>How to use it</h4>"
-       "<p>Drag the box to choose the keep-area, pick an aspect ratio if you want a standard "
-       "shape, and use rotate / flip to orient the target. Apply to commit.</p>"
+       "<p>Drag the box to choose what to keep. <b>Aspect ratio</b> locks it to a "
+       "standard shape, or leave it free. <b>Guides</b> draws a rule-of-thirds "
+       "grid or a centre cross inside the box to help you place the subject — "
+       "they are drawing aids only and are never part of the picture. Then "
+       "<b>Apply Crop</b>.</p>"
+       "<p><b>Rotate 90&deg;</b>, <b>Flip H</b> and <b>Flip V</b> are different: "
+       "they apply the moment you press them, without waiting for Apply Crop. "
+       "The panel says so, and it surprises people once.</p>"
        "<h4>Tips</h4>"
-       "<p>Crop early — later steps then work on your final framing, and gradient removal has a "
-       "cleaner frame to model.</p>"),
+       "<p>Cut conservatively here. Linear data is nearly black, so smeared "
+       "corners and faint stacking artefacts are genuinely hard to see, and they "
+       "only announce themselves after the stretch. That is what <b>Trim</b> is "
+       "for — a second, later crop that appends a step at the end of your "
+       "history instead of discarding everything after Crop. Leaving a little "
+       "margin here and trimming properly at the end costs nothing; cropping too "
+       "hard now cannot be undone later without redoing the whole edit.</p>"
+),
 
     _t("background", "Background extraction",
        "Remove light-pollution gradients so the sky is even.",
@@ -354,27 +368,51 @@ _TOPIC_LIST = (
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",
        "<h4>What it does</h4>"
-       "<p>Corrects the small blur every telescope adds, tightening stars and recovering fine "
-       "detail. It runs on the <b>linear</b> image (before Stretch), which is where deconvolution "
-       "works best. Uses <b>BlurXTerminator</b> if you have RC-Astro, or a free sharpening "
-       "fallback otherwise.</p>"
+       "<p>Corrects the small blur every optical system adds, tightening stars "
+       "and recovering fine detail. It runs on the <i>linear</i> image, before "
+       "Stretch, which is where deconvolution is mathematically well behaved — "
+       "run it after a stretch and it amplifies artefacts instead. Uses "
+       "BlurXTerminator if you have RC-Astro, or a free sharpening fallback.</p>"
        "<h4>How to use it</h4>"
-       "<p>Pick <b>light</b>, <b>medium</b>, or <b>strong</b>. Apply.</p>"
+       "<p><b>light</b>, <b>medium</b> or <b>strong</b>, then Apply. Remember the "
+       "image is still nearly black at this point: to judge the result, look at "
+       "the star shapes in the preview rather than trying to see nebulosity.</p>"
        "<h4>Tips</h4>"
-       "<p>The Seestar is undersampled (big pixels for its focal length), so keep this "
-       "conservative — light or medium usually looks best. Strongest with RC-Astro installed.</p>"),
+       "<p>This is the step with the least forgiving failure mode. Too much "
+       "deconvolution puts dark rings around bright stars and a hard, wormy "
+       "texture into nebulosity, and neither can be undone by anything later — "
+       "they are now real structure in the data. When in doubt use light.</p>"
+       "<p>It cannot rescue trailed or badly out-of-focus stars. Deconvolution "
+       "sharpens a blur that is the same everywhere; a star trailed in one "
+       "direction is a different problem, and the place to fix it is frame "
+       "selection at the stacking stage.</p>"
+),
 
     _t("stretch", "Stretch",
        "Reveal faint detail by committing a real non-linear stretch.",
        "<h4>What it does</h4>"
-       "<p>Applies the real, permanent stretch that turns the dark linear data into a visible "
-       "image — pulling faint nebulosity and dust up out of the shadows.</p>"
+       "<p>Applies the real, permanent stretch that turns dark linear data into "
+       "a visible picture. Up to this point you have been looking at a preview "
+       "stretch; this is the one that is written into the image and carried "
+       "forward by every step after it.</p>"
        "<h4>How to use it</h4>"
-       "<p>Use the aggressiveness slider: the middle roughly matches the preview you already see; "
-       "higher reveals more faint signal (and more noise). Apply.</p>"
+       "<p><b>Aggressiveness</b> runs from gentle to punchy, and what it actually "
+       "sets is how bright the sky background ends up. The middle of the slider "
+       "lands on the same target the preview has been using all along, so "
+       "mid-slider means <i>what you have been looking at is what you get</i>. "
+       "Push right to lift faint dust and outer nebulosity further out of the "
+       "shadows; pull left for a darker, more restrained result. <b>Target</b> "
+       "shows the background level you are asking for, so you can return to the "
+       "same look on another image.</p>"
        "<h4>Tips</h4>"
-       "<p>If you move past this step without stretching, Nocturne commits a sensible default "
-       "stretch automatically so the later steps work.</p>"),
+       "<p>Stretching is the step that makes noise visible — it was always there, "
+       "the shadows were just too dark to show it. That is why Noise Reduction "
+       "comes after this one and not before.</p>"
+       "<p>Aim slightly gentler than looks right. Levels and Curves come next and "
+       "both add contrast; a stretch that already looks punchy leaves them "
+       "nothing to work with, and over-stretched shadows cannot be pushed back "
+       "down without flattening the faint detail you lifted.</p>"
+),
 
     _t("levels", "Levels",
        "Fine-tune black point, midtones, and white point against the histogram.",
@@ -522,12 +560,27 @@ _TOPIC_LIST = (
     _t("saturation", "Saturation",
        "Mute or boost colour intensity.",
        "<h4>What it does</h4>"
-       "<p>Adjusts overall colour intensity — from muted to vivid.</p>"
+       "<p>Sets how strong the colours are. Two sliders, because a nebula and a "
+       "star field want opposite things: one moves the whole picture, the other "
+       "reaches only for the nebula.</p>"
        "<h4>How to use it</h4>"
-       "<p>Drag left to mute, right to boost; the centre is no change. Apply.</p>"
+       "<p><b>Saturation</b> runs mute &rarr; native &rarr; boost, with the centre "
+       "leaving the image exactly as it is. <b>Nebula boost</b> adds colour on "
+       "top of that, but only in the nebula&rsquo;s midtones — it tapers off "
+       "towards the dark sky at one end and the burnt-out core at the other, so "
+       "you can push nebula colour hard without the background going blotchy or "
+       "the bright centre turning into a flat coloured disc. It needs to know "
+       "which pixels are stars, so you will see <i>Separating stars&hellip;</i> "
+       "the first time; the result is cached after that.</p>"
        "<h4>Tips</h4>"
-       "<p>Gentle boosts look natural and bring out nebula colour; heavy boosts also amplify "
-       "colour noise in the background, so go easy.</p>"),
+       "<p>Reach for <b>Nebula boost</b> before pushing overall Saturation far. "
+       "Global saturation multiplies the colour noise in the background just as "
+       "faithfully as it multiplies the nebula, and background colour noise is "
+       "the thing that most makes an image look over-processed.</p>"
+       "<p>If the stars turn garish, you have gone too far on the global slider — "
+       "star colour is best handled by <b>Star Colour</b> in Enhancements, which "
+       "acts on the stars alone.</p>"
+),
 
     _t("green_fringe", "Remove Green Fringe",
        "Remove the green colour fringe around stars.",
@@ -551,13 +604,29 @@ _TOPIC_LIST = (
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
        "<h4>What it does</h4>"
-       "<p>Reduces the grainy noise the stretch amplifies, using <b>NoiseXTerminator</b> "
-       "(RC-Astro) or a free fallback.</p>"
+       "<p>Reduces the grain the stretch made visible. Three engines can do it, "
+       "and which one you have makes more difference than any setting: "
+       "<b>NoiseXTerminator</b> (RC-Astro, paid), <b>GraXpert AI</b> (free), and "
+       "a built-in fallback that needs nothing installed.</p>"
        "<h4>How to use it</h4>"
-       "<p>Choose <b>light</b>, <b>medium</b>, or <b>strong</b>. Apply.</p>"
+       "<p>Pick <b>light</b>, <b>medium</b> or <b>strong</b> and Apply. Medium is "
+       "the default and is where most images want to sit.</p>"
+       "<h4>How much each one can actually do</h4>"
+       "<p>Measured on a real M&nbsp;45 master, background noise before any "
+       "denoise was 0.045. NoiseXTerminator at medium takes it to 0.020. "
+       "GraXpert at its <i>maximum</i> reaches 0.022 — which is NoiseXTerminator&rsquo;s "
+       "<i>light</i>. That ceiling is real: no setting closes it. So if GraXpert "
+       "is what you have, do not be shy with it — star sizes were flat to within "
+       "0.05% across its whole range on that frame, so turning it up costs no "
+       "detail. The free fallback is weaker again, but it takes two seconds "
+       "where GraXpert takes several minutes.</p>"
        "<h4>Tips</h4>"
-       "<p>Denoise after stretching (which is where the grain shows). Don't overdo it — too much "
-       "smears fine structure and stars. Light is often enough on a well-stacked master.</p>"),
+       "<p>Denoise <i>after</i> stretching, which is where the grain appears — "
+       "and that is why this step sits here rather than before Stretch.</p>"
+       "<p>Judge it at 100%, not zoomed out. Every denoiser looks perfect when "
+       "the picture is small. What over-denoising costs is faint background "
+       "structure and small stars, and both disappear quietly.</p>"
+),
 
     _t("recover_core", "Recover Core",
        "Pull blown-out bright cores back so they show detail.",
@@ -578,25 +647,49 @@ _TOPIC_LIST = (
     _t("local_contrast", "Local Contrast",
        "Add mid-scale depth so nebulosity pops.",
        "<h4>What it does</h4>"
-       "<p>Boosts mid-scale structure — the difference between neighbouring regions — so "
-       "nebulosity and dust gain depth and dimensionality.</p>"
+       "<p>Adds mid-scale depth — the difference between one region and its "
+       "neighbours — so dust lanes and nebulosity look three-dimensional instead "
+       "of flat. It works on brightness only and rescales the colour to match, so "
+       "hues do not shift.</p>"
        "<h4>How to use it</h4>"
-       "<p>Pick <b>light</b>, <b>medium</b>, or <b>strong</b>. Apply.</p>"
+       "<p>Drag <b>Strength</b> up from 0. At 0 the step does nothing at all; at "
+       "full it is the pure effect. Watch the live preview and stop where the "
+       "structure reads without the picture starting to look etched. Apply.</p>"
        "<h4>Tips</h4>"
-       "<p>Subtle usually wins — strong local contrast can look crunchy and exaggerate noise.</p>"),
+       "<p>Small values do most of the work. Local contrast operates on "
+       "neighbourhoods, so the first thing it exaggerates is whatever is already "
+       "the strongest local difference — usually noise in the background and the "
+       "halo around bright stars. If the sky starts to look mottled or stars grow "
+       "dark rings, come back down.</p>"
+       "<p>Run it after Noise Reduction, not before. Reaching for local contrast "
+       "on a noisy image amplifies exactly the grain you are about to try to "
+       "remove.</p>"
+),
 
     _t("star_reduction", "Star Reduction",
        "Shrink stars so nebulosity takes centre stage.",
        "<h4>What it does</h4>"
-       "<p>Reduces the size and dominance of stars, so a busy star field stops competing "
-       "with the nebula. With <b>StarXTerminator</b> (RC-Astro) the split is cleanest; "
-       "without it, a built-in star detector is used instead.</p>"
+       "<p>Makes stars smaller and less dominant so a busy field stops competing "
+       "with the nebula. It does not erode them: it crushes each star&rsquo;s "
+       "faint outer wings while leaving the bright core a sharp point, so stars "
+       "shrink rather than turning into soft blobs, and faint ones are dimmed "
+       "instead of being scrubbed away.</p>"
+       "<p>It needs the picture separated into stars and starless — with "
+       "StarXTerminator (RC-Astro) that split is cleanest; without it a built-in "
+       "detector is used. Either way you will see <i>Separating stars&hellip;</i> "
+       "the first time.</p>"
        "<h4>How to use it</h4>"
-       "<p>Choose <b>light</b>, <b>medium</b>, or <b>strong</b>. Apply.</p>"
+       "<p>Drag <b>Reduction</b> from none towards strong and watch the preview. "
+       "Apply.</p>"
        "<h4>Tips</h4>"
-       "<p>Works without RC-Astro; RC-Astro gives a cleaner separation. A little goes a "
-       "long way — over-reduction leaves an unnatural, starless-looking frame. It pairs "
-       "well just before the Enhancements step.</p>"),
+       "<p>Go further than feels comfortable and then come back. The effect is "
+       "much harder to see at fit-to-window than at 100%, and a setting that "
+       "looks strong zoomed out is often barely doing anything.</p>"
+       "<p>What this step cannot do is remove a star. Even at maximum a genuinely "
+       "bright star keeps its core — by design, because that core is what makes "
+       "it look like a star rather than a smudge. If a single bright star is "
+       "ruining the frame, crop or reframe instead.</p>"
+),
 
     _t("star_spikes", "Star Spikes",
        "Draw colour-matched diffraction spikes on the brightest stars.",
