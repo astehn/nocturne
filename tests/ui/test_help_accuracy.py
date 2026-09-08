@@ -1512,3 +1512,67 @@ def test_share_help_does_not_promise_a_free_crop_box():
     eye)", which described a box that does not exist until you pick one."""
     b = _body("share")
     assert "drag the crop box" not in b
+
+
+# --- Reachability -----------------------------------------------------------
+# A topic nobody can open is the same as no topic. Both of the topics this file's
+# docstring says were written — Trim and fullscreen — were added to TOPICS and
+# never added to SECTIONS, so for months the help contained 406 words that no
+# user could reach. Nothing failed, because nothing checked the wiring.
+
+# AI Denoise is deliberately held back from the shipped app (v0.18.0 kept it out
+# of the pipeline), so its topic is reachable from the step and nowhere else.
+_UNLISTED_ON_PURPOSE = {"ai_denoise"}
+
+
+def test_every_help_topic_can_actually_be_opened():
+    listed = {tid for sec in h.SECTIONS for tid in sec.topic_ids}
+    orphans = sorted(set(h.TOPICS) - listed - _UNLISTED_ON_PURPOSE)
+    assert not orphans, (
+        "written but unreachable — not in any section of the help browser: "
+        + ", ".join(f"{tid} ({h.TOPICS[tid].title})" for tid in orphans))
+
+
+def test_the_help_browser_lists_no_topic_that_is_missing():
+    listed = {tid for sec in h.SECTIONS for tid in sec.topic_ids}
+    dangling = sorted(listed - set(h.TOPICS))
+    assert not dangling, f"sections reference topics that do not exist: {dangling}"
+
+
+def test_every_pipeline_step_has_a_topic():
+    """The help button is context-sensitive: it opens the topic for the step you
+    are standing on. A step with no mapping opens nothing at all."""
+    # path_stages(), NOT PROCESSING_ORDER. The latter includes `tint` and
+    # `remove_green`, which are steps in the history but not stops in the
+    # stepper — they live inside the Color panel and map back to Color. A user
+    # never stands on them, so they need no topic of their own; what they need
+    # is for the Color topic to name their controls, which is a separate check.
+    from nocturne.ui.pipeline import path_stages, STEP_NAME
+
+    missing = [f"{s.id} ({STEP_NAME.get(s.id, '?')})"
+               for s in path_stages() if h.stage_topic_id(s.id) is None]
+    assert not missing, "pipeline steps with no help topic: " + ", ".join(missing)
+
+
+def test_the_stacking_topic_documents_drizzle():
+    """Drizzle shipped in v0.22.0 and the word did not appear anywhere in the
+    help until 2026-09-08 — a headline feature with a tick box in the Stack
+    dialog and nothing to read about it.
+
+    Tied to drizzle_gate's own constants so the numbers in the prose cannot
+    drift away from the numbers in the gate.
+    """
+    from nocturne.stacking import drizzle_gate as g
+
+    body = _body("stacking")
+    assert "drizzle" in body.lower()
+    # The control, by the name the dialog gives it.
+    assert "Drizzle" in body and "&times;2" in body
+
+    text = re.sub(r"<[^>]+>", " ", body)
+    # The three signals the gate actually weighs.
+    assert f"{g.FWHM_MAX:.0f}" in text, "the star-size threshold is not stated"
+    assert str(g.MIN_FRAMES) in text, "the minimum frame count is not stated"
+    assert str(g.GOOD_FRAMES) in text, "the comfortable frame count is not stated"
+    # And the cost, which is the whole reason it is a choice.
+    assert "four times" in text.lower()

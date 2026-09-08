@@ -1264,6 +1264,33 @@ _t("upscale", "Upscale Crop",
        "<p><b>Trim the ragged edges</b> applies here too, and matters more: the outline "
        "of a mosaic is genuinely ragged. Note also that a mosaic keeps its position on "
        "the sky, so Plate Solve can label the objects in it without solving again.</p>"
+       "<h4>Detail — Drizzle &times;2</h4>"
+       "<p><b>Drizzle &times;2</b> rebuilds the picture on a grid twice as fine "
+       "instead of enlarging the finished one. Enlarging invents pixels between "
+       "the ones you have; drizzling puts each frame&rsquo;s light where it "
+       "actually landed on a finer grid, so detail your optics resolved but the "
+       "sensor&rsquo;s pixels threw away can come back. It only works because "
+       "your frames do not land in exactly the same place twice — the small "
+       "drift between subs is what fills the finer grid in.</p>"
+       "<p>The green line under the tick box is a recommendation, not a rule, and "
+       "it is worked out from your own frames on three counts. <b>Star size</b>: "
+       "below about 3&nbsp;px the stars are small enough that there is detail to "
+       "recover — the S30&nbsp;Pro typically sits near 2.5&nbsp;px, so most of its "
+       "data qualifies. <b>Drift</b>: the frames have to be scattered across "
+       "sub-pixel positions rather than landing on the same one. <b>Frame "
+       "count</b>: drizzle spreads each frame&rsquo;s light over four times as "
+       "many pixels, so it trades noise for detail — under 20 frames it is "
+       "discouraged, and 40 or more is where it pays off cleanly.</p>"
+       "<p>What it costs is real. Stacking takes roughly ten times longer, the "
+       "master has four times the pixels, and <i>every step after it</i> works on "
+       "that larger image — sliders included. Measured on 100 frames of "
+       "IC&nbsp;1396A, drizzling gave stars 22% tighter than simply doubling the "
+       "same stack — 3.50&nbsp;px across the star profile against 4.47&nbsp;px — "
+       "and found 64% more of them. That is the size of the prize; whether it is "
+       "worth the wait is your call, and you can always stack the same folder "
+       "both ways and compare.</p>"
+       "<p>Drizzle and <b>Stack as mosaic</b> can be used together. It is slow — "
+       "every panel is drizzled — but it works.</p>"
        "<h4>Tips</h4>"
        "<p>More subs mean a cleaner master with less noise. If you already have a stacked master "
        "(e.g. from the Seestar app), you can skip this and just Open FITS.</p>"
@@ -1496,13 +1523,17 @@ TOPICS: dict[str, HelpTopic] = {t.id: t for t in _TOPIC_LIST}
 
 SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started",)),
-    HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history", "readout")),
+    HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history",
+                             "readout", "fullscreen")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
+    # trim and fullscreen were WRITTEN and never listed here, so 406 words of
+    # help sat in TOPICS that no user could open. tests/ui/test_help_accuracy.py
+    # now fails if a topic is unreachable.
     HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband",
-                          "color_balance")),
+                          "color_balance", "trim")),
     HelpSection("Sharing & Projects", ("share", "upscale", "saved-projects", "provenance")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii", "combine")),
     HelpSection("Recipes & Batch", ("recipes",)),
