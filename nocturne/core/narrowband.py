@@ -112,7 +112,23 @@ class NarrowbandParams:
     highlight_reduction: float = 1.0
     brightness: float = 1.0
     highlight_recover: float = 1.0
-    saturation: float = 0.5
+    # 0.5 is "native" in saturate() -- no boost at all -- and the HOO palette
+    # costs chroma by construction: a warm pink mapped to R=Ha / B=OIII goes
+    # neutral wherever the two gases overlap. So the step used to take colour out
+    # and put none back, and the result came out slightly flatter than its own
+    # input. Measured on the 724-frame IC 1396A master, stretched, nebula chroma
+    # against the image the step was handed:
+    #
+    #     saturation   0.50    0.70    0.85    1.00
+    #     no StarX      -7%     -4%     -1%     +1%
+    #     with StarX    -7%     -1%     +4%     +9%
+    #
+    # 0.85 lands on parity instead of a deficit. It costs nothing elsewhere: sky
+    # chroma moves 0-1% across the WHOLE slider range, because saturate()'s
+    # shadow_protect and this module's protect_background both hold the
+    # background back. Andreas and I noticed the flatness independently before
+    # either of us measured it (2026-09-08).
+    saturation: float = 0.85
     # False, matching what the dialog has always shipped: the brighter combine
     # is the better default. These disagreed, so a recipe or batch run with no
     # explicit option rendered DIFFERENTLY from the same tool used by hand.

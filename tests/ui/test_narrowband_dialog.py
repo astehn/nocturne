@@ -127,7 +127,12 @@ def test_the_preview_equals_what_apply_produces(qtbot):
     d.oiii_slider.setValue(70)
     d._do_render()
     shown = d.preview_result().data
-    expect = screen(render(d._prev_starless, d._params()).data,
+    # has_stars must match what the dialog passes. It used to be omitted here and
+    # the test still passed, because the old default saturation of 0.5 is exactly
+    # saturate()'s neutral point, where protect_highlights has no effect at all.
+    # The assertion therefore had no teeth on this axis until the default moved.
+    expect = screen(render(d._prev_starless, d._params(),
+                           has_stars=d._prev_stars is None).data,
                     np.clip(d._prev_stars.data, 0, 1))
     assert np.allclose(shown, expect, atol=1e-6)
 

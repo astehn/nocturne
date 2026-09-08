@@ -270,3 +270,54 @@ def test_the_descriptions_match_what_the_palettes_actually_do():
             f"{palette}: description says Ha is {ha_word} but that channel is dark")
         assert out[right][..., channel_of[oiii_word]].mean() > 0.4, (
             f"{palette}: description says OIII is {oiii_word} but that channel is dark")
+
+
+def _chroma(x, mask):
+    """Mean distance from grey. Linear, unlike HSV saturation, which reports a
+    bright neutral core as less saturated than a dim tinted one and so cannot
+    answer 'does this look flatter'."""
+    x = np.clip(x, 0.0, 1.0)
+    lum = x.mean(axis=2, keepdims=True)
+    return float(np.abs(x - lum).mean(axis=2)[mask].mean())
+
+
+def test_the_default_saturation_compensates_for_what_the_palette_costs():
+    """Andreas and I both noticed narrowband results looking less vibrant than
+    their input, independently, before either of us measured it.
+
+    The cause was not an error. The HOO palette costs chroma by construction — a
+    warm pink mapped to R=Ha / B=OIII goes neutral where the gases overlap — and
+    `saturation` defaulted to 0.5, which saturate() defines as *native*: no boost
+    at all. So the step took colour out and put none back.
+
+    Measured on the real 724-frame IC 1396A master, stretched, nebula chroma
+    against the image the step was handed: -7% at 0.50, -1% at 0.70, +4% at 0.85
+    with StarX. A SYNTHETIC nebula cannot stand in for that measurement — one
+    built for this test read -55%, because an invented nebula is far more
+    saturated than real stretched data and so loses far more in the mapping.
+
+    So this guards the decision rather than a made-up image: the default must
+    apply real compensation, and must beat the neutral setting on the same input.
+    """
+    rng = np.random.default_rng(7)
+    h, w = 120, 160
+    yy, xx = np.mgrid[0:h, 0:w]
+    blob = np.exp(-(((yy - h / 2) / (h / 4)) ** 2 + ((xx - w / 2) / (w / 4)) ** 2))
+    data = np.zeros((h, w, 3), np.float32)
+    data[..., 0] = 0.05 + 0.60 * blob
+    data[..., 1] = 0.04 + 0.18 * blob
+    data[..., 2] = 0.04 + 0.25 * blob
+    data += rng.normal(0, 0.004, data.shape).astype(np.float32)
+    src = np.clip(data, 0.0, 1.0)
+    img = AstroImage(src, is_linear=False)
+    nebula = src.mean(axis=2) > np.percentile(src.mean(axis=2), 90)
+
+    assert NarrowbandParams().saturation > 0.5, (
+        "0.5 is saturate()'s neutral point — a default there means the step "
+        "never compensates for the chroma the palette removes")
+
+    neutral = _chroma(render(img, NarrowbandParams(saturation=0.5),
+                             has_stars=False).data, nebula)
+    default = _chroma(render(img, NarrowbandParams(), has_stars=False).data, nebula)
+    assert default > neutral * 1.05, (
+        f"the default is not doing anything: {neutral:.4f} -> {default:.4f}")

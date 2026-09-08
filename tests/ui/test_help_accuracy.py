@@ -543,8 +543,8 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     assert "Green blend — HOO only (default 0.60)" in b
     assert p.protect_background == 0.4 and d.protect_val.text() == "40%"
     assert "Protect background (default 40%)" in b
-    assert p.saturation == 0.5 and d.sat_val.text() == "0.50"
-    assert "Saturation (default 0.50)" in b
+    assert p.saturation == 0.85 and d.sat_val.text() == "0.85"
+    assert "Saturation (default 0.85)" in b
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
 
