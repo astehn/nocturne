@@ -441,11 +441,59 @@ def test_splitter_holds_table_and_preview(qtbot):
     assert dlg.splitter.widget(1) is dlg.preview
 
 
-def test_dialog_opens_roomy_and_resizable(qtbot):
+def test_dialog_is_never_shorter_than_its_own_layout(qtbot):
+    """It used to be, and that is what painted the help over the controls.
+
+    setMinimumSize(800, 500) with resize(1100, 700) against a layout that needs
+    844px with the explanations expanded — the default — let Qt squeeze the
+    QFormLayout onto a 46px stride while its rows are 54-72px tall. _Hint
+    refuses to shrink (it must, or the text clips), so the explanations painted
+    over the controls beneath: 11 overlaps measured under cocoa.
+
+    Asserted as an INVARIANT, not as pixel values, because the numbers depend on
+    the font: this dialog needs 844px under cocoa and 757px offscreen, so any
+    hard-coded height only tests the machine it was written on.
+    """
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    assert (dlg.width(), dlg.height()) == (1100, 700)
-    assert (dlg.minimumWidth(), dlg.minimumHeight()) == (800, 500)
+    dlg._available_height = lambda: 4000        # plenty of screen
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    assert dlg.height() >= dlg.minimumSizeHint().height(), (
+        f"opens {dlg.height()}px against content needing "
+        f"{dlg.minimumSizeHint().height()}px")
+    assert dlg.minimumHeight() >= dlg.layout().minimumSize().height(), (
+        "a hard floor below the layout's own minimum lets Qt squeeze the rows")
+    assert dlg.width() == 1100 and dlg.minimumWidth() == 800
+
+
+def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
+    """The 1280x800 laptop this app targets cannot show 844px of dialog.
+
+    Growing is not available there, so the explanations fold away — the same
+    trade the collapse control already offers. What must NOT happen is the
+    dialog rendering them on top of the controls.
+    """
+    from nocturne.ui.stack_dialog import _Hint
+
+    settings = Settings()
+    settings.help_expanded = True
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg._available_height = lambda: 400         # a very short screen
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    assert dlg.mosaic_hint.isVisible() is False
+    assert settings.help_expanded is True, (
+        "the screen is not the user: a forced collapse must not rewrite "
+        "the saved preference")
+
+    # And asking for them explicitly still works.
+    dlg._toggle_hints()
+    dlg._toggle_hints()
+    assert dlg.mosaic_hint.isVisible() is True
 
 
 def test_cancel_button_stops_a_grade(qtbot, tmp_path):
@@ -1098,6 +1146,7 @@ def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
     collapsing gives the frame list 63% more height."""
     from nocturne.ui.stack_dialog import _Hint
     d = _dialog(qtbot, tmp_path)
+    d._available_height = lambda: 4000     # this is about the toggle, not the screen
     d._settings.help_expanded = True
     d._apply_hints_visible()
     d.show(); qtbot.waitExposed(d)

@@ -92,7 +92,17 @@ class StackDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
-        self.setMinimumSize(800, 500)
+        # Height is NOT hard-coded any more, and 500 was the bug. With the
+        # explanations expanded -- which is the DEFAULT, help_expanded=True,
+        # settings.py:43 -- this dialog's own minimumSizeHint is 844px, and it
+        # opened at 700 with a floor of 500. Qt then squeezed the QFormLayout's
+        # rows onto a 46px stride while the rows are 54-72px tall, and because
+        # _Hint refuses to shrink (it must, or the text clips) the explanations
+        # painted straight over the controls beneath them: 11 overlaps measured
+        # under cocoa, the worst 158x18px across "Trim the ragged edges".
+        # Andreas never saw it because his help_expanded is False -- collapsed
+        # the dialog needs 658px and fits.
+        self.setMinimumWidth(800)
         self.resize(1100, 700)
         self._settings = settings
         self._on_master = on_master
@@ -311,6 +321,7 @@ class StackDialog(QDialog):
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
+        self._fitted = False       # _fit_to_content runs once, on first show
 
     def _mark_output_edited(self, _text: str) -> None:
         self._output_user_edited = True
@@ -442,6 +453,10 @@ class StackDialog(QDialog):
         self._sync_exclusive()
 
     def _toggle_hints(self) -> None:
+        # An explicit click outranks the screen-height override: if the user
+        # asks for the explanations on a short screen they get them, and the
+        # dialog grows as far as the screen allows.
+        self._hints_forced_closed = False
         self._settings.help_expanded = not self._settings.help_expanded
         try:
             from ..settings import resolve_settings_path, save_settings
@@ -457,7 +472,8 @@ class StackDialog(QDialog):
         you actually work in — 63% more height. That matters most on the small
         screens where the explanations were being clipped anyway.
         """
-        shown = bool(getattr(self._settings, "help_expanded", True))
+        shown = (bool(getattr(self._settings, "help_expanded", True))
+                 and not getattr(self, "_hints_forced_closed", False))
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
         # "this will take N hours and write M MB" estimate, and
         # `exclusive_note` says why a box you just ticked untucked another.
@@ -471,6 +487,53 @@ class StackDialog(QDialog):
         self._help_link.setText(
             '<a href="#" style="color:#7fb2e5;text-decoration:none">'
             + ("How this works ▾" if shown else "How this works ▸") + "</a>")
+
+    def showEvent(self, event) -> None:
+        # Sizing happens HERE, not in __init__. An un-shown window does not have
+        # reliable size hints -- the same trap that made the main window open at
+        # 640x480 for three releases, where every measurement taken before show()
+        # agreed with the code and disagreed with the screen.
+        super().showEvent(event)
+        if not self._fitted:
+            self._fitted = True
+            self._fit_to_content()
+
+    def _fit_to_content(self) -> None:
+        """Open tall enough for what is actually in the dialog.
+
+        Two things can go wrong and both are handled here. If the content needs
+        more height than the dialog was given, grow it. If it needs more than
+        the SCREEN has -- 844px of content against an 800px laptop, which is the
+        floor this app targets -- growing is not available, so collapse the
+        explanations instead of overlapping them. That is the same trade the
+        collapse control already offers, and _apply_hints_visible's own note
+        says it "matters most on the small screens where the explanations were
+        being clipped anyway". The saved preference is left alone: this is what
+        THIS window can show, not a change to what the user asked for.
+        """
+        self.layout().activate()
+        needed = self.minimumSizeHint().height()
+        room = self._available_height()
+
+        if needed > room and getattr(self._settings, "help_expanded", True):
+            self._hints_forced_closed = True
+            self._apply_hints_visible()
+            self.layout().activate()
+            needed = self.minimumSizeHint().height()
+
+        if needed > self.height():
+            self.resize(self.width(), min(needed, room))
+
+    def _available_height(self) -> int:
+        """Usable screen height. Its own method so a test can shrink the screen —
+        the small-screen branch is unreachable otherwise, and it is the branch
+        that matters on the 1280x800 laptop this app targets."""
+        from PySide6.QtGui import QGuiApplication
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return 1 << 20                      # no screen: never force a collapse
+        return screen.availableGeometry().height() - 60   # title bar, dock, menu bar
 
     def _sync_exclusive(self) -> None:
         """Mosaic AND Drizzle together: allowed, and expensive.
