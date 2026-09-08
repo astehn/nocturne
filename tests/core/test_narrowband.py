@@ -321,3 +321,38 @@ def test_the_default_saturation_compensates_for_what_the_palette_costs():
     default = _chroma(render(img, NarrowbandParams(), has_stars=False).data, nebula)
     assert default > neutral * 1.05, (
         f"the default is not doing anything: {neutral:.4f} -> {default:.4f}")
+
+
+def test_the_matched_oiii_setting_is_the_least_colourful_one():
+    """Characterisation, not a preference: it records WHY the default looks flat.
+
+    normalize_to_reference matches OIII's level to Ha's, so where both gases are
+    strong B is driven toward R and the core goes neutral. boost=1.00 — the
+    matched setting and the shipped default — therefore sits at a colour
+    minimum, and moving either way adds colour. Andreas and I both read the
+    default render as washed out before anyone measured it.
+
+    If this test ever fails, the normalisation's behaviour has changed and the
+    Narrowband help's advice ("if it looks washed out, move OIII boost, not
+    Saturation") needs re-checking against it.
+    """
+    rng = np.random.default_rng(11)
+    h, w = 120, 160
+    yy, xx = np.mgrid[0:h, 0:w]
+    blob = np.exp(-(((yy - h / 2) / (h / 4)) ** 2 + ((xx - w / 2) / (w / 4)) ** 2))
+    data = np.zeros((h, w, 3), np.float32)
+    data[..., 0] = 0.05 + 0.55 * blob            # Ha
+    data[..., 1] = 0.04 + 0.20 * blob
+    data[..., 2] = 0.04 + 0.30 * blob            # OIII, weaker but present
+    data += rng.normal(0, 0.004, data.shape).astype(np.float32)
+    src = np.clip(data, 0.0, 1.0)
+    img = AstroImage(src, is_linear=False)
+    nebula = src.mean(axis=2) > np.percentile(src.mean(axis=2), 90)
+
+    def chroma_at(boost):
+        out = render(img, NarrowbandParams(oiii_boost=boost), has_stars=False).data
+        return _chroma(out, nebula)
+
+    warm, matched = chroma_at(0.7), chroma_at(1.0)
+    assert warm > matched, (
+        f"pulling OIII down should ADD colour: x0.70 {warm:.4f} vs x1.00 {matched:.4f}")

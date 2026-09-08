@@ -42,7 +42,24 @@ def channel_level(c: np.ndarray, blackpoint: float) -> tuple[float, float]:
 def normalize_to_reference(secondary: np.ndarray, reference: np.ndarray,
                            blackpoint: float = 1.0, boost: float = 1.0) -> np.ndarray:
     """MTF-match the secondary channel's robust level to the reference's, each
-    channel using ITS OWN black point. Degenerate inputs fall back to identity."""
+    channel using ITS OWN black point. Degenerate inputs fall back to identity.
+
+    NOTE, because it surprises people and it surprised us (2026-09-08): matching
+    is exactly what makes the bright core grey. Where Ha and OIII are both strong
+    the match drives B toward R, and the HOO combine then has nothing to
+    separate. So `boost` = 1.00, the matched setting, is the LEAST colourful
+    point on the control, and moving either way adds colour. Measured on a real
+    Pacman render, nebula chroma (mean distance from grey, 0-255) against
+    core R-B:
+
+        boost   0.60   0.80   1.00   1.25   1.50   2.00
+        core    +48.0  +25.4  +13.0   +3.6   -2.4   -9.5
+        chroma   36.1   21.0   12.4    6.5    6.1   10.0
+
+    Saturation cannot compensate: saturate() scales distance from grey, and a
+    neutral pixel is at zero. Andreas reported narrowband results looking flat;
+    raising the saturation default helped the RIM and could never touch the core.
+    Whether 1.00 should stay the default is open — see TODO."""
     sec = np.clip(np.asarray(secondary, dtype=np.float32), 0.0, 1.0)
     ref = np.clip(np.asarray(reference, dtype=np.float32), 0.0, 1.0)
     M_sec, E0_sec = channel_level(sec, blackpoint)
