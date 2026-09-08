@@ -47,7 +47,14 @@ EDGES = {"ui": 2200, "pic": 2200, "ba": 1600}
 # averages away the very noise the "before" is meant to show, so these are CROPPED
 # from the centre at native resolution instead of scaled. Both halves get the
 # identical rectangle by construction, which is also the manifest's rule.
-DETAIL_PAIRS = ("ba-denoise", "ba-drizzle")
+# Pairs whose change lives at the PIXEL level rather than across the frame.
+# These are centre-cropped at native resolution instead of being shrunk to fit,
+# because shrinking removes the very thing they are meant to show — and because
+# a landscape crop can then be displayed far wider than a full portrait frame,
+# which has to stay short enough to fit a laptop viewport. Andreas, 2026-09-08:
+# the full-frame sliders were "kind of small and its difficult to see the
+# changes between before and after".
+DETAIL_PAIRS = ("ba-denoise", "ba-drizzle", "ba-stars", "ba-contrast")
 DETAIL_CROP = (1600, 1000)
 QUALITY = 88          # above the gallery's 82: these carry UI text, not just sky
 SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
