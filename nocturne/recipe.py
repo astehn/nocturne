@@ -23,6 +23,11 @@ _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
 LEGACY_OIII_REASON = ("saved before the oxygen controls changed — "
                       "open it in Narrowband and re-save the recipe")
 _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
+# Starless Levels is deliberately ABSENT. Its two numbers come from a person
+# looking at one picture — that is the whole premise of the tool — so replaying
+# them across a folder of different targets would mean something different on
+# every frame. Being absent here is what makes uncaptured_step_names report it,
+# so Save Recipe warns honestly instead of promising a step it cannot replay.
 
 
 @dataclass

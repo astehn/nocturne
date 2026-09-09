@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from nocturne.core.inspect import Sample, sample
+from nocturne.core.inspect import (CLIP_HIGHLIGHT, CLIP_MARK_OFF, CLIP_MARK_ON,
+                                   Sample, clip_overlay, paint_clipping, sample)
 
 
 def test_sample_colour_returns_channels_and_mean_luminance():
@@ -45,7 +46,8 @@ def test_sample_is_a_named_tuple():
     assert isinstance(s, Sample)
 
 
-from nocturne.core.inspect import Clipping, clip_masks, clipping_from_histogram
+from nocturne.core.inspect import (Clipping, ClipBaseline, capture_clip_baseline,
+                                   clip_masks, clipping_from_histogram)
 
 
 def _hist(r_top=0, r_bot=0, g_top=0, g_bot=0, b_top=0, b_bot=0, total=1000):
@@ -130,6 +132,90 @@ def test_clip_masks_return_per_channel_boolean_arrays():
     sh, hi = clip_masks(np.zeros((3, 5, 3), np.uint8))
     assert sh.shape == (3, 5, 3) and sh.dtype == bool
     assert hi.shape == (3, 5, 3) and hi.dtype == bool
+
+
+# --- baseline: report what the CURRENT settings ADD, not the crushed total --
+#
+# Mid-grey background throughout, never zeros: a black background is itself
+# shadow-clipped, so a "not lit" assertion on it would pass whether or not the
+# baseline subtraction did anything. This exact mistake has shipped twice on
+# this branch already.
+
+def test_baseline_pixel_already_clipped_is_not_relit():
+    """The whole point: something the pipeline crushed before the dialog
+    opened (e.g. auto_levels's black point) must not sit lit from the first
+    frame with no slider move that could ever clear it."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0                       # crushed already, at baseline settings
+    baseline = capture_clip_baseline(rgb)
+    sh, _ = clip_masks(rgb, baseline=baseline)
+    assert not sh[0, 0].any(), "a pixel clipped at baseline must not relight"
+
+
+def test_baseline_newly_clipped_pixel_is_lit():
+    """What the current settings add IS the signal the overlay exists to show."""
+    base_rgb = np.full((4, 4, 3), 128, np.uint8)
+    baseline = capture_clip_baseline(base_rgb)      # nothing clipped at baseline
+    current = base_rgb.copy()
+    current[1, 1] = 0                                # newly crushed by this session
+    sh, _ = clip_masks(current, baseline=baseline)
+    assert sh[1, 1].all(), "a pixel newly clipped now must be lit"
+
+
+def test_baseline_pixel_that_recovers_is_not_lit():
+    """A pixel clipped at baseline that the CURRENT settings pull back out of
+    zero (e.g. black point dragged past it) must not be lit, and the AND-NOT
+    against a now-false mask must not misbehave."""
+    base_rgb = np.full((4, 4, 3), 128, np.uint8)
+    base_rgb[2, 2] = 0
+    baseline = capture_clip_baseline(base_rgb)
+    current = base_rgb.copy()
+    current[2, 2] = 128                              # recovered under current settings
+    sh, _ = clip_masks(current, baseline=baseline)
+    assert not sh[2, 2].any()
+
+
+def test_baseline_fraction_reports_the_total():
+    """The figure a caller needs to say, in words, how much was already gone —
+    per-pixel (any channel dead), matching what the overlay actually lights."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0
+    rgb[0, 1] = 0
+    baseline = capture_clip_baseline(rgb)
+    assert baseline.shadow_frac == pytest.approx(2 / 16)
+    assert baseline.highlight_frac == 0.0
+
+
+def test_clip_masks_with_no_baseline_is_unchanged():
+    """Existing callers (paint_clipping on every live-preview tick chief among
+    them) must see byte-for-byte identical behaviour."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0
+    rgb[1, 1] = 255
+    sh_a, hi_a = clip_masks(rgb)
+    sh_b, hi_b = clip_masks(rgb, baseline=None)
+    assert np.array_equal(sh_a, sh_b) and np.array_equal(hi_a, hi_b)
+
+
+def test_clip_masks_baseline_shape_mismatch_raises():
+    """A silently misaligned baseline (e.g. captured against a different zoom
+    crop) would AND-NOT the wrong pixels against each other rather than fail —
+    a fault a caller could ship without ever seeing it break."""
+    baseline = capture_clip_baseline(np.full((4, 4, 3), 128, np.uint8))
+    with pytest.raises(ValueError):
+        clip_masks(np.full((8, 8, 3), 128, np.uint8), baseline=baseline)
+
+
+def test_clip_overlay_with_baseline_only_lights_whats_new():
+    """End-to-end through the actual painted overlay, not just the masks."""
+    base_rgb = np.full((8, 8, 3), 128, np.uint8)
+    base_rgb[0, 0] = 0                  # crushed already, e.g. by auto_levels
+    baseline = capture_clip_baseline(base_rgb)
+    current = base_rgb.copy()
+    current[7, 7] = 0                   # newly crushed by the current settings
+    out = clip_overlay(current, (8, 8), baseline=baseline)
+    assert not out[0, 0].any(), "pre-existing shadow clipping must not relight"
+    assert out[7, 7].tolist() == [255, 255, 255], "newly clipped pixel must be lit"
 
 
 def test_clipping_selects_worst_by_fraction_not_count():
@@ -350,3 +436,307 @@ def test_a_real_gradient_is_not_dismissed_as_nothing():
     m = background_model(AstroImage(before, is_linear=True),
                          AstroImage(after, is_linear=True))
     assert m.removed_anything, f"span {m.span} dismissed as nothing"
+
+
+def test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview():
+    """The defect this function exists to prevent: averaging down a 64x64 frame
+    with one blown pixel to 8x8 dilutes it to 255/64 = 4, invisible. The user
+    drags looking for the first speck and never sees it.
+
+    The background is mid-grey, NOT zeros: at 0 every background pixel is itself
+    shadow-clipped, the whole overlay lights up, and the assertion passes whether
+    the reduction is a max or a mean — i.e. it cannot fail for the right reason.
+    """
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out.shape == (8, 8, 3)
+    # Exact value, not .any(): under a mean reduction one blown pixel in a
+    # 64-px block yields 255/64 = 3, which is truthy. Only == 255 separates a
+    # max reduction from a mean one.
+    assert out[1, 1, 0] == 255, "the clipped pixel was averaged away, not maxed"
+    assert not out[0, 0].any(), "a clean block must stay black"
+
+
+def test_padding_preserves_a_pixel_in_the_trailing_partial_block():
+    """65x65 is not a multiple of the 8x8 target — Task 3's real call site
+    (a decimated 3840x2160 frame) is essentially never an exact multiple. The
+    trailing block is real data plus padding, not a clean multiple; a naive
+    crop instead of a pad would silently drop a pixel that falls in that
+    overhang."""
+    rgb = np.full((65, 65, 3), 128, np.uint8)
+    rgb[64, 64] = 255           # last real row/col, inside the padded trailing block
+    out = clip_overlay(rgb, (8, 8))
+    assert out.shape == (8, 8, 3)
+    assert out[7, 7, 0] == 255, "the trailing block was dropped or diluted by padding"
+
+
+def test_clean_frame_produces_a_black_overlay():
+    rgb = np.full((16, 16, 3), 128, np.uint8)
+    out = clip_overlay(rgb, (4, 4))
+    assert not out.any()
+
+
+def test_overlay_is_coloured_by_the_channel_that_died():
+    """Which channel died is the whole story — a background where only red is
+    at zero still looks a healthy teal, so a flat OR-ed mask hides the fault.
+
+    Red CRUSHED, not blown: crushed is the per-channel half of the legend.
+    Blown is a single amber whatever the channel — see the test below."""
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[..., 0] = 0            # red at zero everywhere, green and blue mid
+    out = clip_overlay(rgb, (8, 8))
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+
+
+def test_shadow_and_highlight_clipping_are_distinguishable():
+    """Exact values, not just !=: a wrong tint could still satisfy an
+    inequality. Highlight paints full intensity, shadow paints half, in the
+    channel that actually clipped."""
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[0, 0] = 0              # all three channels at zero
+    rgb[7, 7] = 255            # all three channels blown
+    out = clip_overlay(rgb, (8, 8))
+    assert tuple(out[0, 0]) == (255, 255, 255)     # white: the pixel really is black
+    assert tuple(out[7, 7]) == CLIP_HIGHLIGHT      # amber: blown
+
+
+def test_a_blown_channel_wins_over_a_crushed_one_in_the_same_pixel():
+    """Highlights are painted LAST, deliberately: "a blown core is the more
+    urgent of the two". So a pixel that is crushed in red and blown in green
+    reads as blown, not as a third colour.
+
+    This is the app's own legend, not this function's opinion — the main
+    window's Show Clipping has always painted it this way, and the reason
+    there is ONE painting now is that the two used to disagree."""
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[2, 2] = (0, 255, 128)  # red crushed, green blown, blue clean
+    out = clip_overlay(rgb, (8, 8))
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
+
+
+def test_non_square_shapes_are_not_transposed():
+    """h and w are handled independently, so a transposed bh/bw would pass
+    every other test here since all other shapes are square — the production
+    case is a 16:9 sensor. 64x32 -> 8x4: correct block height is 64/8=8,
+    correct block width is 32/4=8, but src height (64) and width (32) differ,
+    so a swap of which source dimension pairs with which target dimension
+    still misplaces this pixel even though the correct block sizes coincide.
+    """
+    rgb = np.full((64, 32, 3), 128, np.uint8)
+    rgb[40, 10] = 255           # row-block 40//8=5, col-block 10//8=1
+    out = clip_overlay(rgb, (8, 4))
+    assert out.shape == (8, 4, 3)
+    assert tuple(out[5, 1]) == CLIP_HIGHLIGHT, "pixel landed in the wrong block — axes may be transposed"
+    assert np.count_nonzero(out) == 2, \
+        "exactly one blown block should survive (amber is 255,160,0 — two non-zero channels)"
+
+
+def test_identity_shape_is_not_reduced():
+    rgb = np.full((8, 8, 3), 128, np.uint8)   # grey, so only [3, 3] clips
+    rgb[3, 3] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out[3, 3].any()
+    assert not out[0, 0].any()
+
+
+# --- one legend, one implementation ---------------------------------------
+
+def test_the_dialog_overlay_and_the_canvas_agree_on_what_white_means():
+    """The defect: `clip_overlay` had invented a second legend (blown 255,
+    crushed 128), so WHITE meant "all three crushed" on the canvas and "all
+    three blown" in the Starless Levels dialog. A user who learned the main
+    window's tooltip pulled the white point in, saw white specks, and read them
+    as crushed to black — exactly inverted.
+
+    Asserted through the SHARED painter against the canvas's own path, so the
+    two cannot drift apart again.
+    """
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0             # all three crushed
+    rgb[1, 1] = 255           # all three blown
+    rgb[2, 2] = (0, 128, 128)  # red alone crushed
+
+    canvas = paint_clipping(rgb.copy())          # over the picture, as _set_canvas does
+    overlay = clip_overlay(rgb, (4, 4))          # onto black, then reduced 1:1
+
+    assert tuple(canvas[0, 0]) == tuple(overlay[0, 0]) == (255, 255, 255)
+    assert tuple(canvas[1, 1]) == tuple(overlay[1, 1]) == CLIP_HIGHLIGHT
+    assert tuple(canvas[2, 2]) == tuple(overlay[2, 2]) == \
+        (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    # ...and the one difference that is meant to exist: the canvas keeps the
+    # picture where nothing clipped, the overlay replaces it with black.
+    assert tuple(canvas[3, 3]) == (128, 128, 128)
+    assert tuple(overlay[3, 3]) == (0, 0, 0)
+
+
+def test_the_main_window_no_longer_carries_its_own_painting():
+    """A shared function is only shared while both callers use it. This is the
+    cheap guard against someone re-inlining the canvas painting and quietly
+    restoring the two contradictory legends."""
+    from pathlib import Path
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    assert "paint_clipping(rgb)" in src
+    assert "_CLIP_MARK_ON" not in src and "_CLIP_HIGHLIGHT" not in src
+
+
+def test_a_two_dimensional_input_is_refused_rather_than_dying_inside_np_pad():
+    """It is a public core/ function, and its neighbour structural_clipping
+    guards `rgb.ndim != 3`. Without this a mono array passed the identity
+    branch and raised a broadcast ValueError from np.pad naming neither the
+    caller nor the cause — and only when a reduction happened to be needed."""
+    import pytest
+    mono = np.full((16, 16), 128, np.uint8)
+    with pytest.raises(ValueError, match="H x W x 3"):
+        clip_overlay(mono, (4, 4))
+    with pytest.raises(ValueError, match="H x W x 3"):
+        clip_overlay(mono, (16, 16))       # the identity branch too
+    with pytest.raises(ValueError, match="H x W x 3"):
+        paint_clipping(mono)
+
+
+def test_the_fast_block_max_equals_the_plain_five_dimensional_form():
+    """The reduce was rewritten as two np.maximum passes because
+    `reshape(h, bh, w, bw, 3).max(axis=(1, 3))` measured 97.1 ms on an 8.3 MP
+    frame — 60% of the whole preview tick. Speed is worth nothing if the answer
+    moved, so this pins the two together on shapes that divide evenly and on
+    shapes that do not.
+
+    Random marks rather than a tidy pattern: a block-max is exactly the kind of
+    thing that passes a symmetric fixture while getting the axes the wrong way
+    round, and the ragged cases below have bh != bw.
+    """
+    rng = np.random.default_rng(4)
+    for (H, W), (h, w) in [((64, 64), (8, 8)), ((65, 65), (8, 8)),
+                           ((64, 32), (8, 4)), ((70, 33), (9, 5)),
+                           ((2160, 240), (338, 60))]:
+        rgb = np.full((H, W, 3), 128, np.uint8)
+        rgb[rng.random((H, W)) < 0.02] = 255
+        rgb[rng.random((H, W)) < 0.02] = 0
+        painted = paint_clipping(rgb, np.zeros_like(rgb))
+        bh, bw = -(-H // h), -(-W // w)
+        pad = np.pad(painted, ((0, bh * h - H), (0, bw * w - W), (0, 0)),
+                     mode="constant")
+        want = pad.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+        assert np.array_equal(clip_overlay(rgb, (h, w)), want), f"{H}x{W} -> {h}x{w}"
+
+
+# --- Photoshop polarity: `end` flips the ground with the handle being worked -
+#
+# Andreas: "In photoshop the clipping overlay for black point is white and for
+# the highlights its black." `end=None` (never passed by the main window's
+# live canvas) must stay byte-for-byte what shipped before; "lo"/"hi" are new,
+# opt-in views for the Starless Levels dialog alone.
+
+def test_paint_clipping_default_end_is_unchanged():
+    """The critical constraint: `paint_clipping` with no new arguments must be
+    pixel-identical to before this change, because the main window's live
+    canvas calls it on every preview tick and a previous round already proved
+    that bit-unchanged across 30 random frames.
+
+    Expected values are worked out BY HAND from the documented legend, not by
+    calling `paint_clipping` itself — comparing the function against its own
+    output would pass even if this change had broken it. One frame carries
+    both a per-pixel case (all three channels dead) and a per-channel case
+    (one channel dead, the others healthy), plus the blown-wins-over-crushed
+    collision, because a fix that only handled one of those could still break
+    the other.
+    """
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # red alone crushed
+    rgb[1, 1] = (0, 0, 0)         # all three crushed
+    rgb[2, 2] = (255, 255, 255)   # all three blown
+    rgb[3, 3] = (0, 255, 128)     # red crushed, green blown: blown must win
+
+    out = paint_clipping(rgb.copy())
+
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    assert tuple(out[1, 1]) == (255, 255, 255)
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
+    assert tuple(out[3, 3]) == CLIP_HIGHLIGHT
+    assert tuple(out[0, 1]) == (128, 128, 128), "an unclipped pixel must keep its colour"
+
+
+def test_clip_overlay_default_end_is_unchanged():
+    """Same guarantee one level up, through the block-reduced overlay a caller
+    actually uses on screen."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)
+    rgb[1, 1] = (0, 0, 0)
+    rgb[2, 2] = (255, 255, 255)
+    out = clip_overlay(rgb, (4, 4))
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    assert tuple(out[1, 1]) == (255, 255, 255)
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
+    assert tuple(out[3, 3]) == (0, 0, 0), "an unclipped pixel must sit on the black ground"
+
+
+def test_end_lo_is_a_white_ground_showing_shadows_only():
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[1, 1] = (255, 255, 255)   # blown — must NOT appear on the shadow-only view
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[0, 0]) == (255, 255, 255), "unclipped pixels must be the white ground"
+    assert tuple(out[1, 1]) == (255, 255, 255), "highlight clipping must not be shown"
+
+
+def test_end_lo_keeps_a_single_channels_own_colour():
+    """The brief's explicit requirement: a pixel crushed in ONE channel keeps
+    that channel's colour on the white ground — only the all-three case
+    changes."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # red alone crushed
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+
+
+def test_end_lo_paints_the_all_channel_collision_black_not_white():
+    """The one deviation the brief calls out: on a white ground, "all three
+    dead" would normally paint white and vanish. It has to read black instead
+    — legible, and what Photoshop's own threshold view shows."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[2, 2] = (0, 0, 0)
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[2, 2]) == (0, 0, 0)
+
+
+def test_end_hi_is_a_black_ground_showing_highlights_only():
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # crushed — must NOT appear on the highlight-only view
+    rgb[1, 1] = (255, 255, 255)
+    out = paint_clipping(rgb, np.zeros_like(rgb), end="hi")
+    assert tuple(out[3, 3]) == (0, 0, 0), "unclipped pixels must be the black ground"
+    assert tuple(out[0, 0]) == (0, 0, 0), "shadow clipping must not be shown"
+    assert tuple(out[1, 1]) == CLIP_HIGHLIGHT
+
+
+def test_a_white_ground_speck_survives_reduction_via_minimum():
+    """The white-ground counterpart of
+    `test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview`: a
+    MAXIMUM reduction would let the surrounding white ground swallow an
+    isolated dark mark, so "lo" must reduce with MINIMUM instead."""
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 0                       # one crushed pixel
+    out = clip_overlay(rgb, (8, 8), end="lo")
+    assert tuple(out[1, 1]) == (0, 0, 0), "the crushed speck was washed out by the white ground"
+    assert tuple(out[0, 0]) == (255, 255, 255), "a clean block must stay white"
+
+
+def test_white_ground_padding_matches_the_ground_not_zero():
+    """The trailing-block counterpart of
+    `test_padding_preserves_a_pixel_in_the_trailing_partial_block`: a zero pad
+    against a minimum reduction would crush every trailing block regardless of
+    its real content."""
+    rgb = np.full((65, 65, 3), 128, np.uint8)
+    out = clip_overlay(rgb, (8, 8), end="lo")
+    assert tuple(out[7, 7]) == (255, 255, 255), \
+        "the zero-padded trailing block was crushed by its own padding"
+
+
+def test_end_none_still_uses_maximum_not_minimum():
+    """Guards the reduction choice itself: with the default black ground a
+    MINIMUM reduction would erase an isolated blown speck instead of a
+    MAXIMUM preserving it."""
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out[1, 1, 0] == 255

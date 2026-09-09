@@ -1563,6 +1563,146 @@ def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
     assert not opened                         # refused on a linear image
 
 
+def test_starless_levels_action_exists_in_the_finishing_group(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    names = [a.text() for a in win._toolbar.actions()]
+    assert "Starless Levels…" in names
+    # It finishes an image, so it belongs after Star Spikes and before Recipes.
+    assert names.index("Starless Levels…") > names.index("Star Spikes…")
+
+
+def test_starless_levels_is_disabled_without_a_picture(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    act = next(a for a in win._toolbar.actions()
+               if a.text() == "Starless Levels…")
+    assert act.isEnabled() is False
+
+
+def test_starless_levels_refuses_a_linear_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))       # freshly loaded == still linear
+    assert win.project.current().is_linear is True
+    win._open_starless_levels()
+    assert "Stretch the image first" in win._warning.text()
+
+
+def test_apply_commits_the_step_with_its_values(qtbot, tmp_path):
+    win = _stretched_window(qtbot, tmp_path)
+    assert win.project.current().is_linear is False   # _stretched_window here is the faked one (TODO.md)
+    result = win.project.current()
+    win._apply_starless_levels(result, (0.1, 0.8))
+    entry = win.project.entries()[-1]
+    assert entry[0] == "Starless Levels"
+    assert entry[1] == (0.1, 0.8)
+
+
+def _fake_starless_dialog(monkeypatch, values=(0.1, 0.8)):
+    """Stand in for StarlessLevelsDialog, accepting immediately with `values`.
+
+    `_open_starless_levels` imports the class inside the function, so the patch
+    has to land on the DEFINING module, not on main_window."""
+    seen = {}
+
+    class _Fake:
+        def __init__(self, starless, stars, parent=None, on_apply=None):
+            seen["busy_at_open"] = parent._busy
+            self._on_apply, self._starless, self._stars = on_apply, starless, stars
+
+        def exec(self):
+            seen["busy_at_ok"] = self._on_apply.__self__._busy
+            self._on_apply(self._starless, values)
+            return 1
+
+    monkeypatch.setattr("nocturne.ui.starless_levels_dialog.StarlessLevelsDialog", _Fake)
+    return seen
+
+
+def test_ok_records_a_history_step_through_the_whole_open_path(qtbot, tmp_path, monkeypatch):
+    """The regression guard for the silent no-op.
+
+    Driving `_apply_starless_levels` directly — which the test above does — is
+    exactly why the defect shipped: it bypasses `_run_busy`, the only path that
+    sets `_busy`, and `_apply_starless_levels` returns early while `_busy` is
+    True. Pressing OK produced no step, no undo and no error. This drives
+    `_open_starless_levels` end to end instead and asserts a step ARRIVES.
+    """
+    win = _stretched_window(qtbot, tmp_path)
+    seen = _fake_starless_dialog(monkeypatch)
+    before = len(win.project.entries())
+
+    win._open_starless_levels()
+    # The dialog is opened from a singleShot(0) so that _run_busy's finally
+    # runs first; nothing has happened yet at this point.
+    qtbot.waitUntil(lambda: "busy_at_ok" in seen, timeout=2000)
+
+    assert len(win.project.entries()) == before + 1, \
+        "pressing OK recorded no history step at all"
+    assert win.project.entries()[-1][0] == "Starless Levels"
+    assert win.project.entries()[-1][1] == (0.1, 0.8)
+    assert seen["busy_at_ok"] is False, \
+        "_busy was still set when OK fired, so _apply_starless_levels's own "\
+        "guard swallowed the result silently"
+    assert seen["busy_at_open"] is False, \
+        "the dialog opened while the window was still busy — the busy bar, the "\
+        "Cancel button and the wait cursor sit over it"
+
+
+def test_save_recipe_warns_that_starless_levels_is_not_captured(qtbot, tmp_path, monkeypatch):
+    """The honest warning, driven from a REAL history entry rather than a
+    monkeypatched name.
+
+    While the step was recipe-capturable this dialog did not appear at all: the
+    step serialised into the recipe, preflight said it would run as saved, and
+    `apply_recipe` then raised `ValueError('starless_levels')` — which
+    `run_batch`'s per-file `except Exception` turns into a failure for every
+    file in the folder."""
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
+    win = _stretched_window(qtbot, tmp_path)
+    win._apply_starless_levels(win.project.current(), (0.1, 0.8))
+    said = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda _p, _t, text, *a, **k:
+                                     (said.append(text), QMessageBox.StandardButton.Cancel)[1]))
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: pytest.fail("saved a recipe silently")))
+    win._save_recipe()
+    assert said and "Starless Levels" in said[0]
+
+
+def test_toolbar_overflow_at_the_small_screen_floor(qtbot, tmp_path):
+    """A sixth "finish it" tool pushes the tail behind the chevron at the
+    1280x800 floor (bar overflows ~1058px — see the comment above `tint` in
+    main_window.py). Measured headless: `QCursor`/`screencapture` don't work
+    in this terminal, so this reads the toolbar layout back directly, per
+    CLAUDE.md's "send Qt events to a real window and read the widget back".
+
+    Before this tool existed, Share was the last visible action and Save
+    Recipe/Batch were already behind the chevron. Adding Starless Levels
+    pushes Share behind it too — that's the measured cost of a sixth
+    finishing tool, not a guess, and it is a placement question for Andreas
+    rather than something to silently accept.
+    """
+    win = _window(qtbot, tmp_path)
+    win.resize(1280, 800)
+    win.show()
+    qtbot.waitUntil(lambda: win._toolbar.widgetForAction(win._starless_levels_act) is not None)
+    for _ in range(5):
+        qtbot.wait(0)
+
+    def visible(text):
+        act = next(a for a in win._toolbar.actions() if a.text() == text)
+        w = win._toolbar.widgetForAction(act)
+        return w is not None and w.isVisible()
+
+    assert visible("Starless Levels…") is True
+    # Newly pushed behind the chevron by the sixth "finish it" tool.
+    assert visible("Share") is False
+    # Unchanged from before this tool: already behind the chevron at this size.
+    assert visible("Save Recipe") is False
+    assert visible("Batch…") is False
+
+
 def test_open_fits_starts_in_base_dir(qtbot, tmp_path, monkeypatch):
     from nocturne import ui
     import nocturne.ui.main_window as mw

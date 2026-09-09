@@ -11,6 +11,8 @@ _MARGIN = 8
 _MIN_SPAN = 0.02      # a band narrower than this selects essentially nothing
 _ACCENT = "#ffd479"
 _STRIP_GAP = 3        # breathing room between the histogram and the strip
+_DATA = "#0d0e10"     # the histogram itself: darker than either ground
+_OUTSIDE = "#1e2024"  # ground beyond the handles, so dark bars still read
 
 
 class RangeHandles(QWidget):
@@ -37,15 +39,59 @@ class RangeHandles(QWidget):
         self._lo, self._hi = 0.0, 1.0
         self._hist = None
         self._drag: str | None = None
+        # Persists past mouse release, unlike `_drag` (which is only "which
+        # handle is currently held"). Starless Levels needs "which handle was
+        # worked LAST" to follow Photoshop's black/white-point polarity, and
+        # that has to survive the button-up that ends the gesture. A small
+        # accessor rather than a widened `rangeChanged` signal, because
+        # `color_balance_dialog.py`'s existing `rangeChanged.connect(lambda lo,
+        # hi: ...)` would break on an extra positional argument.
+        self._last_handle: str | None = None
 
     # --- model ---
     def range(self) -> tuple[float, float]:
         return (self._lo, self._hi)
 
+    def last_handle(self) -> str | None:
+        """"lo", "hi", or None if no drag has happened yet on this widget.
+
+        Only a real drag (`_move`, via mouse press/move) updates this —
+        `set_range` stays silent on purpose (see its own docstring), so a
+        preset or a typed readout does not make it look as though a handle
+        was touched by hand."""
+        return self._last_handle
+
+    def reset_last_handle(self) -> None:
+        """Forget which handle was last dragged.
+
+        For a caller whose Reset means "nothing is being worked now" — without
+        it, a view that follows the worked end keeps pointing at an edit the
+        user has just thrown away."""
+        self._last_handle = None
+
     def set_range(self, lo: float, hi: float) -> None:
+        """Set both bounds, ordered, clamped into [0, 1] and never narrower
+        than `_MIN_SPAN`.
+
+        The span clamp is here as well as in `_move` because the mouse is not
+        the only way in: `set_range(0.5, 0.5)` gave a zero span that
+        `apply_levels` silently rescues as `white = black + 1e-4`, so the
+        readouts described an operation that never happened — the exact failure
+        `_move`'s clamp exists to prevent, reachable by every preset, spin box
+        and test that comes through this door instead.
+
+        The low bound is the one kept: a caller that hands over a degenerate
+        band has usually computed the low end from the image and let the high
+        end collapse onto it, and at the very top of the range there is nowhere
+        left to push the high bound, so the low one gives way instead.
+        """
         lo = float(np.clip(lo, 0.0, 1.0))
         hi = float(np.clip(hi, 0.0, 1.0))
-        self._lo, self._hi = min(lo, hi), max(lo, hi)
+        lo, hi = min(lo, hi), max(lo, hi)
+        if hi - lo < _MIN_SPAN:
+            hi = min(1.0, lo + _MIN_SPAN)
+            lo = max(0.0, hi - _MIN_SPAN)
+        self._lo, self._hi = lo, hi
         self.update()
 
     def set_histogram(self, data) -> None:
@@ -90,6 +136,7 @@ class RangeHandles(QWidget):
             self._lo = float(np.clip(min(x, self._hi - _MIN_SPAN), 0.0, 1.0))
         else:
             self._hi = float(np.clip(max(x, self._lo + _MIN_SPAN), 0.0, 1.0))
+        self._last_handle = self._drag
         self.update()
         self.rangeChanged.emit(self._lo, self._hi)
 
@@ -100,9 +147,21 @@ class RangeHandles(QWidget):
         p.fillRect(self.rect(), QColor(BG_0))
         ox, oy, w, h = self._plot()
 
+        # Outside the selected band there is no amber wash to silhouette the
+        # bars against, and a dark bar on the near-black ground is invisible —
+        # which matters most exactly there, because the handles are dragged to
+        # where the data BEGINS and ENDS. A slight lift gives the excluded
+        # region a ground of its own without competing with the band.
+        lo_px, hi_px = self._x_to_px(self._lo), self._x_to_px(self._hi)
+        p.fillRect(int(ox), oy, max(0, int(lo_px - ox)), h, QColor(_OUTSIDE))
+        p.fillRect(int(hi_px), oy, max(0, int(ox + w - hi_px)), h, QColor(_OUTSIDE))
+
         if self._hist is not None:
-            fill = QColor(BORDER)
-            fill.setAlpha(70)
+            # Solid and DARKER than either ground, so the data reads as a
+            # silhouette cut out of the band rather than as a faint wash on it.
+            # It was BORDER #3c4046 at alpha 70 over BG_0, which against the
+            # band's amber lift left the shape barely discernible.
+            fill = QColor(_DATA)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(fill)
             n = len(self._hist)
@@ -114,7 +173,6 @@ class RangeHandles(QWidget):
         band.setAlpha(40)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(band)
-        lo_px, hi_px = self._x_to_px(self._lo), self._x_to_px(self._hi)
         p.drawRect(int(lo_px), oy, max(1, int(hi_px - lo_px)), h)
 
         p.setPen(QPen(QColor(_ACCENT), 2))

@@ -61,7 +61,7 @@ from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
-from ..core.inspect import (clip_masks, clipping_from_histogram, sample,
+from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
                             structural_clipping)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -853,6 +853,65 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _open_starless_levels(self) -> None:
+        """Split first, then let the user set the endpoints on the starless layer.
+
+        The split is the reason this is a tool rather than a one-tap enhancement,
+        and the reason it is slower to open than any other: on the full frame the
+        star cores clip first and always, which would pin the white point and
+        defeat the whole operation.
+        """
+        if self.project is None or self._busy:
+            return
+        if self.project.current().is_linear:
+            self._show_warning("Stretch the image first — Starless Levels works "
+                                "on the stretched image.")
+            return
+        base = self.project.current()
+
+        def work():
+            return self._remove_stars(base)
+
+        def on_result(split) -> None:
+            # Deferred to the next event-loop turn, NOT opened here. `.exec()`
+            # blocks for the dialog's whole lifetime, and _run_busy clears
+            # `_busy` in a finally only AFTER this callback returns — so opened
+            # inline, `_busy` was still True when the user pressed OK and
+            # `_apply_starless_levels`'s own guard swallowed the result. No
+            # step, no undo, no error. (main_window already carries the same
+            # lesson elsewhere: "It was a SILENT no-op.") This is the first
+            # _run_busy callback in the app that opens a modal, which is why
+            # mirroring _open_star_spikes — which never goes through _run_busy —
+            # did not carry the problem with it.
+            #
+            # Dropping the guard instead would not do: BUSY_DELAY_MS is 400 ms,
+            # so the busy bar, the elapsed timer, the Cancel button and the wait
+            # CURSOR would all appear behind and over the open dialog. Letting
+            # _release() run first takes them down before it is shown.
+            QTimer.singleShot(0, lambda: self._show_starless_levels(split))
+
+        self._run_busy(work, on_result, "Separating stars…",
+                        "Starless Levels failed")
+
+    def _show_starless_levels(self, split) -> None:
+        if self.project is None:
+            return              # workspace closed while the split was running
+        from .starless_levels_dialog import StarlessLevelsDialog
+        starless, stars = split
+        StarlessLevelsDialog(starless, stars, parent=self,
+                              on_apply=self._apply_starless_levels).exec()
+
+    def _apply_starless_levels(self, result, values) -> None:
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
+        self._mark_dirty()
+        black, white = values
+        self.log_panel.append_entry(format_log_entry(
+            "Starless Levels", f"black {black:.2f} / white {white:.2f}", None))
+        self._clear_warning()
+        self._refresh()
+
     def _open_narrowband(self) -> None:
         if self.project is None:
             return
@@ -1424,6 +1483,7 @@ class MainWindow(QMainWindow):
             "color-balance": "#c078d8",
             # finish it — roses, walked toward violet so the group reads as a run
             "star-spikes": "#e089a0",
+            "starless-levels": "#dd88a8",
             "trim": "#dd87b1",
             "upscale": "#d987c4",
             "share": "#d489d6",
@@ -1461,6 +1521,10 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         # --- finish it ---
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        self._starless_levels_act = tb.addAction(
+            load_icon("starless-levels", tint["starless-levels"]),
+            "Starless Levels…", self._open_starless_levels)
+        self._starless_levels_act.setEnabled(False)   # needs a stretched picture
         self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -2330,50 +2394,21 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
-    # The shadow mark is built ADDITIVELY from the channels that died: red,
-    # green or blue for one; yellow, magenta or cyan for two; white for all
-    # three. So the colour of the mark IS the answer to "which channel is gone",
-    # and white — every channel lit — is the only case where the pixel really is
-    # black. That matters: an earlier draft of this painted white for two dead
-    # channels too, which says "black" about a pixel that is still, say, dark
-    # blue. Andreas checked a flagged region against Photoshop, found healthy
-    # colour, and reasonably read the old flat blue as a false alarm. It was
-    # not: only red had died, and in an HOO palette red is Ha.
-    _CLIP_MARK_ON = 255       # a channel that is clipped
-    _CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
-    # Highlights stay a single colour. On this sensor they are vanishingly rare
-    # — 0.00002% measured on real captures, because Seestar star cores do not
-    # saturate — and a second three-hue palette would cost readability for the
-    # case that actually happens. Amber sits outside the shadow palette, so the
-    # two can never be read as each other.
-    _CLIP_HIGHLIGHT = (255, 160, 0)
-
     def _set_canvas(self, img) -> None:
         """The ONE path to the canvas. Paints the clipping overlay when it is on
         and records what is on screen, so the hover readout can never disagree
-        with the pixels the user is looking at."""
+        with the pixels the user is looking at.
+
+        The painting itself lives in core.inspect.paint_clipping, shared with
+        the Starless Levels clipping view. Two implementations meant two
+        legends, and they said opposite things: white was "all three crushed"
+        here and "all three blown" there."""
         rgb = to_rgb8(img)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
         self._structural_clip = None if img.is_linear else structural_clipping(rgb)
         if self._show_clipping and not img.is_linear:
-            sh, hi = clip_masks(rgb)
-            r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
-            any_sh = r0 | g0 | b0
-            # Nested np.where per channel, NOT `rgb[any_sh] = marks[any_sh]`.
-            # Measured on an 8.3 MP frame with 6.6% clipped: this form 38.5 ms
-            # against 63.4 for the fancy-index form and 40.2 for masked
-            # assignment, where the flat-blue paint it replaces cost 33.3. Five
-            # milliseconds for naming the channel is the whole price, and this
-            # runs on every live-preview tick.
-            for i, dead in enumerate((r0, g0, b0)):
-                rgb[..., i] = np.where(
-                    any_sh, np.where(dead, self._CLIP_MARK_ON, self._CLIP_MARK_OFF),
-                    rgb[..., i])
-            # Highlights painted last: a pixel can be 0 in one channel and 255
-            # in another, and a blown core is the more urgent of the two.
-            # Bitwise, not .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
-            rgb[hi[..., 0] | hi[..., 1] | hi[..., 2]] = self._CLIP_HIGHLIGHT
+            paint_clipping(rgb)      # in place, over the picture
         self._canvas_img = img
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
 
@@ -3626,6 +3661,10 @@ class MainWindow(QMainWindow):
         self._cb_act.setToolTip(
             "Shift the colour of one tonal range" if stretched else
             "Colour Balance — available once you've stretched the image")
+        self._starless_levels_act.setEnabled(stretched)
+        self._starless_levels_act.setToolTip(
+            "Set black/white points on the starless layer" if stretched else
+            "Starless Levels — available once you've stretched the image")
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

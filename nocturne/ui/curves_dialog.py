@@ -31,6 +31,7 @@ from ..core.curves import (CURVE_CHANNELS, CURVE_RANGES, active_curves,
 from ..core.image import AstroImage
 from .curve_editor import CurveEditor
 from .preview import to_qimage
+from .zoom_row import ZoomRow
 
 _PREVIEW_MAX = 640
 
@@ -100,12 +101,30 @@ class _ZoomPreview(QLabel):
         self._drag = None
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
+    ZOOM_STEP = 1.5
+
     def zoom_level(self) -> float:
+        return self._zoom
+
+    def display_zoom(self) -> float:
+        """What the readout says. Same number here; `CompareView` has a mode
+        where the picture is an `ImageView` and the two differ."""
         return self._zoom
 
     def reset_view(self) -> None:
         self._zoom, self._centre = 1.0, [0.5, 0.5]
         self.viewChanged.emit()
+
+    # `fit`/`zoom_in`/`zoom_out` are the vocabulary `ZoomRow` drives, and the
+    # same one `ImageView` already speaks, so one row serves both.
+    def fit(self) -> None:
+        self.reset_view()
+
+    def zoom_in(self) -> None:
+        self.set_zoom(self._zoom * self.ZOOM_STEP)
+
+    def zoom_out(self) -> None:
+        self.set_zoom(self._zoom / self.ZOOM_STEP)
 
     def set_zoom(self, zoom: float) -> None:
         self._zoom = max(1.0, min(64.0, float(zoom)))
@@ -284,26 +303,10 @@ class CurvesDialog(QDialog):
         left.addWidget(self.active_label)
         left.addLayout(reset_row)
         left.addLayout(presets)
-        # Scroll to zoom, drag to pan — plus explicit buttons, because a
-        # trackpad gesture is not discoverable and this is the one surface where
-        # a large mosaic is unusable without it.
-        self.zoom_label = QLabel("1.0x")
-        fit_btn = QPushButton("Fit")
-        fit_btn.clicked.connect(self.preview_label.reset_view)
-        in_btn = QPushButton("+")
-        in_btn.clicked.connect(
-            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() * 1.5))
-        out_btn = QPushButton("−")
-        out_btn.clicked.connect(
-            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() / 1.5))
-        self.fit_btn, self.zoom_in_btn, self.zoom_out_btn = fit_btn, in_btn, out_btn
-        zoom_row = QHBoxLayout()
-        zoom_row.addWidget(QLabel("Preview"))
-        zoom_row.addStretch(1)
-        zoom_row.addWidget(self.zoom_label)
-        zoom_row.addWidget(out_btn)
-        zoom_row.addWidget(in_btn)
-        zoom_row.addWidget(fit_btn)
+        zoom_row = ZoomRow(self.preview_label)
+        self.zoom_label = zoom_row.label
+        self.fit_btn = zoom_row.fit_btn
+        self.zoom_in_btn, self.zoom_out_btn = zoom_row.in_btn, zoom_row.out_btn
 
         right = QVBoxLayout()
         right.addLayout(zoom_row)
@@ -432,8 +435,30 @@ class CurvesDialog(QDialog):
         self.accept()
 
 
+def _scaled_to_box(pm, box):
+    """One smooth KeepAspectRatio rescale of a pixmap into `box`.
+
+    Shared with `compare_view`, which had a second copy of the same three
+    lines: the same picture is produced through one and displayed through the
+    other, so they must not be able to disagree.
+    """
+    if pm.isNull():
+        return pm
+    return pm.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
+                     Qt.TransformationMode.SmoothTransformation)
+
+
 def _pixmap_for(img: AstroImage, size):
     from PySide6.QtGui import QPixmap
-    pm = QPixmap.fromImage(to_qimage(img))
-    return pm.scaled(size, Qt.AspectRatioMode.KeepAspectRatio,
-                     Qt.TransformationMode.SmoothTransformation)
+    return _scaled_to_box(QPixmap.fromImage(to_qimage(img)), size)
+
+
+def _fitted_size(src_w: int, src_h: int, box):
+    """The size `src` will occupy inside `box` under KeepAspectRatio.
+
+    Shared so a caller that must produce its pixels AT the display size — the
+    Starless Levels clipping view, whose block-max must not then be re-diluted
+    by a smooth rescale — asks the same question `_pixmap_for` answers by
+    scaling afterwards, and gets the same answer."""
+    from PySide6.QtCore import QSize
+    return QSize(int(src_w), int(src_h)).scaled(box, Qt.AspectRatioMode.KeepAspectRatio)

@@ -158,7 +158,48 @@ def structural_clipping(rgb: np.ndarray,
     return Clipping(hi_frac, hi_ch, lo_frac, lo_ch)
 
 
-def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+class ClipBaseline(NamedTuple):
+    """A `clip_masks()` snapshot at some reference settings (e.g. black=0,
+    white=1 — the tool doing nothing), so a later `clip_masks(rgb, baseline=...)`
+    call can report only what changed since.
+
+    Same split as `main_window._clip_baseline`, one level lower: that one
+    diffs two SCALAR fractions from the histogram to keep the live-preview
+    ALARM from crying wolf on damage the session didn't cause. This one diffs
+    the actual per-pixel MASKS, because the overlay has to light specific
+    pixels, not just adjust a percentage — a starless layer that already has
+    2-6% of its shadows at zero (auto_levels's black point crushes part of the
+    noise floor by construction, measured 2026-09-09) must not relight those
+    same pixels the moment Starless Levels opens with black=0.
+
+    Fractions are stored alongside the masks — per-pixel (`.any(axis=2)`), the
+    same rule `paint_clipping` uses to decide a pixel is marked at all — so a
+    caller can state "N% already crushed on arrival" without recomputing
+    anything.
+    """
+    shadow: np.ndarray        # H x W x 3 bool, from clip_masks
+    highlight: np.ndarray     # H x W x 3 bool, from clip_masks
+    shadow_frac: float
+    highlight_frac: float
+
+
+def capture_clip_baseline(rgb: np.ndarray) -> ClipBaseline:
+    """Snapshot `clip_masks(rgb)` as a `ClipBaseline` for later diffing.
+
+    A separate call, not a flag on `clip_masks`, because a baseline is
+    captured ONCE — a dialog opening, or a session's arrival state — while
+    `clip_masks` itself runs on every live-preview tick; folding fraction
+    bookkeeping into the hot path would cost every caller for a number only
+    one of them wants.
+    """
+    shadow, highlight = clip_masks(rgb)
+    return ClipBaseline(shadow, highlight,
+                        float(shadow.any(axis=2).mean()),
+                        float(highlight.any(axis=2).mean()))
+
+
+def clip_masks(rgb: np.ndarray,
+               baseline: ClipBaseline | None = None) -> tuple[np.ndarray, np.ndarray]:
     """(shadow, highlight) boolean masks over a uint8 H×W×3 display array, PER
     CHANNEL — same H×W×3 shape as the input, so `shadow[..., 0]` is "red is at
     zero here".
@@ -172,8 +213,205 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     Two vectorised comparisons over the whole array; the caller combines them
     with bitwise ops rather than `.any(axis=2)`, which measures 78 ms on an
-    8.3 MP frame against 7 ms, and this runs in the live-preview path."""
-    return rgb == 0, rgb == 255
+    8.3 MP frame against 7 ms, and this runs in the live-preview path.
+
+    `baseline`, when given, is subtracted out: a pixel clipped there too is NOT
+    reported here, so a caller sees only what changed since the baseline was
+    captured, per the ruling in round2-task-B — "light only what was added,
+    still report the total" (the total lives in `baseline.shadow_frac` /
+    `.highlight_frac`, not here). Defaults to None so every existing caller —
+    `paint_clipping` on the main window's live-preview tick chief among them —
+    is byte-for-byte unaffected; the extra branch and two bitwise ops only run
+    for a caller that opts in."""
+    sh, hi = rgb == 0, rgb == 255
+    if baseline is not None:
+        if baseline.shadow.shape != sh.shape:
+            raise ValueError(
+                "clip baseline shape does not match rgb: "
+                f"{baseline.shadow.shape} vs {sh.shape}")
+        # In place, into the arrays the comparisons above just produced. The
+        # `sh & ~baseline.shadow` form allocated a second full H x W x 3 array
+        # per mask; on an 8.3 MP frame that is four arrays alive at once
+        # (~100 MB) on every 60 ms tick of a handle drag, against two here.
+        np.logical_and(sh, ~baseline.shadow, out=sh)
+        np.logical_and(hi, ~baseline.highlight, out=hi)
+    return sh, hi
+
+
+# --- the ONE clipping legend, shared by the canvas and the dialogs ----------
+#
+# The shadow mark is built ADDITIVELY from the channels that died: red, green
+# or blue for one; yellow, magenta or cyan for two; white for all three. So the
+# colour of the mark IS the answer to "which channel is gone", and white —
+# every channel lit — is the only case where the pixel really is black. That
+# matters: an earlier draft of this painted white for two dead channels too,
+# which says "black" about a pixel that is still, say, dark blue. Andreas
+# checked a flagged region against Photoshop, found healthy colour, and
+# reasonably read the old flat blue as a false alarm. It was not: only red had
+# died, and in an HOO palette red is Ha.
+CLIP_MARK_ON = 255       # a channel that is clipped
+CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
+# Highlights stay a single colour. On this sensor they are vanishingly rare —
+# 0.00002% measured on real captures, because Seestar star cores do not
+# saturate — and a second three-hue palette would cost readability for the case
+# that actually happens. Amber sits outside the shadow palette, so the two can
+# never be read as each other.
+CLIP_HIGHLIGHT = (255, 160, 0)
+
+
+def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
+                   baseline: ClipBaseline | None = None,
+                   end: str | None = None) -> np.ndarray:
+    """Paint the clipping legend for `rgb` into `out` (default: `rgb` itself).
+
+    `baseline`, forwarded to `clip_masks`, restricts the paint to pixels newly
+    clipped since it was captured — see `ClipBaseline`. None (the default)
+    paints the total, exactly as before; this is what the main window's
+    live-preview tick uses, unchanged.
+
+    `end` follows Photoshop's polarity (Andreas, working the Starless Levels
+    black point: "In photoshop the clipping overlay for black point is white
+    and for the highlights its black"). None (default) paints BOTH ends, byte
+    for byte what shipped before — every branch below is gated on `end` so the
+    main window's live-preview path, which never passes it, cannot be touched.
+    "lo" paints ONLY shadow (crushed) marks, for a caller that has filled `out`
+    with a WHITE ground. "hi" paints ONLY highlight (blown) marks, for a black
+    ground — the ground colour itself is the caller's choice, made by what it
+    fills `out` with; this function only ever adds marks.
+
+    The one deviation "lo" makes from the shared legend: an all-three-channels
+    -dead pixel normally paints white (every channel lit), which is invisible
+    against a white ground and would read as "nothing here" for the pixel that
+    is most completely gone. It paints BLACK there instead — legible, and what
+    Photoshop's own threshold view shows for a fully clipped pixel. No other
+    colour changes on either ground; a single dead channel still keeps its own
+    colour, which is the point of the legend.
+
+    ONE implementation, because the legend is a thing the user LEARNS. The main
+    window's Show Clipping tooltip teaches channel colour = crushed, amber =
+    blown; a second painting with its own scheme meant white said "all three
+    crushed" on the canvas and "all three blown" in a dialog, so a user who
+    pulled the white point in and saw white specks read them as exactly the
+    opposite of what they were.
+
+    `out` separate from `rgb` is what lets the same painting serve both callers:
+    the canvas paints over the picture, so unclipped pixels keep their colour,
+    while `clip_overlay` paints onto a solid field and the picture is replaced.
+
+    Nested np.where per channel, NOT `out[any_sh] = marks[any_sh]`. Measured on
+    an 8.3 MP frame with 6.6% clipped: this form 38.5 ms against 63.4 for the
+    fancy-index form and 40.2 for masked assignment, where the flat-blue paint
+    it replaces cost 33.3. Five milliseconds for naming the channel is the whole
+    price, and this runs on every live-preview tick.
+
+    The marks are passed as np.uint8 SCALARS, not the plain ints they read as
+    above: `np.where(mask, 255, 60)` promotes to int64, so each channel built an
+    8-byte intermediate — 66 MB per channel on that frame — and threw seven
+    eighths of it away in the cast back to uint8. Same form, same result, 27.9 ms
+    to 20.0.
+    """
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        raise ValueError("paint_clipping needs an H x W x 3 uint8 array; "
+                         f"got shape {rgb.shape}")
+    if out is None:
+        out = rgb
+    on, off = np.uint8(CLIP_MARK_ON), np.uint8(CLIP_MARK_OFF)
+    sh, hi = clip_masks(rgb, baseline=baseline)
+    if end != "hi":
+        r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
+        any_sh = r0 | g0 | b0
+        for i, dead in enumerate((r0, g0, b0)):
+            out[..., i] = np.where(any_sh, np.where(dead, on, off), out[..., i])
+        if end == "lo":
+            out[r0 & g0 & b0] = 0
+    # Highlights painted last: a pixel can be 0 in one channel and 255 in
+    # another, and a blown core is the more urgent of the two. Bitwise, not
+    # .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
+    if end != "lo":
+        out[hi[..., 0] | hi[..., 1] | hi[..., 2]] = CLIP_HIGHLIGHT
+    return out
+
+
+def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
+                 baseline: ClipBaseline | None = None,
+                 end: str | None = None) -> np.ndarray:
+    """`paint_clipping` onto a solid field, reduced to `shape` with a MAXIMUM
+    (or, on a white ground, a MINIMUM) rather than an average.
+
+    `baseline`, forwarded to `paint_clipping`, must be captured at the SAME
+    shape as `rgb` (not `shape` — that is only the display target). A caller
+    diffing against a zoomed crop or a resized composite needs to capture a
+    matching-shape baseline itself; `clip_masks` raises rather than silently
+    misaligning if the shapes disagree.
+
+    `end` mirrors `paint_clipping` — None (default) is a BLACK ground showing
+    both ends, byte for byte what shipped before. "lo" is a WHITE ground
+    showing shadow clipping alone (Photoshop's black-point threshold view);
+    "hi" keeps the black ground but shows highlight clipping alone. The ground
+    is a plain fill of `out` before painting, so `paint_clipping` never needs
+    to know about it.
+
+    The reduction has to flip with the ground. MAXIMUM is what preserves an
+    isolated blown pixel against a black field — it is the brightest thing in
+    its block. On a WHITE ground the informative pixel is the DARK one: a lone
+    crushed mark surrounded by unmarked white neighbours would be washed back
+    to white by a max reduction, so "lo" reduces with MINIMUM instead, and the
+    padding fill has to match (255, not 0) or the trailing edge would read as
+    spuriously crushed.
+
+    The reduction is the point. The preview runs on a decimated copy for speed,
+    and averaging a 4x4 block containing one blown pixel yields 255/16 = 16 —
+    invisible. A user drags the white point until the first specks appear, so an
+    overlay that dilutes isolated pixels hides exactly the signal it exists to
+    show. Any clipped pixel inside a block lights the whole block: over-reporting
+    at preview scale is a wrong colour on one block, under-reporting is a blown
+    core the user never sees.
+
+    `shape` should be the size the overlay will be DISPLAYED at, not an
+    arbitrary intermediate: a smooth rescale afterwards re-dilutes exactly what
+    the block reduction preserved (measured: an isolated lit block drops to
+    195 / 111 / 55 depending on the factor), which can leave a blown speck
+    dimmer than a flat crushed background and invert the legend again.
+    """
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        # Its neighbour structural_clipping guards the same way. Without this a
+        # 2D array passes the identity branch and dies inside np.pad with a
+        # broadcast error that names neither the caller nor the cause.
+        raise ValueError("clip_overlay needs an H x W x 3 uint8 array; "
+                         f"got shape {rgb.shape}")
+    ground = np.uint8(255) if end == "lo" else np.uint8(0)
+    out = paint_clipping(rgb, np.full_like(rgb, ground), baseline=baseline, end=end)
+    h, w = shape
+    src_h, src_w = out.shape[:2]
+    if (src_h, src_w) == (h, w):
+        return out
+    # Pad to a whole number of blocks so the trailing edge is not silently
+    # dropped — but only when there IS a trailing edge: np.pad always copies,
+    # which is 24 MB on an 8.3 MP frame. The pad value matches the ground: a
+    # zero pad against a white-ground minimum reduction would crush every
+    # trailing block regardless of its real content.
+    bh, bw = -(-src_h // h), -(-src_w // w)
+    if bh * h != src_h or bw * w != src_w:
+        out = np.pad(out, ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0)),
+                     mode="constant", constant_values=int(ground))
+    # Rows then columns, accumulating with np.maximum (or np.minimum on a white
+    # ground), NOT one `reshape(h, bh, w, bw, 3).max(axis=(1, 3))`. Identical
+    # result; the five-dimensional form reduces over two interleaved
+    # non-adjacent axes and measures 97.1 ms on an 8.3 MP frame against 4.4 for
+    # this, which is 60% of the whole preview tick for an operation that only
+    # touches 25 MB once. (Two chained single-axis `.max()` calls are 13.6 ms —
+    # better, still 3x this.) Each pass is a handful of full-width elementwise
+    # reductions, which is the access pattern the memory system is built for.
+    reduce_into = np.minimum if end == "lo" else np.maximum
+    rows = out.reshape(h, bh, out.shape[1], 3)
+    acc = rows[:, 0].copy()
+    for k in range(1, bh):
+        reduce_into(acc, rows[:, k], out=acc)
+    cols = acc.reshape(h, w, bw, 3)
+    acc = cols[:, :, 0].copy()
+    for k in range(1, bw):
+        reduce_into(acc, cols[:, :, k], out=acc)
+    return acc
 
 
 class BackgroundModel(NamedTuple):

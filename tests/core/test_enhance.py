@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 from nocturne.core.image import AstroImage
 from nocturne.core.enhance import boost_hue, darken_sky, lighten_sky, soft_glow, vibrance, star_colour_layers, dark_structure
+from nocturne.core.enhance import starless_levels_layers
 from skimage.color import rgb2hsv
 
 
@@ -286,3 +288,63 @@ def test_taps_stack_gently_rather_than_all_at_once():
     assert gains == sorted(gains), gains
     assert gains[0] < 1.25, f"a single tap is too strong ({gains[0]:.3f})"
     assert gains[2] > gains[0] * 1.2, "stacking taps must actually accumulate"
+
+
+def _split_pair():
+    """A starless layer with a bright patch, and a stars layer with one hot core.
+
+    Values are deliberately asymmetric so a swapped-argument bug cannot pass:
+    the starless patch (0.60) and the star core (0.95) are far apart.
+    """
+    starless = np.zeros((8, 8, 3), np.float32)
+    starless[2:5, 2:5] = 0.60
+    starless[5:7, 5:7] = 0.30
+    stars = np.zeros((8, 8, 3), np.float32)
+    stars[0, 0] = 0.95
+    return (AstroImage(starless, is_linear=False, metadata={}),
+            AstroImage(stars, is_linear=False, metadata={}))
+
+
+def test_identity_endpoints_are_a_plain_recombine():
+    starless, stars = _split_pair()
+    out = starless_levels_layers(starless, stars, black=0.0, white=1.0)
+    expected = 1.0 - (1.0 - starless.data) * (1.0 - stars.data)
+    assert np.allclose(out.data, expected, atol=1e-6)
+
+
+def test_white_point_lifts_the_starless_layer():
+    starless, stars = _split_pair()
+    out = starless_levels_layers(starless, stars, black=0.0, white=0.60)
+    # The 0.60 patch sits exactly at the white point, so it reaches 1.0.
+    assert out.data[3, 3, 0] == pytest.approx(1.0, abs=1e-6)
+    # The dimmer patch is lifted but not clipped: 0.30/0.60 = 0.5.
+    assert out.data[6, 6, 0] == pytest.approx(0.5, abs=1e-6)
+
+
+def test_stars_layer_is_left_unchanged():
+    """A 'must not touch the stars' requirement: capture before, assert equal.
+
+    `assert stars != known_bad` would pass while the code wrote a DIFFERENT
+    wrong value, which is how this exact weakness got through twice before.
+    """
+    starless, stars = _split_pair()
+    before = stars.data.copy()
+    starless_levels_layers(starless, stars, black=0.1, white=0.5)
+    assert np.array_equal(stars.data, before)
+
+
+def test_star_core_survives_a_white_point_that_would_have_clipped_it():
+    """The entire reason the tool operates on the split: a white point of 0.60
+    would drive a 0.95 star core to pure white on the full frame. Screened back
+    from the untouched layer, it keeps its value."""
+    starless, stars = _split_pair()
+    out = starless_levels_layers(starless, stars, black=0.0, white=0.60)
+    assert out.data[0, 0, 0] == pytest.approx(0.95, abs=1e-6)
+
+
+def test_metadata_and_linearity_come_from_the_starless_layer():
+    starless, stars = _split_pair()
+    starless.metadata["OBJECT"] = "M 16"
+    out = starless_levels_layers(starless, stars)
+    assert out.metadata["OBJECT"] == "M 16"
+    assert out.is_linear is False

@@ -91,3 +91,34 @@ def test_auto_levels_blows_no_additional_star_cores():
     before = int((d >= 0.999).all(axis=2).sum())
     out = apply_levels(AstroImage(d, is_linear=False), *auto_levels(d)).data
     assert int((out >= 0.999).all(axis=2).sum()) == before
+
+
+def test_the_identity_gamma_shortcut_changes_nothing():
+    """`np.power(x, 1.0)` is a whole-array pass that returns x exactly — 19 ms
+    of a 72 ms compose at 8.3 MP — so gamma 1.0 now skips it. The shortcut has
+    to be bit-identical, not merely close: Starless Levels always passes 1.0,
+    so if it drifted, the ONLY path that tool ever takes would be the wrong
+    one."""
+    d = _stretched()
+    img = AstroImage(d, is_linear=False)
+    got = apply_levels(img, 0.1, 1.0, 0.8).data
+    x = np.clip((img.data - 0.1) / (0.8 - 0.1), 0.0, 1.0)
+    assert np.array_equal(got, np.power(x, 1.0).astype(np.float32))
+
+
+def test_the_result_never_aliases_or_mutates_the_source():
+    """apply_levels builds its output in place after one allocation. In place
+    on ITS OWN array — a caller that found its input rewritten, or two images
+    sharing a buffer, would corrupt the undo history.
+
+    Asserted as UNCHANGED, and separately as not-the-same-memory: `x is not y`
+    alone would pass for a view."""
+    d = _stretched()
+    img = AstroImage(d, is_linear=False)
+    before = img.data.copy()
+    for gamma in (1.0, 2.2):                    # both branches
+        out = apply_levels(img, 0.1, gamma, 0.8)
+        assert np.array_equal(img.data, before), "apply_levels wrote into its input"
+        assert not np.shares_memory(out.data, img.data)
+        out.data[0, 0] = 0.5                    # and writing the result is safe
+        assert np.array_equal(img.data, before)

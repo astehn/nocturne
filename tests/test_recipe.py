@@ -356,3 +356,29 @@ def test_an_enhancement_is_named_by_its_tap(tmp_path):
     from nocturne.settings import Settings
     r = Recipe(steps=[{"stage": "enhance", "option": "Boost Gold"}])
     assert preflight(r, Settings())[0].step == "Boost Gold"
+
+
+def test_starless_levels_is_reported_as_uncaptured_not_silently_saved():
+    """Recipe-capturing it destroys a whole batch.
+
+    The name USED to be in `_NAME_TO_STAGE`, which both serialised the step
+    into the recipe and removed it from `uncaptured_step_names` — so Save
+    Recipe stopped warning. There is no `starless_levels` case in `make_step`,
+    so preflight said "This step will run as saved" and `apply_recipe` then
+    raised `ValueError('starless_levels')`, which run_batch's per-file
+    `except Exception` turns into a failure for EVERY file in the folder,
+    under a raw stage id.
+
+    It is not implemented as a replayable step because it should not be one:
+    the two values come from a person looking at one picture, so they do not
+    transfer to the next target. The honest answer is the warning.
+    """
+    from nocturne.recipe import (_NAME_TO_STAGE, recipe_from_entries,
+                                 uncaptured_step_names)
+    entries = [("Stretch", 0.5), ("Starless Levels", (0.1, 0.8))]
+    assert "Starless Levels" not in _NAME_TO_STAGE
+    assert uncaptured_step_names(entries) == ["Starless Levels"]
+    # ...and it is left out of the recipe rather than written as a stage no
+    # loader can build.
+    assert [s["stage"] for s in recipe_from_entries(entries).steps] == ["stretch"]
+

@@ -168,3 +168,103 @@ def test_the_strip_does_not_eat_the_histogram_area(qtbot):
     assert w._x_to_px(0.0) < w._x_to_px(1.0)
     _ox, _oy, _pw, ph = w._plot()
     assert ph < w.height() - w.STRIP_H, "the plot area overlaps the strip"
+
+
+def test_set_range_enforces_the_minimum_span(qtbot):
+    """`_move` clamps the span for the mouse; `set_range` did not, and it is the
+    door every preset, spin box and test comes through. `set_range(0.5, 0.5)`
+    gave a zero span, which `apply_levels` silently rescues as
+    `white = black + 1e-4` — so the readouts described an operation that never
+    happened, the exact failure the clamp exists to prevent."""
+    from nocturne.ui.range_handles import _MIN_SPAN
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.set_range(0.5, 0.5)
+    lo, hi = w.range()
+    assert hi - lo == pytest.approx(_MIN_SPAN), f"zero span accepted: {lo} {hi}"
+
+    # And at the very top, where there is no room to push the high bound up:
+    # the low one gives way instead, rather than the span collapsing again.
+    w.set_range(1.0, 1.0)
+    lo, hi = w.range()
+    assert hi == pytest.approx(1.0)
+    assert hi - lo == pytest.approx(_MIN_SPAN), f"zero span accepted at 1.0: {lo} {hi}"
+
+
+# --- last_handle: which bound was worked, for Starless Levels' clip polarity -
+
+def test_last_handle_is_none_before_any_drag(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    assert w.last_handle() is None
+
+
+def test_dragging_the_low_handle_reports_lo(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w.last_handle() == "lo"
+
+
+def test_dragging_the_high_handle_reports_hi(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 1.0, 0.7)
+    assert w.last_handle() == "hi"
+
+
+def test_last_handle_survives_the_mouse_release(qtbot):
+    """`_drag` (which handle is currently HELD) is reset to None on release —
+    `last_handle` is a separate, persistent record of which one was worked
+    LAST, and a caller reading it after the gesture ends must still see it."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w._drag is None, "the fixture didn't release the mouse"
+    assert w.last_handle() == "lo"
+
+
+def test_last_handle_updates_to_whichever_was_dragged_most_recently(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w.last_handle() == "lo"
+    _drag(w, 1.0, 0.7)
+    assert w.last_handle() == "hi"
+
+
+def test_set_range_does_not_touch_last_handle(qtbot):
+    """A preset or a typed readout is not the user's hand on a handle —
+    `set_range` stays silent on `rangeChanged` for the same reason, so the two
+    guards match."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.set_range(0.2, 0.8)
+    assert w.last_handle() is None
+
+
+def test_the_data_is_darker_than_both_grounds(qtbot):
+    """Andreas: "make the histogram itself a little bit darker... the contrast
+    between that and the histogram background is too little."
+
+    It was BORDER #3c4046 at alpha 70 over BG_0 — barely more opaque than the
+    ground, and under the band's amber lift the shape was a wash rather than a
+    shape. Solid and darker than either ground makes it a silhouette.
+    """
+    from nocturne.ui.range_handles import _DATA, _OUTSIDE
+    from nocturne.ui.theme import BG_0
+
+    def lum(hex_colour):
+        r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    assert lum(_DATA) < lum(BG_0), "the data must be darker than the band ground"
+    assert lum(_DATA) < lum(_OUTSIDE), "the data must be darker than the outside ground"
+    # And the outside ground must be light enough that a dark bar reads on it —
+    # the handles are dragged to where the data BEGINS and ENDS, so the shape
+    # beyond them is the part being judged.
+    assert lum(_OUTSIDE) - lum(_DATA) >= 8
