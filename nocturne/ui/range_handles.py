@@ -11,6 +11,8 @@ _MARGIN = 8
 _MIN_SPAN = 0.02      # a band narrower than this selects essentially nothing
 _ACCENT = "#ffd479"
 _STRIP_GAP = 3        # breathing room between the histogram and the strip
+_DATA = "#0d0e10"     # the histogram itself: darker than either ground
+_OUTSIDE = "#1e2024"  # ground beyond the handles, so dark bars still read
 
 
 class RangeHandles(QWidget):
@@ -145,9 +147,21 @@ class RangeHandles(QWidget):
         p.fillRect(self.rect(), QColor(BG_0))
         ox, oy, w, h = self._plot()
 
+        # Outside the selected band there is no amber wash to silhouette the
+        # bars against, and a dark bar on the near-black ground is invisible —
+        # which matters most exactly there, because the handles are dragged to
+        # where the data BEGINS and ENDS. A slight lift gives the excluded
+        # region a ground of its own without competing with the band.
+        lo_px, hi_px = self._x_to_px(self._lo), self._x_to_px(self._hi)
+        p.fillRect(int(ox), oy, max(0, int(lo_px - ox)), h, QColor(_OUTSIDE))
+        p.fillRect(int(hi_px), oy, max(0, int(ox + w - hi_px)), h, QColor(_OUTSIDE))
+
         if self._hist is not None:
-            fill = QColor(BORDER)
-            fill.setAlpha(70)
+            # Solid and DARKER than either ground, so the data reads as a
+            # silhouette cut out of the band rather than as a faint wash on it.
+            # It was BORDER #3c4046 at alpha 70 over BG_0, which against the
+            # band's amber lift left the shape barely discernible.
+            fill = QColor(_DATA)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(fill)
             n = len(self._hist)
@@ -159,7 +173,6 @@ class RangeHandles(QWidget):
         band.setAlpha(40)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(band)
-        lo_px, hi_px = self._x_to_px(self._lo), self._x_to_px(self._hi)
         p.drawRect(int(lo_px), oy, max(1, int(hi_px - lo_px)), h)
 
         p.setPen(QPen(QColor(_ACCENT), 2))

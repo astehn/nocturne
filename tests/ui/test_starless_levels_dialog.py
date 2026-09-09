@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from PySide6.QtGui import QImage
 
 from nocturne.core.enhance import starless_levels_layers
 from nocturne.core.image import AstroImage
@@ -874,3 +875,36 @@ def test_reset_forgets_which_end_was_being_worked(qtbot):
     assert d._clip_end() == "lo"
     d.reset()
     assert d._clip_end() is None
+
+
+def test_side_by_side_panes_are_not_the_same_picture(qtbot):
+    """Before is the untouched composite, After the current one — so with
+    non-identity endpoints the two panes must differ.
+
+    Andreas could not see a difference side by side and asked whether they were
+    showing the same thing. They were not (measured: mean 88.8 against 98.8 at
+    black 0.008 / white 0.887 — a 1.13x lift is simply hard to see across a gap).
+    This pins it so they can never silently BECOME the same picture.
+    """
+    rng = np.random.default_rng(0)
+    starless = np.clip(rng.normal(0.35, 0.12, (200, 200, 3)), 0, 1).astype(np.float32)
+    stars = np.zeros((200, 200, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.resize(900, 700)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg.preview.set_mode("side")
+    dlg.black_val.setValue(0.10)
+    dlg.white_val.setValue(0.70)
+    dlg._render_preview()
+
+    before = dlg.preview._before_pane.pixmap()
+    after = dlg.preview._after_pane.pixmap()
+    assert not before.isNull() and not after.isNull()
+    b = qimage_to_rgb8(before.toImage().convertToFormat(QImage.Format.Format_RGB888))
+    a = qimage_to_rgb8(after.toImage().convertToFormat(QImage.Format.Format_RGB888))
+    assert b.shape == a.shape, "the two panes must be drawn at the same scale"
+    assert not np.array_equal(a, b), "before and after are the same picture"
+    assert a.mean() > b.mean(), "pulling the white point in must lighten the after"

@@ -245,3 +245,26 @@ def test_set_range_does_not_touch_last_handle(qtbot):
     qtbot.addWidget(w)
     w.set_range(0.2, 0.8)
     assert w.last_handle() is None
+
+
+def test_the_data_is_darker_than_both_grounds(qtbot):
+    """Andreas: "make the histogram itself a little bit darker... the contrast
+    between that and the histogram background is too little."
+
+    It was BORDER #3c4046 at alpha 70 over BG_0 — barely more opaque than the
+    ground, and under the band's amber lift the shape was a wash rather than a
+    shape. Solid and darker than either ground makes it a silhouette.
+    """
+    from nocturne.ui.range_handles import _DATA, _OUTSIDE
+    from nocturne.ui.theme import BG_0
+
+    def lum(hex_colour):
+        r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    assert lum(_DATA) < lum(BG_0), "the data must be darker than the band ground"
+    assert lum(_DATA) < lum(_OUTSIDE), "the data must be darker than the outside ground"
+    # And the outside ground must be light enough that a dark bar reads on it —
+    # the handles are dragged to where the data BEGINS and ENDS, so the shape
+    # beyond them is the part being judged.
+    assert lum(_OUTSIDE) - lum(_DATA) >= 8
