@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.29.0] — 2026-09-09
+
+Black and white points can be pulled all the way in without flattening a star core, and Narrowband's oxygen control now says what it does
+
+### Added
+- Starless Levels, a new finishing tool: it separates the stars, sets black and white points on the starless layer alone, and screens the untouched stars back. Pulling the white point in is how a stretched image gets its colour, and it is also how star colour is destroyed — which is why Levels deliberately will not choose a white point for you. Measured on every master tested, a 99.9th-percentile white point drove about 0.08% of pixels to pure white, roughly six thousand star cores, and Seestar cores do not saturate in the capture, so that colour is real data. On a starless layer there are no cores to clip, so the move is safe there and only there. Measured on three masters, mean colour rises 30-50% as the endpoints come in, while the brightest star cores move by at most 1.4 levels out of 255.
+- The endpoints are set on a full-width histogram of the starless layer, with the two handles ON it — where the data begins and ends is the whole judgement, and a histogram is the only thing that can answer it. Values can be typed instead; the boxes and the handles are the same control.
+- A clipping view that shows what YOU are about to lose. It follows Photoshop's polarity — a white ground while the black point is being worked, black while the white point is — and it marks only what the current endpoints add, stating separately what the image arrived already carrying. A stretched master usually arrives with 2-6% of its noise floor already crushed by the automatic black point, so reporting the total would have made the black end look ruined before anything was touched.
+- A compare control on Starless Levels: off, a draggable wipe divider, or side by side with the panes locked to one zoom and pan, so both views move together.
+
+### Changed
+- Narrowband's OIII boost is replaced by two separate things, because it was doing two jobs at once and they disagree. The OIII-to-Ha normalisation is now purely photometric — it matches the channels and nothing else — and a new Oxygen strength rides on top of it as the look control. This matters because the old control's centre value was its LEAST colourful setting: at a matched point the two gases cancel wherever both are strong, and moving in either direction added colour, which is not a thing a slider should do. Oxygen strength defaults to 0.85, chosen by eye against measurements on M 16 and NGC 7000 after the two targets were found to want opposite directions from the matched value.
+- Recipes saved before this release that contain a Narrowband step are refused rather than loaded. There is no honest mapping from the old single value onto the two controls that replaced it, and the alternative — dropping it silently and rendering with a default it was never given — would produce a different picture without saying so. Open the image in Narrowband and save the recipe again.
+- The clipping overlay is drawn by one piece of code now, shared between the main window and Starless Levels, so a mark means the same thing in both. The mark's colour is still the channel that died.
+
+### Fixed
+- Share crashed on any image whose width Qt had to pad. Qt aligns each row of a QImage to a four-byte boundary, and the conversion back assumed the padding was always a whole number of pixels — true at 1080 wide, false after a crop or an upscale. A 4107-pixel-wide drizzled frame failed outright with a reshape error.
+- A recipe preflight named tool and geometry steps by their internal ids, so it said 'flip_h', 'color_balance' or 'narrowband' at the user instead of the names those steps carry everywhere else in the app.
+
 ## [0.28.0] — 2026-09-09
 
 Frames with a roof or a tree in them are rejected automatically, and the in-app help finally describes the app that shipped
