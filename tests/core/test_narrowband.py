@@ -372,3 +372,16 @@ def test_the_matched_strength_is_the_least_colourful_one():
     matched = chroma_at(1.0)
     assert chroma_at(0.7) > matched, "moving oxygen DOWN from matched must add colour"
     assert chroma_at(1.6) > matched, "moving oxygen UP from matched must add colour"
+
+
+def test_the_default_oxygen_strength_is_not_the_matched_value():
+    """The matched value is a photometric statement, not a look.
+
+    Shipping it as the default is what made every render come out flatter than
+    the image it was given — the same failure as the saturation default fixed in
+    ef4f622, and the same shape: a control whose resting place is where it does
+    nothing.
+    """
+    p = NarrowbandParams()
+    assert p.oxygen_strength != 1.0, "the default must not sit on the matched point"
+    assert 0.3 <= p.oxygen_strength <= 2.0, "and must be reachable on the slider"

@@ -115,10 +115,41 @@ class NarrowbandParams:
     palette: str = "HOO"
     blackpoint: float = 1.0
     # How loud the oxygen is, applied to the MATCHED OIII plane. 1.0 leaves the
-    # photometric match exactly as computed. Below 1.0 is hydrogen-leaning and
-    # warm; above is oxygen-leaning and cool. The default is MEASURED, not
-    # chosen — see the comment rewritten in Task 4 of the plan.
-    oxygen_strength: float = 1.0
+    # photometric match exactly as computed, and is labelled "matched" on the
+    # slider. Below 1.0 is hydrogen-leaning and warm; above is oxygen-leaning
+    # and cool. Both effects come from the same move: raising it brings the teal
+    # out AND drains the reds, because it scales oxygen RELATIVE to hydrogen.
+    #
+    # 0.85 was CHOSEN BY EYE by Andreas on 2026-09-09, from rendered candidates
+    # at 0.60/0.70/0.85/1.00 on M 16 (hydrogen-dominant) and NGC 6992 (the Veil,
+    # oxygen-rich), the Veil judged on a native-resolution crop of its filaments.
+    # Bright-nebula chroma (0-255) at each, for the record:
+    #
+    #     strength      0.50   0.60   0.70   0.80   0.90   1.00   1.20
+    #     M 16          36.3   30.9   24.2   19.7   16.6   14.4   11.6
+    #     NGC 6992      16.1   14.7   12.4   11.1   10.4    9.9    9.3
+    #     M 8           64.5   57.4   42.6   31.7   24.5   19.7   13.4
+    #     M 17          27.2   26.8   21.8   18.1   15.6   13.8   11.9
+    #
+    # BY EYE, and deliberately so. Three measured criteria were tried and all
+    # three fail; do not replace this with a formula without reading why:
+    #
+    #  1. "Parity with the input's chroma" answers 1.00 — i.e. change nothing —
+    #     but only because it depends on how far through the pipeline the input
+    #     already is. A real pre-narrowband image measured 25.0 where the best
+    #     reconstruction from its own master measured 14.6, and colour
+    #     calibration closes 0.01 of that gap. The criterion silently encodes an
+    #     assumption about the user's workflow.
+    #  2. "Where the core stops being neutral" is the right idea measured wrongly:
+    #     the top 0.5% of luminance on a frame that still has its stars IS the
+    #     stars, which are white by construction and unmoved by any setting.
+    #  3. A bright-nebula chroma threshold clears at EVERY strength, so there is
+    #     no crossing to anchor on.
+    #
+    # What survives all three is only the shape: lower is warmer and more
+    # colourful, monotonically, on every target. There is no optimum in the data,
+    # only a preference — so a person chose it.
+    oxygen_strength: float = 0.85
     blend_amount: float = 0.6
     highlight_reduction: float = 1.0
     brightness: float = 1.0
