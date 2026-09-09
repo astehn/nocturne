@@ -176,9 +176,68 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rgb == 0, rgb == 255
 
 
+# --- the ONE clipping legend, shared by the canvas and the dialogs ----------
+#
+# The shadow mark is built ADDITIVELY from the channels that died: red, green
+# or blue for one; yellow, magenta or cyan for two; white for all three. So the
+# colour of the mark IS the answer to "which channel is gone", and white —
+# every channel lit — is the only case where the pixel really is black. That
+# matters: an earlier draft of this painted white for two dead channels too,
+# which says "black" about a pixel that is still, say, dark blue. Andreas
+# checked a flagged region against Photoshop, found healthy colour, and
+# reasonably read the old flat blue as a false alarm. It was not: only red had
+# died, and in an HOO palette red is Ha.
+CLIP_MARK_ON = 255       # a channel that is clipped
+CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
+# Highlights stay a single colour. On this sensor they are vanishingly rare —
+# 0.00002% measured on real captures, because Seestar star cores do not
+# saturate — and a second three-hue palette would cost readability for the case
+# that actually happens. Amber sits outside the shadow palette, so the two can
+# never be read as each other.
+CLIP_HIGHLIGHT = (255, 160, 0)
+
+
+def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
+    """Paint the clipping legend for `rgb` into `out` (default: `rgb` itself).
+
+    ONE implementation, because the legend is a thing the user LEARNS. The main
+    window's Show Clipping tooltip teaches channel colour = crushed, amber =
+    blown; a second painting with its own scheme meant white said "all three
+    crushed" on the canvas and "all three blown" in a dialog, so a user who
+    pulled the white point in and saw white specks read them as exactly the
+    opposite of what they were.
+
+    `out` separate from `rgb` is what lets the same painting serve both callers:
+    the canvas paints over the picture, so unclipped pixels keep their colour,
+    while `clip_overlay` paints onto a black field and the picture is replaced.
+
+    Nested np.where per channel, NOT `out[any_sh] = marks[any_sh]`. Measured on
+    an 8.3 MP frame with 6.6% clipped: this form 38.5 ms against 63.4 for the
+    fancy-index form and 40.2 for masked assignment, where the flat-blue paint
+    it replaces cost 33.3. Five milliseconds for naming the channel is the whole
+    price, and this runs on every live-preview tick.
+    """
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        raise ValueError("paint_clipping needs an H x W x 3 uint8 array; "
+                         f"got shape {rgb.shape}")
+    if out is None:
+        out = rgb
+    sh, hi = clip_masks(rgb)
+    r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
+    any_sh = r0 | g0 | b0
+    for i, dead in enumerate((r0, g0, b0)):
+        out[..., i] = np.where(
+            any_sh, np.where(dead, CLIP_MARK_ON, CLIP_MARK_OFF), out[..., i])
+    # Highlights painted last: a pixel can be 0 in one channel and 255 in
+    # another, and a blown core is the more urgent of the two. Bitwise, not
+    # .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
+    out[hi[..., 0] | hi[..., 1] | hi[..., 2]] = CLIP_HIGHLIGHT
+    return out
+
+
 def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    """Per-channel clipping painted onto a black field, reduced to `shape` with
-    a MAXIMUM rather than an average.
+    """`paint_clipping` onto a black field, reduced to `shape` with a MAXIMUM
+    rather than an average.
 
     The reduction is the point. The preview runs on a decimated copy for speed,
     and averaging a 4x4 block containing one blown pixel yields 255/16 = 16 —
@@ -188,25 +247,31 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     at preview scale is a wrong colour on one block, under-reporting is a blown
     core the user never sees.
 
-    Shadow and highlight are both painted PER CHANNEL, blown at full intensity and
-    crushed at half. Painting shadow per pixel instead collapses distinct faults
-    into one colour: a pixel with red crushed and green blown read as identical to
-    a plain all-crushed pixel, which defeats the point of a per-channel mask.
+    `shape` should be the size the overlay will be DISPLAYED at, not an
+    arbitrary intermediate: a smooth rescale afterwards re-dilutes exactly what
+    the block-max preserved (measured: an isolated lit block drops to 195 / 111
+    / 55 depending on the factor), which can leave a blown speck dimmer than a
+    flat crushed background and invert the legend again.
     """
-    shadow, highlight = clip_masks(rgb)
-    out = np.zeros_like(rgb)
-    out[highlight] = 255
-    out[shadow] = 128
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        # Its neighbour structural_clipping guards the same way. Without this a
+        # 2D array passes the identity branch and dies inside np.pad with a
+        # broadcast error that names neither the caller nor the cause.
+        raise ValueError("clip_overlay needs an H x W x 3 uint8 array; "
+                         f"got shape {rgb.shape}")
+    out = paint_clipping(rgb, np.zeros_like(rgb))
     h, w = shape
-    if out.shape[:2] == (h, w):
-        return out
-    # Block-max down to the preview size. Pad to a whole number of blocks so the
-    # trailing edge is not silently dropped.
     src_h, src_w = out.shape[:2]
+    if (src_h, src_w) == (h, w):
+        return out
+    # Block-max down to the display size. Pad to a whole number of blocks so the
+    # trailing edge is not silently dropped — but only when there IS a trailing
+    # edge: np.pad always copies, which is 24 MB on an 8.3 MP frame.
     bh, bw = -(-src_h // h), -(-src_w // w)
-    pad = ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0))
-    padded = np.pad(out, pad, mode="constant")
-    return padded.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+    if bh * h != src_h or bw * w != src_w:
+        out = np.pad(out, ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0)),
+                     mode="constant")
+    return out.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
 
 
 class BackgroundModel(NamedTuple):

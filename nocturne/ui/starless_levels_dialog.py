@@ -46,10 +46,15 @@ class StarlessLevelsDialog(QDialog):
 
         self.clip_check = QCheckBox("Show Clipping")
         self.clip_check.setChecked(False)
+        # Word for word the main window's own Show clipping tooltip. One
+        # legend: a mark must not mean two different things in two places.
         self.clip_check.setToolTip(
-            "Light up pixels that have gone pure black or pure white, coloured "
-            "by which channel died. Drag until the first specks appear, then "
-            "back off.")
+            "The mark's colour is the channel that died:\n"
+            "  red / green / blue — that one channel is at zero\n"
+            "  yellow / magenta / cyan — those two are\n"
+            "  white — all three, so the pixel really is black\n"
+            "Amber marks a channel blown to white instead.\n"
+            "Drag until the first specks appear, then back off.")
 
         self.preview_label = _ZoomPreview()
 

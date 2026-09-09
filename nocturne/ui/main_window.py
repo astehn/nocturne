@@ -61,7 +61,7 @@ from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
-from ..core.inspect import (clip_masks, clipping_from_histogram, sample,
+from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
                             structural_clipping)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
@@ -2394,50 +2394,21 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
-    # The shadow mark is built ADDITIVELY from the channels that died: red,
-    # green or blue for one; yellow, magenta or cyan for two; white for all
-    # three. So the colour of the mark IS the answer to "which channel is gone",
-    # and white — every channel lit — is the only case where the pixel really is
-    # black. That matters: an earlier draft of this painted white for two dead
-    # channels too, which says "black" about a pixel that is still, say, dark
-    # blue. Andreas checked a flagged region against Photoshop, found healthy
-    # colour, and reasonably read the old flat blue as a false alarm. It was
-    # not: only red had died, and in an HOO palette red is Ha.
-    _CLIP_MARK_ON = 255       # a channel that is clipped
-    _CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
-    # Highlights stay a single colour. On this sensor they are vanishingly rare
-    # — 0.00002% measured on real captures, because Seestar star cores do not
-    # saturate — and a second three-hue palette would cost readability for the
-    # case that actually happens. Amber sits outside the shadow palette, so the
-    # two can never be read as each other.
-    _CLIP_HIGHLIGHT = (255, 160, 0)
-
     def _set_canvas(self, img) -> None:
         """The ONE path to the canvas. Paints the clipping overlay when it is on
         and records what is on screen, so the hover readout can never disagree
-        with the pixels the user is looking at."""
+        with the pixels the user is looking at.
+
+        The painting itself lives in core.inspect.paint_clipping, shared with
+        the Starless Levels clipping view. Two implementations meant two
+        legends, and they said opposite things: white was "all three crushed"
+        here and "all three blown" there."""
         rgb = to_rgb8(img)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
         self._structural_clip = None if img.is_linear else structural_clipping(rgb)
         if self._show_clipping and not img.is_linear:
-            sh, hi = clip_masks(rgb)
-            r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
-            any_sh = r0 | g0 | b0
-            # Nested np.where per channel, NOT `rgb[any_sh] = marks[any_sh]`.
-            # Measured on an 8.3 MP frame with 6.6% clipped: this form 38.5 ms
-            # against 63.4 for the fancy-index form and 40.2 for masked
-            # assignment, where the flat-blue paint it replaces cost 33.3. Five
-            # milliseconds for naming the channel is the whole price, and this
-            # runs on every live-preview tick.
-            for i, dead in enumerate((r0, g0, b0)):
-                rgb[..., i] = np.where(
-                    any_sh, np.where(dead, self._CLIP_MARK_ON, self._CLIP_MARK_OFF),
-                    rgb[..., i])
-            # Highlights painted last: a pixel can be 0 in one channel and 255
-            # in another, and a blown core is the more urgent of the two.
-            # Bitwise, not .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
-            rgb[hi[..., 0] | hi[..., 1] | hi[..., 2]] = self._CLIP_HIGHLIGHT
+            paint_clipping(rgb)      # in place, over the picture
         self._canvas_img = img
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
 

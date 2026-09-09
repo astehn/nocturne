@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from nocturne.core.inspect import Sample, clip_overlay, sample
+from nocturne.core.inspect import (CLIP_HIGHLIGHT, CLIP_MARK_OFF, CLIP_MARK_ON,
+                                   Sample, clip_overlay, paint_clipping, sample)
 
 
 def test_sample_colour_returns_channels_and_mean_luminance():
@@ -393,15 +394,14 @@ def test_clean_frame_produces_a_black_overlay():
 
 def test_overlay_is_coloured_by_the_channel_that_died():
     """Which channel died is the whole story — a background where only red is
-    at zero still looks a healthy teal, so a flat OR-ed mask hides the fault."""
-    rgb = np.zeros((8, 8, 3), np.uint8)
-    rgb[..., 0] = 255          # red blown everywhere, green and blue mid
-    rgb[..., 1] = 128
-    rgb[..., 2] = 128
+    at zero still looks a healthy teal, so a flat OR-ed mask hides the fault.
+
+    Red CRUSHED, not blown: crushed is the per-channel half of the legend.
+    Blown is a single amber whatever the channel — see the test below."""
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[..., 0] = 0            # red at zero everywhere, green and blue mid
     out = clip_overlay(rgb, (8, 8))
-    assert out[0, 0, 0] == 255
-    assert out[0, 0, 1] == 0
-    assert out[0, 0, 2] == 0
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
 
 
 def test_shadow_and_highlight_clipping_are_distinguishable():
@@ -412,19 +412,22 @@ def test_shadow_and_highlight_clipping_are_distinguishable():
     rgb[0, 0] = 0              # all three channels at zero
     rgb[7, 7] = 255            # all three channels blown
     out = clip_overlay(rgb, (8, 8))
-    assert tuple(out[0, 0]) == (128, 128, 128)
-    assert tuple(out[7, 7]) == (255, 255, 255)
+    assert tuple(out[0, 0]) == (255, 255, 255)     # white: the pixel really is black
+    assert tuple(out[7, 7]) == CLIP_HIGHLIGHT      # amber: blown
 
 
-def test_mixed_clip_pixel_keeps_each_channel_distinct():
-    """Regression guard: shadow used to be painted per PIXEL, so a pixel with
-    red crushed and green blown collapsed to the same colour as a plain
-    all-crushed or all-blown pixel. Per-channel painting keeps every
-    combination distinct."""
+def test_a_blown_channel_wins_over_a_crushed_one_in_the_same_pixel():
+    """Highlights are painted LAST, deliberately: "a blown core is the more
+    urgent of the two". So a pixel that is crushed in red and blown in green
+    reads as blown, not as a third colour.
+
+    This is the app's own legend, not this function's opinion — the main
+    window's Show Clipping has always painted it this way, and the reason
+    there is ONE painting now is that the two used to disagree."""
     rgb = np.full((8, 8, 3), 128, np.uint8)
     rgb[2, 2] = (0, 255, 128)  # red crushed, green blown, blue clean
     out = clip_overlay(rgb, (8, 8))
-    assert tuple(out[2, 2]) == (128, 255, 0)
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
 
 
 def test_non_square_shapes_are_not_transposed():
@@ -439,8 +442,9 @@ def test_non_square_shapes_are_not_transposed():
     rgb[40, 10] = 255           # row-block 40//8=5, col-block 10//8=1
     out = clip_overlay(rgb, (8, 4))
     assert out.shape == (8, 4, 3)
-    assert tuple(out[5, 1]) == (255, 255, 255), "pixel landed in the wrong block — axes may be transposed"
-    assert np.count_nonzero(out) == 3, "exactly one blown pixel should survive, in one block"
+    assert tuple(out[5, 1]) == CLIP_HIGHLIGHT, "pixel landed in the wrong block — axes may be transposed"
+    assert np.count_nonzero(out) == 2, \
+        "exactly one blown block should survive (amber is 255,160,0 — two non-zero channels)"
 
 
 def test_identity_shape_is_not_reduced():
@@ -449,3 +453,58 @@ def test_identity_shape_is_not_reduced():
     out = clip_overlay(rgb, (8, 8))
     assert out[3, 3].any()
     assert not out[0, 0].any()
+
+
+# --- one legend, one implementation ---------------------------------------
+
+def test_the_dialog_overlay_and_the_canvas_agree_on_what_white_means():
+    """The defect: `clip_overlay` had invented a second legend (blown 255,
+    crushed 128), so WHITE meant "all three crushed" on the canvas and "all
+    three blown" in the Starless Levels dialog. A user who learned the main
+    window's tooltip pulled the white point in, saw white specks, and read them
+    as crushed to black — exactly inverted.
+
+    Asserted through the SHARED painter against the canvas's own path, so the
+    two cannot drift apart again.
+    """
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0             # all three crushed
+    rgb[1, 1] = 255           # all three blown
+    rgb[2, 2] = (0, 128, 128)  # red alone crushed
+
+    canvas = paint_clipping(rgb.copy())          # over the picture, as _set_canvas does
+    overlay = clip_overlay(rgb, (4, 4))          # onto black, then reduced 1:1
+
+    assert tuple(canvas[0, 0]) == tuple(overlay[0, 0]) == (255, 255, 255)
+    assert tuple(canvas[1, 1]) == tuple(overlay[1, 1]) == CLIP_HIGHLIGHT
+    assert tuple(canvas[2, 2]) == tuple(overlay[2, 2]) == \
+        (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    # ...and the one difference that is meant to exist: the canvas keeps the
+    # picture where nothing clipped, the overlay replaces it with black.
+    assert tuple(canvas[3, 3]) == (128, 128, 128)
+    assert tuple(overlay[3, 3]) == (0, 0, 0)
+
+
+def test_the_main_window_no_longer_carries_its_own_painting():
+    """A shared function is only shared while both callers use it. This is the
+    cheap guard against someone re-inlining the canvas painting and quietly
+    restoring the two contradictory legends."""
+    from pathlib import Path
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    assert "paint_clipping(rgb)" in src
+    assert "_CLIP_MARK_ON" not in src and "_CLIP_HIGHLIGHT" not in src
+
+
+def test_a_two_dimensional_input_is_refused_rather_than_dying_inside_np_pad():
+    """It is a public core/ function, and its neighbour structural_clipping
+    guards `rgb.ndim != 3`. Without this a mono array passed the identity
+    branch and raised a broadcast ValueError from np.pad naming neither the
+    caller nor the cause — and only when a reduction happened to be needed."""
+    import pytest
+    mono = np.full((16, 16), 128, np.uint8)
+    with pytest.raises(ValueError, match="H x W x 3"):
+        clip_overlay(mono, (4, 4))
+    with pytest.raises(ValueError, match="H x W x 3"):
+        clip_overlay(mono, (16, 16))       # the identity branch too
+    with pytest.raises(ValueError, match="H x W x 3"):
+        paint_clipping(mono)
