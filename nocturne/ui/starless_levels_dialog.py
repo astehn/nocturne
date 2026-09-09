@@ -107,9 +107,15 @@ class StarlessLevelsDialog(QDialog):
             box.setLocale(QLocale.c())
             box.setToolTip(tip)
             box.valueChanged.connect(self._on_readout_edited)
+        self.black_val.valueChanged.connect(lambda *_: self._note_end("lo"))
+        self.white_val.valueChanged.connect(lambda *_: self._note_end("hi"))
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.setToolTip("Back to 0.000 / 1.000 — the untouched image")
         self.reset_btn.clicked.connect(self.reset)
+
+        # Which end the user is working, when they said so by TYPING rather than
+        # by dragging. None means "ask the handles".
+        self._typed_end: str | None = None
 
         self.clip_check = QCheckBox("Show Clipping")
         self.clip_check.setChecked(False)
@@ -247,6 +253,11 @@ class StarlessLevelsDialog(QDialog):
     def reset(self) -> None:
         # `set_range` is deliberately silent, so the readout refresh and the
         # re-render are asked for explicitly here.
+        # Reset means no end is being worked any more, so the clipping view goes
+        # back to its opening polarity rather than keeping whichever ground the
+        # abandoned edit had chosen.
+        self._typed_end = None
+        self.handles.reset_last_handle()
         self.handles.set_range(0.0, 1.0)
         self._sync_readouts()
         self._queue_preview()
@@ -272,6 +283,11 @@ class StarlessLevelsDialog(QDialog):
         self._queue_preview()
 
     def _on_range_changed(self, _lo: float, _hi: float) -> None:
+        # A real handle drag is now the most recent statement of which end is
+        # being worked, so a typed one stops speaking for it. `rangeChanged`
+        # fires on drags only (`set_range` is silent), so this cannot be
+        # tripped by the sync below writing the numbers back.
+        self._typed_end = None
         self._sync_readouts()
         self._queue_preview()
 
@@ -446,7 +462,20 @@ class StarlessLevelsDialog(QDialog):
         to clamp the pair, so this is one accessor, not a duplicate state
         machine that could drift from it.
         """
-        return self.handles.last_handle()
+        return self._typed_end or self.handles.last_handle()
+
+    def _note_end(self, end: str) -> None:
+        """Typing into a readout is working that end, exactly as dragging its
+        handle is.
+
+        `RangeHandles.last_handle` deliberately ignores `set_range`, so that a
+        preset cannot masquerade as a handle drag — correct for its own
+        purposes, but the spin boxes here are not a preset. They are the same
+        control as the handle, offered to someone who wants to type 0.154
+        rather than find it with a mouse, so they must flip the clipping ground
+        the same way. Held here rather than pushed into RangeHandles, so
+        Colour Balance's use of the same widget is untouched."""
+        self._typed_end = end
 
     def _update_clip_line(self) -> None:
         """State which end is showing, then the total in words, the way the

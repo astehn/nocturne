@@ -59,6 +59,14 @@ class RangeHandles(QWidget):
         was touched by hand."""
         return self._last_handle
 
+    def reset_last_handle(self) -> None:
+        """Forget which handle was last dragged.
+
+        For a caller whose Reset means "nothing is being worked now" — without
+        it, a view that follows the worked end keeps pointing at an edit the
+        user has just thrown away."""
+        self._last_handle = None
+
     def set_range(self, lo: float, hi: float) -> None:
         """Set both bounds, ordered, clamped into [0, 1] and never narrower
         than `_MIN_SPAN`.

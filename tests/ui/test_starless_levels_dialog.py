@@ -832,3 +832,45 @@ def test_the_label_states_which_end_is_showing(qtbot, polarity_split):
     dlg._render_preview()
     assert "highlight" in dlg.clip_line.text().lower(), dlg.clip_line.text()
     assert "shadow" not in dlg.clip_line.text().lower(), dlg.clip_line.text()
+
+
+def _dlg(qtbot):
+    starless = np.full((64, 64, 3), 0.5, np.float32)
+    stars = np.zeros((64, 64, 3), np.float32)
+    d = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                             AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(d)
+    return d
+
+
+def test_typing_a_black_value_flips_the_clipping_ground_like_dragging_does(qtbot):
+    """The spin boxes are the same control as the handles, offered to someone who
+    would rather type 0.154 than find it with a mouse — so they must choose the
+    clipping ground the same way. `RangeHandles.last_handle` ignores `set_range`
+    on purpose (so a preset cannot pose as a drag), which is why the dialog
+    tracks a typed end itself."""
+    d = _dlg(qtbot)
+    assert d._clip_end() is None            # nothing worked yet
+    d.black_val.setValue(0.2)
+    assert d._clip_end() == "lo"
+    d.white_val.setValue(0.8)
+    assert d._clip_end() == "hi"
+
+
+def test_a_handle_drag_supersedes_a_typed_end(qtbot):
+    """Most recent wins. Without this the first typed value would pin the ground
+    for the rest of the session and dragging a handle could not change it."""
+    d = _dlg(qtbot)
+    d.black_val.setValue(0.2)
+    assert d._clip_end() == "lo"
+    d.handles._last_handle = "hi"           # as a real drag leaves it
+    d._on_range_changed(*d.handles.range())
+    assert d._clip_end() == "hi"
+
+
+def test_reset_forgets_which_end_was_being_worked(qtbot):
+    d = _dlg(qtbot)
+    d.black_val.setValue(0.2)
+    assert d._clip_end() == "lo"
+    d.reset()
+    assert d._clip_end() is None
