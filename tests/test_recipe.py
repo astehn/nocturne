@@ -358,20 +358,27 @@ def test_an_enhancement_is_named_by_its_tap(tmp_path):
     assert preflight(r, Settings())[0].step == "Boost Gold"
 
 
-def test_starless_levels_round_trips_through_a_recipe():
-    from nocturne.recipe import serialize_option, deserialize_option
-    assert serialize_option("starless_levels", (0.1, 0.8)) == [0.1, 0.8]
-    assert deserialize_option("starless_levels", [0.1, 0.8]) == (0.1, 0.8)
+def test_starless_levels_is_reported_as_uncaptured_not_silently_saved():
+    """Recipe-capturing it destroys a whole batch.
 
+    The name USED to be in `_NAME_TO_STAGE`, which both serialised the step
+    into the recipe and removed it from `uncaptured_step_names` — so Save
+    Recipe stopped warning. There is no `starless_levels` case in `make_step`,
+    so preflight said "This step will run as saved" and `apply_recipe` then
+    raised `ValueError('starless_levels')`, which run_batch's per-file
+    `except Exception` turns into a failure for EVERY file in the folder,
+    under a raw stage id.
 
-def test_starless_levels_is_named_not_shown_as_a_raw_id():
-    """A preflight that says 'starless_levels' at the user is a defect — the
-    same one that made recipes say 'flip_h' and 'color_balance'."""
-    from nocturne.recipe import _step_display_name
-    assert _step_display_name("starless_levels") == "Starless Levels"
+    It is not implemented as a replayable step because it should not be one:
+    the two values come from a person looking at one picture, so they do not
+    transfer to the next target. The honest answer is the warning.
+    """
+    from nocturne.recipe import (_NAME_TO_STAGE, recipe_from_entries,
+                                 uncaptured_step_names)
+    entries = [("Stretch", 0.5), ("Starless Levels", (0.1, 0.8))]
+    assert "Starless Levels" not in _NAME_TO_STAGE
+    assert uncaptured_step_names(entries) == ["Starless Levels"]
+    # ...and it is left out of the recipe rather than written as a stage no
+    # loader can build.
+    assert [s["stage"] for s in recipe_from_entries(entries).steps] == ["stretch"]
 
-
-def test_starless_levels_is_distinct_from_the_levels_step():
-    """Two steps must never collide in the recipe, the log or provenance."""
-    from nocturne.recipe import _step_display_name
-    assert _step_display_name("levels") != _step_display_name("starless_levels")

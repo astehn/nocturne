@@ -1275,8 +1275,8 @@ _t("upscale", "Upscale Crop",
        "screened back afterwards, untouched by either slider — so the same move that is unsafe "
        "on the full frame is exactly what the name says it is here.</p>"
        "<h4>How to use it</h4>"
-       "<p>Click <b>Starless Levels…</b> in the toolbar once your image is stretched — it "
-       "refuses a linear image, same as Levels. Opening it separates the stars first, off the "
+       "<p>Click <b>Starless Levels…</b> in the toolbar once your image is stretched — on a "
+       "linear image it says so rather than running. Opening it separates the stars first, off the "
        "UI thread behind the busy panel, which makes it slower to open than any other finishing "
        "tool; that wait is the split running, not a hang. Drag <b>Black point</b> and "
        "<b>White point</b> against the live preview until the background reads clean and the "
@@ -1292,8 +1292,11 @@ _t("upscale", "Upscale Crop",
        "zoomed in, it covers only the visible region.</p>"
        "<h4>Tips</h4>"
        "<p>Applying records one history step called <b>Starless Levels</b> carrying your two "
-       "values, so it reaches the log, a saved recipe and the provenance report like any other "
-       "step.</p>"),
+       "values, so it reaches the log and the provenance report like any other step. It is "
+       "<b>not</b> captured in a saved recipe: these two numbers belong to one picture — you "
+       "set them by looking at where that image's data begins — and replaying them over a "
+       "folder of different targets would mean something different on every frame. Save "
+       "Recipe says so when your history contains this step.</p>"),
 
     _t("fullscreen", "Inspecting your image",
        "Press F for the image and nothing else.",

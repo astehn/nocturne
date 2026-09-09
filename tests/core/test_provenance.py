@@ -52,3 +52,18 @@ def test_the_engines_section_does_not_claim_to_know_what_ran_historically():
                      date=datetime.date(2026, 9, 2), settings=Settings())
     section = r.split("## Engines")[1]
     assert "current tool configuration" in section
+
+
+def test_a_step_absent_from_the_recipe_map_is_still_named_in_the_report():
+    """Starless Levels is deliberately NOT recipe-capturable (see
+    tests/test_recipe.py), and `_serialize` reaches `_NAME_TO_STAGE` — so the
+    thing to check is that dropping it there did not turn the report into raw
+    ids. It does not: the report is written from the recorded NAME, and a
+    tuple option is serialised without consulting the map at all."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    r = build_report([("Starless Levels", (0.1, 0.8))], {}, app_version="0.24.0",
+                     date=datetime.date(2026, 9, 9))
+    assert "Starless Levels" in r
+    assert "starless_levels" not in r
+    assert "0.1, 0.8" in r          # the two values are still recorded

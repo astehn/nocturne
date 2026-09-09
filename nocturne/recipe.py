@@ -23,7 +23,11 @@ _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
 LEGACY_OIII_REASON = ("saved before the oxygen controls changed — "
                       "open it in Narrowband and re-save the recipe")
 _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
-_NAME_TO_STAGE["Starless Levels"] = "starless_levels"   # finishing tool, appends
+# Starless Levels is deliberately ABSENT. Its two numbers come from a person
+# looking at one picture — that is the whole premise of the tool — so replaying
+# them across a folder of different targets would mean something different on
+# every frame. Being absent here is what makes uncaptured_step_names report it,
+# so Save Recipe warns honestly instead of promising a step it cannot replay.
 
 
 @dataclass
@@ -48,9 +52,6 @@ def serialize_option(stage_id, option):
     if stage_id == "levels":
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
-    if stage_id == "starless_levels":
-        b, w = option if option else (0.0, 1.0)
-        return [float(b), float(w)]
     if stage_id == "stretch":
         return float(option) if option not in (None, "") else 0.5
     if stage_id in ("local_contrast", "star_reduction", "recover_core", "green_fringe",
@@ -110,8 +111,6 @@ def deserialize_option(stage_id, value):
         return tuple(value) if value else (0.0, 0.0)
     if stage_id == "levels":
         return tuple(value)
-    if stage_id == "starless_levels":
-        return tuple(value) if value else (0.0, 1.0)
     if stage_id == "rotate":
         return CropParams(rotate=90)
     if stage_id == "flip_h":

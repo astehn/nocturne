@@ -1647,6 +1647,29 @@ def test_ok_records_a_history_step_through_the_whole_open_path(qtbot, tmp_path, 
         "Cancel button and the wait cursor sit over it"
 
 
+def test_save_recipe_warns_that_starless_levels_is_not_captured(qtbot, tmp_path, monkeypatch):
+    """The honest warning, driven from a REAL history entry rather than a
+    monkeypatched name.
+
+    While the step was recipe-capturable this dialog did not appear at all: the
+    step serialised into the recipe, preflight said it would run as saved, and
+    `apply_recipe` then raised `ValueError('starless_levels')` — which
+    `run_batch`'s per-file `except Exception` turns into a failure for every
+    file in the folder."""
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import file_dialogs
+    win = _stretched_window(qtbot, tmp_path)
+    win._apply_starless_levels(win.project.current(), (0.1, 0.8))
+    said = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda _p, _t, text, *a, **k:
+                                     (said.append(text), QMessageBox.StandardButton.Cancel)[1]))
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: pytest.fail("saved a recipe silently")))
+    win._save_recipe()
+    assert said and "Starless Levels" in said[0]
+
+
 def test_toolbar_overflow_at_the_small_screen_floor(qtbot, tmp_path):
     """A sixth "finish it" tool pushes the tail behind the chevron at the
     1280x800 floor (bar overflows ~1058px — see the comment above `tint` in
