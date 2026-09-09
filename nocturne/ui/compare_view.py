@@ -49,6 +49,8 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
 from .curves_dialog import _ZoomPreview, _scaled_to_box
 from .image_view import ImageView
 
+_LETTERBOX = "#2a2d31"
+
 MODES = ("off", "wipe", "side")
 
 # Slack left inside the wipe pane, in pixels — see `CompareView.pane_size`.
@@ -105,6 +107,13 @@ class CompareView(QWidget):
         for pane in (self._after_pane, self._before_pane):
             pane.setMinimumSize(120, 120)
             pane.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # The letterbox must not be the same colour as the picture. The
+            # Starless Levels clipping view is pure black wherever nothing
+            # clips, and against the window's own BG_1 #1e1f22 the picture's
+            # edge is invisible — Andreas read a correctly-sized overlay as
+            # covering only part of the image. #2a2d31 is light enough to bound
+            # a black frame and still recede behind an ordinary preview.
+            pane.setStyleSheet(f"background: {_LETTERBOX};")
             # Ignored/Ignored, or the PIXMAP drives the layout. A QLabel's
             # sizeHint is its pixmap's size, so in Side mode the QHBoxLayout
             # split the width by the two pictures' sizes: measured at 1180x860,

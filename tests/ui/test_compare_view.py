@@ -291,3 +291,21 @@ def test_a_speck_in_a_corner_survives_to_the_displayed_pixmap(qtbot):
         corner = shown[:max(1, h // 8), :max(1, w // 8)]
         assert int(corner.max()) > 128, (
             f"the speck is missing from the {name} pane's top-left corner")
+
+
+def test_the_letterbox_is_not_the_same_colour_as_a_black_picture(qtbot):
+    """A clipping overlay is pure black wherever nothing clips. If the pane
+    behind it were black too, a letterboxed picture would have no visible edge
+    and the view reads as though the overlay covers only part of the image —
+    which is exactly how it was reported. The pane must be distinguishable from
+    #000000 without being bright enough to compete with the picture.
+    """
+    from nocturne.ui.compare_view import _LETTERBOX
+
+    view = CompareView()
+    qtbot.addWidget(view)
+    for pane in (view._after_pane, view._before_pane):
+        assert _LETTERBOX in pane.styleSheet()
+    r, g, b = (int(_LETTERBOX[i:i + 2], 16) for i in (1, 3, 5))
+    assert max(r, g, b) >= 0x28, "too close to black to bound the picture"
+    assert max(r, g, b) <= 0x50, "bright enough to compete with the picture"
