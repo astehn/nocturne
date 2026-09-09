@@ -79,8 +79,13 @@ def test_a_pre_split_recipe_is_refused_by_name_not_silently_dropped():
     assert len(plans) == 1
     assert plans[0].outcome == "fail"
     assert plans[0].reason == LEGACY_OIII_REASON
+    # The STEP NAME, not just the reason. Asserting "Narrowband" in the summary
+    # passed while the step was named "narrowband", because the reason text
+    # happens to contain the capitalised word — a toothless check that looked
+    # like a real one.
+    assert plans[0].step == "Narrowband", "the user's name for the step, not the stage id"
     summary = preflight_summary(plans)
-    assert "Narrowband" in summary and "cannot run" in summary
+    assert "cannot run" in summary
 
 
 def test_a_current_recipe_still_runs():

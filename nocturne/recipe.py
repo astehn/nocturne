@@ -209,6 +209,26 @@ class StepPlan:
         return self.outcome != "fail"
 
 
+def _step_display_name(stage_id) -> str:
+    """The name the user knows a step by.
+
+    STEP_NAME only covers the STEPPER stages, so every tool and geometry step —
+    Narrowband, Colour Balance, Crop, Rotate, Flip — fell through to its raw
+    stage id and a preflight said "flip_h" or "color_balance" at the user.
+    _NAME_TO_STAGE already holds those names; this reads it backwards.
+    """
+    from .ui.pipeline import STEP_NAME
+
+    if not stage_id:
+        return "?"
+    if stage_id in STEP_NAME:
+        return STEP_NAME[stage_id]
+    for name, sid in _NAME_TO_STAGE.items():
+        if sid == stage_id:
+            return name
+    return stage_id
+
+
 def preflight(recipe: Recipe, settings) -> list[StepPlan]:
     """Step by step: what will run, what will be substituted, what will fail.
 
@@ -229,7 +249,7 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
     for step in recipe.steps:
         sid = step.get("stage")
         name = (str(step.get("option")) if sid == "enhance"
-                else STEP_NAME.get(sid, sid or "?"))
+                else _step_display_name(sid))
         opt = step.get("option")
         if sid == "narrowband" and isinstance(opt, dict) and "oiii_boost" in opt:
             plans.append(StepPlan(name, "fail", "", LEGACY_OIII_REASON))
