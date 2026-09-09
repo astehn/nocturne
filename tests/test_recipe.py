@@ -356,3 +356,22 @@ def test_an_enhancement_is_named_by_its_tap(tmp_path):
     from nocturne.settings import Settings
     r = Recipe(steps=[{"stage": "enhance", "option": "Boost Gold"}])
     assert preflight(r, Settings())[0].step == "Boost Gold"
+
+
+def test_starless_levels_round_trips_through_a_recipe():
+    from nocturne.recipe import serialize_option, deserialize_option
+    assert serialize_option("starless_levels", (0.1, 0.8)) == [0.1, 0.8]
+    assert deserialize_option("starless_levels", [0.1, 0.8]) == (0.1, 0.8)
+
+
+def test_starless_levels_is_named_not_shown_as_a_raw_id():
+    """A preflight that says 'starless_levels' at the user is a defect — the
+    same one that made recipes say 'flip_h' and 'color_balance'."""
+    from nocturne.recipe import _step_display_name
+    assert _step_display_name("starless_levels") == "Starless Levels"
+
+
+def test_starless_levels_is_distinct_from_the_levels_step():
+    """Two steps must never collide in the recipe, the log or provenance."""
+    from nocturne.recipe import _step_display_name
+    assert _step_display_name("levels") != _step_display_name("starless_levels")

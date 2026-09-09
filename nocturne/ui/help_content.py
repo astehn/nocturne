@@ -1256,6 +1256,45 @@ _t("upscale", "Upscale Crop",
        "<p>A trim changes the framing, so it clears a plate solve just as a crop does. Solve "
        "again afterwards if you want the annotations back.</p>"),
 
+    _t("starless_levels", "Starless Levels",
+       "Pull the black and white points in on the starless layer alone, with the stars "
+       "screened back untouched.",
+       "<h4>What it does</h4>"
+       "<p>The move a Photoshop workflow already knows: export the starless layer, open it, "
+       "add a Levels adjustment, and drag the black <b>and</b> white input points in to where "
+       "the data actually begins. Starless Levels does that inside Nocturne, without giving up "
+       "your history, undo, or Share annotations along the way. It splits the stars off, "
+       "applies your two points to the starless layer alone, then screens the untouched stars "
+       "back over the result.</p>"
+       "<h4>Why the white point is safe here</h4>"
+       "<p><b>Levels</b>' own <b>Auto</b> is deliberately black-point-only — gamma and white "
+       "point pinned at 1.00 — because on a full frame the measured 99.9th-percentile white "
+       "point drove roughly 0.08% of pixels, about 6,000 star cores, to pure white on every "
+       "master. Seestar star cores do not saturate in capture, so that would be destroying real "
+       "colour data. A starless layer has no star cores left to clip — they are held aside and "
+       "screened back afterwards, untouched by either slider — so the same move that is unsafe "
+       "on the full frame is exactly what the name says it is here.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Click <b>Starless Levels…</b> in the toolbar once your image is stretched — it "
+       "refuses a linear image, same as Levels. Opening it separates the stars first, off the "
+       "UI thread behind the busy panel, which makes it slower to open than any other finishing "
+       "tool; that wait is the split running, not a hang. Drag <b>Black point</b> and "
+       "<b>White point</b> against the live preview until the background reads clean and the "
+       "nebulosity keeps its colour.</p>"
+       "<h4>Show Clipping</h4>"
+       "<p><b>Show Clipping</b> replaces the picture with a clipping view: a blown channel "
+       "paints at full intensity, a crushed channel paints at half intensity, <b>per channel</b> "
+       "— so a pixel with red crushed and green blown looks different from one that is simply "
+       "all crushed. Drag until the first specks appear, then back off. It is the same idea as "
+       "Photoshop's Option-drag threshold view, but as a toggle you can see rather than a "
+       "hidden modifier only Photoshop users would find. At the default fit zoom the mask is "
+       "computed over the whole frame at native resolution, so a speck anywhere is caught; "
+       "zoomed in, it covers only the visible region.</p>"
+       "<h4>Tips</h4>"
+       "<p>Applying records one history step called <b>Starless Levels</b> carrying your two "
+       "values, so it reaches the log, a saved recipe and the provenance report like any other "
+       "step.</p>"),
+
     _t("fullscreen", "Inspecting your image",
        "Press F for the image and nothing else.",
        "<h4>What it does</h4>"
@@ -1649,7 +1688,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     # help sat in TOPICS that no user could open. tests/ui/test_help_accuracy.py
     # now fails if a topic is unreachable.
     HelpSection("Tools", ("tools", "auto-enhance", "plate-solve", "star_spikes", "narrowband",
-                          "color_balance", "trim")),
+                          "color_balance", "starless_levels", "trim")),
     HelpSection("Sharing & Projects", ("share", "upscale", "saved-projects", "provenance")),
     HelpSection("Stacking & Ha/OIII", ("stacking", "haoiii", "combine")),
     HelpSection("Recipes & Batch", ("recipes",)),
