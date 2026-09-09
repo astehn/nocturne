@@ -176,6 +176,39 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rgb == 0, rgb == 255
 
 
+# Highlight clipping paints in the channel that died; shadow clipping paints in
+# its complement, so the two are told apart at a glance rather than by legend.
+_SHADOW_TINT = np.array([0, 255, 255], np.uint8)
+
+
+def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """Per-channel clipping painted onto a black field, reduced to `shape` with
+    a MAXIMUM rather than an average.
+
+    The reduction is the point. The preview runs on a decimated copy for speed,
+    and averaging a 4x4 block containing one blown pixel yields 255/16 = 16 —
+    invisible. A user drags the white point until the first specks appear, so an
+    overlay that dilutes isolated pixels hides exactly the signal it exists to
+    show. Any clipped pixel inside a block lights the whole block: over-reporting
+    at preview scale is a wrong colour on one block, under-reporting is a blown
+    core the user never sees.
+    """
+    shadow, highlight = clip_masks(rgb)
+    out = np.zeros_like(rgb)
+    out[highlight] = 255
+    out[np.any(shadow, axis=2)] |= _SHADOW_TINT
+    h, w = shape
+    if out.shape[:2] == (h, w):
+        return out
+    # Block-max down to the preview size. Pad to a whole number of blocks so the
+    # trailing edge is not silently dropped.
+    src_h, src_w = out.shape[:2]
+    bh, bw = -(-src_h // h), -(-src_w // w)
+    pad = ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0))
+    padded = np.pad(out, pad, mode="constant")
+    return padded.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+
+
 class BackgroundModel(NamedTuple):
     image: "AstroImage"      # the removed gradient, normalised for viewing
     span: float              # its strength in the image's own units

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from nocturne.core.inspect import Sample, sample
+from nocturne.core.inspect import Sample, clip_overlay, sample
 
 
 def test_sample_colour_returns_channels_and_mean_luminance():
@@ -350,3 +350,55 @@ def test_a_real_gradient_is_not_dismissed_as_nothing():
     m = background_model(AstroImage(before, is_linear=True),
                          AstroImage(after, is_linear=True))
     assert m.removed_anything, f"span {m.span} dismissed as nothing"
+
+
+def test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview():
+    """The defect this function exists to prevent: averaging down a 64x64 frame
+    with one blown pixel to 8x8 dilutes it to 255/64 = 4, invisible. The user
+    drags looking for the first speck and never sees it.
+
+    The background is mid-grey, NOT zeros: at 0 every background pixel is itself
+    shadow-clipped, the whole overlay lights up, and the assertion passes whether
+    the reduction is a max or a mean — i.e. it cannot fail for the right reason.
+    """
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out.shape == (8, 8, 3)
+    assert out[1, 1].any(), "the clipped pixel was averaged away"
+    assert not out[0, 0].any(), "a clean block must stay black"
+
+
+def test_clean_frame_produces_a_black_overlay():
+    rgb = np.full((16, 16, 3), 128, np.uint8)
+    out = clip_overlay(rgb, (4, 4))
+    assert not out.any()
+
+
+def test_overlay_is_coloured_by_the_channel_that_died():
+    """Which channel died is the whole story — a background where only red is
+    at zero still looks a healthy teal, so a flat OR-ed mask hides the fault."""
+    rgb = np.zeros((8, 8, 3), np.uint8)
+    rgb[..., 0] = 255          # red blown everywhere, green and blue mid
+    rgb[..., 1] = 128
+    rgb[..., 2] = 128
+    out = clip_overlay(rgb, (8, 8))
+    assert out[0, 0, 0] == 255
+    assert out[0, 0, 1] == 0
+    assert out[0, 0, 2] == 0
+
+
+def test_shadow_and_highlight_clipping_are_distinguishable():
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[0, 0] = 0              # all three channels at zero
+    rgb[7, 7] = 255            # all three channels blown
+    out = clip_overlay(rgb, (8, 8))
+    assert tuple(out[0, 0]) != tuple(out[7, 7])
+
+
+def test_identity_shape_is_not_reduced():
+    rgb = np.full((8, 8, 3), 128, np.uint8)   # grey, so only [3, 3] clips
+    rgb[3, 3] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out[3, 3].any()
+    assert not out[0, 0].any()
