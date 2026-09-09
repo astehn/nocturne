@@ -365,7 +365,10 @@ def test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview():
     rgb[10, 10] = 255
     out = clip_overlay(rgb, (8, 8))
     assert out.shape == (8, 8, 3)
-    assert out[1, 1].any(), "the clipped pixel was averaged away"
+    # Exact value, not .any(): under a mean reduction one blown pixel in a
+    # 64-px block yields 255/64 = 3, which is truthy. Only == 255 separates a
+    # max reduction from a mean one.
+    assert out[1, 1, 0] == 255, "the clipped pixel was averaged away, not maxed"
     assert not out[0, 0].any(), "a clean block must stay black"
 
 
