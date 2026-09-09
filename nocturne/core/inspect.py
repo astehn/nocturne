@@ -260,13 +260,32 @@ CLIP_HIGHLIGHT = (255, 160, 0)
 
 
 def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
-                   baseline: ClipBaseline | None = None) -> np.ndarray:
+                   baseline: ClipBaseline | None = None,
+                   end: str | None = None) -> np.ndarray:
     """Paint the clipping legend for `rgb` into `out` (default: `rgb` itself).
 
     `baseline`, forwarded to `clip_masks`, restricts the paint to pixels newly
     clipped since it was captured — see `ClipBaseline`. None (the default)
     paints the total, exactly as before; this is what the main window's
     live-preview tick uses, unchanged.
+
+    `end` follows Photoshop's polarity (Andreas, working the Starless Levels
+    black point: "In photoshop the clipping overlay for black point is white
+    and for the highlights its black"). None (default) paints BOTH ends, byte
+    for byte what shipped before — every branch below is gated on `end` so the
+    main window's live-preview path, which never passes it, cannot be touched.
+    "lo" paints ONLY shadow (crushed) marks, for a caller that has filled `out`
+    with a WHITE ground. "hi" paints ONLY highlight (blown) marks, for a black
+    ground — the ground colour itself is the caller's choice, made by what it
+    fills `out` with; this function only ever adds marks.
+
+    The one deviation "lo" makes from the shared legend: an all-three-channels
+    -dead pixel normally paints white (every channel lit), which is invisible
+    against a white ground and would read as "nothing here" for the pixel that
+    is most completely gone. It paints BLACK there instead — legible, and what
+    Photoshop's own threshold view shows for a fully clipped pixel. No other
+    colour changes on either ground; a single dead channel still keeps its own
+    colour, which is the point of the legend.
 
     ONE implementation, because the legend is a thing the user LEARNS. The main
     window's Show Clipping tooltip teaches channel colour = crushed, amber =
@@ -277,7 +296,7 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
 
     `out` separate from `rgb` is what lets the same painting serve both callers:
     the canvas paints over the picture, so unclipped pixels keep their colour,
-    while `clip_overlay` paints onto a black field and the picture is replaced.
+    while `clip_overlay` paints onto a solid field and the picture is replaced.
 
     Nested np.where per channel, NOT `out[any_sh] = marks[any_sh]`. Measured on
     an 8.3 MP frame with 6.6% clipped: this form 38.5 ms against 63.4 for the
@@ -298,27 +317,47 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
         out = rgb
     on, off = np.uint8(CLIP_MARK_ON), np.uint8(CLIP_MARK_OFF)
     sh, hi = clip_masks(rgb, baseline=baseline)
-    r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
-    any_sh = r0 | g0 | b0
-    for i, dead in enumerate((r0, g0, b0)):
-        out[..., i] = np.where(any_sh, np.where(dead, on, off), out[..., i])
+    if end != "hi":
+        r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
+        any_sh = r0 | g0 | b0
+        for i, dead in enumerate((r0, g0, b0)):
+            out[..., i] = np.where(any_sh, np.where(dead, on, off), out[..., i])
+        if end == "lo":
+            out[r0 & g0 & b0] = 0
     # Highlights painted last: a pixel can be 0 in one channel and 255 in
     # another, and a blown core is the more urgent of the two. Bitwise, not
     # .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
-    out[hi[..., 0] | hi[..., 1] | hi[..., 2]] = CLIP_HIGHLIGHT
+    if end != "lo":
+        out[hi[..., 0] | hi[..., 1] | hi[..., 2]] = CLIP_HIGHLIGHT
     return out
 
 
 def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
-                 baseline: ClipBaseline | None = None) -> np.ndarray:
-    """`paint_clipping` onto a black field, reduced to `shape` with a MAXIMUM
-    rather than an average.
+                 baseline: ClipBaseline | None = None,
+                 end: str | None = None) -> np.ndarray:
+    """`paint_clipping` onto a solid field, reduced to `shape` with a MAXIMUM
+    (or, on a white ground, a MINIMUM) rather than an average.
 
     `baseline`, forwarded to `paint_clipping`, must be captured at the SAME
     shape as `rgb` (not `shape` — that is only the display target). A caller
     diffing against a zoomed crop or a resized composite needs to capture a
     matching-shape baseline itself; `clip_masks` raises rather than silently
     misaligning if the shapes disagree.
+
+    `end` mirrors `paint_clipping` — None (default) is a BLACK ground showing
+    both ends, byte for byte what shipped before. "lo" is a WHITE ground
+    showing shadow clipping alone (Photoshop's black-point threshold view);
+    "hi" keeps the black ground but shows highlight clipping alone. The ground
+    is a plain fill of `out` before painting, so `paint_clipping` never needs
+    to know about it.
+
+    The reduction has to flip with the ground. MAXIMUM is what preserves an
+    isolated blown pixel against a black field — it is the brightest thing in
+    its block. On a WHITE ground the informative pixel is the DARK one: a lone
+    crushed mark surrounded by unmarked white neighbours would be washed back
+    to white by a max reduction, so "lo" reduces with MINIMUM instead, and the
+    padding fill has to match (255, not 0) or the trailing edge would read as
+    spuriously crushed.
 
     The reduction is the point. The preview runs on a decimated copy for speed,
     and averaging a 4x4 block containing one blown pixel yields 255/16 = 16 —
@@ -330,9 +369,9 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
 
     `shape` should be the size the overlay will be DISPLAYED at, not an
     arbitrary intermediate: a smooth rescale afterwards re-dilutes exactly what
-    the block-max preserved (measured: an isolated lit block drops to 195 / 111
-    / 55 depending on the factor), which can leave a blown speck dimmer than a
-    flat crushed background and invert the legend again.
+    the block reduction preserved (measured: an isolated lit block drops to
+    195 / 111 / 55 depending on the factor), which can leave a blown speck
+    dimmer than a flat crushed background and invert the legend again.
     """
     if rgb.ndim != 3 or rgb.shape[2] < 3:
         # Its neighbour structural_clipping guards the same way. Without this a
@@ -340,34 +379,38 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
         # broadcast error that names neither the caller nor the cause.
         raise ValueError("clip_overlay needs an H x W x 3 uint8 array; "
                          f"got shape {rgb.shape}")
-    out = paint_clipping(rgb, np.zeros_like(rgb), baseline=baseline)
+    ground = np.uint8(255) if end == "lo" else np.uint8(0)
+    out = paint_clipping(rgb, np.full_like(rgb, ground), baseline=baseline, end=end)
     h, w = shape
     src_h, src_w = out.shape[:2]
     if (src_h, src_w) == (h, w):
         return out
     # Pad to a whole number of blocks so the trailing edge is not silently
     # dropped — but only when there IS a trailing edge: np.pad always copies,
-    # which is 24 MB on an 8.3 MP frame.
+    # which is 24 MB on an 8.3 MP frame. The pad value matches the ground: a
+    # zero pad against a white-ground minimum reduction would crush every
+    # trailing block regardless of its real content.
     bh, bw = -(-src_h // h), -(-src_w // w)
     if bh * h != src_h or bw * w != src_w:
         out = np.pad(out, ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0)),
-                     mode="constant")
-    # Rows then columns, accumulating with np.maximum, NOT one
-    # `reshape(h, bh, w, bw, 3).max(axis=(1, 3))`. Identical result; the
-    # five-dimensional form reduces over two interleaved non-adjacent axes and
-    # measures 97.1 ms on an 8.3 MP frame against 4.4 for this, which is 60% of
-    # the whole preview tick for an operation that only touches 25 MB once.
-    # (Two chained single-axis `.max()` calls are 13.6 ms — better, still 3x
-    # this.) Each pass is a handful of full-width elementwise maxima, which is
-    # the access pattern the memory system is built for.
+                     mode="constant", constant_values=int(ground))
+    # Rows then columns, accumulating with np.maximum (or np.minimum on a white
+    # ground), NOT one `reshape(h, bh, w, bw, 3).max(axis=(1, 3))`. Identical
+    # result; the five-dimensional form reduces over two interleaved
+    # non-adjacent axes and measures 97.1 ms on an 8.3 MP frame against 4.4 for
+    # this, which is 60% of the whole preview tick for an operation that only
+    # touches 25 MB once. (Two chained single-axis `.max()` calls are 13.6 ms —
+    # better, still 3x this.) Each pass is a handful of full-width elementwise
+    # reductions, which is the access pattern the memory system is built for.
+    reduce_into = np.minimum if end == "lo" else np.maximum
     rows = out.reshape(h, bh, out.shape[1], 3)
     acc = rows[:, 0].copy()
     for k in range(1, bh):
-        np.maximum(acc, rows[:, k], out=acc)
+        reduce_into(acc, rows[:, k], out=acc)
     cols = acc.reshape(h, w, bw, 3)
     acc = cols[:, :, 0].copy()
     for k in range(1, bw):
-        np.maximum(acc, cols[:, :, k], out=acc)
+        reduce_into(acc, cols[:, :, k], out=acc)
     return acc
 
 

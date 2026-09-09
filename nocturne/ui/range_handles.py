@@ -37,10 +37,27 @@ class RangeHandles(QWidget):
         self._lo, self._hi = 0.0, 1.0
         self._hist = None
         self._drag: str | None = None
+        # Persists past mouse release, unlike `_drag` (which is only "which
+        # handle is currently held"). Starless Levels needs "which handle was
+        # worked LAST" to follow Photoshop's black/white-point polarity, and
+        # that has to survive the button-up that ends the gesture. A small
+        # accessor rather than a widened `rangeChanged` signal, because
+        # `color_balance_dialog.py`'s existing `rangeChanged.connect(lambda lo,
+        # hi: ...)` would break on an extra positional argument.
+        self._last_handle: str | None = None
 
     # --- model ---
     def range(self) -> tuple[float, float]:
         return (self._lo, self._hi)
+
+    def last_handle(self) -> str | None:
+        """"lo", "hi", or None if no drag has happened yet on this widget.
+
+        Only a real drag (`_move`, via mouse press/move) updates this —
+        `set_range` stays silent on purpose (see its own docstring), so a
+        preset or a typed readout does not make it look as though a handle
+        was touched by hand."""
+        return self._last_handle
 
     def set_range(self, lo: float, hi: float) -> None:
         """Set both bounds, ordered, clamped into [0, 1] and never narrower
@@ -109,6 +126,7 @@ class RangeHandles(QWidget):
             self._lo = float(np.clip(min(x, self._hi - _MIN_SPAN), 0.0, 1.0))
         else:
             self._hi = float(np.clip(max(x, self._lo + _MIN_SPAN), 0.0, 1.0))
+        self._last_handle = self._drag
         self.update()
         self.rangeChanged.emit(self._lo, self._hi)
 

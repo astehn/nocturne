@@ -281,13 +281,11 @@ class StarlessLevelsDialog(QDialog):
     def _on_clip_toggled(self, on: bool) -> None:
         self.clip_line.setVisible(bool(on))
         # Not debounced: a 60 ms window where the line is visible but blank
-        # reads as a bug in the line rather than a wait for a render.
+        # reads as a bug in the line rather than a wait for a render. The line
+        # itself is filled in by `_render_preview` (which now keeps it live on
+        # every drag too, not just on toggle), so there is nothing left to do
+        # here once clipping is on.
         self._render_preview()
-        if on:
-            # After the render, not before: at fit the render has just captured
-            # the whole-frame baseline this line needs, so asking now costs
-            # nothing instead of a second full-frame compose.
-            self._update_clip_line()
 
     def _on_mode_changed(self, index: int) -> None:
         self.preview.set_mode(_MODES[index][1])
@@ -351,6 +349,12 @@ class StarlessLevelsDialog(QDialog):
 
         if clipping:
             after = self._clip_qimage(full_starless, full_stars, key)
+            # A drag can flip which end is showing (`_clip_end`) without going
+            # through `_on_clip_toggled` at all, so the label has to be kept
+            # live here too — otherwise it goes stale the moment someone drags
+            # a handle with the overlay already on, exactly the "which end am
+            # I looking at" confusion the label exists to prevent.
+            self._update_clip_line()
         else:
             after = to_qimage(self.compose(small_starless, small_stars))
         # With clipping on the two halves are produced by different paths — the
@@ -431,16 +435,43 @@ class StarlessLevelsDialog(QDialog):
             self._frame_clip = (base.shadow_frac, base.highlight_frac)
         return self._frame_clip
 
-    def _update_clip_line(self) -> None:
-        """State the total in words, the way the main window does.
+    def _clip_end(self) -> str | None:
+        """Which end the clipping view shows: whichever handle the user last
+        DRAGGED, or None before either has been touched.
 
-        Its precedent is explicit: the TOTAL is always what is reported, because
-        those shadows really are gone. Only the MARKS are restricted to what
-        this tool added — `auto_levels` sets the black point at median − 3.5·MAD
-        earlier in the pipeline, so a starless layer arrives with 2-6% of its
-        pixels already at zero (measured on Andreas' masters, 2026-09-09) and
-        the old overlay lit every one of them the moment the dialog opened.
+        Photoshop flips the ground with the end being worked — white for the
+        black point, black for the highlights — rather than showing both ends
+        on one ground. Reading straight from `RangeHandles` rather than
+        tracking a second copy here: it already has to know which handle moved
+        to clamp the pair, so this is one accessor, not a duplicate state
+        machine that could drift from it.
         """
+        return self.handles.last_handle()
+
+    def _update_clip_line(self) -> None:
+        """State which end is showing, then the total in words, the way the
+        main window does.
+
+        The end has to be said out loud — Andreas' first report of trouble
+        ("the overlay does not seem to fill the entire image area") was a dark
+        mark on a dark ground with a dark letterbox, i.e. exactly the shadow
+        case with no way to tell it apart from "nothing is clipped".
+
+        The total-in-words precedent is unchanged: the TOTAL is always what is
+        reported, because those shadows really are gone. Only the MARKS are
+        restricted to what this tool added — `auto_levels` sets the black
+        point at median − 3.5·MAD earlier in the pipeline, so a starless layer
+        arrives with 2-6% of its pixels already at zero (measured on Andreas'
+        masters, 2026-09-09) and the old overlay lit every one of them the
+        moment the dialog opened.
+        """
+        end = self._clip_end()
+        if end == "lo":
+            which = "Showing shadow clipping only, on a white ground — working the black point."
+        elif end == "hi":
+            which = "Showing highlight clipping only, on a black ground — working the white point."
+        else:
+            which = "Showing shadow and highlight clipping together, on a black ground."
         shadow_frac, highlight_frac = self._frame_fractions()
         was = []
         if shadow_frac > 0:
@@ -449,7 +480,8 @@ class StarlessLevelsDialog(QDialog):
             was.append(f"{highlight_frac * 100:.1f}% blown")
         detail = ", ".join(was) + " before this tool touched it" if was \
             else "nothing was clipped before this tool touched it"
-        self.clip_line.setText(f"Marks only what these two points add — {detail}.")
+        self.clip_line.setText(
+            f"{which} Marks only what these two points add — {detail}.")
 
     def _clip_qimage(self, starless: AstroImage, stars: AstroImage, key):
         """The clipping mask, block-maxed straight to the size it is DISPLAYED
@@ -469,6 +501,12 @@ class StarlessLevelsDialog(QDialog):
 
         Handed back at exactly the pane's fitted size, so `CompareView`'s own
         scale-to-fit is a no-op rather than a second rescale.
+
+        `end` (from `_clip_end`) follows Photoshop's polarity: the ground and
+        which end is drawn both come from `clip_overlay`, keyed off whichever
+        handle was last dragged. `None` — nothing dragged yet — is the one
+        case handed straight through with no new argument at all, which is
+        what keeps this identical to the view that shipped before.
         """
         baseline = self._clip_baseline(starless, stars, key)
         full = self.compose(starless, stars)
@@ -476,7 +514,8 @@ class StarlessLevelsDialog(QDialog):
         src_h, src_w = rgb.shape[:2]
         box = _fitted_size(src_w, src_h, self.preview.pane_size())
         tw, th = min(src_w, max(1, box.width())), min(src_h, max(1, box.height()))
-        qimage = rgb_to_qimage(clip_overlay(rgb, (th, tw), baseline=baseline))
+        end = self._clip_end()
+        qimage = rgb_to_qimage(clip_overlay(rgb, (th, tw), baseline=baseline, end=end))
         if (tw, th) != (box.width(), box.height()):
             qimage = qimage.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
                                    Qt.TransformationMode.FastTransformation)

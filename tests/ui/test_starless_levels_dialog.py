@@ -3,6 +3,7 @@ import pytest
 
 from nocturne.core.enhance import starless_levels_layers
 from nocturne.core.image import AstroImage
+from nocturne.core.inspect import CLIP_HIGHLIGHT, CLIP_MARK_OFF, CLIP_MARK_ON
 from nocturne.ui.curves_dialog import _PREVIEW_MAX
 from nocturne.ui.preview import qimage_to_rgb8, to_rgb8
 from nocturne.ui.starless_levels_dialog import _MODES, StarlessLevelsDialog
@@ -705,3 +706,129 @@ def test_the_readouts_use_a_decimal_point_whatever_the_locale(qtbot, split):
     qtbot.addWidget(dlg)
     dlg.black_val.setValue(0.125)
     assert dlg.black_val.text() == "0.125", dlg.black_val.text()
+
+
+# --- clip polarity: the ground follows the handle being worked -------------
+#
+# Andreas: "In photoshop the clipping overlay for black point is white and for
+# the highlights its black." His first report of trouble ("the overlay does
+# not seem to fill the entire image area") was a dark mark on a dark ground
+# with a dark letterbox — exactly the black-point case on the old single
+# black-ground view.
+
+_POL_SIZE = 400   # exceeds CompareView's (320, 240) minimum pane size, so a
+                  # pane resized to match it is neither up- nor down-scaled —
+                  # `_clip_qimage` hands `clip_overlay` back its own pixels
+                  # 1:1, and sampled coordinates below mean exactly what they
+                  # say instead of landing wherever a NN rescale moved them.
+
+
+@pytest.fixture
+def polarity_split():
+    """Mid-grey background, never zeros (CLAUDE.md — black is itself
+    shadow-clipped). Three patches, each of which clips only once a handle is
+    actually dragged past it, so a test can isolate "the black handle was
+    worked" from "the white handle was worked" rather than having both ends
+    clip at once. Each patch is 60x60 and sampled at its centre, well clear of
+    its edges, so it survives being carried through `to_rgb8`/`QImage` whole."""
+    starless = np.full((_POL_SIZE, _POL_SIZE, 3), 0.5, np.float32)
+    starless[20:80, 20:80] = 0.10                     # crushes in ALL THREE channels
+    starless[20:80, 120:180] = (0.10, 0.5, 0.5)       # crushes in RED alone
+    starless[320:380, 320:380] = 0.95                  # blows once the white point drops
+    stars = np.zeros((_POL_SIZE, _POL_SIZE, 3), np.float32)
+    return (AstroImage(starless, is_linear=False, metadata={}),
+            AstroImage(stars, is_linear=False, metadata={}))
+
+
+# Sample points, each at a patch centre or in plain background — see the
+# fixture above for which is which.
+_BG, _ALL3, _RED_ONLY, _HI = (200, 200), (50, 50), (50, 150), (350, 350)
+
+
+def _open_polarity_dialog(qtbot, polarity_split):
+    dlg = StarlessLevelsDialog(*polarity_split)
+    qtbot.addWidget(dlg)
+    dlg.handles.resize(400, 200)
+    _size_preview(dlg, _POL_SIZE, _POL_SIZE)
+    return dlg
+
+
+def test_before_a_drag_the_view_is_the_current_black_ground_view(qtbot, polarity_split):
+    """Nothing changes for someone who toggles clipping without dragging
+    first — the brief's explicit requirement."""
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    assert dlg._clip_end() is None
+    dlg.clip_check.setChecked(True)
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert tuple(rgb[_BG]) == (0, 0, 0), \
+        "an unclipped pixel must sit on the black ground before any drag"
+
+
+def test_dragging_the_black_handle_gives_a_white_ground_shadow_view(qtbot, polarity_split):
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    _drag(dlg.handles, 0.0, 0.3)            # black point up past the 0.10 patches
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    assert dlg._clip_end() == "lo"
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert tuple(rgb[_BG]) == (255, 255, 255), "an unclipped pixel must be the white ground"
+    assert tuple(rgb[_HI]) == (255, 255, 255), \
+        "highlight clipping must not show on the shadow-only view"
+
+
+def test_all_three_crushed_renders_black_not_white_on_the_white_ground(qtbot, polarity_split):
+    """The one collision the brief calls out: white would be invisible against
+    a white ground, so the pixel that is most completely gone has to read
+    black there instead."""
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    _drag(dlg.handles, 0.0, 0.3)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert tuple(rgb[_ALL3]) == (0, 0, 0), \
+        "an all-three-channels-crushed pixel must render BLACK on the white ground"
+
+
+def test_a_single_channel_crushed_pixel_keeps_its_channel_colour(qtbot, polarity_split):
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    _drag(dlg.handles, 0.0, 0.3)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    r, g, b = (int(v) for v in rgb[_RED_ONLY])
+    assert (r, g, b) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF), \
+        "a single-channel-crushed pixel must keep its own channel colour"
+
+
+def test_dragging_the_white_handle_gives_a_black_ground_highlight_view(qtbot, polarity_split):
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    _drag(dlg.handles, 1.0, 0.85)           # white point down past the 0.95 patch
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    assert dlg._clip_end() == "hi"
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert tuple(rgb[_BG]) == (0, 0, 0), "an unclipped pixel must be the black ground"
+    assert tuple(rgb[_HI]) == CLIP_HIGHLIGHT, "the blown patch must still mark amber"
+    assert tuple(rgb[_ALL3]) == (0, 0, 0), \
+        "shadow clipping must not show on the highlight-only view"
+
+
+def test_the_label_states_which_end_is_showing(qtbot, polarity_split):
+    """The user must not have to infer which end they are looking at."""
+    dlg = _open_polarity_dialog(qtbot, polarity_split)
+    dlg.clip_check.setChecked(True)
+    assert "together" in dlg.clip_line.text().lower(), dlg.clip_line.text()
+
+    _drag(dlg.handles, 0.0, 0.3)
+    dlg._render_preview()
+    assert "shadow" in dlg.clip_line.text().lower(), dlg.clip_line.text()
+    assert "highlight" not in dlg.clip_line.text().lower(), dlg.clip_line.text()
+
+    _drag(dlg.handles, 1.0, 0.85)
+    dlg._render_preview()
+    assert "highlight" in dlg.clip_line.text().lower(), dlg.clip_line.text()
+    assert "shadow" not in dlg.clip_line.text().lower(), dlg.clip_line.text()

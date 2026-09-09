@@ -619,3 +619,124 @@ def test_the_fast_block_max_equals_the_plain_five_dimensional_form():
                      mode="constant")
         want = pad.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
         assert np.array_equal(clip_overlay(rgb, (h, w)), want), f"{H}x{W} -> {h}x{w}"
+
+
+# --- Photoshop polarity: `end` flips the ground with the handle being worked -
+#
+# Andreas: "In photoshop the clipping overlay for black point is white and for
+# the highlights its black." `end=None` (never passed by the main window's
+# live canvas) must stay byte-for-byte what shipped before; "lo"/"hi" are new,
+# opt-in views for the Starless Levels dialog alone.
+
+def test_paint_clipping_default_end_is_unchanged():
+    """The critical constraint: `paint_clipping` with no new arguments must be
+    pixel-identical to before this change, because the main window's live
+    canvas calls it on every preview tick and a previous round already proved
+    that bit-unchanged across 30 random frames.
+
+    Expected values are worked out BY HAND from the documented legend, not by
+    calling `paint_clipping` itself — comparing the function against its own
+    output would pass even if this change had broken it. One frame carries
+    both a per-pixel case (all three channels dead) and a per-channel case
+    (one channel dead, the others healthy), plus the blown-wins-over-crushed
+    collision, because a fix that only handled one of those could still break
+    the other.
+    """
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # red alone crushed
+    rgb[1, 1] = (0, 0, 0)         # all three crushed
+    rgb[2, 2] = (255, 255, 255)   # all three blown
+    rgb[3, 3] = (0, 255, 128)     # red crushed, green blown: blown must win
+
+    out = paint_clipping(rgb.copy())
+
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    assert tuple(out[1, 1]) == (255, 255, 255)
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
+    assert tuple(out[3, 3]) == CLIP_HIGHLIGHT
+    assert tuple(out[0, 1]) == (128, 128, 128), "an unclipped pixel must keep its colour"
+
+
+def test_clip_overlay_default_end_is_unchanged():
+    """Same guarantee one level up, through the block-reduced overlay a caller
+    actually uses on screen."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)
+    rgb[1, 1] = (0, 0, 0)
+    rgb[2, 2] = (255, 255, 255)
+    out = clip_overlay(rgb, (4, 4))
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+    assert tuple(out[1, 1]) == (255, 255, 255)
+    assert tuple(out[2, 2]) == CLIP_HIGHLIGHT
+    assert tuple(out[3, 3]) == (0, 0, 0), "an unclipped pixel must sit on the black ground"
+
+
+def test_end_lo_is_a_white_ground_showing_shadows_only():
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[1, 1] = (255, 255, 255)   # blown — must NOT appear on the shadow-only view
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[0, 0]) == (255, 255, 255), "unclipped pixels must be the white ground"
+    assert tuple(out[1, 1]) == (255, 255, 255), "highlight clipping must not be shown"
+
+
+def test_end_lo_keeps_a_single_channels_own_colour():
+    """The brief's explicit requirement: a pixel crushed in ONE channel keeps
+    that channel's colour on the white ground — only the all-three case
+    changes."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # red alone crushed
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[0, 0]) == (CLIP_MARK_ON, CLIP_MARK_OFF, CLIP_MARK_OFF)
+
+
+def test_end_lo_paints_the_all_channel_collision_black_not_white():
+    """The one deviation the brief calls out: on a white ground, "all three
+    dead" would normally paint white and vanish. It has to read black instead
+    — legible, and what Photoshop's own threshold view shows."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[2, 2] = (0, 0, 0)
+    out = paint_clipping(rgb, np.full_like(rgb, 255), end="lo")
+    assert tuple(out[2, 2]) == (0, 0, 0)
+
+
+def test_end_hi_is_a_black_ground_showing_highlights_only():
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = (0, 128, 128)     # crushed — must NOT appear on the highlight-only view
+    rgb[1, 1] = (255, 255, 255)
+    out = paint_clipping(rgb, np.zeros_like(rgb), end="hi")
+    assert tuple(out[3, 3]) == (0, 0, 0), "unclipped pixels must be the black ground"
+    assert tuple(out[0, 0]) == (0, 0, 0), "shadow clipping must not be shown"
+    assert tuple(out[1, 1]) == CLIP_HIGHLIGHT
+
+
+def test_a_white_ground_speck_survives_reduction_via_minimum():
+    """The white-ground counterpart of
+    `test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview`: a
+    MAXIMUM reduction would let the surrounding white ground swallow an
+    isolated dark mark, so "lo" must reduce with MINIMUM instead."""
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 0                       # one crushed pixel
+    out = clip_overlay(rgb, (8, 8), end="lo")
+    assert tuple(out[1, 1]) == (0, 0, 0), "the crushed speck was washed out by the white ground"
+    assert tuple(out[0, 0]) == (255, 255, 255), "a clean block must stay white"
+
+
+def test_white_ground_padding_matches_the_ground_not_zero():
+    """The trailing-block counterpart of
+    `test_padding_preserves_a_pixel_in_the_trailing_partial_block`: a zero pad
+    against a minimum reduction would crush every trailing block regardless of
+    its real content."""
+    rgb = np.full((65, 65, 3), 128, np.uint8)
+    out = clip_overlay(rgb, (8, 8), end="lo")
+    assert tuple(out[7, 7]) == (255, 255, 255), \
+        "the zero-padded trailing block was crushed by its own padding"
+
+
+def test_end_none_still_uses_maximum_not_minimum():
+    """Guards the reduction choice itself: with the default black ground a
+    MINIMUM reduction would erase an isolated blown speck instead of a
+    MAXIMUM preserving it."""
+    rgb = np.full((64, 64, 3), 128, np.uint8)
+    rgb[10, 10] = 255
+    out = clip_overlay(rgb, (8, 8))
+    assert out[1, 1, 0] == 255

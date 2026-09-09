@@ -189,3 +189,59 @@ def test_set_range_enforces_the_minimum_span(qtbot):
     lo, hi = w.range()
     assert hi == pytest.approx(1.0)
     assert hi - lo == pytest.approx(_MIN_SPAN), f"zero span accepted at 1.0: {lo} {hi}"
+
+
+# --- last_handle: which bound was worked, for Starless Levels' clip polarity -
+
+def test_last_handle_is_none_before_any_drag(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    assert w.last_handle() is None
+
+
+def test_dragging_the_low_handle_reports_lo(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w.last_handle() == "lo"
+
+
+def test_dragging_the_high_handle_reports_hi(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 1.0, 0.7)
+    assert w.last_handle() == "hi"
+
+
+def test_last_handle_survives_the_mouse_release(qtbot):
+    """`_drag` (which handle is currently HELD) is reset to None on release —
+    `last_handle` is a separate, persistent record of which one was worked
+    LAST, and a caller reading it after the gesture ends must still see it."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w._drag is None, "the fixture didn't release the mouse"
+    assert w.last_handle() == "lo"
+
+
+def test_last_handle_updates_to_whichever_was_dragged_most_recently(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _drag(w, 0.0, 0.3)
+    assert w.last_handle() == "lo"
+    _drag(w, 1.0, 0.7)
+    assert w.last_handle() == "hi"
+
+
+def test_set_range_does_not_touch_last_handle(qtbot):
+    """A preset or a typed readout is not the user's hand on a handle —
+    `set_range` stays silent on `rangeChanged` for the same reason, so the two
+    guards match."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.set_range(0.2, 0.8)
+    assert w.last_handle() is None
