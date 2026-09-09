@@ -165,3 +165,35 @@ def test_set_images_with_before_none_does_not_crash(qtbot, mode):
     other = {"off": "wipe", "wipe": "side", "side": "off"}[mode]
     w.set_mode(other)
     w.set_images(None, _qimage())
+
+
+def test_pane_size_is_the_pane_not_the_widget(qtbot):
+    """A host that must produce its pixels AT the display size — Starless
+    Levels' clipping overlay, whose block-max must not be re-diluted by a later
+    rescale — needs the pane. In Side mode that is roughly half the width, and
+    rendering to the full 800 would be scaled down again on arrival."""
+    w = _mk(qtbot)
+    w.show()                     # nested layouts only lay out once shown
+    qtbot.waitExposed(w)
+    assert w.pane_size() == w._after_pane.size()
+    off_w = w.pane_size().width()
+
+    w.set_mode("side")
+    qtbot.waitUntil(lambda: w._after_pane.width() < off_w, timeout=1000)
+    assert w.pane_size().width() < off_w * 0.75, (
+        "Side mode still reports the full width — the overlay would be built "
+        "twice the size of the pane it lands in")
+
+
+def test_wipe_pane_size_leaves_room_to_scale_up(qtbot):
+    """ImageView fits with fitInView, which insets the viewport by 2 px and
+    transforms nearest-neighbour: a picture sized to the exact viewport is
+    shrunk very slightly, and a nearest-neighbour shrink DROPS an isolated
+    speck. The margin means it can only ever scale up."""
+    w = _mk(qtbot)
+    w.set_mode("wipe")
+    w.show()
+    qtbot.waitExposed(w)
+    viewport = w._wipe_view.viewport().size()
+    assert w.pane_size().width() < viewport.width()
+    assert w.pane_size().height() < viewport.height()

@@ -46,6 +46,9 @@ from .image_view import ImageView
 
 MODES = ("off", "wipe", "side")
 
+# Slack left inside the wipe pane, in pixels — see `CompareView.pane_size`.
+_WIPE_MARGIN = 8
+
 
 def _scaled_pixmap(qimage, box: QSize) -> QPixmap:
     """QImage -> QPixmap fitted into `box`, aspect kept.
@@ -219,6 +222,29 @@ class CompareView(QWidget):
 
     def visible_rect(self, shape) -> tuple:
         return self._after_pane.visible_rect(shape)
+
+    def pane_size(self) -> QSize:
+        """The box the "after" image is actually DISPLAYED in — not the widget.
+
+        A host that must produce its pixels AT the display size asks this rather
+        than `size()`: in Side mode the pane is roughly half the width, and
+        rendering to the full width would be rescaled afterwards. Starless
+        Levels' clipping overlay is the case that cares — its block-max keeps an
+        isolated blown pixel at full intensity and any later rescale re-dilutes
+        it.
+
+        Wipe is the exception: `ImageView` fits with `fitInView`, which insets
+        the viewport by 2 px and transforms the pixmap nearest-neighbour, so a
+        picture sized to the exact viewport is shrunk very slightly — and a
+        nearest-neighbour shrink DROPS an isolated speck. Leaving a margin means
+        it can only ever scale up, where nearest-neighbour enlarges the speck
+        instead.
+        """
+        if self._mode == "wipe":
+            s = self._wipe_view.viewport().size()
+            return QSize(max(1, s.width() - _WIPE_MARGIN),
+                         max(1, s.height() - _WIPE_MARGIN))
+        return self._after_pane.size()
 
     # --- layout ---
     def resizeEvent(self, event) -> None:
