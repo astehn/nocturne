@@ -40,26 +40,16 @@ def channel_level(c: np.ndarray, blackpoint: float) -> tuple[float, float]:
 
 
 def normalize_to_reference(secondary: np.ndarray, reference: np.ndarray,
-                           blackpoint: float = 1.0, boost: float = 1.0) -> np.ndarray:
+                           blackpoint: float = 1.0) -> np.ndarray:
     """MTF-match the secondary channel's robust level to the reference's, each
     channel using ITS OWN black point. Degenerate inputs fall back to identity.
 
-    NOTE, because it surprises people and it surprised us (2026-09-08): matching
-    is exactly what makes the bright core grey. Where Ha and OIII are both strong
-    the match drives B toward R, and the HOO combine then has nothing to
-    separate. So `boost` = 1.00, the matched setting, is the LEAST colourful
-    point on the control, and moving either way adds colour. Measured on a real
-    Pacman render, nebula chroma (mean distance from grey, 0-255) against
-    core R-B:
-
-        boost   0.60   0.80   1.00   1.25   1.50   2.00
-        core    +48.0  +25.4  +13.0   +3.6   -2.4   -9.5
-        chroma   36.1   21.0   12.4    6.5    6.1   10.0
-
-    Saturation cannot compensate: saturate() scales distance from grey, and a
-    neutral pixel is at zero. Andreas reported narrowband results looking flat;
-    raising the saturation default helped the RIM and could never touch the core.
-    Whether 1.00 should stay the default is open — see TODO."""
+    Purely photometric since 2026-09-09. It used to take a `boost` that divided
+    the midpoint below, so this one function both matched the channels and chose
+    how much oxygen the picture showed — which is why the matched setting was
+    also the least colourful one. How loud the oxygen is now belongs to
+    NarrowbandParams.oxygen_strength, applied to the RESULT of this function.
+    """
     sec = np.clip(np.asarray(secondary, dtype=np.float32), 0.0, 1.0)
     ref = np.clip(np.asarray(reference, dtype=np.float32), 0.0, 1.0)
     M_sec, E0_sec = channel_level(sec, blackpoint)
@@ -71,7 +61,7 @@ def normalize_to_reference(secondary: np.ndarray, reference: np.ndarray,
     denom = A_sec - 2.0 * A_sec * A_ref + A_ref
     if abs(denom) < 1e-6 or A_sec <= 1e-6 or A_ref <= 1e-6:
         return sec
-    m = float(np.clip((A_sec * (1.0 - A_ref) / denom) / boost, 1e-3, 1.0 - 1e-3))
+    m = float(np.clip(A_sec * (1.0 - A_ref) / denom, 1e-3, 1.0 - 1e-3))
     e2 = np.clip((sec - M_sec) / max(1e-6, 1.0 - M_sec), 0.0, 1.0)   # rescale [M,1]
     stretched = _mtf(m, e2)
     sub = np.minimum(sec, M_sec)                                    # sub-blackpoint part
@@ -124,7 +114,11 @@ def highlight_recover(x: np.ndarray, amount: float = 1.0) -> np.ndarray:
 class NarrowbandParams:
     palette: str = "HOO"
     blackpoint: float = 1.0
-    oiii_boost: float = 1.0
+    # How loud the oxygen is, applied to the MATCHED OIII plane. 1.0 leaves the
+    # photometric match exactly as computed. Below 1.0 is hydrogen-leaning and
+    # warm; above is oxygen-leaning and cool. The default is MEASURED, not
+    # chosen — see the comment rewritten in Task 4 of the plan.
+    oxygen_strength: float = 1.0
     blend_amount: float = 0.6
     highlight_reduction: float = 1.0
     brightness: float = 1.0
@@ -205,8 +199,11 @@ def _combine(ha: np.ndarray, oiii: np.ndarray, palette: str,
 def render_palette(img: AstroImage, params: NarrowbandParams,
                    has_stars: bool = True) -> AstroImage:
     ha, oiii = extract_ha_oiii(img)
-    oiii_n = normalize_to_reference(oiii, ha, params.blackpoint, params.oiii_boost)
-    r, g, b = _combine(ha, oiii_n, params.palette, params.blend_amount, params.scnr)
+    oiii_n = normalize_to_reference(oiii, ha, params.blackpoint)
+    # Strength rides on TOP of the match, so the photometry stays honest. An MTF
+    # rather than a multiply: x2.0 on a plain multiply would clip bright oxygen.
+    oiii_s = brightness(oiii_n, params.oxygen_strength)
+    r, g, b = _combine(ha, oiii_s, params.palette, params.blend_amount, params.scnr)
     rgb = np.stack([r, g, b], axis=2).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)
     rgb = highlight_recover(rgb, params.highlight_recover)
