@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from nocturne.core.image import AstroImage
 from nocturne.core.narrowband import (
-    NarrowbandParams, PALETTES, channel_level, extract_ha_oiii,
+    NarrowbandParams, PALETTES, brightness, channel_level, extract_ha_oiii,
     normalize_to_reference, render, screen,
 )
 
@@ -50,7 +50,7 @@ def test_normalize_lifts_oiii_signal_toward_reference():
 
     def patch(ha_level):
         ha = np.clip(ha_level + 0.02 * rng.standard_normal((80, 80)), 0, 1).astype(np.float32)
-        return normalize_to_reference(oiii, ha, blackpoint=1.0, boost=1.0)
+        return normalize_to_reference(oiii, ha, blackpoint=1.0)
 
     weak, strong = patch(0.30), patch(0.85)
     assert np.isfinite(strong).all()
@@ -68,25 +68,42 @@ def test_normalize_lift_scales_with_reference_strength():
 
     def mean_for(ha_level):
         ha = np.clip(ha_level + 0.02 * rng.standard_normal((80, 80)), 0, 1).astype(np.float32)
-        return float(normalize_to_reference(oiii, ha, blackpoint=1.0, boost=1.0).mean())
+        return float(normalize_to_reference(oiii, ha, blackpoint=1.0).mean())
 
     assert mean_for(0.85) > mean_for(0.30) + 0.02
 
 
-def test_oiii_boost_lifts_the_signal():
+def test_normalize_to_reference_is_purely_photometric():
+    """It matches OIII's level to Ha's and does nothing else.
+
+    It used to take a `boost` that divided the MTF midpoint, so one number both
+    matched the channels and biased the palette — which is why the matched
+    setting was also the least colourful one.
+    """
+    import inspect
+
+    params = inspect.signature(normalize_to_reference).parameters
+    assert "boost" not in params, (
+        "matching must not take a look parameter; that conflation is the bug")
+    assert set(params) == {"secondary", "reference", "blackpoint"}
+
+
+def test_oxygen_strength_lifts_the_matched_signal():
     rng = np.random.default_rng(2)
     oiii = np.clip(0.10 + 0.03 * rng.standard_normal((64, 64)), 0, 1).astype(np.float32)
     oiii[16:48, 16:48] = 0.5
     ha = np.clip(0.45 + 0.03 * rng.standard_normal((64, 64)), 0, 1).astype(np.float32)
-    base = normalize_to_reference(oiii, ha, boost=1.0)
-    boosted = normalize_to_reference(oiii, ha, boost=1.6)
-    assert boosted.mean() > base.mean() + 0.01        # boost pushes the signal higher
-    assert boosted[32, 32] > base[32, 32]             # the patch specifically
+
+    matched = normalize_to_reference(oiii, ha)
+    lifted = brightness(matched, 1.6)
+    assert lifted.mean() > matched.mean() + 0.01
+    assert lifted[32, 32] > matched[32, 32]
+    assert lifted.max() <= 1.0, "an MTF must not clip where a multiply would"
 
 
 def test_normalize_degenerate_channel_is_identity_no_nan():
     flat = np.full((16, 16), 0.3, np.float32)
-    out = normalize_to_reference(flat, flat, boost=1.0)
+    out = normalize_to_reference(flat, flat)
     assert np.isfinite(out).all()
     assert np.allclose(out, flat, atol=1e-3)
 
@@ -323,18 +340,16 @@ def test_the_default_saturation_compensates_for_what_the_palette_costs():
         f"the default is not doing anything: {neutral:.4f} -> {default:.4f}")
 
 
-def test_the_matched_oiii_setting_is_the_least_colourful_one():
-    """Characterisation, not a preference: it records WHY the default looks flat.
+def test_the_matched_strength_is_the_least_colourful_one():
+    """Characterisation. Matching drives B toward R where both gases are strong,
+    so the core goes neutral — and oxygen_strength 1.0 IS the match.
 
-    normalize_to_reference matches OIII's level to Ha's, so where both gases are
-    strong B is driven toward R and the core goes neutral. boost=1.00 — the
-    matched setting and the shipped default — therefore sits at a colour
-    minimum, and moving either way adds colour. Andreas and I both read the
-    default render as washed out before anyone measured it.
+    The minimum did NOT go away when the control was split. It moved from an
+    arbitrary x1.30 — an artefact of dividing an MTF midpoint — onto a round
+    number the readout names, and the default was moved off it deliberately.
 
-    If this test ever fails, the normalisation's behaviour has changed and the
-    Narrowband help's advice ("if it looks washed out, move OIII boost, not
-    Saturation") needs re-checking against it.
+    If this ever fails, the normalisation's behaviour has changed and the
+    Narrowband help's advice needs re-checking against it.
     """
     rng = np.random.default_rng(11)
     h, w = 120, 160
@@ -349,10 +364,24 @@ def test_the_matched_oiii_setting_is_the_least_colourful_one():
     img = AstroImage(src, is_linear=False)
     nebula = src.mean(axis=2) > np.percentile(src.mean(axis=2), 90)
 
-    def chroma_at(boost):
-        out = render(img, NarrowbandParams(oiii_boost=boost), has_stars=False).data
+    def chroma_at(strength):
+        out = render(img, NarrowbandParams(oxygen_strength=strength),
+                     has_stars=False).data
         return _chroma(out, nebula)
 
-    warm, matched = chroma_at(0.7), chroma_at(1.0)
-    assert warm > matched, (
-        f"pulling OIII down should ADD colour: x0.70 {warm:.4f} vs x1.00 {matched:.4f}")
+    matched = chroma_at(1.0)
+    assert chroma_at(0.7) > matched, "moving oxygen DOWN from matched must add colour"
+    assert chroma_at(1.6) > matched, "moving oxygen UP from matched must add colour"
+
+
+def test_the_default_oxygen_strength_is_not_the_matched_value():
+    """The matched value is a photometric statement, not a look.
+
+    Shipping it as the default is what made every render come out flatter than
+    the image it was given — the same failure as the saturation default fixed in
+    ef4f622, and the same shape: a control whose resting place is where it does
+    nothing.
+    """
+    p = NarrowbandParams()
+    assert p.oxygen_strength != 1.0, "the default must not sit on the matched point"
+    assert 0.3 <= p.oxygen_strength <= 2.0, "and must be reachable on the slider"

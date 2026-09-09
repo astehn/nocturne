@@ -13,6 +13,15 @@ _NAME_TO_STAGE["Rotate"] = "rotate"
 _NAME_TO_STAGE["Flip H"] = "flip_h"
 _NAME_TO_STAGE["Flip V"] = "flip_v"
 _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
+
+# A recipe saved before 2026-09-09 carries `oiii_boost`, which both matched the
+# channels and chose the look. There is no honest mapping onto the two controls
+# that replaced it, and deserialize_option filters to KNOWN field names — so
+# without the check in preflight() the value would vanish silently and the step
+# would render with a default it was never given. Beta software: refuse, and say
+# which step and why.
+LEGACY_OIII_REASON = ("saved before the oxygen controls changed — "
+                      "open it in Narrowband and re-save the recipe")
 _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
 
 
@@ -73,7 +82,8 @@ def serialize_option(stage_id, option):
         from .core.narrowband import NarrowbandParams
         p = option if isinstance(option, NarrowbandParams) else NarrowbandParams()
         return {
-            "palette": p.palette, "blackpoint": p.blackpoint, "oiii_boost": p.oiii_boost,
+            "palette": p.palette, "blackpoint": p.blackpoint,
+            "oxygen_strength": p.oxygen_strength,
             "blend_amount": p.blend_amount, "highlight_reduction": p.highlight_reduction,
             "brightness": p.brightness, "highlight_recover": p.highlight_recover,
             "saturation": p.saturation, "lightness_preserve": p.lightness_preserve,
@@ -199,6 +209,26 @@ class StepPlan:
         return self.outcome != "fail"
 
 
+def _step_display_name(stage_id) -> str:
+    """The name the user knows a step by.
+
+    STEP_NAME only covers the STEPPER stages, so every tool and geometry step —
+    Narrowband, Colour Balance, Crop, Rotate, Flip — fell through to its raw
+    stage id and a preflight said "flip_h" or "color_balance" at the user.
+    _NAME_TO_STAGE already holds those names; this reads it backwards.
+    """
+    from .ui.pipeline import STEP_NAME
+
+    if not stage_id:
+        return "?"
+    if stage_id in STEP_NAME:
+        return STEP_NAME[stage_id]
+    for name, sid in _NAME_TO_STAGE.items():
+        if sid == stage_id:
+            return name
+    return stage_id
+
+
 def preflight(recipe: Recipe, settings) -> list[StepPlan]:
     """Step by step: what will run, what will be substituted, what will fail.
 
@@ -219,7 +249,11 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
     for step in recipe.steps:
         sid = step.get("stage")
         name = (str(step.get("option")) if sid == "enhance"
-                else STEP_NAME.get(sid, sid or "?"))
+                else _step_display_name(sid))
+        opt = step.get("option")
+        if sid == "narrowband" and isinstance(opt, dict) and "oiii_boost" in opt:
+            plans.append(StepPlan(name, "fail", "", LEGACY_OIII_REASON))
+            continue
         # The OPTION can make the engine irrelevant: Background "off" returns
         # the image untouched and never reaches GraXpert, which is why
         # missing_tools excludes it. A preflight that ignored the option would
