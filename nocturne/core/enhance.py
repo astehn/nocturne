@@ -216,10 +216,20 @@ def starless_levels_layers(starless: AstroImage, stars: AstroImage,
 
 def _screen_back(base: np.ndarray, stars: AstroImage, ref: AstroImage) -> AstroImage:
     """Screen the stars layer over `base` — the same recombine star_colour_layers
-    uses, so a split processed either way rejoins identically."""
-    st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
-    out = 1.0 - (1.0 - base) * (1.0 - st)
-    return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
+    uses, so a split processed either way rejoins identically.
+
+    Written in place after the two arrays it owns are allocated. The plain
+    expression is the same arithmetic in the same float32 order, but leaves
+    eight full-size temporaries behind; at 8.3 MP that is 33 MB each, and at
+    112 MP (the M 31 mosaic) 1.34 GB each, on every Starless Levels preview
+    tick. It never writes into `base` or into the caller's stars array.
+    """
+    st = np.clip(np.asarray(stars.data, np.float32), 0.0, 1.0)
+    out = np.subtract(1.0, base)              # 1 - base
+    out *= np.subtract(1.0, st)               # ... * (1 - stars)
+    np.subtract(1.0, out, out=out)            # 1 - ...
+    np.clip(out, 0.0, 1.0, out=out)
+    return AstroImage(out.astype(np.float32, copy=False),
                       is_linear=ref.is_linear, metadata=dict(ref.metadata))
 
 

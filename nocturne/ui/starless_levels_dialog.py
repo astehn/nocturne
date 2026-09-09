@@ -7,7 +7,6 @@ screen is what Apply produces.
 """
 from __future__ import annotations
 
-import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout,
@@ -16,8 +15,9 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout
 from ..core.enhance import starless_levels_layers
 from ..core.image import AstroImage
 from ..core.inspect import clip_overlay
-from .curves_dialog import _downscale, _fit_to_screen, _ZoomPreview
-from .preview import rgb_to_qimage
+from .curves_dialog import (_downscale, _fit_to_screen, _fitted_size,
+                           _pixmap_for, _ZoomPreview)
+from .preview import rgb_to_qimage, to_rgb8
 
 _SCALE = 1000          # QSlider is integer-only; 0..1000 represents 0.0..1.0
 _PREFERRED = (1100, 720)
@@ -128,10 +128,14 @@ class StarlessLevelsDialog(QDialog):
         CurvesDialog._render, and for the same reason: rendering the whole frame
         at a size fine enough to be useful while zoomed would make dragging
         stutter, so only the on-screen region is ever composed at full detail.
+
+        The two branches are exclusive: the clipping view replaces the picture,
+        so the decimated composite it used to build and then throw away is
+        simply not made.
         """
         view = self.preview_label
-        if view.zoom_level() <= 1.0:
-            small_starless, small_stars = self._small_starless, self._small_stars
+        fit = view.zoom_level() <= 1.0
+        if fit:
             full_starless, full_stars = self._starless, self._stars
         else:
             shape = self._starless.data.shape
@@ -142,24 +146,46 @@ class StarlessLevelsDialog(QDialog):
             full_stars = AstroImage(self._stars.data[y0:y1, x0:x1],
                                     is_linear=self._stars.is_linear,
                                     metadata=dict(self._stars.metadata))
-            edge = max(view.width(), view.height(), 1)
-            small_starless = _downscale(full_starless, max_edge=edge)
-            small_stars = _downscale(full_stars, max_edge=edge)
 
-        small = self.compose(small_starless, small_stars)
-        rgb = np.clip(small.data * 255.0, 0, 255).astype(np.uint8)
-        if rgb.ndim == 2:
-            rgb = np.repeat(rgb[..., None], 3, axis=2)
         if self.clip_check.isChecked():
-            full = self.compose(full_starless, full_stars)
-            frgb = np.clip(full.data * 255.0, 0, 255).astype(np.uint8)
-            if frgb.ndim == 2:
-                frgb = np.repeat(frgb[..., None], 3, axis=2)
-            rgb = clip_overlay(frgb, rgb.shape[:2])
-        pixmap = QPixmap.fromImage(rgb_to_qimage(rgb))
-        self.preview_label.setPixmap(
-            pixmap.scaled(self.preview_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation))
+            view.setPixmap(self._clip_pixmap(full_starless, full_stars))
+        else:
+            if fit:
+                small_starless, small_stars = self._small_starless, self._small_stars
+            else:
+                edge = max(view.width(), view.height(), 1)
+                small_starless = _downscale(full_starless, max_edge=edge)
+                small_stars = _downscale(full_stars, max_edge=edge)
+            view.setPixmap(_pixmap_for(self.compose(small_starless, small_stars),
+                                       view.size()))
+
+    def _clip_pixmap(self, starless: AstroImage, stars: AstroImage) -> QPixmap:
+        """The clipping mask, block-maxed straight to the size it is DISPLAYED
+        at — no smooth rescale afterwards.
+
+        `clip_overlay` goes to lengths to keep an isolated speck at full
+        intensity, and a `SmoothTransformation` to the label then undid it:
+        measured, an isolated lit block came out at 195, 111 or 55 depending on
+        the factor, so a blown speck could render dimmer than a flat crushed
+        background and read as the wrong fault entirely.
+        `FastTransformation` is not the alternative — nearest-neighbour on a
+        downscale drops the speck outright.
+
+        Enlarging is the one case that still needs Qt, because a block-max can
+        only combine pixels, never invent them. There nearest-neighbour is
+        exactly right: it makes the lit block bigger at full intensity.
+        """
+        full = self.compose(starless, stars)
+        rgb = to_rgb8(full)                    # the canvas's own conversion
+        src_h, src_w = rgb.shape[:2]
+        box = _fitted_size(src_w, src_h, self.preview_label.size())
+        tw, th = min(src_w, max(1, box.width())), min(src_h, max(1, box.height()))
+        pixmap = QPixmap.fromImage(rgb_to_qimage(clip_overlay(rgb, (th, tw))))
+        if (tw, th) != (box.width(), box.height()):
+            pixmap = pixmap.scaled(self.preview_label.size(),
+                                   Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.FastTransformation)
+        return pixmap
 
     def _apply(self) -> None:
         if self._on_apply is not None:

@@ -508,3 +508,29 @@ def test_a_two_dimensional_input_is_refused_rather_than_dying_inside_np_pad():
         clip_overlay(mono, (16, 16))       # the identity branch too
     with pytest.raises(ValueError, match="H x W x 3"):
         paint_clipping(mono)
+
+
+def test_the_fast_block_max_equals_the_plain_five_dimensional_form():
+    """The reduce was rewritten as two np.maximum passes because
+    `reshape(h, bh, w, bw, 3).max(axis=(1, 3))` measured 97.1 ms on an 8.3 MP
+    frame — 60% of the whole preview tick. Speed is worth nothing if the answer
+    moved, so this pins the two together on shapes that divide evenly and on
+    shapes that do not.
+
+    Random marks rather than a tidy pattern: a block-max is exactly the kind of
+    thing that passes a symmetric fixture while getting the axes the wrong way
+    round, and the ragged cases below have bh != bw.
+    """
+    rng = np.random.default_rng(4)
+    for (H, W), (h, w) in [((64, 64), (8, 8)), ((65, 65), (8, 8)),
+                           ((64, 32), (8, 4)), ((70, 33), (9, 5)),
+                           ((2160, 240), (338, 60))]:
+        rgb = np.full((H, W, 3), 128, np.uint8)
+        rgb[rng.random((H, W)) < 0.02] = 255
+        rgb[rng.random((H, W)) < 0.02] = 0
+        painted = paint_clipping(rgb, np.zeros_like(rgb))
+        bh, bw = -(-H // h), -(-W // w)
+        pad = np.pad(painted, ((0, bh * h - H), (0, bw * w - W), (0, 0)),
+                     mode="constant")
+        want = pad.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+        assert np.array_equal(clip_overlay(rgb, (h, w)), want), f"{H}x{W} -> {h}x{w}"

@@ -216,18 +216,24 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     fancy-index form and 40.2 for masked assignment, where the flat-blue paint
     it replaces cost 33.3. Five milliseconds for naming the channel is the whole
     price, and this runs on every live-preview tick.
+
+    The marks are passed as np.uint8 SCALARS, not the plain ints they read as
+    above: `np.where(mask, 255, 60)` promotes to int64, so each channel built an
+    8-byte intermediate — 66 MB per channel on that frame — and threw seven
+    eighths of it away in the cast back to uint8. Same form, same result, 27.9 ms
+    to 20.0.
     """
     if rgb.ndim != 3 or rgb.shape[2] < 3:
         raise ValueError("paint_clipping needs an H x W x 3 uint8 array; "
                          f"got shape {rgb.shape}")
     if out is None:
         out = rgb
+    on, off = np.uint8(CLIP_MARK_ON), np.uint8(CLIP_MARK_OFF)
     sh, hi = clip_masks(rgb)
     r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
     any_sh = r0 | g0 | b0
     for i, dead in enumerate((r0, g0, b0)):
-        out[..., i] = np.where(
-            any_sh, np.where(dead, CLIP_MARK_ON, CLIP_MARK_OFF), out[..., i])
+        out[..., i] = np.where(any_sh, np.where(dead, on, off), out[..., i])
     # Highlights painted last: a pixel can be 0 in one channel and 255 in
     # another, and a blown core is the more urgent of the two. Bitwise, not
     # .any(axis=2) — 7 ms against 78 on an 8.3 MP frame.
@@ -264,14 +270,30 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     src_h, src_w = out.shape[:2]
     if (src_h, src_w) == (h, w):
         return out
-    # Block-max down to the display size. Pad to a whole number of blocks so the
-    # trailing edge is not silently dropped — but only when there IS a trailing
-    # edge: np.pad always copies, which is 24 MB on an 8.3 MP frame.
+    # Pad to a whole number of blocks so the trailing edge is not silently
+    # dropped — but only when there IS a trailing edge: np.pad always copies,
+    # which is 24 MB on an 8.3 MP frame.
     bh, bw = -(-src_h // h), -(-src_w // w)
     if bh * h != src_h or bw * w != src_w:
         out = np.pad(out, ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0)),
                      mode="constant")
-    return out.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+    # Rows then columns, accumulating with np.maximum, NOT one
+    # `reshape(h, bh, w, bw, 3).max(axis=(1, 3))`. Identical result; the
+    # five-dimensional form reduces over two interleaved non-adjacent axes and
+    # measures 97.1 ms on an 8.3 MP frame against 4.4 for this, which is 60% of
+    # the whole preview tick for an operation that only touches 25 MB once.
+    # (Two chained single-axis `.max()` calls are 13.6 ms — better, still 3x
+    # this.) Each pass is a handful of full-width elementwise maxima, which is
+    # the access pattern the memory system is built for.
+    rows = out.reshape(h, bh, out.shape[1], 3)
+    acc = rows[:, 0].copy()
+    for k in range(1, bh):
+        np.maximum(acc, rows[:, k], out=acc)
+    cols = acc.reshape(h, w, bw, 3)
+    acc = cols[:, :, 0].copy()
+    for k in range(1, bw):
+        np.maximum(acc, cols[:, :, k], out=acc)
+    return acc
 
 
 class BackgroundModel(NamedTuple):

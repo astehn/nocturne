@@ -437,3 +437,14 @@ def _pixmap_for(img: AstroImage, size):
     pm = QPixmap.fromImage(to_qimage(img))
     return pm.scaled(size, Qt.AspectRatioMode.KeepAspectRatio,
                      Qt.TransformationMode.SmoothTransformation)
+
+
+def _fitted_size(src_w: int, src_h: int, box):
+    """The size `src` will occupy inside `box` under KeepAspectRatio.
+
+    Shared so a caller that must produce its pixels AT the display size — the
+    Starless Levels clipping view, whose block-max must not then be re-diluted
+    by a smooth rescale — asks the same question `_pixmap_for` answers by
+    scaling afterwards, and gets the same answer."""
+    from PySide6.QtCore import QSize
+    return QSize(int(src_w), int(src_h)).scaled(box, Qt.AspectRatioMode.KeepAspectRatio)

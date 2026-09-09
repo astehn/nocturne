@@ -108,10 +108,11 @@ def test_show_clipping_finds_a_speck_the_decimated_preview_would_hide(qtbot):
     dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
                                AstroImage(stars, is_linear=False, metadata={}))
     qtbot.addWidget(dlg)
-    # Match the preview widget to the overlay's own resolution so the final
-    # `.scaled()` call is an identity, not a second blur that could smear the
-    # one lit pixel away before the test can see it.
-    dlg.preview_label.resize(_PREVIEW_MAX, _PREVIEW_MAX)
+    # A label SMALLER than the source, so the overlay is really reduced 4x and
+    # the speck has to survive a genuine block-max. The first version of this
+    # test matched the label to the overlay's own resolution, which made the
+    # reduction an identity — it could not have caught a diluting one.
+    dlg.preview_label.resize(320, 320)
     dlg.white_slider.setValue(700)
     dlg.clip_check.setChecked(True)
     dlg._render_preview()
@@ -120,6 +121,44 @@ def test_show_clipping_finds_a_speck_the_decimated_preview_would_hide(qtbot):
     assert rgb.max() >= 250, (
         "no clipped pixel reached the overlay: the mask was built from the "
         "decimated preview, which averaged the seeded pixel away")
+
+
+def test_an_isolated_speck_reaches_the_screen_at_full_intensity(qtbot):
+    """The block-max is undone by whatever happens after it.
+
+    `clip_overlay` goes to lengths to keep an isolated speck at 255, and the
+    pixmap was then `.scaled(..., SmoothTransformation)` to the label —
+    measured to drop an isolated lit block to 195, 111 or 55 depending on the
+    factor. A blown speck could therefore render DIMMER than a flat crushed
+    background, which inverts the legend all over again. The overlay is now
+    block-maxed straight to the displayed size, with no rescale.
+
+    `>= 250`, not `> 0`: the whole failure mode is a speck that survives while
+    being dimmed, so truthiness cannot see it. The background is mid-grey so it
+    contributes nothing of its own — a np.zeros background is itself
+    shadow-clipped and would light the frame for the wrong reason.
+    """
+    size = 1200
+    starless = np.full((size, size, 3), 0.5, np.float32)
+    starless[600, 600] = 1.0                # one pixel, blown after the levels
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.preview_label.resize(400, 400)      # 3x reduction: a real rescale
+    dlg.white_slider.setValue(700)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    pm = dlg.preview_label.pixmap()
+    assert (pm.width(), pm.height()) == (400, 400), \
+        "the overlay was not produced at the size it is displayed at"
+    rgb = qimage_to_rgb8(pm.toImage())
+    assert int(rgb.max()) == 255, (
+        f"the speck reached the screen at {int(rgb.max())}, not 255 — something "
+        "re-diluted the block-max after clip_overlay produced it")
+    assert np.count_nonzero(rgb) <= 12, \
+        "more than one block lit: the speck was smeared across neighbours"
 
 
 # --- pan and zoom --------------------------------------------------------
