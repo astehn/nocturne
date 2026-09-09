@@ -176,11 +176,6 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return rgb == 0, rgb == 255
 
 
-# Highlight clipping paints in the channel that died; shadow clipping paints in
-# its complement, so the two are told apart at a glance rather than by legend.
-_SHADOW_TINT = np.array([0, 255, 255], np.uint8)
-
-
 def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     """Per-channel clipping painted onto a black field, reduced to `shape` with
     a MAXIMUM rather than an average.
@@ -192,11 +187,16 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     show. Any clipped pixel inside a block lights the whole block: over-reporting
     at preview scale is a wrong colour on one block, under-reporting is a blown
     core the user never sees.
+
+    Shadow and highlight are both painted PER CHANNEL, blown at full intensity and
+    crushed at half. Painting shadow per pixel instead collapses distinct faults
+    into one colour: a pixel with red crushed and green blown read as identical to
+    a plain all-crushed pixel, which defeats the point of a per-channel mask.
     """
     shadow, highlight = clip_masks(rgb)
     out = np.zeros_like(rgb)
     out[highlight] = 255
-    out[np.any(shadow, axis=2)] |= _SHADOW_TINT
+    out[shadow] = 128
     h, w = shape
     if out.shape[:2] == (h, w):
         return out

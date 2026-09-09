@@ -372,6 +372,19 @@ def test_a_single_clipped_pixel_survives_reduction_to_a_smaller_preview():
     assert not out[0, 0].any(), "a clean block must stay black"
 
 
+def test_padding_preserves_a_pixel_in_the_trailing_partial_block():
+    """65x65 is not a multiple of the 8x8 target — Task 3's real call site
+    (a decimated 3840x2160 frame) is essentially never an exact multiple. The
+    trailing block is real data plus padding, not a clean multiple; a naive
+    crop instead of a pad would silently drop a pixel that falls in that
+    overhang."""
+    rgb = np.full((65, 65, 3), 128, np.uint8)
+    rgb[64, 64] = 255           # last real row/col, inside the padded trailing block
+    out = clip_overlay(rgb, (8, 8))
+    assert out.shape == (8, 8, 3)
+    assert out[7, 7, 0] == 255, "the trailing block was dropped or diluted by padding"
+
+
 def test_clean_frame_produces_a_black_overlay():
     rgb = np.full((16, 16, 3), 128, np.uint8)
     out = clip_overlay(rgb, (4, 4))
@@ -392,11 +405,42 @@ def test_overlay_is_coloured_by_the_channel_that_died():
 
 
 def test_shadow_and_highlight_clipping_are_distinguishable():
+    """Exact values, not just !=: a wrong tint could still satisfy an
+    inequality. Highlight paints full intensity, shadow paints half, in the
+    channel that actually clipped."""
     rgb = np.full((8, 8, 3), 128, np.uint8)
     rgb[0, 0] = 0              # all three channels at zero
     rgb[7, 7] = 255            # all three channels blown
     out = clip_overlay(rgb, (8, 8))
-    assert tuple(out[0, 0]) != tuple(out[7, 7])
+    assert tuple(out[0, 0]) == (128, 128, 128)
+    assert tuple(out[7, 7]) == (255, 255, 255)
+
+
+def test_mixed_clip_pixel_keeps_each_channel_distinct():
+    """Regression guard: shadow used to be painted per PIXEL, so a pixel with
+    red crushed and green blown collapsed to the same colour as a plain
+    all-crushed or all-blown pixel. Per-channel painting keeps every
+    combination distinct."""
+    rgb = np.full((8, 8, 3), 128, np.uint8)
+    rgb[2, 2] = (0, 255, 128)  # red crushed, green blown, blue clean
+    out = clip_overlay(rgb, (8, 8))
+    assert tuple(out[2, 2]) == (128, 255, 0)
+
+
+def test_non_square_shapes_are_not_transposed():
+    """h and w are handled independently, so a transposed bh/bw would pass
+    every other test here since all other shapes are square — the production
+    case is a 16:9 sensor. 64x32 -> 8x4: correct block height is 64/8=8,
+    correct block width is 32/4=8, but src height (64) and width (32) differ,
+    so a swap of which source dimension pairs with which target dimension
+    still misplaces this pixel even though the correct block sizes coincide.
+    """
+    rgb = np.full((64, 32, 3), 128, np.uint8)
+    rgb[40, 10] = 255           # row-block 40//8=5, col-block 10//8=1
+    out = clip_overlay(rgb, (8, 4))
+    assert out.shape == (8, 4, 3)
+    assert tuple(out[5, 1]) == (255, 255, 255), "pixel landed in the wrong block — axes may be transposed"
+    assert np.count_nonzero(out) == 3, "exactly one blown pixel should survive, in one block"
 
 
 def test_identity_shape_is_not_reduced():
