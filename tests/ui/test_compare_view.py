@@ -197,3 +197,97 @@ def test_wipe_pane_size_leaves_room_to_scale_up(qtbot):
     viewport = w._wipe_view.viewport().size()
     assert w.pane_size().width() < viewport.width()
     assert w.pane_size().height() < viewport.height()
+
+
+# --- geometry after layout: the two Criticals of the round-2 review ---------
+#
+# Both defects were about widget geometry AFTER the layout runs, which is why
+# every test above missed them: a widget that is never shown and never laid out
+# reports its default size, and the defect only exists in the difference
+# between that and the real one. These show the widget, let the layout settle,
+# and read the real sizes back.
+
+
+def _shown_side(qtbot, image=None, w=800, h=400):
+    """The real gesture, in order: the dialog opens in Off with a picture
+    already in the after pane, and the user THEN picks Side by side.
+
+    The order is load-bearing. Starting in Side with both panes empty leaves
+    the two sizeHints equal, and a layout that splits by hint then looks
+    correct — the fixture would be symmetric, and a symmetric fixture cannot
+    tell a correct implementation from a broken one. The defect IS the
+    asymmetry: the after pane arrives holding a full-width picture while the
+    before pane holds nothing.
+    """
+    image = _qimage(300, 300) if image is None else image
+    view = CompareView()
+    qtbot.addWidget(view)
+    view.resize(w, h)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_images(image, image)          # Off: only the after pane is filled
+    qtbot.waitUntil(lambda: view._after_pane.width() > w // 2, timeout=1000)
+    view.set_mode("side")
+    return view
+
+
+def test_the_two_side_panes_are_equal_on_the_first_click(qtbot):
+    """`_ZoomPreview` is a QLabel, so its sizeHint is its PIXMAP's size. With no
+    stretch on the two boxes the QHBoxLayout split the width by those hints, and
+    the after pane arrives holding the Off-mode picture while the before pane
+    holds nothing — measured 400 px against 216 here, and 460 against 328 in the
+    dialog at 1180x860. Two pictures at a 40% scale difference cannot be
+    compared, which is the entire point of the mode.
+
+    Read IMMEDIATELY, with no waiting: that frame is what the user sees when
+    they click, and with both panes eventually rendering the same size the
+    unequal split can converge afterwards — which is why the bug reads as
+    intermittent rather than as always broken.
+    """
+    view = _shown_side(qtbot)
+    assert view._before_pane.size() == view._after_pane.size(), (
+        f"on the first click: before {view._before_pane.size()}, after "
+        f"{view._after_pane.size()} — the pixmaps are driving the layout")
+    qtbot.waitUntil(
+        lambda: view._before_pane.width() == view._after_pane.width(), timeout=1000)
+    assert view._before_pane.size() == view._after_pane.size()
+
+
+def test_no_pane_is_left_holding_a_pixmap_larger_than_itself(qtbot):
+    """QLabel AlignCenter CENTRE-CROPS a pixmap bigger than the label, with no
+    scrollbar and no indication — measured, a 611x611 picture inside a 460 px
+    pane cut 75 px off each side. A pane's geometry settles after the layout
+    runs, so a picture rendered before that is left oversized unless the pane's
+    own resize triggers a re-render."""
+    view = _shown_side(qtbot)
+    view.resize(420, 300)                  # shrink: the panes follow, later
+    qtbot.waitUntil(lambda: view._after_pane.width() < 260, timeout=1000)
+    for name, pane in (("before", view._before_pane), ("after", view._after_pane)):
+        pm = pane.pixmap()
+        assert pm.width() <= pane.width() and pm.height() <= pane.height(), (
+            f"{name} pane is {pane.width()}x{pane.height()} holding a "
+            f"{pm.width()}x{pm.height()} pixmap — silently centre-cropped")
+
+
+def test_a_speck_in_a_corner_survives_to_the_displayed_pixmap(qtbot):
+    """The reviewer's repro: a speck at (20, 20) of a 1200^2 frame vanished
+    entirely, which is exactly what "drag until the first specks appear" is
+    looking for. Mid-grey field, never np.zeros — a black field is itself
+    shadow-clipped and would make this pass for the wrong reason."""
+    from nocturne.ui.preview import qimage_to_rgb8
+    arr = np.full((1200, 1200, 3), 128, dtype=np.uint8)
+    arr[20, 20] = 255
+    view = _shown_side(qtbot, image=rgb_to_qimage(arr), w=1180, h=700)
+    view.resize(900, 560)
+    qtbot.waitUntil(lambda: view._after_pane.width() < 460, timeout=1000)
+
+    for name, pane in (("before", view._before_pane), ("after", view._after_pane)):
+        pm = pane.pixmap()
+        assert pm.width() <= pane.width() and pm.height() <= pane.height(), (
+            f"the {name} pane centre-crops its picture, so the frame's own "
+            "corners are not on screen at all")
+        shown = qimage_to_rgb8(pm.toImage())
+        h, w = shown.shape[:2]
+        corner = shown[:max(1, h // 8), :max(1, w // 8)]
+        assert int(corner.max()) > 128, (
+            f"the speck is missing from the {name} pane's top-left corner")

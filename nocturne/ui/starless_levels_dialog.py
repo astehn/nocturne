@@ -15,10 +15,10 @@ value rather than two that can drift apart.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QLocale, Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-                               QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
-                               QWidget)
+                               QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from ..core.enhance import starless_levels_layers
 from ..core.image import AstroImage
@@ -27,6 +27,7 @@ from .compare_view import CompareView
 from .curves_dialog import _downscale, _fit_to_screen, _fitted_size
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from .range_handles import RangeHandles
+from .zoom_row import ZoomRow
 
 _PREFERRED = (1180, 860)
 
@@ -61,6 +62,10 @@ class StarlessLevelsDialog(QDialog):
         self._baseline = None
         self._before_key = None
         self._before_img = None
+        # What the image ARRIVED with, over the WHOLE frame — see
+        # `_frame_fractions`. Never recomputed, so the sentence under the
+        # checkbox does not change when the user zooms.
+        self._frame_clip = None
 
         self.handles = RangeHandles()
         self.handles.setMinimumHeight(_HIST_MIN_H)
@@ -74,8 +79,34 @@ class StarlessLevelsDialog(QDialog):
         # that floor IS where the black point goes. Measured 82 ms on an 8.3 MP
         # frame, paid once against a star split that takes seconds.
         self.handles.set_histogram(starless.data)
-        self.black_val = QLabel("0.000")
-        self.white_val = QLabel("1.000")
+        # Spin boxes, not labels. The removed `ResetSlider` pair gave arrow-key
+        # stepping at 0.001; a histogram handle is mouse-only at ~0.001 per
+        # pixel, so the rework took the precision away with the sliders. These
+        # are not a second control holding a second copy of the number — they
+        # READ FROM `handles.range()` and write straight back into it, and
+        # `_sync_readouts` re-reads the handles afterwards so what is shown is
+        # always what the handles took (they clamp `_MIN_SPAN`).
+        self.black_val = QDoubleSpinBox()
+        self.white_val = QDoubleSpinBox()
+        for box, tip in ((self.black_val, "Black point — type a value or use "
+                                          "the arrow keys to nudge by 0.001"),
+                         (self.white_val, "White point — type a value or use "
+                                          "the arrow keys to nudge by 0.001")):
+            box.setDecimals(3)
+            box.setRange(0.0, 1.0)
+            box.setSingleStep(0.001)
+            # Without this every keystroke of a typed value is a separate edit,
+            # so typing "0.25" passes through 0.2 and recomposes the image on
+            # the way.
+            box.setKeyboardTracking(False)
+            # A decimal POINT, whatever the system locale says. Every other
+            # number in the app is formatted "{:.3f}" — the history step, the
+            # provenance report, the log line, this dialog's own help — so on a
+            # Swedish machine (Andreas') the untouched spin box read "0,000"
+            # beside a history entry saying "0.000" for the same value.
+            box.setLocale(QLocale.c())
+            box.setToolTip(tip)
+            box.valueChanged.connect(self._on_readout_edited)
         self.reset_btn = QPushButton("Reset")
         self.reset_btn.setToolTip("Back to 0.000 / 1.000 — the untouched image")
         self.reset_btn.clicked.connect(self.reset)
@@ -107,29 +138,18 @@ class StarlessLevelsDialog(QDialog):
             "Wipe splits one picture with a divider you drag; Side by side "
             "shows both at once, and pan and zoom move them together")
 
-        # Scroll to zoom, drag to pan — plus explicit buttons, the same set
-        # CurvesDialog carries over the same widget and for the same reason: a
-        # trackpad gesture is not discoverable, and a large mosaic is unusable
-        # without one. Sharper here than there, because zooming CHANGES WHAT
-        # THE MASK COVERS (whole frame at fit, visible region beyond it) — so a
-        # user who scroll-zoomed by accident silently lost the whole-frame clip
-        # mask and had no way back to Fit.
-        self.zoom_label = QLabel("1.0x")
-        self.fit_btn = QPushButton("Fit")
-        self.fit_btn.clicked.connect(self.preview.reset_view)
-        self.zoom_in_btn = QPushButton("+")
-        self.zoom_in_btn.clicked.connect(
-            lambda: self.preview.set_zoom(self.preview.zoom_level() * 1.5))
-        self.zoom_out_btn = QPushButton("−")
-        self.zoom_out_btn.clicked.connect(
-            lambda: self.preview.set_zoom(self.preview.zoom_level() / 1.5))
-        zoom_row = QHBoxLayout()
-        zoom_row.addWidget(QLabel("Preview"))
-        zoom_row.addStretch(1)
-        zoom_row.addWidget(self.zoom_label)
-        zoom_row.addWidget(self.zoom_out_btn)
-        zoom_row.addWidget(self.zoom_in_btn)
-        zoom_row.addWidget(self.fit_btn)
+        # The shared row (zoom_row.py), so the buttons drive whichever widget
+        # the current Compare mode actually shows. Built by hand here before,
+        # they drove the side/off pane's model in Wipe mode too — where the
+        # picture is an ImageView that does not use it: Fit did nothing, the
+        # readout froze at whatever it last said, and "+" re-cropped from a
+        # DETACHED pane's stale geometry (a 400x600 crop out of a square
+        # frame). The help documents these three buttons, so that was a
+        # documented control lying in one of three modes.
+        zoom_row = ZoomRow(self.preview)
+        self.zoom_label = zoom_row.label
+        self.fit_btn = zoom_row.fit_btn
+        self.zoom_in_btn, self.zoom_out_btn = zoom_row.in_btn, zoom_row.out_btn
 
         note = QLabel("Pull the endpoints in to where the data begins. The stars "
                       "are held aside and screened back untouched, so the white "
@@ -204,7 +224,12 @@ class StarlessLevelsDialog(QDialog):
         # sanity-check preview, so zoom/pan has to actually feed back into the
         # render here.
         self.preview.viewChanged.connect(self._on_view_changed)
-        self._update_labels()
+        # A mode switch changes the pane's size without resizing `CompareView`,
+        # so neither this dialog's resizeEvent nor `viewChanged` sees it — and
+        # the clipping overlay is built AT the pane size, which would then be
+        # the previous mode's.
+        self.preview.paneResized.connect(self._queue_preview)
+        self._sync_readouts()
         self._render_preview()   # first paint, not debounced
 
     # --- the two numbers ---
@@ -220,19 +245,34 @@ class StarlessLevelsDialog(QDialog):
                                       black, white)
 
     def reset(self) -> None:
-        # `set_range` is deliberately silent, so the label refresh and the
+        # `set_range` is deliberately silent, so the readout refresh and the
         # re-render are asked for explicitly here.
         self.handles.set_range(0.0, 1.0)
-        self._update_labels()
+        self._sync_readouts()
         self._queue_preview()
 
-    def _update_labels(self) -> None:
-        black, white = self.values()
-        self.black_val.setText(f"{black:.3f}")
-        self.white_val.setText(f"{white:.3f}")
+    def _sync_readouts(self) -> None:
+        """Push the handles' numbers into the two spin boxes.
+
+        Signals blocked, so writing the handles' value back into a box the user
+        just edited cannot echo round and drive the handles again.
+        """
+        for box, value in zip((self.black_val, self.white_val), self.values()):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+
+    def _on_readout_edited(self, *_) -> None:
+        """A typed or arrow-keyed value goes STRAIGHT into the handles, and the
+        boxes are then re-read from them — so the handles stay the one place
+        these two numbers live, and a value they clamp is shown clamped rather
+        than the box keeping a number the tool is not using."""
+        self.handles.set_range(self.black_val.value(), self.white_val.value())
+        self._sync_readouts()
+        self._queue_preview()
 
     def _on_range_changed(self, _lo: float, _hi: float) -> None:
-        self._update_labels()
+        self._sync_readouts()
         self._queue_preview()
 
     def _queue_preview(self, *_) -> None:
@@ -240,10 +280,14 @@ class StarlessLevelsDialog(QDialog):
 
     def _on_clip_toggled(self, on: bool) -> None:
         self.clip_line.setVisible(bool(on))
-        # Not debounced: the readout beside the checkbox is written when the
-        # baseline is captured, and a 60 ms window where the line is visible but
-        # blank reads as a bug in the line rather than a wait for a render.
+        # Not debounced: a 60 ms window where the line is visible but blank
+        # reads as a bug in the line rather than a wait for a render.
         self._render_preview()
+        if on:
+            # After the render, not before: at fit the render has just captured
+            # the whole-frame baseline this line needs, so asking now costs
+            # nothing instead of a second full-frame compose.
+            self._update_clip_line()
 
     def _on_mode_changed(self, index: int) -> None:
         self.preview.set_mode(_MODES[index][1])
@@ -253,10 +297,9 @@ class StarlessLevelsDialog(QDialog):
         self._render_preview()
 
     def _on_view_changed(self, *_) -> None:
-        # The readout tracks the gesture, the render waits for the debounce —
-        # the same split the value labels use. A zoom number that only caught
-        # up 60 ms later would lag the thing it is describing.
-        self.zoom_label.setText(f"{self.preview.zoom_level():.1f}x")
+        # The readout tracks the gesture (ZoomRow is connected to the same
+        # signal), the render waits for the debounce — the same split the two
+        # value readouts use.
         self._queue_preview()
 
     # --- rendering ---
@@ -310,20 +353,38 @@ class StarlessLevelsDialog(QDialog):
             after = self._clip_qimage(full_starless, full_stars, key)
         else:
             after = to_qimage(self.compose(small_starless, small_stars))
-        before = self._before_qimage(small_starless, small_stars, key) \
+        # With clipping on the two halves are produced by different paths — the
+        # overlay is built at the PANE's size, "before" from the decimated copy
+        # — so they must be reconciled explicitly. `ImageView.set_compare` takes
+        # the divider's whole range from the COMPARE pixmap: measured on a
+        # 1200^2 frame, base 601x601 against compare 1200x1200, which spread the
+        # divider over twice the picture and showed the "before" half as a 2x
+        # magnified top-left quadrant.
+        before = self._before_qimage(small_starless, small_stars, key,
+                                     box=after.size() if clipping else None) \
             if show_before else None
         view.set_images(before, after)
 
     def _before_qimage(self, small_starless: AstroImage, small_stars: AstroImage,
-                       key):
+                       key, box=None):
         """The untouched composite, cached: it depends on the crop and the
         preview scale, never on the two handles, so recomposing it on every tick
         of a drag would double the cost of the drag for a picture that has not
-        changed."""
-        cache_key = (key, small_starless.data.shape)
+        changed.
+
+        `box` is the size the "after" image came out at, given only when the two
+        paths can disagree about it — see the call site. Same source aspect, so
+        a KeepAspectRatio fit into it lands on exactly that size.
+        """
+        cache_key = (key, small_starless.data.shape,
+                     None if box is None else (box.width(), box.height()))
         if cache_key != self._before_key:
-            self._before_img = to_qimage(
+            img = to_qimage(
                 starless_levels_layers(small_starless, small_stars, 0.0, 1.0))
+            if box is not None and img.size() != box:
+                img = img.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+            self._before_img = img
             self._before_key = cache_key
         return self._before_img
 
@@ -340,8 +401,35 @@ class StarlessLevelsDialog(QDialog):
             untouched = starless_levels_layers(starless, stars, 0.0, 1.0)
             self._baseline = capture_clip_baseline(to_rgb8(untouched))
             self._baseline_key = key
-            self._update_clip_line()
+            if key == ("fit",) and self._frame_clip is None:
+                # At fit this crop IS the whole frame, so the reported figures
+                # come free — see `_frame_fractions`.
+                self._frame_clip = (self._baseline.shadow_frac,
+                                    self._baseline.highlight_frac)
         return self._baseline
+
+    def _frame_fractions(self) -> tuple[float, float]:
+        """What the image ARRIVED with, measured over the WHOLE frame ONCE.
+
+        The per-crop baseline cannot answer this. It is captured on whatever is
+        currently visible, so zooming into a dark corner took the line from
+        "2.1% crushed" to "40% crushed" while the sentence still said "before
+        this tool touched it" — which reads as a property of the file. The
+        overlay answers "what am I adding here" and is right to follow the crop;
+        this sentence answers "what did this image arrive with", and that does
+        not change when you zoom.
+
+        Measured on first need rather than in __init__: it is a full compose of
+        the whole frame, and nobody who leaves Show Clipping off should pay it.
+        At fit it costs nothing at all — `_clip_baseline` has already done the
+        work and hands the figures over.
+        """
+        if self._frame_clip is None:
+            untouched = starless_levels_layers(self._starless, self._stars,
+                                               0.0, 1.0)
+            base = capture_clip_baseline(to_rgb8(untouched))
+            self._frame_clip = (base.shadow_frac, base.highlight_frac)
+        return self._frame_clip
 
     def _update_clip_line(self) -> None:
         """State the total in words, the way the main window does.
@@ -353,12 +441,12 @@ class StarlessLevelsDialog(QDialog):
         pixels already at zero (measured on Andreas' masters, 2026-09-09) and
         the old overlay lit every one of them the moment the dialog opened.
         """
-        base = self._baseline
+        shadow_frac, highlight_frac = self._frame_fractions()
         was = []
-        if base is not None and base.shadow_frac > 0:
-            was.append(f"{base.shadow_frac * 100:.1f}% crushed")
-        if base is not None and base.highlight_frac > 0:
-            was.append(f"{base.highlight_frac * 100:.1f}% blown")
+        if shadow_frac > 0:
+            was.append(f"{shadow_frac * 100:.1f}% crushed")
+        if highlight_frac > 0:
+            was.append(f"{highlight_frac * 100:.1f}% blown")
         detail = ", ".join(was) + " before this tool touched it" if was \
             else "nothing was clipped before this tool touched it"
         self.clip_line.setText(f"Marks only what these two points add — {detail}.")

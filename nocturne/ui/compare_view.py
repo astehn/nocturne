@@ -23,12 +23,16 @@ Reuse, not reinvention:
 
 The two mechanisms don't share a coordinate model, so they are not bridged
 live: while Wipe is showing, ImageView owns its own pan/zoom (as it already
-does everywhere else it is embedded), and CompareView's zoom/pan surface
-(`zoom_level` / `set_zoom` / `reset_view` / `visible_rect`) tracks Off/Side's
-shared `_ZoomPreview` state regardless of which mode is active. The one
-guarantee this file exists to make is about the two SIDE panes, which is where
-independent state would actually be invisible drift rather than an accepted
-difference between two distinct viewing modes.
+does everywhere else it is embedded). The RENDER model — `zoom_level` /
+`set_zoom` / `visible_rect`, which a host uses to decide what to compose —
+tracks Off/Side's shared `_ZoomPreview` in every mode, so Wipe always renders
+the whole frame and ImageView magnifies that. The USER-FACING controls
+(`zoom_in` / `zoom_out` / `fit` / `display_zoom`) are mode-aware and drive
+whichever widget is on screen, because a Fit button that does nothing in one
+of three modes is worse than no button at all. The one guarantee this file
+exists to make is about the two SIDE panes, which is where independent state
+would actually be invisible drift rather than an accepted difference between
+two distinct viewing modes.
 
 The widget only displays what it is given — `set_images()` takes finished
 QImages. Cropping a large image to the visible region for performance (as
@@ -37,33 +41,35 @@ are exposed so a host can do that and hand back new images on `viewChanged`.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
+                               QWidget)
 
-from .curves_dialog import _ZoomPreview, _fitted_size
+from .curves_dialog import _ZoomPreview, _scaled_to_box
 from .image_view import ImageView
 
 MODES = ("off", "wipe", "side")
 
 # Slack left inside the wipe pane, in pixels — see `CompareView.pane_size`.
+#
+# Measured against a real ImageView at a 698 x 498 viewport: a pixmap that
+# large fits at scale 0.99197, and the fit scale only reaches 1.00000 once the
+# pixmap is 4 px smaller in each dimension (694 x 494) — fitInView's 2 px inset
+# per side. 8 leaves double that break-even margin, which lands at 1.00580, so
+# rounding in any host that computes the size slightly differently still cannot
+# push the picture back into a nearest-neighbour SHRINK.
 _WIPE_MARGIN = 8
 
 
 def _scaled_pixmap(qimage, box: QSize) -> QPixmap:
     """QImage -> QPixmap fitted into `box`, aspect kept.
 
-    Reuses `_fitted_size` rather than re-deriving the KeepAspectRatio maths
-    `curves_dialog._pixmap_for` already got right (that helper takes an
-    AstroImage; CompareView is only ever handed a finished QImage, so this is
-    the same target-size question asked directly).
+    One line, because the rescale itself is `curves_dialog._scaled_to_box` —
+    the same helper `_pixmap_for` uses. This file only ever holds finished
+    QImages, so the conversion is all that is left over.
     """
-    pm = QPixmap.fromImage(qimage)
-    if pm.isNull():
-        return pm
-    target = _fitted_size(pm.width(), pm.height(), box)
-    return pm.scaled(target, Qt.AspectRatioMode.KeepAspectRatio,
-                     Qt.TransformationMode.SmoothTransformation)
+    return _scaled_to_box(QPixmap.fromImage(qimage), box)
 
 
 class CompareView(QWidget):
@@ -77,10 +83,17 @@ class CompareView(QWidget):
     """
 
     viewChanged = Signal()
+    # The panes have been given their real geometry. A host that produces its
+    # pixels AT the display size (Starless Levels' clipping overlay) has to
+    # re-render when that size changes, and a mode switch changes it without
+    # ever resizing `CompareView` itself, so a resizeEvent on the host is not
+    # enough.
+    paneResized = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._mode = "off"
+        self._rebuilding = False
         self._before_img = None
         self._after_img = None
         # Sentinel, not None: None is a legitimate "before" image (clears the
@@ -92,6 +105,20 @@ class CompareView(QWidget):
         for pane in (self._after_pane, self._before_pane):
             pane.setMinimumSize(120, 120)
             pane.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # Ignored/Ignored, or the PIXMAP drives the layout. A QLabel's
+            # sizeHint is its pixmap's size, so in Side mode the QHBoxLayout
+            # split the width by the two pictures' sizes: measured at 1180x860,
+            # after 460 px wide against before 328, a 40% scale difference
+            # between two panes whose whole job is to be comparable. With the
+            # hint ignored the two equal stretches decide, and they are equal.
+            pane.setSizePolicy(QSizePolicy.Policy.Ignored,
+                               QSizePolicy.Policy.Ignored)
+            # The pane's geometry settles AFTER the layout runs, and `_render`
+            # scales to `pane.size()`. Rendering only at rebuild time left a
+            # 611 px pixmap inside a 460 px pane, which QLabel AlignCenter
+            # centre-crops silently — 75 px off each edge, no scrollbar, no
+            # indication, and a clipped speck near a corner simply gone.
+            pane.installEventFilter(self)
         self._after_pane.viewChanged.connect(lambda: self._on_pane_changed(self._after_pane))
         self._before_pane.viewChanged.connect(lambda: self._on_pane_changed(self._before_pane))
 
@@ -109,6 +136,9 @@ class CompareView(QWidget):
         # value readout are both useful here.
         self._wipe_view.annotation_pill.hide()
         self._wipe_view.object_panel.hide()
+        # So the shared readout tracks a wipe-mode zoom too — its own pill and
+        # the dialog's zoom row would otherwise disagree about the same view.
+        self._wipe_view.zoomChanged.connect(lambda _z: self.viewChanged.emit())
 
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -137,6 +167,9 @@ class CompareView(QWidget):
         parented under it would take the pane down too, silently destroying
         state this class exists to keep alive.
         """
+        # Reparenting fires resize events on the panes; the filter's re-render
+        # would then run against a half-built layout.
+        self._rebuilding = True
         for w in (self._after_pane, self._before_pane,
                  self._before_label, self._after_label, self._wipe_view):
             w.setParent(None)
@@ -146,6 +179,7 @@ class CompareView(QWidget):
             if w is not None:
                 w.deleteLater()
 
+        nested = ()
         if self._mode == "off":
             self._layout.addWidget(self._after_pane, 1)
         elif self._mode == "wipe":
@@ -161,12 +195,23 @@ class CompareView(QWidget):
             av.setContentsMargins(0, 0, 0, 0)
             av.addWidget(self._after_label)
             av.addWidget(self._after_pane, 1)
-            row.addWidget(before_box)
-            row.addWidget(after_box)
+            # Stretch 1 each. Without it the two boxes are sized by their
+            # sizeHints, which are their pixmaps' — see the size policy above.
+            row.addWidget(before_box, 1)
+            row.addWidget(after_box, 1)
             container = QWidget()
             container.setLayout(row)
             self._layout.addWidget(container, 1)
+            nested = (row, bv, av)
 
+        # Lay the new arrangement out BEFORE rendering into it. `_render`
+        # scales each picture to `pane.size()`, and a pane that has not been
+        # given its new geometry yet still reports the OLD mode's — which is
+        # how a 611 px picture ended up inside a 460 px pane, centre-cropped.
+        self._rebuilding = False
+        self._layout.activate()
+        for lay in nested:      # outer first: a nested layout can only place
+            lay.activate()      # its children once its own box has a geometry
         self._render()
 
     # --- images ---
@@ -212,16 +257,58 @@ class CompareView(QWidget):
         self.viewChanged.emit()
 
     def zoom_level(self) -> float:
+        """The RENDER model: 1.0 = the host should compose the whole frame.
+
+        Deliberately not mode-aware. Wipe hands `ImageView` one finished
+        picture and lets it magnify; the host must keep composing the whole
+        frame there, or the mask would cover a region the wipe divider is not
+        actually looking at.
+        """
         return self._after_pane.zoom_level()
 
     def set_zoom(self, zoom: float) -> None:
         self._after_pane.set_zoom(zoom)
 
-    def reset_view(self) -> None:
-        self._after_pane.reset_view()
-
     def visible_rect(self, shape) -> tuple:
         return self._after_pane.visible_rect(shape)
+
+    # --- the user-facing controls: whichever widget is actually on screen ---
+    def _zoom_target(self):
+        return self._wipe_view if self._mode == "wipe" else self._after_pane
+
+    def zoom_in(self) -> None:
+        self._zoom_target().zoom_in()
+
+    def zoom_out(self) -> None:
+        self._zoom_target().zoom_out()
+
+    def fit(self) -> None:
+        self._zoom_target().fit()
+
+    def reset_view(self) -> None:
+        self.fit()
+
+    def display_zoom(self) -> float:
+        """What a zoom readout should say, in "x fit" units in every mode.
+
+        `ImageView` reports an ABSOLUTE scale (image px -> view px), so on a
+        picture wider than the pane it reads 0.5x at fit while `_ZoomPreview`
+        reads 1.0x for the same view. One readout serves all three modes, so
+        Wipe's number is converted rather than the label meaning two different
+        things in two places.
+        """
+        if self._mode != "wipe":
+            return self._after_pane.display_zoom()
+        fit = self._wipe_fit_scale()
+        return self._wipe_view.zoom() / fit if fit > 0 else 1.0
+
+    def _wipe_fit_scale(self) -> float:
+        """The display scale `ImageView` lands on with the whole picture fitted."""
+        w, h = self._wipe_view._image_wh()
+        vp = self._wipe_view.viewport().size()
+        if w <= 0 or h <= 0:
+            return 1.0
+        return max(1e-9, min(vp.width() / w, vp.height() / h))
 
     def pane_size(self) -> QSize:
         """The box the "after" image is actually DISPLAYED in — not the widget.
@@ -247,6 +334,20 @@ class CompareView(QWidget):
         return self._after_pane.size()
 
     # --- layout ---
+    def eventFilter(self, obj, event) -> bool:
+        """Re-render a pane the moment it is actually given its size.
+
+        The pane geometry a mode switch produces arrives after the layout runs,
+        not during `_rebuild`, and `CompareView` itself never resizes — so
+        without this the picture keeps whatever scale the PREVIOUS mode's pane
+        had.
+        """
+        if (event.type() == QEvent.Type.Resize and not self._rebuilding
+                and obj in (self._after_pane, self._before_pane)):
+            self._render()
+            self.paneResized.emit()
+        return super().eventFilter(obj, event)
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._render()

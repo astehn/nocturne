@@ -5,7 +5,7 @@ from nocturne.core.enhance import starless_levels_layers
 from nocturne.core.image import AstroImage
 from nocturne.ui.curves_dialog import _PREVIEW_MAX
 from nocturne.ui.preview import qimage_to_rgb8, to_rgb8
-from nocturne.ui.starless_levels_dialog import StarlessLevelsDialog
+from nocturne.ui.starless_levels_dialog import _MODES, StarlessLevelsDialog
 
 
 @pytest.fixture
@@ -503,3 +503,205 @@ def test_resizing_re_renders_rather_than_rescaling(qtbot, split):
     # alone proves nothing about the handler.
     QApplication.sendEvent(dlg, QResizeEvent(QSize(900, 700), dlg.size()))
     assert dlg._timer.isActive(), "a resize left the old picture stretched in place"
+
+
+# --- geometry after layout: the round-2 review's two Criticals -------------
+
+def _shown(qtbot, size=1200, w=1180, h=860, corner_speck=True):
+    """A shown, laid-out dialog on a frame big enough for the defects to bite.
+
+    Mid-grey field, never np.zeros: a black field is itself shadow-clipped and
+    would light the overlay for the wrong reason.
+    """
+    starless = np.full((size, size, 3), 0.5, np.float32)
+    if corner_speck:
+        starless[20, 20] = 0.9          # the reviewer's repro speck
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.resize(w, h)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    return dlg
+
+
+def test_side_by_side_panes_match_after_the_layout_settles(qtbot):
+    """Andreas' headline request, broken on the first click. `_ZoomPreview` is
+    a QLabel whose sizeHint is its PIXMAP's size, so with no stretch the
+    QHBoxLayout split the width by the two separately-rendered pictures:
+    measured at 1180x860 on a real gesture, after pane 460x572 against before
+    328x572 — a 40% scale difference between two panes whose whole job is to be
+    comparable — and, mid-switch, a 611x611 picture inside the 460 px pane,
+    which QLabel AlignCenter centre-crops with no scrollbar and no
+    indication."""
+    dlg = _shown(qtbot)
+    dlg.clip_check.setChecked(True)
+    dlg.handles.set_range(0.0, 0.7)
+    dlg.mode_box.setCurrentIndex(2)             # Side by side
+    view = dlg.preview
+    qtbot.waitUntil(
+        lambda: view._before_pane.width() == view._after_pane.width(), timeout=2000)
+    assert view._before_pane.size() == view._after_pane.size()
+    for name, pane in (("before", view._before_pane), ("after", view._after_pane)):
+        pm = pane.pixmap()
+        assert pm.width() <= pane.width() and pm.height() <= pane.height(), (
+            f"{name} pane {pane.width()}x{pane.height()} holds a "
+            f"{pm.width()}x{pm.height()} pixmap — centre-cropped")
+
+
+def test_a_corner_speck_survives_into_side_by_side(qtbot):
+    """"Drag until the first specks appear" is what this tool is for, and a
+    centre-crop is precisely what hides them: 75 px off each side put the
+    reviewer's speck at (20, 20) of a 1200^2 frame off-screen entirely."""
+    dlg = _shown(qtbot)
+    dlg.handles.set_range(0.0, 0.7)
+    dlg.clip_check.setChecked(True)
+    dlg.mode_box.setCurrentIndex(2)
+    view = dlg.preview
+    qtbot.waitUntil(
+        lambda: view._before_pane.width() == view._after_pane.width(), timeout=2000)
+    dlg._render_preview()
+
+    shown = qimage_to_rgb8(view._after_pane.pixmap().toImage())
+    h, w = shown.shape[:2]
+    corner = shown[:max(1, h // 8), :max(1, w // 8)]
+    assert int(corner.max()) == 255, (
+        "the clipped speck is not in the top-left corner of the after pane — "
+        "the picture was centre-cropped on its way to the screen")
+
+
+def test_wipe_with_clipping_composites_two_layers_of_the_same_size(qtbot):
+    """`ImageView.set_compare` takes `_split_x` and the divider's max from the
+    COMPARE pixmap, so a mismatch spreads the divider across twice the picture
+    and shows the "before" half as a magnified top-left quadrant. Measured on a
+    1200^2 frame: base 601x601 against compare 1200x1200."""
+    dlg = _shown(qtbot, corner_speck=False)
+    dlg.handles.set_range(0.0, 0.7)
+    dlg.clip_check.setChecked(True)
+    dlg.mode_box.setCurrentIndex(1)             # Wipe
+    dlg._render_preview()
+
+    wipe = dlg.preview._wipe_view
+    base = wipe._item.pixmap()
+    compare = wipe._compare_item.pixmap()
+    assert not base.isNull() and not compare.isNull()
+    assert (base.width(), base.height()) == (compare.width(), compare.height()), (
+        f"base {base.width()}x{base.height()} against compare "
+        f"{compare.width()}x{compare.height()} — the wipe divider spans the "
+        "wrong picture and magnifies the before half")
+
+
+# --- the zoom row tells the truth in all three modes -----------------------
+
+def test_the_zoom_buttons_drive_the_wipe_view_in_wipe_mode(qtbot, split):
+    """They drove the side/off pane's model in every mode. In Wipe the picture
+    is an `ImageView` that does not use that model: Fit did nothing, the readout
+    froze, and "+" re-cropped from a DETACHED pane's stale geometry. The help
+    documents these three buttons, so it was false in one of three modes."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.resize(900, 700)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg.mode_box.setCurrentIndex(1)             # Wipe
+    wipe = dlg.preview._wipe_view
+    fitted = wipe.zoom()
+
+    dlg.zoom_in_btn.click()
+    assert wipe.zoom() > fitted, "the + button did not touch the wipe view"
+    assert dlg.zoom_label.text() != "1.0x", "the readout ignored the zoom"
+
+    dlg.fit_btn.click()
+    assert wipe.zoom() == pytest.approx(fitted, rel=1e-3), "Fit did nothing"
+    assert dlg.zoom_label.text() == "1.0x"
+
+
+def test_the_zoom_row_readout_is_in_fit_units_in_every_mode(qtbot, split):
+    """`ImageView` reports an absolute scale while `_ZoomPreview` counts from
+    1.0 = fit, and one readout serves all three modes — so it must not mean two
+    different things in two of them."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.resize(900, 700)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    for index in (0, 1, 2):
+        dlg.mode_box.setCurrentIndex(index)
+        assert dlg.preview.display_zoom() == pytest.approx(1.0, abs=0.02), (
+            f"mode {_MODES[index][1]} does not read 1.0x when nothing is zoomed")
+
+
+# --- what the image ARRIVED with does not change when you zoom -------------
+
+def test_the_already_clipped_figure_is_the_whole_frame_not_the_crop(qtbot):
+    """The sentence says "before this tool touched it", which reads as a
+    property of the file — but it came from a baseline captured on the CURRENT
+    crop, so zooming into a dark corner took it from "2.1% crushed" to "40%
+    crushed". The overlay answers "what am I adding here" and is right to
+    follow the crop; this sentence answers "what did this image arrive with"."""
+    size = 200
+    starless = np.full((size, size, 3), 0.40, np.float32)
+    starless[:20, :20] = 0.0                # 400 of 40000 pixels = 1.0%
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 200, 200)
+    dlg.clip_check.setChecked(True)
+    at_fit = dlg.clip_line.text()
+    assert "1.0% crushed" in at_fit, at_fit
+
+    # Into the crushed corner, which is 100% crushed on its own.
+    dlg.preview.set_zoom(8.0)
+    dlg.preview._after_pane._centre = [0.03, 0.03]
+    dlg._render_preview()
+    dlg._update_clip_line()
+    assert dlg.clip_line.text() == at_fit, (
+        "the reported figure followed the crop — it describes the file, not "
+        "the corner being looked at")
+    # ...while the per-crop baseline the OVERLAY uses did follow the crop:
+    # nearly half of this crop is crushed, against 1.0% of the whole frame.
+    assert dlg._baseline.shadow_frac > 0.3, dlg._baseline.shadow_frac
+
+
+# --- precision: the readouts are editable, and are not a second copy -------
+
+def test_the_readouts_can_be_typed_into_and_drive_the_handles(qtbot, split):
+    """The removed `ResetSlider` pair gave arrow-key stepping at 0.001; a
+    histogram handle is mouse-only at ~0.001 per pixel, so the rework took the
+    precision away with the sliders — on the one tool where "the levels IS the
+    key"."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.black_val.setValue(0.123)
+    assert dlg.handles.range()[0] == pytest.approx(0.123)
+    assert dlg.values()[0] == pytest.approx(0.123)
+    dlg.white_val.setValue(0.750)
+    assert dlg.handles.range() == pytest.approx((0.123, 0.750))
+    assert dlg.black_val.singleStep() == pytest.approx(0.001)
+
+
+def test_the_readouts_show_what_the_handles_took_not_what_was_asked(qtbot, split):
+    """One source of truth. A box that kept a number the handles clamped away
+    would be exactly the second copy removing the sliders was meant to end."""
+    from nocturne.ui.range_handles import _MIN_SPAN
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.black_val.setValue(0.500)
+    dlg.white_val.setValue(0.500)               # a span the handles will refuse
+    lo, hi = dlg.values()
+    assert hi - lo == pytest.approx(_MIN_SPAN)
+    assert dlg.black_val.value() == pytest.approx(lo)
+    assert dlg.white_val.value() == pytest.approx(hi)
+
+
+def test_the_readouts_use_a_decimal_point_whatever_the_locale(qtbot, split):
+    """Every other number in the app is formatted "{:.3f}" — the history step,
+    the provenance report, the log line — so on a Swedish machine (Andreas')
+    a locale-formatted box read "0,000" beside a history entry saying "0.000"
+    for the same value."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.black_val.setValue(0.125)
+    assert dlg.black_val.text() == "0.125", dlg.black_val.text()
