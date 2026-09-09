@@ -79,6 +79,13 @@ class StarlessLevelsDialog(QDialog):
         self.black_slider.valueChanged.connect(self._on_slider_changed)
         self.white_slider.valueChanged.connect(self._on_slider_changed)
         self.clip_check.toggled.connect(self._queue_preview)
+        # _ZoomPreview accepts wheel-zoom and drag-pan on its own (see
+        # curves_dialog._ZoomPreview) and emits viewChanged either way. Without
+        # this connection the widget still tracks the gesture internally but the
+        # picture never redraws -- finding the first clipped specks IS this
+        # tool's workflow, more than it is CurvesDialog's sanity-check preview,
+        # so zoom/pan has to actually feed back into the render here.
+        self.preview_label.viewChanged.connect(self._queue_preview)
         self._update_labels()
         self._render_preview()   # first paint, not debounced
 
@@ -109,13 +116,37 @@ class StarlessLevelsDialog(QDialog):
         does) rather than tinting it, and its mask comes from the FULL-resolution
         composite: the decimated preview averages a block down, so an isolated
         blown pixel — exactly what dragging the white point is looking for —
-        would vanish if the mask were built from the small copy instead."""
-        small = self.compose(self._small_starless, self._small_stars)
+        would vanish if the mask were built from the small copy instead.
+
+        Zoomed in, "full resolution" means the native crop under the visible
+        rect, not the whole-frame decimated copy — same reasoning as
+        CurvesDialog._render, and for the same reason: rendering the whole frame
+        at a size fine enough to be useful while zoomed would make dragging
+        stutter, so only the on-screen region is ever composed at full detail.
+        """
+        view = self.preview_label
+        if view.zoom_level() <= 1.0:
+            small_starless, small_stars = self._small_starless, self._small_stars
+            full_starless, full_stars = self._starless, self._stars
+        else:
+            shape = self._starless.data.shape
+            x0, y0, x1, y1 = view.visible_rect(shape)
+            full_starless = AstroImage(self._starless.data[y0:y1, x0:x1],
+                                       is_linear=self._starless.is_linear,
+                                       metadata=dict(self._starless.metadata))
+            full_stars = AstroImage(self._stars.data[y0:y1, x0:x1],
+                                    is_linear=self._stars.is_linear,
+                                    metadata=dict(self._stars.metadata))
+            edge = max(view.width(), view.height(), 1)
+            small_starless = _downscale(full_starless, max_edge=edge)
+            small_stars = _downscale(full_stars, max_edge=edge)
+
+        small = self.compose(small_starless, small_stars)
         rgb = np.clip(small.data * 255.0, 0, 255).astype(np.uint8)
         if rgb.ndim == 2:
             rgb = np.repeat(rgb[..., None], 3, axis=2)
         if self.clip_check.isChecked():
-            full = self.compose()
+            full = self.compose(full_starless, full_stars)
             frgb = np.clip(full.data * 255.0, 0, 255).astype(np.uint8)
             if frgb.ndim == 2:
                 frgb = np.repeat(frgb[..., None], 3, axis=2)

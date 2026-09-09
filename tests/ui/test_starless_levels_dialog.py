@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 
 from nocturne.core.image import AstroImage
+from nocturne.ui.curves_dialog import _PREVIEW_MAX
+from nocturne.ui.preview import qimage_to_rgb8
 from nocturne.ui.starless_levels_dialog import StarlessLevelsDialog
 
 
@@ -76,3 +78,59 @@ def test_stars_are_untouched_by_the_dialog(qtbot, split):
     dlg.white_slider.setValue(400)
     dlg.compose()
     assert np.array_equal(stars.data, before)
+
+
+# --- Show Clipping: the mask must come from the full-resolution composite ----
+
+def test_show_clipping_finds_a_speck_the_decimated_preview_would_hide(qtbot):
+    """The brief's own 7 tests never toggle `clip_check` and render — this is
+    the task's only subtle correctness requirement, and a "simplification" to
+    build the mask from the decimated preview would pass every one of them
+    while silently blinding the tool.
+
+    Size comfortably larger than `_PREVIEW_MAX` (640) so the preview really is
+    decimated (2x2 block averaging, not a no-op). A MID-GREY background, not
+    black: a black background is itself shadow-clipped (rgb == 0), which would
+    light the whole overlay for the wrong reason and let this assertion pass
+    even from a broken implementation.
+
+    One pixel is seeded so that, after the levels below, it alone is blown:
+    - full resolution: 1.0 / white(0.7) = 1.43 -> clips to 1.0 (255)
+    - its own 2x2 decimation block: (1.0 + 3*0.5) / 4 = 0.625; 0.625/0.7 = 0.89
+      -> stays under 1.0, so the decimated copy shows nothing wrong there
+    - the plain background: 0.5 / 0.7 = 0.71 -> 182, neither 0 nor 255, so it
+      cannot itself trip the shadow or highlight mask
+    """
+    size = 2 * _PREVIEW_MAX   # 1280: guarantees real 2x2-block decimation
+    starless = np.full((size, size, 3), 0.5, np.float32)
+    starless[100, 100] = 1.0
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    # Match the preview widget to the overlay's own resolution so the final
+    # `.scaled()` call is an identity, not a second blur that could smear the
+    # one lit pixel away before the test can see it.
+    dlg.preview_label.resize(_PREVIEW_MAX, _PREVIEW_MAX)
+    dlg.white_slider.setValue(700)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    rgb = qimage_to_rgb8(dlg.preview_label.pixmap().toImage())
+    assert rgb.max() >= 250, (
+        "no clipped pixel reached the overlay: the mask was built from the "
+        "decimated preview, which averaged the seeded pixel away")
+
+
+# --- pan and zoom --------------------------------------------------------
+
+def test_view_changes_queue_a_redraw(qtbot, split):
+    """`_ZoomPreview.viewChanged` fires on both wheel-zoom and drag-pan
+    (curves_dialog.py). Without this wired to the debounced re-render, the
+    widget still tracks the gesture internally but the picture never updates
+    -- reads as a frozen dialog, and finding the first clipped specks by
+    zooming in IS this tool's workflow."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    with qtbot.waitSignal(dlg._timer.timeout, timeout=500, raising=True):
+        dlg.preview_label.set_zoom(2.0)
