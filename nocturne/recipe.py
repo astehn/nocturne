@@ -13,6 +13,15 @@ _NAME_TO_STAGE["Rotate"] = "rotate"
 _NAME_TO_STAGE["Flip H"] = "flip_h"
 _NAME_TO_STAGE["Flip V"] = "flip_v"
 _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
+
+# A recipe saved before 2026-09-09 carries `oiii_boost`, which both matched the
+# channels and chose the look. There is no honest mapping onto the two controls
+# that replaced it, and deserialize_option filters to KNOWN field names — so
+# without the check in preflight() the value would vanish silently and the step
+# would render with a default it was never given. Beta software: refuse, and say
+# which step and why.
+LEGACY_OIII_REASON = ("saved before the oxygen controls changed — "
+                      "open it in Narrowband and re-save the recipe")
 _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
 
 
@@ -73,7 +82,8 @@ def serialize_option(stage_id, option):
         from .core.narrowband import NarrowbandParams
         p = option if isinstance(option, NarrowbandParams) else NarrowbandParams()
         return {
-            "palette": p.palette, "blackpoint": p.blackpoint, "oiii_boost": p.oiii_boost,
+            "palette": p.palette, "blackpoint": p.blackpoint,
+            "oxygen_strength": p.oxygen_strength,
             "blend_amount": p.blend_amount, "highlight_reduction": p.highlight_reduction,
             "brightness": p.brightness, "highlight_recover": p.highlight_recover,
             "saturation": p.saturation, "lightness_preserve": p.lightness_preserve,
@@ -220,6 +230,10 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
         sid = step.get("stage")
         name = (str(step.get("option")) if sid == "enhance"
                 else STEP_NAME.get(sid, sid or "?"))
+        opt = step.get("option")
+        if sid == "narrowband" and isinstance(opt, dict) and "oiii_boost" in opt:
+            plans.append(StepPlan(name, "fail", "", LEGACY_OIII_REASON))
+            continue
         # The OPTION can make the engine irrelevant: Background "off" returns
         # the image untouched and never reaches GraXpert, which is why
         # missing_tools excludes it. A preflight that ignored the option would
