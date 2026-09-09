@@ -853,6 +853,45 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
 
+    def _open_starless_levels(self) -> None:
+        """Split first, then let the user set the endpoints on the starless layer.
+
+        The split is the reason this is a tool rather than a one-tap enhancement,
+        and the reason it is slower to open than any other: on the full frame the
+        star cores clip first and always, which would pin the white point and
+        defeat the whole operation.
+        """
+        if self.project is None or self._busy:
+            return
+        if self.project.current().is_linear:
+            self._show_warning("Stretch the image first — Starless Levels works "
+                                "on the stretched image.")
+            return
+        base = self.project.current()
+
+        def work():
+            return self._remove_stars(base)
+
+        def on_result(split) -> None:
+            from .starless_levels_dialog import StarlessLevelsDialog
+            starless, stars = split
+            StarlessLevelsDialog(starless, stars, parent=self,
+                                  on_apply=self._apply_starless_levels).exec()
+
+        self._run_busy(work, on_result, "Separating stars…",
+                        "Starless Levels failed")
+
+    def _apply_starless_levels(self, result, values) -> None:
+        if self.project is None or self._busy:
+            return
+        self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
+        self._mark_dirty()
+        black, white = values
+        self.log_panel.append_entry(format_log_entry(
+            "Starless Levels", f"black {black:.2f} / white {white:.2f}", None))
+        self._clear_warning()
+        self._refresh()
+
     def _open_narrowband(self) -> None:
         if self.project is None:
             return
@@ -1424,6 +1463,7 @@ class MainWindow(QMainWindow):
             "color-balance": "#c078d8",
             # finish it — roses, walked toward violet so the group reads as a run
             "star-spikes": "#e089a0",
+            "starless-levels": "#e388a9",
             "trim": "#dd87b1",
             "upscale": "#d987c4",
             "share": "#d489d6",
@@ -1461,6 +1501,10 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         # --- finish it ---
         tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        self._starless_levels_act = tb.addAction(
+            load_icon("starless-levels", tint["starless-levels"]),
+            "Starless Levels…", self._open_starless_levels)
+        self._starless_levels_act.setEnabled(False)   # needs a stretched picture
         self._trim_act = tb.addAction(load_icon("trim", tint["trim"]), "Trim", self._trim)
         self._trim_act.setEnabled(False)   # gated on a stretched image (see _refresh)
         self._upscale_act = tb.addAction(load_icon("upscale", tint["upscale"]), "Upscale Crop", self._upscale)
@@ -3626,6 +3670,10 @@ class MainWindow(QMainWindow):
         self._cb_act.setToolTip(
             "Shift the colour of one tonal range" if stretched else
             "Colour Balance — available once you've stretched the image")
+        self._starless_levels_act.setEnabled(stretched)
+        self._starless_levels_act.setToolTip(
+            "Set black/white points on the starless layer" if stretched else
+            "Starless Levels — available once you've stretched the image")
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

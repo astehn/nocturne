@@ -1563,6 +1563,72 @@ def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
     assert not opened                         # refused on a linear image
 
 
+def test_starless_levels_action_exists_in_the_finishing_group(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    names = [a.text() for a in win._toolbar.actions()]
+    assert "Starless Levels…" in names
+    # It finishes an image, so it belongs after Star Spikes and before Recipes.
+    assert names.index("Starless Levels…") > names.index("Star Spikes…")
+
+
+def test_starless_levels_is_disabled_without_a_picture(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    act = next(a for a in win._toolbar.actions()
+               if a.text() == "Starless Levels…")
+    assert act.isEnabled() is False
+
+
+def test_starless_levels_refuses_a_linear_image(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))       # freshly loaded == still linear
+    assert win.project.current().is_linear is True
+    win._open_starless_levels()
+    assert "Stretch the image first" in win._warning.text()
+
+
+def test_apply_commits_the_step_with_its_values(qtbot, tmp_path):
+    win = _stretched_window(qtbot, tmp_path)
+    assert win.project.current().is_linear is False   # _stretched_window here is the faked one (TODO.md)
+    result = win.project.current()
+    win._apply_starless_levels(result, (0.1, 0.8))
+    entry = win.project.entries()[-1]
+    assert entry[0] == "Starless Levels"
+    assert entry[1] == (0.1, 0.8)
+
+
+def test_toolbar_overflow_at_the_small_screen_floor(qtbot, tmp_path):
+    """A sixth "finish it" tool pushes the tail behind the chevron at the
+    1280x800 floor (bar overflows ~1058px — see the comment above `tint` in
+    main_window.py). Measured headless: `QCursor`/`screencapture` don't work
+    in this terminal, so this reads the toolbar layout back directly, per
+    CLAUDE.md's "send Qt events to a real window and read the widget back".
+
+    Before this tool existed, Share was the last visible action and Save
+    Recipe/Batch were already behind the chevron. Adding Starless Levels
+    pushes Share behind it too — that's the measured cost of a sixth
+    finishing tool, not a guess, and it is a placement question for Andreas
+    rather than something to silently accept.
+    """
+    win = _window(qtbot, tmp_path)
+    win.resize(1280, 800)
+    win.show()
+    qtbot.waitUntil(lambda: win._toolbar.widgetForAction(win._starless_levels_act) is not None)
+    for _ in range(5):
+        qtbot.wait(0)
+
+    def visible(text):
+        act = next(a for a in win._toolbar.actions() if a.text() == text)
+        w = win._toolbar.widgetForAction(act)
+        return w is not None and w.isVisible()
+
+    assert visible("Starless Levels…") is True
+    # Newly pushed behind the chevron by the sixth "finish it" tool.
+    assert visible("Share") is False
+    # Unchanged from before this tool: already behind the chevron at this size.
+    assert visible("Save Recipe") is False
+    assert visible("Batch…") is False
+
+
 def test_open_fits_starts_in_base_dir(qtbot, tmp_path, monkeypatch):
     from nocturne import ui
     import nocturne.ui.main_window as mw
