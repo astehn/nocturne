@@ -873,13 +873,33 @@ class MainWindow(QMainWindow):
             return self._remove_stars(base)
 
         def on_result(split) -> None:
-            from .starless_levels_dialog import StarlessLevelsDialog
-            starless, stars = split
-            StarlessLevelsDialog(starless, stars, parent=self,
-                                  on_apply=self._apply_starless_levels).exec()
+            # Deferred to the next event-loop turn, NOT opened here. `.exec()`
+            # blocks for the dialog's whole lifetime, and _run_busy clears
+            # `_busy` in a finally only AFTER this callback returns — so opened
+            # inline, `_busy` was still True when the user pressed OK and
+            # `_apply_starless_levels`'s own guard swallowed the result. No
+            # step, no undo, no error. (main_window already carries the same
+            # lesson elsewhere: "It was a SILENT no-op.") This is the first
+            # _run_busy callback in the app that opens a modal, which is why
+            # mirroring _open_star_spikes — which never goes through _run_busy —
+            # did not carry the problem with it.
+            #
+            # Dropping the guard instead would not do: BUSY_DELAY_MS is 400 ms,
+            # so the busy bar, the elapsed timer, the Cancel button and the wait
+            # CURSOR would all appear behind and over the open dialog. Letting
+            # _release() run first takes them down before it is shown.
+            QTimer.singleShot(0, lambda: self._show_starless_levels(split))
 
         self._run_busy(work, on_result, "Separating stars…",
                         "Starless Levels failed")
+
+    def _show_starless_levels(self, split) -> None:
+        if self.project is None:
+            return              # workspace closed while the split was running
+        from .starless_levels_dialog import StarlessLevelsDialog
+        starless, stars = split
+        StarlessLevelsDialog(starless, stars, parent=self,
+                              on_apply=self._apply_starless_levels).exec()
 
     def _apply_starless_levels(self, result, values) -> None:
         if self.project is None or self._busy:
