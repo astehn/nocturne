@@ -1,20 +1,57 @@
 import numpy as np
 import pytest
 
+from nocturne.core.enhance import starless_levels_layers
 from nocturne.core.image import AstroImage
 from nocturne.ui.curves_dialog import _PREVIEW_MAX
-from nocturne.ui.preview import qimage_to_rgb8
+from nocturne.ui.preview import qimage_to_rgb8, to_rgb8
 from nocturne.ui.starless_levels_dialog import StarlessLevelsDialog
 
 
 @pytest.fixture
 def split():
-    starless = np.zeros((32, 32, 3), np.float32)
+    """A mid-grey starless background, never np.zeros: a black background is
+    itself shadow-clipped, which lights the clipping overlay for the wrong
+    reason and lets a clipping assertion pass from a broken implementation."""
+    starless = np.full((32, 32, 3), 0.30, np.float32)
     starless[8:16, 8:16] = 0.60
     stars = np.zeros((32, 32, 3), np.float32)
     stars[0, 0] = 0.95
     return (AstroImage(starless, is_linear=False, metadata={}),
             AstroImage(stars, is_linear=False, metadata={}))
+
+
+def _drag(w, frm_x, to_x):
+    """Press at normalised x `frm_x` on a RangeHandles and drag to `to_x`.
+
+    Built and sent directly rather than driven with `qtbot.mouseMove`, which is
+    unreliable here (CLAUDE.md) — the same helper `test_range_handles.py` uses.
+    """
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    for typ, x, btn, held in (
+        (QEvent.Type.MouseButtonPress, frm_x, Qt.MouseButton.LeftButton,
+         Qt.MouseButton.LeftButton),
+        (QEvent.Type.MouseMove, to_x, Qt.MouseButton.NoButton,
+         Qt.MouseButton.LeftButton),
+        (QEvent.Type.MouseButtonRelease, to_x, Qt.MouseButton.LeftButton,
+         Qt.MouseButton.NoButton),
+    ):
+        pos = QPointF(w._x_to_px(x), w.height() / 2)
+        QApplication.sendEvent(w, QMouseEvent(typ, pos, QPointF(0, 0), btn, held,
+                                              Qt.KeyboardModifier.NoModifier))
+
+
+def _size_preview(dlg, w, h):
+    """Give the compare widget a real size AND lay its panes out.
+
+    `resize()` updates the widget's own geometry immediately but only POSTS the
+    child relayout, so without the explicit `activate()` the pane inside is
+    still its default size when the render asks `pane_size()` for it.
+    """
+    dlg.preview.resize(w, h)
+    dlg.preview.layout().activate()
 
 
 def test_opens_at_identity_endpoints(qtbot, split):
@@ -23,8 +60,8 @@ def test_opens_at_identity_endpoints(qtbot, split):
     assert dlg.values() == (0.0, 1.0)
 
 
-def test_sliders_can_represent_their_own_defaults(qtbot, split):
-    """A slider whose divisor cannot express its default silently shifts the
+def test_the_handles_can_represent_their_own_defaults(qtbot, split):
+    """A control whose resolution cannot express its default silently shifts the
     image the moment the dialog opens."""
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
@@ -34,21 +71,187 @@ def test_sliders_can_represent_their_own_defaults(qtbot, split):
 
 def test_compose_matches_the_core_function_exactly(qtbot, split):
     """WYSIWYG: the dialog must not have its own arithmetic."""
-    from nocturne.core.enhance import starless_levels_layers
     starless, stars = split
     dlg = StarlessLevelsDialog(starless, stars)
     qtbot.addWidget(dlg)
-    dlg.white_slider.setValue(600)
+    dlg.handles.set_range(0.0, 0.6)
     out = dlg.compose()
     expected = starless_levels_layers(starless, stars, 0.0, 0.6)
     assert np.allclose(out.data, expected.data, atol=1e-6)
 
 
-def test_white_slider_drives_the_white_point(qtbot, split):
+def test_dragging_the_high_handle_drives_the_white_point(qtbot, split):
+    """The handles ARE the two points — there is no slider holding a second
+    copy of the number that could disagree with them."""
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
-    dlg.white_slider.setValue(600)
-    assert dlg.values()[1] == pytest.approx(0.6, abs=1e-6)
+    dlg.handles.resize(400, 200)
+    _drag(dlg.handles, 1.0, 0.6)
+    black, white = dlg.values()
+    assert white == pytest.approx(0.6, abs=0.03)
+    assert black == pytest.approx(0.0, abs=0.001), "the black point moved too"
+    assert dlg.white_val.text() == f"{white:.3f}"
+    assert dlg.black_val.text() == f"{black:.3f}"
+
+
+def test_the_handles_cannot_cross(qtbot, split):
+    """Black 0.80 / white 0.20 used to be accepted: `apply_levels` quietly
+    clamps a crossed pair to `white = black + 1e-4`, so the preview became a
+    hard threshold while the labels still read "0.800 / 0.200" and the committed
+    params described an operation that never happened.
+
+    `RangeHandles` prevents it by construction (`_MIN_SPAN`), which is why the
+    dialog no longer carries a clamp of its own — two guards that can disagree
+    is the drift this rework removed."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.handles.resize(400, 200)
+    _drag(dlg.handles, 0.0, 0.8)            # black up to 0.8
+    _drag(dlg.handles, 1.0, 0.2)            # white down past it
+    black, white = dlg.values()
+    assert white > black, f"the handles crossed: black {black}, white {white}"
+    assert dlg.black_val.text() == f"{black:.3f}"
+    assert dlg.white_val.text() == f"{white:.3f}"
+
+
+def test_reset_returns_exactly_the_identity_endpoints(qtbot, split):
+    """Without a way back to exactly (0.0, 1.0) there is nothing to compare the
+    edit against — the same job double-clicking a ResetSlider used to do."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.handles.resize(400, 200)
+    _drag(dlg.handles, 0.0, 0.3)
+    _drag(dlg.handles, 1.0, 0.6)
+    assert dlg.values() != (0.0, 1.0)
+    dlg.reset_btn.click()
+    assert dlg.values() == (0.0, 1.0)
+    assert (dlg.black_val.text(), dlg.white_val.text()) == ("0.000", "1.000")
+
+
+def test_the_histogram_is_the_starless_layer_not_the_composite(qtbot, split):
+    """The two points act on the starless layer. A composite histogram would
+    show the screened-back stars as a bright tail neither handle can touch —
+    exactly the confusion the tool exists to remove.
+
+    The fixture's starless layer tops out at 0.60 while its star pixel screens
+    the composite up past 0.95, so the top bins separate the two sources."""
+    from nocturne.ui.range_handles import RangeHandles
+    starless, stars = split
+    dlg = StarlessLevelsDialog(starless, stars)
+    qtbot.addWidget(dlg)
+
+    reference = RangeHandles()
+    qtbot.addWidget(reference)
+    reference.set_histogram(starless.data)
+    assert np.array_equal(dlg.handles._hist, reference._hist)
+
+    composite = RangeHandles()
+    qtbot.addWidget(composite)
+    composite.set_histogram(starless_levels_layers(starless, stars, 0.0, 1.0).data)
+    # bin 100 of 128 is luminance 0.78: above the starless layer's own maximum
+    # of 0.60, and below the 0.965 the screened-back star reaches.
+    assert composite._hist[100:].sum() > 0, "the fixture does not separate the two"
+    assert dlg.handles._hist[100:].sum() == 0, \
+        "the histogram carries the stars' bright tail — it is the composite"
+
+
+# --- Show Clipping: the mask must come from the full-resolution composite ----
+
+def test_show_clipping_finds_a_speck_the_decimated_preview_would_hide(qtbot):
+    """A "simplification" to build the mask from the decimated preview would
+    pass every other test in this file while silently blinding the tool.
+
+    Size comfortably larger than `_PREVIEW_MAX` (640) so the preview really is
+    decimated (2x2 block averaging, not a no-op). A MID-GREY background, not
+    black: a black background is itself shadow-clipped (rgb == 0), which would
+    light the whole overlay for the wrong reason and let this assertion pass
+    even from a broken implementation.
+
+    One pixel is seeded so that, after the levels below, it alone is blown:
+    - full resolution: 0.9 / white(0.7) = 1.29 -> clips to 1.0 (255)
+    - its own 2x2 decimation block: (0.9 + 3*0.5) / 4 = 0.6; 0.6/0.7 = 0.86
+      -> stays under 1.0, so the decimated copy shows nothing wrong there
+    - the plain background: 0.5 / 0.7 = 0.71 -> 182, neither 0 nor 255, so it
+      cannot itself trip the shadow or highlight mask
+
+    0.9 rather than 1.0, deliberately: a pixel already at 1.0 is blown with the
+    tool doing NOTHING, so the baseline would (rightly) hold it back and this
+    test would be asserting against the fix in change 3.
+    """
+    size = 2 * _PREVIEW_MAX   # 1280: guarantees real 2x2-block decimation
+    starless = np.full((size, size, 3), 0.5, np.float32)
+    starless[100, 100] = 0.9
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    # A pane SMALLER than the source, so the overlay is really reduced 4x and
+    # the speck has to survive a genuine block-max. The first version of this
+    # test matched the pane to the overlay's own resolution, which made the
+    # reduction an identity — it could not have caught a diluting one.
+    _size_preview(dlg, 320, 320)
+    dlg.handles.set_range(0.0, 0.7)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert rgb.max() >= 250, (
+        "no clipped pixel reached the overlay: the mask was built from the "
+        "decimated preview, which averaged the seeded pixel away")
+
+
+def test_an_isolated_speck_reaches_the_screen_at_full_intensity(qtbot):
+    """The block-max is undone by whatever happens after it.
+
+    `clip_overlay` goes to lengths to keep an isolated speck at 255, and the
+    pixmap was then `.scaled(..., SmoothTransformation)` to the pane —
+    measured to drop an isolated lit block to 195, 111 or 55 depending on the
+    factor. A blown speck could therefore render DIMMER than a flat crushed
+    background, which inverts the legend all over again. The overlay is now
+    block-maxed straight to the displayed size, and handed to `CompareView` at
+    exactly that size so its own scale-to-fit is a no-op.
+
+    `>= 250`, not `> 0`: the whole failure mode is a speck that survives while
+    being dimmed, so truthiness cannot see it. The background is mid-grey so it
+    contributes nothing of its own — a np.zeros background is itself
+    shadow-clipped and would light the frame for the wrong reason.
+    """
+    size = 1200
+    starless = np.full((size, size, 3), 0.5, np.float32)
+    starless[600, 600] = 0.9                # one pixel, blown after the levels
+    stars = np.zeros((size, size, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 400, 400)            # 3x reduction: a real rescale
+    dlg.handles.set_range(0.0, 0.7)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    pm = dlg.preview._after_pane.pixmap()
+    assert (pm.width(), pm.height()) == (400, 400), \
+        "the overlay was not produced at the size it is displayed at"
+    rgb = qimage_to_rgb8(pm.toImage())
+    assert int(rgb.max()) == 255, (
+        f"the speck reached the screen at {int(rgb.max())}, not 255 — something "
+        "re-diluted the block-max after clip_overlay produced it")
+    assert np.count_nonzero(rgb) <= 12, \
+        "more than one block lit: the speck was smeared across neighbours"
+
+
+# --- Show Clipping: only what the tool ADDS -------------------------------
+
+@pytest.fixture
+def already_crushed():
+    """A starless layer that arrives with part of it already at zero, as every
+    real one does: `auto_levels` puts the black point at median - 3.5*MAD
+    earlier in the pipeline, and 2-6% of a master's pixels land on it. The rest
+    is mid-grey, so nothing but the seeded patch can trip the shadow mask."""
+    starless = np.full((64, 64, 3), 0.40, np.float32)
+    starless[:8, :8] = 0.0                  # 64 of 4096 pixels = 1.6%
+    stars = np.zeros((64, 64, 3), np.float32)
+    return (AstroImage(starless, is_linear=False, metadata={}),
+            AstroImage(stars, is_linear=False, metadata={}))
 
 
 def test_clipping_toggle_is_off_by_default(qtbot, split):
@@ -57,12 +260,146 @@ def test_clipping_toggle_is_off_by_default(qtbot, split):
     assert dlg.clip_check.isChecked() is False
 
 
+def test_pre_existing_clipping_is_not_lit(qtbot, already_crushed):
+    """Andreas: "the Starless Levels function in Nocturne almost always shows
+    black level as crushed even to begin with", while Photoshop says there is
+    room. It was reporting everything the pipeline had already crushed before
+    the dialog opened.
+
+    At the identity endpoints the tool has added nothing, so the overlay must be
+    entirely dark — asserted as UNCHANGED-from-black, not merely different from
+    some known-bad value."""
+    dlg = StarlessLevelsDialog(*already_crushed)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 64, 64)
+    dlg.clip_check.setChecked(True)
+
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert int(rgb.max()) == 0, (
+        "the overlay lit pixels that were already at zero when the dialog "
+        "opened — the baseline was not subtracted")
+
+
+def test_clipping_the_tool_adds_is_still_lit(qtbot, already_crushed):
+    """The other half: subtracting the baseline must not blind the overlay to
+    what the two points actually do."""
+    dlg = StarlessLevelsDialog(*already_crushed)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 64, 64)
+    dlg.clip_check.setChecked(True)
+    dlg.handles.set_range(0.6, 1.0)         # crushes the 0.40 background
+    dlg._render_preview()
+
+    rgb = qimage_to_rgb8(dlg.preview._after_pane.pixmap().toImage())
+    assert int(rgb.max()) == 255, "newly crushed pixels were not marked"
+
+
+def test_the_total_is_still_reported_in_words(qtbot, already_crushed):
+    """The main window's rule, matched here: the TOTAL is always what is
+    reported — those shadows really are gone, and hiding that from someone
+    editing an already-crushed file would be its own lie. Only the MARKS are
+    restricted to what this tool added."""
+    dlg = StarlessLevelsDialog(*already_crushed)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 64, 64)
+    dlg.clip_check.setChecked(True)
+    assert dlg.clip_line.isVisible() or dlg.clip_line.text()
+    assert "1.6% crushed" in dlg.clip_line.text(), dlg.clip_line.text()
+
+
+def test_the_baseline_is_recaptured_when_the_crop_changes(qtbot, already_crushed):
+    """`clip_masks` raises on a shape mismatch, so a baseline captured at fit
+    cannot be reused against a zoomed crop. Getting this wrong makes the dialog
+    raise the moment the user zooms with clipping on."""
+    dlg = StarlessLevelsDialog(*already_crushed)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 64, 64)
+    dlg.clip_check.setChecked(True)
+    fit_baseline = dlg._baseline
+    dlg.preview.set_zoom(4.0)
+    dlg._render_preview()                   # would raise on a stale baseline
+    assert dlg._baseline is not fit_baseline
+    assert dlg._baseline.shadow.shape[:2] != fit_baseline.shadow.shape[:2]
+
+
+def test_a_handle_drag_does_not_recapture_the_baseline(qtbot, already_crushed):
+    """The baseline is a second full-resolution compose. Recapturing it on every
+    tick of a drag would double the cost of the one gesture this tool is for."""
+    dlg = StarlessLevelsDialog(*already_crushed)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 64, 64)
+    dlg.clip_check.setChecked(True)
+    captured = dlg._baseline
+    dlg.handles.set_range(0.2, 0.9)
+    dlg._render_preview()
+    assert dlg._baseline is captured
+
+
+# --- before/after compare -------------------------------------------------
+
+def test_the_preview_is_a_compare_view_defaulting_to_off(qtbot, split):
+    """Default Off, so nothing changes for someone who does not want it."""
+    from nocturne.ui.compare_view import CompareView
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    assert isinstance(dlg.preview, CompareView)
+    assert dlg.preview.mode() == "off"
+    assert dlg.mode_box.currentText() == "Off"
+
+
+def test_the_mode_control_drives_the_compare_view(qtbot, split):
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    for index, mode in ((1, "wipe"), (2, "side"), (0, "off")):
+        dlg.mode_box.setCurrentIndex(index)
+        assert dlg.preview.mode() == mode
+
+
+def test_before_is_the_untouched_composite(qtbot, split):
+    """"Before" is the tool doing nothing — black 0.0, white 1.0 — not the
+    starless layer and not the current result."""
+    starless, stars = split
+    dlg = StarlessLevelsDialog(starless, stars)
+    qtbot.addWidget(dlg)
+    _size_preview(dlg, 200, 200)
+    dlg.mode_box.setCurrentIndex(2)         # side by side
+    dlg.handles.set_range(0.1, 0.7)
+    dlg._render_preview()
+
+    shown = qimage_to_rgb8(dlg.preview._before_img)
+    expected = to_rgb8(starless_levels_layers(dlg._small_starless,
+                                             dlg._small_stars, 0.0, 1.0))
+    assert np.array_equal(shown, expected)
+
+
+def test_off_mode_does_not_compose_a_before(qtbot, split):
+    """Off shows one pane, so composing the untouched image would be a second
+    full compose per tick for a picture nobody can see."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg._render_preview()
+    assert dlg.preview._before_img is None
+
+
+def test_both_panes_share_one_zoom(qtbot, split):
+    """His requirement: "if the user PTZ's the view both views needs to
+    follow"."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.mode_box.setCurrentIndex(2)
+    dlg.preview._before_pane.set_zoom(3.0)
+    assert dlg.preview._after_pane.zoom_level() == pytest.approx(3.0)
+    assert dlg.preview.zoom_level() == pytest.approx(3.0)
+
+
+# --- the rest -------------------------------------------------------------
+
 def test_apply_delivers_the_composed_image_and_the_values(qtbot, split):
     seen = {}
     dlg = StarlessLevelsDialog(*split,
                                on_apply=lambda img, vals: seen.update(img=img, vals=vals))
     qtbot.addWidget(dlg)
-    dlg.white_slider.setValue(600)
+    dlg.handles.set_range(0.0, 0.6)
     dlg._apply()
     assert seen["vals"] == (0.0, 0.6)
     assert seen["img"].data.shape == (32, 32, 3)
@@ -75,129 +412,52 @@ def test_stars_are_untouched_by_the_dialog(qtbot, split):
     before = stars.data.copy()
     dlg = StarlessLevelsDialog(starless, stars)
     qtbot.addWidget(dlg)
-    dlg.white_slider.setValue(400)
+    dlg.handles.set_range(0.0, 0.4)
     dlg.compose()
     assert np.array_equal(stars.data, before)
 
 
-# --- Show Clipping: the mask must come from the full-resolution composite ----
-
-def test_show_clipping_finds_a_speck_the_decimated_preview_would_hide(qtbot):
-    """The brief's own 7 tests never toggle `clip_check` and render — this is
-    the task's only subtle correctness requirement, and a "simplification" to
-    build the mask from the decimated preview would pass every one of them
-    while silently blinding the tool.
-
-    Size comfortably larger than `_PREVIEW_MAX` (640) so the preview really is
-    decimated (2x2 block averaging, not a no-op). A MID-GREY background, not
-    black: a black background is itself shadow-clipped (rgb == 0), which would
-    light the whole overlay for the wrong reason and let this assertion pass
-    even from a broken implementation.
-
-    One pixel is seeded so that, after the levels below, it alone is blown:
-    - full resolution: 1.0 / white(0.7) = 1.43 -> clips to 1.0 (255)
-    - its own 2x2 decimation block: (1.0 + 3*0.5) / 4 = 0.625; 0.625/0.7 = 0.89
-      -> stays under 1.0, so the decimated copy shows nothing wrong there
-    - the plain background: 0.5 / 0.7 = 0.71 -> 182, neither 0 nor 255, so it
-      cannot itself trip the shadow or highlight mask
-    """
-    size = 2 * _PREVIEW_MAX   # 1280: guarantees real 2x2-block decimation
-    starless = np.full((size, size, 3), 0.5, np.float32)
-    starless[100, 100] = 1.0
-    stars = np.zeros((size, size, 3), np.float32)
-    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
-                               AstroImage(stars, is_linear=False, metadata={}))
-    qtbot.addWidget(dlg)
-    # A label SMALLER than the source, so the overlay is really reduced 4x and
-    # the speck has to survive a genuine block-max. The first version of this
-    # test matched the label to the overlay's own resolution, which made the
-    # reduction an identity — it could not have caught a diluting one.
-    dlg.preview_label.resize(320, 320)
-    dlg.white_slider.setValue(700)
-    dlg.clip_check.setChecked(True)
-    dlg._render_preview()
-
-    rgb = qimage_to_rgb8(dlg.preview_label.pixmap().toImage())
-    assert rgb.max() >= 250, (
-        "no clipped pixel reached the overlay: the mask was built from the "
-        "decimated preview, which averaged the seeded pixel away")
-
-
-def test_an_isolated_speck_reaches_the_screen_at_full_intensity(qtbot):
-    """The block-max is undone by whatever happens after it.
-
-    `clip_overlay` goes to lengths to keep an isolated speck at 255, and the
-    pixmap was then `.scaled(..., SmoothTransformation)` to the label —
-    measured to drop an isolated lit block to 195, 111 or 55 depending on the
-    factor. A blown speck could therefore render DIMMER than a flat crushed
-    background, which inverts the legend all over again. The overlay is now
-    block-maxed straight to the displayed size, with no rescale.
-
-    `>= 250`, not `> 0`: the whole failure mode is a speck that survives while
-    being dimmed, so truthiness cannot see it. The background is mid-grey so it
-    contributes nothing of its own — a np.zeros background is itself
-    shadow-clipped and would light the frame for the wrong reason.
-    """
-    size = 1200
-    starless = np.full((size, size, 3), 0.5, np.float32)
-    starless[600, 600] = 1.0                # one pixel, blown after the levels
-    stars = np.zeros((size, size, 3), np.float32)
-    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
-                               AstroImage(stars, is_linear=False, metadata={}))
-    qtbot.addWidget(dlg)
-    dlg.preview_label.resize(400, 400)      # 3x reduction: a real rescale
-    dlg.white_slider.setValue(700)
-    dlg.clip_check.setChecked(True)
-    dlg._render_preview()
-
-    pm = dlg.preview_label.pixmap()
-    assert (pm.width(), pm.height()) == (400, 400), \
-        "the overlay was not produced at the size it is displayed at"
-    rgb = qimage_to_rgb8(pm.toImage())
-    assert int(rgb.max()) == 255, (
-        f"the speck reached the screen at {int(rgb.max())}, not 255 — something "
-        "re-diluted the block-max after clip_overlay produced it")
-    assert np.count_nonzero(rgb) <= 12, \
-        "more than one block lit: the speck was smeared across neighbours"
-
-
-# --- pan and zoom --------------------------------------------------------
-
 def test_view_changes_queue_a_redraw(qtbot, split):
-    """`_ZoomPreview.viewChanged` fires on both wheel-zoom and drag-pan
-    (curves_dialog.py). Without this wired to the debounced re-render, the
-    widget still tracks the gesture internally but the picture never updates
-    -- reads as a frozen dialog, and finding the first clipped specks by
-    zooming in IS this tool's workflow."""
+    """`CompareView.viewChanged` fires on wheel-zoom and drag-pan alike. Without
+    it wired to the debounced re-render, the widget still tracks the gesture
+    internally but the picture never updates -- reads as a frozen dialog, and
+    finding the first clipped specks by zooming in IS this tool's workflow."""
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
     with qtbot.waitSignal(dlg._timer.timeout, timeout=500, raising=True):
-        dlg.preview_label.set_zoom(2.0)
+        dlg.preview.set_zoom(2.0)
 
 
-# --- the controls the house pattern requires ------------------------------
+def test_the_layout_is_the_house_pattern_with_a_full_width_histogram(qtbot, split):
+    """Preview left at stretch 1, control column right capped at 340 — but the
+    histogram spans the full width underneath both, because a histogram inside
+    a 340 px column is exactly the "small histogram levels" he rejected.
 
-def test_the_layout_is_the_house_pattern_not_a_stack(qtbot, split):
-    """Star Spikes was deliberately moved to this pattern on 2026-09-08 and
-    this dialog reintroduced the one it was moved away from: preview on top,
-    full-width sliders underneath.
-
-    Read back from the real widgets, per CLAUDE.md — the preview must be the
-    stretching item in a HORIZONTAL body, and the control column capped at the
-    same 340 star_spikes and narrowband use ("Without it the column takes half
-    the window and the preview is no better off than it was stacked")."""
-    from PySide6.QtWidgets import QHBoxLayout
+    Read back from the real widgets, per CLAUDE.md."""
+    from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
-    body = dlg.layout()
+    root = dlg.layout()
+    assert isinstance(root, QVBoxLayout)
+    body = root.itemAt(0).layout()
     assert isinstance(body, QHBoxLayout), "the body is still a vertical stack"
-    assert body.itemAt(0).widget() is dlg.preview_label
+    assert body.itemAt(0).widget() is dlg.preview
     assert body.stretch(0) == 1, "the preview does not take the spare width"
     column = body.itemAt(1).widget()
     assert column.maximumWidth() == 340
-    # the sliders live in the column, not full-width under the picture
-    assert dlg.black_slider.parent() is column
-    assert dlg.white_slider.parent() is column
+    # the histogram is NOT in the narrow column
+    assert dlg.handles.parent() is dlg
+    assert root.indexOf(dlg.handles) >= 0
+    assert dlg.handles.minimumHeight() >= 200
+
+
+def test_there_is_no_slider_left_holding_a_second_copy_of_the_values(qtbot, split):
+    """Two controls for one value is where drift comes from — the sliders were
+    removed rather than kept beside the handles."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    assert not hasattr(dlg, "black_slider")
+    assert not hasattr(dlg, "white_slider")
 
 
 def test_there_is_a_way_back_to_fit(qtbot, split):
@@ -208,34 +468,14 @@ def test_there_is_a_way_back_to_fit(qtbot, split):
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
     dlg.zoom_in_btn.click()
-    assert dlg.preview_label.zoom_level() > 1.0
+    assert dlg.preview.zoom_level() > 1.0
     assert dlg.zoom_label.text() == "1.5x"
     dlg.zoom_out_btn.click()
-    assert dlg.preview_label.zoom_level() == pytest.approx(1.0)
-    dlg.preview_label.set_zoom(8.0)
+    assert dlg.preview.zoom_level() == pytest.approx(1.0)
+    dlg.preview.set_zoom(8.0)
     dlg.fit_btn.click()
-    assert dlg.preview_label.zoom_level() == 1.0
+    assert dlg.preview.zoom_level() == 1.0
     assert dlg.zoom_label.text() == "1.0x"
-
-
-def test_double_click_returns_a_slider_to_the_identity_endpoint(qtbot, split):
-    """ResetSlider, as every other slider surface in the app uses. Without it
-    there is no way back to exactly (0.0, 1.0) to compare against the untouched
-    image."""
-    from PySide6.QtCore import QEvent, QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-    from PySide6.QtWidgets import QApplication
-    dlg = StarlessLevelsDialog(*split)
-    qtbot.addWidget(dlg)
-    dlg.black_slider.setValue(300)
-    dlg.white_slider.setValue(600)
-    for slider, back_to in ((dlg.black_slider, 0), (dlg.white_slider, 1000)):
-        QApplication.sendEvent(slider, QMouseEvent(
-            QEvent.Type.MouseButtonDblClick, QPointF(5, 5), QPointF(5, 5),
-            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier))
-        assert slider.value() == back_to
-    assert dlg.values() == (0.0, 1.0)
 
 
 def test_ok_is_the_primary_action(qtbot, split):
@@ -248,23 +488,18 @@ def test_ok_is_the_primary_action(qtbot, split):
     assert box.button(QDialogButtonBox.StandardButton.Ok).objectName() == "primary"
 
 
-def test_the_sliders_cannot_cross(qtbot, split):
-    """Black 0.80 / white 0.20 was accepted: `apply_levels` quietly clamps to
-    `white = black + 1e-4`, so the preview became a hard threshold while the
-    labels still read "0.800 / 0.200" and the committed params described an
-    operation that never happened. The labels and the params must stay true."""
+def test_resizing_re_renders_rather_than_rescaling(qtbot, split):
+    """`CompareView` scales what it holds to fit its panes, smoothly. On the
+    clipping overlay that re-dilutes the block-max — an isolated speck measured
+    195, 111 or 55 instead of 255 — so the dialog re-renders at the new size
+    instead of letting the stored image be stretched into it."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QResizeEvent
+    from PySide6.QtWidgets import QApplication
     dlg = StarlessLevelsDialog(*split)
     qtbot.addWidget(dlg)
-    dlg.black_slider.setValue(800)
-    dlg.white_slider.setValue(200)          # would cross
-    black, white = dlg.values()
-    assert white > black, f"the sliders crossed: black {black}, white {white}"
-    assert dlg.black_val.text() == f"{black:.3f}"
-    assert dlg.white_val.text() == f"{white:.3f}"
-    # and the other way round
-    dlg.black_slider.setValue(0)
-    dlg.white_slider.setValue(300)
-    dlg.black_slider.setValue(900)
-    black, white = dlg.values()
-    assert black < white
-    assert dlg.black_val.text() == f"{black:.3f}"
+    dlg._timer.stop()
+    # Sent directly: a hidden widget only POSTS its resize event, so resize()
+    # alone proves nothing about the handler.
+    QApplication.sendEvent(dlg, QResizeEvent(QSize(900, 700), dlg.size()))
+    assert dlg._timer.isActive(), "a resize left the old picture stretched in place"
