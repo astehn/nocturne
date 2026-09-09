@@ -53,3 +53,26 @@ def test_to_rgb8_treats_nan_as_zero_without_warning(qapp, recwarn):
     rgb = to_rgb8(img)
     assert rgb[0, 0, 0] == 0
     assert not any(issubclass(w.category, RuntimeWarning) for w in recwarn.list)
+
+
+@pytest.mark.parametrize("w", [1080, 3285, 101, 102, 103, 104])
+def test_qimage_round_trip_survives_scanline_padding(w):
+    """Qt pads every scanline to a 4-byte boundary, so bytesPerLine() is width*3
+    only when the width is a multiple of 4.
+
+    The old inline conversion in _annotated_rgb8 divided bytesPerLine() by 3, so
+    Share crashed on any image whose width was not a multiple of 4 — three
+    widths in four. It never showed on a native Seestar frame, which is 1080
+    wide; it took a cropped drizzle to surface it:
+
+        ValueError: cannot reshape array of size 40478592 into shape (4107,3285,3)
+    """
+    import numpy as np
+    from nocturne.ui.preview import qimage_to_rgb8, rgb_to_qimage
+
+    rng = np.random.default_rng(w)
+    src = rng.integers(0, 256, (7, w, 3), dtype=np.uint8)
+    back = qimage_to_rgb8(rgb_to_qimage(src))
+
+    assert back.shape == src.shape
+    assert np.array_equal(back, src), "the round trip must be lossless"

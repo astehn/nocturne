@@ -2970,16 +2970,19 @@ class MainWindow(QMainWindow):
         if not self._solve or self._solve[0] != self._solve_sig():
             return None
         from .annotation_render import paint_annotations, scale_for
-        from .preview import rgb_to_qimage
+        from .preview import qimage_to_rgb8, rgb_to_qimage
         import numpy as np
         h, w = rgb8.shape[:2]
         _sig, res, objs = self._solve
         qi = rgb_to_qimage(np.ascontiguousarray(rgb8))
         paint_annotations(qi, self._annotation_primitives(res, objs, (h, w),
                                                           ui_scale=scale_for((h, w))), (h, w))
-        ptr = qi.constBits()
-        out = np.frombuffer(ptr, dtype=np.uint8, count=qi.sizeInBytes())
-        return out.reshape(qi.height(), qi.bytesPerLine() // 3, 3)[:, :w].copy()
+        # qimage_to_rgb8, not an inline reshape: Qt pads scanlines to a 4-byte
+        # boundary, and dividing bytesPerLine() by 3 only works when the width
+        # happens to make the padding a whole pixel. Share crashed on any other
+        # width — it never showed on a 1080-wide Seestar frame, and a cropped
+        # drizzle broke it.
+        return qimage_to_rgb8(qi)
 
     def _upscale(self) -> None:
         if self.project is None or self._busy:

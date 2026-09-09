@@ -41,6 +41,28 @@ def rgb_to_qimage(rgb: np.ndarray) -> QImage:
     return QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
 
+def qimage_to_rgb8(qi) -> np.ndarray:
+    """The inverse of rgb_to_qimage: an H×W×3 uint8 copy of a QImage.
+
+    Qt pads every scanline to a 4-byte boundary, so bytesPerLine() is NOT
+    width*3 in general — for a 3285-wide RGB888 image it is 9856, not 9855. The
+    old inline version divided bytesPerLine() by 3 and reshaped, which is only
+    correct when the width is a multiple of 4 (3w is divisible by 4 exactly when
+    w is). Seestar frames are 1080 wide so it always worked; a cropped or
+    drizzled master failed three times in four with "cannot reshape array of
+    size ... into shape ...".
+
+    Reshape by BYTES, then take the valid part of each row.
+    """
+    from PySide6.QtGui import QImage
+
+    if qi.format() != QImage.Format.Format_RGB888:
+        qi = qi.convertToFormat(QImage.Format.Format_RGB888)
+    w, h = qi.width(), qi.height()
+    buf = np.frombuffer(qi.constBits(), np.uint8, count=qi.sizeInBytes())
+    return buf.reshape(h, qi.bytesPerLine())[:, :w * 3].reshape(h, w, 3).copy()
+
+
 def to_rgb8(img: AstroImage) -> np.ndarray:
     """The uint8 H×W×3 array the canvas displays. Linear images are autostretched
     for display only — the underlying data is untouched, which is why the hover
