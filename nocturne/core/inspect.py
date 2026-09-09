@@ -229,8 +229,12 @@ def clip_masks(rgb: np.ndarray,
             raise ValueError(
                 "clip baseline shape does not match rgb: "
                 f"{baseline.shadow.shape} vs {sh.shape}")
-        sh = sh & ~baseline.shadow
-        hi = hi & ~baseline.highlight
+        # In place, into the arrays the comparisons above just produced. The
+        # `sh & ~baseline.shadow` form allocated a second full H x W x 3 array
+        # per mask; on an 8.3 MP frame that is four arrays alive at once
+        # (~100 MB) on every 60 ms tick of a handle drag, against two here.
+        np.logical_and(sh, ~baseline.shadow, out=sh)
+        np.logical_and(hi, ~baseline.highlight, out=hi)
     return sh, hi
 
 
