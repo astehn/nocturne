@@ -34,7 +34,7 @@ def _slider_positions(p: NarrowbandParams) -> dict:
     """
     return {
         "palette": p.palette,
-        "oiii": round(p.oiii_boost * 50),
+        "oxygen": round(p.oxygen_strength * 50),
         "blend": round(p.blend_amount * 100),
         "sat": round(p.saturation * 100),
         "bright": round(p.brightness * 50),
@@ -86,12 +86,12 @@ class NarrowbandDialog(QDialog):
         self.palette_box.addItems(PALETTES)
         self.palette_box.setCurrentText(pos["palette"])
         self.blend_slider = ResetSlider(pos["blend"])
-        self.oiii_slider = ResetSlider(pos["oiii"])
+        self.oxygen_slider = ResetSlider(pos["oxygen"])
         self.sat_slider = ResetSlider(pos["sat"])
         self.bright_slider = ResetSlider(pos["bright"])
         self.protect_slider = ResetSlider(pos["protect"])
         self.tame_slider = ResetSlider(pos["tame"])
-        self.oiii_val = QLabel()
+        self.oxygen_val = QLabel()
         self.blend_val = QLabel()
         self.protect_val = QLabel()
         self.sat_val = QLabel()
@@ -119,7 +119,7 @@ class NarrowbandDialog(QDialog):
         self._render_timer.setInterval(_DEBOUNCE_MS)
         self._render_timer.timeout.connect(self._do_render)
         self.palette_box.currentTextChanged.connect(self._on_palette_change)
-        for s in (self.blend_slider, self.oiii_slider, self.sat_slider,
+        for s in (self.blend_slider, self.oxygen_slider, self.sat_slider,
                   self.bright_slider, self.protect_slider, self.tame_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
@@ -139,7 +139,7 @@ class NarrowbandDialog(QDialog):
         controls = QFormLayout()
         controls.addRow("Palette", self.palette_box)
         controls.addRow(self.palette_desc)      # spans both columns: see below
-        controls.addRow("OIII boost", _row(self.oiii_slider, self.oiii_val))
+        controls.addRow("Oxygen strength", _row(self.oxygen_slider, self.oxygen_val))
         controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
         controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
         controls.addRow("Saturation", _row(self.sat_slider, self.sat_val))
@@ -216,7 +216,7 @@ class NarrowbandDialog(QDialog):
         pos = _slider_positions(_ENGINE_DEFAULTS)
         self.palette_box.setCurrentText(pos["palette"])
         self.blend_slider.setValue(pos["blend"])
-        self.oiii_slider.setValue(pos["oiii"])
+        self.oxygen_slider.setValue(pos["oxygen"])
         self.sat_slider.setValue(pos["sat"])
         self.bright_slider.setValue(pos["bright"])
         self.protect_slider.setValue(pos["protect"])
@@ -273,7 +273,12 @@ class NarrowbandDialog(QDialog):
     def _update_value_labels(self) -> None:
         """Show each slider's mapped value. OIII boost / Brightness read as a
         multiplier (×1.33) to match the numbers a tutorial or PixInsight uses."""
-        self.oiii_val.setText(f"×{max(0.3, self.oiii_slider.value() / 50.0):.2f}")
+        oxy = max(0.3, self.oxygen_slider.value() / 50.0)
+        # 1.00 is the photometric match — the one value here that means
+        # something beyond taste, and where the colour minimum sits. Naming it
+        # makes it a place you can go back to.
+        self.oxygen_val.setText(f"×{oxy:.2f} · matched" if abs(oxy - 1.0) < 5e-3
+                                else f"×{oxy:.2f}")
         self.bright_val.setText(f"×{max(0.3, self.bright_slider.value() / 50.0):.2f}")
         self.blend_val.setText(f"{self.blend_slider.value() / 100.0:.2f}")
         self.sat_val.setText(f"{self.sat_slider.value() / 100.0:.2f}")
@@ -287,7 +292,7 @@ class NarrowbandDialog(QDialog):
         return NarrowbandParams(
             palette=self.palette_box.currentText(),
             blend_amount=self.blend_slider.value() / 100.0,
-            oiii_boost=max(0.3, self.oiii_slider.value() / 50.0),
+            oxygen_strength=max(0.3, self.oxygen_slider.value() / 50.0),
             saturation=self.sat_slider.value() / 100.0,
             brightness=max(0.3, self.bright_slider.value() / 50.0),
             protect_background=self.protect_slider.value() / 100.0,

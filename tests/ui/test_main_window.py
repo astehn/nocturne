@@ -1723,7 +1723,7 @@ def test_narrowband_records_recipe_captured_step(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.6)                                  # need a stretched image
     result = win.project.current()                         # stand-in recoloured result
-    win._apply_narrowband(result, NarrowbandParams(palette="HOO", oiii_boost=1.3))
+    win._apply_narrowband(result, NarrowbandParams(palette="HOO", oxygen_strength=1.3))
     names = [n for n, _ in win.project.entries()]
     assert "Narrowband" in names
     # and a saved recipe captures it (not dropped)
