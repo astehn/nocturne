@@ -46,7 +46,8 @@ def test_sample_is_a_named_tuple():
     assert isinstance(s, Sample)
 
 
-from nocturne.core.inspect import Clipping, clip_masks, clipping_from_histogram
+from nocturne.core.inspect import (Clipping, ClipBaseline, capture_clip_baseline,
+                                   clip_masks, clipping_from_histogram)
 
 
 def _hist(r_top=0, r_bot=0, g_top=0, g_bot=0, b_top=0, b_bot=0, total=1000):
@@ -131,6 +132,90 @@ def test_clip_masks_return_per_channel_boolean_arrays():
     sh, hi = clip_masks(np.zeros((3, 5, 3), np.uint8))
     assert sh.shape == (3, 5, 3) and sh.dtype == bool
     assert hi.shape == (3, 5, 3) and hi.dtype == bool
+
+
+# --- baseline: report what the CURRENT settings ADD, not the crushed total --
+#
+# Mid-grey background throughout, never zeros: a black background is itself
+# shadow-clipped, so a "not lit" assertion on it would pass whether or not the
+# baseline subtraction did anything. This exact mistake has shipped twice on
+# this branch already.
+
+def test_baseline_pixel_already_clipped_is_not_relit():
+    """The whole point: something the pipeline crushed before the dialog
+    opened (e.g. auto_levels's black point) must not sit lit from the first
+    frame with no slider move that could ever clear it."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0                       # crushed already, at baseline settings
+    baseline = capture_clip_baseline(rgb)
+    sh, _ = clip_masks(rgb, baseline=baseline)
+    assert not sh[0, 0].any(), "a pixel clipped at baseline must not relight"
+
+
+def test_baseline_newly_clipped_pixel_is_lit():
+    """What the current settings add IS the signal the overlay exists to show."""
+    base_rgb = np.full((4, 4, 3), 128, np.uint8)
+    baseline = capture_clip_baseline(base_rgb)      # nothing clipped at baseline
+    current = base_rgb.copy()
+    current[1, 1] = 0                                # newly crushed by this session
+    sh, _ = clip_masks(current, baseline=baseline)
+    assert sh[1, 1].all(), "a pixel newly clipped now must be lit"
+
+
+def test_baseline_pixel_that_recovers_is_not_lit():
+    """A pixel clipped at baseline that the CURRENT settings pull back out of
+    zero (e.g. black point dragged past it) must not be lit, and the AND-NOT
+    against a now-false mask must not misbehave."""
+    base_rgb = np.full((4, 4, 3), 128, np.uint8)
+    base_rgb[2, 2] = 0
+    baseline = capture_clip_baseline(base_rgb)
+    current = base_rgb.copy()
+    current[2, 2] = 128                              # recovered under current settings
+    sh, _ = clip_masks(current, baseline=baseline)
+    assert not sh[2, 2].any()
+
+
+def test_baseline_fraction_reports_the_total():
+    """The figure a caller needs to say, in words, how much was already gone —
+    per-pixel (any channel dead), matching what the overlay actually lights."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0
+    rgb[0, 1] = 0
+    baseline = capture_clip_baseline(rgb)
+    assert baseline.shadow_frac == pytest.approx(2 / 16)
+    assert baseline.highlight_frac == 0.0
+
+
+def test_clip_masks_with_no_baseline_is_unchanged():
+    """Existing callers (paint_clipping on every live-preview tick chief among
+    them) must see byte-for-byte identical behaviour."""
+    rgb = np.full((4, 4, 3), 128, np.uint8)
+    rgb[0, 0] = 0
+    rgb[1, 1] = 255
+    sh_a, hi_a = clip_masks(rgb)
+    sh_b, hi_b = clip_masks(rgb, baseline=None)
+    assert np.array_equal(sh_a, sh_b) and np.array_equal(hi_a, hi_b)
+
+
+def test_clip_masks_baseline_shape_mismatch_raises():
+    """A silently misaligned baseline (e.g. captured against a different zoom
+    crop) would AND-NOT the wrong pixels against each other rather than fail —
+    a fault a caller could ship without ever seeing it break."""
+    baseline = capture_clip_baseline(np.full((4, 4, 3), 128, np.uint8))
+    with pytest.raises(ValueError):
+        clip_masks(np.full((8, 8, 3), 128, np.uint8), baseline=baseline)
+
+
+def test_clip_overlay_with_baseline_only_lights_whats_new():
+    """End-to-end through the actual painted overlay, not just the masks."""
+    base_rgb = np.full((8, 8, 3), 128, np.uint8)
+    base_rgb[0, 0] = 0                  # crushed already, e.g. by auto_levels
+    baseline = capture_clip_baseline(base_rgb)
+    current = base_rgb.copy()
+    current[7, 7] = 0                   # newly crushed by the current settings
+    out = clip_overlay(current, (8, 8), baseline=baseline)
+    assert not out[0, 0].any(), "pre-existing shadow clipping must not relight"
+    assert out[7, 7].tolist() == [255, 255, 255], "newly clipped pixel must be lit"
 
 
 def test_clipping_selects_worst_by_fraction_not_count():

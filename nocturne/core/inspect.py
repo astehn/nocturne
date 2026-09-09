@@ -158,7 +158,48 @@ def structural_clipping(rgb: np.ndarray,
     return Clipping(hi_frac, hi_ch, lo_frac, lo_ch)
 
 
-def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+class ClipBaseline(NamedTuple):
+    """A `clip_masks()` snapshot at some reference settings (e.g. black=0,
+    white=1 — the tool doing nothing), so a later `clip_masks(rgb, baseline=...)`
+    call can report only what changed since.
+
+    Same split as `main_window._clip_baseline`, one level lower: that one
+    diffs two SCALAR fractions from the histogram to keep the live-preview
+    ALARM from crying wolf on damage the session didn't cause. This one diffs
+    the actual per-pixel MASKS, because the overlay has to light specific
+    pixels, not just adjust a percentage — a starless layer that already has
+    2-6% of its shadows at zero (auto_levels's black point crushes part of the
+    noise floor by construction, measured 2026-09-09) must not relight those
+    same pixels the moment Starless Levels opens with black=0.
+
+    Fractions are stored alongside the masks — per-pixel (`.any(axis=2)`), the
+    same rule `paint_clipping` uses to decide a pixel is marked at all — so a
+    caller can state "N% already crushed on arrival" without recomputing
+    anything.
+    """
+    shadow: np.ndarray        # H x W x 3 bool, from clip_masks
+    highlight: np.ndarray     # H x W x 3 bool, from clip_masks
+    shadow_frac: float
+    highlight_frac: float
+
+
+def capture_clip_baseline(rgb: np.ndarray) -> ClipBaseline:
+    """Snapshot `clip_masks(rgb)` as a `ClipBaseline` for later diffing.
+
+    A separate call, not a flag on `clip_masks`, because a baseline is
+    captured ONCE — a dialog opening, or a session's arrival state — while
+    `clip_masks` itself runs on every live-preview tick; folding fraction
+    bookkeeping into the hot path would cost every caller for a number only
+    one of them wants.
+    """
+    shadow, highlight = clip_masks(rgb)
+    return ClipBaseline(shadow, highlight,
+                        float(shadow.any(axis=2).mean()),
+                        float(highlight.any(axis=2).mean()))
+
+
+def clip_masks(rgb: np.ndarray,
+               baseline: ClipBaseline | None = None) -> tuple[np.ndarray, np.ndarray]:
     """(shadow, highlight) boolean masks over a uint8 H×W×3 display array, PER
     CHANNEL — same H×W×3 shape as the input, so `shadow[..., 0]` is "red is at
     zero here".
@@ -172,8 +213,25 @@ def clip_masks(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
     Two vectorised comparisons over the whole array; the caller combines them
     with bitwise ops rather than `.any(axis=2)`, which measures 78 ms on an
-    8.3 MP frame against 7 ms, and this runs in the live-preview path."""
-    return rgb == 0, rgb == 255
+    8.3 MP frame against 7 ms, and this runs in the live-preview path.
+
+    `baseline`, when given, is subtracted out: a pixel clipped there too is NOT
+    reported here, so a caller sees only what changed since the baseline was
+    captured, per the ruling in round2-task-B — "light only what was added,
+    still report the total" (the total lives in `baseline.shadow_frac` /
+    `.highlight_frac`, not here). Defaults to None so every existing caller —
+    `paint_clipping` on the main window's live-preview tick chief among them —
+    is byte-for-byte unaffected; the extra branch and two bitwise ops only run
+    for a caller that opts in."""
+    sh, hi = rgb == 0, rgb == 255
+    if baseline is not None:
+        if baseline.shadow.shape != sh.shape:
+            raise ValueError(
+                "clip baseline shape does not match rgb: "
+                f"{baseline.shadow.shape} vs {sh.shape}")
+        sh = sh & ~baseline.shadow
+        hi = hi & ~baseline.highlight
+    return sh, hi
 
 
 # --- the ONE clipping legend, shared by the canvas and the dialogs ----------
@@ -197,8 +255,14 @@ CLIP_MARK_OFF = 60       # one that is not — dark enough to read as absent
 CLIP_HIGHLIGHT = (255, 160, 0)
 
 
-def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
+def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
+                   baseline: ClipBaseline | None = None) -> np.ndarray:
     """Paint the clipping legend for `rgb` into `out` (default: `rgb` itself).
+
+    `baseline`, forwarded to `clip_masks`, restricts the paint to pixels newly
+    clipped since it was captured — see `ClipBaseline`. None (the default)
+    paints the total, exactly as before; this is what the main window's
+    live-preview tick uses, unchanged.
 
     ONE implementation, because the legend is a thing the user LEARNS. The main
     window's Show Clipping tooltip teaches channel colour = crushed, amber =
@@ -229,7 +293,7 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     if out is None:
         out = rgb
     on, off = np.uint8(CLIP_MARK_ON), np.uint8(CLIP_MARK_OFF)
-    sh, hi = clip_masks(rgb)
+    sh, hi = clip_masks(rgb, baseline=baseline)
     r0, g0, b0 = sh[..., 0], sh[..., 1], sh[..., 2]
     any_sh = r0 | g0 | b0
     for i, dead in enumerate((r0, g0, b0)):
@@ -241,9 +305,16 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None) -> np.ndarray
     return out
 
 
-def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
+                 baseline: ClipBaseline | None = None) -> np.ndarray:
     """`paint_clipping` onto a black field, reduced to `shape` with a MAXIMUM
     rather than an average.
+
+    `baseline`, forwarded to `paint_clipping`, must be captured at the SAME
+    shape as `rgb` (not `shape` — that is only the display target). A caller
+    diffing against a zoomed crop or a resized composite needs to capture a
+    matching-shape baseline itself; `clip_masks` raises rather than silently
+    misaligning if the shapes disagree.
 
     The reduction is the point. The preview runs on a decimated copy for speed,
     and averaging a 4x4 block containing one blown pixel yields 255/16 = 16 —
@@ -265,7 +336,7 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
         # broadcast error that names neither the caller nor the cause.
         raise ValueError("clip_overlay needs an H x W x 3 uint8 array; "
                          f"got shape {rgb.shape}")
-    out = paint_clipping(rgb, np.zeros_like(rgb))
+    out = paint_clipping(rgb, np.zeros_like(rgb), baseline=baseline)
     h, w = shape
     src_h, src_w = out.shape[:2]
     if (src_h, src_w) == (h, w):
