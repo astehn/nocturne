@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.28.0] — 2026-09-09
+
+Frames with a roof or a tree in them are rejected automatically, and the in-app help finally describes the app that shipped
+
+### Added
+- Frame grading catches obstructions — a roof, a tree, a bank of cloud drifting through. It was already measuring how BRIGHT the background is, which cannot see this: a dark roof across a third of the frame leaves the average sky level almost unchanged. It now also measures how much the background VARIES across the frame, which is exactly what an obstruction does to it. On a real 2,535-frame IC 1396A session — shot from a garden ringed by houses, where the scope slewed into one of them at the end of each night — it moved the kept count from 2,037 to 1,908 at Normal strictness, and the frames it removed are the ones with the house in them. The gate is session-relative and must stay that way: measured across fourteen sessions, deep-sky frames sit at 0.19-1.62 on this scale while wide-field Milky Way frames sit at 22 and 176, because the galactic plane crossing the frame IS real background structure. Any fixed threshold that catches a roof would delete every Milky Way frame ever shot.
+
+### Changed
+- Narrowband opens with Saturation at 0.85 instead of 0.50. 0.50 means 'native' — no boost at all — while the two-gas palette costs colour by construction: a warm pink mapped to red hydrogen and teal oxygen goes neutral wherever the two overlap. So the step was taking colour out and putting none back, and renders came out slightly flatter than the image they were given. Measured on a 724-frame IC 1396A master, the nebula lost 7% of its colour at the old default and gains 4% at the new one. Saved recipes carry their own value and render exactly as before.
+- Seven step topics in the help are rewritten to say how to CHOOSE, not just that a control exists. Two of them were worse than thin: Local Contrast and Star Reduction both told you to 'pick light, medium or strong' long after both controls became sliders. Noise Reduction now carries the measurement that matters most about it — GraXpert at its maximum reaches the same noise floor as NoiseXTerminator's lightest setting, and star sizes are flat across GraXpert's whole range, so there is no reason to be shy with it.
+- The Narrowband help says which control to reach for when a render looks washed out, and it is not Saturation. OIII boost at ×1.00 matches oxygen to hydrogen, so where both gases are strong the core comes out neutral — and saturation cannot rescue a neutral pixel, because it scales distance from grey and that distance is zero. ×1.00 is the least colourful setting on the slider; moving either way adds colour.
+
+### Fixed
+- The Stack dialog painted its own explanations over its own controls, in the state a new user gets. With the explanations expanded — the default — the dialog's contents need 844 pixels and it opened at 700, with a hard floor of 500 that allowed the squeeze. The form's rows were then laid out 46 pixels apart while being 54 to 72 pixels tall, so 'the frames.' printed across 'Trim the ragged edges' and 'size' across the Output field. The window now sizes itself to its contents, and on a screen too short to hold them the explanations fold away rather than overlapping.
+- Every verdict in the frame list was truncated. The column is 209 pixels wide and the shortest verdict needed 437, so the first thing lost was always the right-hand end — which is where the measurement is, and the measurement is the part you cannot get anywhere else. The table now takes the extra width when you widen the dialog (the preview used to take it), the verdict column is sized to what it holds, and each verdict has a short form for the table and the full sentence in its tooltip.
+- The help topics for Trim and fullscreen existed and could not be opened. Both were written, both were current, and neither was listed in the help browser or reachable from any step — 406 words shipping inside the app that no one could read. Drizzle, meanwhile, had no help at all despite shipping four releases ago; the Stacking topic now explains what drizzling does instead of enlarging, the three things the recommendation weighs, and what it costs.
+
 ## [0.27.0] — 2026-09-06
 
 Zooming no longer eats memory, stacking anchors on the middle of the drift, and the window opens the size it was always meant to
