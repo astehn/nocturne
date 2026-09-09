@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from .image import AstroImage
+from .levels import apply_levels
 
 _KNEE = 0.4   # luminance above which the sky ops fade to nothing
 
@@ -191,6 +192,26 @@ def sharpen_nebulosity_layers(starless: AstroImage, stars: AstroImage,
     m = mask if base.ndim == 2 else mask[..., None]
     out = np.clip(base + amount * detail * m, 0.0, 1.0)
     return _screen_back(out, stars, starless)
+
+
+def starless_levels_layers(starless: AstroImage, stars: AstroImage,
+                           black: float = 0.0, white: float = 1.0) -> AstroImage:
+    """Set black and white points on the STARLESS layer of a star/starless
+    split, then screen the untouched stars back.
+
+    `auto_levels` refuses to choose a white point for a reason: on a full frame
+    a percentile white point drove ~0.08% of pixels — roughly 6,000 star cores —
+    to pure white, and Seestar cores do not saturate in capture, so that is real
+    colour being destroyed. That reasoning is void here. There are no star cores
+    in the starless layer to clip, so the white point may be pulled in to where
+    the nebulosity actually ends, which is the move users leave for Photoshop.
+
+    Gamma is fixed at 1.0: the operation is the two endpoints. `black=0.0,
+    white=1.0` is a plain recombine, identical to what the other layer
+    functions produce, so a split processed either way rejoins the same.
+    """
+    base = apply_levels(starless, black, 1.0, white).data
+    return _screen_back(base, stars, starless)
 
 
 def _screen_back(base: np.ndarray, stars: AstroImage, ref: AstroImage) -> AstroImage:
