@@ -63,7 +63,7 @@ def test_value_labels_and_default_preserve_off(qtbot):
     d = _dialog(qtbot, starless=_img(), stars=None)
     assert d.lightness_check.isChecked() is False          # brighter combine is the default
     assert d.oxygen_val.text().startswith("×")               # shown as a multiplier
-    d.oxygen_slider.setValue(75)                              # 75/50 = 1.5
+    d.oxygen_slider.setValue(150)                             # 150/100 = 1.5
     assert d.oxygen_val.text() == "×1.50"
     d.protect_slider.setValue(30)
     assert d.protect_val.text() == "30%"
@@ -411,10 +411,17 @@ def test_the_matched_point_is_labelled_on_the_slider(qtbot):
                                                 is_linear=False))
     qtbot.addWidget(d)
 
-    d.oxygen_slider.setValue(50)              # 50 / 50 = 1.00
+    d.oxygen_slider.setValue(100)             # 100 / 100 = 1.00
     assert d.oxygen_val.text() == "×1.00 · matched"
     assert d._params().oxygen_strength == 1.0
 
-    d.oxygen_slider.setValue(40)              # 40 / 50 = 0.80
+    d.oxygen_slider.setValue(80)              # 80 / 100 = 0.80
     assert d.oxygen_val.text() == "×0.80"
     assert abs(d._params().oxygen_strength - 0.8) < 1e-6
+
+    # The default must be REPRESENTABLE. On the old /50 scale round(0.85 * 50)
+    # was 42, which read back as 0.84 — a control that could not express its own
+    # default, and the help would have quoted a number the dialog never showed.
+    d.reset()
+    assert d._params().oxygen_strength == 0.85
+    assert d.oxygen_val.text() == "×0.85"

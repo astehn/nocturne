@@ -508,7 +508,7 @@ def test_narrowband_help_names_every_control_the_dialog_shows():
         _combine(ha, oiii, "SHO", 0.6)            # the help says SHO is not available
     assert "no sulfur" in b
 
-    for row in ("OIII boost", "Green blend", "Protect background", "Saturation",
+    for row in ("Oxygen strength", "Green blend", "Protect background", "Saturation",
                 "Brightness"):
         assert row in b, f"the help never mentions {row!r}"
         assert f'controls.addRow("{row}"' in nd, f"{row!r} is no longer a control"
@@ -535,8 +535,8 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     p = d._params()
 
     assert p.palette == "HOO" and "Start here" in b
-    assert p.oiii_boost == 1.0 and d.oiii_val.text() == "×1.00"
-    assert "OIII boost — the key control (default ×1.00)" in b
+    assert p.oxygen_strength == 0.85 and d.oxygen_val.text() == "×0.85"
+    assert "Oxygen strength (default ×0.85)" in b
     assert p.brightness == 1.0 and d.bright_val.text() == "×1.00"
     assert "Brightness (default ×1.00)" in b
     assert p.blend_amount == 0.6 and d.blend_val.text() == "0.60"
@@ -548,8 +548,8 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
 
-    d.oiii_slider.setValue(d.oiii_slider.maximum())
-    assert d.oiii_val.text() == "×2.00", "the OIII boost range moved"
+    d.oxygen_slider.setValue(d.oxygen_slider.maximum())
+    assert d.oxygen_val.text() == "×2.00", "the oxygen strength range moved"
     assert "toward ×2.00" in b
 
 
@@ -614,12 +614,16 @@ def test_narrowband_help_gets_the_direction_of_the_two_headline_sliders_right():
     rng = np.random.default_rng(17)
     ha = np.clip(0.45 + 0.08 * rng.standard_normal((96, 96)), 0, 1).astype(np.float32)
     oiii = np.clip(0.08 + 0.02 * rng.standard_normal((96, 96)), 0, 1).astype(np.float32)
-    levels = [float(normalize_to_reference(oiii, ha, 1.0, boost).mean())
-              for boost in (0.3, 1.0, 2.0)]
-    assert levels[0] < levels[1] < levels[2], "OIII boost no longer runs upward"
-    assert float(oiii.mean()) < levels[1], "×1.00 no longer lifts the oxygen at all"
-    assert "×1.00 is not &quot;off&quot;" in b
-    assert "Drop it below ×1.00 to pull the oxygen back down" in b
+    # The direction lives in oxygen_strength now; matching is undistorted and
+    # takes no look parameter at all.
+    from nocturne.core.narrowband import brightness
+    matched = normalize_to_reference(oiii, ha, 1.0)
+    levels = [float(brightness(matched, s).mean()) for s in (0.3, 1.0, 2.0)]
+    assert levels[0] < levels[1] < levels[2], "Oxygen strength no longer runs upward"
+    assert float(oiii.mean()) < float(matched.mean()), \
+        "matching no longer lifts the oxygen to the hydrogen's level"
+    assert "×1.00 is the matched point" in b
+    assert "Below ×1.00 leans toward hydrogen" in b
 
     rgb = np.dstack([ha, oiii, oiii])
     masks = [float(nebula_mask(rgb, p).mean()) for p in (0.0, 0.4, 1.0)]

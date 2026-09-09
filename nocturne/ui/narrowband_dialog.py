@@ -34,7 +34,10 @@ def _slider_positions(p: NarrowbandParams) -> dict:
     """
     return {
         "palette": p.palette,
-        "oxygen": round(p.oxygen_strength * 50),
+        # /100 rather than /50 like its neighbours: the default is 0.85 and
+        # round(0.85 * 50) is 42, which reads back as 0.84. A control whose
+        # own default it cannot represent is a control with a rounding bug.
+        "oxygen": round(p.oxygen_strength * 100),
         "blend": round(p.blend_amount * 100),
         "sat": round(p.saturation * 100),
         "bright": round(p.brightness * 50),
@@ -86,7 +89,7 @@ class NarrowbandDialog(QDialog):
         self.palette_box.addItems(PALETTES)
         self.palette_box.setCurrentText(pos["palette"])
         self.blend_slider = ResetSlider(pos["blend"])
-        self.oxygen_slider = ResetSlider(pos["oxygen"])
+        self.oxygen_slider = ResetSlider(pos["oxygen"], maximum=200)
         self.sat_slider = ResetSlider(pos["sat"])
         self.bright_slider = ResetSlider(pos["bright"])
         self.protect_slider = ResetSlider(pos["protect"])
@@ -273,7 +276,7 @@ class NarrowbandDialog(QDialog):
     def _update_value_labels(self) -> None:
         """Show each slider's mapped value. OIII boost / Brightness read as a
         multiplier (×1.33) to match the numbers a tutorial or PixInsight uses."""
-        oxy = max(0.3, self.oxygen_slider.value() / 50.0)
+        oxy = max(0.3, self.oxygen_slider.value() / 100.0)
         # 1.00 is the photometric match — the one value here that means
         # something beyond taste, and where the colour minimum sits. Naming it
         # makes it a place you can go back to.
@@ -292,7 +295,7 @@ class NarrowbandDialog(QDialog):
         return NarrowbandParams(
             palette=self.palette_box.currentText(),
             blend_amount=self.blend_slider.value() / 100.0,
-            oxygen_strength=max(0.3, self.oxygen_slider.value() / 50.0),
+            oxygen_strength=max(0.3, self.oxygen_slider.value() / 100.0),
             saturation=self.sat_slider.value() / 100.0,
             brightness=max(0.3, self.bright_slider.value() / 50.0),
             protect_background=self.protect_slider.value() / 100.0,
