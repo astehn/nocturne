@@ -168,3 +168,24 @@ def test_the_strip_does_not_eat_the_histogram_area(qtbot):
     assert w._x_to_px(0.0) < w._x_to_px(1.0)
     _ox, _oy, _pw, ph = w._plot()
     assert ph < w.height() - w.STRIP_H, "the plot area overlaps the strip"
+
+
+def test_set_range_enforces_the_minimum_span(qtbot):
+    """`_move` clamps the span for the mouse; `set_range` did not, and it is the
+    door every preset, spin box and test comes through. `set_range(0.5, 0.5)`
+    gave a zero span, which `apply_levels` silently rescues as
+    `white = black + 1e-4` — so the readouts described an operation that never
+    happened, the exact failure the clamp exists to prevent."""
+    from nocturne.ui.range_handles import _MIN_SPAN
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.set_range(0.5, 0.5)
+    lo, hi = w.range()
+    assert hi - lo == pytest.approx(_MIN_SPAN), f"zero span accepted: {lo} {hi}"
+
+    # And at the very top, where there is no room to push the high bound up:
+    # the low one gives way instead, rather than the span collapsing again.
+    w.set_range(1.0, 1.0)
+    lo, hi = w.range()
+    assert hi == pytest.approx(1.0)
+    assert hi - lo == pytest.approx(_MIN_SPAN), f"zero span accepted at 1.0: {lo} {hi}"

@@ -43,9 +43,28 @@ class RangeHandles(QWidget):
         return (self._lo, self._hi)
 
     def set_range(self, lo: float, hi: float) -> None:
+        """Set both bounds, ordered, clamped into [0, 1] and never narrower
+        than `_MIN_SPAN`.
+
+        The span clamp is here as well as in `_move` because the mouse is not
+        the only way in: `set_range(0.5, 0.5)` gave a zero span that
+        `apply_levels` silently rescues as `white = black + 1e-4`, so the
+        readouts described an operation that never happened — the exact failure
+        `_move`'s clamp exists to prevent, reachable by every preset, spin box
+        and test that comes through this door instead.
+
+        The low bound is the one kept: a caller that hands over a degenerate
+        band has usually computed the low end from the image and let the high
+        end collapse onto it, and at the very top of the range there is nowhere
+        left to push the high bound, so the low one gives way instead.
+        """
         lo = float(np.clip(lo, 0.0, 1.0))
         hi = float(np.clip(hi, 0.0, 1.0))
-        self._lo, self._hi = min(lo, hi), max(lo, hi)
+        lo, hi = min(lo, hi), max(lo, hi)
+        if hi - lo < _MIN_SPAN:
+            hi = min(1.0, lo + _MIN_SPAN)
+            lo = max(0.0, hi - _MIN_SPAN)
+        self._lo, self._hi = lo, hi
         self.update()
 
     def set_histogram(self, data) -> None:
