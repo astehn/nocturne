@@ -173,3 +173,98 @@ def test_view_changes_queue_a_redraw(qtbot, split):
     qtbot.addWidget(dlg)
     with qtbot.waitSignal(dlg._timer.timeout, timeout=500, raising=True):
         dlg.preview_label.set_zoom(2.0)
+
+
+# --- the controls the house pattern requires ------------------------------
+
+def test_the_layout_is_the_house_pattern_not_a_stack(qtbot, split):
+    """Star Spikes was deliberately moved to this pattern on 2026-09-08 and
+    this dialog reintroduced the one it was moved away from: preview on top,
+    full-width sliders underneath.
+
+    Read back from the real widgets, per CLAUDE.md — the preview must be the
+    stretching item in a HORIZONTAL body, and the control column capped at the
+    same 340 star_spikes and narrowband use ("Without it the column takes half
+    the window and the preview is no better off than it was stacked")."""
+    from PySide6.QtWidgets import QHBoxLayout
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    body = dlg.layout()
+    assert isinstance(body, QHBoxLayout), "the body is still a vertical stack"
+    assert body.itemAt(0).widget() is dlg.preview_label
+    assert body.stretch(0) == 1, "the preview does not take the spare width"
+    column = body.itemAt(1).widget()
+    assert column.maximumWidth() == 340
+    # the sliders live in the column, not full-width under the picture
+    assert dlg.black_slider.parent() is column
+    assert dlg.white_slider.parent() is column
+
+
+def test_there_is_a_way_back_to_fit(qtbot, split):
+    """Zoom and pan were wired but shipped none of the affordances CurvesDialog
+    has for the same widget. Worse here than there: the mask covers the whole
+    frame only at fit, so a user who scroll-zoomed by accident on a trackpad
+    silently lost the whole-frame clip mask with no button to get back."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.zoom_in_btn.click()
+    assert dlg.preview_label.zoom_level() > 1.0
+    assert dlg.zoom_label.text() == "1.5x"
+    dlg.zoom_out_btn.click()
+    assert dlg.preview_label.zoom_level() == pytest.approx(1.0)
+    dlg.preview_label.set_zoom(8.0)
+    dlg.fit_btn.click()
+    assert dlg.preview_label.zoom_level() == 1.0
+    assert dlg.zoom_label.text() == "1.0x"
+
+
+def test_double_click_returns_a_slider_to_the_identity_endpoint(qtbot, split):
+    """ResetSlider, as every other slider surface in the app uses. Without it
+    there is no way back to exactly (0.0, 1.0) to compare against the untouched
+    image."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.black_slider.setValue(300)
+    dlg.white_slider.setValue(600)
+    for slider, back_to in ((dlg.black_slider, 0), (dlg.white_slider, 1000)):
+        QApplication.sendEvent(slider, QMouseEvent(
+            QEvent.Type.MouseButtonDblClick, QPointF(5, 5), QPointF(5, 5),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier))
+        assert slider.value() == back_to
+    assert dlg.values() == (0.0, 1.0)
+
+
+def test_ok_is_the_primary_action(qtbot, split):
+    """As curves, star_spikes, trim, upscale, narrowband, colour balance,
+    combine, batch, stack and haoiii all mark it."""
+    from PySide6.QtWidgets import QDialogButtonBox
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    box = dlg.findChild(QDialogButtonBox)
+    assert box.button(QDialogButtonBox.StandardButton.Ok).objectName() == "primary"
+
+
+def test_the_sliders_cannot_cross(qtbot, split):
+    """Black 0.80 / white 0.20 was accepted: `apply_levels` quietly clamps to
+    `white = black + 1e-4`, so the preview became a hard threshold while the
+    labels still read "0.800 / 0.200" and the committed params described an
+    operation that never happened. The labels and the params must stay true."""
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    dlg.black_slider.setValue(800)
+    dlg.white_slider.setValue(200)          # would cross
+    black, white = dlg.values()
+    assert white > black, f"the sliders crossed: black {black}, white {white}"
+    assert dlg.black_val.text() == f"{black:.3f}"
+    assert dlg.white_val.text() == f"{white:.3f}"
+    # and the other way round
+    dlg.black_slider.setValue(0)
+    dlg.white_slider.setValue(300)
+    dlg.black_slider.setValue(900)
+    black, white = dlg.values()
+    assert black < white
+    assert dlg.black_val.text() == f"{black:.3f}"

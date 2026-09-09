@@ -1483,7 +1483,7 @@ class MainWindow(QMainWindow):
             "color-balance": "#c078d8",
             # finish it — roses, walked toward violet so the group reads as a run
             "star-spikes": "#e089a0",
-            "starless-levels": "#e388a9",
+            "starless-levels": "#dd88a8",
             "trim": "#dd87b1",
             "upscale": "#d987c4",
             "share": "#d489d6",

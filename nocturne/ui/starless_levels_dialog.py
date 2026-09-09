@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout,
-                               QLabel, QSlider, QVBoxLayout)
+                               QLabel, QPushButton, QVBoxLayout, QWidget)
 
 from ..core.enhance import starless_levels_layers
 from ..core.image import AstroImage
@@ -18,9 +18,15 @@ from ..core.inspect import clip_overlay
 from .curves_dialog import (_downscale, _fit_to_screen, _fitted_size,
                            _pixmap_for, _ZoomPreview)
 from .preview import rgb_to_qimage, to_rgb8
+from .reset_slider import ResetSlider
 
 _SCALE = 1000          # QSlider is integer-only; 0..1000 represents 0.0..1.0
 _PREFERRED = (1100, 720)
+
+# One slider step. `apply_levels` clamps a crossed pair to `white = black + 1e-4`,
+# so a single step (0.001) is comfortably clear of the point where the two would
+# be describing something the labels do not say.
+_MIN_GAP = 1
 
 
 class StarlessLevelsDialog(QDialog):
@@ -35,12 +41,12 @@ class StarlessLevelsDialog(QDialog):
         self._small_stars = _downscale(stars)
         self._on_apply = on_apply
 
-        self.black_slider = QSlider(Qt.Orientation.Horizontal)
-        self.black_slider.setRange(0, _SCALE)
-        self.black_slider.setValue(0)
-        self.white_slider = QSlider(Qt.Orientation.Horizontal)
-        self.white_slider.setRange(0, _SCALE)
-        self.white_slider.setValue(_SCALE)
+        # ResetSlider, as step_panels, star_spikes, narrowband and colour
+        # balance all use: double-click returns it to the identity endpoint, so
+        # there is a way back to exactly (0.0, 1.0) to compare against the
+        # untouched image. A plain QSlider has none.
+        self.black_slider = ResetSlider(0, minimum=0, maximum=_SCALE)
+        self.white_slider = ResetSlider(_SCALE, minimum=0, maximum=_SCALE)
         self.black_val = QLabel("0.000")
         self.white_val = QLabel("1.000")
 
@@ -58,21 +64,69 @@ class StarlessLevelsDialog(QDialog):
 
         self.preview_label = _ZoomPreview()
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.preview_label, 1)
+        # Scroll to zoom, drag to pan — plus explicit buttons, the same set
+        # CurvesDialog carries over the same widget and for the same reason: a
+        # trackpad gesture is not discoverable, and a large mosaic is unusable
+        # without one. Sharper here than there, because zooming CHANGES WHAT
+        # THE MASK COVERS (whole frame at fit, visible region beyond it) — so a
+        # user who scroll-zoomed by accident silently lost the whole-frame clip
+        # mask and had no way back to Fit.
+        self.zoom_label = QLabel("1.0x")
+        self.fit_btn = QPushButton("Fit")
+        self.fit_btn.clicked.connect(self.preview_label.reset_view)
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.clicked.connect(
+            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() * 1.5))
+        self.zoom_out_btn = QPushButton("−")
+        self.zoom_out_btn.clicked.connect(
+            lambda: self.preview_label.set_zoom(self.preview_label.zoom_level() / 1.5))
+        zoom_row = QHBoxLayout()
+        zoom_row.addWidget(QLabel("Preview"))
+        zoom_row.addStretch(1)
+        zoom_row.addWidget(self.zoom_label)
+        zoom_row.addWidget(self.zoom_out_btn)
+        zoom_row.addWidget(self.zoom_in_btn)
+        zoom_row.addWidget(self.fit_btn)
+
+        note = QLabel("Pull the endpoints in to where the data begins. The stars "
+                      "are held aside and screened back untouched, so the white "
+                      "point cannot clip a star core.")
+        note.setWordWrap(True)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primary")
+        buttons.accepted.connect(self._apply)
+        buttons.rejected.connect(self.reject)
+
+        side = QVBoxLayout()
+        side.addWidget(note)
         for label, slider, val in (("Black point", self.black_slider, self.black_val),
                                    ("White point", self.white_slider, self.white_val)):
             row = QHBoxLayout()
             row.addWidget(QLabel(label))
             row.addWidget(slider, 1)
             row.addWidget(val)
-            layout.addLayout(row)
-        layout.addWidget(self.clip_check)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                                   | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self._apply)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+            side.addLayout(row)
+        side.addWidget(self.clip_check)
+        side.addLayout(zoom_row)
+        side.addWidget(QLabel("Scroll to zoom · drag to pan"))
+        side.addStretch(1)
+        side.addWidget(buttons)
+
+        side_wrap = QWidget()
+        side_wrap.setLayout(side)
+        # The house pattern — preview left at stretch 1, a vertical control
+        # column right, capped at the same 340 star_spikes and narrowband use:
+        # "Without it the column takes half the window and the preview is no
+        # better off than it was stacked." Star Spikes was moved to this on
+        # 2026-09-08 and this dialog had reintroduced the stacked layout it was
+        # moved away from.
+        side_wrap.setMaximumWidth(340)
+
+        body = QHBoxLayout(self)
+        body.addWidget(self.preview_label, 1)
+        body.addWidget(side_wrap)
 
         # Debounced like curves_dialog: a slider drag emits on every tick, and
         # recomposing the full-resolution image on each one stutters. The
@@ -81,8 +135,8 @@ class StarlessLevelsDialog(QDialog):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._render_preview)
 
-        self.black_slider.valueChanged.connect(self._on_slider_changed)
-        self.white_slider.valueChanged.connect(self._on_slider_changed)
+        self.black_slider.valueChanged.connect(self._on_black_changed)
+        self.white_slider.valueChanged.connect(self._on_white_changed)
         self.clip_check.toggled.connect(self._queue_preview)
         # _ZoomPreview accepts wheel-zoom and drag-pan on its own (see
         # curves_dialog._ZoomPreview) and emits viewChanged either way. Without
@@ -90,7 +144,7 @@ class StarlessLevelsDialog(QDialog):
         # picture never redraws -- finding the first clipped specks IS this
         # tool's workflow, more than it is CurvesDialog's sanity-check preview,
         # so zoom/pan has to actually feed back into the render here.
-        self.preview_label.viewChanged.connect(self._queue_preview)
+        self.preview_label.viewChanged.connect(self._on_view_changed)
         self._update_labels()
         self._render_preview()   # first paint, not debounced
 
@@ -109,12 +163,33 @@ class StarlessLevelsDialog(QDialog):
         self.black_val.setText(f"{black:.3f}")
         self.white_val.setText(f"{white:.3f}")
 
-    def _on_slider_changed(self, *_) -> None:
+    def _on_black_changed(self, value: int) -> None:
+        if value > self.white_slider.value() - _MIN_GAP:
+            # Clamped, not merely tolerated. `apply_levels` silently rescues a
+            # crossed pair as `white = black + 1e-4`, which makes the preview a
+            # hard threshold while the labels still read "0.800 / 0.200" and the
+            # committed params describe an operation that never happened.
+            self.black_slider.setValue(self.white_slider.value() - _MIN_GAP)
+            return          # the setValue re-enters; that pass does the rest
+        self._update_labels()
+        self._queue_preview()
+
+    def _on_white_changed(self, value: int) -> None:
+        if value < self.black_slider.value() + _MIN_GAP:
+            self.white_slider.setValue(self.black_slider.value() + _MIN_GAP)
+            return
         self._update_labels()
         self._queue_preview()
 
     def _queue_preview(self, *_) -> None:
         self._timer.start(60)
+
+    def _on_view_changed(self, *_) -> None:
+        # The readout tracks the gesture, the render waits for the debounce —
+        # the same split the value labels use. A zoom number that only caught
+        # up 60 ms later would lag the thing it is describing.
+        self.zoom_label.setText(f"{self.preview_label.zoom_level():.1f}x")
+        self._queue_preview()
 
     def _render_preview(self) -> None:
         """The clipping view REPLACES the picture (as Photoshop's threshold view
