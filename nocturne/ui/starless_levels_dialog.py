@@ -376,6 +376,20 @@ class StarlessLevelsDialog(QDialog):
             self._update_clip_line()
         else:
             after = to_qimage(self.compose(small_starless, small_stars))
+            # The picture and the overlay size themselves independently — the
+            # picture from `_downscale`, the overlay from `_fitted_size` — and
+            # their rounding disagreed: measured at fit on a 4320x5746 frame,
+            # 601 px wide against the overlay's 602. A mark cannot sit on the
+            # feature that caused it if the two grids differ, which is the whole
+            # job of the view. IgnoreAspectRatio deliberately: KeepAspectRatio
+            # preserves the SOURCE's already-rounded aspect and lands back on
+            # 601, while `box` comes from the true full-res shape, so forcing it
+            # is the more faithful of the two and the error is under one pixel.
+            shp = self._starless.data.shape if fit else (y1 - y0, x1 - x0)
+            box = _fitted_size(shp[1], shp[0], view.pane_size())
+            if after.size() != box:
+                after = after.scaled(box, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                     Qt.TransformationMode.SmoothTransformation)
         # With clipping on the two halves are produced by different paths — the
         # overlay is built at the PANE's size, "before" from the decimated copy
         # — so they must be reconciled explicitly. `ImageView.set_compare` takes

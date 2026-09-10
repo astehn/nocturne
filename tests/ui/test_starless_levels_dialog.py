@@ -971,3 +971,31 @@ def test_the_readout_states_how_much_is_clipping_now(qtbot):
     text = dlg.clip_line.text()
     assert "now" in text.lower(), f"the line says nothing about the current cost: {text!r}"
     assert "%" in text
+
+
+def test_picture_and_overlay_are_the_same_size_at_every_zoom(qtbot):
+    """They arrive by different routes — the picture from a decimated copy Qt
+    then scales, the overlay block-maxed straight to the pane's fitted box — and
+    measured at fit on a 4320x5746 frame they came out 601 px wide against 602.
+    A mark that cannot sit on the feature that caused it defeats the view."""
+    rng = np.random.default_rng(1)
+    starless = np.clip(rng.normal(0.4, 0.15, (900, 700, 3)), 0, 1).astype(np.float32)
+    stars = np.zeros((900, 700, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.resize(1000, 800)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg.white_val.setValue(0.85)
+    for zoom in (1.0, 1.6, 3.0):
+        dlg.preview.set_zoom(zoom)
+        dlg.clip_check.setChecked(False)
+        dlg._render_preview()
+        pic = dlg.preview._after_pane.pixmap().size()
+        dlg.clip_check.setChecked(True)
+        dlg._render_preview()
+        ovl = dlg.preview._after_pane.pixmap().size()
+        assert (pic.width(), pic.height()) == (ovl.width(), ovl.height()), (
+            f"zoom {zoom}: picture {pic.width()}x{pic.height()} vs "
+            f"overlay {ovl.width()}x{ovl.height()}")
