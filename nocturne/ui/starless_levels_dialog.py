@@ -21,8 +21,9 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QVBoxLayout, QWidget)
 
 from ..core.enhance import starless_levels_layers
+from ..core.levels import apply_levels
 from ..core.image import AstroImage
-from ..core.inspect import capture_clip_baseline, clip_overlay
+from ..core.inspect import capture_clip_baseline, clip_masks, clip_overlay
 from .compare_view import CompareView
 from .curves_dialog import _downscale, _fit_to_screen, _fitted_size
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
@@ -116,6 +117,8 @@ class StarlessLevelsDialog(QDialog):
         # Which end the user is working, when they said so by TYPING rather than
         # by dragging. None means "ask the handles".
         self._typed_end: str | None = None
+        # (shadow, highlight) fractions the CURRENT endpoints add; None until measured.
+        self._added: tuple[float, float] | None = None
 
         self.clip_check = QCheckBox("Show Clipping")
         self.clip_check.setChecked(False)
@@ -408,6 +411,12 @@ class StarlessLevelsDialog(QDialog):
             self._before_key = cache_key
         return self._before_img
 
+    def _levels_args(self) -> tuple[float, float, float]:
+        """(black, gamma, white) for `apply_levels`. Gamma is fixed at 1.0 —
+        this tool is the two endpoints and nothing else."""
+        black, white = self.values()
+        return (black, 1.0, white)
+
     def _clip_baseline(self, starless: AstroImage, stars: AstroImage, key):
         """The clipping already present with the tool doing nothing.
 
@@ -418,7 +427,9 @@ class StarlessLevelsDialog(QDialog):
         keeps costing one compose per tick rather than two.
         """
         if key != self._baseline_key:
-            untouched = starless_levels_layers(starless, stars, 0.0, 1.0)
+            # Same layer the mask is taken from (see _clip_qimage), or the two
+            # measure different pictures and the subtraction is meaningless.
+            untouched = apply_levels(starless, 0.0, 1.0, 1.0)
             self._baseline = capture_clip_baseline(to_rgb8(untouched))
             self._baseline_key = key
             if key == ("fit",) and self._frame_clip is None:
@@ -477,6 +488,26 @@ class StarlessLevelsDialog(QDialog):
         Colour Balance's use of the same widget is untouched."""
         self._typed_end = end
 
+    def _added_phrase(self, end) -> str:
+        """What the current endpoints are costing, in the same voice as the rest.
+
+        The marks alone cannot say whether they mean half the frame or almost
+        none of it — and on a large image almost none of it still paints a
+        startling number of dots, because one display pixel stands for a hundred
+        real ones and lights if any of them clips.
+        """
+        if self._added is None:
+            return "Nothing is clipping now."
+        shadow, highlight = self._added
+        parts = []
+        if end != "hi" and shadow > 0:
+            parts.append(f"{shadow * 100:.3f}% crushed")
+        if end != "lo" and highlight > 0:
+            parts.append(f"{highlight * 100:.3f}% blown")
+        if not parts:
+            return "Nothing is clipping now."
+        return "Right now that is " + " and ".join(parts) + "."
+
     def _update_clip_line(self) -> None:
         """State which end is showing, then the total in words, the way the
         main window does.
@@ -509,8 +540,10 @@ class StarlessLevelsDialog(QDialog):
             was.append(f"{highlight_frac * 100:.1f}% blown")
         detail = ", ".join(was) + " before this tool touched it" if was \
             else "nothing was clipped before this tool touched it"
+        now = self._added_phrase(end)
         self.clip_line.setText(
-            f"{which} Marks only what these two points add — {detail}.")
+            f"{which} Marks only what these two points add. {now} "
+            f"For reference, {detail}.")
 
     def _clip_qimage(self, starless: AstroImage, stars: AstroImage, key):
         """The clipping mask, block-maxed straight to the size it is DISPLAYED
@@ -538,12 +571,25 @@ class StarlessLevelsDialog(QDialog):
         what keeps this identical to the view that shipped before.
         """
         baseline = self._clip_baseline(starless, stars, key)
-        full = self.compose(starless, stars)
-        rgb = to_rgb8(full)                    # the canvas's own conversion
+        # The STARLESS layer, not the composite. The endpoints act on this layer
+        # alone; the stars are screened back untouched, so clipping a star causes
+        # is neither something these two points did nor something they can undo.
+        # Measured on Andreas' IC 1396A drizzle: 335 of 2357 marks (14.2%) came
+        # from the stars, every one of them on a star, over starless values as
+        # low as 0.161 — i.e. a faint star on dark nebulosity, marked as though
+        # the user had blown it. That is what sent him to Photoshop to check.
+        rgb = to_rgb8(apply_levels(starless, *self._levels_args()))
         src_h, src_w = rgb.shape[:2]
         box = _fitted_size(src_w, src_h, self.preview.pane_size())
         tw, th = min(src_w, max(1, box.width())), min(src_h, max(1, box.height()))
         end = self._clip_end()
+        # What these endpoints cost, so the readout can give the marks a scale.
+        # Without it a screen of alarming dots came with no way to tell whether
+        # it meant half the frame or, as on Andreas' IC 1396A, 0.0095% of it.
+        sh, hi = clip_masks(rgb, baseline=baseline)
+        px = max(1, rgb.shape[0] * rgb.shape[1])
+        self._added = (float(sh.any(axis=2).sum()) / px,
+                       float(hi.any(axis=2).sum()) / px)
         qimage = rgb_to_qimage(clip_overlay(rgb, (th, tw), baseline=baseline, end=end))
         if (tw, th) != (box.width(), box.height()):
             qimage = qimage.scaled(box, Qt.AspectRatioMode.KeepAspectRatio,

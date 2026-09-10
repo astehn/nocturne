@@ -908,3 +908,66 @@ def test_side_by_side_panes_are_not_the_same_picture(qtbot):
     assert b.shape == a.shape, "the two panes must be drawn at the same scale"
     assert not np.array_equal(a, b), "before and after are the same picture"
     assert a.mean() > b.mean(), "pulling the white point in must lighten the after"
+
+
+def _star_over_dark(h=64, w=64):
+    """A dark starless layer with one bright STAR on it.
+
+    The star alone drives the composite to white when the two layers are
+    screened together — but the endpoints only act on the starless layer, so
+    nothing the user does here caused it and nothing they can do will fix it.
+    """
+    starless = np.full((h, w, 3), 0.16, np.float32)   # dark, as Andreas measured
+    stars = np.zeros((h, w, 3), np.float32)
+    # The window is knife-edge, which is why only 335 pixels of a 24.8 MP frame
+    # hit it: the star must be dim enough that the composite is NOT already
+    # blown at the identity endpoints, yet bright enough that lifting the dark
+    # starless value under it tips the screen over. With black 0.0 / white
+    # 0.879 and a starless of 0.16 it is s in [0.997603, 0.997666], computed
+    # against the real uint8 threshold (value * 255 + 0.5 >= 255).
+    stars[32, 32] = 0.997634
+    return (AstroImage(starless, is_linear=False, metadata={}),
+            AstroImage(stars, is_linear=False, metadata={}))
+
+
+def test_a_star_over_dark_nebulosity_is_not_reported_as_the_users_clipping(qtbot):
+    """Measured on Andreas' IC 1396A drizzle: 335 of 2357 marks (14.2%) were
+    caused by the STARS layer, 100% of them on a star, with the starless value
+    beneath as low as 0.161. The tool was blaming its own endpoints for pixels
+    they neither touched nor can rescue — and a faint star on dark background is
+    precisely a mark that lands somewhere visibly dark.
+
+    The endpoints act on the starless layer, so that is what the view reports.
+    """
+    starless, stars = _star_over_dark()
+    dlg = StarlessLevelsDialog(starless, stars)
+    qtbot.addWidget(dlg)
+    dlg.resize(700, 600)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg.white_val.setValue(0.879)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+
+    pm = dlg.preview._after_pane.pixmap()
+    rgb = qimage_to_rgb8(pm.toImage().convertToFormat(QImage.Format.Format_RGB888))
+    assert not (rgb == 255).any(), (
+        "a star clipping the composite was reported as the endpoints' doing")
+
+
+def test_the_readout_states_how_much_is_clipping_now(qtbot):
+    """The line reported only what the image ARRIVED with, so a screen full of
+    alarming dots came with no sense of scale — on the real frame they were
+    0.0095% of it. What the current endpoints actually cost has to be said."""
+    starless = np.full((64, 64, 3), 0.5, np.float32)
+    starless[:8, :8] = 0.95
+    stars = np.zeros((64, 64, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.white_val.setValue(0.90)
+    dlg.clip_check.setChecked(True)
+    dlg._render_preview()
+    text = dlg.clip_line.text()
+    assert "now" in text.lower(), f"the line says nothing about the current cost: {text!r}"
+    assert "%" in text
