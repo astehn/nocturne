@@ -234,6 +234,31 @@ def _step_display_name(stage_id) -> str:
     return stage_id
 
 
+
+CANNOT_BUILD_REASON = ("this version of Nocturne cannot replay that step — "
+                       "open the image and apply it by hand, or re-save the recipe")
+
+
+def _can_build(stage_id, settings) -> bool:
+    """Whether `make_step` can construct this stage at all.
+
+    Geometry ops and the enhancement taps never reach `make_step` on replay, so
+    they are answered directly rather than being refused for not being there.
+    """
+    if not stage_id or stage_id in ("enhance",):
+        return True
+    from .steps.factory import make_step
+    try:
+        make_step(stage_id, settings)
+    except ValueError:
+        return False
+    except Exception:
+        # Anything else is an environment problem (a missing binary, say), which
+        # `engine_for` reports far better than a bare "cannot build" would.
+        return True
+    return True
+
+
 def preflight(recipe: Recipe, settings) -> list[StepPlan]:
     """Step by step: what will run, what will be substituted, what will fail.
 
@@ -266,6 +291,16 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
         # same recipe would contradict each other.
         if sid == "background" and step.get("option") == "off":
             plans.append(StepPlan(name, "run", "", ""))
+            continue
+        # Can the factory actually BUILD this stage? Nothing asked before, so a
+        # stage that was registered as capturable but had no `make_step` case
+        # was reported as "will run as saved" and then raised on replay —
+        # `run_batch` catching that per file turned it into a failure for every
+        # file in the folder, with a raw stage id as the message. Colour Balance
+        # was in exactly that state. Answering the question this function claims
+        # to answer costs one construction per step, before any file is touched.
+        if not _can_build(sid, settings):
+            plans.append(StepPlan(name, "fail", "", CANNOT_BUILD_REASON))
             continue
         note = engine_for(sid, settings)
         if note is None:                       # no engine choice: it just runs

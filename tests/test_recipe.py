@@ -382,3 +382,39 @@ def test_starless_levels_is_reported_as_uncaptured_not_silently_saved():
     # loader can build.
     assert [s["stage"] for s in recipe_from_entries(entries).steps] == ["stretch"]
 
+
+
+def test_preflight_refuses_a_stage_the_factory_cannot_build():
+    """A recipe naming a stage `make_step` cannot construct used to report
+    "this step will run as saved", and `apply_recipe` then raised — which
+    `run_batch`'s per-file `except Exception` turned into a failure for EVERY
+    file in the folder, with a raw stage id as the message.
+
+    That happened for real: Colour Balance was registered as capturable and
+    fully serialised while `make_step` had no case for it. Preflight must answer
+    the question it claims to answer — can this actually run — rather than
+    assuming any named stage can.
+    """
+    from nocturne.recipe import Recipe, preflight
+    from nocturne.settings import Settings
+
+    r = Recipe(steps=[{"stage": "not_a_real_stage", "option": ""}])
+    plans = preflight(r, Settings())
+    assert [p.outcome for p in plans] == ["fail"], (
+        f"preflight promised an unbuildable stage would run: {plans}")
+    assert plans[0].reason, "a failure with no reason tells the user nothing"
+    assert "not_a_real_stage" not in plans[0].reason.replace(
+        plans[0].step, ""), "the reason should not show a raw stage id"
+
+
+def test_preflight_still_passes_every_real_stage():
+    """The guard must not start refusing stages that genuinely work."""
+    from nocturne.recipe import Recipe, preflight, serialize_option
+    from nocturne.settings import Settings
+
+    for sid, opt in (("stretch", 0.5), ("levels", (0.0, 1.0, 1.0)),
+                     ("curves", None), ("crop", None), ("flip_h", None)):
+        r = Recipe(steps=[{"stage": sid, "option": serialize_option(sid, opt)}])
+        plans = preflight(r, Settings())
+        assert plans[0].outcome != "fail" or plans[0].reason, (
+            f"{sid} was refused: {plans[0]}")

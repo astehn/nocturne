@@ -45,6 +45,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
     "saturation":     ("Saturation", "RC-Astro", "rcastro"),
     "green_fringe":   ("Remove Green Fringe", "RC-Astro", "rcastro"),
     "narrowband":     ("Narrowband", "RC-Astro", "rcastro"),
+    "color_balance":  ("Colour Balance", "RC-Astro", "rcastro"),
 }
 
 # What the fallback actually IS, verified against each step's apply() rather
@@ -53,7 +54,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
 # unconditionally. Naming a fallback that does not exist is worse than naming
 # none, because the whole point of the receipt is that it can be trusted.
 #
-# The four star steps share `steps/star_split.resolve_star_split`: StarX when
+# The five star steps share `steps/star_split.resolve_star_split`: StarX when
 # RC-Astro is configured, the free SEP split otherwise. So they share a caveat.
 _FREE_SPLIT = "Nocturne (free star split)"
 _FALLBACKS: dict[str, str] = {
@@ -64,6 +65,7 @@ _FALLBACKS: dict[str, str] = {
     "saturation": _FREE_SPLIT,
     "green_fringe": _FREE_SPLIT,
     "narrowband": _FREE_SPLIT,
+    "color_balance": _FREE_SPLIT,
 }
 
 # Steps with NO fallback: without the tool they cannot run at all, and the app
