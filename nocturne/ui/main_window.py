@@ -46,6 +46,7 @@ from .image_view import ImageView
 from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
+from ..recipe import LEVELS_AUTO
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
@@ -266,6 +267,10 @@ class MainWindow(QMainWindow):
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
         # Levels live-preview: a debounced (90 ms) non-committing render.
         self._levels_pending = None
+        # Whether the Levels values on screen came from Auto rather than a
+        # hand-set slider. A recipe stores the DECISION when they did, so it
+        # re-derives per image instead of replaying one frame's noise floor.
+        self._levels_auto = False
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
         self._levels_timer.timeout.connect(self._render_levels_preview)
@@ -1893,6 +1898,11 @@ class MainWindow(QMainWindow):
         stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
+        if stage_id == "levels" and self._levels_auto:
+            # Record the DECISION, not this image's measurement. Applying it now
+            # re-derives from the very image on screen, so the committed pixels
+            # are identical to the preview — `auto_levels` is deterministic.
+            option = LEVELS_AUTO
         if stage_id == "levels" and self.project.current().is_linear:
             # Levels remaps [black, white] in display space; on a still-linear
             # image (values ~0.003) any black point clips the whole frame to
@@ -1944,7 +1954,11 @@ class MainWindow(QMainWindow):
 
     def _log_step(self, stage_id: str, option, base, result) -> None:
         name = STEP_NAME[stage_id]
-        if stage_id in ("color", "levels", "curves"):
+        if stage_id == "levels" and option == LEVELS_AUTO:
+            # The one Levels option that IS user-facing: it says the black point
+            # will be re-derived per image, which a bare "Levels" cannot.
+            label = "auto"
+        elif stage_id in ("color", "levels", "curves"):
             label = ""  # option is a settings object/tuple, not user-facing text
         elif stage_id == "saturation" and isinstance(option, (tuple, list)):
             label = f"{float(option[0]):.2f} / neb {float(option[1]):.2f}"
@@ -2370,18 +2384,51 @@ class MainWindow(QMainWindow):
 
     # --- levels live preview ---
     def _on_levels_change(self, black: float, gamma: float, white: float) -> None:
-        """A Levels slider moved: stash the values and (re)start the debounce."""
+        """A Levels slider moved: stash the values and (re)start the debounce.
+
+        Moving a slider makes the value a CHOICE, so the recipe stores the
+        numbers rather than "re-derive this". `_on_levels_auto` sets the sliders
+        itself and so lands here three times — it re-asserts the flag afterwards.
+        """
         self._levels_pending = (black, gamma, white)
+        self._set_levels_auto(False)
         self._levels_timer.start(90)
+
+    def _set_levels_auto(self, on: bool) -> None:
+        """Flag plus its only visible sign.
+
+        The nudge rule is otherwise invisible — a 0.001 nudge changes what the
+        recipe stores — so the Auto button reading as active while the values are
+        still the derived ones is what makes it legible before a recipe is saved.
+        """
+        self._levels_auto = bool(on)
+        btn = getattr(self._panel, "auto_btn", None)
+        if btn is not None:
+            btn.setChecked(bool(on))
 
     def _on_levels_auto(self) -> None:
         if self.project is None or self.current_stage_id() != "levels":
+            # Qt has already toggled the button — it is checkable now — so put it
+            # back rather than leaving it reading "these values are derived" over
+            # values Auto never got as far as computing.
+            self._set_levels_auto(False)
             return
-        b, g, w = auto_levels(self.project.current().data)
+        # The PRE-Levels image — the same base the preview renders from and the
+        # commit re-applies to. `project.current()` is only the same thing until
+        # a Levels step has been applied; after one, Auto measured the ALREADY
+        # levelled image while the commit measured the original, and the two
+        # disagreed by 0.227 mean on a synthetic frame. That was a WYSIWYG break
+        # AND a wrong suggestion, both of which this fixes.
+        b, g, w = auto_levels(self._preview_base("levels").data)
         # Setting the sliders fires _on_levels_change (which debounces a render).
         self._panel.black_slider.setValue(round(b * BLACK_STEPS))
         self._panel.gamma_slider.setValue(round(g * 100))
         self._panel.white_slider.setValue(round(w * 100))
+        # AFTER the three setValue calls, never before: each one fires
+        # _on_levels_change, which clears the flag. Setting it first means the
+        # app wipes its own record and the recipe silently stores numbers while
+        # the button still reads Auto.
+        self._set_levels_auto(True)
         self._render_levels_preview()
 
     def _preview_base(self, stage_id: str):
@@ -3257,6 +3304,13 @@ class MainWindow(QMainWindow):
             self._stretch_pending = None
         if stage.id == "levels":
             self._levels_pending = None
+            # The rebuilt panel is a NEW widget: its Auto button starts unchecked
+            # and its sliders start at the defaults. Leaving the flag set makes
+            # the app disagree with everything on screen — navigate away from
+            # Levels and back, press Apply without touching anything, and instead
+            # of the no-op the panel promises it applies a full auto black point
+            # and records "auto". Same after opening a different image.
+            self._levels_auto = False
         if stage.id == "saturation":
             self._sat_pending = None
         if stage.id == "local_contrast":

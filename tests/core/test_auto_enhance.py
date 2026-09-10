@@ -207,10 +207,24 @@ def test_run_auto_plan_records_flat_gamma_levels():
     levels_entries = [(name, opt) for name, opt, _img in out if name == "Levels"]
     assert len(levels_entries) == 1
     _name, recorded = levels_entries[0]
-    black, gamma, white = recorded
+    # Records the DECISION now, not this frame's measurement, so a recipe saved
+    # after one tap re-derives per image instead of freezing a black point taken
+    # off whichever frame happened to be open. The guarantee this test exists for
+    # is unchanged and is checked on the RESULT below.
+    from nocturne.core.levels import AUTO, auto_levels
+    assert recorded == AUTO
+
+    # A real black point was applied, and gamma/white stayed flat — auto_levels'
+    # adaptive gamma (~1.37) lifted midtones and produced the milky look that was
+    # rejected, which is why flatness is the thing being guarded.
+    stretched = [img for name, _opt, img in out if name == "Stretch"][-1]
+    black, gamma, white = auto_levels(stretched.data)
     assert black > 0.0
     assert gamma == 1.0
     assert white == 1.0
+    levelled = [img for name, _opt, img in out if name == "Levels"][-1]
+    assert not np.allclose(levelled.data, stretched.data, atol=1e-6), (
+        "Levels ran but changed nothing")
 
 
 def test_run_auto_plan_reports_progress():

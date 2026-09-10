@@ -8,6 +8,8 @@ from .core.crop import CropParams
 from .ui.pipeline import STEP_NAME, ENHANCE_NAMES
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
+from .core.levels import AUTO as LEVELS_AUTO   # re-exported: the one definition
+
 _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
 _NAME_TO_STAGE["Rotate"] = "rotate"
 _NAME_TO_STAGE["Flip H"] = "flip_h"
@@ -50,6 +52,13 @@ def serialize_option(stage_id, option):
         t, w = option if option else (0.0, 0.0)
         return [float(t), float(w)]
     if stage_id == "levels":
+        # "auto" is the DECISION, not a measurement: the black point came from
+        # `auto_levels` on one image's noise floor, and replaying that number on
+        # another frame applies the wrong floor to it. Stored as a string beside
+        # the existing list, so type alone tells them apart and every recipe
+        # saved before this still means exactly what it did.
+        if option == LEVELS_AUTO:
+            return LEVELS_AUTO
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
     if stage_id == "stretch":
@@ -110,7 +119,7 @@ def deserialize_option(stage_id, value):
     if stage_id == "tint":
         return tuple(value) if value else (0.0, 0.0)
     if stage_id == "levels":
-        return tuple(value)
+        return LEVELS_AUTO if value == LEVELS_AUTO else tuple(value)
     if stage_id == "rotate":
         return CropParams(rotate=90)
     if stage_id == "flip_h":

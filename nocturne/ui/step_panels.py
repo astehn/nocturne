@@ -394,6 +394,15 @@ def build_panel(
     elif stage.kind == "levels":
         lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))
         auto_btn = QPushButton("Auto")
+        # Checkable purely as an INDICATOR: it stays down while the values on the
+        # sliders are still the ones Auto derived, and pops up the moment one is
+        # nudged. That is the only sign of whether the recipe will store "derive
+        # this per image" or three frozen numbers.
+        auto_btn.setCheckable(True)
+        auto_btn.setToolTip(
+            "Derive the black point from this image. Stays selected while the "
+            "values are still the derived ones — a recipe then re-derives them "
+            "for each image instead of reusing this one's.")
         if on_levels_auto is not None:
             auto_btn.clicked.connect(lambda: on_levels_auto())
         lay.addWidget(auto_btn)

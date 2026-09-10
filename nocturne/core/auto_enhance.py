@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from ..recipe import serialize_option
+from ..recipe import LEVELS_AUTO, serialize_option
 from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid
 from ..steps.factory import make_step
 from ..tools.base import run_cli
 from .color import ColorSettings
 from .crop import CropParams, detect_content_bounds
 from .image import AstroImage
-from .levels import auto_levels
 
 
 def detect_data_type(metadata: dict) -> str:
@@ -151,7 +150,13 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
                 # source (2026-08-20) — auto_levels now returns gamma and white
                 # of 1.0 itself — so take it whole rather than keep a local
                 # workaround that hides the real behaviour.
-                option = auto_levels(img.data)
+                # The DECISION, not this frame's measurement. `LevelsStep`
+                # re-derives it, so the picture here is identical — but a
+                # recipe saved after one tap now re-derives per image too,
+                # instead of freezing a black point measured off whichever
+                # frame happened to be open. The user never pressed Auto,
+                # so nothing in the UI could have corrected it.
+                option = LEVELS_AUTO
             result = step.apply(img, option)
         except Exception:
             if on_progress is not None:

@@ -44,6 +44,14 @@ def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> A
 # stays at or under 0.54% (M 8 the worst); at 3.0 M 8 reaches 0.98% and at 2.8
 # 1.25%, which eats faint nebulosity. M 31's 11.7% is its empty mosaic border
 # and does not move with sigma.
+AUTO = "auto"
+"""The Levels option meaning "re-derive from the image in front of you".
+
+Lives here, in the module both the recipe layer and the step already
+import, so the two cannot drift: three separate copies of a magic string
+with nothing asserting they are equal is a rename waiting to fail
+silently. `steps/levels.py` importing `recipe` would risk a cycle."""
+
 _BLACK_SIGMA = 3.5
 
 
