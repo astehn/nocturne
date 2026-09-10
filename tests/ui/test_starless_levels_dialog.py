@@ -371,7 +371,22 @@ def test_before_is_the_untouched_composite(qtbot, split):
     shown = qimage_to_rgb8(dlg.preview._before_img)
     expected = to_rgb8(starless_levels_layers(dlg._small_starless,
                                              dlg._small_stars, 0.0, 1.0))
-    assert np.array_equal(shown, expected)
+    # Compared by CONTENT, not by size: "before" is reconciled to whatever size
+    # "after" came out at, so the two halves of a wipe cannot disagree. What
+    # this test guards is that it is the tool DOING NOTHING — not the starless
+    # layer, and not the current result — so check it against both.
+    assert shown.shape[2] == 3
+    cur = to_rgb8(starless_levels_layers(dlg._small_starless, dlg._small_stars,
+                                         0.1, 0.7))
+    # Mean, not the exact array: reconciling the size resamples, which softens
+    # the standard deviation (measured 18.1 against 19.1) while leaving the mean
+    # untouched (81.9 either way). The mean is what survives a rescale, and it
+    # still separates "doing nothing" from the current result by a wide margin.
+    assert abs(float(shown.mean()) - float(expected.mean())) < 0.5, (
+        f"before is not the untouched composite: {shown.mean():.1f} vs "
+        f"{expected.mean():.1f}")
+    assert abs(float(shown.mean()) - float(cur.mean())) > 2.0, (
+        "before is showing the current result")
 
 
 def test_off_mode_does_not_compose_a_before(qtbot, split):
@@ -999,3 +1014,30 @@ def test_picture_and_overlay_are_the_same_size_at_every_zoom(qtbot):
         assert (pic.width(), pic.height()) == (ovl.width(), ovl.height()), (
             f"zoom {zoom}: picture {pic.width()}x{pic.height()} vs "
             f"overlay {ovl.width()}x{ovl.height()}")
+
+
+def test_wipe_without_clipping_also_composites_two_layers_of_the_same_size(qtbot):
+    """The clipping-on case was already guarded; the OFF case was not, and a fix
+    that rescaled the picture then reconciled 'before' to it ONLY when clipping
+    was on left the wipe divider spanning a picture larger than the before half.
+    Andreas saw the before layer cover the top-left corner alone.
+    """
+    rng = np.random.default_rng(3)
+    starless = np.clip(rng.normal(0.4, 0.15, (900, 700, 3)), 0, 1).astype(np.float32)
+    stars = np.zeros((900, 700, 3), np.float32)
+    dlg = StarlessLevelsDialog(AstroImage(starless, is_linear=False, metadata={}),
+                               AstroImage(stars, is_linear=False, metadata={}))
+    qtbot.addWidget(dlg)
+    dlg.resize(1000, 800)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg.handles.set_range(0.015, 0.823)
+    dlg.clip_check.setChecked(False)
+    dlg.mode_box.setCurrentIndex(1)            # Wipe
+    dlg._render_preview()
+
+    before, after = dlg.preview._before_img, dlg.preview._after_img
+    assert before is not None and after is not None
+    assert (before.width(), before.height()) == (after.width(), after.height()), (
+        f"wipe halves differ: before {before.width()}x{before.height()} "
+        f"vs after {after.width()}x{after.height()}")

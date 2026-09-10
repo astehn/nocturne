@@ -397,9 +397,13 @@ class StarlessLevelsDialog(QDialog):
         # 1200^2 frame, base 601x601 against compare 1200x1200, which spread the
         # divider over twice the picture and showed the "before" half as a 2x
         # magnified top-left quadrant.
+        # ALWAYS reconciled to whatever size `after` came out at, not only when
+        # clipping is on. The picture is now rescaled to the shared grid too, so
+        # 'only when clipping' left the wipe divider spanning a picture larger
+        # than its own before half — measured, before 700x900 against after
+        # 365x470 — and the before layer covered one corner of the frame.
         before = self._before_qimage(small_starless, small_stars, key,
-                                     box=after.size() if clipping else None) \
-            if show_before else None
+                                     box=after.size()) if show_before else None
         view.set_images(before, after)
 
     def _before_qimage(self, small_starless: AstroImage, small_stars: AstroImage,
