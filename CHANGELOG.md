@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.30.0] — 2026-09-11
+
+Long external-tool runs show real progress, and the clipping view stops lying about where it is looking
+
+### Added
+- GraXpert and RC-Astro report how far they have got. Both print progress throughout — GraXpert a percentage roughly every two seconds, RC-Astro a percentage and an ETA — and both were discarded, because the app waited for the process to exit and buffered everything it said. A user reported restarting Nocturne several times during a GraXpert denoise, convinced it had hung; he only discovered the wait was normal by timing the same image in GraXpert itself. One RC-Astro change covers eight places, since every operation reaches the same wrapper: Deconvolution, Noise Reduction, Star Reduction, Saturation, Remove Green Fringe, Narrowband, Colour Balance and Starless Levels. The star split most of all — that is the wait when one of those tools opens.
+- Narrowband and Colour Balance count their star split up in place rather than showing one static line for the whole wait.
+
+### Changed
+- The 'this can take a few minutes' warning for GraXpert now appears for the people who most need it. It tested the engine the option NAMED rather than the one that would actually run, and with GraXpert installed and RC-Astro absent no engine choice is offered, so the option says RC-Astro while GraXpert runs. The warning therefore showed for anyone who had both engines and picked GraXpert, and was missing for anyone who had only GraXpert and no way to avoid the wait.
+- Auto Levels is recorded in a recipe as the DECISION rather than the three numbers it produced. Its black point is measured from one image's own noise floor, so replaying the number applied one frame's floor to another frame's data — crushing a darker frame, doing nothing to a brighter one. Each image now derives its own. Touching a slider afterwards makes it an ordinary chosen value, frozen like every other step, and the Auto button stays selected while the values are still the derived ones so you can see which a recipe will store. Auto Enhance records the decision too. Recipes saved before this release are unaffected.
+
+### Fixed
+- The clipping view left a band of the picture uncovered, down the right and bottom, so nothing there could ever be marked. It mapped the image onto the screen in equal blocks of a size that does not divide the image, padding the remainder — and on a 4320x5746 frame shown at 602x801 that made 82 rows and 62 columns out of padding alone. It changed with the window size, vanishing when the ratio happened to land near a whole number, and it had been wrong for highlights since they shipped: there the padding is black on a black ground, so it was invisible rather than absent.
+- The clipping view reported the composite rather than the starless layer the two endpoints act on. Stars are screened back untouched, so a star pushing a pixel to white was reported as the user's clipping though nothing they set caused it and nothing they set could fix it: on a real frame, 14% of the marks came from the stars, every one over nebulosity dark enough to look wrong. The same fault hid shadow clipping — 29,036 genuinely crushed pixels concealed, because screening a star back lifts a crushed pixel above zero.
+- A recipe containing Colour Balance destroyed a whole batch. The step was recorded and fully serialised but nothing could replay it, so the dialog reported that every step would run as saved and then every file in the folder failed with a raw internal name as the message. Colour Balance now replays, taking its star split the same way the app does, and the preflight checks each step can actually be built before promising it will run.
+- The clipping readout says what the current endpoints cost, not only what the image arrived carrying — a screen of marks came with no sense of whether it meant half the frame or a hundredth of it.
+- The progress bar no longer labels every operation 'Denoising', and shows a percentage as a percentage rather than as a count out of 100.
+
 ## [0.29.0] — 2026-09-09
 
 Black and white points can be pulled all the way in without flattening a star core, and Narrowband's oxygen control now says what it does
