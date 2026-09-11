@@ -54,11 +54,22 @@ def _refuse_real_pending_prompt(monkeypatch):
     failure. Tests that need an answer stub `_ask_pending` locally via
     monkeypatch, which simply overrides this (fixtures are function-scoped and
     monkeypatch unwinds in reverse order).
+
+    The real implementation is stashed on the class as `_real_ask_pending`
+    (also via monkeypatch, so it is gone by the next test) for the rare test
+    that needs to exercise `_ask_pending`'s actual body — restore it with
+    `monkeypatch.setattr(mw.MainWindow, "_ask_pending", mw.MainWindow._real_ask_pending)`,
+    not a blanket `monkeypatch.undo()`: this fixture and `_no_real_file_dialogs`
+    above share one function-scoped `monkeypatch`, and `undo()` reverts both,
+    quietly disarming the file-dialog hang guard along with this one.
     """
     try:
         from nocturne.ui import main_window as mw
     except ImportError:
         return
+
+    monkeypatch.setattr(mw.MainWindow, "_real_ask_pending", mw.MainWindow._ask_pending,
+                        raising=False)
 
     def refuse(self, step_label):
         raise AssertionError(

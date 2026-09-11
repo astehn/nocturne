@@ -498,8 +498,12 @@ def test_apply_and_continue_is_not_offered_when_apply_is_disabled(
         "fixture assumption: GraXpert must be unconfigured in test settings")
     assert win._pending_apply_targets() == []
 
-    monkeypatch.undo()   # lift the autouse _refuse_real_pending_prompt stub —
-                          # this test exercises _ask_pending's real body
+    # Restore the real _ask_pending (stashed by the autouse fixture as
+    # _real_ask_pending) rather than monkeypatch.undo(): this test and
+    # _no_real_file_dialogs share one function-scoped monkeypatch, and a
+    # blanket undo() would also lift THAT guard for the rest of the test.
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", mw.MainWindow._real_ask_pending)
     seen = []
 
     def fake_exec(self):
@@ -552,3 +556,112 @@ def test_async_apply_writes_the_baseline_on_the_panel_it_was_pressed_from(
     assert win._has_pending() is False, (
         "an untouched Noise Reduction panel now reads pending because its "
         "baseline was clobbered by an unrelated apply landing late")
+
+
+def test_deferred_nav_does_not_fire_after_the_user_moved_on(
+        qtbot, tmp_path, monkeypatch):
+    """IMPORTANT 1. The stepper isn't busy-gated the way Next/Back are, so
+    the user can click a different row while a deferred "Apply and
+    continue" is still in flight. Reproduced: on Noise Reduction with a
+    pending dropdown, Next -> apply (deferred, target Local Contrast);
+    while the worker is still running, click Curves -> a second prompt
+    (Cancel default, IMPORTANT 2 keeps Apply off it since noise_sharpen's
+    own apply_btn is busy-disabled) -> discard -> lands on Curves. When the
+    worker completes, the FIRST deferral must not yank the user back to
+    Local Contrast — they deliberately moved to Curves since.
+    """
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("noise_sharpen")
+    win._panel.option_box.setCurrentText("strong")
+    assert win._has_pending() is True
+    captured = _deferred_run_busy(monkeypatch, win)
+    answers = iter(["apply", "discard"])
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: next(answers))
+
+    win.go_next()                               # -> deferred, target local_contrast
+    assert win._deferred_nav is not None
+    assert win.current_stage_id() == "noise_sharpen"
+
+    win._go_to_id("curves")                      # second prompt: discard -> real nav
+    assert win.current_stage_id() == "curves"
+
+    _land(win, captured)
+
+    assert win.current_stage_id() == "curves", (
+        "a stale deferred nav yanked the user off a step they moved to")
+
+
+def test_color_apply_and_continue_is_not_offered_during_an_unrelated_busy_op(
+        qtbot, tmp_path, monkeypatch):
+    """IMPORTANT 2. _set_busy disables only self._panel.apply_btn, not
+    Color's apply_tint_btn / remove_green_btn, so those stayed clickable
+    during ANY unrelated busy op (a plate solve, Auto Enhance, Save Project
+    — all _run_busy). Reproduced: tint nudged, an unrelated op running,
+    _ask_pending's real body still offered "Apply and continue" as its
+    DEFAULT button. Pressing it would click apply_tint_btn, whose own
+    handler (_apply_tint_step) early-returns on self._busy — nothing
+    commits, no navigation happens, no warning is shown: the default button
+    does nothing at all, the same class of bug as IMPORTANT 3 reached
+    through a different door.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.tint_slider.setValue(20)
+    win._set_busy(True, "Solving…")                 # an UNRELATED busy op
+    try:
+        monkeypatch.setattr(mw.MainWindow, "_ask_pending", mw.MainWindow._real_ask_pending)
+        seen = []
+
+        def fake_exec(self):
+            seen.extend(b.text() for b in self.buttons())
+            for b in self.buttons():
+                if b.text() == "Continue without applying":
+                    b.click()
+                    return 0
+            return 0
+
+        monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+
+        answer = win._ask_pending("Color")
+
+        assert "Apply and continue" not in seen, (
+            "the prompt offered an apply that would silently do nothing "
+            "while an unrelated busy op is running")
+        assert answer == "discard"
+    finally:
+        win._set_busy(False)
+
+
+def test_land_deferred_nav_bails_if_the_apply_never_actually_committed(
+        qtbot, tmp_path):
+    """MINOR 3(a). The _has_pending() bail in _land_deferred_nav is the
+    safety half of the async fix: a refused or failed apply (Levels on a
+    still-linear image, a cancelled tool, an exception) leaves its pending
+    slot set, and landing the deferred nav anyway would sweep the user
+    forward as if the apply had worked.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)                # pending: nothing committed
+    win._deferred_nav = (win._stage, win._stage + 1)    # simulate a queued deferral
+
+    win._land_deferred_nav()
+
+    assert win._deferred_nav is None, "a landed (or bailed) deferral must be consumed"
+    assert win.current_stage_id() == "levels", (
+        "landed the deferred nav even though the apply never actually committed")
+
+
+def test_swap_workspace_drops_a_stale_deferred_nav(qtbot, tmp_path):
+    """MINOR 3(b). A deferred nav from a superseded workspace (new image
+    opened, project closed) points at a stage index and an apply that will
+    never call back into it meaningfully — _swap_workspace must drop it."""
+    win = _win(qtbot, tmp_path)
+    win._deferred_nav = (0, 1)
+
+    win._swap_workspace()
+
+    assert win._deferred_nav is None

@@ -225,11 +225,13 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
-        # Stage index to land on once the in-flight apply's worker actually
-        # completes ("Apply and continue" on an async step) — see _go_to and
-        # _land_deferred_nav. Navigating the instant the button is pressed
-        # would run _rebuild_panel/_ensure_stretched against a project the
-        # worker hasn't finished mutating yet.
+        # (origin stage index, target stage index) to land once the in-flight
+        # apply's worker actually completes ("Apply and continue" on an async
+        # step) — see _go_to and _land_deferred_nav. Navigating the instant
+        # the button is pressed would run _rebuild_panel/_ensure_stretched
+        # against a project the worker hasn't finished mutating yet; the
+        # origin is kept so a stale deferral can be told apart from the stage
+        # the user is standing on by the time it would land.
         self._deferred_nav = None
         self._active_token = None       # CancelToken for the running op, if any
         self._busy_start = 0.0          # time.monotonic() when the current op started
@@ -1827,7 +1829,16 @@ class MainWindow(QMainWindow):
                     # the pre-apply position). Land the move once the worker
                     # actually completes instead — see _land_deferred_nav,
                     # called from _set_busy(False).
-                    self._deferred_nav = index
+                    #
+                    # Paired with self._stage: the stepper isn't busy-gated
+                    # the way Next/Back are, so the user can click a
+                    # different row while this apply is still in flight,
+                    # answer that SECOND prompt, and land somewhere else
+                    # entirely. _land_deferred_nav bails if self._stage no
+                    # longer matches where this deferral started — otherwise
+                    # it would yank the user off a step they deliberately
+                    # moved to, back to one they already left.
+                    self._deferred_nav = (self._stage, index)
                     return
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
@@ -1851,9 +1862,19 @@ class MainWindow(QMainWindow):
         tool, an exception) leaves the pending slot set, and landing anyway
         would sweep the user forward as if it had worked while the warning
         they need to see sits under the stage they just left.
+
+        Also checked against the stage the deferral started FROM: the
+        stepper isn't busy-gated, so the user can click a different row
+        while this apply is still running, answer a second prompt, and be
+        standing somewhere else entirely by the time this runs. Landing the
+        stale target then would yank them off a step they just chose back to
+        one they already abandoned.
         """
-        target, self._deferred_nav = self._deferred_nav, None
-        if target is None or self.project is None or self._has_pending():
+        pending, self._deferred_nav = self._deferred_nav, None
+        if pending is None or self.project is None or self._has_pending():
+            return
+        from_stage, target = pending
+        if self._stage != from_stage:
             return
         self._go_to(target, user_initiated=False)
 
@@ -1879,7 +1900,22 @@ class MainWindow(QMainWindow):
         tint or green the user set — worse than the silent discard this guard
         exists to prevent — so Color's targets are whichever of its own
         buttons match what is actually pending.
+
+        Empty whenever `self._busy`: `_set_busy` disables only
+        `self._panel.apply_btn`, not Color's `apply_tint_btn` /
+        `remove_green_btn`, so those stayed clickable during any unrelated
+        busy op (a plate solve, Auto Enhance, Save Project). Offered as the
+        prompt's DEFAULT button there, pressing it clicked a button whose own
+        handler (`_apply_tint_step` / `_remove_green`) early-returns on
+        `self._busy` — nothing commits, `_go_to` still defers the nav on the
+        non-empty list, and when busy clears `_has_pending()` is still True
+        so `_land_deferred_nav` drops it: no commit, no navigation, no
+        warning. Checked here rather than in every panel's own button state,
+        so the prompt's offer can't be honest in one place and wrong in
+        another.
         """
+        if self._busy:
+            return []
         if self.current_stage_id() == "color":
             targets = []
             if self._tint_pending is not None:
