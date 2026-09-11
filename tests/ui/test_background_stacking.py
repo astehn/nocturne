@@ -211,3 +211,59 @@ def test_a_combine_result_survives_with_a_project_open(qtbot, tmp_path, monkeypa
 
     assert np.array_equal(win.project.current().data, result.data), \
         "a finished Combine has nowhere else to go — it must open, not be logged away"
+
+
+def test_open_stack_hands_the_dialog_the_real_queues_busy_check(
+        qtbot, tmp_path, monkeypatch):
+    """The guard is tested; this tests the line that ARMS it.
+
+    `test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy` builds a
+    StackDialog directly with `queue_busy=lambda: True`, so it proves the
+    dialog honours the callable — and stays green if `_open_stack` stops
+    passing one. Deleting that kwarg reopened the two-writer race with all
+    1505 UI and stacking tests still passing.
+
+    So this asserts the wiring: the dialog is handed something, and what it is
+    handed tracks the REAL queue rather than a constant.
+    """
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    captured = {}
+
+    class _Stub:
+        def __init__(self, *a, **kw):
+            captured.update(kw)
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("nocturne.ui.stack_dialog.StackDialog", _Stub)
+    win._open_stack()
+
+    busy = captured.get("queue_busy")
+    assert callable(busy), "_open_stack did not pass queue_busy to the dialog"
+    assert busy() is False, "the queue is idle, so the dialog should be free"
+
+    monkeypatch.setattr(JobQueue, "_spawn", lambda self, j: _FakeProc())
+    win._job_queue.enqueue(_job())
+    assert busy() is True, (
+        "queue_busy is not reading the live queue — a dialog opened during a "
+        "background stack would start a second writer")
+
+
+def test_a_result_with_no_file_behind_it_is_refused_not_dropped(qtbot, tmp_path):
+    """The structural half of the Combine fix.
+
+    Routing a fileless result through here destroyed it silently — Combine
+    writes nothing to disk, so "not opened, you have an image open" was the
+    whole of its delivery. `path` is required now, and a falsy one raises
+    rather than logging. Without a test, a later refactor making it optional
+    again restores the data loss with a green suite.
+    """
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    img = AstroImage(np.zeros((4, 4, 3), np.float32), is_linear=True, metadata={})
+    with pytest.raises(ValueError, match="real file path"):
+        win._on_foreground_master(img, "combined narrowband", "")
