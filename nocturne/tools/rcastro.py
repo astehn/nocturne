@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import subprocess
 import tempfile
 
 import numpy as np
 
 from ..core.image import AstroImage
+from ..core.tasks import report_progress
 from .base import read_fits_array, run_cli, write_temp_fits
 
 _IMAGE_EXTS = (".fits", ".fit", ".fts", ".tiff", ".tif", ".xisf", ".png")
@@ -23,6 +26,79 @@ def _read_corrected(path: str, is_linear: bool, metadata: dict | None = None) ->
         np.ascontiguousarray(img.data[::-1]), is_linear=is_linear,
         metadata=dict(metadata or {}),
     )
+
+
+# RC-Astro's default output draws a progress bar with CARRIAGE RETURNS — the
+# whole thing is one line, so line-based streaming sees nothing until the run
+# ends. `--json` is newline-delimited instead, and carries more: a percentage, an
+# ETA, phase names and a schemaVersion, i.e. a contract rather than a scrape.
+# Measured on 2.6.6, 2026-09-11:
+#     {"event":"progress","done":11.1,"mpPerSec":0.6,"eta":1.1}
+_JSON_SUPPORT: dict[str, bool] = {}
+
+
+def parse_rc_event(line: str):
+    """(kind, value) for one JSON line, or None if it says nothing useful.
+
+    Never raises: a tool's chatter must not be able to take down the operation
+    it is reporting on.
+    """
+    line = (line or "").strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        obj = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    event = obj.get("event")
+    if event == "progress":
+        done = obj.get("done")
+        if isinstance(done, (int, float)):
+            return ("progress", int(round(done)))
+        return None
+    if event in ("status", "error", "warning"):
+        msg = obj.get("message")
+        return (event, msg) if msg else None
+    return None
+
+
+def _supports_json(binary_path: str) -> bool:
+    """Whether this RC-Astro understands `--json`, asked once per binary.
+
+    An older install must keep working — without progress, not broken — so the
+    flag is only added when the help text advertises it.
+    """
+    if binary_path not in _JSON_SUPPORT:
+        ok = False
+        try:
+            proc = subprocess.run([binary_path, "--help"], capture_output=True,
+                                  text=True, timeout=30)
+            ok = "--json" in (proc.stdout or "") + (proc.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            ok = False
+        _JSON_SUPPORT[binary_path] = ok
+    return _JSON_SUPPORT[binary_path]
+
+
+
+def _progress_args(binary_path: str):
+    """(extra argv, on_line) for a run that should report progress, or ([], None).
+
+    Shared by both call sites: StarXTerminator does NOT go through `_run`, and it
+    is the slow one — the split every star-based tool waits on — so leaving it out
+    would have missed the wait people actually feel.
+    """
+    if not _supports_json(binary_path):
+        return [], None
+
+    def on_line(text: str) -> None:
+        parsed = parse_rc_event(text)
+        if parsed and parsed[0] == "progress":
+            report_progress(parsed[1], 100)
+
+    return ["--json"], on_line
 
 
 class RCAstro:
@@ -66,13 +142,14 @@ class RCAstro:
         out_fits = os.path.join(tmp, "starless.fits")
         try:
             write_temp_fits(img, in_fits)
+            extra_args, on_line = _progress_args(self.binary_path)
             args = [
-                self.binary_path, "--no-banner", "sxt",
+                self.binary_path, "--no-banner", *extra_args, "sxt",
                 in_fits, "-o", out_fits, "--overwrite", "--depth", "32F", "--stars",
             ]
             if unscreen:
                 args.append("--unscreen")
-            runner(args)
+            runner(args, **({"on_line": on_line} if on_line is not None else {}))
             starless = _read_corrected(out_fits, img.is_linear, img.metadata)
             stars_path = self._find_other(tmp, {in_fits, out_fits})
             stars = _read_corrected(stars_path, img.is_linear, img.metadata)
@@ -96,11 +173,10 @@ class RCAstro:
             write_temp_fits(img, in_fits)
             # `--no-banner` is a top-level option (before the subcommand). Keep
             # 32-bit float output to preserve linear precision.
-            runner([
-                self.binary_path, "--no-banner", product,
-                in_fits, "-o", out_fits, "--overwrite", "--depth", "32F",
-                *extra,
-            ])
+            extra_args, on_line = _progress_args(self.binary_path)
+            args = [self.binary_path, "--no-banner", *extra_args, product,
+                    in_fits, "-o", out_fits, "--overwrite", "--depth", "32F", *extra]
+            runner(args, **({"on_line": on_line} if on_line is not None else {}))
             produced = out_fits if os.path.exists(out_fits) else self._find_output(tmp, in_fits)
             return _read_corrected(produced, img.is_linear, img.metadata)
         finally:
