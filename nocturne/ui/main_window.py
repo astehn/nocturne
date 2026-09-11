@@ -2058,7 +2058,7 @@ class MainWindow(QMainWindow):
                 break
         return n
 
-    # Stage id -> the attribute holding its uncommitted preview values. These
+    # Step id -> the attribute holding its uncommitted preview values. These
     # slots already exist, one per live-preview step; this maps them rather
     # than replacing them, so the ten steps stay independently revertable.
     _PENDING_SLOTS = {
@@ -2073,8 +2073,29 @@ class MainWindow(QMainWindow):
         "local_contrast": "_lc_pending",
         "star_reduction": "_sr_pending",
     }
+    # Which of those previews live on each STAGE's panel. Stage ids and step ids
+    # are different vocabularies: "tint" and "remove_green" are steps with no
+    # stage of their own — both are controls on the Color panel — so keying the
+    # slots by stage id alone left Color, the one stage carrying two live
+    # previews, with no coverage at all. Every other stage shares its step's id.
+    _STAGE_PREVIEWS = {"color": ("tint", "remove_green")}
 
-    def _committed_option(self, stage_id: str) -> str | None:
+    def _clear_pending(self, step_id: str, applied_option: str | None = None) -> None:
+        """Forget what a step's controls were holding, because it just became the
+        commit: the preview slot, and the dropdown's baseline when one applies.
+
+        One helper rather than a copy per commit path. There are six of them —
+        apply_current plus the five steps that commit their own cached result —
+        and the clear lived in only apply_current, so Saturation said "Not
+        applied yet" from the instant it was applied.
+        """
+        slot = self._PENDING_SLOTS.get(step_id)
+        if slot is not None:
+            setattr(self, slot, None)
+        if applied_option is not None and getattr(self._panel, "option_box", None) is not None:
+            self._panel.option_baseline = applied_option
+
+    def _committed_option(self, stage_id: str) -> object | None:
         """The option recorded by this stage's last commit, or None if it has
         never been applied to this image."""
         name = STEP_NAME.get(stage_id)
@@ -2093,22 +2114,30 @@ class MainWindow(QMainWindow):
         preview values that were never committed. A compute step has no preview,
         so nothing is at risk — but a changed dropdown is an intent the app has
         not honoured, and Next would drop it silently.
+
+        The dropdown is measured against the panel's own baseline, not against
+        the committed history: the history cannot answer "has this moved since
+        the last commit". Noise Reduction commits a dict, Background "off"
+        commits nothing at all, and a rebuilt panel starts at the step default —
+        each of which read permanently pending against their own commit.
         """
         if self.project is None:
             return False
         sid = self.current_stage_id()
-        slot = self._PENDING_SLOTS.get(sid)
-        if slot is not None:
-            return getattr(self, slot, None) is not None
-        if getattr(self._panel, "option_box", None) is None or sid not in STEP_NAME:
+        slots = [self._PENDING_SLOTS[p]
+                 for p in self._STAGE_PREVIEWS.get(sid, (sid,))
+                 if p in self._PENDING_SLOTS]
+        if slots:
+            return any(getattr(self, s, None) is not None for s in slots)
+        box = getattr(self._panel, "option_box", None)
+        baseline = getattr(self._panel, "option_baseline", None)
+        if box is None or not isinstance(baseline, str):
+            # A permanent net, not the mechanism: when no comparison is possible
+            # the answer is "not pending". The costs are asymmetric — a lost
+            # prompt is a rare missed safeguard, a false one nags on every
+            # single navigation.
             return False
-        committed = self._committed_option(sid)
-        # Never applied: the panel's own default is what "not started" looks
-        # like, not None — None just means there is no commit to compare
-        # against yet. Comparing to None instead would mean a compute step can
-        # never go pending before its first Apply.
-        baseline = committed if committed is not None else self._step_for(sid).default_option()
-        return self._panel.option_box.currentText() != baseline
+        return box.currentText() != baseline
 
     def _sync_step_controls(self) -> None:
         """One place that makes the step's own controls agree with its state.
@@ -2159,6 +2188,10 @@ class MainWindow(QMainWindow):
             # "off" = no background extraction: drop any prior result, record nothing
             self._clear_warning()
             self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
+            # Nothing is recorded, but "off" is still a first-class decision the
+            # user made and the image now reflects. Without the re-baseline it
+            # would read pending forever, having no commit to compare against.
+            self._clear_pending(stage_id, "off")
             self._refresh()
             return
         if stage_id == "curves":
@@ -2166,18 +2199,20 @@ class MainWindow(QMainWindow):
         step = self._step_for(stage_id)
         base = self.project.current()
         self._clear_warning()
+        # Read now, not in on_result: what gets committed is what the dropdown
+        # said when Apply was pressed, and a long run (GraXpert takes minutes)
+        # leaves plenty of room to move it meanwhile.
+        box = getattr(self._panel, "option_box", None)
+        applied_text = box.currentText() if box is not None else None
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result)
-            # The commit now reflects what the slider/dropdown showed: clear the
-            # preview slot so _has_pending agrees. Only _rebuild_panel cleared
-            # these before (on navigating away), which left a step falsely
-            # "pending" right after its own Apply.
-            slot = self._PENDING_SLOTS.get(stage_id)
-            if slot is not None:
-                setattr(self, slot, None)
+            # The commit now reflects what the slider/dropdown showed. Only
+            # _rebuild_panel cleared these before (on navigating away), which
+            # left a step falsely "pending" right after its own Apply.
+            self._clear_pending(stage_id, applied_text)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
@@ -2568,6 +2603,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
         self._clear_warning()
+        self._clear_pending("remove_green")
         self._refresh()
 
     def _apply_tint_step(self, tint: float, temperature: float) -> None:
@@ -2589,6 +2625,7 @@ class MainWindow(QMainWindow):
                              f"tint {tint:+.2f} · temp {temperature:+.2f}",
                              rms_delta(base, result)))
         self._clear_warning()
+        self._clear_pending("tint")
         self._refresh()
 
     def _on_tint_change(self, tint: float, temperature: float) -> None:
@@ -2873,6 +2910,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
         self._clear_warning()
+        self._clear_pending("saturation")
         self._refresh()
 
     # --- local contrast live preview ---
@@ -3073,6 +3111,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
         self._clear_warning()
+        self._clear_pending("green_fringe")
         self._refresh()
 
     # --- star reduction live preview (cached StarX split) ---
@@ -3192,6 +3231,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
         self._clear_warning()
+        self._clear_pending("star_reduction")
         self._refresh()
 
     # --- history ---

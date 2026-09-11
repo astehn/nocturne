@@ -221,6 +221,12 @@ def build_panel(
         lay.addWidget(note)
         _update_enabled()
         w.option_box = box
+        # What the dropdown read on arrival. "Pending" means "moved since the
+        # last commit or since I got here", and only the panel can answer that:
+        # the committed history stores whatever the step recorded — a dict for
+        # Noise Reduction, nothing at all for Background "off" — and a rebuilt
+        # panel starts at the step default rather than at the committed value.
+        w.option_baseline = box.currentText()
         w.apply_btn = apply_btn
         w.disabled_note = note
         if show_model is not None:

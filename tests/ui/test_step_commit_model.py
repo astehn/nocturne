@@ -5,10 +5,8 @@ preview is pixel-identical to the commit (see _preview_base — that is
 deliberate), so nothing on screen distinguishes "previewed" from "applied".
 """
 import numpy as np
-import pytest
 
 from nocturne.core.image import AstroImage
-from nocturne.ui.pipeline import STEP_NAME
 
 
 def _win(qtbot, tmp_path):
@@ -66,6 +64,17 @@ def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     win._sync_step_controls()
     assert win._panel.pending_label.isVisible()
     assert "not applied" in win._panel.pending_label.text().lower()
+    # Third leg, and the one with teeth: the two above are both satisfied by a
+    # show-only _sync_step_controls, because the label is CONSTRUCTED hidden.
+    # Saturation is deliberate — it commits through its own handler rather than
+    # apply_current, which is where the clear was missing entirely.
+    win._go_to_id("saturation")
+    qtbot.wait(1)                     # same rebuild lag as above
+    win._on_sat_change(0.5, 0.0)      # nebula 0: no star split, so this is instant
+    assert win._panel.pending_label.isVisible()
+    win._apply_saturation(0.5, 0.0)
+    qtbot.wait(1)
+    assert not win._panel.pending_label.isVisible()
 
 
 def test_a_compute_step_is_pending_once_its_option_differs(qtbot, tmp_path):
@@ -85,3 +94,58 @@ def test_committed_option_reads_the_last_commit_for_that_stage(qtbot, tmp_path):
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
     win.apply_current((0.1, 1.0, 0.9))
+    # Without this the test is passed by a _committed_option that always
+    # returns None — which is what the "never applied" leg above asserts.
+    qtbot.waitUntil(
+        lambda: win._committed_option("levels") == (0.1, 1.0, 0.9), timeout=5000)
+
+
+def test_a_process_step_is_not_pending_right_after_its_own_apply(qtbot, tmp_path):
+    """Noise Reduction commits a dict ({"engine": ..., "level": ...}); the
+    dropdown holds a bare string. Compared against the history it could never
+    agree, so the step read pending from its own Apply onwards."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("noise_sharpen")
+    win._panel.option_box.setCurrentText("strong")
+    assert win._has_pending() is True
+    win.apply_current({"engine": None, "level": "strong"})
+    qtbot.waitUntil(lambda: win._has_pending() is False, timeout=10000)
+
+
+def test_returning_to_an_applied_process_step_is_not_pending(qtbot, tmp_path):
+    """The rebuilt panel starts at the step's default, not at the committed
+    value — a string-vs-string mismatch that no type guard could have caught."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("deconvolution")
+    win._panel.option_box.setCurrentText("strong")
+    win.apply_current("strong")
+    qtbot.waitUntil(lambda: win._has_pending() is False, timeout=10000)
+    win._go_to_id("levels")
+    win._go_to_id("deconvolution")
+    assert win._has_pending() is False
+
+
+def test_background_off_is_a_decision_not_a_pending_change(qtbot, tmp_path):
+    """Choosing "off" records nothing at all (apply_current early-returns), so
+    there is no commit for the history to report — but the user chose it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("background")
+    win._panel.option_box.setCurrentText("off")
+    assert win._has_pending() is True
+    win.apply_current("off")
+    assert win._has_pending() is False
+
+
+def test_the_color_stage_covers_both_of_its_previews(qtbot, tmp_path):
+    """Color carries two live previews and had no coverage at all: its slots
+    were keyed by step name ("tint", "remove_green"), which current_stage_id
+    never returns."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    assert win._has_pending() is False
+    win._on_tint_change(0.2, 0.0)
+    assert win._has_pending() is True
+    win._apply_tint_step(0.2, 0.0)
+    assert win._has_pending() is False
+    win._on_removegreen_change(0.4)
+    assert win._has_pending() is True
