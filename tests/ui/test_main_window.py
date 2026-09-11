@@ -4678,17 +4678,6 @@ class _RecordingCB:
         return 0
 
 
-def _stretched_window(qtbot, tmp_path):
-    from nocturne.ui.main_window import _PrecomputedStep
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    base = win.project.current()
-    win.project.run_step(_PrecomputedStep("Stretch", AstroImage(
-        base.data, is_linear=False, metadata=dict(base.metadata))), "0.5")
-    win._refresh()
-    return win
-
-
 def test_colour_balance_reuses_a_star_split_across_opens(qtbot, tmp_path, monkeypatch):
     """Reported 2026-08-17. Every open paid a full StarX run, which is the main
     friction in the two-applies workflow — cool the arms, then warm the core.
