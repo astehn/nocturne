@@ -332,6 +332,39 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
     return out
 
 
+
+def _reduce_axis(arr: np.ndarray, n: int, axis: int, fn) -> np.ndarray:
+    """Reduce `arr` along `axis` into ceil(L/b) groups of b = ceil(L/n).
+
+    Whole blocks first, by a handful of full-width elementwise reductions —
+    the access pattern the memory system is built for, and 12 ms on an 8.3 MP
+    frame where `reduceat` is 298 and a five-dimensional
+    `reshape(...).max(axis=(1, 3))` is 97. Any remainder becomes its own final
+    group rather than being padded out, so no output pixel is ever made of
+    padding.
+    """
+    length = arr.shape[axis]
+    b = max(1, -(-length // n))
+    whole = (length // b) * b
+    if whole:
+        head = arr[:whole] if axis == 0 else arr[:, :whole]
+        shape = ((whole // b, b) + head.shape[1:]) if axis == 0 else \
+                (head.shape[0], whole // b, b) + head.shape[2:]
+        blocks = head.reshape(shape)
+        pick = (lambda k: (slice(None), k)) if axis == 0 else \
+               (lambda k: (slice(None), slice(None), k))
+        acc = blocks[pick(0)].copy()
+        for k in range(1, b):
+            fn(acc, blocks[pick(k)], out=acc)
+    else:
+        acc = None
+    if whole < length:
+        tail = arr[whole:] if axis == 0 else arr[:, whole:]
+        extra = fn.reduce(tail, axis=axis, keepdims=True)
+        acc = extra if acc is None else np.concatenate([acc, extra], axis=axis)
+    return acc
+
+
 def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
                  baseline: ClipBaseline | None = None,
                  end: str | None = None) -> np.ndarray:
@@ -385,33 +418,31 @@ def clip_overlay(rgb: np.ndarray, shape: tuple[int, int],
     src_h, src_w = out.shape[:2]
     if (src_h, src_w) == (h, w):
         return out
-    # Pad to a whole number of blocks so the trailing edge is not silently
-    # dropped — but only when there IS a trailing edge: np.pad always copies,
-    # which is 24 MB on an 8.3 MP frame. The pad value matches the ground: a
-    # zero pad against a white-ground minimum reduction would crush every
-    # trailing block regardless of its real content.
-    bh, bw = -(-src_h // h), -(-src_w // w)
-    if bh * h != src_h or bw * w != src_w:
-        out = np.pad(out, ((0, bh * h - src_h), (0, bw * w - src_w), (0, 0)),
-                     mode="constant", constant_values=int(ground))
-    # Rows then columns, accumulating with np.maximum (or np.minimum on a white
-    # ground), NOT one `reshape(h, bh, w, bw, 3).max(axis=(1, 3))`. Identical
-    # result; the five-dimensional form reduces over two interleaved
-    # non-adjacent axes and measures 97.1 ms on an 8.3 MP frame against 4.4 for
-    # this, which is 60% of the whole preview tick for an operation that only
-    # touches 25 MB once. (Two chained single-axis `.max()` calls are 13.6 ms —
-    # better, still 3x this.) Each pass is a handful of full-width elementwise
-    # reductions, which is the access pattern the memory system is built for.
+    # Reduce into the number of whole blocks the SOURCE actually has, then
+    # stretch that to the display size — never the other way round.
+    #
+    # Reducing straight to `shape` with a uniform block of ceil(src/n) pads the
+    # source out to n*ceil(src/n), which can overshoot by nearly a whole block,
+    # and those trailing output pixels are then made of padding alone: a
+    # hard-edged band of bare GROUND down the right and bottom of the picture.
+    # On a 4320x5746 frame at 602x801, ceil(5746/801) = 8 pads to 6408 rows, so
+    # 662/8 = 82 output rows were padding. Andreas saw exactly that — 82 rows and
+    # 62 columns — and only on the white ground, because on black it was black on
+    # black. Reducing to ceil(src/b) rows instead leaves at most b-1 source
+    # pixels over, folded into the final group.
+    #
+    # `np.minimum.reduceat` would map every output pixel to its exact source
+    # range, but measured 298 ms on this frame against 12 for the two-pass form
+    # below — 3x the whole preview tick, for a live drag.
     reduce_into = np.minimum if end == "lo" else np.maximum
-    rows = out.reshape(h, bh, out.shape[1], 3)
-    acc = rows[:, 0].copy()
-    for k in range(1, bh):
-        reduce_into(acc, rows[:, k], out=acc)
-    cols = acc.reshape(h, w, bw, 3)
-    acc = cols[:, :, 0].copy()
-    for k in range(1, bw):
-        reduce_into(acc, cols[:, :, k], out=acc)
-    return acc
+    acc = _reduce_axis(out, h, 0, reduce_into)
+    acc = _reduce_axis(acc, w, 1, reduce_into)
+    mh, mw = acc.shape[0], acc.shape[1]
+    if (mh, mw) == (h, w):
+        return acc
+    # Nearest-neighbour: the overlay's real resolution is the block size, and a
+    # smooth stretch would re-dilute exactly what the block reduction preserved.
+    return acc[np.arange(h) * mh // h][:, np.arange(w) * mw // w]
 
 
 class BackgroundModel(NamedTuple):

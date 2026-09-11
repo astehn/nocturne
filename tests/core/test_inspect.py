@@ -595,29 +595,35 @@ def test_a_two_dimensional_input_is_refused_rather_than_dying_inside_np_pad():
         paint_clipping(mono)
 
 
-def test_the_fast_block_max_equals_the_plain_five_dimensional_form():
-    """The reduce was rewritten as two np.maximum passes because
-    `reshape(h, bh, w, bw, 3).max(axis=(1, 3))` measured 97.1 ms on an 8.3 MP
-    frame — 60% of the whole preview tick. Speed is worth nothing if the answer
-    moved, so this pins the two together on shapes that divide evenly and on
-    shapes that do not.
+def test_the_fast_reduce_equals_a_plain_loop(self_check=None):
+    """The reduce is hand-optimised — a few full-width elementwise passes — and
+    speed is worth nothing if the answer moved, so this pins it against an
+    obvious loop doing the same thing.
 
-    Random marks rather than a tidy pattern: a block-max is exactly the kind of
-    thing that passes a symmetric fixture while getting the axes the wrong way
-    round, and the ragged cases below have bh != bw.
+    The SEMANTICS being pinned: reduce into ceil(src/b) groups of b = ceil(src/n)
+    (the last group holding whatever is left over), then nearest-stretch that to
+    n. Not "each output pixel covers its exact source range" — `reduceat` gives
+    that and measured 298 ms against 12 on an 8.3 MP frame. What matters, and
+    what the loop below also guarantees, is that EVERY source pixel lands in some
+    group and no output pixel is made of padding.
     """
     rng = np.random.default_rng(4)
     for (H, W), (h, w) in [((64, 64), (8, 8)), ((65, 65), (8, 8)),
                            ((64, 32), (8, 4)), ((70, 33), (9, 5)),
-                           ((2160, 240), (338, 60))]:
+                           ((2160, 240), (338, 60)), ((5746, 4320), (801, 602))]:
         rgb = np.full((H, W, 3), 128, np.uint8)
         rgb[rng.random((H, W)) < 0.02] = 255
         rgb[rng.random((H, W)) < 0.02] = 0
         painted = paint_clipping(rgb, np.zeros_like(rgb))
+
         bh, bw = -(-H // h), -(-W // w)
-        pad = np.pad(painted, ((0, bh * h - H), (0, bw * w - W), (0, 0)),
-                     mode="constant")
-        want = pad.reshape(h, bh, w, bw, 3).max(axis=(1, 3))
+        mh, mw = -(-H // bh), -(-W // bw)
+        blocks = np.zeros((mh, mw, 3), np.uint8)
+        for i in range(mh):
+            for j in range(mw):
+                tile = painted[i * bh:(i + 1) * bh, j * bw:(j + 1) * bw]
+                blocks[i, j] = tile.reshape(-1, 3).max(axis=0)
+        want = blocks[np.arange(h) * mh // h][:, np.arange(w) * mw // w]
         assert np.array_equal(clip_overlay(rgb, (h, w)), want), f"{H}x{W} -> {h}x{w}"
 
 
@@ -740,3 +746,41 @@ def test_end_none_still_uses_maximum_not_minimum():
     rgb[10, 10] = 255
     out = clip_overlay(rgb, (8, 8))
     assert out[1, 1, 0] == 255
+
+
+@pytest.mark.parametrize("src,dst", [
+    ((5746, 4320), (801, 602)),     # Andreas' drizzle at 1900x1050 — 82/62 band
+    ((5746, 4320), (951, 714)),     # 1600x1200 — the worst, 130/96
+    ((5746, 4320), (1151, 865)),    # 1830x1400 — landed near a whole number, looked fine
+    ((1000, 1000), (333, 333)),
+    ((999, 777), (100, 80)),
+])
+def test_the_overlay_covers_the_whole_image_at_any_display_size(src, dst):
+    """A uniform block size of ceil(src/dst) pads the source out to dst*ceil(...),
+    which can exceed it by a whole block — and those trailing output rows are
+    then pure GROUND, a hard-edged band down the right and bottom of the picture.
+
+    On Andreas' 4320x5746 frame at 602x801: ceil(5746/801) = 8, so the source is
+    padded to 6408 rows, and 662/8 = 82 output rows are padding alone. Measured
+    in the app: exactly 82 rows and 62 columns. It was wrong for highlights too —
+    invisible only because there the padding is black on a black ground.
+    """
+    h, w = dst
+    # every source pixel clipped, so ANY correctly-covered output pixel is marked
+    rgb = np.zeros((src[0], src[1], 3), np.uint8)
+    out = clip_overlay(rgb, dst, end="lo")
+    assert out.shape[:2] == dst
+    ground = np.all(out == 255, axis=2)
+    assert not ground.any(), (
+        f"{int(ground.all(axis=1).sum())} trailing rows and "
+        f"{int(ground.all(axis=0).sum())} columns are untouched ground — "
+        "the overlay does not cover the whole image")
+
+
+def test_the_same_hole_on_a_black_ground():
+    """The highlight end has the identical defect; it just hides on black."""
+    rgb = np.full((5746, 4320, 3), 255, np.uint8)      # everything blown
+    out = clip_overlay(rgb, (801, 602), end="hi")
+    dark = np.all(out == 0, axis=2)
+    assert not dark.any(), (
+        f"{int(dark.all(axis=1).sum())} rows of untouched ground on the black ground")
