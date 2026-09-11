@@ -2058,6 +2058,69 @@ class MainWindow(QMainWindow):
                 break
         return n
 
+    # Stage id -> the attribute holding its uncommitted preview values. These
+    # slots already exist, one per live-preview step; this maps them rather
+    # than replacing them, so the ten steps stay independently revertable.
+    _PENDING_SLOTS = {
+        "tint": "_tint_pending",
+        "remove_green": "_rg_pending",
+        "levels": "_levels_pending",
+        "stretch": "_stretch_pending",
+        "saturation": "_sat_pending",
+        "recover_core": "_recover_pending",
+        "curves": "_curve_pending",
+        "green_fringe": "_fringe_pending",
+        "local_contrast": "_lc_pending",
+        "star_reduction": "_sr_pending",
+    }
+
+    def _committed_option(self, stage_id: str) -> str | None:
+        """The option recorded by this stage's last commit, or None if it has
+        never been applied to this image."""
+        name = STEP_NAME.get(stage_id)
+        if name is None or self.project is None:
+            return None
+        for entry_name, option in reversed(self.project.entries()):
+            if entry_name == name:
+                return option
+        return None
+
+    def _has_pending(self) -> bool:
+        """Do the current step's controls describe something the committed image
+        does not reflect?
+
+        Two shapes, one meaning. A live-preview step is pending when it holds
+        preview values that were never committed. A compute step has no preview,
+        so nothing is at risk — but a changed dropdown is an intent the app has
+        not honoured, and Next would drop it silently.
+        """
+        if self.project is None:
+            return False
+        sid = self.current_stage_id()
+        slot = self._PENDING_SLOTS.get(sid)
+        if slot is not None:
+            return getattr(self, slot, None) is not None
+        if getattr(self._panel, "option_box", None) is None or sid not in STEP_NAME:
+            return False
+        committed = self._committed_option(sid)
+        # Never applied: the panel's own default is what "not started" looks
+        # like, not None — None just means there is no commit to compare
+        # against yet. Comparing to None instead would mean a compute step can
+        # never go pending before its first Apply.
+        baseline = committed if committed is not None else self._step_for(sid).default_option()
+        return self._panel.option_box.currentText() != baseline
+
+    def _sync_step_controls(self) -> None:
+        """One place that makes the step's own controls agree with its state.
+
+        Named for the job rather than the widget: Task 4 adds the Reset button's
+        enablement here, and a method called _sync_pending_label that also
+        enabled a button would be a lie by its name.
+        """
+        label = getattr(self._panel, "pending_label", None)
+        if label is not None:
+            label.setVisible(self._has_pending())
+
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
         predecessors an Apply-Stretch preserves."""
@@ -2108,6 +2171,13 @@ class MainWindow(QMainWindow):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result)
+            # The commit now reflects what the slider/dropdown showed: clear the
+            # preview slot so _has_pending agrees. Only _rebuild_panel cleared
+            # these before (on navigating away), which left a step falsely
+            # "pending" right after its own Apply.
+            slot = self._PENDING_SLOTS.get(stage_id)
+            if slot is not None:
+                setattr(self, slot, None)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
@@ -2524,6 +2594,7 @@ class MainWindow(QMainWindow):
     def _on_tint_change(self, tint: float, temperature: float) -> None:
         self._tint_pending = (float(tint), float(temperature))
         self._tint_timer.start(90)
+        self._sync_step_controls()
 
     def _render_tint_preview(self) -> None:
         """Live-preview the tint on the PRE-TINT image — which is whatever the
@@ -2557,6 +2628,7 @@ class MainWindow(QMainWindow):
         (== what the commit operates on, so preview == apply)."""
         self._rg_pending = float(strength)
         self._rg_timer.start(90)
+        self._sync_step_controls()
 
     def _render_removegreen_preview(self) -> None:
         if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
@@ -2595,6 +2667,7 @@ class MainWindow(QMainWindow):
         self._levels_pending = (black, gamma, white)
         self._set_levels_auto(False)
         self._levels_timer.start(90)
+        self._sync_step_controls()
 
     def _set_levels_auto(self, on: bool) -> None:
         """Flag plus its only visible sign.
@@ -2689,6 +2762,7 @@ class MainWindow(QMainWindow):
         """The Stretch aggressiveness slider moved: stash + (re)start the debounce."""
         self._stretch_pending = amount
         self._stretch_timer.start(90)
+        self._sync_step_controls()
 
     def _sync_stretch_preview(self) -> None:
         """On the Stretch step, show what Apply will actually commit.
@@ -2753,6 +2827,7 @@ class MainWindow(QMainWindow):
                                lambda layers: self._on_sat_split(sig, layers),
                                "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
+        self._sync_step_controls()
 
     def _on_sat_split(self, sig, layers) -> None:
         if self.current_stage_id() != "saturation":
@@ -2805,6 +2880,7 @@ class MainWindow(QMainWindow):
         """The Local Contrast slider moved: stash the value and (re)start debounce."""
         self._lc_pending = amount
         self._lc_timer.start(90)
+        self._sync_step_controls()
 
     def _render_lc_preview(self) -> None:
         """Non-committing live preview of the current Local Contrast setting."""
@@ -2820,6 +2896,7 @@ class MainWindow(QMainWindow):
         """The Recover Core slider moved: stash the value and (re)start debounce."""
         self._recover_pending = amount
         self._recover_timer.start(90)
+        self._sync_step_controls()
 
     def _render_recover_preview(self) -> None:
         """Non-committing live preview of the current Recover Core setting."""
@@ -2852,6 +2929,7 @@ class MainWindow(QMainWindow):
         """The curve was edited: stash the points and (re)start debounce."""
         self._curve_pending = list(points)
         self._curve_timer.start(90)
+        self._sync_step_controls()
 
     def _render_curve_preview(self) -> None:
         """Non-committing live preview of the current curve."""
@@ -2974,6 +3052,7 @@ class MainWindow(QMainWindow):
         self._fringe_pending = strength
         if self._fringe_ready:
             self._fringe_timer.start(90)
+        self._sync_step_controls()
 
     def _render_fringe_preview(self) -> None:
         if (self.project is None or self.current_stage_id() != "green_fringe"
@@ -3086,6 +3165,7 @@ class MainWindow(QMainWindow):
         self._sr_pending = amount
         if self._sr_ready:
             self._sr_timer.start(90)
+        self._sync_step_controls()
 
     def _render_sr_preview(self) -> None:
         """Non-committing live preview of the current reduction against the cached
@@ -3889,6 +3969,7 @@ class MainWindow(QMainWindow):
         self._update_clipping_line()
         self._sync_background_model_toggle()
         self._sync_stretch_preview()
+        self._sync_step_controls()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         # Hidden, not merely disabled, on the last step. A greyed-out "Next →"
         # sitting under Export reads as something you have failed to satisfy

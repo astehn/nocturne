@@ -742,5 +742,11 @@ def build_panel(
     else:  # placeholder / unknown
         lay.addWidget(QLabel("Coming soon."))
 
+    # Every stage, one place. The preview is pixel-identical to the commit by
+    # design, so this line is the only thing that distinguishes them.
+    w.pending_label = _desc_label("Not applied yet")
+    w.pending_label.setVisible(False)
+    lay.addWidget(w.pending_label)
+
     lay.addStretch(1)
     return w
