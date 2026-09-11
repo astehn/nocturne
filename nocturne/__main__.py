@@ -142,7 +142,14 @@ def main() -> None:
     if "--check-network" in sys.argv:
         raise SystemExit(_check_network())
 
-    # Background stacking child process. No GUI, no event loop.
+    # A backgrounded stack runs as a child of this same executable, and is
+    # dispatched HERE for the same reason --check-network is: the child has no
+    # display, and anything below this line would give it a window.
+    #
+    # It is dispatched on argv rather than spawned with `-m` because in the
+    # shipped .app `sys.executable` IS the app binary — `-m` there re-launches
+    # Nocturne instead of running a job. From source the reverse is true and the
+    # module has to be named; job_command() holds both halves.
     if "--stack-job" in sys.argv:
         from .stacking.job import main as job_main
         raise SystemExit(job_main(sys.argv))
