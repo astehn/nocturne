@@ -592,6 +592,47 @@ def test_deferred_nav_does_not_fire_after_the_user_moved_on(
         "a stale deferred nav yanked the user off a step they moved to")
 
 
+def test_deferred_nav_does_not_fire_after_a_round_trip_back_to_the_origin(
+        qtbot, tmp_path, monkeypatch):
+    """The origin-stage bail (test above) is defeated by a round trip: leave
+    the origin stage and come back to it while the apply is still in
+    flight, and a bare stage-index comparison matches again by coincidence
+    even though real navigation happened in between. GraXpert applies are
+    documented elsewhere in this file as taking minutes — ample time to
+    check another step and come back. `_nav_seq` (a monotonic counter,
+    bumped on every completed navigation) catches this where the index
+    couldn't: it cannot recur the way an index can.
+
+    Reproduced: Noise Reduction pending -> apply (deferred, target Local
+    Contrast) -> Curves -> discard -> back to Noise Reduction (no prompt:
+    the rebuilt panel isn't pending) -> worker lands -> must stay on Noise
+    Reduction, not get yanked to Local Contrast.
+    """
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("noise_sharpen")
+    win._panel.option_box.setCurrentText("strong")
+    assert win._has_pending() is True
+    captured = _deferred_run_busy(monkeypatch, win)
+    answers = iter(["apply", "discard"])
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: next(answers))
+
+    win.go_next()                                 # -> deferred, target local_contrast
+    assert win._deferred_nav is not None
+
+    win._go_to_id("curves")                       # second prompt: discard -> real nav
+    assert win.current_stage_id() == "curves"
+
+    win._go_to_id("noise_sharpen")                # round trip: fresh panel, not pending
+    assert win._has_pending() is False
+    assert win.current_stage_id() == "noise_sharpen"
+
+    _land(win, captured)
+
+    assert win.current_stage_id() == "noise_sharpen", (
+        "a stale deferred nav landed after a round trip back to its own origin")
+
+
 def test_color_apply_and_continue_is_not_offered_during_an_unrelated_busy_op(
         qtbot, tmp_path, monkeypatch):
     """IMPORTANT 2. _set_busy disables only self._panel.apply_btn, not

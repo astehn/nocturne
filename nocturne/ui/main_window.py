@@ -225,14 +225,23 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
-        # (origin stage index, target stage index) to land once the in-flight
-        # apply's worker actually completes ("Apply and continue" on an async
-        # step) — see _go_to and _land_deferred_nav. Navigating the instant
-        # the button is pressed would run _rebuild_panel/_ensure_stretched
-        # against a project the worker hasn't finished mutating yet; the
-        # origin is kept so a stale deferral can be told apart from the stage
-        # the user is standing on by the time it would land.
+        # (nav counter at defer time, target stage index) to land once the
+        # in-flight apply's worker actually completes ("Apply and continue"
+        # on an async step) — see _go_to and _land_deferred_nav. Navigating
+        # the instant the button is pressed would run _rebuild_panel/
+        # _ensure_stretched against a project the worker hasn't finished
+        # mutating yet.
         self._deferred_nav = None
+        # Bumped by _go_to on every navigation that actually completes.
+        # _deferred_nav captures this at defer time; _land_deferred_nav bails
+        # if it has moved on. A bare stage-index comparison looked equivalent
+        # but isn't: leave the origin stage and come back to it (GraXpert
+        # applies are documented elsewhere in this file as taking minutes —
+        # ample time to check another step) and the index matches again by
+        # coincidence even though real navigation happened in between. A
+        # monotonic counter cannot recur, so it catches that round trip and
+        # any other intervening navigation, not just "currently elsewhere".
+        self._nav_seq = 0
         self._active_token = None       # CancelToken for the running op, if any
         self._busy_start = 0.0          # time.monotonic() when the current op started
         # Bumped every time the workspace is replaced (new image, opened bundle,
@@ -1830,21 +1839,23 @@ class MainWindow(QMainWindow):
                     # actually completes instead — see _land_deferred_nav,
                     # called from _set_busy(False).
                     #
-                    # Paired with self._stage: the stepper isn't busy-gated
-                    # the way Next/Back are, so the user can click a
-                    # different row while this apply is still in flight,
-                    # answer that SECOND prompt, and land somewhere else
-                    # entirely. _land_deferred_nav bails if self._stage no
-                    # longer matches where this deferral started — otherwise
-                    # it would yank the user off a step they deliberately
-                    # moved to, back to one they already left.
-                    self._deferred_nav = (self._stage, index)
+                    # Paired with self._nav_seq, not self._stage: the
+                    # stepper isn't busy-gated the way Next/Back are, so the
+                    # user can click a different row while this apply is
+                    # still in flight, answer that SECOND prompt, and even
+                    # navigate BACK to this exact stage before the worker
+                    # lands — a bare index comparison would then match by
+                    # coincidence and land the stale target anyway.
+                    # _land_deferred_nav bails if any navigation has
+                    # completed since, landing back here or not.
+                    self._deferred_nav = (self._nav_seq, index)
                     return
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
             self._ensure_stretched()
         self._stage = index
+        self._nav_seq += 1   # a completed navigation — see _deferred_nav
         self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
             self._ba_act.setChecked(False)
@@ -1863,18 +1874,22 @@ class MainWindow(QMainWindow):
         would sweep the user forward as if it had worked while the warning
         they need to see sits under the stage they just left.
 
-        Also checked against the stage the deferral started FROM: the
-        stepper isn't busy-gated, so the user can click a different row
-        while this apply is still running, answer a second prompt, and be
-        standing somewhere else entirely by the time this runs. Landing the
-        stale target then would yank them off a step they just chose back to
-        one they already abandoned.
+        Also checked against _nav_seq, not self._stage: the stepper isn't
+        busy-gated, so the user can click a different row while this apply
+        is still running, answer a second prompt, and even navigate BACK to
+        the stage this deferral started from before the worker lands —
+        GraXpert applies are documented elsewhere in this file as taking
+        minutes, ample time for a round trip. A stage-index comparison would
+        then match by coincidence and land the stale target anyway; the
+        counter can't recur, so any completed navigation since — a round
+        trip or not — correctly drops this deferral instead of yanking the
+        user somewhere they didn't ask to go on this visit.
         """
         pending, self._deferred_nav = self._deferred_nav, None
         if pending is None or self.project is None or self._has_pending():
             return
-        from_stage, target = pending
-        if self._stage != from_stage:
+        seq, target = pending
+        if self._nav_seq != seq:
             return
         self._go_to(target, user_initiated=False)
 
