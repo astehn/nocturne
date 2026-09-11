@@ -5,7 +5,7 @@ from nocturne.tools.rcastro import RCAstro
 
 
 def _capture_and_write(img, factor, captured):
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         captured["args"] = args
         out_path = args[args.index("-o") + 1]
         write_temp_fits(AstroImage(img.data * factor), out_path)
@@ -52,7 +52,7 @@ def test_remove_stars_returns_starless_and_stars():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=False)
     captured = {}
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         captured["args"] = args
         out_path = args[args.index("-o") + 1]                 # starless
         write_temp_fits(AstroImage(img.data * 0.6), out_path)
@@ -78,7 +78,7 @@ def test_remove_stars_defaults_to_unscreen():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=False)
     captured = {}
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         captured["args"] = args
         out_path = args[args.index("-o") + 1]
         write_temp_fits(AstroImage(img.data * 0.6), out_path)
@@ -117,7 +117,7 @@ def test_rcastro_preserves_input_metadata():
                      metadata={"target": "NGC 281",
                                "solve_cards": {"OBJCTRA": "00 53 06", "FOCALLEN": 160.0}})
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         write_temp_fits(AstroImage(img.data * 0.9), args[args.index("-o") + 1])
 
     out = RCAstro("/fake/rc").denoise(img, 0.5, runner=fake_runner)

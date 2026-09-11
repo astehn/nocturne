@@ -64,6 +64,26 @@ class NoiseSharpenStep(Step):
     def default_option(self) -> str:
         return "medium"
 
+    @staticmethod
+    def engine_that_will_run(option, *, has_rcastro: bool, has_graxpert: bool) -> str:
+        """Which engine an apply would ACTUALLY use — "rcastro", "graxpert" or
+        "free".
+
+        The requested engine is only a preference: with GraXpert installed and
+        RC-Astro absent, an option asking for "rcastro" runs GraXpert. A caller
+        that read the option instead of asking this got it backwards for exactly
+        the users who have no choice — the GraXpert-only ones, who then got no
+        warning that a denoise takes minutes and concluded the app had hung.
+        """
+        engine, _level = parse_noise_option(option)
+        order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
+        for e in order:
+            if e == "rcastro" and has_rcastro:
+                return "rcastro"
+            if e == "graxpert" and has_graxpert:
+                return "graxpert"
+        return "free"
+
     def apply(self, img: AstroImage, option) -> AstroImage:
         engine, level = parse_noise_option(option)
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]

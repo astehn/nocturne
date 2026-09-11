@@ -35,14 +35,43 @@ def read_fits_array(path: str) -> AstroImage:
     return AstroImage(data, is_linear=True)
 
 
-def run_cli(args: list[str], cancel=None) -> None:
+def run_cli(args: list[str], cancel=None, on_line=None) -> None:
+    """Run a tool to completion, raising ToolError on a non-zero exit.
+
+    `on_line` opts into STREAMING: each line is handed over as the child prints
+    it, instead of everything arriving at once when it exits. Only GraXpert needs
+    this — it prints `Progress: N%` about every two seconds through a slow
+    denoise, and buffering it meant the app showed a still screen for minutes and
+    read as hung. Without the callback the behaviour is exactly as before, so
+    RC-Astro and ASTAP are untouched.
+    """
     token = cancel if cancel is not None else current()
     start = time.monotonic()
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
-    if token is not None:
-        token.bind_process(proc)
-    out, err = proc.communicate()             # returns when the child exits (incl. after a kill)
+    if on_line is None:
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, start_new_session=True)
+        if token is not None:
+            token.bind_process(proc)
+        out, err = proc.communicate()         # returns when the child exits (incl. after a kill)
+    else:
+        # stderr folded into stdout: two pipes need two readers or the child
+        # blocks when one fills, and GraXpert writes its progress to stderr
+        # anyway. The merged text becomes ToolError's stdout so a failure still
+        # carries everything the tool said.
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1, start_new_session=True)
+        if token is not None:
+            token.bind_process(proc)
+        lines = []
+        for line in proc.stdout:              # ends when the child exits or is killed
+            line = line.rstrip("\n")
+            lines.append(line)
+            try:
+                on_line(line)
+            except Exception:
+                pass                          # a reporting failure must not kill the run
+        proc.wait()
+        out, err = "\n".join(lines), ""
     elapsed = time.monotonic() - start
     if token is not None and token.cancelled:
         raise Cancelled()

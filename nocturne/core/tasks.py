@@ -29,6 +29,11 @@ class CancelToken:
     def __init__(self) -> None:
         self._ev = threading.Event()
         self._proc = None
+        # Where a long tool reports how far it has got. It rides on the token
+        # because the token ALREADY crosses the worker-thread boundary — the
+        # alternative was threading a callback through step.apply and every tool
+        # wrapper for the one tool that has progress to report.
+        self.on_progress = None
 
     @property
     def cancelled(self) -> bool:
@@ -62,3 +67,16 @@ def clear_ambient() -> None:
 
 def current() -> "CancelToken | None":
     return getattr(_ambient, "token", None)
+
+
+def report_progress(done: int, total: int) -> None:
+    """Report progress to whoever is listening, or to nobody.
+
+    Called from deep inside tool code on a worker thread. Silent when there is
+    no ambient token or no sink, so a tool can always report and a caller that
+    does not care pays nothing.
+    """
+    token = getattr(_ambient, "token", None)
+    sink = getattr(token, "on_progress", None) if token is not None else None
+    if sink is not None:
+        sink(done, total)

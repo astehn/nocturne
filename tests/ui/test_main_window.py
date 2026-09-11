@@ -297,7 +297,11 @@ def test_noise_busy_label_warns_for_graxpert(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(mw, "graxpert_valid", lambda s: True)
     warn = win._busy_label_for("noise_sharpen", {"engine": "graxpert", "level": "medium"})
     assert "GraXpert" in warn and "minute" in warn
-    # non-GraXpert (and other steps) use the plain label
+    # non-GraXpert (and other steps) use the plain label — but only when RC-Astro
+    # is genuinely available. Without it the step FALLS BACK to GraXpert, and the
+    # warning belongs there too: asserting the plain label with rcastro absent is
+    # asserting the bug that made a GraXpert-only user think the app had hung.
+    monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
     assert win._busy_label_for("noise_sharpen", {"engine": "rcastro", "level": "medium"}) \
         == "Applying Noise Reduction…"
     assert win._busy_label_for("levels", (0.0, 1.0, 1.0)) == "Applying Levels…"

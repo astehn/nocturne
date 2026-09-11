@@ -159,6 +159,17 @@ class _PrecomputedStep(Step):
         return self._image
 
 
+class _ToolProgressSignals(QObject):
+    """Marshals a long tool's progress from the worker thread onto the GUI one.
+
+    GraXpert prints a percentage every couple of seconds through a denoise that
+    can run for minutes; `core.tasks.report_progress` calls the sink from the
+    worker, and touching a widget from there is a crash waiting to happen.
+    Same Signal-based plumbing the other progress paths use."""
+
+    progress = Signal(int, int)
+
+
 class _AutoEnhanceSignals(QObject):
     """Marshals run_auto_plan's on_progress callbacks (fired from the worker
     thread when async is enabled) back onto the GUI thread via a queued
@@ -229,6 +240,9 @@ class MainWindow(QMainWindow):
         # or a fresh solve lands. See _sync_object_list_visibility.
         self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
+        self._tool_progress = _ToolProgressSignals()
+        self._tool_progress.progress.connect(
+            lambda done, total: self._set_progress("Denoising", done, total))
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
         self._save_signals = _SaveSignals()
@@ -1945,9 +1959,17 @@ class MainWindow(QMainWindow):
     def _busy_label_for(self, stage_id: str, option) -> str:
         """Busy message for an apply. GraXpert AI denoise takes minutes (inherent
         to the model, confirmed vs Siril), so warn when it's the engine running."""
-        if (stage_id == "noise_sharpen" and isinstance(option, dict)
-                and option.get("engine") == "graxpert" and graxpert_valid(self.settings)):
-            return "Denoising with GraXpert — this can take a few minutes…"
+        if stage_id == "noise_sharpen" and isinstance(option, dict):
+            # Ask which engine will ACTUALLY run, not which one the option names.
+            # The option is a preference: with GraXpert installed and RC-Astro
+            # absent it says "rcastro" and GraXpert runs anyway — so this warning
+            # was missing for precisely the users who cannot avoid the wait, and
+            # one of them restarted the app several times thinking it had hung.
+            from ..steps.noise_sharpen import NoiseSharpenStep
+            if NoiseSharpenStep.engine_that_will_run(
+                    option, has_rcastro=rcastro_valid(self.settings),
+                    has_graxpert=graxpert_valid(self.settings)) == "graxpert":
+                return "Denoising with GraXpert — this can take a few minutes…"
         if stage_id == "color" and getattr(option, "method", "sky") == "photometric":
             return "Calibrating colour…"
         return f"Applying {STEP_NAME[stage_id]}…"
@@ -1981,6 +2003,10 @@ class MainWindow(QMainWindow):
         and friends can see it via `nocturne.core.tasks.current()`. A `Cancelled`
         raised by `work` is treated as a clean stop, not an error."""
         token = CancelToken()
+        # Where a long tool reports how far it has got. Riding on the token means
+        # no step or tool signature has to grow a callback — and the token is
+        # already published to the worker thread just below.
+        token.on_progress = self._tool_progress.progress.emit
         self._active_token = token
         self._busy_start = _time.monotonic()
         self._set_busy(True, label)

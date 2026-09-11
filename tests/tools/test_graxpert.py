@@ -7,7 +7,7 @@ from nocturne.tools.graxpert import GraXpert
 
 
 def _writes_output(img, factor):
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         out_path = args[args.index("-output") + 1]
         write_temp_fits(AstroImage(img.data * factor), out_path)
     return fake_runner
@@ -17,7 +17,7 @@ def test_background_extraction_invokes_cli_and_reads_output(tmp_path):
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
     captured = {}
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         captured["args"] = args
         out_path = args[args.index("-output") + 1]
         write_temp_fits(AstroImage(img.data * 0.5), out_path)
@@ -36,7 +36,7 @@ def test_denoise_uses_denoising_command():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
     captured = {}
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         captured["args"] = args
         out_path = args[args.index("-output") + 1]
         write_temp_fits(AstroImage(img.data * 0.9), out_path)
@@ -52,7 +52,7 @@ def test_denoise_uses_denoising_command():
 def test_finds_output_with_unexpected_name():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         # GraXpert writes a differently-named file (not the requested -output).
         out_path = args[args.index("-output") + 1]
         alt = os.path.join(os.path.dirname(out_path), "in_GraXpert.fits")
@@ -74,7 +74,7 @@ def test_preserves_is_linear():
 def _capture():
     calls = []
 
-    def fake(args):
+    def fake(args, **_kw):
         calls.append(args)
         # write an output file where GraXpert would (out + ".fits") so _find_output succeeds
         out = args[args.index("-output") + 1]
@@ -110,7 +110,7 @@ def test_graxpert_preserves_input_metadata():
                      metadata={"target": "NGC 281",
                                "solve_cards": {"OBJCTRA": "00 53 06", "FOCALLEN": 160.0}})
 
-    def fake_runner(args):
+    def fake_runner(args, **_kw):
         write_temp_fits(AstroImage(img.data * 0.5), args[args.index("-output") + 1])
 
     out = GraXpert("/fake/graxpert").background_extraction(img, 0.5, runner=fake_runner)

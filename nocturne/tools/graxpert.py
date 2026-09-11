@@ -1,13 +1,33 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 
 from ..core.image import AstroImage
+from ..core.tasks import report_progress
 from .base import read_fits_array, run_cli, write_temp_fits
 
 _IMAGE_EXTS = (".fits", ".fit", ".tiff", ".tif", ".xisf")
+
+
+_PROGRESS_RE = re.compile(r"\bProgress:\s*(\d{1,3})%")
+
+
+def parse_progress(line: str):
+    """The percentage in a GraXpert log line, or None.
+
+    Measured on GraXpert 3.0.2 on 2026-09-11: it logs through a standard Python
+    logger, one `Progress: N%` roughly every two seconds during a denoise, e.g.
+
+        2026-09-11 08:48:42,738 MainProcess root INFO     Progress: 3%
+
+    Anchored on the word so a percentage that is not progress cannot be mistaken
+    for one.
+    """
+    m = _PROGRESS_RE.search(line or "")
+    return int(m.group(1)) if m else None
 
 
 class GraXpert:
@@ -32,10 +52,19 @@ class GraXpert:
             # `-cli` is mandatory; `-output` is the base output filename; the
             # strength flag differs per command: background-extraction uses
             # `-smoothing`, denoising uses `-strength` (GraXpert 3.x).
+            # Streamed, not buffered: a denoise takes minutes and GraXpert
+            # reports a percentage throughout. Discarding it left the app looking
+            # hung — a user restarted it several times before timing the same
+            # image in GraXpert itself and finding the wait was normal.
+            def _line(text: str) -> None:
+                pct = parse_progress(text)
+                if pct is not None:
+                    report_progress(pct, 100)
+
             runner([
                 self.binary_path, "-cli", "-cmd", command,
                 in_fits, "-output", out_fits, strength_flag, str(strength),
-            ])
+            ], on_line=_line)
             produced = out_fits if os.path.exists(out_fits) else self._find_output(tmp, in_fits)
             result = read_fits_array(produced)
             result.is_linear = img.is_linear

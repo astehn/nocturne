@@ -23,7 +23,7 @@ def _run_background(option, corrected=None):
     img = AstroImage(rng.random((8, 8, 3)).astype(np.float32))
     captured = {}
 
-    def fake(args):
+    def fake(args, **_kw):
         captured["args"] = args
         # GraXpert "removes" a constant pedestal unless the test says otherwise
         out = corrected if corrected is not None else np.clip(img.data - 0.10, 0, 1)
@@ -128,7 +128,7 @@ def test_noise_sharpen_rcastro_strength_per_preset():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
     calls = []
 
-    def fake(args):
+    def fake(args, **_kw):
         calls.append(args)
         write_temp_fits(img, args[args.index("-o") + 1])
 
@@ -318,7 +318,7 @@ def test_deconvolution_uses_bxt_and_sharpens_stars():
     from nocturne.steps.deconvolution_step import DeconvolutionStep
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
     calls = []
-    def fake(args):
+    def fake(args, **_kw):
         calls.append(args)
         write_temp_fits(img, args[args.index("-o") + 1])
     step = DeconvolutionStep(rcastro=RCAstro("/fake/rc-astro"))
