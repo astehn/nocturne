@@ -96,3 +96,101 @@ def test_the_child_imports_no_qt():
     src = pathlib.Path(__file__).resolve().parents[2] / "nocturne" / "stacking" / "job.py"
     text = src.read_text(encoding="utf-8")
     assert "PySide6" not in text and "QtCore" not in text
+
+
+def test_main_missing_flag_emits_error_event():
+    """A missing --stack-job flag must emit an error event, not a silent traceback.
+    The parent cannot catch exceptions across a process boundary."""
+    import nocturne.stacking.job as job
+    buf = io.StringIO()
+    code = job.main(["prog_name"], out=buf)
+    events = [json.loads(ln) for ln in buf.getvalue().splitlines()]
+    assert code != 0, "missing flag must exit non-zero"
+    assert len(events) == 1
+    assert events[0]["event"] == "error"
+    assert "--stack-job" in events[0]["message"]
+
+
+def test_main_missing_file_emits_error_event():
+    """A missing or unreadable options file must emit an error event."""
+    import nocturne.stacking.job as job
+    buf = io.StringIO()
+    code = job.main(["prog_name", "--stack-job", "/nonexistent/path.json"], out=buf)
+    events = [json.loads(ln) for ln in buf.getvalue().splitlines()]
+    assert code != 0, "missing file must exit non-zero"
+    assert len(events) == 1
+    assert events[0]["event"] == "error"
+
+
+def test_emit_flushes_without_waiting_for_eof():
+    """Flushing is the single constraint this module exists to honour — a buffered
+    stdout would deliver an hour of progress all at once at exit, the exact hang
+    problem this feature solves. Test the real contract: spawn a child that emits
+    and then blocks, read from the pipe without waiting for EOF, and assert the
+    line arrives."""
+    import pathlib
+    import subprocess
+    import select
+
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    # Create a tiny script that imports our module and emits, then sleeps forever
+    script = '''
+import sys
+sys.path.insert(0, {!r})
+from nocturne.stacking.job import emit
+emit({{"event": "test", "value": 42}})
+# Sleep forever — the parent reads and kills us
+import time
+time.sleep(3600)
+'''.format(str(repo_root))
+
+    # Run it and read one line from stdout without waiting for EOF
+    proc = subprocess.Popen(
+        [str(repo_root / ".venv" / "bin" / "python"), "-c", script],
+        cwd=str(repo_root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    try:
+        # Use a short timeout to catch if the line never appears (unbuffered failure)
+        ready, _, _ = select.select([proc.stdout], [], [], 2.0)
+        if not ready:
+            raise TimeoutError("emit() did not flush — data still in buffer")
+        line = proc.stdout.readline()
+        assert line, "no output received from child"
+        event = json.loads(line)
+        assert event["event"] == "test"
+        assert event["value"] == 42
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def test_on_progress_with_zero_total():
+    """The guard 'if n else 0' must stay: on_progress(i, 0, label) must not divide
+    by zero. Test the case so the guard is never removed."""
+    import nocturne.stacking.job as job
+    import unittest.mock
+
+    class _Result:
+        output_path = "/tmp/out.fits"
+        frame_count = 1
+        integration_seconds = 10.0
+        rejected = []
+
+    def fake_run_stack(opts, *, on_progress=None):
+        on_progress(0, 0, "initializing")
+        return _Result()
+
+    with unittest.mock.patch.object(job, "run_stack", fake_run_stack):
+        buf = io.StringIO()
+        code = job.run_job(_opts_text(), out=buf)
+        events = [json.loads(ln) for ln in buf.getvalue().splitlines()]
+        assert code == 0
+        assert events[0]["event"] == "progress"
+        assert events[0]["done"] == 0  # Guard produced 0, not ZeroDivisionError
