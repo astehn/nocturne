@@ -83,9 +83,12 @@ def test_a_foreground_stack_does_not_replace_open_work(qtbot, tmp_path):
     before = win.project.current().data.copy()
     master = AstroImage(np.full((8, 8, 3), 0.9, np.float32), is_linear=False,
                         metadata={})
-    win._on_foreground_master(master, "stacked master")
+    out_path = str(tmp_path / "master.fits")
+    win._on_foreground_master(master, "stacked master", out_path)
     assert np.array_equal(win.project.current().data, before)
     assert "stacked master" in win.log_panel.toPlainText()
+    assert out_path in win.log_panel.toPlainText(), \
+        "the file exists on disk and the log must say where"
 
 
 def test_a_foreground_stack_opens_when_nothing_is_open(qtbot, tmp_path):
@@ -95,7 +98,7 @@ def test_a_foreground_stack_opens_when_nothing_is_open(qtbot, tmp_path):
     assert win.project is None
     master = AstroImage(np.full((8, 8, 3), 0.9, np.float32), is_linear=False,
                         metadata={})
-    win._on_foreground_master(master, "stacked master")
+    win._on_foreground_master(master, "stacked master", str(tmp_path / "master.fits"))
     assert win.project is not None, "nothing was open, so it should have opened"
 
 
@@ -167,3 +170,44 @@ def test_quitting_after_a_cancel_that_has_not_reaped_still_waits(qtbot, tmp_path
     assert win._cancel_jobs_for_quit() is True
     assert not t.is_alive(), \
         "closeEvent's wait never joined the leftover (not-yet-reaped) reader thread"
+
+
+def test_a_combine_result_survives_with_a_project_open(qtbot, tmp_path, monkeypatch):
+    """Combine writes no file at all — combine_dialog.py hands the finished
+    picture over as an in-memory AstroImage, and that is the ONLY delivery.
+    The "never replace open work" rule was Andreas's ask for a BACKGROUND
+    stack, which always writes a master to disk first; extending it to
+    Combine — which has nothing to point at — would drop the whole result
+    with one log line and no way to get it back. It must always open,
+    exactly as it did before this branch.
+    """
+    from tests.ui.test_main_window import _make_fits, _window
+    import nocturne.ui.combine_dialog as combine_dialog_module
+
+    captured = {}
+
+    class _FakeCombineDialog:
+        """Stands in for the real dialog: captures the on_master callback
+        _open_combine actually wires up, then fires it exactly as the real
+        dialog does on a successful combine — without a real modal exec()."""
+
+        def __init__(self, settings, parent=None, on_master=None):
+            captured["on_master"] = on_master
+
+        def exec(self):
+            pass
+
+    monkeypatch.setattr(combine_dialog_module, "CombineDialog", _FakeCombineDialog)
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    win._open_combine()
+    assert "on_master" in captured, "_open_combine never wired up a callback"
+
+    result = AstroImage(np.full((8, 8, 3), 0.9, np.float32), is_linear=False,
+                        metadata={})
+    captured["on_master"](result)
+
+    assert np.array_equal(win.project.current().data, result.data), \
+        "a finished Combine has nowhere else to go — it must open, not be logged away"

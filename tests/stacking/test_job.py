@@ -3,12 +3,14 @@
 It speaks the newline-delimited JSON protocol RC-Astro progress introduced in
 v0.30.0, so the parent can read it with the same run_cli(on_line=...) stream.
 """
+import dataclasses
 import io
 import json
 
 import pytest
 
 from nocturne.stacking.job import emit, job_command, options_from_json, run_job
+from nocturne.stacking.stacker import StackOptions
 
 
 def _opts_text(**over):
@@ -19,15 +21,16 @@ def _opts_text(**over):
 
 
 def test_options_round_trip_from_json():
-    """StackOptions is all primitives, which is what makes the process boundary
-    cheap — no marshalling layer."""
-    o = options_from_json(_opts_text())
-    assert o.method == "average"
-    assert o.kappa == 2.5
-    assert o.include == ["a.fit", "b.fit", "c.fit"]
-    assert o.output_path == "/tmp/out.fits"
-    assert o.autocrop is True
-    assert o.pixfrac == 0.9
+    """Round-trips through the SAME path JobQueue._spawn actually uses to
+    hand options to the child — dataclasses.asdict, then json.dumps — not a
+    hand-written dict. A hand-written dict can drift from what asdict()
+    actually produces: a StackOptions field of a non-JSON type (a Path, a
+    tuple, a numpy scalar) would still pass a hand-written round-trip and
+    only fail for real at spawn time.
+    """
+    o = StackOptions("average", 2.5, ["a.fit", "b.fit", "c.fit"],
+                     "/tmp/out.fits", autocrop=True)
+    assert options_from_json(json.dumps(dataclasses.asdict(o))) == o
 
 
 def test_unknown_keys_are_refused_not_ignored():

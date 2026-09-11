@@ -1350,3 +1350,117 @@ def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
     assert d.background_note.isVisible(), (
         "the reason the background button is disabled vanished with the help")
     assert "mosaic" in d.background_note.text().lower()
+
+
+# --- Fix round 2: queue-aware guard, and the background button's validations ---
+
+def test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy(qtbot, tmp_path):
+    """The intra-dialog busy guard (_set_busy) only protects a dialog against
+    ITSELF. A FRESH StackDialog starts with _busy = False and, without this
+    check, knows nothing about a background stack already running elsewhere.
+    Reproduced: background a stack, open a second StackDialog on the same
+    folder, press Stack — it ran, two writers on the same auto-generated
+    output path.
+    """
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
+    ran = {}
+
+    def fake_stack(opts, on_progress=None):
+        ran["called"] = True
+        raise AssertionError("must never reach the runner while the queue is busy")
+
+    dlg = StackDialog(Settings(), queue_busy=lambda: True)
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = fake_stack
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6), _stats(c, 0.9),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    dlg.run()
+
+    assert "called" not in ran, "the foreground runner must never start while a background job is busy"
+    assert not dlg._busy, "run() must not have started the async worker at all"
+    assert "background" in dlg.status.text().lower()
+
+
+def test_a_fresh_dialog_runs_when_the_queue_is_free(qtbot, tmp_path):
+    """The queue_busy guard must not become a blanket refusal: with nothing
+    running, Stack must work exactly as it always has."""
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
+    got = {}
+
+    class _Img:
+        pass
+
+    def fake_stack(opts, on_progress=None):
+        got["opts"] = opts
+        from nocturne.stacking.stacker import StackResult
+        return StackResult(_Img(), opts.include, [], len(opts.include), 30.0, opts.output_path)
+
+    dlg = StackDialog(Settings(), queue_busy=lambda: False)
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = fake_stack
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6), _stats(c, 0.9),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    dlg.run()
+
+    qtbot.waitUntil(lambda: "opts" in got, timeout=2000)
+
+
+def test_clicking_background_button_without_grading_refuses(qtbot):
+    """Reproduced: on a freshly opened dialog with nothing graded, the button
+    was enabled, and a real click enqueued StackOptions(include=[],
+    output_path='', ...) then closed the dialog — a child spawned over
+    silence, with only a failure line in the log seconds later."""
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    assert dlg.background_btn.isEnabled()
+    qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
+
+    assert "opts" not in got, "must not enqueue with nothing graded"
+    assert dlg.isVisible(), "must not close the dialog on a refused click"
+    assert "output path" in dlg.status.text().lower()
+
+
+def test_clicking_background_button_with_too_few_frames_refuses(qtbot, tmp_path):
+    for name in ("a.fit", "b.fit"):
+        (tmp_path / name).write_text("x")
+    a, b = (str(tmp_path / n) for n in ("a.fit", "b.fit"))
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
+
+    assert "opts" not in got, "must not enqueue with fewer than 3 frames"
+    assert dlg.isVisible()
+    assert "at least 3" in dlg.status.text().lower()

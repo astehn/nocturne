@@ -90,7 +90,8 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
 
 class StackDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None,
-                 on_settings_changed=None, on_background=None) -> None:
+                 on_settings_changed=None, on_background=None,
+                 queue_busy=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
@@ -109,6 +110,13 @@ class StackDialog(QDialog):
         self._on_settings_changed = on_settings_changed
         self._on_master = on_master
         self._on_background = on_background
+        # Zero-arg predicate: True while ANY background job is queued or
+        # running. A FRESH StackDialog starts with _busy = False and knows
+        # nothing about the job queue on its own — a background stack, then a
+        # second StackDialog on the same folder pressing plain Stack, resolved
+        # to the SAME auto-generated output path with no guard at all. None in
+        # standalone use (and most tests): nothing to check against.
+        self._queue_busy = queue_busy
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
         self._mosaic_runner = run_mosaic    # injectable for tests
@@ -826,17 +834,42 @@ class StackDialog(QDialog):
                        if s.included and s.target), "")
         return target or "stacked master"
 
+    def _validate_ready_to_run(self) -> bool:
+        """Shared by both buttons: Stack and Stack in background start the
+        SAME job, so they must refuse under the same conditions with the
+        same message rather than drift into checking different things — see
+        the bug this closed, where the background button skipped both of
+        these and enqueued StackOptions(include=[], output_path='', ...)."""
+        if not self.output_edit.text().strip():
+            self.status.setText("Pick an output path.")
+            return False
+        if len(self._included_paths_best_first()) < 3:
+            self.status.setText("Select at least 3 frames to stack.")
+            return False
+        return True
+
     def run(self) -> None:
         if self._busy:
             self.status.setText("Please wait — still working…")
             return
-        if not self.output_edit.text().strip():
-            self.status.setText("Pick an output path.")
+        # Refuses rather than warns-then-allows: a silent OR a dismissable
+        # start both let a background job and this dialog's foreground run
+        # write the SAME auto-generated output path at once — ~17 GB
+        # resident and a corrupted master, discovered only after the fact.
+        # A fresh StackDialog starts with _busy = False and cannot see the
+        # job queue any other way (`_set_busy` only guards THIS dialog
+        # against itself). `_stack_in_background` does not need this check:
+        # the queue itself serialises background jobs one at a time, so a
+        # second one just waits instead of racing.
+        if self._queue_busy is not None and self._queue_busy():
+            self.status.setText(
+                "A background stack is already running — wait for it to "
+                "finish before starting another (they could write the same "
+                "file).")
+            return
+        if not self._validate_ready_to_run():
             return
         include = self._included_paths_best_first()
-        if len(include) < 3:
-            self.status.setText("Select at least 3 frames to stack.")
-            return
         method = self._method()
 
         if self.mosaic_check.isChecked():
@@ -870,6 +903,8 @@ class StackDialog(QDialog):
             return
         if self._busy:
             self.status.setText("Please wait — still working…")
+            return
+        if not self._validate_ready_to_run():
             return
         if self.mosaic_check.isChecked():
             self.status.setText("Mosaics can't run in the background yet — use Stack.")

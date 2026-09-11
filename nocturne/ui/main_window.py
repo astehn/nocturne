@@ -904,32 +904,44 @@ class MainWindow(QMainWindow):
         BatchDialog(self.settings, self).exec()
 
     def _open_stack(self) -> None:
-        try:
-            from .stack_dialog import StackDialog
-        except ImportError:
-            self._show_warning("Stacking unavailable — install astroalign and sep.")
-            return
-        StackDialog(self.settings, self,
-                    on_settings_changed=self._save_settings,
-                    on_background=self._start_background_stack,
-                    on_master=lambda img: self._on_foreground_master(
-                        img, "stacked master")).exec()
+        # No try/except ImportError here any more: `job_queue` (imported at
+        # module level, above) already pulls in astroalign/sep to build this
+        # module at all, so that guard could never be reached — an
+        # environment missing either hard dep now fails at app launch, not
+        # here. Both are hard deps in pyproject.toml.
+        from .stack_dialog import StackDialog
+        dlg = StackDialog(self.settings, self,
+                          on_settings_changed=self._save_settings,
+                          on_background=self._start_background_stack,
+                          queue_busy=self._job_queue.busy,
+                          # dlg, not a captured path: _rename_to_true_count
+                          # can rewrite output_edit AFTER the user's own
+                          # choice, right before on_master fires, and reading
+                          # it here (closure, called only once dlg exists)
+                          # always sees that final value.
+                          on_master=lambda img: self._on_foreground_master(
+                              img, "stacked master", dlg.output_edit.text().strip()))
+        dlg.exec()
 
     def _open_combine(self) -> None:
+        # Deliberately NOT routed through _on_foreground_master: Combine
+        # writes no file anywhere — combine_dialog.py hands over an
+        # in-memory AstroImage and that is the ONLY delivery. Logging
+        # "not opened" instead of opening it would destroy the result with
+        # no way to recover it. The open-work rule is for background/
+        # foreground STACKS, which always write a master to disk first; it
+        # was scope creep to extend it to a dialog with nothing to point at.
         from .combine_dialog import CombineDialog
         CombineDialog(self.settings, self,
-                      on_master=lambda img: self._on_foreground_master(
+                      on_master=lambda img: self.open_image(
                           img, "combined narrowband")).exec()
 
     def _open_haoiii(self) -> None:
-        try:
-            from .haoiii_dialog import HaOIIIDialog
-        except ImportError:
-            self._show_warning("Ha/OIII extract unavailable — install astroalign and sep.")
-            return
-        HaOIIIDialog(self.settings, self,
-                     on_master=lambda img: self._on_foreground_master(
-                         img, "Ha/OIII master")).exec()
+        from .haoiii_dialog import HaOIIIDialog
+        dlg = HaOIIIDialog(self.settings, self,
+                           on_master=lambda img: self._on_foreground_master(
+                               img, "Ha/OIII master", dlg.output_edit.text().strip()))
+        dlg.exec()
 
     def _start_background_stack(self, options, label: str) -> None:
         self._job_queue.enqueue(StackJob(label, options))
@@ -956,25 +968,49 @@ class MainWindow(QMainWindow):
         """Logged, never opened. A background stack landing on the canvas would
         replace whatever the user had started editing while it ran."""
         mins = int(float(event.get("seconds", 0)) // 60)
+        # `seconds` is integration_seconds — total EXPOSURE across the kept
+        # frames, not how long the background job itself took to run.
+        # stack_dialog's own foreground report calls the same field "minutes
+        # of light" (_stack_report) — matching that wording here stops the
+        # same number reading as two different things depending on which
+        # mode produced it.
         self.log_panel.append_entry(
             f"Stacked {job.label} — {event.get('frames', 0)} frames, "
-            f"{mins} min → {event.get('output', '')}")
+            f"{mins} min of light → {event.get('output', '')}")
 
     def _on_job_failed(self, job, message: str) -> None:
         self.log_panel.append_entry(f"Stacking {job.label} failed — {message}")
 
-    def _on_foreground_master(self, img, label: str) -> None:
-        """A finished stack never replaces work you have open.
+    def _on_foreground_master(self, img, label: str, path: str) -> None:
+        """A finished stack never replaces work you have open — but this is
+        ONLY safe because Stack and Ha/OIII always write their master to
+        `path` FIRST; "not opened" here still means "on disk, findable".
+
+        `path` is required, not optional: this function must never be the
+        one place a result that exists NOWHERE ELSE gets discarded. Combine
+        holds its result only in memory (no output_edit, no save_fits
+        anywhere in combine_dialog.py) and is deliberately NOT routed
+        through here — see _open_combine — because logging "not opened"
+        for a Combine result would destroy it with nothing to recover.
+        A caller with no real path to give must call open_image directly,
+        not invent one; that is the loud failure this raises for.
 
         Nothing open → it opens, as it always has. Something open → it is
-        logged like a background job, so the two modes differ in exactly one
-        thing: whether the window blocked you while it ran.
+        logged (with the path, so the file is still findable) like a
+        background job, so the two modes differ in exactly one thing:
+        whether the window blocked you while it ran.
         """
+        if not path:
+            raise ValueError(
+                "_on_foreground_master requires a real file path: it is only "
+                "safe for a result that ALSO exists on disk. A result that "
+                "exists only in memory must not be routed through here — "
+                "call open_image directly instead (see _open_combine).")
         if self.project is None:
             self.open_image(img, label)
             return
         self.log_panel.append_entry(
-            f"Stacked {label} — not opened, you have an image open")
+            f"Stacked {label} — not opened, you have an image open → {path}")
 
     def _open_star_spikes(self) -> None:
         if self.project is None:

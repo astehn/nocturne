@@ -103,6 +103,17 @@ class JobQueue(QObject):
     def running(self):
         return self._running
 
+    def busy(self) -> bool:
+        """True if a foreground stack anywhere in the app must not start —
+        this job (or the next one in line) may still be writing a file a
+        fresh dialog's own output-path guess could collide with. See
+        StackDialog's `queue_busy`, the only consumer: `_set_busy`/mosaic
+        already keep two clicks on ONE dialog from racing each other, but a
+        FRESH StackDialog starts with `_busy = False` and knows nothing about
+        this queue on its own."""
+        return self._running is not None or any(
+            j.state == "queued" for j in self._jobs)
+
     # --- control (GUI thread only) ---
     def enqueue(self, job: StackJob) -> None:
         self._jobs.append(job)
