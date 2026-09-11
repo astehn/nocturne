@@ -2178,7 +2178,14 @@ class MainWindow(QMainWindow):
         if total > 0:
             self._progress.setMaximum(total)
             self._progress.setValue(done)
-            self._progress.setFormat(f"{phase} — %v/%m" if phase else "%v/%m")
+            # `%v/%m` is the COUNT format — right for "frame 5 of 187", odd for
+            # a percentage, where it rendered GraXpert's 2% as "Denoising —
+            # 2/100". A total of exactly 100 is a percentage by construction:
+            # `report_progress` is the only source of one, and it always reports
+            # out of 100.
+            pct = total == 100
+            body = "%p%" if pct else "%v/%m"
+            self._progress.setFormat(f"{phase} — {body}" if phase else body)
             self._progress.show()
         else:
             self._progress.hide()

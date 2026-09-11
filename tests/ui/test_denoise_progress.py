@@ -110,3 +110,22 @@ def test_a_tool_that_reports_nothing_leaves_the_bar_alone(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win._run_busy(lambda: None, lambda _r: None, "Working…", "failed")
     assert win._progress_state[2] == 0, "a silent tool should leave total at 0"
+
+
+@pytest.mark.parametrize("phase,done,total,expected", [
+    ("Denoising", 2, 100, "Denoising — 2%"),          # a percentage reads as one
+    ("Stacking", 5, 187, "Stacking — 5/187"),         # a count still reads as a count
+    ("", 40, 100, "40%"),
+    ("", 5, 187, "5/187"),
+])
+def test_a_percentage_is_shown_as_a_percentage(qtbot, tmp_path, phase, done, total, expected):
+    """`%v/%m` is the COUNT format — right for "frame 5 of 187", odd for a
+    percentage, where it rendered GraXpert's 2% as "Denoising — 2/100"."""
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    win._set_progress(phase, done, total)
+    win._apply_progress_state()
+    # .text(), not .format(): format() is the template with %v/%p placeholders
+    # still in it, so asserting on it would pass whatever the user ends up seeing.
+    assert win._progress.text() == expected
