@@ -29,12 +29,19 @@ import json
 import subprocess
 import tempfile
 import threading
+import time
 import os
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal
 
 from ..core.tasks import kill_process
 from ..stacking.job import job_command
+
+# closeEvent's bound on waiting for a reader thread to finish at quit. SIGTERM
+# to reap is normally well under a second; generous enough to absorb a slow
+# child flushing 8.7 GB, short enough that a genuinely stuck one doesn't hang
+# the app on quit forever. See JobQueue.wait_for_shutdown.
+_SHUTDOWN_TIMEOUT = 5.0
 
 
 @dataclasses.dataclass
@@ -80,6 +87,9 @@ class JobQueue(QObject):
         self._jobs: list[StackJob] = []
         self._running: StackJob | None = None
         self._proc = None
+        # Reader threads still alive, tracked so quit can join them for real
+        # instead of just marking jobs cancelled — see wait_for_shutdown.
+        self._reader_threads: list[threading.Thread] = []
         self._child_exited.connect(self._on_child_done,
                                    Qt.ConnectionType.QueuedConnection)
 
@@ -128,6 +138,35 @@ class JobQueue(QObject):
         if running is not None and self._proc is not None:
             kill_process(self._proc)
 
+    def wait_for_shutdown(self, timeout: float = _SHUTDOWN_TIMEOUT) -> None:
+        """For quit, after cancel_all(): join the live reader thread(s) and
+        pump the queued `_child_exited` signal so it is DELIVERED — not just
+        emitted — while this QObject is still alive.
+
+        `_read`'s emit() can succeed and post the event, then have the event
+        delivered after this object is torn down by the closing window; that
+        is a use-after-free on the C++ side, not a Python exception, so no
+        try/except anywhere can guard it. Joining the thread first guarantees
+        the emit already happened before we pump events for it.
+
+        Bounded: a child that ignores SIGTERM must not hang the app on quit
+        forever. If the deadline passes we stop waiting and forget the slot
+        locally anyway — nothing will call `_pump()` again once we're
+        quitting, so there is no double-spawn risk, only the (rare, accepted)
+        chance that thread's eventual emit lands after this object is gone.
+        """
+        deadline = time.monotonic() + timeout
+        for t in list(self._reader_threads):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            t.join(remaining)
+        app = QCoreApplication.instance()
+        if app is not None:
+            app.processEvents()
+        self._running = None
+        self._proc = None
+
     # --- running (GUI thread only) ---
     def _pump(self) -> None:
         while self._running is None:
@@ -173,8 +212,10 @@ class JobQueue(QObject):
             _discard(path)          # no reader will ever reach its cleanup
             raise
         try:
-            threading.Thread(target=self._read, args=(job, proc, path),
-                             daemon=True).start()
+            t = threading.Thread(target=self._read, args=(job, proc, path),
+                                 daemon=True)
+            t.start()
+            self._reader_threads.append(t)
         except BaseException:
             kill_process(proc)      # nothing would read it, reap it, or kill it
             _discard(path)
@@ -239,5 +280,10 @@ class JobQueue(QObject):
                 msg = ((final or {}).get("message")
                        or f"stacking stopped (exit {code})")
                 self.failed.emit(job, msg)
+        # This callback only runs once the thread that spawned it has already
+        # returned (it's the last thing `_read` does), so it is always safe
+        # to drop here — a long session must not accumulate one dead Thread
+        # object per stack ever run.
+        self._reader_threads = [t for t in self._reader_threads if t.is_alive()]
         self.changed.emit()
         self._pump()

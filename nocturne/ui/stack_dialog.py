@@ -90,7 +90,7 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
 
 class StackDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None,
-                 on_settings_changed=None) -> None:
+                 on_settings_changed=None, on_background=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
@@ -108,6 +108,7 @@ class StackDialog(QDialog):
         self._settings = settings
         self._on_settings_changed = on_settings_changed
         self._on_master = on_master
+        self._on_background = on_background
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
         self._mosaic_runner = run_mosaic    # injectable for tests
@@ -277,6 +278,17 @@ class StackDialog(QDialog):
         self._stack_btn = QPushButton("Stack")
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
+        self.background_btn = QPushButton("Stack in background")
+        self.background_btn.clicked.connect(self._stack_in_background)
+        # Standalone (and in tests) there is nowhere to send it, so it is not
+        # offered rather than offered and broken.
+        self.background_btn.setVisible(on_background is not None)
+        # The background job protocol carries a plain StackOptions (see
+        # nocturne/stacking/job.py) — a mosaic is a different options type it
+        # cannot express, so backgrounding one would silently drop the
+        # checkbox and run a flat stack instead of the mosaic asked for.
+        self.mosaic_check.toggled.connect(lambda *_: self._sync_background_availability())
+        self._sync_background_availability()
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.clicked.connect(self._cancel_active)
         self._cancel_btn.setEnabled(False)
@@ -285,6 +297,7 @@ class StackDialog(QDialog):
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self._stack_btn)
+        buttons.addWidget(self.background_btn)
         buttons.addWidget(self._cancel_btn)
         buttons.addWidget(close_btn)
 
@@ -568,6 +581,20 @@ class StackDialog(QDialog):
             "expect this to take a very long time."
             if both and self.mosaic_check.isEnabled() else "")
 
+    def _sync_background_availability(self) -> None:
+        """Grey the button out rather than have it silently drop the mosaic
+        checkbox — see the comment where it's created."""
+        if self._on_background is None:
+            return
+        mosaic = self.mosaic_check.isChecked()
+        self.background_btn.setEnabled(not mosaic)
+        self.background_btn.setToolTip(
+            "Mosaics can't run in the background yet — use Stack."
+            if mosaic else
+            "Start the stack and close this window. It keeps running while "
+            "you work; progress appears below and the master is written "
+            "to disk.")
+
     # --- grade ---
     def grade(self) -> None:
         if self._busy:
@@ -755,6 +782,27 @@ class StackDialog(QDialog):
                 chosen.append(self._stats[row])
         return order_best_first(chosen)
 
+    def _method(self) -> str:
+        if self.drizzle_check.isChecked():
+            return "drizzle"      # drizzle does its own sigma-clip rejection
+        return "sigma_clip" if self.sigma_radio.isChecked() else "average"
+
+    def _options(self):
+        """The one place a StackOptions is built. Two buttons now start the
+        same stack; building it twice is how they would come to mean
+        different things."""
+        return StackOptions(self._method(), KAPPA[self.kappa_box.currentText()],
+                            self._included_paths_best_first(),
+                            self.output_edit.text().strip(),
+                            autocrop=self.crop_check.isChecked())
+
+    def _target_label(self) -> str:
+        """The same name _auto_output_path already derives for the output
+        filename, so the log and the file agree on what this was."""
+        target = next((s.target for s in self._stats
+                       if s.included and s.target), "")
+        return target or "stacked master"
+
     def run(self) -> None:
         if self._busy:
             self.status.setText("Please wait — still working…")
@@ -766,10 +814,7 @@ class StackDialog(QDialog):
         if len(include) < 3:
             self.status.setText("Select at least 3 frames to stack.")
             return
-        if self.drizzle_check.isChecked():
-            method = "drizzle"      # drizzle does its own sigma-clip rejection
-        else:
-            method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
+        method = self._method()
 
         if self.mosaic_check.isChecked():
             mosaic_opts = MosaicOptions(
@@ -788,9 +833,7 @@ class StackDialog(QDialog):
                         "this takes considerably longer than one stack.")
             return
 
-        opts = StackOptions(method, KAPPA[self.kappa_box.currentText()],
-                            include, self.output_edit.text().strip(),
-                            autocrop=self.crop_check.isChecked())
+        opts = self._options()
         runner = self._stack_runner
 
         def work():
@@ -798,6 +841,12 @@ class StackDialog(QDialog):
                           self._signals.progress.emit(i, n, label))
 
         self._start(work, self._on_stacked, "Stacking…")
+
+    def _stack_in_background(self) -> None:
+        if self._on_background is None:
+            return
+        self._on_background(self._options(), self._target_label())
+        self.accept()
 
     def _on_progress(self, i: int, n: int, label: str) -> None:
         self.progress.setMaximum(max(1, n))

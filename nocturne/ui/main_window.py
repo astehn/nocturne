@@ -43,6 +43,8 @@ from .provenance_dialog import ProvenanceDialog
 from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
+from .job_queue import JobQueue, StackJob
+from .jobs_panel import JobsPanel
 from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
@@ -198,6 +200,8 @@ class _SaveSignals(QObject):
 
 
 class MainWindow(QMainWindow):
+    _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
+
     def __init__(self, settings_path: str, check_updates: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(app_title())
@@ -240,6 +244,14 @@ class MainWindow(QMainWindow):
         # or a fresh solve lands. See _sync_object_list_visibility.
         self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
+        self._job_queue = JobQueue(self)
+        self._job_queue.progress.connect(self._on_job_progress)
+        self._job_queue.finished.connect(self._on_job_finished)
+        self._job_queue.failed.connect(self._on_job_failed)
+        # Last percentage LOGGED per job, so the log gets a line every 10% rather
+        # than one every couple of seconds. The log is append-only and permanent;
+        # an hour of ticks would bury everything else that happened.
+        self._job_logged_at: dict[int, int] = {}
         self._tool_progress = _ToolProgressSignals()
         # No phase name: the busy LABEL above the bar already says what is
         # running — "Separating stars…", "Denoising with GraXpert…" — and every
@@ -511,7 +523,17 @@ class MainWindow(QMainWindow):
         self._bottom_bar = QWidget()
         bottom = QHBoxLayout(self._bottom_bar)
         bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.addWidget(self.log_panel, 3)      # history gets the wider share
+        log_col = QVBoxLayout()
+        log_col.setContentsMargins(0, 0, 0, 0)
+        self.jobs_panel = JobsPanel(self._job_queue, self)
+        # Hidden until there is something to show: an always-present empty strip
+        # would cost height on the 1280x800 floor for nothing.
+        self.jobs_panel.setVisible(False)
+        self._job_queue.changed.connect(
+            lambda: self.jobs_panel.setVisible(not self.jobs_panel.is_empty()))
+        log_col.addWidget(self.jobs_panel)
+        log_col.addWidget(self.log_panel)
+        bottom.addLayout(log_col, 3)             # history gets the wider share
         bottom.addWidget(self.output_panel, 2)   # results/progress, copyable
         outer.addWidget(self._bottom_bar)
 
@@ -572,14 +594,51 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        """Offer to save before discarding an edited (un-saved) project on quit."""
+        """Offer to save before discarding an edited (un-saved) project on
+        quit, then stop any background stacks — in that order: a user who
+        cancels the unsaved-project prompt has not quit, so nothing running
+        in the background should have been touched by then.
+        """
         if not self._confirm_save_if_dirty():
+            event.ignore()
+            return
+        if not self._cancel_jobs_for_quit():
             event.ignore()
             return
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
         event.accept()
+
+    def _confirm_quit_with_jobs(self, count: int) -> bool:
+        """True to quit and cancel. Separate so a test can answer it."""
+        plural = "job" if count == 1 else "jobs"
+        return QMessageBox.question(
+            self, "Background stacking",
+            f"{count} stacking {plural} still running. Quit anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes
+
+    def _cancel_jobs_for_quit(self) -> bool:
+        """Ask, then cancel and wait. False means the user chose to keep
+        working.
+
+        The wait is not cosmetic: `JobQueue.wait_for_shutdown` joins the live
+        reader thread(s) before this method returns, so `closeEvent` cannot
+        go on to destroy the JobQueue while one of them might still deliver
+        its exit signal to it — that lands on a torn-down C++ object and
+        segfaults, not a Python exception, so nothing downstream could catch
+        it.
+        """
+        outstanding = [j for j in self._job_queue.jobs()
+                       if j.state in ("queued", "running")]
+        if not outstanding:
+            return True
+        if not self._confirm_quit_with_jobs(len(outstanding)):
+            return False
+        self._job_queue.cancel_all()
+        self._job_queue.wait_for_shutdown()
+        return True
 
     # --- dirty-state tracking + window title ---
     def _mark_dirty(self) -> None:
@@ -842,12 +901,15 @@ class MainWindow(QMainWindow):
             return
         StackDialog(self.settings, self,
                     on_settings_changed=self._save_settings,
-                    on_master=lambda img: self.open_image(img, "stacked master")).exec()
+                    on_background=self._start_background_stack,
+                    on_master=lambda img: self._on_foreground_master(
+                        img, "stacked master")).exec()
 
     def _open_combine(self) -> None:
         from .combine_dialog import CombineDialog
         CombineDialog(self.settings, self,
-                      on_master=lambda img: self.open_image(img, "combined narrowband")).exec()
+                      on_master=lambda img: self._on_foreground_master(
+                          img, "combined narrowband")).exec()
 
     def _open_haoiii(self) -> None:
         try:
@@ -856,7 +918,44 @@ class MainWindow(QMainWindow):
             self._show_warning("Ha/OIII extract unavailable — install astroalign and sep.")
             return
         HaOIIIDialog(self.settings, self,
-                     on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
+                     on_master=lambda img: self._on_foreground_master(
+                         img, "Ha/OIII master")).exec()
+
+    def _start_background_stack(self, options, label: str) -> None:
+        self._job_queue.enqueue(StackJob(label, options))
+        self.log_panel.append_entry(f"Stacking {label} — sent to the background")
+
+    # --- background jobs: progress into the log, never onto the canvas ---
+    def _on_job_progress(self, job, pct: int, phase: str) -> None:
+        last = self._job_logged_at.get(id(job))
+        if last is not None and pct < last + self._JOB_LOG_EVERY:
+            return
+        self._job_logged_at[id(job)] = pct - (pct % self._JOB_LOG_EVERY)
+        self.log_panel.append_entry(f"Stacking {job.label} — {pct}%")
+
+    def _on_job_finished(self, job, event: dict) -> None:
+        """Logged, never opened. A background stack landing on the canvas would
+        replace whatever the user had started editing while it ran."""
+        mins = int(float(event.get("seconds", 0)) // 60)
+        self.log_panel.append_entry(
+            f"Stacked {job.label} — {event.get('frames', 0)} frames, "
+            f"{mins} min → {event.get('output', '')}")
+
+    def _on_job_failed(self, job, message: str) -> None:
+        self.log_panel.append_entry(f"Stacking {job.label} failed — {message}")
+
+    def _on_foreground_master(self, img, label: str) -> None:
+        """A finished stack never replaces work you have open.
+
+        Nothing open → it opens, as it always has. Something open → it is
+        logged like a background job, so the two modes differ in exactly one
+        thing: whether the window blocked you while it ran.
+        """
+        if self.project is None:
+            self.open_image(img, label)
+            return
+        self.log_panel.append_entry(
+            f"Stacked {label} — not opened, you have an image open")
 
     def _open_star_spikes(self) -> None:
         if self.project is None:

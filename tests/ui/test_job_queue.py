@@ -12,6 +12,7 @@ thread rather than calling its callbacks from the main thread.
 import json
 import os
 import threading
+import time
 
 import pytest
 
@@ -357,3 +358,52 @@ def test_spawn_builds_its_argv_with_job_command(qtbot, tmp_path, monkeypatch):
     assert captured["args"][0] == "sentinel-interpreter"
     assert captured["args"][1] == "--stack-job"
     _settle(qtbot, q)
+
+
+def test_wait_for_shutdown_joins_the_real_reader_thread_and_delivers_its_exit(qtbot):
+    """closeEvent must not destroy the queue while a reader thread might still
+    emit into it (see JobQueue.wait_for_shutdown). Proven with a REAL thread —
+    every other test above exercises `_reader_threads` empty, since `_spawn`
+    is monkeypatched away before it ever starts one."""
+    q = JobQueue()
+    a = _job("A")
+    q._jobs.append(a)
+    a.state = "running"
+    q._running = a
+    proc = _FakeProc([json.dumps(_done("A")) + "\n"])
+    q._proc = proc
+    t = threading.Thread(target=q._read, args=(a, proc, "/nonexistent/opts.json"))
+    q._reader_threads.append(t)
+    finished = []
+    q.finished.connect(lambda job, ev: finished.append(job))
+    t.start()
+
+    q.wait_for_shutdown(timeout=2.0)
+
+    assert not t.is_alive(), "wait_for_shutdown returned before the reader thread finished"
+    assert q.running() is None
+    assert finished == [a], "the queued _child_exited signal was never delivered"
+
+
+def test_wait_for_shutdown_gives_up_after_its_bound_rather_than_hang(qtbot):
+    """A reader thread wedged on a child that ignores SIGTERM must not hang
+    the app on quit forever — the bound exists for exactly this."""
+    q = JobQueue()
+    a = _job("A")
+    q._jobs.append(a)
+    a.state = "running"
+    q._running = a
+    never_set = threading.Event()
+    t = threading.Thread(target=never_set.wait)   # blocks until we release it
+    q._reader_threads.append(t)
+    t.start()
+    try:
+        start = time.monotonic()
+        q.wait_for_shutdown(timeout=0.2)
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.5, "wait_for_shutdown did not respect its bound"
+        assert q.running() is None, \
+            "gave up waiting on the thread, but left the stale slot behind"
+    finally:
+        never_set.set()
+        t.join(timeout=2)
