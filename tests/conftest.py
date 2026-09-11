@@ -23,3 +23,44 @@ tests or creating the `qapp` fixture.
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+# --- the user's real settings file is off limits to the suite ----------------
+#
+# `stack_dialog._toggle_hints` persisted a preference by writing the WHOLE
+# settings object to `resolve_settings_path()` — the real ~/.nocturne/settings.json
+# — whatever settings path the app had actually been given. MainWindow gets a
+# temp path in tests, so a test that toggled those explanations wrote a fresh,
+# EMPTY `Settings()` over the developer's file and silently wiped their
+# configured GraXpert / RC-Astro / ASTAP paths. It happened for real on
+# 2026-09-11; the file was rewritten at 09:29:38 by a full-suite run.
+#
+# Fixing that one call site is not the guarantee. This is: while the suite runs,
+# the default path resolves inside a temp directory, so NO test can reach the
+# real file however it gets there. An explicit `home=` still behaves normally,
+# because tests/test_settings_migration.py legitimately drives that argument.
+
+import tempfile
+
+import pytest
+
+import nocturne.settings as _settings
+
+_REAL_RESOLVE = _settings.resolve_settings_path
+_SANDBOX = tempfile.mkdtemp(prefix="nocturne_settings_")
+
+
+def _sandboxed_resolve(home: str | None = None) -> str:
+    return _REAL_RESOLVE(home=home if home is not None else _SANDBOX)
+
+
+_settings.resolve_settings_path = _sandboxed_resolve
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _settings_sandbox():
+    """Belt and braces: keep the redirect in place for the whole session even if
+    something re-imports the module."""
+    _settings.resolve_settings_path = _sandboxed_resolve
+    yield
+    _settings.resolve_settings_path = _REAL_RESOLVE

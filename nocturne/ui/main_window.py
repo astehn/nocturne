@@ -836,6 +836,7 @@ class MainWindow(QMainWindow):
             self._show_warning("Stacking unavailable — install astroalign and sep.")
             return
         StackDialog(self.settings, self,
+                    on_settings_changed=self._save_settings,
                     on_master=lambda img: self.open_image(img, "stacked master")).exec()
 
     def _open_combine(self) -> None:
@@ -1955,6 +1956,15 @@ class MainWindow(QMainWindow):
 
         self._run_busy(lambda: step.apply(base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
+
+    def _save_settings(self) -> None:
+        """Persist settings through the path this window was GIVEN.
+
+        The one place that writes them, so a dialog never has to resolve a path
+        of its own — doing that wrote the whole object to the real
+        ~/.nocturne/settings.json whatever file the app was using.
+        """
+        save_settings(self.settings, self._settings_path)
 
     def _busy_label_for(self, stage_id: str, option) -> str:
         """Busy message for an apply. GraXpert AI denoise takes minutes (inherent

@@ -89,7 +89,8 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
 
 
 class StackDialog(QDialog):
-    def __init__(self, settings, parent=None, on_master=None) -> None:
+    def __init__(self, settings, parent=None, on_master=None,
+                 on_settings_changed=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
@@ -105,6 +106,7 @@ class StackDialog(QDialog):
         self.setMinimumWidth(800)
         self.resize(1100, 700)
         self._settings = settings
+        self._on_settings_changed = on_settings_changed
         self._on_master = on_master
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
@@ -458,11 +460,16 @@ class StackDialog(QDialog):
         # dialog grows as far as the screen allows.
         self._hints_forced_closed = False
         self._settings.help_expanded = not self._settings.help_expanded
-        try:
-            from ..settings import resolve_settings_path, save_settings
-            save_settings(self._settings, resolve_settings_path())
-        except OSError:
-            pass          # a preference that will not save is not worth a dialog
+        # Persisted by whoever OWNS the settings, through the path the app was
+        # actually given. Resolving the default path here wrote the whole object
+        # to the real ~/.nocturne/settings.json whatever file was in use — which
+        # in the test suite meant an empty Settings() landing on the developer's
+        # own and wiping their configured tool paths.
+        if self._on_settings_changed is not None:
+            try:
+                self._on_settings_changed()
+            except OSError:
+                pass      # a preference that will not save is not worth a dialog
         self._apply_hints_visible()
 
     def _apply_hints_visible(self) -> None:
