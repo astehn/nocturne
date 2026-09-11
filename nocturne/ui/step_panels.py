@@ -68,6 +68,7 @@ def build_panel(
     on_fringe_apply=None,
     on_lc_change=None,
     on_show_model=None,
+    on_option_change=None,
     on_curve_change=None,
     on_curve_preset=None, on_curve_expand=None,
     on_recover_change=None,
@@ -179,6 +180,12 @@ def build_panel(
                 apply_btn.setEnabled(apply_enabled)
 
         box.currentTextChanged.connect(_update_enabled)
+        if on_option_change is not None:
+            # The pending label reads the dropdown, so it has to hear the
+            # dropdown. Without this it only caught up on the next _refresh,
+            # which for a compute stage means it lagged until the user did
+            # something else entirely.
+            box.currentTextChanged.connect(lambda _t: on_option_change())
 
         # Seeing the model is how you tell a real gradient from the fit eating
         # the faint outer parts of your object: the first is a smooth ramp, the

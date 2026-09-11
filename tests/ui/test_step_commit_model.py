@@ -149,3 +149,24 @@ def test_the_color_stage_covers_both_of_its_previews(qtbot, tmp_path):
     assert win._has_pending() is False
     win._on_removegreen_change(0.4)
     assert win._has_pending() is True
+
+
+def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path):
+    """The label reads the dropdown, so it must hear the dropdown.
+
+    `_has_pending()` was already right here; only the label lagged, catching up
+    on the next `_refresh` — i.e. when the user did something else entirely. A
+    signal that is correct but displayed late is still a step that looks applied
+    when it is not.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("deconvolution")
+    win.show()
+    qtbot.waitExposed(win)
+    assert not win._panel.pending_label.isVisible()
+
+    win._panel.option_box.setCurrentText("strong")
+    qtbot.wait(1)
+
+    assert win._panel.pending_label.isVisible(), (
+        "the dropdown moved and the label did not notice until the next refresh")

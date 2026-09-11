@@ -3678,6 +3678,7 @@ class MainWindow(QMainWindow):
             on_fringe_change=self._on_fringe_change,
             on_fringe_apply=self._apply_green_fringe,
             on_show_model=self._on_show_background_model,
+            on_option_change=self._sync_step_controls,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
             on_curve_expand=self._open_curves_dialog,
