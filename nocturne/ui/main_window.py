@@ -43,6 +43,8 @@ from .provenance_dialog import ProvenanceDialog
 from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
+from .job_queue import JobQueue, StackJob
+from .jobs_panel import JobsPanel
 from .log_panel import LogPanel, OutputPanel, format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
@@ -198,6 +200,8 @@ class _SaveSignals(QObject):
 
 
 class MainWindow(QMainWindow):
+    _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
+
     def __init__(self, settings_path: str, check_updates: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(app_title())
@@ -240,6 +244,14 @@ class MainWindow(QMainWindow):
         # or a fresh solve lands. See _sync_object_list_visibility.
         self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
+        self._job_queue = JobQueue(self)
+        self._job_queue.progress.connect(self._on_job_progress)
+        self._job_queue.finished.connect(self._on_job_finished)
+        self._job_queue.failed.connect(self._on_job_failed)
+        # Last percentage LOGGED per job, so the log gets a line every 10% rather
+        # than one every couple of seconds. The log is append-only and permanent;
+        # an hour of ticks would bury everything else that happened.
+        self._job_logged_at: dict[int, int] = {}
         self._tool_progress = _ToolProgressSignals()
         # No phase name: the busy LABEL above the bar already says what is
         # running — "Separating stars…", "Denoising with GraXpert…" — and every
@@ -511,7 +523,17 @@ class MainWindow(QMainWindow):
         self._bottom_bar = QWidget()
         bottom = QHBoxLayout(self._bottom_bar)
         bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.addWidget(self.log_panel, 3)      # history gets the wider share
+        log_col = QVBoxLayout()
+        log_col.setContentsMargins(0, 0, 0, 0)
+        self.jobs_panel = JobsPanel(self._job_queue, self)
+        # Hidden until there is something to show: an always-present empty strip
+        # would cost height on the 1280x800 floor for nothing.
+        self.jobs_panel.setVisible(False)
+        self._job_queue.changed.connect(
+            lambda: self.jobs_panel.setVisible(not self.jobs_panel.is_empty()))
+        log_col.addWidget(self.jobs_panel)
+        log_col.addWidget(self.log_panel)
+        bottom.addLayout(log_col, 3)             # history gets the wider share
         bottom.addWidget(self.output_panel, 2)   # results/progress, copyable
         outer.addWidget(self._bottom_bar)
 
@@ -572,14 +594,61 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        """Offer to save before discarding an edited (un-saved) project on quit."""
+        """Offer to save before discarding an edited (un-saved) project on
+        quit, then stop any background stacks — in that order: a user who
+        cancels the unsaved-project prompt has not quit, so nothing running
+        in the background should have been touched by then.
+        """
         if not self._confirm_save_if_dirty():
+            event.ignore()
+            return
+        if not self._cancel_jobs_for_quit():
             event.ignore()
             return
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
         event.accept()
+
+    def _confirm_quit_with_jobs(self, count: int) -> bool:
+        """True to quit and cancel. Separate so a test can answer it."""
+        plural = "job" if count == 1 else "jobs"
+        return QMessageBox.question(
+            self, "Background stacking",
+            f"{count} stacking {plural} still running. Quit anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes
+
+    def _cancel_jobs_for_quit(self) -> bool:
+        """Ask (if anything is still queued/running), then cancel, then wait
+        for real. False means the user chose to keep working.
+
+        The wait must run whenever `running()` names a job — NOT only when
+        something is still "queued"/"running". `JobQueue.cancel` marks a job
+        "cancelled" and sends SIGTERM immediately, but its reader thread stays
+        alive until the child's stdout actually closes; `JobsPanel` shows
+        exactly this window as "stopping…", and `running()` keeps naming the
+        job throughout it. Gating the wait on the queued/running predicate
+        skipped it on the single likeliest route to the hazard it exists for:
+        Cancel in the panel, then Quit — nothing left queued or running, but
+        the reader thread is still alive and about to emit.
+
+        The wait itself is not cosmetic: `JobQueue.wait_for_shutdown` joins
+        the live reader thread(s) before this method returns, so `closeEvent`
+        cannot go on to destroy the JobQueue while one of them might still
+        deliver its exit signal to it — that lands on a torn-down C++ object
+        and segfaults, not a Python exception, so nothing downstream could
+        catch it.
+        """
+        outstanding = [j for j in self._job_queue.jobs()
+                       if j.state in ("queued", "running")]
+        if outstanding:
+            if not self._confirm_quit_with_jobs(len(outstanding)):
+                return False
+            self._job_queue.cancel_all()
+        if self._job_queue.running() is not None:
+            self._job_queue.wait_for_shutdown()
+        return True
 
     # --- dirty-state tracking + window title ---
     def _mark_dirty(self) -> None:
@@ -835,28 +904,113 @@ class MainWindow(QMainWindow):
         BatchDialog(self.settings, self).exec()
 
     def _open_stack(self) -> None:
-        try:
-            from .stack_dialog import StackDialog
-        except ImportError:
-            self._show_warning("Stacking unavailable — install astroalign and sep.")
-            return
-        StackDialog(self.settings, self,
-                    on_settings_changed=self._save_settings,
-                    on_master=lambda img: self.open_image(img, "stacked master")).exec()
+        # No try/except ImportError here any more: `job_queue` (imported at
+        # module level, above) already pulls in astroalign/sep to build this
+        # module at all, so that guard could never be reached — an
+        # environment missing either hard dep now fails at app launch, not
+        # here. Both are hard deps in pyproject.toml.
+        from .stack_dialog import StackDialog
+        dlg = StackDialog(self.settings, self,
+                          on_settings_changed=self._save_settings,
+                          on_background=self._start_background_stack,
+                          queue_busy=self._job_queue.busy,
+                          # dlg, not a captured path: _rename_to_true_count
+                          # can rewrite output_edit AFTER the user's own
+                          # choice, right before on_master fires, and reading
+                          # it here (closure, called only once dlg exists)
+                          # always sees that final value.
+                          on_master=lambda img: self._on_foreground_master(
+                              img, "stacked master", dlg.output_edit.text().strip()))
+        dlg.exec()
 
     def _open_combine(self) -> None:
+        # Deliberately NOT routed through _on_foreground_master: Combine
+        # writes no file anywhere — combine_dialog.py hands over an
+        # in-memory AstroImage and that is the ONLY delivery. Logging
+        # "not opened" instead of opening it would destroy the result with
+        # no way to recover it. The open-work rule is for background/
+        # foreground STACKS, which always write a master to disk first; it
+        # was scope creep to extend it to a dialog with nothing to point at.
         from .combine_dialog import CombineDialog
         CombineDialog(self.settings, self,
-                      on_master=lambda img: self.open_image(img, "combined narrowband")).exec()
+                      on_master=lambda img: self.open_image(
+                          img, "combined narrowband")).exec()
 
     def _open_haoiii(self) -> None:
-        try:
-            from .haoiii_dialog import HaOIIIDialog
-        except ImportError:
-            self._show_warning("Ha/OIII extract unavailable — install astroalign and sep.")
+        from .haoiii_dialog import HaOIIIDialog
+        dlg = HaOIIIDialog(self.settings, self,
+                           on_master=lambda img: self._on_foreground_master(
+                               img, "Ha/OIII master", dlg.output_edit.text().strip()))
+        dlg.exec()
+
+    def _start_background_stack(self, options, label: str) -> None:
+        self._job_queue.enqueue(StackJob(label, options))
+        self.log_panel.append_entry(f"Stacking {label} — sent to the background")
+
+    # --- background jobs: progress into the log, never onto the canvas ---
+    def _on_job_progress(self, job, pct: int, phase: str) -> None:
+        """Keyed on (job, phase), not just job: `job.py`'s `done` is percent
+        WITHIN the current phase and restarts at 0 on every phase change
+        (`stacker.step_label` — combining starts a fresh "Step 2 of 2" after
+        aligning reaches 100). Keying on the job alone left `last` stuck at
+        100 forever after the first phase, so every later tick failed
+        `pct < last + _JOB_LOG_EVERY` and the whole rest of an hour-long
+        stack logged nothing until the finish line."""
+        key = (id(job), phase)
+        last = self._job_logged_at.get(key)
+        if last is not None and pct < last + self._JOB_LOG_EVERY:
             return
-        HaOIIIDialog(self.settings, self,
-                     on_master=lambda img: self.open_image(img, "Ha/OIII master")).exec()
+        self._job_logged_at[key] = pct - (pct % self._JOB_LOG_EVERY)
+        self.log_panel.append_entry(f"Stacking {job.label} — {phase} ({pct}%)"
+                                    if phase else f"Stacking {job.label} — {pct}%")
+
+    def _on_job_finished(self, job, event: dict) -> None:
+        """Logged, never opened. A background stack landing on the canvas would
+        replace whatever the user had started editing while it ran."""
+        mins = int(float(event.get("seconds", 0)) // 60)
+        # `seconds` is integration_seconds — total EXPOSURE across the kept
+        # frames, not how long the background job itself took to run.
+        # stack_dialog's own foreground report calls the same field "minutes
+        # of light" (_stack_report) — matching that wording here stops the
+        # same number reading as two different things depending on which
+        # mode produced it.
+        self.log_panel.append_entry(
+            f"Stacked {job.label} — {event.get('frames', 0)} frames, "
+            f"{mins} min of light → {event.get('output', '')}")
+
+    def _on_job_failed(self, job, message: str) -> None:
+        self.log_panel.append_entry(f"Stacking {job.label} failed — {message}")
+
+    def _on_foreground_master(self, img, label: str, path: str) -> None:
+        """A finished stack never replaces work you have open — but this is
+        ONLY safe because Stack and Ha/OIII always write their master to
+        `path` FIRST; "not opened" here still means "on disk, findable".
+
+        `path` is required, not optional: this function must never be the
+        one place a result that exists NOWHERE ELSE gets discarded. Combine
+        holds its result only in memory (no output_edit, no save_fits
+        anywhere in combine_dialog.py) and is deliberately NOT routed
+        through here — see _open_combine — because logging "not opened"
+        for a Combine result would destroy it with nothing to recover.
+        A caller with no real path to give must call open_image directly,
+        not invent one; that is the loud failure this raises for.
+
+        Nothing open → it opens, as it always has. Something open → it is
+        logged (with the path, so the file is still findable) like a
+        background job, so the two modes differ in exactly one thing:
+        whether the window blocked you while it ran.
+        """
+        if not path:
+            raise ValueError(
+                "_on_foreground_master requires a real file path: it is only "
+                "safe for a result that ALSO exists on disk. A result that "
+                "exists only in memory must not be routed through here — "
+                "call open_image directly instead (see _open_combine).")
+        if self.project is None:
+            self.open_image(img, label)
+            return
+        self.log_panel.append_entry(
+            f"Stacked {label} — not opened, you have an image open → {path}")
 
     def _open_star_spikes(self) -> None:
         if self.project is None:

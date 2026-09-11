@@ -90,7 +90,8 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
 
 class StackDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None,
-                 on_settings_changed=None) -> None:
+                 on_settings_changed=None, on_background=None,
+                 queue_busy=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
@@ -108,6 +109,14 @@ class StackDialog(QDialog):
         self._settings = settings
         self._on_settings_changed = on_settings_changed
         self._on_master = on_master
+        self._on_background = on_background
+        # Zero-arg predicate: True while ANY background job is queued or
+        # running. A FRESH StackDialog starts with _busy = False and knows
+        # nothing about the job queue on its own — a background stack, then a
+        # second StackDialog on the same folder pressing plain Stack, resolved
+        # to the SAME auto-generated output path with no guard at all. None in
+        # standalone use (and most tests): nothing to check against.
+        self._queue_busy = queue_busy
         self._grade_runner = grade_frames  # injectable for tests
         self._stack_runner = run_stack      # injectable for tests
         self._mosaic_runner = run_mosaic    # injectable for tests
@@ -277,16 +286,43 @@ class StackDialog(QDialog):
         self._stack_btn = QPushButton("Stack")
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
+        self.background_btn = QPushButton("Stack in background")
+        self.background_btn.setToolTip(
+            "Start the stack and close this window. It keeps running while "
+            "you work; progress appears below and the master is written "
+            "to disk.")
+        self.background_btn.clicked.connect(self._stack_in_background)
+        # Standalone (and in tests) there is nowhere to send it, so it is not
+        # offered rather than offered and broken.
+        self.background_btn.setVisible(on_background is not None)
+        # Why it may be greyed even when offered: THIS dialog's own foreground
+        # run (same output-path race _set_busy exists to prevent — see
+        # _stack_in_background) or "Stack as mosaic" (the background job
+        # protocol carries a plain StackOptions, see nocturne/stacking/job.py;
+        # a mosaic is a different options type it cannot express, so
+        # backgrounding one would silently drop the checkbox and run a flat
+        # stack instead of the mosaic asked for). The mosaic reason gets a
+        # visible note below the row, exclusive_note's pattern, rather than
+        # living only in a tooltip.
+        self.background_note = _Hint("")
+        self.mosaic_check.toggled.connect(lambda *_: self._sync_background_availability())
+        self._sync_background_availability()
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.clicked.connect(self._cancel_active)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.hide()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self._stack_btn)
-        buttons.addWidget(self._cancel_btn)
-        buttons.addWidget(close_btn)
+        buttons_row = QHBoxLayout()
+        buttons_row.addWidget(self._stack_btn)
+        buttons_row.addWidget(self.background_btn)
+        buttons_row.addWidget(self._cancel_btn)
+        buttons_row.addWidget(close_btn)
+        buttons_col = QVBoxLayout()
+        buttons_col.setContentsMargins(0, 0, 0, 0)
+        buttons_col.setSpacing(2)
+        buttons_col.addLayout(buttons_row)
+        buttons_col.addWidget(self.background_note)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.table)
@@ -322,7 +358,7 @@ class StackDialog(QDialog):
         root.addWidget(self.splitter, 1)
         root.addWidget(self.progress)
         root.addWidget(self.status)
-        root.addLayout(buttons)
+        root.addLayout(buttons_col)
         self._fitted = False       # _fit_to_content runs once, on first show
 
     def _mark_output_edited(self, _text: str) -> None:
@@ -393,11 +429,15 @@ class StackDialog(QDialog):
     # --- busy state ---
     def _set_busy(self, busy: bool) -> None:
         """Block the Stack button (and re-entrant runs) while async work runs, so
-        two workers can't stack to the same output path at once."""
+        two workers can't stack to the same output path at once. The
+        background button gets the same guard — see _stack_in_background —
+        composed with the mosaic gate in _sync_background_availability, so
+        re-enabling on finish does not light it up while mosaic is checked."""
         self._busy = busy
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)
+        self._sync_background_availability()
 
     # --- cancellable async dispatch ---
     def _start(self, work, on_done, status: str) -> None:
@@ -482,12 +522,14 @@ class StackDialog(QDialog):
         shown = (bool(getattr(self._settings, "help_expanded", True))
                  and not getattr(self, "_hints_forced_closed", False))
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
-        # "this will take N hours and write M MB" estimate, and
-        # `exclusive_note` says why a box you just ticked untucked another.
-        # Those are what you decide ON, not what explains the control — hiding
-        # them with the help would mean collapsing the explanations quietly
-        # removed the numbers you needed to choose.
-        always = {self.drizzle_note, self.exclusive_note}
+        # "this will take N hours and write M MB" estimate, `exclusive_note`
+        # says why a box you just ticked untucked another, and
+        # `background_note` says why a button beside it has gone dead. Those
+        # are what you decide ON, not what explains the control — hiding them
+        # with the help would mean collapsing the explanations quietly removed
+        # the numbers you needed to choose, or left a disabled control with no
+        # reason anywhere on screen.
+        always = {self.drizzle_note, self.exclusive_note, self.background_note}
         for hint in self.findChildren(_Hint):
             if hint not in always:
                 hint.setVisible(shown)
@@ -567,6 +609,22 @@ class StackDialog(QDialog):
             "Drizzle runs on every pointing, so a mosaic multiplies its cost — "
             "expect this to take a very long time."
             if both and self.mosaic_check.isEnabled() else "")
+
+    def _sync_background_availability(self) -> None:
+        """Disabled while THIS dialog's own foreground stack is running (the
+        same output-path race `_set_busy` exists to prevent) or while "Stack
+        as mosaic" is checked (see the comment where the button is created).
+        Busy is transient and self-evident from the status text and progress
+        bar already on screen; mosaic gets its own visible note so the reason
+        doesn't require a hover to find — the note explains, the disable
+        enforces."""
+        if self._on_background is None:
+            return
+        mosaic = self.mosaic_check.isChecked()
+        self.background_btn.setEnabled(not (self._busy or mosaic))
+        self.background_note.setText(
+            "Mosaics can't run in the background yet — use Stack."
+            if mosaic else "")
 
     # --- grade ---
     def grade(self) -> None:
@@ -755,21 +813,64 @@ class StackDialog(QDialog):
                 chosen.append(self._stats[row])
         return order_best_first(chosen)
 
+    def _method(self) -> str:
+        if self.drizzle_check.isChecked():
+            return "drizzle"      # drizzle does its own sigma-clip rejection
+        return "sigma_clip" if self.sigma_radio.isChecked() else "average"
+
+    def _options(self):
+        """The one place a StackOptions is built. Two buttons now start the
+        same stack; building it twice is how they would come to mean
+        different things."""
+        return StackOptions(self._method(), KAPPA[self.kappa_box.currentText()],
+                            self._included_paths_best_first(),
+                            self.output_edit.text().strip(),
+                            autocrop=self.crop_check.isChecked())
+
+    def _target_label(self) -> str:
+        """The same name _auto_output_path already derives for the output
+        filename, so the log and the file agree on what this was."""
+        target = next((s.target for s in self._stats
+                       if s.included and s.target), "")
+        return target or "stacked master"
+
+    def _validate_ready_to_run(self) -> bool:
+        """Shared by both buttons: Stack and Stack in background start the
+        SAME job, so they must refuse under the same conditions with the
+        same message rather than drift into checking different things — see
+        the bug this closed, where the background button skipped both of
+        these and enqueued StackOptions(include=[], output_path='', ...)."""
+        if not self.output_edit.text().strip():
+            self.status.setText("Pick an output path.")
+            return False
+        if len(self._included_paths_best_first()) < 3:
+            self.status.setText("Select at least 3 frames to stack.")
+            return False
+        return True
+
     def run(self) -> None:
         if self._busy:
             self.status.setText("Please wait — still working…")
             return
-        if not self.output_edit.text().strip():
-            self.status.setText("Pick an output path.")
+        # Refuses rather than warns-then-allows: a silent OR a dismissable
+        # start both let a background job and this dialog's foreground run
+        # write the SAME auto-generated output path at once — ~17 GB
+        # resident and a corrupted master, discovered only after the fact.
+        # A fresh StackDialog starts with _busy = False and cannot see the
+        # job queue any other way (`_set_busy` only guards THIS dialog
+        # against itself). `_stack_in_background` does not need this check:
+        # the queue itself serialises background jobs one at a time, so a
+        # second one just waits instead of racing.
+        if self._queue_busy is not None and self._queue_busy():
+            self.status.setText(
+                "A background stack is already running — wait for it to "
+                "finish before starting another (they could write the same "
+                "file).")
+            return
+        if not self._validate_ready_to_run():
             return
         include = self._included_paths_best_first()
-        if len(include) < 3:
-            self.status.setText("Select at least 3 frames to stack.")
-            return
-        if self.drizzle_check.isChecked():
-            method = "drizzle"      # drizzle does its own sigma-clip rejection
-        else:
-            method = "sigma_clip" if self.sigma_radio.isChecked() else "average"
+        method = self._method()
 
         if self.mosaic_check.isChecked():
             mosaic_opts = MosaicOptions(
@@ -788,9 +889,7 @@ class StackDialog(QDialog):
                         "this takes considerably longer than one stack.")
             return
 
-        opts = StackOptions(method, KAPPA[self.kappa_box.currentText()],
-                            include, self.output_edit.text().strip(),
-                            autocrop=self.crop_check.isChecked())
+        opts = self._options()
         runner = self._stack_runner
 
         def work():
@@ -798,6 +897,20 @@ class StackDialog(QDialog):
                           self._signals.progress.emit(i, n, label))
 
         self._start(work, self._on_stacked, "Stacking…")
+
+    def _stack_in_background(self) -> None:
+        if self._on_background is None:
+            return
+        if self._busy:
+            self.status.setText("Please wait — still working…")
+            return
+        if not self._validate_ready_to_run():
+            return
+        if self.mosaic_check.isChecked():
+            self.status.setText("Mosaics can't run in the background yet — use Stack.")
+            return
+        self._on_background(self._options(), self._target_label())
+        self.accept()
 
     def _on_progress(self, i: int, n: int, label: str) -> None:
         self.progress.setMaximum(max(1, n))

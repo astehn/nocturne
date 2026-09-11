@@ -992,8 +992,13 @@ def test_every_hint_starts_at_the_same_left_edge(qtbot):
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
+    # `background_note` is excluded: it sits under the button ROW, explaining
+    # why the button beside it is dead, and has no column of prose to line up
+    # with. The rule this test exists for is about the options form, where
+    # ragged left edges were the original complaint.
     lefts = {h.mapTo(d, h.rect().topLeft()).x()
-             for h in d.findChildren(_Hint) if h.isVisible()}
+             for h in d.findChildren(_Hint)
+             if h.isVisible() and h is not d.background_note}
     assert len(lefts) == 1, f"hints start at {len(lefts)} different x positions: {sorted(lefts)}"
 
 
@@ -1207,3 +1212,255 @@ def test_no_explanation_is_ever_cut_off(qtbot, tmp_path, size):
                for h in d.findChildren(_Hint)
                if h.isVisible() and h.height() < h.minimumSizeHint().height() - 1]
     assert not clipped, f"at {size}: {clipped}"
+
+
+# --- "Stack in background" (Task 5 fix round 1) ---
+
+def test_background_button_hidden_without_on_background(qtbot):
+    """Opt-in, not opt-out: standalone (and every existing caller/test that
+    doesn't pass on_background) must not be offered a button with nowhere
+    to send its result."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    assert not dlg.background_btn.isVisible()
+
+
+def test_background_button_shown_with_on_background(qtbot):
+    dlg = StackDialog(Settings(), on_background=lambda opts, label: None)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    assert dlg.background_btn.isVisible()
+
+
+def test_clicking_background_button_calls_on_background_with_options(qtbot, tmp_path):
+    """Driven with a real click — qtbot.mouseClick — not by calling
+    _stack_in_background() directly: the button-to-handler connection is the
+    one thing only a click actually exercises, and it's the only way a user
+    reaches this feature."""
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts, label=label))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    def graded(paths, on_progress=None, strictness="normal"):
+        out = [_stats(a, 0.4), _stats(b, 0.6), _stats(c, 0.9)]
+        for s in out:
+            s.target = "IC 1396A"
+        return out
+
+    dlg._grade_runner = graded
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    assert dlg.background_btn.isEnabled()
+    qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
+
+    assert "opts" in got, "clicking the button never reached on_background"
+    assert len(got["opts"].include) == 3
+    assert got["opts"].output_path == str(tmp_path / "master.fits")
+    assert got["label"] == "IC 1396A"
+
+
+def test_background_button_disabled_while_dialog_is_busy(qtbot):
+    """The same output-path race _set_busy guards Stack against must guard
+    Stack in background too — see run()'s own docstring."""
+    dlg = StackDialog(Settings(), on_background=lambda *a: None)
+    qtbot.addWidget(dlg)
+    assert dlg.background_btn.isEnabled()
+    dlg._set_busy(True)
+    assert not dlg.background_btn.isEnabled()
+
+
+def test_clicking_background_button_while_busy_does_nothing(qtbot):
+    """Proves the guard lives in the handler, not only in the (disabled,
+    unclickable) button — a foreground stack must not be joined by a second
+    writer to the same output path."""
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg._set_busy(True)
+    dlg._stack_in_background()
+    assert "opts" not in got
+
+
+def test_background_button_disabled_and_noted_while_mosaic_checked(qtbot):
+    """The background job protocol carries a plain StackOptions and cannot
+    express a mosaic — see nocturne/stacking/job.py. The reason is a visible
+    note (exclusive_note's pattern), not hover-only."""
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg.mosaic_check.setEnabled(True)   # normally gated on multi-pointing detection
+    dlg.mosaic_check.setChecked(True)
+    assert not dlg.background_btn.isEnabled()
+    assert "background" in dlg.background_note.text().lower()
+    # Defence in depth: even a direct call must not silently drop the mosaic
+    # flag and run a flat stack of a mosaic set.
+    dlg._stack_in_background()
+    assert "opts" not in got
+
+
+def test_mosaic_gate_still_wins_after_set_busy_false(qtbot):
+    """Composing with the mosaic gate, not fighting it: re-enabling after a
+    stack finishes must not light the button up while mosaic is checked."""
+    dlg = StackDialog(Settings(), on_background=lambda *a: None)
+    qtbot.addWidget(dlg)
+    dlg.mosaic_check.setEnabled(True)
+    dlg.mosaic_check.setChecked(True)
+    dlg._set_busy(True)
+    assert not dlg.background_btn.isEnabled()
+    dlg._set_busy(False)
+    assert not dlg.background_btn.isEnabled(), \
+        "mosaic is still checked, so the background button must stay disabled"
+
+
+def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
+    """A disabled control must never be left with its reason nowhere on screen.
+
+    `help_expanded` persists between sessions, so a user who collapsed the
+    explanations months ago meets a dead "Stack in background" button and no
+    explanation at all — the button's own tooltip is static and describes what
+    it does when it works, which in this state contradicts what they see.
+
+    This is the second half of the visible-note pattern: `_apply_hints_visible`
+    exempts the hints you decide ON from the help toggle, and a note copied
+    without its exemption is hover-only again.
+    """
+    d = StackDialog(Settings(), on_background=lambda opts, label: None)
+    qtbot.addWidget(d)
+    d.mosaic_check.setChecked(True)
+    d._settings.help_expanded = False
+    d._apply_hints_visible()
+    d.show()
+    qtbot.waitExposed(d)
+
+    assert not d.background_btn.isEnabled()
+    assert d.background_note.isVisible(), (
+        "the reason the background button is disabled vanished with the help")
+    assert "mosaic" in d.background_note.text().lower()
+
+
+# --- Fix round 2: queue-aware guard, and the background button's validations ---
+
+def test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy(qtbot, tmp_path):
+    """The intra-dialog busy guard (_set_busy) only protects a dialog against
+    ITSELF. A FRESH StackDialog starts with _busy = False and, without this
+    check, knows nothing about a background stack already running elsewhere.
+    Reproduced: background a stack, open a second StackDialog on the same
+    folder, press Stack — it ran, two writers on the same auto-generated
+    output path.
+    """
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
+    ran = {}
+
+    def fake_stack(opts, on_progress=None):
+        ran["called"] = True
+        raise AssertionError("must never reach the runner while the queue is busy")
+
+    dlg = StackDialog(Settings(), queue_busy=lambda: True)
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = fake_stack
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6), _stats(c, 0.9),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    dlg.run()
+
+    assert "called" not in ran, "the foreground runner must never start while a background job is busy"
+    assert not dlg._busy, "run() must not have started the async worker at all"
+    assert "background" in dlg.status.text().lower()
+
+
+def test_a_fresh_dialog_runs_when_the_queue_is_free(qtbot, tmp_path):
+    """The queue_busy guard must not become a blanket refusal: with nothing
+    running, Stack must work exactly as it always has."""
+    for name in ("a.fit", "b.fit", "c.fit"):
+        (tmp_path / name).write_text("x")
+    a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
+    got = {}
+
+    class _Img:
+        pass
+
+    def fake_stack(opts, on_progress=None):
+        got["opts"] = opts
+        from nocturne.stacking.stacker import StackResult
+        return StackResult(_Img(), opts.include, [], len(opts.include), 30.0, opts.output_path)
+
+    dlg = StackDialog(Settings(), queue_busy=lambda: False)
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = fake_stack
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6), _stats(c, 0.9),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    dlg.run()
+
+    qtbot.waitUntil(lambda: "opts" in got, timeout=2000)
+
+
+def test_clicking_background_button_without_grading_refuses(qtbot):
+    """Reproduced: on a freshly opened dialog with nothing graded, the button
+    was enabled, and a real click enqueued StackOptions(include=[],
+    output_path='', ...) then closed the dialog — a child spawned over
+    silence, with only a failure line in the log seconds later."""
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+
+    assert dlg.background_btn.isEnabled()
+    qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
+
+    assert "opts" not in got, "must not enqueue with nothing graded"
+    assert dlg.isVisible(), "must not close the dialog on a refused click"
+    assert "output path" in dlg.status.text().lower()
+
+
+def test_clicking_background_button_with_too_few_frames_refuses(qtbot, tmp_path):
+    for name in ("a.fit", "b.fit"):
+        (tmp_path / name).write_text("x")
+    a, b = (str(tmp_path / n) for n in ("a.fit", "b.fit"))
+    got = {}
+    dlg = StackDialog(Settings(),
+                      on_background=lambda opts, label: got.update(opts=opts))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
+        _stats(a, 0.4), _stats(b, 0.6),
+    ]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+
+    qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
+
+    assert "opts" not in got, "must not enqueue with fewer than 3 frames"
+    assert dlg.isVisible()
+    assert "at least 3" in dlg.status.text().lower()
