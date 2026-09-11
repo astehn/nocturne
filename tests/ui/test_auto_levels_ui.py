@@ -124,8 +124,11 @@ def test_navigating_away_and_back_forgets_that_auto_was_pressed(qtbot, tmp_path)
     win = _levels_window(qtbot, tmp_path)
     win._on_levels_auto()
     assert win._levels_auto is True
-    win._go_to_id("curves")
-    win._go_to_id("levels")
+    # user_initiated=False: this round trip is test plumbing to force a panel
+    # rebuild, not a simulated user abandoning a pending change — the pending
+    # guard has its own tests in tests/ui/test_step_commit_model.py.
+    win._go_to_id("curves", user_initiated=False)
+    win._go_to_id("levels", user_initiated=False)
     assert win._panel.auto_btn.isChecked() is False, "the rebuilt button is unchecked"
     assert win._levels_auto is False, (
         "the flag outlived the panel: Apply would now record 'auto' for values "

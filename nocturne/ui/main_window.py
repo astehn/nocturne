@@ -1798,9 +1798,19 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))
 
-    def _go_to(self, index: int) -> None:
+    def _go_to(self, index: int, *, user_initiated: bool = True) -> None:
+        """`user_initiated` defaults to True so a navigation route added later is
+        guarded unless it opts out — the two that opt out are loading an image
+        and undo/redo/restore (via _navigate_to_step), neither of which is
+        abandoning work the user just did."""
         if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
+        if user_initiated and self._has_pending():
+            answer = self._ask_pending(self._stages[self._stage].label)
+            if answer == "cancel":
+                return
+            if answer == "apply":
+                self._apply_current_step()
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
@@ -1814,11 +1824,56 @@ class MainWindow(QMainWindow):
         self._rebuild_panel()
         self._refresh()
 
-    def _go_to_id(self, stage_id: str) -> None:
+    def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
         for i, s in enumerate(self._stages):
             if s.id == stage_id:
-                self._go_to(i)
+                self._go_to(i, user_initiated=user_initiated)
                 return
+
+    def _ask_pending(self, step_label: str) -> str:
+        """'apply', 'discard' or 'cancel'. Split out so tests can answer it
+        without a real modal ever appearing."""
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{APP_NAME} — {step_label}")
+        box.setText(f"{step_label} has unapplied changes.")
+        apply_btn = box.addButton("Apply and continue",
+                                  QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = box.addButton("Continue without applying",
+                                 QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(apply_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        return ("apply" if clicked is apply_btn
+                else "discard" if clicked is skip_btn else "cancel")
+
+    def _apply_current_step(self) -> None:
+        """Press this step's own Apply button(s).
+
+        Every stage that can commit sets `w.apply_btn` in build_panel, already
+        connected to the handler `_has_pending` tracks — except Color, whose
+        `apply_btn` ("Apply Color") commits the colour-calibration method, a
+        decision `_has_pending` does not track at all there. What IS tracked
+        on Color is its two live previews (tint, remove-green), each with its
+        own button (`apply_tint_btn`, `remove_green_btn`). Pressing the wrong
+        one would commit a method nobody asked for and STILL discard the tint
+        or green the user set — worse than the silent discard this guard
+        exists to prevent — so Color presses whichever of its own buttons
+        matches what is actually pending.
+        """
+        if self.current_stage_id() == "color":
+            if self._tint_pending is not None:
+                btn = getattr(self._panel, "apply_tint_btn", None)
+                if btn is not None and btn.isEnabled():
+                    btn.click()
+            if self._rg_pending is not None:
+                btn = getattr(self._panel, "remove_green_btn", None)
+                if btn is not None and btn.isEnabled():
+                    btn.click()
+            return
+        btn = getattr(self._panel, "apply_btn", None)
+        if btn is not None and btn.isEnabled():
+            btn.click()
 
     # --- file / project ---
     def _choose_fits(self) -> None:
@@ -1862,7 +1917,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
         )
-        self._go_to_id("load")  # stay on Import & assess so the user sees metadata
+        self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._dirty = False
         self._update_title()
@@ -3284,7 +3339,7 @@ class MainWindow(QMainWindow):
         target = next((i for i, s in enumerate(self._stages)
                        if s.id == sid and s.enabled), None) if sid else None
         if target is not None:
-            self._go_to(target)
+            self._go_to(target, user_initiated=False)
         else:
             self._refresh()
 
