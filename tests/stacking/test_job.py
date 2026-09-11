@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from nocturne.stacking.job import emit, options_from_json, run_job
+from nocturne.stacking.job import emit, job_command, options_from_json, run_job
 
 
 def _opts_text(**over):
@@ -194,3 +194,78 @@ def test_on_progress_with_zero_total():
         assert code == 0
         assert events[0]["event"] == "progress"
         assert events[0]["done"] == 0  # Guard produced 0, not ZeroDivisionError
+
+
+def test_job_command_frozen_true():
+    """Frozen, sys.executable IS the app binary and knows --stack-job.
+    A -m flag would re-launch the whole app instead of running a job."""
+    import sys
+    cmd = job_command("/x.json", frozen=True)
+    assert cmd == [sys.executable, "--stack-job", "/x.json"]
+    assert "-m" not in cmd, (
+        "a frozen build would re-launch the app instead of running a job"
+    )
+
+
+def test_job_command_frozen_false():
+    """From source, sys.executable is a bare interpreter; the module has to be named."""
+    import sys
+    cmd = job_command("/x.json", frozen=False)
+    assert cmd == [sys.executable, "-m", "nocturne", "--stack-job", "/x.json"]
+
+
+def test_job_command_detects_sys_frozen(monkeypatch):
+    """The frozen parameter is optional; the default reads sys.frozen."""
+    import sys
+    # Monkeypatch with raising=False so the attribute is deleted in teardown
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    cmd = job_command("/x.json")
+    assert cmd == [sys.executable, "--stack-job", "/x.json"]
+    # Teardown is automatic via raising=False
+
+
+def test_job_command_end_to_end_from_source():
+    """End-to-end: spawn a real child with frozen=False and verify it runs
+    correctly from source. One frame is fewer than the three run_stack needs,
+    so the job should report an error event honestly."""
+    import pathlib
+    import subprocess
+    import tempfile
+    import os
+
+    opts = {
+        "method": "average",
+        "kappa": 2.5,
+        "include": ["x.fit"],
+        "output_path": "/tmp/nope.fits",
+        "autocrop": True,
+        "pixfrac": 0.9,
+    }
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    tmpdir = tempfile.mkdtemp()
+    opts_path = os.path.join(tmpdir, "opts.json")
+    with open(opts_path, "w") as f:
+        json.dump(opts, f)
+
+    try:
+        cmd = job_command(opts_path, frozen=False)
+        result = subprocess.run(
+            cmd,
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        # One frame is fewer than the three run_stack needs, so the job fails
+        # with an error event. If the command were malformed, we'd see a
+        # Python usage error on stderr instead.
+        assert result.returncode != 0, "job should fail (only 1 frame)"
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) > 0, "no output from child"
+        event = json.loads(lines[-1])
+        assert event["event"] == "error", (
+            f"expected error event, got {event}. stderr: {result.stderr[:200]}"
+        )
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)

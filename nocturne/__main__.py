@@ -142,6 +142,11 @@ def main() -> None:
     if "--check-network" in sys.argv:
         raise SystemExit(_check_network())
 
+    # Background stacking child process. No GUI, no event loop.
+    if "--stack-job" in sys.argv:
+        from .stacking.job import main as job_main
+        raise SystemExit(job_main(sys.argv))
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
 

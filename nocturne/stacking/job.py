@@ -73,3 +73,18 @@ def main(argv: list[str], out=None) -> int:
     except Exception as exc:                      # noqa: BLE001 - reported as data
         emit({"event": "error", "message": str(exc)}, out)
         return 1
+
+
+def job_command(options_path: str, frozen: bool | None = None) -> list[str]:
+    """The other end of `main`'s argv contract — kept here so the two cannot drift.
+
+    Frozen, `sys.executable` IS the app binary and knows `--stack-job`; `-m`
+    there would re-launch the whole of Nocturne instead of running a job. From
+    source `sys.executable` is a bare interpreter, which knows neither, so the
+    module has to be named. The two cases are opposites, and getting the frozen
+    one wrong is invisible until the packaged build ships.
+    """
+    if frozen is None:
+        frozen = bool(getattr(sys, "frozen", False))
+    head = [sys.executable] if frozen else [sys.executable, "-m", "nocturne"]
+    return [*head, "--stack-job", options_path]
