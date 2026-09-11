@@ -1,5 +1,6 @@
 """The two modes, and the rule that a finished stack never replaces open work."""
 import json
+import threading
 
 import numpy as np
 import pytest
@@ -129,3 +130,40 @@ def test_the_panel_is_in_the_window_and_shows_when_a_job_starts(qtbot, tmp_path,
     win._job_queue.enqueue(_job("A"))
     assert win.jobs_panel.isVisible()
     assert "A" in win.jobs_panel.rows()[0]
+
+
+def test_quitting_after_a_cancel_that_has_not_reaped_still_waits(qtbot, tmp_path):
+    """Cancel in the panel, then quit: nothing is left "queued" or "running"
+    (the job is "cancelled"), but its reader thread can still be alive —
+    JobsPanel shows exactly this window as "stopping…", and `running()` keeps
+    naming the job throughout it. Gating the wait on queued/running skipped it
+    on precisely this route — the likeliest one — to the uncatchable
+    delivery-time crash `wait_for_shutdown` exists to prevent.
+    """
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    job = _job("A")
+    win._job_queue._jobs.append(job)
+    job.state = "cancelled"          # already cancelled: NOT queued, NOT running
+    win._job_queue._running = job    # but still occupying the slot: not yet reaped
+
+    # Nothing is queued/running, so quitting here must not even ask —
+    # the user already chose to stop this job via Cancel.
+    def _unexpected(_n):
+        raise AssertionError("must not ask to quit — nothing is queued/running")
+
+    win._confirm_quit_with_jobs = _unexpected
+
+    still_alive = threading.Event()
+
+    def slow_finish():
+        still_alive.wait(timeout=0.3)
+
+    t = threading.Thread(target=slow_finish)
+    win._job_queue._reader_threads.append(t)
+    t.start()
+
+    assert win._cancel_jobs_for_quit() is True
+    assert not t.is_alive(), \
+        "closeEvent's wait never joined the leftover (not-yet-reaped) reader thread"

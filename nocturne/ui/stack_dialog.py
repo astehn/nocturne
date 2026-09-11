@@ -279,14 +279,24 @@ class StackDialog(QDialog):
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
         self.background_btn = QPushButton("Stack in background")
+        self.background_btn.setToolTip(
+            "Start the stack and close this window. It keeps running while "
+            "you work; progress appears below and the master is written "
+            "to disk.")
         self.background_btn.clicked.connect(self._stack_in_background)
         # Standalone (and in tests) there is nowhere to send it, so it is not
         # offered rather than offered and broken.
         self.background_btn.setVisible(on_background is not None)
-        # The background job protocol carries a plain StackOptions (see
-        # nocturne/stacking/job.py) — a mosaic is a different options type it
-        # cannot express, so backgrounding one would silently drop the
-        # checkbox and run a flat stack instead of the mosaic asked for.
+        # Why it may be greyed even when offered: THIS dialog's own foreground
+        # run (same output-path race _set_busy exists to prevent — see
+        # _stack_in_background) or "Stack as mosaic" (the background job
+        # protocol carries a plain StackOptions, see nocturne/stacking/job.py;
+        # a mosaic is a different options type it cannot express, so
+        # backgrounding one would silently drop the checkbox and run a flat
+        # stack instead of the mosaic asked for). The mosaic reason gets a
+        # visible note below the row, exclusive_note's pattern, rather than
+        # living only in a tooltip.
+        self.background_note = _Hint("")
         self.mosaic_check.toggled.connect(lambda *_: self._sync_background_availability())
         self._sync_background_availability()
         self._cancel_btn = QPushButton("Cancel")
@@ -295,11 +305,16 @@ class StackDialog(QDialog):
         self._cancel_btn.hide()
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
-        buttons = QHBoxLayout()
-        buttons.addWidget(self._stack_btn)
-        buttons.addWidget(self.background_btn)
-        buttons.addWidget(self._cancel_btn)
-        buttons.addWidget(close_btn)
+        buttons_row = QHBoxLayout()
+        buttons_row.addWidget(self._stack_btn)
+        buttons_row.addWidget(self.background_btn)
+        buttons_row.addWidget(self._cancel_btn)
+        buttons_row.addWidget(close_btn)
+        buttons_col = QVBoxLayout()
+        buttons_col.setContentsMargins(0, 0, 0, 0)
+        buttons_col.setSpacing(2)
+        buttons_col.addLayout(buttons_row)
+        buttons_col.addWidget(self.background_note)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.table)
@@ -335,7 +350,7 @@ class StackDialog(QDialog):
         root.addWidget(self.splitter, 1)
         root.addWidget(self.progress)
         root.addWidget(self.status)
-        root.addLayout(buttons)
+        root.addLayout(buttons_col)
         self._fitted = False       # _fit_to_content runs once, on first show
 
     def _mark_output_edited(self, _text: str) -> None:
@@ -406,11 +421,15 @@ class StackDialog(QDialog):
     # --- busy state ---
     def _set_busy(self, busy: bool) -> None:
         """Block the Stack button (and re-entrant runs) while async work runs, so
-        two workers can't stack to the same output path at once."""
+        two workers can't stack to the same output path at once. The
+        background button gets the same guard — see _stack_in_background —
+        composed with the mosaic gate in _sync_background_availability, so
+        re-enabling on finish does not light it up while mosaic is checked."""
         self._busy = busy
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)
+        self._sync_background_availability()
 
     # --- cancellable async dispatch ---
     def _start(self, work, on_done, status: str) -> None:
@@ -582,18 +601,20 @@ class StackDialog(QDialog):
             if both and self.mosaic_check.isEnabled() else "")
 
     def _sync_background_availability(self) -> None:
-        """Grey the button out rather than have it silently drop the mosaic
-        checkbox — see the comment where it's created."""
+        """Disabled while THIS dialog's own foreground stack is running (the
+        same output-path race `_set_busy` exists to prevent) or while "Stack
+        as mosaic" is checked (see the comment where the button is created).
+        Busy is transient and self-evident from the status text and progress
+        bar already on screen; mosaic gets its own visible note so the reason
+        doesn't require a hover to find — the note explains, the disable
+        enforces."""
         if self._on_background is None:
             return
         mosaic = self.mosaic_check.isChecked()
-        self.background_btn.setEnabled(not mosaic)
-        self.background_btn.setToolTip(
+        self.background_btn.setEnabled(not (self._busy or mosaic))
+        self.background_note.setText(
             "Mosaics can't run in the background yet — use Stack."
-            if mosaic else
-            "Start the stack and close this window. It keeps running while "
-            "you work; progress appears below and the master is written "
-            "to disk.")
+            if mosaic else "")
 
     # --- grade ---
     def grade(self) -> None:
@@ -844,6 +865,12 @@ class StackDialog(QDialog):
 
     def _stack_in_background(self) -> None:
         if self._on_background is None:
+            return
+        if self._busy:
+            self.status.setText("Please wait — still working…")
+            return
+        if self.mosaic_check.isChecked():
+            self.status.setText("Mosaics can't run in the background yet — use Stack.")
             return
         self._on_background(self._options(), self._target_label())
         self.accept()

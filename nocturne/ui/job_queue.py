@@ -32,15 +32,18 @@ import threading
 import time
 import os
 
-from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, Qt, Signal
 
 from ..core.tasks import kill_process
 from ..stacking.job import job_command
 
-# closeEvent's bound on waiting for a reader thread to finish at quit. SIGTERM
-# to reap is normally well under a second; generous enough to absorb a slow
-# child flushing 8.7 GB, short enough that a genuinely stuck one doesn't hang
-# the app on quit forever. See JobQueue.wait_for_shutdown.
+# closeEvent's bound on waiting for a reader thread to finish at quit.
+# Measured 2026-09-11 on a real 80-frame NGC 281 cancel: the child died under
+# 1 s after SIGTERM. 5 s is generous headroom above that, short enough that a
+# genuinely stuck child doesn't hang the app on quit forever. `cancel_all`
+# only ever sends SIGTERM and `wait_for_shutdown` never escalates past it, so
+# hitting this bound means the app can exit while that child is still alive,
+# still holding its ~8.7 GB. See JobQueue.wait_for_shutdown.
 _SHUTDOWN_TIMEOUT = 5.0
 
 
@@ -163,7 +166,12 @@ class JobQueue(QObject):
             t.join(remaining)
         app = QCoreApplication.instance()
         if app is not None:
-            app.processEvents()
+            # Called from closeEvent, so this is also pumping whatever else
+            # is queued (an update check landing, save-progress ticks) — not
+            # just our own _child_exited. ExcludeUserInputEvents keeps a
+            # stray click/keypress from being delivered mid-close; it does
+            # not affect our own queued signal, which isn't user input.
+            app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         self._running = None
         self._proc = None
 
@@ -280,10 +288,13 @@ class JobQueue(QObject):
                 msg = ((final or {}).get("message")
                        or f"stacking stopped (exit {code})")
                 self.failed.emit(job, msg)
-        # This callback only runs once the thread that spawned it has already
-        # returned (it's the last thing `_read` does), so it is always safe
-        # to drop here — a long session must not accumulate one dead Thread
-        # object per stack ever run.
+        # The emit() that reaches this callback is `_read`'s LAST statement,
+        # so its thread is normally already finished by now — but emit() on a
+        # queued connection only posts the event and returns, so that is not
+        # a hard guarantee, just the common case. Filtering on `is_alive()`
+        # rather than assuming it means a thread that hasn't quite finished
+        # yet is simply left for the next prune, and a long session still
+        # doesn't accumulate one dead Thread object per stack ever run.
         self._reader_threads = [t for t in self._reader_threads if t.is_alive()]
         self.changed.emit()
         self._pump()

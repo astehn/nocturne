@@ -620,24 +620,34 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.StandardButton.Yes
 
     def _cancel_jobs_for_quit(self) -> bool:
-        """Ask, then cancel and wait. False means the user chose to keep
-        working.
+        """Ask (if anything is still queued/running), then cancel, then wait
+        for real. False means the user chose to keep working.
 
-        The wait is not cosmetic: `JobQueue.wait_for_shutdown` joins the live
-        reader thread(s) before this method returns, so `closeEvent` cannot
-        go on to destroy the JobQueue while one of them might still deliver
-        its exit signal to it — that lands on a torn-down C++ object and
-        segfaults, not a Python exception, so nothing downstream could catch
-        it.
+        The wait must run whenever `running()` names a job — NOT only when
+        something is still "queued"/"running". `JobQueue.cancel` marks a job
+        "cancelled" and sends SIGTERM immediately, but its reader thread stays
+        alive until the child's stdout actually closes; `JobsPanel` shows
+        exactly this window as "stopping…", and `running()` keeps naming the
+        job throughout it. Gating the wait on the queued/running predicate
+        skipped it on the single likeliest route to the hazard it exists for:
+        Cancel in the panel, then Quit — nothing left queued or running, but
+        the reader thread is still alive and about to emit.
+
+        The wait itself is not cosmetic: `JobQueue.wait_for_shutdown` joins
+        the live reader thread(s) before this method returns, so `closeEvent`
+        cannot go on to destroy the JobQueue while one of them might still
+        deliver its exit signal to it — that lands on a torn-down C++ object
+        and segfaults, not a Python exception, so nothing downstream could
+        catch it.
         """
         outstanding = [j for j in self._job_queue.jobs()
                        if j.state in ("queued", "running")]
-        if not outstanding:
-            return True
-        if not self._confirm_quit_with_jobs(len(outstanding)):
-            return False
-        self._job_queue.cancel_all()
-        self._job_queue.wait_for_shutdown()
+        if outstanding:
+            if not self._confirm_quit_with_jobs(len(outstanding)):
+                return False
+            self._job_queue.cancel_all()
+        if self._job_queue.running() is not None:
+            self._job_queue.wait_for_shutdown()
         return True
 
     # --- dirty-state tracking + window title ---
@@ -927,11 +937,20 @@ class MainWindow(QMainWindow):
 
     # --- background jobs: progress into the log, never onto the canvas ---
     def _on_job_progress(self, job, pct: int, phase: str) -> None:
-        last = self._job_logged_at.get(id(job))
+        """Keyed on (job, phase), not just job: `job.py`'s `done` is percent
+        WITHIN the current phase and restarts at 0 on every phase change
+        (`stacker.step_label` — combining starts a fresh "Step 2 of 2" after
+        aligning reaches 100). Keying on the job alone left `last` stuck at
+        100 forever after the first phase, so every later tick failed
+        `pct < last + _JOB_LOG_EVERY` and the whole rest of an hour-long
+        stack logged nothing until the finish line."""
+        key = (id(job), phase)
+        last = self._job_logged_at.get(key)
         if last is not None and pct < last + self._JOB_LOG_EVERY:
             return
-        self._job_logged_at[id(job)] = pct - (pct % self._JOB_LOG_EVERY)
-        self.log_panel.append_entry(f"Stacking {job.label} — {pct}%")
+        self._job_logged_at[key] = pct - (pct % self._JOB_LOG_EVERY)
+        self.log_panel.append_entry(f"Stacking {job.label} — {phase} ({pct}%)"
+                                    if phase else f"Stacking {job.label} — {pct}%")
 
     def _on_job_finished(self, job, event: dict) -> None:
         """Logged, never opened. A background stack landing on the canvas would
