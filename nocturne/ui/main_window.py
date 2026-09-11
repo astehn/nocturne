@@ -241,8 +241,13 @@ class MainWindow(QMainWindow):
         self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
         self._tool_progress = _ToolProgressSignals()
+        # No phase name: the busy LABEL above the bar already says what is
+        # running — "Separating stars…", "Denoising with GraXpert…" — and every
+        # tool reports through this one sink, so naming the operation here named
+        # it wrongly. A star split showed "Denoising — 14%" under a label that
+        # said it was separating stars. The bar says how far; the label says what.
         self._tool_progress.progress.connect(
-            lambda done, total: self._set_progress("Denoising", done, total))
+            lambda done, total: self._set_progress("", done, total))
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
         self._save_signals = _SaveSignals()

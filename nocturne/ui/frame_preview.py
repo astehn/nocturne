@@ -39,6 +39,11 @@ class FramePreview(QWidget):
         self.overlay.setText(text)
         self.overlay.show()
 
+    def message_text(self) -> str:
+        """What the overlay currently says — so a caller can update it in place
+        (a star split counting up) and a test can read it back."""
+        return self.overlay.text()
+
     def clear(self) -> None:
         self.view.set_image(QImage())          # blank the scene
         self._has_image = False

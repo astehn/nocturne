@@ -19,6 +19,8 @@ from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
 
+_SPLIT_MSG = "Removing stars…\n(one-time, then tweak live)"
+
 _TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
 
 _ENGINE_DEFAULTS = NarrowbandParams()
@@ -195,10 +197,20 @@ class NarrowbandDialog(QDialog):
                                 "image (star colour may look off).")
             self._on_starless((self._base, None))
             return
-        self.preview.show_message("Removing stars…\n(one-time, then tweak live)")
+        self.preview.show_message(_SPLIT_MSG)
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
-                  self._on_starless, self._on_error)
+                  self._on_starless, self._on_error,
+                  on_progress=self._on_split_progress)
+
+    def _on_split_progress(self, done: int, total: int) -> None:
+        """Count the star split up in place.
+
+        The dialog's only sign of life was a static line of text, for the same
+        split that shows a moving bar in Starless Levels — same work, same wait,
+        one of them silent.
+        """
+        self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
 
     def _on_starless(self, layers) -> None:
         # A compare set up while "Removing stars..." was on screen would be left

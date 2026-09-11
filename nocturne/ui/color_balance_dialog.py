@@ -19,6 +19,8 @@ from .range_handles import RangeHandles
 from .reset_slider import ResetSlider
 from .worker import run_async
 
+_SPLIT_MSG = "Removing stars…\n(one-time, then tweak live)"
+
 _PREVIEW_MAX = 640
 _DEBOUNCE_MS = 90
 
@@ -229,10 +231,16 @@ class ColorBalanceDialog(QDialog):
                                 "so star colour shifts with the rest.")
             self._on_starless((self._base, None))
             return
-        self.preview.show_message("Removing stars…\n(one-time, then tweak live)")
+        self.preview.show_message(_SPLIT_MSG)
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
-                  self._on_starless, self._on_error)
+                  self._on_starless, self._on_error,
+                  on_progress=self._on_split_progress)
+
+    def _on_split_progress(self, done: int, total: int) -> None:
+        """Count the star split up in place — the same wait Starless Levels
+        shows a bar for."""
+        self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
 
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers

@@ -98,7 +98,7 @@ def test_a_tool_reporting_progress_drives_the_progress_bar(qtbot, tmp_path):
     qtbot.waitUntil(lambda: bool(seen), timeout=2000)
     done, total, state = seen[-1]
     assert (done, total) == (42, 100)
-    assert state == ("Denoising", 42, 100), (
+    assert state == ("", 42, 100), (
         f"progress did not reach the bar: {state}")
 
 
@@ -129,3 +129,35 @@ def test_a_percentage_is_shown_as_a_percentage(qtbot, tmp_path, phase, done, tot
     # .text(), not .format(): format() is the template with %v/%p placeholders
     # still in it, so asserting on it would pass whatever the user ends up seeing.
     assert win._progress.text() == expected
+
+
+def test_the_bar_does_not_name_the_operation_itself(qtbot, tmp_path):
+    """The busy LABEL already says what is running — "Separating stars…",
+    "Denoising with GraXpert…". The bar naming it too was both redundant and
+    wrong: the sink hardcoded "Denoising", so a star split reported
+    "Denoising — 14%" underneath a label that said it was separating stars.
+
+    One source of truth. The bar shows how far, the label says what.
+    """
+    from nocturne.core.tasks import report_progress
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    seen = []
+    # Render explicitly: the bar is only painted once the 400 ms busy threshold
+    # has passed, and a sub-threshold op shows nothing at all by design.
+    def _rendered(d, t):
+        win._apply_progress_state()
+        seen.append((win._progress_state[0], win._progress.text()))
+
+    win._tool_progress.progress.connect(_rendered)
+
+    def work():
+        report_progress(14, 100)
+        return None
+
+    win._run_busy(work, lambda _r: None, "Separating stars…", "failed")
+    qtbot.waitUntil(lambda: bool(seen), timeout=2000)
+    phase, text = seen[-1]
+    assert phase == "", f"the bar still names the operation: {phase!r}"
+    assert text == "14%", f"the bar does not show the percentage: {text!r}"
