@@ -2,6 +2,8 @@
 import json
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from nocturne.stacking.stacker import StackOptions
 from nocturne.ui.job_queue import JobQueue, StackJob
@@ -143,3 +145,84 @@ def test_a_done_event_missing_fields_does_not_crash_the_panel(
 
     assert panel.is_empty()
     assert panel.rows() == []
+
+
+def _cancel_buttons(panel):
+    """The buttons a user can actually reach, in displayed order.
+
+    Read off the layout rather than `findChildren`, which walks the tree in
+    construction order — that happens to match today and would stop matching
+    the moment a row is rebuilt in place.
+    """
+    return [r.findChild(QPushButton) for r in _rows(panel) if r is not None]
+
+
+def _rows(panel):
+    lay = panel.layout()
+    return [lay.itemAt(i).widget() for i in range(lay.count())]
+
+
+def _labels(panel):
+    """What is actually painted, as distinct from what `rows()` recomputes.
+
+    `rows()` derives its text from the queue on every call, so it agrees with
+    the model whatever the labels say — it cannot see a label written with the
+    wrong job's text. Only reading the widgets can.
+    """
+    return [r.findChild(QLabel).text() for r in _rows(panel) if r is not None]
+
+
+def test_clicking_the_first_rows_cancel_button_stops_that_job_and_no_other(
+        qtbot, monkeypatch):
+    """Through the button, not through `cancel_row`.
+
+    `cancel_row` is correct and separately tested; the connection between a
+    row's button and its index is the part only a real click exercises, and it
+    is the ONLY way a user can stop a job.
+
+    It clicks the FIRST row deliberately. Python closures capture the loop
+    variable, not its value, so a button connected without the default-arg
+    capture calls `cancel_row` with the LAST index for every row — which a
+    click on the last row cannot tell from correct behaviour. Row 0 can.
+    """
+    q = _queue(monkeypatch)
+    panel = JobsPanel(q)
+    qtbot.addWidget(panel)
+    running, queued = _job("IC 1396A"), _job("NGC 7000")
+    q.enqueue(running)
+    q.enqueue(queued)
+
+    buttons = _cancel_buttons(panel)
+    assert len(buttons) == 2, "one Cancel button per outstanding job"
+    before = queued.state
+    qtbot.mouseClick(buttons[0], Qt.MouseButton.LeftButton)
+
+    assert running.state == "cancelled"
+    assert queued.state == before, (
+        "clicking row 1's Cancel hit row 2's job — the buttons are wired to "
+        "the wrong rows")
+
+
+def test_a_progress_tick_writes_only_the_running_jobs_label(qtbot, monkeypatch):
+    """Progress is matched by job identity, and this is what pins that.
+
+    It reads the LABELS, not `rows()`. `rows()` recomputes its text from the
+    queue on every call, so it reports what the model says and agrees with
+    itself no matter what was painted — a tick that wrote the running job's
+    text onto every row would leave `rows()` looking perfect.
+    """
+    q = _queue(monkeypatch)
+    panel = JobsPanel(q)
+    qtbot.addWidget(panel)
+    running, queued = _job("IC 1396A"), _job("NGC 7000")
+    q.enqueue(running)
+    q.enqueue(queued)
+    before = _labels(panel)[1]
+
+    q.progress.emit(running, 42, "integrating")
+
+    labels = _labels(panel)
+    assert "42" in labels[0]
+    assert labels[1] == before, (
+        "the running job's progress was written onto the queued job's row")
+    assert "NGC 7000" in labels[1]

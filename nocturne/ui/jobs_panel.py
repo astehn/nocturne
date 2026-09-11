@@ -86,8 +86,10 @@ class JobsPanel(QWidget):
             row_lay.addWidget(button)
             self._lay.addWidget(row)
             self._labels.append(label)
-        # Prune percent history for jobs the queue no longer knows about, so
-        # a long session doesn't accumulate one entry per stack ever run.
+        # Drop percent history for jobs the queue has forgotten. Today it
+        # forgets none — `jobs()` keeps every job for the life of the session —
+        # so this is a no-op kept for the day that changes, not the bound on
+        # growth it would be if it fired.
         live = {id(j) for j in self._queue.jobs()}
         self._pct = {k: v for k, v in self._pct.items() if k in live}
 
