@@ -514,12 +514,14 @@ class StackDialog(QDialog):
         shown = (bool(getattr(self._settings, "help_expanded", True))
                  and not getattr(self, "_hints_forced_closed", False))
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
-        # "this will take N hours and write M MB" estimate, and
-        # `exclusive_note` says why a box you just ticked untucked another.
-        # Those are what you decide ON, not what explains the control — hiding
-        # them with the help would mean collapsing the explanations quietly
-        # removed the numbers you needed to choose.
-        always = {self.drizzle_note, self.exclusive_note}
+        # "this will take N hours and write M MB" estimate, `exclusive_note`
+        # says why a box you just ticked untucked another, and
+        # `background_note` says why a button beside it has gone dead. Those
+        # are what you decide ON, not what explains the control — hiding them
+        # with the help would mean collapsing the explanations quietly removed
+        # the numbers you needed to choose, or left a disabled control with no
+        # reason anywhere on screen.
+        always = {self.drizzle_note, self.exclusive_note, self.background_note}
         for hint in self.findChildren(_Hint):
             if hint not in always:
                 hint.setVisible(shown)

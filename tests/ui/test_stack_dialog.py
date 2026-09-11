@@ -992,8 +992,13 @@ def test_every_hint_starts_at_the_same_left_edge(qtbot):
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
+    # `background_note` is excluded: it sits under the button ROW, explaining
+    # why the button beside it is dead, and has no column of prose to line up
+    # with. The rule this test exists for is about the options form, where
+    # ragged left edges were the original complaint.
     lefts = {h.mapTo(d, h.rect().topLeft()).x()
-             for h in d.findChildren(_Hint) if h.isVisible()}
+             for h in d.findChildren(_Hint)
+             if h.isVisible() and h is not d.background_note}
     assert len(lefts) == 1, f"hints start at {len(lefts)} different x positions: {sorted(lefts)}"
 
 
@@ -1319,3 +1324,29 @@ def test_mosaic_gate_still_wins_after_set_busy_false(qtbot):
     dlg._set_busy(False)
     assert not dlg.background_btn.isEnabled(), \
         "mosaic is still checked, so the background button must stay disabled"
+
+
+def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
+    """A disabled control must never be left with its reason nowhere on screen.
+
+    `help_expanded` persists between sessions, so a user who collapsed the
+    explanations months ago meets a dead "Stack in background" button and no
+    explanation at all — the button's own tooltip is static and describes what
+    it does when it works, which in this state contradicts what they see.
+
+    This is the second half of the visible-note pattern: `_apply_hints_visible`
+    exempts the hints you decide ON from the help toggle, and a note copied
+    without its exemption is hover-only again.
+    """
+    d = StackDialog(Settings(), on_background=lambda opts, label: None)
+    qtbot.addWidget(d)
+    d.mosaic_check.setChecked(True)
+    d._settings.help_expanded = False
+    d._apply_hints_visible()
+    d.show()
+    qtbot.waitExposed(d)
+
+    assert not d.background_btn.isEnabled()
+    assert d.background_note.isVisible(), (
+        "the reason the background button is disabled vanished with the help")
+    assert "mosaic" in d.background_note.text().lower()
