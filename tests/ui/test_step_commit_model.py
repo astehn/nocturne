@@ -5,6 +5,7 @@ preview is pixel-identical to the commit (see _preview_base — that is
 deliberate), so nothing on screen distinguishes "previewed" from "applied".
 """
 import numpy as np
+import pytest
 
 from nocturne.core.image import AstroImage
 from nocturne.ui.pipeline import STEP_NAME
@@ -313,10 +314,17 @@ def test_color_apply_and_continue_commits_the_tint_not_apply_color(
     not what's pending. 'Apply and continue' must press apply_tint_btn — the
     button that actually commits what the user changed — or it would commit a
     method nobody asked for and still drop the tint, which is worse than the
-    silent discard this task exists to fix."""
+    silent discard this task exists to fix.
+
+    Moves the actual slider, not just `_on_tint_change`: `apply_tint_btn`
+    reads `tint_slider.value()` at click time (step_panels.py), not the
+    pending slot. Calling `_on_tint_change` alone left the slider at 0, so the
+    app committed `(0.0, 0.0)` while this test — asserting only the step
+    NAME — passed regardless.
+    """
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
-    win._on_tint_change(0.2, 0.0)
+    win._panel.tint_slider.setValue(20)     # -> 0.20; fires _on_tint_change
     before = list(win.project.entries())
     _answer(monkeypatch, "apply")
 
@@ -324,5 +332,223 @@ def test_color_apply_and_continue_commits_the_tint_not_apply_color(
 
     qtbot.waitUntil(lambda: len(win.project.entries()) == len(before) + 1,
                     timeout=5000)
-    assert win.project.entries()[-1][0] == "Colour Tint"
+    name, option = win.project.entries()[-1]
+    assert name == "Colour Tint"
+    assert option == (pytest.approx(0.2), pytest.approx(0.0)), (
+        f"committed {option!r}, not the slider's value")
     assert win._tint_pending is None
+
+
+def test_color_apply_and_continue_commits_remove_green_too(
+        qtbot, tmp_path, monkeypatch):
+    """The remove-green branch of `_pending_apply_targets` had no coverage:
+    deleting it left the whole file green. Untested, that is precisely the
+    bug this task exists to fix, just for Color's other slider — 'Apply and
+    continue' on a pending Remove Green silently discarding it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.rg_slider.setValue(40)   # -> 0.40; fires _on_removegreen_change
+    before = list(win.project.entries())
+    _answer(monkeypatch, "apply")
+
+    win.go_next()
+
+    qtbot.waitUntil(lambda: len(win.project.entries()) == len(before) + 1,
+                    timeout=5000)
+    name, option = win.project.entries()[-1]
+    assert name == "Remove Green"
+    assert option == pytest.approx(0.4), f"committed {option!r}, not 0.40"
+    assert win._rg_pending is None
+
+
+def test_returning_to_an_untouched_color_after_a_discarded_tint_does_not_prompt(
+        qtbot, tmp_path, monkeypatch):
+    """CRITICAL 1. `_rebuild_panel` cleared `_rg_pending` on Color but not
+    `_tint_pending`, so a discarded tint stayed in the slot forever — the next
+    visit to Color, untouched, slider at 0, read as pending. Worse than a
+    false prompt: the dialog's default button is "Apply and continue", so
+    Return alone committed a no-op (0.0, 0.0) tint, and `_apply_tint_step`'s
+    jump_back deleted every step applied since.
+
+    Reproduces exactly that: nudge the tint, discard, apply Stretch and
+    Levels, come back to Color untouched.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.tint_slider.setValue(20)
+    _answer(monkeypatch, "discard")
+    win.go_next()                                       # off Color, tint discarded
+
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    committed = list(win.project.entries())
+
+    asked = []
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending",
+                        lambda self, step: asked.append(step) or "apply")
+    win._go_to_id("color")                               # untouched: slider reads 0
+    assert win._has_pending() is False, (
+        "a stale _tint_pending survived the discard and the two applies")
+
+    win.go_next()
+
+    assert asked == [], "an untouched Color step prompted"
+    assert win.project.entries() == committed, (
+        "Stretch/Levels were deleted by a no-op tint commit")
+
+
+def _linear_win(qtbot, tmp_path):
+    """A pre-stretch window — real FITS data loads linear — so a
+    POST_STRETCH_IDS target (Levels) actually exercises _ensure_stretched."""
+    from tests.ui.test_main_window import _window, _make_fits
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.show()
+    qtbot.waitExposed(win)
+    return win
+
+
+def _deferred_run_busy(monkeypatch, win):
+    """Replace _run_busy with one that sets busy=True immediately (matching
+    the real async path: _set_busy(True) runs synchronously before the
+    worker is dispatched) but STORES work/on_result instead of running them,
+    so the test controls exactly when the apply "lands" relative to
+    navigation. `_async_enabled=False` (what `_win`/`_window` set for every
+    other test here) makes `_run_busy` run everything synchronously and hides
+    this entire class of ordering bug — see CLAUDE.md 'measuring the GUI'."""
+    from nocturne.ui import main_window as mw
+    captured = {}
+
+    def fake(self, work, on_result, label, err_prefix):
+        self._set_busy(True, label)
+        captured["work"] = work
+        captured["on_result"] = on_result
+
+    monkeypatch.setattr(mw.MainWindow, "_run_busy", fake)
+    return captured
+
+
+def _land(win, captured):
+    """Simulate the worker completing: run the captured work, feed it to
+    on_result, then clear busy — the same sequence _run_busy's real async
+    path runs on a background thread before calling back onto the UI one."""
+    result = captured["work"]()
+    captured["on_result"](result)
+    win._set_busy(False)
+
+
+def test_apply_and_continue_defers_navigation_until_the_worker_lands(
+        qtbot, tmp_path, monkeypatch):
+    """CRITICAL 2. apply_current is asynchronous in the shipped app —
+    _run_busy dispatches off the UI thread and returns immediately, so firing
+    the navigation right after pressing Apply ran _ensure_stretched and
+    _rebuild_panel against a project the worker had not finished mutating.
+
+    Reproduced on a linear image: move Deconvolution to "strong", answer
+    "apply" navigating to Levels (a POST_STRETCH_ID). Before the fix,
+    _ensure_stretched fired immediately against the still-linear,
+    pre-Deconvolution project — a phantom Stretch landed BEFORE Deconvolution
+    committed, and Deconvolution's result (computed from the true pre-stretch
+    base) then landed on top of it, silently resetting is_linear back to True
+    even though the entries list claimed Stretch was done.
+    """
+    win = _linear_win(qtbot, tmp_path)
+    win._go_to_id("deconvolution")
+    win._panel.option_box.setCurrentText("strong")
+    assert win._has_pending() is True
+    captured = _deferred_run_busy(monkeypatch, win)
+    _answer(monkeypatch, "apply")
+
+    win._go_to_id("levels")
+
+    assert win.project.entries() == [], (
+        "navigation committed something before the async apply landed")
+    assert win.current_stage_id() == "deconvolution", (
+        "the stage moved before the apply that was supposed to precede it "
+        "actually committed")
+
+    _land(win, captured)
+
+    assert [n for n, _ in win.project.entries()] == ["Deconvolution", "Stretch"], (
+        "Deconvolution must land, in order, before the auto-stretch Levels needs")
+    assert win.current_stage_id() == "levels"
+    assert win.project.current().is_linear is False, (
+        "Deconvolution landed on top of the auto-stretch and undid it")
+
+
+def test_apply_and_continue_is_not_offered_when_apply_is_disabled(
+        qtbot, tmp_path, monkeypatch):
+    """IMPORTANT 3. Background's apply_btn is disabled from the moment the
+    dropdown reads anything but "off" (GraXpert unconfigured in test
+    settings — apply_enabled is False). Before the fix, `_apply_current_step`
+    silently skipped the disabled button and `_go_to` navigated anyway:
+    "Apply and continue" committed nothing and nobody was told — the original
+    bug wearing a reassuring button. The prompt must not offer an action that
+    cannot happen.
+    """
+    from PySide6.QtWidgets import QMessageBox
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("background")
+    win._panel.option_box.setCurrentText("light")   # baseline is "strong" (default)
+    assert win._has_pending() is True
+    assert win._panel.apply_btn.isEnabled() is False, (
+        "fixture assumption: GraXpert must be unconfigured in test settings")
+    assert win._pending_apply_targets() == []
+
+    monkeypatch.undo()   # lift the autouse _refuse_real_pending_prompt stub —
+                          # this test exercises _ask_pending's real body
+    seen = []
+
+    def fake_exec(self):
+        seen.extend(b.text() for b in self.buttons())
+        for b in self.buttons():
+            if b.text() == "Continue without applying":
+                b.click()
+                return 0
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+
+    answer = win._ask_pending("Background")
+
+    assert "Apply and continue" not in seen, (
+        "the prompt offered an apply that could not actually happen")
+    assert answer == "discard"
+
+
+def test_async_apply_writes_the_baseline_on_the_panel_it_was_pressed_from(
+        qtbot, tmp_path, monkeypatch):
+    """IMPORTANT 4. on_result wrote `self._panel.option_baseline` — whichever
+    panel is CURRENT when the worker returns, not the one Apply was pressed
+    on. The stepper isn't busy-gated the way Next is, so navigating away and
+    back while an apply is in flight is reachable in the real app.
+
+    Reproduced: apply Noise Reduction "strong" (deferred), navigate away and
+    back to a FRESH Noise Reduction panel before the worker lands, then land
+    it — the fresh, untouched panel must not inherit "strong" as its
+    baseline against its own "medium" default.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("noise_sharpen")
+    win._panel.option_box.setCurrentText("strong")
+    captured = _deferred_run_busy(monkeypatch, win)
+    win.apply_current({"engine": None, "level": "strong"})
+    assert win._busy is True
+
+    win._go_to_id("levels", user_initiated=False)
+    win._go_to_id("noise_sharpen", user_initiated=False)
+    fresh_panel = win._panel
+    fresh_baseline = fresh_panel.option_baseline
+
+    _land(win, captured)
+
+    assert win._panel is fresh_panel
+    assert win._panel.option_baseline == fresh_baseline, (
+        "the async apply overwrote the panel current when it returned, not "
+        "the panel it was pressed from")
+    assert win._has_pending() is False, (
+        "an untouched Noise Reduction panel now reads pending because its "
+        "baseline was clobbered by an unrelated apply landing late")

@@ -225,6 +225,12 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        # Stage index to land on once the in-flight apply's worker actually
+        # completes ("Apply and continue" on an async step) — see _go_to and
+        # _land_deferred_nav. Navigating the instant the button is pressed
+        # would run _rebuild_panel/_ensure_stretched against a project the
+        # worker hasn't finished mutating yet.
+        self._deferred_nav = None
         self._active_token = None       # CancelToken for the running op, if any
         self._busy_start = 0.0          # time.monotonic() when the current op started
         # Bumped every time the workspace is replaced (new image, opened bundle,
@@ -1811,6 +1817,18 @@ class MainWindow(QMainWindow):
                 return
             if answer == "apply":
                 self._apply_current_step()
+                if self._busy:
+                    # apply_current dispatches the actual work off the UI
+                    # thread (_run_busy) in the shipped app and returns
+                    # immediately — _busy is already True here. Finishing the
+                    # navigation now would run _ensure_stretched/
+                    # _rebuild_panel against a project the worker hasn't
+                    # finished mutating yet (it can still be jump_back'd to
+                    # the pre-apply position). Land the move once the worker
+                    # actually completes instead — see _land_deferred_nav,
+                    # called from _set_busy(False).
+                    self._deferred_nav = index
+                    return
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
@@ -1824,56 +1842,95 @@ class MainWindow(QMainWindow):
         self._rebuild_panel()
         self._refresh()
 
+    def _land_deferred_nav(self) -> None:
+        """Finish a navigation "Apply and continue" deferred while its apply
+        was in flight (see _go_to). Called from _set_busy once busy clears.
+
+        Checked against _has_pending(), not just "the worker finished": a
+        refused or failed apply (Levels on a still-linear image, a cancelled
+        tool, an exception) leaves the pending slot set, and landing anyway
+        would sweep the user forward as if it had worked while the warning
+        they need to see sits under the stage they just left.
+        """
+        target, self._deferred_nav = self._deferred_nav, None
+        if target is None or self.project is None or self._has_pending():
+            return
+        self._go_to(target, user_initiated=False)
+
     def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
         for i, s in enumerate(self._stages):
             if s.id == stage_id:
                 self._go_to(i, user_initiated=user_initiated)
                 return
 
-    def _ask_pending(self, step_label: str) -> str:
-        """'apply', 'discard' or 'cancel'. Split out so tests can answer it
-        without a real modal ever appearing."""
-        box = QMessageBox(self)
-        box.setWindowTitle(f"{APP_NAME} — {step_label}")
-        box.setText(f"{step_label} has unapplied changes.")
-        apply_btn = box.addButton("Apply and continue",
-                                  QMessageBox.ButtonRole.AcceptRole)
-        skip_btn = box.addButton("Continue without applying",
-                                 QMessageBox.ButtonRole.DestructiveRole)
-        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(apply_btn)
-        box.exec()
-        clicked = box.clickedButton()
-        return ("apply" if clicked is apply_btn
-                else "discard" if clicked is skip_btn else "cancel")
-
-    def _apply_current_step(self) -> None:
-        """Press this step's own Apply button(s).
+    def _pending_apply_targets(self) -> list:
+        """Buttons `_apply_current_step` would press right now, and the same
+        list `_ask_pending` checks to decide whether "Apply and continue" is
+        even offered — one list so the prompt's options and what pressing
+        Apply actually does cannot drift apart.
 
         Every stage that can commit sets `w.apply_btn` in build_panel, already
         connected to the handler `_has_pending` tracks — except Color, whose
         `apply_btn` ("Apply Color") commits the colour-calibration method, a
         decision `_has_pending` does not track at all there. What IS tracked
         on Color is its two live previews (tint, remove-green), each with its
-        own button (`apply_tint_btn`, `remove_green_btn`). Pressing the wrong
-        one would commit a method nobody asked for and STILL discard the tint
-        or green the user set — worse than the silent discard this guard
-        exists to prevent — so Color presses whichever of its own buttons
-        matches what is actually pending.
+        own button (`apply_tint_btn`, `remove_green_btn`). Pressing "Apply
+        Color" would commit a method nobody asked for and STILL discard the
+        tint or green the user set — worse than the silent discard this guard
+        exists to prevent — so Color's targets are whichever of its own
+        buttons match what is actually pending.
         """
         if self.current_stage_id() == "color":
+            targets = []
             if self._tint_pending is not None:
                 btn = getattr(self._panel, "apply_tint_btn", None)
                 if btn is not None and btn.isEnabled():
-                    btn.click()
+                    targets.append(btn)
             if self._rg_pending is not None:
                 btn = getattr(self._panel, "remove_green_btn", None)
                 if btn is not None and btn.isEnabled():
-                    btn.click()
-            return
+                    targets.append(btn)
+            return targets
         btn = getattr(self._panel, "apply_btn", None)
-        if btn is not None and btn.isEnabled():
+        return [btn] if btn is not None and btn.isEnabled() else []
+
+    def _apply_current_step(self) -> None:
+        """Press this step's own Apply button(s) — see _pending_apply_targets
+        for which ones and why Color is special."""
+        for btn in self._pending_apply_targets():
             btn.click()
+
+    def _ask_pending(self, step_label: str) -> str:
+        """'apply', 'discard' or 'cancel'. Split out so tests can answer it
+        without a real modal ever appearing.
+
+        "Apply and continue" is omitted when nothing would actually happen if
+        pressed (Apply disabled — e.g. Background with GraXpert unconfigured):
+        offering an action that silently does nothing is the original bug
+        wearing a reassuring button. Cancel becomes the default in that case,
+        not Discard — the safe default is still "change nothing" when the
+        safer of the two real options (apply it) isn't on the table.
+        """
+        can_apply = bool(self._pending_apply_targets())
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{APP_NAME} — {step_label}")
+        box.setText(f"{step_label} has unapplied changes.")
+        apply_btn = None
+        if can_apply:
+            apply_btn = box.addButton("Apply and continue",
+                                      QMessageBox.ButtonRole.AcceptRole)
+        else:
+            box.setInformativeText(
+                "This step can't be applied right now, so continuing will "
+                "discard the change.")
+        skip_btn = box.addButton("Continue without applying",
+                                 QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(apply_btn if apply_btn is not None else cancel_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        return ("apply" if clicked is apply_btn
+                else "discard" if clicked is skip_btn else "cancel")
 
     # --- file / project ---
     def _choose_fits(self) -> None:
@@ -2135,7 +2192,8 @@ class MainWindow(QMainWindow):
     # previews, with no coverage at all. Every other stage shares its step's id.
     _STAGE_PREVIEWS = {"color": ("tint", "remove_green")}
 
-    def _clear_pending(self, step_id: str, applied_option: str | None = None) -> None:
+    def _clear_pending(self, step_id: str, applied_option: str | None = None,
+                       *, panel=None) -> None:
         """Forget what a step's controls were holding, because it just became the
         commit: the preview slot, and the dropdown's baseline when one applies.
 
@@ -2143,12 +2201,21 @@ class MainWindow(QMainWindow):
         apply_current plus the five steps that commit their own cached result —
         and the clear lived in only apply_current, so Saturation said "Not
         applied yet" from the instant it was applied.
+
+        `panel` defaults to whatever is current, but apply_current's async
+        path passes the panel it captured when Apply was pressed: its
+        on_result can land after the user has navigated on (this task's own
+        "Apply and continue" defers the move until it does, but a direct
+        stepper click during a busy op is not gated the same way), and the
+        baseline belongs to the panel that showed the option, not whichever
+        one happens to be on screen when the worker returns.
         """
         slot = self._PENDING_SLOTS.get(step_id)
         if slot is not None:
             setattr(self, slot, None)
-        if applied_option is not None and getattr(self._panel, "option_box", None) is not None:
-            self._panel.option_baseline = applied_option
+        target = panel if panel is not None else self._panel
+        if applied_option is not None and getattr(target, "option_box", None) is not None:
+            target.option_baseline = applied_option
 
     def _committed_option(self, stage_id: str) -> object | None:
         """The option recorded by this stage's last commit, or None if it has
@@ -2259,6 +2326,11 @@ class MainWindow(QMainWindow):
         # leaves plenty of room to move it meanwhile.
         box = getattr(self._panel, "option_box", None)
         applied_text = box.currentText() if box is not None else None
+        # Same reasoning, for the PANEL itself: on_result can land after the
+        # user has moved on (a stepper click isn't busy-gated the way Next
+        # is), and the baseline belongs on the panel that showed this option,
+        # not whichever one happens to be current when the worker returns.
+        applied_panel = self._panel
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
@@ -2267,7 +2339,7 @@ class MainWindow(QMainWindow):
             # The commit now reflects what the slider/dropdown showed. Only
             # _rebuild_panel cleared these before (on navigating away), which
             # left a step falsely "pending" right after its own Apply.
-            self._clear_pending(stage_id, applied_text)
+            self._clear_pending(stage_id, applied_text, panel=applied_panel)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
@@ -2428,6 +2500,12 @@ class MainWindow(QMainWindow):
         """
         self._cancel_active()
         self._project_gen += 1
+        # A deferred "Apply and continue" nav (see _go_to) points at a stage
+        # index in THIS workspace's stepper state; the in-flight apply it was
+        # waiting on is superseded by the generation bump above and will
+        # never call back into it meaningfully. Landing it against the new
+        # workspace would navigate somewhere the user never asked to go.
+        self._deferred_nav = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -2455,6 +2533,8 @@ class MainWindow(QMainWindow):
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setDisabled(busy)
+        if not busy:
+            self._land_deferred_nav()
 
     def _show_busy_visuals(self) -> None:
         self._busy_bar.show_over(self.image_view)
@@ -3702,6 +3782,13 @@ class MainWindow(QMainWindow):
             self._sr_pending = None
         if stage.id == "color":
             self._rg_pending = None
+            # _tint_pending was missing here (Task 1): a rebuilt Color panel's
+            # slider reads 0 but the slot stayed set from a prior visit, so an
+            # untouched Color read as pending. Worse than a false prompt, the
+            # guard's default button then commits that stale (0.0, 0.0) tint —
+            # which is a real apply, and _apply_tint_step's jump_back deletes
+            # every step applied since. Clear it beside _rg_pending.
+            self._tint_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)

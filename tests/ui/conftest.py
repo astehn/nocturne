@@ -40,3 +40,29 @@ def _no_real_file_dialogs(monkeypatch):
             f"nocturne.ui.file_dialogs.choose_folder / open_file / save_file.")
 
     monkeypatch.setattr(file_dialogs, "_prepare", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _refuse_real_pending_prompt(monkeypatch):
+    """MainWindow._ask_pending builds its own QMessageBox and calls .exec()
+    directly, so it is NOT covered by _auto_answer_dialogs above (that only
+    patches the static QMessageBox.question helper). Unstubbed, it blocks
+    forever headless — a real hang, not a failure. That happened once already:
+    a test navigated away from a pending step without stubbing it, and the run
+    sat at near-zero CPU until killed by hand. Raise instead, so the next test
+    that adds a guarded navigation without stubbing the prompt gets a named
+    failure. Tests that need an answer stub `_ask_pending` locally via
+    monkeypatch, which simply overrides this (fixtures are function-scoped and
+    monkeypatch unwinds in reverse order).
+    """
+    try:
+        from nocturne.ui import main_window as mw
+    except ImportError:
+        return
+
+    def refuse(self, step_label):
+        raise AssertionError(
+            f"a real pending-change prompt was opened in a test for "
+            f"{step_label!r}. Stub MainWindow._ask_pending via monkeypatch.")
+
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", refuse)
