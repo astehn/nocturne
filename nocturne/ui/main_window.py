@@ -2319,9 +2319,29 @@ class MainWindow(QMainWindow):
         enablement here, and a method called _sync_pending_label that also
         enabled a button would be a lie by its name.
         """
+        pending = self._has_pending()
         label = getattr(self._panel, "pending_label", None)
         if label is not None:
-            label.setVisible(self._has_pending())
+            label.setVisible(pending)
+        # The hero green means "there is an edit to commit" (theme.py). Spend it
+        # only when that is true: a colour worn on every step at all times says
+        # nothing when the step genuinely wants pressing. The buttons that would
+        # commit the pending thing are the ones _pending_apply_targets names, so
+        # Color lights the tint button rather than Apply Color.
+        # `_pending_apply_targets` answers "which buttons WOULD commit it", and
+        # is consulted only after the guard has established that something is
+        # pending — it is not itself a pending check, and returns candidates on
+        # an untouched step. Gate it, or the green never goes out.
+        wanted = set(map(id, self._pending_apply_targets())) if pending else set()
+        for name in ("apply_btn", "apply_tint_btn", "remove_green_btn"):
+            btn = getattr(self._panel, name, None)
+            if btn is None:
+                continue
+            state = "true" if id(btn) in wanted else "false"
+            if btn.property("pending") != state:
+                btn.setProperty("pending", state)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
 
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the

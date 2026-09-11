@@ -706,3 +706,47 @@ def test_swap_workspace_drops_a_stale_deferred_nav(qtbot, tmp_path):
     win._swap_workspace()
 
     assert win._deferred_nav is None
+
+
+def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
+    """Below the primary action is past where the eye stops.
+
+    Reported from a screenshot: the line answering "did that apply?" was muted
+    grey help-text styling, underneath the big green button, and effectively
+    invisible. Position carries more here than colour does.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("saturation")
+    lay = win._panel.layout()
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+    assert win._panel.pending_label in order
+    assert order.index(win._panel.pending_label) < order.index(win._panel.apply_btn)
+    assert win._panel.pending_label.objectName() == "pendingNote"
+
+
+def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
+        qtbot, tmp_path):
+    """`SUCCESS` is documented in theme.py as "there is an edit to commit". A
+    button wearing it on every step at all times cannot say anything when the
+    step genuinely wants pressing."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("saturation")
+    assert win._panel.apply_btn.property("pending") == "false"
+
+    win._on_sat_change(0.7, 0.0)
+    win._sync_step_controls()
+    assert win._panel.apply_btn.property("pending") == "true"
+
+
+def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
+        qtbot, tmp_path):
+    """Color carries three commit buttons. Lighting Apply Color when a TINT is
+    pending would point the user at the one button that does not commit it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._on_tint_change(0.2, 0.0)
+    win._sync_step_controls()
+
+    assert win._panel.apply_tint_btn.property("pending") == "true"
+    assert win._panel.apply_btn.property("pending") == "false", (
+        "Apply Color is lit for a pending tint it does not commit")

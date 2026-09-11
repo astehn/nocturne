@@ -46,6 +46,14 @@ QPushButton:pressed {{ background: {BG_2}; }}
 QPushButton:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
 QPushButton#primary {{ background: {SUCCESS}; color: #052611; font-weight: 600; border: none; }}
 QPushButton#primary:hover {{ background: {SUCCESS_HI}; }}
+/* SUCCESS is documented above as "there is an edit to commit". A step with
+   nothing pending has no edit to commit, and a colour that is always on carries
+   no information — so the hero green is spent only when it is true. Set ONLY on
+   the step-panel apply buttons (see _sync_step_controls); everything else keeps
+   the default above. */
+QPushButton#primary[pending="false"] {{ background: {BG_3}; color: {TEXT};
+                                        border: 1px solid {BORDER}; }}
+QPushButton#primary[pending="false"]:hover {{ background: #383b41; }}
 QPushButton#primary:pressed {{ background: #37a247; }}
 QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
@@ -86,6 +94,10 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
+/* The answer to "did that apply?" — so NOT stepDesc's muted help-text grey, which
+   is the styling people skim past. Full-strength text, above the button. */
+QLabel#pendingNote {{ color: {TEXT}; font-size: 13px; font-weight: 600;
+                      padding: 2px 0 6px 0; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}

@@ -757,9 +757,19 @@ def build_panel(
 
     # Every stage, one place. The preview is pixel-identical to the commit by
     # design, so this line is the only thing that distinguishes them.
-    w.pending_label = _desc_label("Not applied yet")
+    w.pending_label = QLabel("Not applied yet")
+    w.pending_label.setObjectName("pendingNote")
+    w.pending_label.setWordWrap(True)
     w.pending_label.setVisible(False)
-    lay.addWidget(w.pending_label)
+    # ABOVE the apply button, not below it. Below the primary action is past
+    # where the eye stops — the line answering "did that apply?" has to sit in
+    # the path to the button, not after it.
+    anchor = getattr(w, "apply_btn", None)
+    index = lay.indexOf(anchor) if anchor is not None else -1
+    if index >= 0:
+        lay.insertWidget(index, w.pending_label)
+    else:
+        lay.addWidget(w.pending_label)
 
     lay.addStretch(1)
     return w
