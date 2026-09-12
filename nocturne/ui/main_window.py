@@ -1850,6 +1850,16 @@ class MainWindow(QMainWindow):
                     # completed since, landing back here or not.
                     self._deferred_nav = (self._nav_seq, index)
                     return
+                if self._has_pending():
+                    # An Apply can now decline mid-flight (Task 5's truncation
+                    # confirm), which leaves `_busy` False exactly the way an
+                    # ordinary synchronous commit does — before that, an Apply
+                    # could never fail to commit, so "not busy" alone safely
+                    # meant "already finished" and this check did not exist.
+                    # `_land_deferred_nav` below already trusts this same
+                    # signal for the async path; reuse it here rather than
+                    # reach for `_busy` a second way.
+                    return
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
@@ -1945,11 +1955,36 @@ class MainWindow(QMainWindow):
         btn = getattr(self._panel, "apply_btn", None)
         return [btn] if btn is not None and btn.isEnabled() else []
 
+    def _button_step_pending(self, btn) -> bool:
+        """Whether the preview slot this button commits is still holding an
+        unapplied value, right after clicking it.
+
+        `_pending_apply_targets` only ever offers a button when this was
+        already True, so False afterwards means the click actually committed
+        (or, on Background's "off", recorded an explicit decision) rather
+        than being declined at a truncation confirm.
+        """
+        if btn is getattr(self._panel, "apply_tint_btn", None):
+            return self._tint_pending is not None
+        if btn is getattr(self._panel, "remove_green_btn", None):
+            return self._rg_pending is not None
+        return self._has_pending()
+
     def _apply_current_step(self) -> None:
         """Press this step's own Apply button(s) — see _pending_apply_targets
-        for which ones and why Color is special."""
+        for which ones and why Color is special.
+
+        Stops after a button whose truncation confirm was declined instead of
+        pressing whatever else was pending: Color's tint and remove-green
+        targets are independent buttons, and continuing would re-ask the same
+        destructive question on the second one seconds after the user just
+        said no to the first. `_go_to` reads `_has_pending()` once this
+        returns to learn whether anything here is still unapplied.
+        """
         for btn in self._pending_apply_targets():
             btn.click()
+            if not self._busy and self._button_step_pending(btn):
+                break
 
     def _ask_pending(self, step_label: str) -> str:
         """'apply', 'discard' or 'cancel'. Split out so tests can answer it
@@ -2494,6 +2529,22 @@ class MainWindow(QMainWindow):
             return True
         return self._ask_truncation(casualties, verb)
 
+    def _truncate_for(self, step_id: str, verb: str) -> bool:
+        """Confirm, then truncate. False means the user cancelled and the
+        caller must return without applying anything.
+
+        Six Apply paths reach this (plus Reset, via _truncation_target
+        directly). They used to each compute the same preceding-names
+        formula inline and call jump_back straight away — which is how five
+        of them came to discard later work with no prompt at all, while only
+        apply_current's copy was ever noticed.
+        """
+        target = self._truncation_target(step_id)
+        if not self._confirm_truncation(step_id, target, verb):
+            return False
+        self.project.jump_back(target)
+        return True
+
     def _reset_step(self) -> None:
         """Put this step back to unapplied: controls to defaults, commit removed.
 
@@ -2539,12 +2590,12 @@ class MainWindow(QMainWindow):
                 "Apply Stretch first — Levels works on the stretched image.")
             return
         # Truncate history to this stage's applied predecessors (synchronous).
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
-        }
-        target = self._leading_kept(self.project.entries(), preceding)
-        self.project.jump_back(target)
+        # ASK FIRST: this discards every step applied after this one, and did
+        # so silently for the whole life of the app. Before jump_back, and
+        # before any expensive work starts — asking permission to discard
+        # work already discarded is not asking.
+        if not self._truncate_for(stage_id, "Apply"):
+            return
         self._warn_if_uncovered(stage_id)
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
@@ -2972,11 +3023,8 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         strength = float(strength)
-        idx = PROCESSING_ORDER.index("remove_green")
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
-        }
-        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        if not self._truncate_for("remove_green", "Apply"):
+            return
         base = self.project.current()
         result = self._step_for("remove_green").apply(base, strength)
         self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
@@ -2991,11 +3039,8 @@ class MainWindow(QMainWindow):
         """Commit the colour tint as its own step, on top of the colour result."""
         if self.project is None or self._busy:
             return
-        idx = PROCESSING_ORDER.index("tint")
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
-        }
-        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        if not self._truncate_for("tint", "Apply"):
+            return
         base = self.project.current()
         option = (float(tint), float(temperature))
         result = self._step_for("tint").apply(base, option)
@@ -3216,12 +3261,6 @@ class MainWindow(QMainWindow):
         self._show_preview(apply_stretch(img, amount).data)
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
-    def _sat_preceding(self) -> set:
-        return set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("saturation")]
-        }
-
     def _setup_saturation(self) -> None:
         """On entering Saturation: the Nebula slider is always enabled. The global
         slider always works; the split (StarX or the free fallback) is deferred
@@ -3282,8 +3321,8 @@ class MainWindow(QMainWindow):
         """Commit Saturation (+ Nebula boost) using the cached split — instant."""
         if self.project is None or self._busy:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._sat_preceding()))
+        if not self._truncate_for("saturation", "Apply"):
+            return
         base = self.project.current()
         result = self._sat_result(base, amount, nebula)
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
@@ -3484,8 +3523,8 @@ class MainWindow(QMainWindow):
     def _apply_green_fringe(self, strength) -> None:
         if self.project is None or not self._fringe_ready or self._busy or not self._fringe_layers:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._fringe_preceding()))
+        if not self._truncate_for("green_fringe", "Apply"):
+            return
         result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
         self._mark_dirty()
@@ -3603,8 +3642,8 @@ class MainWindow(QMainWindow):
         StarX rerun, so Apply is instant."""
         if self.project is None or not self._sr_ready or self._busy or not self._sr_layers:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._sr_preceding()))
+        if not self._truncate_for("star_reduction", "Apply"):
+            return
         _, starless, stars = self._sr_layers
         result = reduce_stars(starless, stars, float(amount))
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))

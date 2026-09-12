@@ -4894,14 +4894,22 @@ def test_apply_stretch_untouched_commits_exactly_what_is_on_screen(qtbot, tmp_pa
         f"{committed.mean():.4f} committed")
 
 
-def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path):
+def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path, monkeypatch):
     """The general form, across every step with a live preview. Measured
     2026-08-18: Stretch was the ONLY one whose default was not a no-op — Curves,
     Saturation, Recover Core, Local Contrast and Levels all default to exact
     identities. This guards the others against acquiring the same fault when
-    someone changes a default."""
+    someone changes a default.
+
+    The loop deliberately revisits Recover Core after Curves/Saturation are
+    already committed (PROCESSING_ORDER puts it earlier), which now raises a
+    real truncation confirm — accept it here; this test is about pixel
+    identity, not about the confirm flow."""
     import numpy as np
+    from nocturne.ui import main_window as mw
     from nocturne.ui.preview import to_rgb8
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: True)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._async_enabled = False
