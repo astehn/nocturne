@@ -942,7 +942,7 @@ def test_truncation_is_silent_when_only_this_step_would_go(
     asked = []
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: asked.append(names) or False)
+                        lambda self, names, label, verb, **kw: asked.append(names) or False)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -958,7 +958,7 @@ def test_truncation_confirms_and_names_the_later_steps(
     seen = []
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or True)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
                      ("curves", [(0.0, 0.0), (1.0, 1.0)])):
@@ -984,7 +984,7 @@ def test_declining_the_confirm_returns_false_and_truncates_nothing(
     truncates then asks would pass a test that only checked the return value."""
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
     win = _win(qtbot, tmp_path)
     for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
                      ("curves", [(0.0, 0.0), (1.0, 1.0)])):
@@ -1004,7 +1004,7 @@ def test_a_repeated_step_is_named_once_in_the_confirm(qtbot, tmp_path, monkeypat
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1058,7 +1058,7 @@ def test_clicking_reset_step_drops_this_steps_commit(qtbot, tmp_path, monkeypatc
     from nocturne.ui import main_window as mw
     # Reset at the frontier now confirms (Critical #1 below) -- accept it.
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -1074,7 +1074,7 @@ def test_reset_step_leaves_everything_before_it_untouched(qtbot, tmp_path, monke
     from nocturne.ui import main_window as mw
     # Reset at the frontier now confirms (Critical #1 below) -- accept it.
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1092,7 +1092,7 @@ def test_reset_step_asks_before_discarding_later_work(
         qtbot, tmp_path, monkeypatch):
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
     win = _win(qtbot, tmp_path)
     for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
                      ("curves", [(0.0, 0.0), (1.0, 1.0)])):
@@ -1122,7 +1122,7 @@ def test_reset_step_at_the_frontier_now_confirms_and_names_its_own_commit(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or True)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1143,7 +1143,7 @@ def test_declining_a_frontier_reset_confirm_keeps_the_commit(
     a half-truncated state."""
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -1163,7 +1163,7 @@ def test_reset_step_logs_and_clears_the_warning_like_every_other_commit_path(
     fixed alongside the confirm above."""
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -1184,7 +1184,7 @@ def test_reset_step_on_a_repeated_own_name_is_named_once(qtbot, tmp_path, monkey
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or True)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1221,7 +1221,7 @@ def test_reset_step_on_crop_at_the_frontier_now_confirms_and_names_rotate(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or True)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("crop")
     win._rotate()
@@ -1242,7 +1242,7 @@ def test_reset_step_on_crop_names_later_real_work_and_can_be_declined(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
     win = _win(qtbot, tmp_path)
     win._go_to_id("crop")
     win._rotate()
@@ -1279,7 +1279,7 @@ def test_reset_step_on_enhancements_drops_the_whole_trailing_run_not_one_tap(
     from nocturne.ui import main_window as mw
     # Reset at the frontier now confirms (Critical #1 below) -- accept it.
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1389,7 +1389,7 @@ def test_reset_step_on_enhancements_survives_a_trailing_trim(qtbot, tmp_path):
     seen = []
     from unittest.mock import patch
     with patch.object(mw.MainWindow, "_ask_truncation",
-                       lambda self, names, label, verb: seen.append(list(names)) or True):
+                       lambda self, names, label, verb, **kw: seen.append(list(names)) or True):
         win._reset_step()
 
     assert seen == [["Trim"]], f"expected Trim named as the only casualty, got {seen}"
@@ -1443,7 +1443,7 @@ def test_resetting_color_confirms_and_names_its_own_tint(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or True)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._apply_tint_step(0.3, 0.1)
@@ -1469,7 +1469,7 @@ def test_apply_on_a_revisited_step_asks_before_discarding_later_work(
     no prompt at all. Go back to step 8 of 16, press Apply, lose 9-16."""
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
     win = _win(qtbot, tmp_path)
     for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
                      ("curves", [(0.0, 0.0), (1.0, 1.0)])):
@@ -1490,7 +1490,7 @@ def test_apply_at_the_frontier_still_never_prompts(qtbot, tmp_path, monkeypatch)
     asked = []
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: asked.append(names) or True)
+                        lambda self, names, label, verb, **kw: asked.append(names) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -1520,7 +1520,7 @@ def test_remove_green_revisited_asks_and_declining_keeps_later_work(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
 
     win._remove_green(0.7)
 
@@ -1549,7 +1549,7 @@ def test_tint_revisited_names_remove_green_and_declining_keeps_it(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
 
     win._apply_tint_step(0.5, 0.1)
 
@@ -1579,7 +1579,7 @@ def test_saturation_revisited_asks_and_declining_keeps_later_work(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
 
     win._apply_saturation(0.7, 0.0)
 
@@ -1621,7 +1621,7 @@ def test_green_fringe_revisited_asks_and_declining_keeps_later_work(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
 
     win._apply_green_fringe(0.7)
 
@@ -1657,7 +1657,7 @@ def test_star_reduction_revisited_asks_and_declining_keeps_later_work(
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: seen.append(list(names)) or False)
+                        lambda self, names, label, verb, **kw: seen.append(list(names)) or False)
 
     win._apply_star_reduction(0.7)
 
@@ -1691,7 +1691,7 @@ def test_cancelling_the_truncation_confirm_during_apply_and_continue_stays_put(
     _answer(monkeypatch, "apply")
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
 
     win.go_next()
 
@@ -1727,7 +1727,7 @@ def test_apply_and_continue_still_navigates_with_nothing_declined(
     _answer(monkeypatch, "apply")
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
 
     win.go_next()   # a real confirm fires (Curves is later work) and is accepted
 
@@ -1753,7 +1753,7 @@ def test_color_cancelling_the_first_confirm_never_clicks_the_second_button(
     assert win._pending_apply_targets() == [
         win._panel.apply_tint_btn, win._panel.remove_green_btn]
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: False)
+                        lambda self, names, label, verb, **kw: False)
     _answer(monkeypatch, "apply")
 
     win.go_next()
@@ -1776,7 +1776,7 @@ def test_color_a_successful_tint_apply_still_lets_remove_green_proceed(
     """
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._on_tint_change(0.2, 0.0)
@@ -1916,3 +1916,284 @@ def test_color_still_refuses_apply_color_when_a_tint_is_waiting(qtbot, tmp_path)
     assert win._panel.apply_btn not in targets, (
         "Apply Color offered while a tint is waiting — it would discard it")
     assert win._panel.apply_tint_btn in targets
+
+
+# --- Second whole-branch review -------------------------------------------
+#
+# All five findings sat at the SEAMS between the branch's mechanisms, not
+# inside any one of them: one set of names serving two different questions,
+# Reset truncating a step that had never committed, a sequence that ran once,
+# and two dialogs whose wording nobody had ever rendered.
+
+
+def test_apply_color_asks_before_discarding_a_committed_tint(
+        qtbot, tmp_path, monkeypatch):
+    """CRITICAL. "Colour Tint" and "Remove Green" are the COLOR STAGE's own
+    work (so Reset can take them back), but they are not what Apply Color
+    commits. Serving both questions from one set told the Apply confirm that a
+    committed tint was this button's own work at the frontier, so Apply Color
+    discarded it in silence — the exact bug this branch exists to end."""
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.apply_btn.click()
+    win._apply_tint_step(0.20, 0.0)
+    win._remove_green(0.40)
+    before = list(win.project.entries())
+    assert [n for n, _ in before] == ["Color", "Colour Tint", "Remove Green"]
+
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb, **kw:
+                        seen.append(list(names)) or False)
+
+    win._panel.apply_btn.click()
+
+    assert seen == [["Colour Tint", "Remove Green"]], (
+        f"Apply Color must name the tint and the green it would discard: {seen}")
+    assert list(win.project.entries()) == before, (
+        "Apply Color destroyed the committed tint the user declined to lose")
+
+
+def test_apply_color_at_its_own_frontier_is_still_silent(qtbot, tmp_path):
+    """The other half: replacing Color's OWN commit must stay silent. The
+    autouse `_ask_truncation` stub raises if asked, so a clean run is the
+    proof — without it the fix above would just be "always ask"."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.apply_btn.click()
+    win._panel.apply_btn.click()
+
+    assert [n for n, _ in win.project.entries()] == ["Color"]
+
+
+def test_next_on_colour_never_destroys_a_committed_tint_in_silence(
+        qtbot, tmp_path, monkeypatch):
+    """CRITICAL, by the route a user actually reaches it: with only the method
+    pending, Next offers "Apply and continue", which presses Apply Color. The
+    branch's own prompt was routing a silent destruction of committed work."""
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.apply_btn.click()
+    win._apply_tint_step(0.20, 0.0)
+    before = list(win.project.entries())
+    assert [n for n, _ in before] == ["Color", "Colour Tint"]
+
+    box = win._panel.method_box
+    box.setCurrentText(next(box.itemText(i) for i in range(box.count())
+                            if box.itemText(i) != box.currentText()))
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb, **kw:
+                        seen.append(list(names)) or False)
+    _answer(monkeypatch, "apply")
+    stage = win.current_stage_id()
+
+    win.go_next()
+
+    assert seen == [["Colour Tint"]], f"navigated past the tint in silence: {seen}"
+    assert list(win.project.entries()) == before
+    assert win.current_stage_id() == stage, (
+        "navigated on after the user declined the discard")
+
+
+def test_reset_on_a_never_applied_step_leaves_later_work_alone(
+        qtbot, tmp_path):
+    """HIGH. The spec says the commit is removed IF this step has one. With
+    none, Reset put the controls back AND truncated — eating Curves. The
+    existing coverage tests the UNTOUCHED case, which one slider move walks
+    straight past, so this one nudges a slider first.
+
+    No `_ask_truncation` stub: the autouse fixture raises if a confirm is
+    opened at all, which is itself the assertion that nothing was at risk."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)])
+    win._go_to_id("levels", user_initiated=False)
+    before = list(win.project.entries())
+    assert [n for n, _ in before] == ["Stretch", "Curves"]
+    win._on_levels_change(0.1, 1.0, 0.9)
+    assert win._has_pending()
+
+    win._reset_step()
+
+    assert list(win.project.entries()) == before, (
+        "Reset on a step with no commit of its own discarded the later work")
+    assert not win._has_pending(), "Reset left the controls pending"
+
+
+def test_reset_still_removes_this_steps_own_commit(qtbot, tmp_path, monkeypatch):
+    """The teeth on the test above: "never truncate" would pass it. Reset on a
+    step that HAS committed must still take that commit out."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb, **kw: True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    assert [n for n, _ in win.project.entries()] == ["Stretch", "Levels"]
+
+    win._reset_step()
+
+    assert [n for n, _ in win.project.entries()] == ["Stretch"]
+
+
+def test_the_frontier_reset_dialog_does_not_say_applied_after_it(
+        qtbot, tmp_path, monkeypatch):
+    """MEDIUM, and invisible for exactly the reason the destructive-default bug
+    was: the two tests that drive the real body both use the later-work path,
+    and the frontier one asserts on the stubbed `names` argument. Rendered, the
+    seam of two earlier fixes read "Reset Levels? / This discards Levels,
+    applied after it." — "it" being Levels. Assert on the TEXT."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["text"] = self.text()
+        seen["informative"] = self.informativeText()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    before = list(win.project.entries())
+
+    win._reset_step()
+
+    assert seen["text"] == "Reset Levels?", seen
+    assert "applied after it" not in seen["informative"], (
+        f"the frontier reset still reads as nonsense: {seen['informative']!r}")
+    assert "Levels" in seen["informative"], seen["informative"]
+    assert list(win.project.entries()) == before, (
+        "the dialog was cancelled and the commit went anyway")
+
+
+def test_the_reset_dialog_still_says_applied_after_it_for_later_work(
+        qtbot, tmp_path, monkeypatch):
+    """Teeth for the above: dropping the tail everywhere would pass it, and
+    lose the one sentence that says the later work is what is at risk."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["informative"] = self.informativeText()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)])
+    win._go_to_id("levels", user_initiated=False)
+
+    win._reset_step()
+
+    assert seen["informative"] == "This discards Curves, applied after it.", seen
+
+
+def test_a_first_ever_apply_does_not_say_again(qtbot, tmp_path, monkeypatch):
+    """LOW. "Apply Levels again?" on a step this image has never had applied."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["text"] = self.text()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)])
+    win._go_to_id("levels", user_initiated=False)
+
+    win.apply_current((0.1, 1.0, 0.9))
+
+    assert seen["text"] == "Apply Levels?", seen
+
+
+def test_re_applying_a_committed_step_still_says_again(
+        qtbot, tmp_path, monkeypatch):
+    """Teeth for the above: deleting "again" outright would pass it."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["text"] = self.text()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)])
+    win._go_to_id("levels", user_initiated=False)
+
+    win.apply_current((0.2, 1.0, 0.9))
+
+    assert seen["text"] == "Apply Levels again?", seen
+
+
+def test_colour_next_applies_the_method_and_the_tint_in_one_prompt(
+        qtbot, tmp_path, monkeypatch):
+    """MEDIUM. Colour is the one stage with two independent pending sources, so
+    this is its ordinary case. One pass over the targets committed the tint and
+    left the method pending, and `_go_to` then returned with the stage
+    unchanged and nothing said — press Next, watch nothing happen.
+
+    The method must go FIRST: "Color" precedes "Colour Tint" in
+    PROCESSING_ORDER, so committing the tint and then the method discards the
+    tint the app just committed on the user's behalf."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    box = win._panel.method_box
+    box.setCurrentText(next(box.itemText(i) for i in range(box.count())
+                            if box.itemText(i) != box.currentText()))
+    win._on_tint_change(0.2, 0.0)
+    stage = win.current_stage_id()
+    _answer(monkeypatch, "apply")
+
+    win.go_next()
+
+    # No _ask_truncation stub: the autouse fixture raises if a truncation
+    # confirm is opened, so this also proves the sequence never asked to
+    # discard work it had just committed itself.
+    assert [n for n, _ in win.project.entries()] == ["Color", "Colour Tint"], (
+        "one 'Apply and continue' must commit both, method first")
+    assert not win._has_pending()
+    assert win.current_stage_id() != stage, "the navigation never landed"

@@ -95,7 +95,7 @@ def _refuse_real_truncation_prompt(monkeypatch):
     monkeypatch.setattr(mw.MainWindow, "_real_ask_truncation", mw.MainWindow._ask_truncation,
                         raising=False)
 
-    def refuse(self, names, label, verb):
+    def refuse(self, names, label, verb, **kw):
         raise AssertionError(
             f"a real truncation-confirm prompt was opened in a test for "
             f"{names!r}. Stub MainWindow._ask_truncation via monkeypatch.")

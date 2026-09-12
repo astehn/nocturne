@@ -4909,7 +4909,7 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path, mo
     from nocturne.ui import main_window as mw
     from nocturne.ui.preview import to_rgb8
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
-                        lambda self, names, label, verb: True)
+                        lambda self, names, label, verb, **kw: True)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._async_enabled = False

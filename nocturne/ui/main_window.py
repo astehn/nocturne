@@ -1848,7 +1848,8 @@ class MainWindow(QMainWindow):
                     # coincidence and land the stale target anyway.
                     # _land_deferred_nav bails if any navigation has
                     # completed since, landing back here or not.
-                    self._deferred_nav = (self._nav_seq, index)
+                    self._deferred_nav = (self._nav_seq, index,
+                                          self._pending_sources())
                     return
                 if self._has_pending():
                     # An Apply can now decline mid-flight (Task 5's truncation
@@ -1884,6 +1885,13 @@ class MainWindow(QMainWindow):
         would sweep the user forward as if it had worked while the warning
         they need to see sits under the stage they just left.
 
+        Still pending is not always a failure, though: Colour can hold three
+        independent edits, and the sequence presses the method first (see
+        `_apply_sequence`), so a perfectly good apply can land with the tint
+        still waiting. Those two are told apart by strict progress in
+        `_pending_sources` — if something actually committed, carry on with the
+        rest rather than dropping a navigation the user already authorised.
+
         Also checked against _nav_seq, not self._stage: the stepper isn't
         busy-gated, so the user can click a different row while this apply
         is still running, answer a second prompt, and even navigate BACK to
@@ -1896,11 +1904,30 @@ class MainWindow(QMainWindow):
         user somewhere they didn't ask to go on this visit.
         """
         pending, self._deferred_nav = self._deferred_nav, None
-        if pending is None or self.project is None or self._has_pending():
+        if pending is None or self.project is None:
             return
-        seq, target = pending
+        seq, target, *rest = pending
         if self._nav_seq != seq:
             return
+        if self._has_pending():
+            # Still pending for one of two very different reasons. Either the
+            # apply failed or was refused — the same source is still unapplied,
+            # and landing would sweep the user past the warning they need to
+            # see — or it succeeded and Colour simply has another button to
+            # press (method, then tint, then remove-green). Tell them apart by
+            # requiring STRICT progress since the deferral was armed: a
+            # shrinking set can only shrink so far, so this cannot spin on an
+            # apply that keeps failing.
+            was = rest[0] if rest else frozenset()
+            left = self._pending_sources()
+            if not (left < was) or not self._pending_apply_targets():
+                return
+            self._apply_current_step()
+            if self._busy:
+                self._deferred_nav = (seq, target, left)   # another one in flight
+                return
+            if self._has_pending():
+                return
         self._go_to(target, user_initiated=False)
 
     def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
@@ -1965,35 +1992,76 @@ class MainWindow(QMainWindow):
         return [btn] if btn is not None and btn.isEnabled() else []
 
     def _button_step_pending(self, btn) -> bool:
-        """Whether the preview slot this button commits is still holding an
-        unapplied value, right after clicking it.
+        """Whether the thing THIS button commits is still unapplied, right
+        after clicking it.
 
         `_pending_apply_targets` only ever offers a button when this was
         already True, so False afterwards means the click actually committed
         (or, on Background's "off", recorded an explicit decision) rather
         than being declined at a truncation confirm.
+
+        Per button rather than `_has_pending()` for the whole step, because
+        Colour has three independent sources: reading the step would call a
+        perfectly successful Apply Color "declined" whenever a tint was still
+        waiting behind it, and stop the sequence one button short.
         """
         if btn is getattr(self._panel, "apply_tint_btn", None):
             return self._tint_pending is not None
         if btn is getattr(self._panel, "remove_green_btn", None):
             return self._rg_pending is not None
+        if self.current_stage_id() == "color":
+            return self._color_method_pending()
         return self._has_pending()
 
+    def _apply_sequence(self) -> list:
+        """`_pending_apply_targets`, in the order the buttons must be PRESSED.
+
+        Colour's method commits as "Color", which sits BEFORE "Colour Tint" in
+        PROCESSING_ORDER — so applying it truncates a committed tint away.
+        Tint first and method second therefore commits the user's tint and then
+        immediately asks to discard it; method first commits both and discards
+        nothing. `_pending_apply_targets` keeps answering the single-press
+        question (which button is green, which one the note sits above, whether
+        "Apply and continue" is honest), where Apply Color must still not be
+        offered while a tint waits.
+        """
+        targets = self._pending_apply_targets()
+        if (self.current_stage_id() != "color" or self._busy
+                or not self._color_method_pending()):
+            return targets
+        btn = getattr(self._panel, "apply_btn", None)
+        if btn is not None and btn.isEnabled() and btn not in targets:
+            targets.insert(0, btn)
+        return targets
+
     def _apply_current_step(self) -> None:
-        """Press this step's own Apply button(s) — see _pending_apply_targets
-        for which ones and why Color is special.
+        """Press this step's own Apply button(s) — see `_apply_sequence` for
+        which ones, in which order, and why Color is special.
+
+        Re-reads the sequence after every press rather than iterating one
+        snapshot: Colour is the one stage that can hold two independent pending
+        edits, so a single pass committed the first and left `_go_to` looking
+        at a step that was still pending. The user pressed Next, watched
+        nothing move, and had to answer the identical prompt a second time.
 
         Stops after a button whose truncation confirm was declined instead of
-        pressing whatever else was pending: Color's tint and remove-green
-        targets are independent buttons, and continuing would re-ask the same
-        destructive question on the second one seconds after the user just
-        said no to the first. `_go_to` reads `_has_pending()` once this
-        returns to learn whether anything here is still unapplied.
+        pressing whatever else was pending — continuing would re-ask the same
+        destructive question seconds after the user said no — and stops the
+        moment a press goes async, where `_land_deferred_nav` carries on.
+        Each press either clears its own source or returns, so this terminates.
         """
-        for btn in self._pending_apply_targets():
+        while self._has_pending():
+            # `_has_pending`, not "are there targets left": _pending_apply_targets
+            # answers "which button WOULD commit it" and hands back a candidate
+            # on an untouched step too (see _sync_step_controls), so looping on
+            # a non-empty list re-presses Apply forever.
+            targets = self._apply_sequence()
+            if not targets:
+                return
+            btn = targets[0]
             btn.click()
-            if not self._busy and self._button_step_pending(btn):
-                break
+            if self._busy or self._button_step_pending(btn):
+                return
 
     def _ask_pending(self, step_label: str) -> str:
         """'apply', 'discard' or 'cancel'. Split out so tests can answer it
@@ -2360,19 +2428,33 @@ class MainWindow(QMainWindow):
         commits nothing at all, and a rebuilt panel starts at the step default —
         each of which read permanently pending against their own commit.
         """
+        return bool(self._pending_sources())
+
+    def _pending_sources(self) -> frozenset:
+        """Which independent unapplied things this step is holding, by name.
+
+        `_has_pending` asks "any?"; a deferred "Apply and continue" needs
+        "which?", because Colour has up to three (the method, the tint, the
+        remove-green) and a step that still reads pending after one of them
+        committed is not the same situation as one whose apply failed. See
+        `_land_deferred_nav`.
+        """
         if self.project is None:
-            return False
+            return frozenset()
         sid = self.current_stage_id()
-        slots = [self._PENDING_SLOTS[p]
-                 for p in self._STAGE_PREVIEWS.get(sid, (sid,))
-                 if p in self._PENDING_SLOTS]
-        if slots and any(getattr(self, s, None) is not None for s in slots):
-            return True
+        previews = [p for p in self._STAGE_PREVIEWS.get(sid, (sid,))
+                    if p in self._PENDING_SLOTS]
+        out = {p for p in previews
+               if getattr(self, self._PENDING_SLOTS[p], None) is not None}
         if sid == "color":
-            return self._color_method_pending()
-        if slots:
-            return False
-        return self._option_box_pending(sid)
+            if self._color_method_pending():
+                out.add("method")
+        elif not previews and self._option_box_pending(sid):
+            # A live-preview stage is answered by its slot alone: its panel has
+            # no option_box to compare, and consulting one would read a
+            # neighbour's baseline.
+            out.add("option")
+        return frozenset(out)
 
     def _color_method_pending(self) -> bool:
         """Whether Color's method dropdown differs from what was committed.
@@ -2472,11 +2554,7 @@ class MainWindow(QMainWindow):
             # holds nothing of its own, and pressing it would silently eat
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
-            has_commit = False
-            if self.project is not None:
-                tail = self.project.entries()[self._truncation_target(sid):]
-                has_commit = any(n in self._step_own_names(sid) for n, _ in tail)
-            reset_btn.setEnabled(pending or has_commit)
+            reset_btn.setEnabled(pending or self._step_has_commit(sid))
 
     def _position_pending_label(self, label, pending: bool) -> None:
         """Keep the note directly above whichever button would actually
@@ -2509,6 +2587,20 @@ class MainWindow(QMainWindow):
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
         }
 
+    def _step_has_commit(self, step_id: str) -> bool:
+        """Is one of this STAGE's own entries actually in history?
+
+        One reading for two callers — the Reset button's enablement and Reset
+        itself — so the button cannot offer to remove a commit the action then
+        treats as absent, or the other way round. `_reset_step` used to skip the
+        question entirely and truncate regardless, which on a never-applied step
+        discarded the LATER work and put nothing in its place.
+        """
+        if self.project is None:
+            return False
+        tail = self.project.entries()[self._truncation_target(step_id):]
+        return any(n in self._stage_own_names(step_id) for n, _ in tail)
+
     def _truncation_target(self, step_id: str) -> int:
         """The history length this step's commit truncates back to.
 
@@ -2527,7 +2619,7 @@ class MainWindow(QMainWindow):
         tail (see GEOMETRY_NAMES), so a history ending in taps-then-Trim is
         the ordinary path, not an edge case. Walking back over Trim too, not
         just ENHANCE_NAMES, is what keeps the button alive there instead of
-        going permanently dead the moment anyone trims. _step_own_names does
+        going permanently dead the moment anyone trims. _stage_own_names does
         NOT add Trim to enhancements' own names, so it still shows up as a
         named casualty in the confirm — honest, since resetting the taps
         really does cost you the trim.
@@ -2538,7 +2630,7 @@ class MainWindow(QMainWindow):
             # Trim is TRANSPARENT to this walk, not one of the taps. It is a
             # late finishing crop appended after the tail, so taps-then-Trim is
             # the ordinary shape; stopping at it left the button permanently
-            # dead the moment anyone trimmed. _step_own_names deliberately does
+            # dead the moment anyone trimmed. _stage_own_names deliberately does
             # NOT claim Trim for this stage, so it still appears as a named
             # casualty in the confirm — honest, because resetting the taps does
             # cost you the trim.
@@ -2550,26 +2642,26 @@ class MainWindow(QMainWindow):
         }
         return self._leading_kept(self.project.entries(), preceding)
 
-    def _step_own_names(self, step_id: str) -> set:
-        """Entry names this step's own commit can produce.
+    def _stage_own_names(self, step_id: str) -> set:
+        """Answers "what can this STAGE's Reset take back?" — every name any
+        button on the stage commits under.
 
-        _confirm_truncation compares casualties against this to tell "you are
-        replacing your own work at the frontier" (silent) from "you are
-        discarding later work" (named). Most steps commit under exactly one
-        name, but three stages commit under several.
+        Reset is a stage-wide action: one button on the panel, undoing whatever
+        that panel applied. So Crop's stage owns Crop/Rotate/Flip, Enhancements
+        owns every tap, and Color owns all three of "Color", "Colour Tint" and
+        "Remove Green" — the stage id matches only the first, and without the
+        other two Reset reads disabled over a real tint-only commit.
 
-        Crop's stage commits as Crop/Rotate/Flip — Trim is deliberately
-        excluded: it is a distinct, later action, not this stage's own edit.
-        Enhancements commits under any of ENHANCE_NAMES. And Color carries
-        three buttons that commit as "Color", "Colour Tint" and "Remove Green"
-        — the stage id matches only the first, so without the other two a
-        tint-only or green-only edit is not recognised as this stage's own
-        work: Reset reads disabled over a real commit, and a confirm would
-        name the user's own tint as a casualty.
+        Deliberately NOT the same question as `_commit_own_names`, which asks
+        what the PRESSED BUTTON re-commits. Answering that one with this set is
+        how Apply Color came to discard a committed tint in silence: the tint is
+        this stage's own work, but it is not what Apply Color commits. Keep them
+        apart.
 
-        Toolbar tools (Narrowband, Colour Balance, Star Spikes, Starless
-        Levels) also commit under their own names, and are deliberately absent:
-        no stepper stage owns them, so they are always someone else's work.
+        Trim is excluded from crop: it is a distinct, later action, not this
+        stage's own edit. Toolbar tools (Narrowband, Colour Balance, Star
+        Spikes, Starless Levels) are absent too — no stepper stage owns them, so
+        they are always someone else's work.
         """
         if step_id == "crop":
             return {"Crop", "Rotate", "Flip H", "Flip V"}
@@ -2580,9 +2672,37 @@ class MainWindow(QMainWindow):
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
-    def _ask_truncation(self, names: list[str], step_label: str,
-                        verb: str) -> bool:
+    def _commit_own_names(self, step_id: str) -> set:
+        """Answers "what is the pressed Apply button about to re-commit?" — the
+        entry name this one commit produces.
+
+        `_confirm_truncation` uses it for the frontier-silence rule: replacing
+        your own commit with a new one under the same name costs nothing, so it
+        stays silent, while any OTHER name in the discarded tail is work the
+        user has to be told about. Every caller of `_truncate_for` passes the
+        id of the COMMIT (`color`, `tint`, `remove_green`, `saturation`, …), not
+        of the stage, so one name is always the honest answer — see
+        `_stage_own_names` for the stage-wide question and why merging the two
+        is a silent data loss rather than a tidy-up.
+
+        An id with no STEP_NAME (a stepper stage such as `crop`, were one ever
+        routed through here) yields the empty set, so everything in the tail is
+        named and the user is asked. Over-asking is the safe direction.
+        """
+        name = STEP_NAME.get(step_id)
+        return {name} if name else set()
+
+    def _ask_truncation(self, names: list[str], step_label: str, verb: str,
+                        *, repeat: bool = False, own_work: bool = False) -> bool:
         """Split out so tests can answer it. True means go ahead.
+
+        `repeat` is "this step already has a commit the new one replaces" — the
+        only thing that makes "again" true. Without it every first-ever Apply on
+        a revisited step asked "Apply Levels again?" about a step never applied.
+        `own_work` is "the names ARE this step's own commit", which only Reset at
+        the frontier passes: the standard "applied after it" tail rendered as
+        "Reset Levels? / This discards Levels, applied after it.", where "it" is
+        Levels itself.
 
         Names the step in the headline. macOS drops a QMessageBox window title
         entirely, so without it the only text on screen is "This discards X,
@@ -2600,9 +2720,11 @@ class MainWindow(QMainWindow):
                   if len(names) > 1 else names[0])
         box = QMessageBox(self)
         box.setWindowTitle(f"{APP_NAME} — {verb}")
-        box.setText(f"{verb} {step_label} again?" if verb == "Apply"
+        box.setText(f"{verb} {step_label} again?" if repeat
                     else f"{verb} {step_label}?")
-        box.setInformativeText(f"This discards {listed}, applied after it.")
+        box.setInformativeText(
+            f"This discards {listed}, "
+            + ("applied at this step." if own_work else "applied after it."))
         go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel)
@@ -2618,18 +2740,21 @@ class MainWindow(QMainWindow):
         Names the steps rather than counting them: "3 steps" does not tell you
         whether you are about to lose ten minutes of GraXpert.
         """
-        own = self._step_own_names(step_id)
+        own = self._commit_own_names(step_id)
         # Deduplicated, first appearance wins. Trim is deliberately append-only
         # (see _trim), so it can legitimately appear twice in one history —
         # "This discards Trim, Curves and Trim" reads like a bug in the dialog.
         casualties: list[str] = []
+        repeat = False
         for name, _ in self.project.entries()[target:]:
-            if name not in own and name not in casualties:
+            if name in own:
+                repeat = True      # there IS an earlier commit to say "again" about
+            elif name not in casualties:
                 casualties.append(name)
         if not casualties:
             return True
         return self._ask_truncation(
-            casualties, STEP_NAME.get(step_id, step_id), verb)
+            casualties, STEP_NAME.get(step_id, step_id), verb, repeat=repeat)
 
     def _confirm_reset(self, step_id: str, target: int) -> bool:
         """Reset's own version of _confirm_truncation's silence rule.
@@ -2644,7 +2769,7 @@ class MainWindow(QMainWindow):
         `_confirm_truncation` always has: name the surprising later work, not
         the step's own edit that pressing "Reset" obviously discards.
         """
-        own = self._step_own_names(step_id)
+        own = self._stage_own_names(step_id)
         own_here: list[str] = []
         later: list[str] = []
         for name, _ in self.project.entries()[target:]:
@@ -2656,7 +2781,8 @@ class MainWindow(QMainWindow):
         if later:
             return self._ask_truncation(later, STEP_NAME.get(step_id, step_id), "Reset")
         if own_here:
-            return self._ask_truncation(own_here, STEP_NAME.get(step_id, step_id), "Reset")
+            return self._ask_truncation(own_here, STEP_NAME.get(step_id, step_id),
+                                        "Reset", own_work=True)
         return True
 
     def _truncate_for(self, step_id: str, verb: str) -> bool:
@@ -2679,12 +2805,19 @@ class MainWindow(QMainWindow):
         """Put this step back to unapplied: controls to defaults, commit removed.
 
         Removing the commit means truncating, because jump_back cannot take an
-        entry out of the middle — see the spec's §4. Uses `_confirm_reset`, NOT
-        `_confirm_truncation`: Apply's frontier silence is safe because your
-        own commit is immediately replaced by your own new one, but Reset
-        replaces it with nothing, and jump_back has no redo — Undo then walks
-        past the removed entry instead of restoring it. So Reset confirms even
-        when the only thing at risk is its own commit.
+        entry out of the middle — see the spec's §4, which removes the commit IF
+        there is one. With none there is nothing to truncate, and truncating
+        anyway ate the later work in its place: apply Stretch, apply Curves,
+        walk back to a never-applied Levels, nudge a slider, press Reset, and
+        Curves was gone. The controls half still runs, with no confirm in the
+        way — the confirm's Cancel leaves the sliders untouched, so with one
+        the button could never do its stated job once later work existed.
+
+        Uses `_confirm_reset`, NOT `_confirm_truncation`: Apply's frontier
+        silence is safe because your own commit is immediately replaced by your
+        own new one, but Reset replaces it with nothing, and jump_back has no
+        redo — Undo then walks past the removed entry instead of restoring it.
+        So Reset confirms even when the only thing at risk is its own commit.
 
         Guarded on `_busy` like every other commit path: a running worker
         (GraXpert, RC-Astro, …) holds `base = self.project.current()` captured
@@ -2696,11 +2829,12 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         sid = self.current_stage_id()
-        target = self._truncation_target(sid)
-        if not self._confirm_reset(sid, target):
-            return
-        self.project.jump_back(target)
-        self._mark_dirty()
+        if self._step_has_commit(sid):
+            target = self._truncation_target(sid)
+            if not self._confirm_reset(sid, target):
+                return
+            self.project.jump_back(target)
+            self._mark_dirty()
         self._clear_warning()      # every other commit path clears a stale warning too
         self._rebuild_panel()      # controls back to their defaults
         self._refresh()
