@@ -77,3 +77,27 @@ def _refuse_real_pending_prompt(monkeypatch):
             f"{step_label!r}. Stub MainWindow._ask_pending via monkeypatch.")
 
     monkeypatch.setattr(mw.MainWindow, "_ask_pending", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _refuse_real_truncation_prompt(monkeypatch):
+    """MainWindow._ask_truncation builds its own QMessageBox and calls .exec()
+    directly, same hang risk _refuse_real_pending_prompt above guards against
+    for _ask_pending — an unstubbed call blocks forever headless rather than
+    failing. Tests that need an answer stub `_ask_truncation` locally via
+    monkeypatch, which simply overrides this.
+    """
+    try:
+        from nocturne.ui import main_window as mw
+    except ImportError:
+        return
+
+    monkeypatch.setattr(mw.MainWindow, "_real_ask_truncation", mw.MainWindow._ask_truncation,
+                        raising=False)
+
+    def refuse(self, names, verb):
+        raise AssertionError(
+            f"a real truncation-confirm prompt was opened in a test for "
+            f"{names!r}. Stub MainWindow._ask_truncation via monkeypatch.")
+
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation", refuse)

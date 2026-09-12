@@ -750,3 +750,66 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
     assert win._panel.apply_tint_btn.property("pending") == "true"
     assert win._panel.apply_btn.property("pending") == "false", (
         "Apply Color is lit for a pending tint it does not commit")
+
+
+def test_truncation_is_silent_when_only_this_step_would_go(
+        qtbot, tmp_path, monkeypatch):
+    """Replacing your own work at the frontier is the common case and must not
+    prompt."""
+    asked = []
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: asked.append(names) or False)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+
+    target = win._truncation_target("levels")
+    assert win._confirm_truncation("levels", target, "Apply") is True
+    assert asked == [], "prompted when only this step's own entry was at risk"
+
+
+def test_truncation_confirms_and_names_the_later_steps(
+        qtbot, tmp_path, monkeypatch):
+    seen = []
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: seen.append(list(names)) or True)
+    win = _win(qtbot, tmp_path)
+    for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
+                     ("curves", [(0.0, 0.0), (1.0, 1.0)])):
+        win._go_to_id(sid)
+        win.apply_current(opt)
+        assert win._committed_option(sid) is not None
+    win._go_to_id("levels")
+
+    target = win._truncation_target("levels")
+    assert win._confirm_truncation("levels", target, "Apply") is True
+    # NOTE: the brief's original assertion checked STEP_NAME["saturation"],
+    # which was never applied in this test's sequence (stretch/levels/curves)
+    # — a copy-paste slip. Curves is the step actually applied after Levels
+    # here, so it is the one truncation must name.
+    assert seen and STEP_NAME["curves"] in seen[0]
+    assert STEP_NAME["levels"] not in seen[0], (
+        "named this step as a casualty of redoing this step")
+
+
+def test_declining_the_confirm_returns_false_and_truncates_nothing(
+        qtbot, tmp_path, monkeypatch):
+    """The confirm must be asked BEFORE jump_back. An implementation that
+    truncates then asks would pass a test that only checked the return value."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: False)
+    win = _win(qtbot, tmp_path)
+    for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
+                     ("curves", [(0.0, 0.0), (1.0, 1.0)])):
+        win._go_to_id(sid)
+        win.apply_current(opt)
+        assert win._committed_option(sid) is not None
+    before = list(win.project.entries())
+
+    target = win._truncation_target("levels")
+    assert win._confirm_truncation("levels", target, "Apply") is False
+    assert list(win.project.entries()) == before

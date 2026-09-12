@@ -2351,6 +2351,47 @@ class MainWindow(QMainWindow):
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
         }
 
+    def _truncation_target(self, step_id: str) -> int:
+        """The history length this step's commit truncates back to.
+
+        Extracted verbatim from the Apply path so both callers cannot drift —
+        the same number decides what Apply discards and what Reset discards.
+        """
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]
+        }
+        return self._leading_kept(self.project.entries(), preceding)
+
+    def _ask_truncation(self, names: list[str], verb: str) -> bool:
+        """Split out so tests can answer it. True means go ahead."""
+        listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 \
+            else names[0]
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{APP_NAME} — {verb}")
+        box.setText(f"This discards {listed}, applied after it.")
+        go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(box.buttons()[-1])
+        box.exec()
+        return box.clickedButton() is go
+
+    def _confirm_truncation(self, step_id: str, target: int, verb: str) -> bool:
+        """False means the user cancelled and NOTHING may be discarded.
+
+        Silent when the only entry at risk is this step's own — that is
+        replacing your own work at the frontier, which is most Applies.
+
+        Names the steps rather than counting them: "3 steps" does not tell you
+        whether you are about to lose ten minutes of GraXpert.
+        """
+        own = STEP_NAME.get(step_id)
+        casualties = [name for name, _ in self.project.entries()[target:]
+                      if name != own]
+        if not casualties:
+            return True
+        return self._ask_truncation(casualties, verb)
+
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
             return
