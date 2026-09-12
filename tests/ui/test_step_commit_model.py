@@ -141,16 +141,38 @@ def test_background_off_is_a_decision_not_a_pending_change(qtbot, tmp_path):
     assert win._has_pending() is False
 
 
-def test_the_color_stage_covers_both_of_its_previews(qtbot, tmp_path):
-    """Color carries two live previews and had no coverage at all: its slots
-    were keyed by step name ("tint", "remove_green"), which current_stage_id
-    never returns."""
+def test_the_color_stage_covers_its_tint_preview(qtbot, tmp_path):
+    """Color's tint preview had no coverage at all: its slot is keyed by step
+    name ("tint"), which current_stage_id never returns. De-green Sky used to
+    share this problem as Color's second preview, but now has its own stage
+    and needs no mapping here — see
+    test_the_remove_green_stage_covers_its_own_preview below."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     assert win._has_pending() is False
     win._on_tint_change(0.2, 0.0)
     assert win._has_pending() is True
     win._apply_tint_step(0.2, 0.0)
+    assert win._has_pending() is False
+
+
+def test_color_pending_is_not_disturbed_by_a_stale_remove_green_slot(qtbot, tmp_path):
+    """De-green Sky moved off Color's panel entirely — _STAGE_PREVIEWS["color"]
+    must be ("tint",) only. A value left in _rg_pending (from a previous
+    visit to the remove_green stage, discarded rather than applied) must not
+    make Color read as pending; if _STAGE_PREVIEWS["color"] regained
+    "remove_green" this would spuriously light Color's pending state again."""
+    win = _win(qtbot, tmp_path)
+    win._rg_pending = 0.4     # simulate a stale slot from another stage
+    win._go_to_id("color")
+    assert win._has_pending() is False
+
+
+def test_the_remove_green_stage_covers_its_own_preview(qtbot, tmp_path):
+    """Unlike tint, remove_green's stage id IS its step id, so it needs no
+    entry in _STAGE_PREVIEWS at all — the generic (sid,) fallback covers it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("remove_green")
     assert win._has_pending() is False
     win._on_removegreen_change(0.4)
     assert win._has_pending() is True
@@ -339,14 +361,13 @@ def test_color_apply_and_continue_commits_the_tint_not_apply_color(
     assert win._tint_pending is None
 
 
-def test_color_apply_and_continue_commits_remove_green_too(
+def test_remove_green_apply_and_continue_commits_it(
         qtbot, tmp_path, monkeypatch):
-    """The remove-green branch of `_pending_apply_targets` had no coverage:
-    deleting it left the whole file green. Untested, that is precisely the
-    bug this task exists to fix, just for Color's other slider — 'Apply and
-    continue' on a pending De-green Sky silently discarding it."""
+    """De-green Sky is a single-commit stage like any other now (its own
+    stage, its own apply_btn) — 'Apply and continue' must not silently
+    discard a pending strength."""
     win = _win(qtbot, tmp_path)
-    win._go_to_id("color")
+    win._go_to_id("remove_green")
     win._panel.rg_slider.setValue(40)   # -> 0.40; fires _on_removegreen_change
     before = list(win.project.entries())
     _answer(monkeypatch, "apply")
@@ -636,9 +657,9 @@ def test_deferred_nav_does_not_fire_after_a_round_trip_back_to_the_origin(
 def test_color_apply_and_continue_is_not_offered_during_an_unrelated_busy_op(
         qtbot, tmp_path, monkeypatch):
     """IMPORTANT 2. _set_busy disables only self._panel.apply_btn, not
-    Color's apply_tint_btn / remove_green_btn, so those stayed clickable
-    during ANY unrelated busy op (a plate solve, Auto Enhance, Save Project
-    — all _run_busy). Reproduced: tint nudged, an unrelated op running,
+    Color's apply_tint_btn, so that stayed clickable during ANY unrelated
+    busy op (a plate solve, Auto Enhance, Save Project — all _run_busy).
+    Reproduced: tint nudged, an unrelated op running,
     _ask_pending's real body still offered "Apply and continue" as its
     DEFAULT button. Pressing it would click apply_tint_btn, whose own
     handler (_apply_tint_step) early-returns on self._busy — nothing
@@ -745,17 +766,21 @@ def test_the_pending_note_sits_above_apply_tint_when_a_tint_is_pending(
         "pending tint rather than commit it")
 
 
-def test_the_pending_note_sits_above_remove_green_when_it_is_pending(
+def test_the_pending_note_sits_above_remove_green_apply_when_it_is_pending(
         qtbot, tmp_path):
+    """De-green Sky is a single-commit stage now, the same shape as every
+    other one (see test_the_pending_note_sits_above_the_apply_button) — kept
+    as its own regression since this exact stage used to be special-cased on
+    Colour, with its own button name and its own coverage gap."""
     win = _win(qtbot, tmp_path)
-    win._go_to_id("color")
+    win._go_to_id("remove_green")
     win._on_removegreen_change(0.4)
     win._sync_step_controls()
 
     lay = win._panel.layout()
     order = [lay.itemAt(i).widget() for i in range(lay.count())]
     assert order.index(win._panel.pending_label) == \
-        order.index(win._panel.remove_green_btn) - 1
+        order.index(win._panel.apply_btn) - 1
 
 
 def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
@@ -825,15 +850,16 @@ def test_background_off_does_not_stay_green_after_being_applied(qtbot, tmp_path)
 
 def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         qtbot, tmp_path):
-    """Color carries three commit buttons. Lighting Apply Color when a TINT is
-    pending would point the user at the one button that does not commit it.
+    """Color carries two commit buttons (Apply Color, Apply Tint — De-green
+    Sky moved to its own stage). Lighting Apply Color when a TINT is pending
+    would point the user at the one button that does not commit it.
 
     Reads the RENDERED background, not just the Qt property (whole-branch
     review Critical #4): theme.py styles `QPushButton#primary[pending=...]`,
-    and apply_tint_btn/remove_green_btn had no objectName "primary" at all —
-    the property was set faithfully forever with zero visual effect. A test
-    on the property alone cannot see that; this fails against exactly the
-    no-op the review flagged.
+    and apply_tint_btn had no objectName "primary" at all — the property was
+    set faithfully forever with zero visual effect. A test on the property
+    alone cannot see that; this fails against exactly the no-op the review
+    flagged.
     """
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QColor
@@ -851,8 +877,6 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
             "Apply Color is lit for a pending tint it does not commit")
         assert win._panel.apply_tint_btn.objectName() == "primary", (
             "apply_tint_btn is not wired into the #primary[pending=...] selector")
-        assert win._panel.remove_green_btn.objectName() == "primary", (
-            "remove_green_btn is not wired into the #primary[pending=...] selector")
 
         btn = win._panel.apply_tint_btn
         pm = btn.grab()
@@ -865,11 +889,44 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         app.setStyleSheet("")
 
 
+def test_on_remove_green_its_own_apply_renders_green_while_pending(
+        qtbot, tmp_path):
+    """Same regression as above, for De-green Sky's own stage: its button is
+    the generic `apply_btn`, not a special-cased `remove_green_btn`, and must
+    be wired into the same #primary[pending=...] selector as every other
+    single-commit stage."""
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QColor
+    from nocturne.ui.theme import build_stylesheet, SUCCESS
+    win = _win(qtbot, tmp_path)
+    app = QApplication.instance()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win._go_to_id("remove_green")
+        win._on_removegreen_change(0.4)
+        win._sync_step_controls()
+
+        assert win._panel.apply_btn.property("pending") == "true"
+        assert win._panel.apply_btn.objectName() == "primary", (
+            "apply_btn is not wired into the #primary[pending=...] selector")
+
+        btn = win._panel.apply_btn
+        pm = btn.grab()
+        rendered = pm.toImage().pixelColor(pm.width() // 2, pm.height() // 2)
+        expected = QColor(SUCCESS)
+        assert (rendered.red(), rendered.green(), rendered.blue()) == \
+            (expected.red(), expected.green(), expected.blue()), (
+                f"Apply De-green Sky does not actually render green while pending: "
+                f"{rendered.name()}")
+    finally:
+        app.setStyleSheet("")
+
+
 # --- Whole-branch review Critical #5: Colour's method choice is not covered
-# by pending at all. _has_pending checked _STAGE_PREVIEWS["color"] = ("tint",
-# "remove_green") and fell back to option_box, but Colour's selector is
-# method_box — so the originally reported bug was fully intact on this one
-# choice, which materially changes the result.
+# by pending at all. _has_pending checked _STAGE_PREVIEWS["color"] = ("tint",)
+# and fell back to option_box, but Colour's selector is method_box — so the
+# originally reported bug was fully intact on this one choice, which
+# materially changes the result.
 
 def test_the_color_method_choice_is_covered_by_pending(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
@@ -1412,8 +1469,8 @@ def test_reset_step_on_enhancements_stays_disabled_with_only_a_trim(qtbot, tmp_p
 
 
 def test_reset_step_is_alive_after_a_tint_only_commit_on_color(qtbot, tmp_path):
-    """The Color stage commits under three names, and the stage id matches only
-    one of them. Without the other two a tint-only edit is not recognised as
+    """The Color stage commits under two names, and the stage id matches only
+    one of them. Without the other a tint-only edit is not recognised as
     this stage's own work and Reset reads disabled over a real commit."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
@@ -1426,8 +1483,10 @@ def test_reset_step_is_alive_after_a_tint_only_commit_on_color(qtbot, tmp_path):
 
 
 def test_reset_step_is_alive_after_a_remove_green_only_commit(qtbot, tmp_path):
+    """De-green Sky now has its own stage, whose id matches its own STEP_NAME
+    entry directly — no _stage_own_names special case needed, unlike Color."""
     win = _win(qtbot, tmp_path)
-    win._go_to_id("color")
+    win._go_to_id("remove_green")
     win._remove_green(0.5)
     assert [n for n, _ in win.project.entries()] == ["De-green Sky"]
 
@@ -1512,10 +1571,12 @@ def test_remove_green_frontier_apply_does_not_prompt(qtbot, tmp_path):
 
 def test_remove_green_revisited_asks_and_declining_keeps_later_work(
         qtbot, tmp_path, monkeypatch):
+    """Later work for De-green Sky means AFTER it in PROCESSING_ORDER now —
+    Recover Core, not Stretch, which moved to sit BEFORE it."""
     win = _win(qtbot, tmp_path)
     win._remove_green(0.5)
-    win._go_to_id("stretch")
-    win.apply_current(0.5)   # later work; frontier for Stretch, so silent
+    win._go_to_id("recover_core")
+    win.apply_current(0.3)   # later work; frontier for Recover Core, so silent
     before = list(win.project.entries())
     from nocturne.ui import main_window as mw
     seen = []
@@ -1524,7 +1585,7 @@ def test_remove_green_revisited_asks_and_declining_keeps_later_work(
 
     win._remove_green(0.7)
 
-    assert seen and "Stretch" in seen[0]
+    assert seen and "Recover Core" in seen[0]
     assert list(win.project.entries()) == before, (
         "De-green Sky truncated after the user declined")
 
@@ -1539,9 +1600,9 @@ def test_tint_frontier_apply_does_not_prompt(qtbot, tmp_path):
 def test_tint_revisited_names_remove_green_and_declining_keeps_it(
         qtbot, tmp_path, monkeypatch):
     """Re-applying a tint over [Colour Tint, De-green Sky] must name
-    De-green Sky as a casualty: it is genuinely later work, even though both are
-    buttons on the same Color stage — different from Reset on the stage
-    itself, where all three names count as the stage's own."""
+    De-green Sky as a casualty: it is genuinely later work, now on its own
+    stage entirely — different from Reset on the Color stage itself, where
+    only "Color" and "Colour Tint" count as that stage's own."""
     win = _win(qtbot, tmp_path)
     win._apply_tint_step(0.2, 0.0)
     win._remove_green(0.4)   # later work; frontier for De-green Sky, so silent
@@ -1737,58 +1798,64 @@ def test_apply_and_continue_still_navigates_with_nothing_declined(
 
 def test_color_cancelling_the_first_confirm_never_clicks_the_second_button(
         qtbot, tmp_path, monkeypatch):
-    """Tint and remove-green are independent buttons on Color. Cancelling the
-    first one's truncation confirm must not still press the second — that
-    would ask the same destructive question again seconds after the user
-    just said no."""
+    """Method and tint are independent commits on Color — its only two
+    remaining sources now that De-green Sky has its own stage. Cancelling the
+    first one's (the method's) truncation confirm must not still press the
+    second (tint) — that would ask the same destructive question again
+    seconds after the user just said no."""
     win = _win(qtbot, tmp_path)
-    win._remove_green(0.3)   # pre-existing later work tint's confirm will name
-    rg_calls = []
+    win._apply_tint_step(0.1, 0.0)   # pre-existing later work the method confirm will name
+    tint_calls = []
     from nocturne.ui import main_window as mw
-    monkeypatch.setattr(mw.MainWindow, "_remove_green",
-                        lambda self, strength=1.0: rg_calls.append(strength))
+    monkeypatch.setattr(mw.MainWindow, "_apply_tint_step",
+                        lambda self, tint, temperature: tint_calls.append((tint, temperature)))
     win._go_to_id("color")   # rebuilds the panel, wiring the patched handler
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
     win._panel.tint_slider.setValue(20)      # -> _on_tint_change -> _tint_pending
-    win._panel.rg_slider.setValue(40)        # -> _on_removegreen_change -> _rg_pending
-    assert win._pending_apply_targets() == [
-        win._panel.apply_tint_btn, win._panel.remove_green_btn]
+    # Unlike the old tint/remove-green pair, method and tint are never BOTH
+    # in _pending_apply_targets at once (that list refuses Apply Color while
+    # a tint waits) — the sequence _apply_current_step actually presses is
+    # _apply_sequence, which puts the method first.
+    assert win._apply_sequence() == [
+        win._panel.apply_btn, win._panel.apply_tint_btn]
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
                         lambda self, names, label, verb, **kw: False)
     _answer(monkeypatch, "apply")
 
     win.go_next()
 
-    assert rg_calls == [], (
-        "remove_green_btn was clicked after the tint confirm was declined")
-    assert win._rg_pending == pytest.approx(0.4), (
-        "the still-pending remove-green edit was disturbed")
+    assert tint_calls == [], (
+        "apply_tint_btn was clicked after the method confirm was declined")
+    assert win._tint_pending == pytest.approx((0.2, 0.0)), (
+        "the still-pending tint edit was disturbed")
     assert win.current_stage_id() == "color"
 
 
-def test_color_a_successful_tint_apply_still_lets_remove_green_proceed(
+def test_color_a_successful_method_apply_still_lets_tint_proceed(
         qtbot, tmp_path, monkeypatch):
     """The loop breaks only on a DECLINED confirm, not on any click.
 
     Without this, "always stop after the first button" passes the whole suite:
     the declined-case test cannot tell a correct break from an over-eager one,
     because both stop. Colour is the one stage with two independent pending
-    edits, so it is the only place the difference is observable.
+    commits (method, tint), so it is the only place the difference is
+    observable.
     """
     from nocturne.ui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
                         lambda self, names, label, verb, **kw: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
     win._on_tint_change(0.2, 0.0)
-    win._on_removegreen_change(0.4)
     win._sync_step_controls()
-    assert len(win._pending_apply_targets()) == 2, "need both pending to test this"
+    assert len(win._apply_sequence()) == 2, "need both pending to test this"
 
     win._apply_current_step()
 
     committed = [n for n, _ in win.project.entries()]
-    assert "Colour Tint" in committed, "the first button never committed"
-    assert "De-green Sky" in committed, (
+    assert "Color" in committed, "the first button never committed"
+    assert "Colour Tint" in committed, (
         "the loop stopped after a SUCCESSFUL first apply — break is too eager")
     assert not win._has_pending()
 
@@ -1962,11 +2029,14 @@ def test_with_method_and_tint_pending_the_green_and_note_are_on_apply_color(
 
 def test_apply_color_asks_before_discarding_a_committed_tint(
         qtbot, tmp_path, monkeypatch):
-    """CRITICAL. "Colour Tint" and "De-green Sky" are the COLOR STAGE's own
-    work (so Reset can take them back), but they are not what Apply Color
-    commits. Serving both questions from one set told the Apply confirm that a
-    committed tint was this button's own work at the frontier, so Apply Color
-    discarded it in silence — the exact bug this branch exists to end."""
+    """CRITICAL. "Colour Tint" is the COLOR STAGE's own work (so Reset can
+    take it back), but it is not what Apply Color commits. Serving both
+    questions from one set told the Apply confirm that a committed tint was
+    this button's own work at the frontier, so Apply Color discarded it in
+    silence — the exact bug this branch exists to end. "De-green Sky" is
+    exercised here too even though it now has its own stage (and so is no
+    longer part of Color's own-names at all) — it is still later work sitting
+    in the history that Apply Color must not discard silently."""
     from nocturne.ui import main_window as mw
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")

@@ -1946,22 +1946,22 @@ class MainWindow(QMainWindow):
         connected to the handler `_has_pending` tracks — except Color, whose
         `apply_btn` ("Apply Color") commits the colour-calibration method, a
         decision `_has_pending` does not track at all there. What IS tracked
-        on Color is its two live previews (tint, remove-green), each with its
-        own button (`apply_tint_btn`, `remove_green_btn`). Pressing "Apply
-        Color" would commit a method nobody asked for and STILL discard the
-        tint or green the user set — worse than the silent discard this guard
-        exists to prevent — so Color's targets are whichever of its own
-        buttons match what is actually pending.
+        on Color is its live tint preview, with its own button
+        (`apply_tint_btn`). Pressing "Apply Color" would commit a method
+        nobody asked for and STILL discard the tint the user set — worse
+        than the silent discard this guard exists to prevent — so Color's
+        targets are whichever of its own buttons match what is actually
+        pending.
 
         Empty whenever `self._busy`: `_set_busy` disables only
-        `self._panel.apply_btn`, not Color's `apply_tint_btn` /
-        `remove_green_btn`, so those stayed clickable during any unrelated
-        busy op (a plate solve, Auto Enhance, Save Project). Offered as the
-        prompt's DEFAULT button there, pressing it clicked a button whose own
-        handler (`_apply_tint_step` / `_remove_green`) early-returns on
-        `self._busy` — nothing commits, `_go_to` still defers the nav on the
-        non-empty list, and when busy clears `_has_pending()` is still True
-        so `_land_deferred_nav` drops it: no commit, no navigation, no
+        `self._panel.apply_btn`, not Color's `apply_tint_btn`, so that
+        stayed clickable during any unrelated busy op (a plate solve, Auto
+        Enhance, Save Project). Offered as the prompt's DEFAULT button
+        there, pressing it clicked a button whose own handler
+        (`_apply_tint_step`) early-returns on `self._busy` — nothing
+        commits, `_go_to` still defers the nav on the non-empty list, and
+        when busy clears `_has_pending()` is still True so
+        `_land_deferred_nav` drops it: no commit, no navigation, no
         warning. Checked here rather than in every panel's own button state,
         so the prompt's offer can't be honest in one place and wrong in
         another.
@@ -1972,10 +1972,6 @@ class MainWindow(QMainWindow):
             targets = []
             if self._tint_pending is not None:
                 btn = getattr(self._panel, "apply_tint_btn", None)
-                if btn is not None and btn.isEnabled():
-                    targets.append(btn)
-            if self._rg_pending is not None:
-                btn = getattr(self._panel, "remove_green_btn", None)
                 if btn is not None and btn.isEnabled():
                     targets.append(btn)
             if not targets and self._color_method_pending():
@@ -2001,14 +1997,12 @@ class MainWindow(QMainWindow):
         than being declined at a truncation confirm.
 
         Per button rather than `_has_pending()` for the whole step, because
-        Colour has three independent sources: reading the step would call a
+        Colour has two independent sources: reading the step would call a
         perfectly successful Apply Color "declined" whenever a tint was still
         waiting behind it, and stop the sequence one button short.
         """
         if btn is getattr(self._panel, "apply_tint_btn", None):
             return self._tint_pending is not None
-        if btn is getattr(self._panel, "remove_green_btn", None):
-            return self._rg_pending is not None
         if self.current_stage_id() == "color":
             return self._color_method_pending()
         return self._has_pending()
@@ -2364,11 +2358,12 @@ class MainWindow(QMainWindow):
         "star_reduction": "_sr_pending",
     }
     # Which of those previews live on each STAGE's panel. Stage ids and step ids
-    # are different vocabularies: "tint" and "remove_green" are steps with no
-    # stage of their own — both are controls on the Color panel — so keying the
-    # slots by stage id alone left Color, the one stage carrying two live
-    # previews, with no coverage at all. Every other stage shares its step's id.
-    _STAGE_PREVIEWS = {"color": ("tint", "remove_green")}
+    # are different vocabularies: "tint" is a step with no stage of its own —
+    # it is a control on the Color panel — so keying the slots by stage id
+    # alone left Color with no coverage for it at all. Every other stage
+    # (including "remove_green", now its own stage) shares its step's id, so
+    # this mapping only needs the one exception.
+    _STAGE_PREVIEWS = {"color": ("tint",)}
 
     def _clear_pending(self, step_id: str, applied_option: str | None = None,
                        *, panel=None) -> None:
@@ -2546,7 +2541,7 @@ class MainWindow(QMainWindow):
         # itself a pending check, and returns candidates on an untouched step.
         # Gate it, or the green never goes out.
         wanted = set(map(id, self._apply_sequence())) if show_green else set()
-        for name in ("apply_btn", "apply_tint_btn", "remove_green_btn"):
+        for name in ("apply_btn", "apply_tint_btn"):
             btn = getattr(self._panel, name, None)
             if btn is None:
                 continue
@@ -2670,9 +2665,9 @@ class MainWindow(QMainWindow):
 
         Reset is a stage-wide action: one button on the panel, undoing whatever
         that panel applied. So Crop's stage owns Crop/Rotate/Flip, Enhancements
-        owns every tap, and Color owns all three of "Color", "Colour Tint" and
-        "De-green Sky" — the stage id matches only the first, and without the
-        other two Reset reads disabled over a real tint-only commit.
+        owns every tap, and Color owns both "Color" and "Colour Tint" — the
+        stage id matches only the first, and without the second Reset reads
+        disabled over a real tint-only commit.
 
         Deliberately NOT the same question as `_commit_own_names`, which asks
         what the PRESSED BUTTON re-commits. Answering that one with this set is
@@ -2690,7 +2685,7 @@ class MainWindow(QMainWindow):
         if step_id == "enhancements":
             return set(ENHANCE_NAMES)
         if step_id == "color":
-            return {"Color", "Colour Tint", "De-green Sky"}
+            return {"Color", "Colour Tint"}
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
@@ -3403,17 +3398,16 @@ class MainWindow(QMainWindow):
         self._sync_step_controls()
 
     def _render_removegreen_preview(self) -> None:
-        if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
+        if (self.project is None or self.current_stage_id() != "remove_green"
+                or self._rg_pending is None):
             return
-        # Color is a PRE-stretch step, so the image is linear — display it through
-        # _set_canvas (which auto-stretches via to_rgb8), not _show_preview (which
-        # assumes display-space data and would render linear values as near-black).
+        # remove_green is a POST-stretch step now (it sits right after Stretch
+        # in PROCESSING_ORDER, see pipeline.py), so the base is already
+        # display-space — same shape as every other post-stretch preview
+        # (levels, saturation, fringe, …): _show_preview, not the raw
+        # _set_canvas path Color's tint preview needs for its still-linear base.
         result = remove_green(self._preview_base("remove_green"), self._rg_pending)
-        self._set_peek(False)
-        self._displayed = result
-        self._set_canvas(result)
-        self.histogram_view.set_image(result)
-        self._update_clipping_line()
+        self._show_preview(result.data)
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
@@ -4032,9 +4026,12 @@ class MainWindow(QMainWindow):
 
     def _stage_for_step_name(self, name):
         """Map a history step name to the stepper stage that produced it, for
-        undo/redo navigation. Geometry -> Crop, Enhancements taps -> Enhancements,
-        De-green Sky (a Color-step button, no own stage) -> Color. Toolbar-tool
-        steps (Narrowband, Star Spikes) have no stepper stage -> None (stay put)."""
+        undo/redo navigation. Geometry -> Crop, Enhancements taps ->
+        Enhancements, Colour Tint (a Color-step button, no own stage) -> Color.
+        Toolbar-tool steps (Narrowband, Star Spikes) have no stepper stage ->
+        None (stay put). De-green Sky has its own stage now, so its STEP_NAME
+        id ("remove_green") already matches a real stage id and needs no
+        special case — it falls straight through to the `return sid` below."""
         if not name:
             return None
         if name in GEOMETRY_NAMES:
@@ -4042,7 +4039,7 @@ class MainWindow(QMainWindow):
         if name in ENHANCE_NAMES:
             return "enhancements"
         sid = {sname: s for s, sname in STEP_NAME.items()}.get(name)
-        if sid in ("tint", "remove_green"):   # both applied on the Color step
+        if sid == "tint":   # applied on the Color step
             return "color"
         return sid
 
@@ -4414,14 +4411,15 @@ class MainWindow(QMainWindow):
             self._fringe_pending = None
         if stage.id == "star_reduction":
             self._sr_pending = None
-        if stage.id == "color":
+        if stage.id == "remove_green":
             self._rg_pending = None
+        if stage.id == "color":
             # _tint_pending was missing here (Task 1): a rebuilt Color panel's
             # slider reads 0 but the slot stayed set from a prior visit, so an
             # untouched Color read as pending. Worse than a false prompt, the
             # guard's default button then commits that stale (0.0, 0.0) tint —
             # which is a real apply, and _apply_tint_step's jump_back deletes
-            # every step applied since. Clear it beside _rg_pending.
+            # every step applied since. Clear it here.
             self._tint_pending = None
         apply_enabled = loaded
         if stage.id == "background":

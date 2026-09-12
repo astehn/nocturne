@@ -71,6 +71,9 @@ def test_auto_panel_apply_color_has_no_green(qtbot):
     qtbot.addWidget(w)
     assert w.panel_kind == "auto"
     assert not hasattr(w, "remove_green_check")
+    # De-green Sky moved to its own stage — Color must carry none of it.
+    assert not hasattr(w, "rg_slider")
+    assert not hasattr(w, "remove_green_btn")
     w.apply_btn.click()
     assert len(got) == 1 and isinstance(got[0], ColorSettings)
     assert got[0].remove_green is False
@@ -93,18 +96,19 @@ def test_color_panel_apply_passes_method(qtbot):
     assert captured["opt2"].method == "sky"
 
 
-def test_auto_panel_remove_green_button_passes_strength(qtbot):
+def test_remove_green_panel_apply_button_passes_strength(qtbot):
     calls = []
-    w = build_panel(_stage("color"), on_remove_green=calls.append)
+    w = build_panel(_stage("remove_green"), on_remove_green=calls.append)
     qtbot.addWidget(w)
+    assert w.panel_kind == "remove_green"
     w.rg_slider.setValue(70)
-    w.remove_green_btn.click()
+    w.apply_btn.click()
     assert calls == [0.70]                    # button hands the slider strength through
 
 
-def test_auto_panel_remove_green_slider_previews_live(qtbot):
+def test_remove_green_panel_slider_previews_live(qtbot):
     changes = []
-    w = build_panel(_stage("color"), on_removegreen_change=changes.append)
+    w = build_panel(_stage("remove_green"), on_removegreen_change=changes.append)
     qtbot.addWidget(w)
     # the default lives in its own test; this one is about the live preview
     w.rg_slider.setValue(25)
@@ -502,7 +506,7 @@ def test_green_removal_starts_at_zero(qtbot):
     of green's fluctuations, skews the distribution the stretch neutralises on,
     and makes the sky greener. A default that harms the common case is the wrong
     default, and the control is already labelled optional."""
-    w = build_panel(_stage("color"))
+    w = build_panel(_stage("remove_green"))
     qtbot.addWidget(w)
     assert w.rg_slider.value() == 0
 

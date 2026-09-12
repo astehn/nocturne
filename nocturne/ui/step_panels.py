@@ -350,44 +350,7 @@ def build_panel(
                                       temp_slider.value() / 100.0))
         lay.addWidget(apply_tint_btn)
         w.apply_tint_btn = apply_tint_btn
-
-        # De-green Sky (SCNR) with a strength dial + live preview — a knob, not a
-        # hammer. 1.00 == the classic full clamp.
-        #
-        # Default OFF, not 0.40. SCNR clamps green only where it exceeds the
-        # red/blue average, and on data with no green cast that happens only in
-        # the noise — so it shaves the upper half of green's fluctuations, skews
-        # the distribution the stretch neutralises on, and makes the sky GREENER.
-        # Measured on a real M 31 mosaic: the stretched sky went 0.983 -> 1.003 at
-        # strength 0.40 and -> 1.027 at 1.00, where 1.000 is neutral. A default
-        # that harms the common case is the wrong default.
-        lay.addWidget(_desc_label(
-            "Optional, and usually unnecessary: the stretch already neutralises "
-            "the sky. Reach for this only if a green cast survives it, then drag "
-            "for strength (right = stronger)."))
-        rg_slider = ResetSlider(0)           # off until the user asks for it
-        rg_val = QLabel("0.00")
-        rg_row = QHBoxLayout()
-        rg_row.addWidget(QLabel("Green removal"))
-        rg_row.addWidget(rg_val)
-        remove_green_btn = QPushButton("De-green Sky")
-        # Same reasoning as apply_tint_btn above: without this objectName the
-        # pending styling has no selector to attach to and the button never
-        # visibly changes.
-        remove_green_btn.setObjectName("primary")
-        remove_green_btn.setEnabled(apply_enabled)
-        if on_removegreen_change is not None:
-            rg_slider.valueChanged.connect(
-                lambda v: (rg_val.setText(f"{v / 100:.2f}"), on_removegreen_change(v / 100.0)))
-        if on_remove_green is not None:
-            remove_green_btn.clicked.connect(
-                lambda: on_remove_green(rg_slider.value() / 100.0))
-        lay.addLayout(rg_row)
-        lay.addWidget(rg_slider)
-        lay.addWidget(remove_green_btn)
         w.apply_btn = apply_btn
-        w.remove_green_btn = remove_green_btn
-        w.rg_slider = rg_slider
 
     elif stage.kind == "stretch":
         lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
@@ -421,6 +384,45 @@ def build_panel(
         w.target_box = target
         w.stretch_slider = slider
         w.stretch_val = stretch_val
+        w.apply_btn = apply_btn
+
+    elif stage.kind == "remove_green":
+        # De-green Sky (SCNR) with a strength dial + live preview — a knob, not a
+        # hammer. 1.00 == the classic full clamp.
+        #
+        # Default OFF, not 0.40. SCNR clamps green only where it exceeds the
+        # red/blue average, and on data with no green cast that happens only in
+        # the noise — so it shaves the upper half of green's fluctuations, skews
+        # the distribution the stretch neutralises on, and makes the sky GREENER.
+        # Measured on a real M 31 mosaic: the stretched sky went 0.983 -> 1.003 at
+        # strength 0.40 and -> 1.027 at 1.00, where 1.000 is neutral. A default
+        # that harms the common case is the wrong default.
+        #
+        # This step now sits AFTER Stretch (it used to be a button on Color,
+        # five steps before the stretch that actually creates the cast), so
+        # "reach for this only if a cast survives the stretch" is finally
+        # advice the user can act on.
+        lay.addWidget(_desc_label(
+            "Optional, and usually unnecessary: the stretch already neutralises "
+            "the sky. Reach for this only if a green cast survives it, then drag "
+            "for strength (right = stronger)."))
+        rg_slider = ResetSlider(0)           # off until the user asks for it
+        rg_val = QLabel("0.00")
+        rg_row = QHBoxLayout()
+        rg_row.addWidget(QLabel("Green removal"))
+        rg_row.addWidget(rg_val)
+        if on_removegreen_change is not None:
+            rg_slider.valueChanged.connect(
+                lambda v: (rg_val.setText(f"{v / 100:.2f}"), on_removegreen_change(v / 100.0)))
+        lay.addLayout(rg_row)
+        lay.addWidget(rg_slider)
+        apply_btn = QPushButton("Apply De-green Sky")
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(apply_enabled)
+        if on_remove_green is not None:
+            apply_btn.clicked.connect(lambda: on_remove_green(rg_slider.value() / 100.0))
+        lay.addWidget(apply_btn)
+        w.rg_slider = rg_slider
         w.apply_btn = apply_btn
 
     elif stage.kind == "levels":

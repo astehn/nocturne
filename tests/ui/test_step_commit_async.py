@@ -207,21 +207,23 @@ def test_async_round_trip_back_to_colour_still_drops_the_deferral(
     assert w.pending() == 0
 
 
-def test_async_three_sources_all_commit_method_first(qtbot, tmp_path, monkeypatch):
+def test_async_two_sources_all_commit_method_first(qtbot, tmp_path, monkeypatch):
+    """Colour now has two independent pending sources (method, tint) — not
+    three. De-green Sky moved to its own stage, so it no longer contributes
+    to Colour's pending sources at all."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     w = Worker(win, monkeypatch)
     win._panel.method_box.setCurrentText(_other_method(win))
     win._on_tint_change(0.2, 0.0)
-    win._on_removegreen_change(0.4)
     _answer(monkeypatch, "apply")
-    assert win._pending_sources() == frozenset({"method", "tint", "remove_green"})
+    assert win._pending_sources() == frozenset({"method", "tint"})
 
     win.go_next()
     w.land()
 
     assert [n for n, _ in win.project.entries()] == [
-        "Color", "Colour Tint", "De-green Sky"]
+        "Color", "Colour Tint"]
     assert not win._has_pending()
     assert win.current_stage_id() != "color"
 

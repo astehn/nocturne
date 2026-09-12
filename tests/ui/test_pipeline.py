@@ -5,14 +5,14 @@ from nocturne.ui.pipeline import (
 
 def test_core_stages_expected():
     assert [s.id for s in core_stages()] == [
-        "load", "crop", "background", "color", "deconvolution", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "stretch", "remove_green",
     ]
 
 
 def test_path_stages_single_linear_flow():
     ids = [s.id for s in path_stages()]
     assert ids == [
-        "load", "crop", "background", "color", "deconvolution", "stretch",
+        "load", "crop", "background", "color", "deconvolution", "stretch", "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction", "enhancements", "export",
     ]
@@ -32,8 +32,7 @@ def test_step_name_and_order():
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
     assert PROCESSING_ORDER == [
-        "background", "color", "tint", "remove_green", "deconvolution",
-        "stretch",
+        "background", "color", "tint", "deconvolution", "stretch", "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
@@ -48,31 +47,32 @@ def test_geometry_names():
     assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
 
 
-def test_remove_green_positioned_after_color():
-    """Intent preserved: De-green Sky runs AFTER the colour calibration.
-
-    It is no longer adjacent — Colour Tint sits between them, so the order is
-    calibrate, nudge to taste, then de-green imported data. Asserting the
-    RELATIVE order rather than adjacency keeps the requirement and stops the
-    test breaking every time something is inserted nearby.
+def test_remove_green_positioned_after_stretch():
+    """The whole point of the move: De-green Sky (SCNR) fixes a green cast
+    that the STRETCH creates (a Bayer sensor gives green twice the
+    photosites, so neutral_stretch amplifies it ~1.9x — see stretch_invented_
+    green in the training notes). Judging whether a cast survives the stretch
+    is meaningless before the stretch has run, so the step must sit AFTER it
+    — it used to sit five steps before, as a button on the Color panel.
     """
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     assert STEP_NAME["remove_green"] == "De-green Sky"
+    assert PROCESSING_ORDER.index("remove_green") > PROCESSING_ORDER.index("stretch")
+    # Still after Color too — de-greening operates on the calibrated result.
     assert PROCESSING_ORDER.index("remove_green") > PROCESSING_ORDER.index("color")
 
 
-def test_colour_tint_runs_between_calibration_and_remove_green():
-    """calibrate -> nudge -> de-green. The order Andreas asked for, pinned.
+def test_colour_tint_runs_after_calibration():
+    """calibrate -> nudge. The order Andreas asked for, pinned.
 
     Tint must come AFTER colour so it nudges a calibrated image rather than
-    being undone by the calibration, and BEFORE remove_green so a de-green
-    applies to the final colour.
+    being undone by the calibration. It no longer has any ordering
+    relationship to enforce against remove_green — that step moved off the
+    Color panel entirely, onto its own stage after Stretch.
     """
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     assert STEP_NAME["tint"] == "Colour Tint"
-    assert (PROCESSING_ORDER.index("color")
-            < PROCESSING_ORDER.index("tint")
-            < PROCESSING_ORDER.index("remove_green"))
+    assert PROCESSING_ORDER.index("color") < PROCESSING_ORDER.index("tint")
 
 
 def test_deconvolution_stage_and_order():
@@ -81,7 +81,7 @@ def test_deconvolution_stage_and_order():
     assert STEP_NAME["deconvolution"] == "Deconvolution"
     assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
     i = PROCESSING_ORDER.index("deconvolution")
-    assert PROCESSING_ORDER[i - 1] == "remove_green"
+    assert PROCESSING_ORDER[i - 1] == "tint"
     assert PROCESSING_ORDER[i + 1] == "stretch"
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")
@@ -116,6 +116,7 @@ def test_enhance_names_disjoint_from_step_and_geometry_names():
 def test_post_stretch_ids_are_the_finishing_steps_minus_export():
     from nocturne.ui.pipeline import POST_STRETCH_IDS, PROCESSING_ORDER
     assert POST_STRETCH_IDS == frozenset({
+        "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe", "noise_sharpen",
         "local_contrast", "star_reduction", "enhancements",
     })
@@ -125,10 +126,24 @@ def test_post_stretch_ids_are_the_finishing_steps_minus_export():
     assert POST_STRETCH_IDS.isdisjoint(pre)
 
 
+def test_remove_green_requires_a_stretched_image():
+    """remove_green is a _CORE stage, not part of _IN_APP_TAIL, but it still
+    needs POST_STRETCH_IDS: its whole premise ("the stretch already
+    neutralises the sky") only holds once the stretch has actually run, so
+    arriving here on a still-linear image must force one — exactly like the
+    in-app tail stages do. Without this a user who jumps straight to this
+    step (skipping Stretch) would de-green a linear image instead."""
+    from nocturne.ui.pipeline import POST_STRETCH_IDS
+    assert "remove_green" in POST_STRETCH_IDS
+
+
 def test_recover_core_placed_after_stretch():
+    """Not immediately after any more — De-green Sky now sits between them,
+    right after Stretch (see test_remove_green_positioned_after_stretch)."""
     from nocturne.ui.pipeline import POST_STRETCH_IDS, STEP_NAME
     ids = [s.id for s in path_stages()]
-    assert ids.index("recover_core") == ids.index("stretch") + 1
+    assert ids.index("recover_core") == ids.index("remove_green") + 1
+    assert ids.index("recover_core") > ids.index("stretch")
     assert ids.index("recover_core") < ids.index("levels")
     assert STEP_NAME["recover_core"] == "Recover Core"
     assert "recover_core" in POST_STRETCH_IDS

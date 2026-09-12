@@ -26,6 +26,13 @@ _CORE = [
     # Restore this Stage and its PROCESSING_ORDER entry when a model passes the
     # deep-end gate. See docs/superpowers/specs/2026-08-24-n2n-v2-postmortem.md.
     Stage("stretch", "Stretch", "stretch"),
+    # Was a button on the Color panel, five steps before its own cause: the
+    # green cast this fixes is CREATED by the stretch (Bayer gives green
+    # twice the photosites, so neutral_stretch amplifies it ~1.9x). Moved
+    # here, right after Stretch, so the panel's own advice ("reach for this
+    # only if a cast survives the stretch") is something the user can
+    # actually judge. See docs/superpowers/specs for the move's rationale.
+    Stage("remove_green", "De-green Sky", "remove_green"),
 ]
 
 _IN_APP_TAIL = [
@@ -59,7 +66,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "tint", "remove_green", "deconvolution", "stretch",
+    "background", "color", "tint", "deconvolution", "stretch", "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
@@ -79,10 +86,13 @@ ENHANCE_NAMES = ("Boost Red", "Boost Cyan", "Boost Blue", "Darken Sky", "Lighten
                  "Vibrance", "Star Colour", "Soft Glow", "Boost Gold", "Dark Structure",
                  "Sharpen Nebulosity")
 
-# Finishing steps that operate in display space and require a stretched image.
-# These are the in-app tail stages minus "export" (exporting a linear file is
-# legitimate, so Export never forces a stretch).
+# Steps that operate in display space and require a stretched image: the
+# in-app tail stages minus "export" (exporting a linear file is legitimate,
+# so Export never forces a stretch), plus "remove_green" — a _CORE stage, but
+# one whose whole premise ("the stretch already neutralises the sky") only
+# holds once the stretch has actually run.
 POST_STRETCH_IDS = frozenset({
+    "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe", "noise_sharpen",
     "local_contrast", "star_reduction", "enhancements",
 })

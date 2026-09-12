@@ -42,9 +42,9 @@ def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
 def test_default_in_app_path_navigation(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    seq = ["crop", "background", "color", "deconvolution", "stretch", "recover_core",
-           "levels", "curves", "saturation", "green_fringe", "noise_sharpen", "local_contrast",
-           "star_reduction", "enhancements", "export"]
+    seq = ["crop", "background", "color", "deconvolution", "stretch", "remove_green",
+           "recover_core", "levels", "curves", "saturation", "green_fringe", "noise_sharpen",
+           "local_contrast", "star_reduction", "enhancements", "export"]
     for sid in seq:
         win.go_next()
         assert win.current_stage_id() == sid
@@ -772,9 +772,13 @@ def test_next_from_load_is_crop(qtbot, tmp_path):
 
 
 def test_remove_green_records_undoable_entry_and_reduces_green(qtbot, tmp_path):
+    """remove_green now sits AFTER Stretch in PROCESSING_ORDER, and operates
+    on the stretched (display-space) image — so this stretches first, the
+    same order a real user's stepper walk would produce."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("color")
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
     before = win.project.current()
     green_before = float(before.data[..., 1].mean()) if before.data.ndim == 3 else 0.0
     win._remove_green()
@@ -788,15 +792,18 @@ def test_remove_green_records_undoable_entry_and_reduces_green(qtbot, tmp_path):
 
 
 def test_remove_green_preserved_after_later_step(qtbot, tmp_path):
+    """De-green Sky sits between Stretch and Levels in PROCESSING_ORDER now —
+    a later step (Levels) applied after it must not disturb it."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("color")
-    win._remove_green()
     win._go_to_id("stretch")
     win.apply_current(0.5)
+    win._remove_green()
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
     names = [n for n, _ in win.project.entries()]
-    assert "De-green Sky" in names and "Stretch" in names
-    assert names.index("De-green Sky") < names.index("Stretch")
+    assert "De-green Sky" in names and "Levels" in names
+    assert names.index("De-green Sky") < names.index("Levels")
 
 
 def test_reset_action_disabled_until_loaded(qtbot, tmp_path):
@@ -2874,8 +2881,11 @@ def test_opening_a_bundle_saved_under_the_old_green_tool_names_recognises_them(
     # the pipeline reasoning that keys off these names (Reset/Apply's
     # own-work and truncation logic) has to recognise the migrated entries
     # too, or Reset reads disabled and Apply can't tell what it would discard.
-    assert names[0] in win._stage_own_names("color"), (
-        "the migrated De-green Sky entry is not recognised as Color's own work")
+    # De-green Sky now has its own stage (it used to be Color's own work,
+    # before this branch moved it after Stretch) — the migrated entry must
+    # be recognised there instead.
+    assert names[0] in win._stage_own_names("remove_green"), (
+        "the migrated De-green Sky entry is not recognised as its own stage's work")
     assert win._truncation_target("noise_sharpen") == len(names), (
         "the migrated entries broke the leading-kept walk _truncation_target relies on")
 
@@ -3389,16 +3399,20 @@ def test_canvas_img_tracks_a_live_preview(qtbot, tmp_path):
 
 
 def test_canvas_img_tracks_the_removegreen_live_preview(qtbot, tmp_path):
-    # Color is a pre-Stretch (linear) step whose preview bypasses _show_preview
-    # (which assumes display-space data), so it must still funnel through
-    # _set_canvas rather than writing the canvas directly.
+    # remove_green is now a POST-Stretch step (it moved off the Color panel
+    # onto its own stage, right after Stretch), so its preview funnels
+    # through _show_preview like every other post-stretch preview — display
+    # space, is_linear forced False — not the raw _set_canvas path Color's
+    # still-linear tint preview needs.
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("color")
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("remove_green")
     win._on_removegreen_change(0.5)
     win._render_removegreen_preview()
     assert win._canvas_img is win._displayed
-    assert win._canvas_img.is_linear is True
+    assert win._canvas_img.is_linear is False
 
 
 def test_to_rgb8_matches_to_qimage_dimensions(qtbot):

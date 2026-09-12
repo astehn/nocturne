@@ -28,6 +28,7 @@ _STAGE_TO_TOPIC = {
     "deconvolution": "deconvolution",
     "ai_denoise": "ai_denoise",
     "stretch": "stretch",
+    "remove_green": "remove_green",
     "recover_core": "recover_core",
     "levels": "levels",
     "curves": "curves",
@@ -166,10 +167,11 @@ _TOPIC_LIST = (
        "belong on linear data, before the image is stretched. Gradients and the telescope's blur "
        "are properties of the raw light, best corrected there.</p>"
        "<h4>After the stretch (display)</h4>"
-       "<p><b>Levels</b>, <b>Saturation</b>, <b>Noise Reduction</b>, <b>Local Contrast</b>, "
-       "<b>Star Reduction</b> and <b>Enhancements</b> are tone and colour polish — they work on "
-       "the stretched image you can actually see. Nocturne enforces this ordering, and auto-"
-       "stretches for you if you jump ahead, so a finishing step never lands on linear data.</p>"),
+       "<p><b>De-green Sky</b>, <b>Levels</b>, <b>Saturation</b>, <b>Noise Reduction</b>, "
+       "<b>Local Contrast</b>, <b>Star Reduction</b> and <b>Enhancements</b> are tone and colour "
+       "polish — they work on the stretched image you can actually see. Nocturne enforces this "
+       "ordering, and auto-stretches for you if you jump ahead, so a finishing step never lands "
+       "on linear data.</p>"),
 
     _t("history", "Non-destructive history",
        "Every step is cached; undo, redo, and jump-back are instant and lossless.",
@@ -313,10 +315,10 @@ _TOPIC_LIST = (
        "<p>Samples your empty sky and neutralises any leftover colour cast so the background is a "
        "clean grey — <i>without</i> touching your nebula's real colour. It measures the sky "
        "itself (not the whole frame), so red or teal nebulosity is preserved rather than washed "
-       "out. Optional green removal (SCNR) is there if a green tinge remains.</p>"
+       "out.</p>"
        "<h4>How to use it</h4>"
        "<p>The panel runs top to bottom in the order you'd actually work: <b>calibrate</b>, then "
-       "<b>nudge to taste</b>, then <b>de-green</b> if you imported the image from elsewhere.</p>"
+       "<b>nudge to taste</b>.</p>"
        "<p><b>1 — Calibrate.</b> Pick a <b>Method</b> and apply. <b>Sky balance</b> (the default) "
        "neutralises the sky cast automatically. <b>Photometric (SPCC)</b> instead calibrates "
        "colour against real star measurements — it identifies stars in the field and balances the "
@@ -330,18 +332,12 @@ _TOPIC_LIST = (
        "<p>Seestar data tends to land slightly magenta. That's the camera, not the stacking: a "
        "single raw sub already shows it. If the image looks a touch purple, drag <b>Green ←→ "
        "Magenta</b> to the left.</p>"
-       "<p><b>3 — De-green Sky.</b> You'll usually <i>not</i> need this on your own stacks; it's "
-       "mainly for images stacked in other software, which often arrive green. Use it only if "
-       "stars or background still take on a green tinge. It has a <b>strength</b> dial with a "
-       "live preview — start gentle and drag up only as far as the green needs; full strength can "
-       "flatten real nebula colour, so a light touch usually wins.</p>"
        "<h4>Tips</h4>"
        "<p>This is the step that cleans up the colour left over after Background extraction. It's "
        "mainly for broadband/OSC data. Photometric (SPCC) needs enough stars to match, so it "
        "suits star-rich fields.</p>"
-       "<p>Tint and De-green Sky do different jobs. The tint <i>shifts</i> colour and keeps the "
-       "relationships between stars; De-green Sky <i>clamps</i> one channel, which removes a cast "
-       "but flattens colour along with it. Reach for the tint first.</p>"),
+       "<p>If a green cast survives all the way through the <b>Stretch</b>, that's what "
+       "<b>De-green Sky</b> — its own step, right after Stretch — is for.</p>"),
 
     _t("ai_denoise", "AI Denoise",
        "Nocturne's own denoiser, trained on Seestar stacks. Runs before Stretch.",
@@ -413,6 +409,29 @@ _TOPIC_LIST = (
        "nothing to work with, and over-stretched shadows cannot be pushed back "
        "down without flattening the faint detail you lifted.</p>"
 ),
+
+    _t("remove_green", "De-green Sky",
+       "Clamp a green cast, if one survives the stretch.",
+       "<h4>What it does</h4>"
+       "<p>SCNR green removal: reduces green wherever it exceeds the average of red and blue, "
+       "so stars and background stop reading green. Red and blue are left alone.</p>"
+       "<h4>How to use it</h4>"
+       "<p>Optional, and usually unnecessary: <b>Color</b> already neutralises the sky before the "
+       "stretch runs, so by the time you reach this step there is normally nothing left to do. "
+       "Reach for it only if a green cast survives the stretch — most often on data stacked "
+       "elsewhere, which tends to arrive green. Drag the <b>strength</b> dial for how hard to "
+       "clamp, with a live preview; start gentle, since full strength can flatten real nebula "
+       "colour along with the cast.</p>"
+       "<h4>Why it sits here</h4>"
+       "<p>Right after <b>Stretch</b>, not on the Color panel where it used to live. The cast "
+       "this fixes is <i>created</i> by the stretch — a Bayer sensor gives green twice the "
+       "photosites of red or blue, so stretching amplifies any green noise along with everything "
+       "else. Judging whether you need this before the stretch has run was judging a problem "
+       "that did not exist yet.</p>"
+       "<h4>Tips</h4>"
+       "<p>Do the <b>Colour Tint</b> nudge on the Color panel first if the whole image looks off. "
+       "Tint <i>shifts</i> colour and keeps the relationships between stars; De-green Sky "
+       "<i>clamps</i> one channel, which removes a cast but flattens colour along with it.</p>"),
 
     _t("levels", "Levels",
        "Fine-tune black point, midtones, and white point against the histogram.",
@@ -1644,8 +1663,8 @@ _t("upscale", "Upscale Crop",
        "image open at all.</p>"
        "<h4>Saving a recipe — and the two steps it cannot hold</h4>"
        "<p>Process one image the way you want it, then click <b>Save Recipe</b>. Everything in "
-       "the stepper is recorded: Background, Color, Colour Tint, De-green Sky, Deconvolution, "
-       "Stretch, Recover Core, Levels, Curves, Saturation, De-green Stars, "
+       "the stepper is recorded: Background, Color, Colour Tint, Deconvolution, Stretch, "
+       "De-green Sky, Recover Core, Levels, Curves, Saturation, De-green Stars, "
        "Noise Reduction, Local Contrast and Star Reduction — plus Crop, Rotate and Flip, the "
        "<b>Narrowband</b> and <b>Colour Balance</b> tools, and all eleven <b>Enhancements</b> "
        "taps.</p>"
@@ -1745,7 +1764,7 @@ SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history",
                              "readout", "fullscreen")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
-                              "recover_core", "levels", "curves", "saturation",
+                              "remove_green", "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
                               "star_reduction", "enhancements", "export")),
     # trim and fullscreen were WRITTEN and never listed here, so 406 words of

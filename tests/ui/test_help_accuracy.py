@@ -326,18 +326,34 @@ def test_colour_help_names_the_tint_controls_that_exist():
 
 
 def test_colour_help_gets_the_order_of_operations_right():
-    """Calibrate, then nudge, then de-green. This is the order Andreas asked
-    for, it is what PROCESSING_ORDER does, and the help must not describe a
-    different one — a user following the wrong order re-runs the calibration and
-    wonders why their tint vanished.
+    """Calibrate, then nudge. This is the order Andreas asked for, it is what
+    PROCESSING_ORDER does, and the help must not describe a different one — a
+    user following the wrong order re-runs the calibration and wonders why
+    their tint vanished.
     """
     from nocturne.ui.pipeline import PROCESSING_ORDER
     b = _body("color")
-    assert (PROCESSING_ORDER.index("color")
-            < PROCESSING_ORDER.index("tint")
-            < PROCESSING_ORDER.index("remove_green"))
+    assert PROCESSING_ORDER.index("color") < PROCESSING_ORDER.index("tint")
     # the prose must present them in that same order
-    assert b.index("1 — Calibrate") < b.index("2 — Nudge") < b.index("3 — De-green Sky")
+    assert b.index("1 — Calibrate") < b.index("2 — Nudge")
+
+
+def test_remove_green_help_sits_after_stretch_and_says_why():
+    """De-green Sky moved off the Color panel onto its own stage, right after
+    Stretch — the whole point being that the green cast it fixes is CREATED by
+    the stretch, so judging whether you need it before Stretch has run is
+    judging a problem that does not exist yet. Guard both the order and the
+    topic's own explanation of it.
+    """
+    from nocturne.ui.pipeline import PROCESSING_ORDER
+    assert PROCESSING_ORDER.index("stretch") < PROCESSING_ORDER.index("remove_green")
+    b = _body("remove_green")
+    assert "after" in b.lower() and "stretch" in b.lower()
+    assert "created" in b.lower() or "creates" in b.lower()
+    # Color's own topic must point forward to the new home, not still teach it
+    color_b = _body("color")
+    assert "3 — De-green Sky" not in color_b
+    assert "De-green Sky" in color_b
 
 
 def test_colour_help_does_not_claim_nocturne_creates_the_magenta():
@@ -1284,7 +1300,7 @@ def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
     planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
                                                           astap_path="/bin/echo"))}
     omitted = [s for s in PROCESSING_ORDER if s not in planned]
-    assert omitted == ["tint", "remove_green", "deconvolution",
+    assert omitted == ["tint", "deconvolution", "remove_green",
                        "recover_core", "curves", "star_reduction"], \
         "the set of stages Auto Enhance skips changed"
     for stage in ("deconvolution", "recover_core", "curves", "star_reduction"):
@@ -1546,11 +1562,13 @@ def test_the_help_browser_lists_no_topic_that_is_missing():
 def test_every_pipeline_step_has_a_topic():
     """The help button is context-sensitive: it opens the topic for the step you
     are standing on. A step with no mapping opens nothing at all."""
-    # path_stages(), NOT PROCESSING_ORDER. The latter includes `tint` and
-    # `remove_green`, which are steps in the history but not stops in the
-    # stepper — they live inside the Color panel and map back to Color. A user
-    # never stands on them, so they need no topic of their own; what they need
-    # is for the Color topic to name their controls, which is a separate check.
+    # path_stages(), NOT PROCESSING_ORDER. The latter includes `tint`, which
+    # is a step in the history but not a stop in the stepper — it lives inside
+    # the Color panel and maps back to Color. A user never stands on it, so it
+    # needs no topic of its own; what it needs is for the Color topic to name
+    # its controls, which is a separate check. `remove_green` DOES have its
+    # own stop now (it moved off the Color panel onto its own stage), so it
+    # needs — and has — a topic of its own like any other stepper stage.
     from nocturne.ui.pipeline import path_stages, STEP_NAME
 
     missing = [f"{s.id} ({STEP_NAME.get(s.id, '?')})"
