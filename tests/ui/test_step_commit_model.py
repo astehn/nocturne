@@ -1496,3 +1496,24 @@ def test_color_a_successful_tint_apply_still_lets_remove_green_proceed(
     assert "Remove Green" in committed, (
         "the loop stopped after a SUCCESSFUL first apply — break is too eager")
     assert not win._has_pending()
+
+
+def test_every_committing_stage_names_the_before_after_affordance(qtbot, tmp_path):
+    """Reset (Tasks 1-5) answers what he asked BY; this answers what he asked
+    FOR — he wanted to "validate the before and after easily", and Space
+    already does that, but he never found it. Driven by win._stages (not a
+    hand-written list) so a stage added later is covered without editing
+    this test."""
+    win = _win(qtbot, tmp_path)
+    for stage in win._stages:
+        win._go_to_id(stage.id)
+        hint = getattr(win._panel, "compare_hint", None)
+        if stage.id in ("load", "export"):
+            assert hint is None, f"{stage.id} should not offer a step-compare hint"
+            continue
+        assert hint is not None, f"{stage.id} has no before/after hint"
+        # Space TOGGLES the peek (main_window._toggle_peek: `not self._peek_active`),
+        # it does not require holding it down — the wording must match or a user
+        # who tries the wrong gesture will conclude the feature is broken.
+        assert "space" in hint.text().lower()
+        assert "hold" not in hint.text().lower()

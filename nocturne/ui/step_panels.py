@@ -770,6 +770,15 @@ def build_panel(
             w.reset_step_btn.clicked.connect(lambda: on_reset_step())
         lay.addWidget(w.reset_step_btn)
 
+    # Names the affordance he already had (Space peek) on every stage where
+    # comparing is the point — same exclusion as Reset step above. Muted
+    # help-text level: this is ambient orientation, not a status the user
+    # must notice (that's pending_label, below).
+    w.compare_hint = None
+    if stage.id not in ("load", "export"):
+        w.compare_hint = _desc_label("Press Space to toggle before and after.")
+        lay.addWidget(w.compare_hint)
+
     # Every stage, one place. The preview is pixel-identical to the commit by
     # design, so this line is the only thing that distinguishes them.
     w.pending_label = QLabel("Not applied yet")
