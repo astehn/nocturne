@@ -98,6 +98,18 @@ def test_enhancements_stage_and_names():
                              "Sharpen Nebulosity")
     ids = [s.id for s in path_stages()]
     assert ids.index("star_reduction") < ids.index("enhancements") < ids.index("export")
+
+
+def test_enhance_names_disjoint_from_step_and_geometry_names():
+    """_truncation_target("enhancements") (main_window.py) walks the history
+    backwards checking membership in ENHANCE_NAMES to decide where the run of
+    taps started. That walk is only correct because no tap shares a name with
+    a real step or a geometry op — a future tap named like one would make
+    Reset on Enhancements silently eat that step's commit instead of stopping
+    there."""
+    from nocturne.ui.pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, STEP_NAME
+    assert set(ENHANCE_NAMES).isdisjoint(STEP_NAME.values())
+    assert set(ENHANCE_NAMES).isdisjoint(GEOMETRY_NAMES)
     assert "enhancements" not in PROCESSING_ORDER   # append-only, not a truncating position
 
 

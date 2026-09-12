@@ -111,7 +111,8 @@ def test_the_auto_button_shows_whether_the_values_are_still_derived(qtbot, tmp_p
     assert win._panel.auto_btn.isChecked() is False
 
 
-def test_navigating_away_and_back_forgets_that_auto_was_pressed(qtbot, tmp_path):
+def test_navigating_away_and_back_forgets_that_auto_was_pressed(qtbot, tmp_path,
+                                                                 monkeypatch):
     """A rebuilt panel is a NEW widget: unchecked button, default sliders. The
     flag has to reset with them.
 
@@ -124,6 +125,12 @@ def test_navigating_away_and_back_forgets_that_auto_was_pressed(qtbot, tmp_path)
     win = _levels_window(qtbot, tmp_path)
     win._on_levels_auto()
     assert win._levels_auto is True
+    # This IS a real user navigating away from a pending change (the docstring
+    # above says so), so it goes through the guarded route (user_initiated
+    # stays default True) rather than opting out — stub the prompt to discard
+    # instead, which exercises the real path at the same cost.
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: "discard")
     win._go_to_id("curves")
     win._go_to_id("levels")
     assert win._panel.auto_btn.isChecked() is False, "the rebuilt button is unchecked"

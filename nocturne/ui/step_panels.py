@@ -68,11 +68,13 @@ def build_panel(
     on_fringe_apply=None,
     on_lc_change=None,
     on_show_model=None,
+    on_option_change=None,
     on_curve_change=None,
     on_curve_preset=None, on_curve_expand=None,
     on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
+    on_reset_step=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -179,6 +181,12 @@ def build_panel(
                 apply_btn.setEnabled(apply_enabled)
 
         box.currentTextChanged.connect(_update_enabled)
+        if on_option_change is not None:
+            # The pending label reads the dropdown, so it has to hear the
+            # dropdown. Without this it only caught up on the next _refresh,
+            # which for a compute stage means it lagged until the user did
+            # something else entirely.
+            box.currentTextChanged.connect(lambda _t: on_option_change())
 
         # Seeing the model is how you tell a real gradient from the fit eating
         # the faint outer parts of your object: the first is a smooth ramp, the
@@ -221,6 +229,12 @@ def build_panel(
         lay.addWidget(note)
         _update_enabled()
         w.option_box = box
+        # What the dropdown read on arrival. "Pending" means "moved since the
+        # last commit or since I got here", and only the panel can answer that:
+        # the committed history stores whatever the step recorded — a dict for
+        # Noise Reduction, nothing at all for Background "off" — and a rebuilt
+        # panel starts at the step default rather than at the committed value.
+        w.option_baseline = box.currentText()
         w.apply_btn = apply_btn
         w.disabled_note = note
         if show_model is not None:
@@ -260,6 +274,16 @@ def build_panel(
         method_box.addItems(["Sky balance", "Photometric (SPCC)"])
         lay.addWidget(method_box)
         w.method_box = method_box
+        # What the dropdown read on arrival — same idea as option_baseline for
+        # a compute stage's dropdown (see _has_pending): the method choice has
+        # no preview slot of its own, so this is the only way to tell "moved
+        # since the last commit" from "just arrived here".
+        w.method_baseline = method_box.currentText()
+        if on_option_change is not None:
+            # The pending label (and the hero green) read this dropdown, so
+            # they have to hear it move — same wiring the process-stage
+            # dropdown below gets, for the same reason.
+            method_box.currentTextChanged.connect(lambda _t: on_option_change())
 
         def _color_option():
             photometric = method_box.currentText().startswith("Photometric")
@@ -315,6 +339,10 @@ def build_panel(
         w.temp_slider = temp_slider
 
         apply_tint_btn = QPushButton("Apply Tint")
+        # Without this, theme.py's `QPushButton#primary[pending=...]` selector
+        # never matches it at all — _sync_step_controls sets the Qt property
+        # every time regardless, so the button silently never changes colour.
+        apply_tint_btn.setObjectName("primary")
         apply_tint_btn.setEnabled(apply_enabled)
         if on_apply_tint is not None:
             apply_tint_btn.clicked.connect(
@@ -343,6 +371,10 @@ def build_panel(
         rg_row.addWidget(QLabel("Green removal"))
         rg_row.addWidget(rg_val)
         remove_green_btn = QPushButton("Remove Green")
+        # Same reasoning as apply_tint_btn above: without this objectName the
+        # pending styling has no selector to attach to and the button never
+        # visibly changes.
+        remove_green_btn.setObjectName("primary")
         remove_green_btn.setEnabled(apply_enabled)
         if on_removegreen_change is not None:
             rg_slider.valueChanged.connect(
@@ -741,6 +773,45 @@ def build_panel(
 
     else:  # placeholder / unknown
         lay.addWidget(QLabel("Coming soon."))
+
+    # Every stage that can commit gets this, in the same place. Import has
+    # nothing to reset (the toolbar Reset owns that) and Export commits nothing.
+    # NOT `reset_btn`: the Curves panel already owns that name for its
+    # curve-preset Reset (step_panels.py, clicked by tests/ui/test_step_panels.py),
+    # and the shared tail runs last, so reusing the name would silently clobber
+    # it and the curve reset would start resetting the whole step.
+    w.reset_step_btn = None
+    if stage.id not in ("load", "export"):
+        w.reset_step_btn = QPushButton("Reset step")
+        w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
+        if on_reset_step is not None:
+            w.reset_step_btn.clicked.connect(lambda: on_reset_step())
+        lay.addWidget(w.reset_step_btn)
+
+    # Names the affordance he already had (Space peek) on every stage where
+    # comparing is the point — same exclusion as Reset step above. Muted
+    # help-text level: this is ambient orientation, not a status the user
+    # must notice (that's pending_label, below).
+    w.compare_hint = None
+    if stage.id not in ("load", "export"):
+        w.compare_hint = _desc_label("Press Space to toggle before and after.")
+        lay.addWidget(w.compare_hint)
+
+    # Every stage, one place. The preview is pixel-identical to the commit by
+    # design, so this line is the only thing that distinguishes them.
+    w.pending_label = QLabel("Not applied yet")
+    w.pending_label.setObjectName("pendingNote")
+    w.pending_label.setWordWrap(True)
+    w.pending_label.setVisible(False)
+    # ABOVE the apply button, not below it. Below the primary action is past
+    # where the eye stops — the line answering "did that apply?" has to sit in
+    # the path to the button, not after it.
+    anchor = getattr(w, "apply_btn", None)
+    index = lay.indexOf(anchor) if anchor is not None else -1
+    if index >= 0:
+        lay.insertWidget(index, w.pending_label)
+    else:
+        lay.addWidget(w.pending_label)
 
     lay.addStretch(1)
     return w

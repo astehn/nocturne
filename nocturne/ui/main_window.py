@@ -225,6 +225,23 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        # (nav counter at defer time, target stage index) to land once the
+        # in-flight apply's worker actually completes ("Apply and continue"
+        # on an async step) — see _go_to and _land_deferred_nav. Navigating
+        # the instant the button is pressed would run _rebuild_panel/
+        # _ensure_stretched against a project the worker hasn't finished
+        # mutating yet.
+        self._deferred_nav = None
+        # Bumped by _go_to on every navigation that actually completes.
+        # _deferred_nav captures this at defer time; _land_deferred_nav bails
+        # if it has moved on. A bare stage-index comparison looked equivalent
+        # but isn't: leave the origin stage and come back to it (GraXpert
+        # applies are documented elsewhere in this file as taking minutes —
+        # ample time to check another step) and the index matches again by
+        # coincidence even though real navigation happened in between. A
+        # monotonic counter cannot recur, so it catches that round trip and
+        # any other intervening navigation, not just "currently elsewhere".
+        self._nav_seq = 0
         self._active_token = None       # CancelToken for the running op, if any
         self._busy_start = 0.0          # time.monotonic() when the current op started
         # Bumped every time the workspace is replaced (new image, opened bundle,
@@ -1798,14 +1815,58 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))
 
-    def _go_to(self, index: int) -> None:
+    def _go_to(self, index: int, *, user_initiated: bool = True) -> None:
+        """`user_initiated` defaults to True so a navigation route added later is
+        guarded unless it opts out — the two that opt out are loading an image
+        and undo/redo/restore (via _navigate_to_step), neither of which is
+        abandoning work the user just did."""
         if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
+        if user_initiated and self._has_pending():
+            answer = self._ask_pending(self._stages[self._stage].label)
+            if answer == "cancel":
+                return
+            if answer == "apply":
+                self._apply_current_step()
+                if self._busy:
+                    # apply_current dispatches the actual work off the UI
+                    # thread (_run_busy) in the shipped app and returns
+                    # immediately — _busy is already True here. Finishing the
+                    # navigation now would run _ensure_stretched/
+                    # _rebuild_panel against a project the worker hasn't
+                    # finished mutating yet (it can still be jump_back'd to
+                    # the pre-apply position). Land the move once the worker
+                    # actually completes instead — see _land_deferred_nav,
+                    # called from _set_busy(False).
+                    #
+                    # Paired with self._nav_seq, not self._stage: the
+                    # stepper isn't busy-gated the way Next/Back are, so the
+                    # user can click a different row while this apply is
+                    # still in flight, answer that SECOND prompt, and even
+                    # navigate BACK to this exact stage before the worker
+                    # lands — a bare index comparison would then match by
+                    # coincidence and land the stale target anyway.
+                    # _land_deferred_nav bails if any navigation has
+                    # completed since, landing back here or not.
+                    self._deferred_nav = (self._nav_seq, index,
+                                          self._pending_sources())
+                    return
+                if self._has_pending():
+                    # An Apply can now decline mid-flight (Task 5's truncation
+                    # confirm), which leaves `_busy` False exactly the way an
+                    # ordinary synchronous commit does — before that, an Apply
+                    # could never fail to commit, so "not busy" alone safely
+                    # meant "already finished" and this check did not exist.
+                    # `_land_deferred_nav` below already trusts this same
+                    # signal for the async path; reuse it here rather than
+                    # reach for `_busy` a second way.
+                    return
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
             self._ensure_stretched()
         self._stage = index
+        self._nav_seq += 1   # a completed navigation — see _deferred_nav
         self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
             self._ba_act.setChecked(False)
@@ -1814,11 +1875,225 @@ class MainWindow(QMainWindow):
         self._rebuild_panel()
         self._refresh()
 
-    def _go_to_id(self, stage_id: str) -> None:
+    def _land_deferred_nav(self) -> None:
+        """Finish a navigation "Apply and continue" deferred while its apply
+        was in flight (see _go_to). Called from _set_busy once busy clears.
+
+        Checked against _has_pending(), not just "the worker finished": a
+        refused or failed apply (Levels on a still-linear image, a cancelled
+        tool, an exception) leaves the pending slot set, and landing anyway
+        would sweep the user forward as if it had worked while the warning
+        they need to see sits under the stage they just left.
+
+        Still pending is not always a failure, though: Colour can hold three
+        independent edits, and the sequence presses the method first (see
+        `_apply_sequence`), so a perfectly good apply can land with the tint
+        still waiting. Those two are told apart by strict progress in
+        `_pending_sources` — if something actually committed, carry on with the
+        rest rather than dropping a navigation the user already authorised.
+
+        Also checked against _nav_seq, not self._stage: the stepper isn't
+        busy-gated, so the user can click a different row while this apply
+        is still running, answer a second prompt, and even navigate BACK to
+        the stage this deferral started from before the worker lands —
+        GraXpert applies are documented elsewhere in this file as taking
+        minutes, ample time for a round trip. A stage-index comparison would
+        then match by coincidence and land the stale target anyway; the
+        counter can't recur, so any completed navigation since — a round
+        trip or not — correctly drops this deferral instead of yanking the
+        user somewhere they didn't ask to go on this visit.
+        """
+        pending, self._deferred_nav = self._deferred_nav, None
+        if pending is None or self.project is None:
+            return
+        seq, target, *rest = pending
+        if self._nav_seq != seq:
+            return
+        if self._has_pending():
+            # Still pending for one of two very different reasons. Either the
+            # apply failed or was refused — the same source is still unapplied,
+            # and landing would sweep the user past the warning they need to
+            # see — or it succeeded and Colour simply has another button to
+            # press (method, then tint, then remove-green). Tell them apart by
+            # requiring STRICT progress since the deferral was armed: a
+            # shrinking set can only shrink so far, so this cannot spin on an
+            # apply that keeps failing.
+            was = rest[0] if rest else frozenset()
+            left = self._pending_sources()
+            if not (left < was) or not self._pending_apply_targets():
+                return
+            self._apply_current_step()
+            if self._busy:
+                self._deferred_nav = (seq, target, left)   # another one in flight
+                return
+            if self._has_pending():
+                return
+        self._go_to(target, user_initiated=False)
+
+    def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
         for i, s in enumerate(self._stages):
             if s.id == stage_id:
-                self._go_to(i)
+                self._go_to(i, user_initiated=user_initiated)
                 return
+
+    def _pending_apply_targets(self) -> list:
+        """Buttons `_apply_current_step` would press right now, and the same
+        list `_ask_pending` checks to decide whether "Apply and continue" is
+        even offered — one list so the prompt's options and what pressing
+        Apply actually does cannot drift apart.
+
+        Every stage that can commit sets `w.apply_btn` in build_panel, already
+        connected to the handler `_has_pending` tracks — except Color, whose
+        `apply_btn` ("Apply Color") commits the colour-calibration method, a
+        decision `_has_pending` does not track at all there. What IS tracked
+        on Color is its two live previews (tint, remove-green), each with its
+        own button (`apply_tint_btn`, `remove_green_btn`). Pressing "Apply
+        Color" would commit a method nobody asked for and STILL discard the
+        tint or green the user set — worse than the silent discard this guard
+        exists to prevent — so Color's targets are whichever of its own
+        buttons match what is actually pending.
+
+        Empty whenever `self._busy`: `_set_busy` disables only
+        `self._panel.apply_btn`, not Color's `apply_tint_btn` /
+        `remove_green_btn`, so those stayed clickable during any unrelated
+        busy op (a plate solve, Auto Enhance, Save Project). Offered as the
+        prompt's DEFAULT button there, pressing it clicked a button whose own
+        handler (`_apply_tint_step` / `_remove_green`) early-returns on
+        `self._busy` — nothing commits, `_go_to` still defers the nav on the
+        non-empty list, and when busy clears `_has_pending()` is still True
+        so `_land_deferred_nav` drops it: no commit, no navigation, no
+        warning. Checked here rather than in every panel's own button state,
+        so the prompt's offer can't be honest in one place and wrong in
+        another.
+        """
+        if self._busy:
+            return []
+        if self.current_stage_id() == "color":
+            targets = []
+            if self._tint_pending is not None:
+                btn = getattr(self._panel, "apply_tint_btn", None)
+                if btn is not None and btn.isEnabled():
+                    targets.append(btn)
+            if self._rg_pending is not None:
+                btn = getattr(self._panel, "remove_green_btn", None)
+                if btn is not None and btn.isEnabled():
+                    targets.append(btn)
+            if not targets and self._color_method_pending():
+                # The method is the ONLY pending thing, so Apply Color is now
+                # the honest target: it commits the method and discards nothing.
+                # The refusal above exists to protect a waiting tint; with none
+                # waiting, refusing left the prompt claiming "this step can't be
+                # applied right now" about a step one button press would apply.
+                btn = getattr(self._panel, "apply_btn", None)
+                if btn is not None and btn.isEnabled():
+                    targets.append(btn)
+            return targets
+        btn = getattr(self._panel, "apply_btn", None)
+        return [btn] if btn is not None and btn.isEnabled() else []
+
+    def _button_step_pending(self, btn) -> bool:
+        """Whether the thing THIS button commits is still unapplied, right
+        after clicking it.
+
+        `_pending_apply_targets` only ever offers a button when this was
+        already True, so False afterwards means the click actually committed
+        (or, on Background's "off", recorded an explicit decision) rather
+        than being declined at a truncation confirm.
+
+        Per button rather than `_has_pending()` for the whole step, because
+        Colour has three independent sources: reading the step would call a
+        perfectly successful Apply Color "declined" whenever a tint was still
+        waiting behind it, and stop the sequence one button short.
+        """
+        if btn is getattr(self._panel, "apply_tint_btn", None):
+            return self._tint_pending is not None
+        if btn is getattr(self._panel, "remove_green_btn", None):
+            return self._rg_pending is not None
+        if self.current_stage_id() == "color":
+            return self._color_method_pending()
+        return self._has_pending()
+
+    def _apply_sequence(self) -> list:
+        """`_pending_apply_targets`, in the order the buttons must be PRESSED.
+
+        Colour's method commits as "Color", which sits BEFORE "Colour Tint" in
+        PROCESSING_ORDER — so applying it truncates a committed tint away.
+        Tint first and method second therefore commits the user's tint and then
+        immediately asks to discard it; method first commits both and discards
+        nothing. `_pending_apply_targets` keeps answering the single-press
+        question (which button is green, which one the note sits above, whether
+        "Apply and continue" is honest), where Apply Color must still not be
+        offered while a tint waits.
+        """
+        targets = self._pending_apply_targets()
+        if (self.current_stage_id() != "color" or self._busy
+                or not self._color_method_pending()):
+            return targets
+        btn = getattr(self._panel, "apply_btn", None)
+        if btn is not None and btn.isEnabled() and btn not in targets:
+            targets.insert(0, btn)
+        return targets
+
+    def _apply_current_step(self) -> None:
+        """Press this step's own Apply button(s) — see `_apply_sequence` for
+        which ones, in which order, and why Color is special.
+
+        Re-reads the sequence after every press rather than iterating one
+        snapshot: Colour is the one stage that can hold two independent pending
+        edits, so a single pass committed the first and left `_go_to` looking
+        at a step that was still pending. The user pressed Next, watched
+        nothing move, and had to answer the identical prompt a second time.
+
+        Stops after a button whose truncation confirm was declined instead of
+        pressing whatever else was pending — continuing would re-ask the same
+        destructive question seconds after the user said no — and stops the
+        moment a press goes async, where `_land_deferred_nav` carries on.
+        Each press either clears its own source or returns, so this terminates.
+        """
+        while self._has_pending():
+            # `_has_pending`, not "are there targets left": _pending_apply_targets
+            # answers "which button WOULD commit it" and hands back a candidate
+            # on an untouched step too (see _sync_step_controls), so looping on
+            # a non-empty list re-presses Apply forever.
+            targets = self._apply_sequence()
+            if not targets:
+                return
+            btn = targets[0]
+            btn.click()
+            if self._busy or self._button_step_pending(btn):
+                return
+
+    def _ask_pending(self, step_label: str) -> str:
+        """'apply', 'discard' or 'cancel'. Split out so tests can answer it
+        without a real modal ever appearing.
+
+        "Apply and continue" is omitted when nothing would actually happen if
+        pressed (Apply disabled — e.g. Background with GraXpert unconfigured):
+        offering an action that silently does nothing is the original bug
+        wearing a reassuring button. Cancel becomes the default in that case,
+        not Discard — the safe default is still "change nothing" when the
+        safer of the two real options (apply it) isn't on the table.
+        """
+        can_apply = bool(self._pending_apply_targets())
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{APP_NAME} — {step_label}")
+        box.setText(f"{step_label} has unapplied changes.")
+        apply_btn = None
+        if can_apply:
+            apply_btn = box.addButton("Apply and continue",
+                                      QMessageBox.ButtonRole.AcceptRole)
+        else:
+            box.setInformativeText(
+                "This step can't be applied right now, so continuing will "
+                "discard the change.")
+        skip_btn = box.addButton("Continue without applying",
+                                 QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(apply_btn if apply_btn is not None else cancel_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        return ("apply" if clicked is apply_btn
+                else "discard" if clicked is skip_btn else "cancel")
 
     # --- file / project ---
     def _choose_fits(self) -> None:
@@ -1862,7 +2137,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
         )
-        self._go_to_id("load")  # stay on Import & assess so the user sees metadata
+        self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._dirty = False
         self._update_title()
@@ -2058,6 +2333,274 @@ class MainWindow(QMainWindow):
                 break
         return n
 
+    @staticmethod
+    def _trailing_kept(entries, drop_names) -> int:
+        """Length once a trailing contiguous run of drop_names is removed.
+
+        Mirrors _leading_kept (drop a suffix here instead of keeping a prefix):
+        Enhancements appends one entry per tap, so "reset this step" means
+        peeling taps off the end, not truncating to a fixed index."""
+        n = len(entries)
+        for name, _ in reversed(entries):
+            if name in drop_names:
+                n -= 1
+            else:
+                break
+        return n
+
+    # Step id -> the attribute holding its uncommitted preview values. These
+    # slots already exist, one per live-preview step; this maps them rather
+    # than replacing them, so the ten steps stay independently revertable.
+    _PENDING_SLOTS = {
+        "tint": "_tint_pending",
+        "remove_green": "_rg_pending",
+        "levels": "_levels_pending",
+        "stretch": "_stretch_pending",
+        "saturation": "_sat_pending",
+        "recover_core": "_recover_pending",
+        "curves": "_curve_pending",
+        "green_fringe": "_fringe_pending",
+        "local_contrast": "_lc_pending",
+        "star_reduction": "_sr_pending",
+    }
+    # Which of those previews live on each STAGE's panel. Stage ids and step ids
+    # are different vocabularies: "tint" and "remove_green" are steps with no
+    # stage of their own — both are controls on the Color panel — so keying the
+    # slots by stage id alone left Color, the one stage carrying two live
+    # previews, with no coverage at all. Every other stage shares its step's id.
+    _STAGE_PREVIEWS = {"color": ("tint", "remove_green")}
+
+    def _clear_pending(self, step_id: str, applied_option: str | None = None,
+                       *, panel=None) -> None:
+        """Forget what a step's controls were holding, because it just became the
+        commit: the preview slot, and the dropdown's baseline when one applies.
+
+        One helper rather than a copy per commit path. There are six of them —
+        apply_current plus the five steps that commit their own cached result —
+        and the clear lived in only apply_current, so Saturation said "Not
+        applied yet" from the instant it was applied.
+
+        `panel` defaults to whatever is current, but apply_current's async
+        path passes the panel it captured when Apply was pressed: its
+        on_result can land after the user has navigated on (this task's own
+        "Apply and continue" defers the move until it does, but a direct
+        stepper click during a busy op is not gated the same way), and the
+        baseline belongs to the panel that showed the option, not whichever
+        one happens to be on screen when the worker returns.
+        """
+        slot = self._PENDING_SLOTS.get(step_id)
+        if slot is not None:
+            setattr(self, slot, None)
+        target = panel if panel is not None else self._panel
+        if applied_option is not None and getattr(target, "option_box", None) is not None:
+            target.option_baseline = applied_option
+        if step_id == "color" and getattr(target, "method_box", None) is not None:
+            # Color's method choice has no PENDING_SLOTS entry of its own — the
+            # dropdown IS its own baseline, exactly like a compute stage's
+            # option_box (see _has_pending) — so a successful Apply Color has
+            # to re-baseline it here or the method would read pending forever
+            # after committing exactly what it said.
+            target.method_baseline = target.method_box.currentText()
+
+    def _committed_option(self, stage_id: str) -> object | None:
+        """The option recorded by this stage's last commit, or None if it has
+        never been applied to this image."""
+        name = STEP_NAME.get(stage_id)
+        if name is None or self.project is None:
+            return None
+        for entry_name, option in reversed(self.project.entries()):
+            if entry_name == name:
+                return option
+        return None
+
+    def _has_pending(self) -> bool:
+        """Do the current step's controls describe something the committed image
+        does not reflect?
+
+        Two shapes, one meaning. A live-preview step is pending when it holds
+        preview values that were never committed. A compute step has no preview,
+        so nothing is at risk — but a changed dropdown is an intent the app has
+        not honoured, and Next would drop it silently.
+
+        The dropdown is measured against the panel's own baseline, not against
+        the committed history: the history cannot answer "has this moved since
+        the last commit". Noise Reduction commits a dict, Background "off"
+        commits nothing at all, and a rebuilt panel starts at the step default —
+        each of which read permanently pending against their own commit.
+        """
+        return bool(self._pending_sources())
+
+    def _pending_sources(self) -> frozenset:
+        """Which independent unapplied things this step is holding, by name.
+
+        `_has_pending` asks "any?"; a deferred "Apply and continue" needs
+        "which?", because Colour has up to three (the method, the tint, the
+        remove-green) and a step that still reads pending after one of them
+        committed is not the same situation as one whose apply failed. See
+        `_land_deferred_nav`.
+        """
+        if self.project is None:
+            return frozenset()
+        sid = self.current_stage_id()
+        previews = [p for p in self._STAGE_PREVIEWS.get(sid, (sid,))
+                    if p in self._PENDING_SLOTS]
+        out = {p for p in previews
+               if getattr(self, self._PENDING_SLOTS[p], None) is not None}
+        if sid == "crop":
+            # A drawn crop box is uncommitted intent like any slider value, but
+            # it lives on the CANVAS rather than in a panel slot, so neither the
+            # preview-slot nor the option_box shape below reaches it — and Next
+            # discarded it in silence. Found by Andreas testing, 2026-09-12.
+            #
+            # The rule is not new: `_on_crop_dismiss` already draws exactly this
+            # line for the click-away gesture — "a fresh, untouched box has no
+            # work to lose, so it dismisses silently". Same question, same
+            # answer; this wires it to navigation too.
+            if (self.image_view.crop_box_visible()
+                    and self.image_view.crop_box_modified()):
+                out.add("crop_box")
+        elif sid == "color":
+            if self._color_method_pending():
+                out.add("method")
+        elif not previews and self._option_box_pending(sid):
+            # A live-preview stage is answered by its slot alone: its panel has
+            # no option_box to compare, and consulting one would read a
+            # neighbour's baseline.
+            out.add("option")
+        return frozenset(out)
+
+    def _color_method_pending(self) -> bool:
+        """Whether Color's method dropdown differs from what was committed.
+
+        Its own predicate because two places need the same answer: `_has_pending`
+        above, and `_pending_apply_targets`, which must offer "Apply Color" when
+        the method is the ONLY pending thing and refuse it when a tint is also
+        waiting. Two readings of one fact would drift.
+
+        The choice lives on `method_box`, not `option_box`, and has no preview
+        slot of its own because nothing renders live for it — so it never
+        reached the option_box fallback, and method changes went completely
+        uncovered on one of sixteen stages.
+        """
+        method_box = getattr(self._panel, "method_box", None)
+        baseline = getattr(self._panel, "method_baseline", None)
+        if method_box is None or not isinstance(baseline, str):
+            return False
+        return method_box.currentText() != baseline
+
+    def _option_box_pending(self, sid: str) -> bool:
+        """The dropdown-vs-baseline comparison the compute stages use."""
+        box = getattr(self._panel, "option_box", None)
+        baseline = getattr(self._panel, "option_baseline", None)
+        if box is None or not isinstance(baseline, str):
+            # A permanent net, not the mechanism: when no comparison is possible
+            # the answer is "not pending". The costs are asymmetric — a lost
+            # prompt is a rare missed safeguard, a false one nags on every
+            # single navigation.
+            return False
+        return box.currentText() != baseline
+
+    def _sync_step_controls(self) -> None:
+        """One place that makes the step's own controls agree with its state.
+
+        Named for the job rather than the widget: Task 4 adds the Reset button's
+        enablement here, and a method called _sync_pending_label that also
+        enabled a button would be a lie by its name.
+        """
+        pending = self._has_pending()
+        sid = self.current_stage_id()
+        # The three compute stages (background, deconvolution, noise_sharpen)
+        # render no live preview, so Apply is the ONLY action ever available
+        # there — arriving with nothing yet committed on this image IS the
+        # invitation to press it (the reported bug: "for deconv, noise
+        # reduction, etc. you need to click the green button"). Background's
+        # "off" records no history entry at all (see apply_current), so
+        # `_committed_option` alone would read "never applied" forever after
+        # the user explicitly chose it — recognise that decision too, via the
+        # baseline `_clear_pending` writes when "off" commits.
+        never_applied = (
+            self._stages[self._stage].kind == "process"
+            and self._committed_option(sid) is None
+            and not (sid == "background"
+                     and getattr(self._panel, "option_baseline", None) == "off"
+                     and getattr(self._panel, "option_box", None) is not None
+                     and self._panel.option_box.currentText() == "off"))
+        show_green = pending or never_applied
+        label = getattr(self._panel, "pending_label", None)
+        if label is not None:
+            label.setVisible(pending)
+            self._position_pending_label(label, pending)
+        # The hero green means "there is an edit to commit" (theme.py). Spend it
+        # only when that is true: a colour worn on every step at all times says
+        # nothing when the step genuinely wants pressing. The buttons that would
+        # commit the pending thing are the ones _apply_sequence names, in the
+        # order a press (or Next) actually fires them — NOT _pending_apply_targets,
+        # which orders Apply Tint before Apply Color and so lit the button that
+        # Next does NOT press first. With both the method and a tint pending
+        # that put the green on the destructive order (Apply Color after a
+        # committed tint asks to discard it) while Next quietly took the safe
+        # one — the highlight was steering users at the order the fix in
+        # `_apply_sequence` exists to avoid. `_apply_sequence` is consulted
+        # only after the guard has established that something is pending (or,
+        # for a compute stage, that arriving IS the invitation) — it is not
+        # itself a pending check, and returns candidates on an untouched step.
+        # Gate it, or the green never goes out.
+        wanted = set(map(id, self._apply_sequence())) if show_green else set()
+        for name in ("apply_btn", "apply_tint_btn", "remove_green_btn"):
+            btn = getattr(self._panel, name, None)
+            if btn is None:
+                continue
+            state = "true" if id(btn) in wanted else "false"
+            if btn.property("pending") != state:
+                btn.setProperty("pending", state)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+        reset_btn = getattr(self._panel, "reset_step_btn", None)
+        if reset_btn is not None:
+            # NOT `_committed_option(sid) is not None`: that reads STEP_NAME,
+            # which has no entry for "crop" or "enhancements" (they are
+            # stepper stages, not PROCESSING_ORDER steps), so it would read
+            # permanently None and leave the button dead on both of them even
+            # after a real crop or a real tap.
+            #
+            # NOT `_truncation_target(sid) < len(entries)` either — that
+            # answers "would truncating change anything", which is true
+            # whenever LATER steps hold real work, not just when THIS step
+            # does. On [Stretch, Curves], sitting on Levels (never applied),
+            # that reading truncation target is < len(entries) because Curves
+            # is there to discard — so Reset would sit enabled on a step that
+            # holds nothing of its own, and pressing it would silently eat
+            # Curves. The tail past the truncation point has to actually
+            # contain one of THIS step's own names.
+            reset_btn.setEnabled(pending or self._step_has_commit(sid))
+
+    def _position_pending_label(self, label, pending: bool) -> None:
+        """Keep the note directly above whichever button would actually
+        commit the pending thing.
+
+        build_panel's static anchor (above w.apply_btn) is correct for every
+        stage but Color: Color carries two independent live previews on two
+        OTHER buttons, and Apply Color commits neither — pressing it would
+        commit a method nobody asked for and still discard whichever of
+        tint/remove-green is pending (see _pending_apply_targets). Every
+        other stage has exactly one commit button, so this is a no-op there.
+        """
+        if self.current_stage_id() != "color":
+            return
+        # `_apply_sequence`, not `_pending_apply_targets`: the note has to sit
+        # above whichever button a press (or Next) fires FIRST, and with the
+        # method and a tint both pending that is Apply Color, not Apply Tint —
+        # see the `wanted` computation above for the same swap and why.
+        targets = self._apply_sequence() if pending else []
+        anchor = targets[0] if targets else getattr(self._panel, "apply_tint_btn", None)
+        if anchor is None:
+            return
+        lay = self._panel.layout()
+        if lay.indexOf(label) == lay.indexOf(anchor) - 1:
+            return   # already in place; skip the pointless remove/insert
+        lay.removeWidget(label)
+        lay.insertWidget(lay.indexOf(anchor), label)
+
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
         predecessors an Apply-Stretch preserves."""
@@ -2065,6 +2608,277 @@ class MainWindow(QMainWindow):
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
         }
+
+    def _step_has_commit(self, step_id: str) -> bool:
+        """Is one of this STAGE's own entries actually in history?
+
+        One reading for two callers — the Reset button's enablement and Reset
+        itself — so the button cannot offer to remove a commit the action then
+        treats as absent, or the other way round. `_reset_step` used to skip the
+        question entirely and truncate regardless, which on a never-applied step
+        discarded the LATER work and put nothing in its place.
+        """
+        if self.project is None:
+            return False
+        tail = self.project.entries()[self._truncation_target(step_id):]
+        return any(n in self._stage_own_names(step_id) for n, _ in tail)
+
+    def _truncation_target(self, step_id: str) -> int:
+        """The history length this step's commit truncates back to.
+
+        Extracted verbatim from the Apply path so both callers cannot drift —
+        the same number decides what Apply discards and what Reset discards.
+
+        `crop` and `enhancements` are stepper stages, not PROCESSING_ORDER
+        steps — PROCESSING_ORDER.index would raise ValueError for them (also
+        true of `load` and `export`, but those two never call this: neither
+        gets a Reset step button). Each needs its own rule rather than the
+        preceding-names one below: Crop, Rotate and Flip all append under the
+        Crop stage, and it is first in the pipeline, so resetting it means
+        discarding the whole history, not truncating to a prefix. Enhancements
+        appends one entry per tap with nothing ever able to follow it except
+        Trim — Trim is by design a LATE finishing crop appended after the
+        tail (see GEOMETRY_NAMES), so a history ending in taps-then-Trim is
+        the ordinary path, not an edge case. Walking back over Trim too, not
+        just ENHANCE_NAMES, is what keeps the button alive there instead of
+        going permanently dead the moment anyone trims. _stage_own_names does
+        NOT add Trim to enhancements' own names, so it still shows up as a
+        named casualty in the confirm — honest, since resetting the taps
+        really does cost you the trim.
+        """
+        if step_id == "crop":
+            return 0
+        if step_id == "enhancements":
+            # Trim is TRANSPARENT to this walk, not one of the taps. It is a
+            # late finishing crop appended after the tail, so taps-then-Trim is
+            # the ordinary shape; stopping at it left the button permanently
+            # dead the moment anyone trimmed. _stage_own_names deliberately does
+            # NOT claim Trim for this stage, so it still appears as a named
+            # casualty in the confirm — honest, because resetting the taps does
+            # cost you the trim.
+            return self._trailing_kept(
+                self.project.entries(), set(ENHANCE_NAMES) | {"Trim"})
+        preceding = set(GEOMETRY_NAMES) | {
+            STEP_NAME[sid]
+            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]
+        }
+        return self._leading_kept(self.project.entries(), preceding)
+
+    def _stage_own_names(self, step_id: str) -> set:
+        """Answers "what can this STAGE's Reset take back?" — every name any
+        button on the stage commits under.
+
+        Reset is a stage-wide action: one button on the panel, undoing whatever
+        that panel applied. So Crop's stage owns Crop/Rotate/Flip, Enhancements
+        owns every tap, and Color owns all three of "Color", "Colour Tint" and
+        "Remove Green" — the stage id matches only the first, and without the
+        other two Reset reads disabled over a real tint-only commit.
+
+        Deliberately NOT the same question as `_commit_own_names`, which asks
+        what the PRESSED BUTTON re-commits. Answering that one with this set is
+        how Apply Color came to discard a committed tint in silence: the tint is
+        this stage's own work, but it is not what Apply Color commits. Keep them
+        apart.
+
+        Trim is excluded from crop: it is a distinct, later action, not this
+        stage's own edit. Toolbar tools (Narrowband, Colour Balance, Star
+        Spikes, Starless Levels) are absent too — no stepper stage owns them, so
+        they are always someone else's work.
+        """
+        if step_id == "crop":
+            return {"Crop", "Rotate", "Flip H", "Flip V"}
+        if step_id == "enhancements":
+            return set(ENHANCE_NAMES)
+        if step_id == "color":
+            return {"Color", "Colour Tint", "Remove Green"}
+        name = STEP_NAME.get(step_id)
+        return {name} if name else set()
+
+    def _commit_own_names(self, step_id: str) -> set:
+        """Answers "what is the pressed Apply button about to re-commit?" — the
+        entry name this one commit produces.
+
+        `_confirm_truncation` uses it for the frontier-silence rule: replacing
+        your own commit with a new one under the same name costs nothing, so it
+        stays silent, while any OTHER name in the discarded tail is work the
+        user has to be told about. Every caller of `_truncate_for` passes the
+        id of the COMMIT (`color`, `tint`, `remove_green`, `saturation`, …), not
+        of the stage, so one name is always the honest answer — see
+        `_stage_own_names` for the stage-wide question and why merging the two
+        is a silent data loss rather than a tidy-up.
+
+        An id with no STEP_NAME (a stepper stage such as `crop`, were one ever
+        routed through here) yields the empty set, so everything in the tail is
+        named and the user is asked. Over-asking is the safe direction.
+        """
+        name = STEP_NAME.get(step_id)
+        return {name} if name else set()
+
+    def _display_step_label(self, step_id: str) -> str:
+        """Human label for a step id, for dialogs — not `STEP_NAME.get(step_id,
+        step_id)`, which falls back to the raw id itself.
+
+        STEP_NAME only covers PROCESSING_ORDER steps. `crop` and `enhancements`
+        are stepper stages with a Reset button but no STEP_NAME entry, so that
+        raw fallback rendered "Reset crop?" / "Reset enhancements?" — lowercase,
+        against the stage labels "Crop" and "Enhancements" — while the log line
+        for the same action already used `self._stages[self._stage].label` and
+        so read correctly. Look up the stage's own label before giving up.
+        """
+        name = STEP_NAME.get(step_id)
+        if name is not None:
+            return name
+        stage = next((s for s in self._stages if s.id == step_id), None)
+        return stage.label if stage is not None else step_id
+
+    def _ask_truncation(self, names: list[str], step_label: str, verb: str,
+                        *, repeat: bool = False, own_work: bool = False) -> bool:
+        """Split out so tests can answer it. True means go ahead.
+
+        `repeat` is "this step already has a commit the new one replaces" — the
+        only thing that makes "again" true. Without it every first-ever Apply on
+        a revisited step asked "Apply Levels again?" about a step never applied.
+        `own_work` is "the names ARE this step's own commit", which only Reset at
+        the frontier passes: the standard "applied after it" tail rendered as
+        "Reset Levels? / This discards Levels, applied after it.", where "it" is
+        Levels itself.
+
+        Names the step in the headline. macOS drops a QMessageBox window title
+        entirely, so without it the only text on screen is "This discards X,
+        applied after it" — and "it" has no antecedent anywhere the user can
+        see. The Apply and Reset dialogs were otherwise word for word identical.
+
+        The default is Cancel, held by reference. `buttons()` returns LAYOUT
+        order, not insertion order, so `buttons()[-1]` handed the default to the
+        DESTRUCTIVE button — Return, or the reflex of hitting the highlighted
+        one, irreversibly discarded the named steps (jump_back deletes the
+        paths; there is no redo). Same reasoning as _ask_pending above and
+        _reset_image below: the safe default is still "change nothing".
+        """
+        listed = (", ".join(names[:-1]) + f" and {names[-1]}"
+                  if len(names) > 1 else names[0])
+        box = QMessageBox(self)
+        box.setWindowTitle(f"{APP_NAME} — {verb}")
+        box.setText(f"{verb} {step_label} again?" if repeat
+                    else f"{verb} {step_label}?")
+        box.setInformativeText(
+            f"This discards {listed}, "
+            + ("applied at this step." if own_work else "applied after it."))
+        go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is go
+
+    def _confirm_truncation(self, step_id: str, target: int, verb: str) -> bool:
+        """False means the user cancelled and NOTHING may be discarded.
+
+        Silent when the only entry at risk is this step's own — that is
+        replacing your own work at the frontier, which is most Applies.
+
+        Names the steps rather than counting them: "3 steps" does not tell you
+        whether you are about to lose ten minutes of GraXpert.
+        """
+        own = self._commit_own_names(step_id)
+        # Deduplicated, first appearance wins. Trim is deliberately append-only
+        # (see _trim), so it can legitimately appear twice in one history —
+        # "This discards Trim, Curves and Trim" reads like a bug in the dialog.
+        casualties: list[str] = []
+        repeat = False
+        for name, _ in self.project.entries()[target:]:
+            if name in own:
+                repeat = True      # there IS an earlier commit to say "again" about
+            elif name not in casualties:
+                casualties.append(name)
+        if not casualties:
+            return True
+        return self._ask_truncation(
+            casualties, self._display_step_label(step_id), verb, repeat=repeat)
+
+    def _confirm_reset(self, step_id: str, target: int) -> bool:
+        """Reset's own version of _confirm_truncation's silence rule.
+
+        `_confirm_truncation`'s own-work exemption is reasoned for Apply: your
+        own commit is immediately replaced by your own new one, so there is
+        nothing to warn about. Reset replaces it with nothing — jump_back has
+        no redo, and Undo then walks past the removed entry rather than
+        restoring it — so this asks even when the only thing at risk is the
+        step's own commit, naming that commit since there is nothing else to
+        say. When later work is ALSO at risk, this still asks exactly the way
+        `_confirm_truncation` always has: name the surprising later work, not
+        the step's own edit that pressing "Reset" obviously discards.
+        """
+        own = self._stage_own_names(step_id)
+        own_here: list[str] = []
+        later: list[str] = []
+        for name, _ in self.project.entries()[target:]:
+            if name in own:
+                if name not in own_here:
+                    own_here.append(name)
+            elif name not in later:
+                later.append(name)
+        if later:
+            return self._ask_truncation(later, self._display_step_label(step_id), "Reset")
+        if own_here:
+            return self._ask_truncation(own_here, self._display_step_label(step_id),
+                                        "Reset", own_work=True)
+        return True
+
+    def _truncate_for(self, step_id: str, verb: str) -> bool:
+        """Confirm, then truncate. False means the user cancelled and the
+        caller must return without applying anything.
+
+        Six Apply paths reach this (plus Reset, via _truncation_target
+        directly). They used to each compute the same preceding-names
+        formula inline and call jump_back straight away — which is how five
+        of them came to discard later work with no prompt at all, while only
+        apply_current's copy was ever noticed.
+        """
+        target = self._truncation_target(step_id)
+        if not self._confirm_truncation(step_id, target, verb):
+            return False
+        self.project.jump_back(target)
+        return True
+
+    def _reset_step(self) -> None:
+        """Put this step back to unapplied: controls to defaults, commit removed.
+
+        Removing the commit means truncating, because jump_back cannot take an
+        entry out of the middle — see the spec's §4, which removes the commit IF
+        there is one. With none there is nothing to truncate, and truncating
+        anyway ate the later work in its place: apply Stretch, apply Curves,
+        walk back to a never-applied Levels, nudge a slider, press Reset, and
+        Curves was gone. The controls half still runs, with no confirm in the
+        way — the confirm's Cancel leaves the sliders untouched, so with one
+        the button could never do its stated job once later work existed.
+
+        Uses `_confirm_reset`, NOT `_confirm_truncation`: Apply's frontier
+        silence is safe because your own commit is immediately replaced by your
+        own new one, but Reset replaces it with nothing, and jump_back has no
+        redo — Undo then walks past the removed entry instead of restoring it.
+        So Reset confirms even when the only thing at risk is its own commit.
+
+        Guarded on `_busy` like every other commit path: a running worker
+        (GraXpert, RC-Astro, …) holds `base = self.project.current()` captured
+        before this call and commits it in `on_result` once it lands — onto
+        whatever history is current THEN, not now. Truncating out from under
+        it does not cancel it; it just makes the eventual commit land on the
+        wrong base, or silently undo the reset.
+        """
+        if self.project is None or self._busy:
+            return
+        sid = self.current_stage_id()
+        if self._step_has_commit(sid):
+            target = self._truncation_target(sid)
+            if not self._confirm_reset(sid, target):
+                return
+            self.project.jump_back(target)
+            self._mark_dirty()
+        self._clear_warning()      # every other commit path clears a stale warning too
+        self._rebuild_panel()      # controls back to their defaults
+        self._refresh()
+        self.log_panel.append_entry(format_log_entry(
+            f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}", "", None))
 
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
@@ -2085,17 +2899,21 @@ class MainWindow(QMainWindow):
                 "Apply Stretch first — Levels works on the stretched image.")
             return
         # Truncate history to this stage's applied predecessors (synchronous).
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
-        }
-        target = self._leading_kept(self.project.entries(), preceding)
-        self.project.jump_back(target)
+        # ASK FIRST: this discards every step applied after this one, and did
+        # so silently for the whole life of the app. Before jump_back, and
+        # before any expensive work starts — asking permission to discard
+        # work already discarded is not asking.
+        if not self._truncate_for(stage_id, "Apply"):
+            return
         self._warn_if_uncovered(stage_id)
         if stage_id == "background" and option == "off":
             # "off" = no background extraction: drop any prior result, record nothing
             self._clear_warning()
             self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
+            # Nothing is recorded, but "off" is still a first-class decision the
+            # user made and the image now reflects. Without the re-baseline it
+            # would read pending forever, having no commit to compare against.
+            self._clear_pending(stage_id, "off")
             self._refresh()
             return
         if stage_id == "curves":
@@ -2103,11 +2921,25 @@ class MainWindow(QMainWindow):
         step = self._step_for(stage_id)
         base = self.project.current()
         self._clear_warning()
+        # Read now, not in on_result: what gets committed is what the dropdown
+        # said when Apply was pressed, and a long run (GraXpert takes minutes)
+        # leaves plenty of room to move it meanwhile.
+        box = getattr(self._panel, "option_box", None)
+        applied_text = box.currentText() if box is not None else None
+        # Same reasoning, for the PANEL itself: on_result can land after the
+        # user has moved on (a stepper click isn't busy-gated the way Next
+        # is), and the baseline belongs on the panel that showed this option,
+        # not whichever one happens to be current when the worker returns.
+        applied_panel = self._panel
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result)
+            # The commit now reflects what the slider/dropdown showed. Only
+            # _rebuild_panel cleared these before (on navigating away), which
+            # left a step falsely "pending" right after its own Apply.
+            self._clear_pending(stage_id, applied_text, panel=applied_panel)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
@@ -2268,6 +3100,12 @@ class MainWindow(QMainWindow):
         """
         self._cancel_active()
         self._project_gen += 1
+        # A deferred "Apply and continue" nav (see _go_to) points at a stage
+        # index in THIS workspace's stepper state; the in-flight apply it was
+        # waiting on is superseded by the generation bump above and will
+        # never call back into it meaningfully. Landing it against the new
+        # workspace would navigate somewhere the user never asked to go.
+        self._deferred_nav = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -2295,6 +3133,14 @@ class MainWindow(QMainWindow):
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setDisabled(busy)
+        reset_btn = getattr(self._panel, "reset_step_btn", None)
+        if reset_btn is not None:
+            if busy:
+                reset_btn.setDisabled(True)
+            else:
+                self._sync_step_controls()   # restore real enablement, not just "on"
+        if not busy:
+            self._land_deferred_nav()
 
     def _show_busy_visuals(self) -> None:
         self._busy_bar.show_over(self.image_view)
@@ -2486,11 +3332,8 @@ class MainWindow(QMainWindow):
         if self.project is None or self._busy:
             return
         strength = float(strength)
-        idx = PROCESSING_ORDER.index("remove_green")
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
-        }
-        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        if not self._truncate_for("remove_green", "Apply"):
+            return
         base = self.project.current()
         result = self._step_for("remove_green").apply(base, strength)
         self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
@@ -2498,17 +3341,15 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
         self._clear_warning()
+        self._clear_pending("remove_green")
         self._refresh()
 
     def _apply_tint_step(self, tint: float, temperature: float) -> None:
         """Commit the colour tint as its own step, on top of the colour result."""
         if self.project is None or self._busy:
             return
-        idx = PROCESSING_ORDER.index("tint")
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid] for sid in PROCESSING_ORDER[:idx]
-        }
-        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        if not self._truncate_for("tint", "Apply"):
+            return
         base = self.project.current()
         option = (float(tint), float(temperature))
         result = self._step_for("tint").apply(base, option)
@@ -2519,11 +3360,13 @@ class MainWindow(QMainWindow):
                              f"tint {tint:+.2f} · temp {temperature:+.2f}",
                              rms_delta(base, result)))
         self._clear_warning()
+        self._clear_pending("tint")
         self._refresh()
 
     def _on_tint_change(self, tint: float, temperature: float) -> None:
         self._tint_pending = (float(tint), float(temperature))
         self._tint_timer.start(90)
+        self._sync_step_controls()
 
     def _render_tint_preview(self) -> None:
         """Live-preview the tint on the PRE-TINT image — which is whatever the
@@ -2557,6 +3400,7 @@ class MainWindow(QMainWindow):
         (== what the commit operates on, so preview == apply)."""
         self._rg_pending = float(strength)
         self._rg_timer.start(90)
+        self._sync_step_controls()
 
     def _render_removegreen_preview(self) -> None:
         if self.project is None or self.current_stage_id() != "color" or self._rg_pending is None:
@@ -2595,6 +3439,7 @@ class MainWindow(QMainWindow):
         self._levels_pending = (black, gamma, white)
         self._set_levels_auto(False)
         self._levels_timer.start(90)
+        self._sync_step_controls()
 
     def _set_levels_auto(self, on: bool) -> None:
         """Flag plus its only visible sign.
@@ -2689,6 +3534,7 @@ class MainWindow(QMainWindow):
         """The Stretch aggressiveness slider moved: stash + (re)start the debounce."""
         self._stretch_pending = amount
         self._stretch_timer.start(90)
+        self._sync_step_controls()
 
     def _sync_stretch_preview(self) -> None:
         """On the Stretch step, show what Apply will actually commit.
@@ -2724,12 +3570,6 @@ class MainWindow(QMainWindow):
         self._show_preview(apply_stretch(img, amount).data)
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
-    def _sat_preceding(self) -> set:
-        return set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("saturation")]
-        }
-
     def _setup_saturation(self) -> None:
         """On entering Saturation: the Nebula slider is always enabled. The global
         slider always works; the split (StarX or the free fallback) is deferred
@@ -2753,6 +3593,7 @@ class MainWindow(QMainWindow):
                                lambda layers: self._on_sat_split(sig, layers),
                                "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
+        self._sync_step_controls()
 
     def _on_sat_split(self, sig, layers) -> None:
         if self.current_stage_id() != "saturation":
@@ -2789,8 +3630,8 @@ class MainWindow(QMainWindow):
         """Commit Saturation (+ Nebula boost) using the cached split — instant."""
         if self.project is None or self._busy:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._sat_preceding()))
+        if not self._truncate_for("saturation", "Apply"):
+            return
         base = self.project.current()
         result = self._sat_result(base, amount, nebula)
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
@@ -2798,6 +3639,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
         self._clear_warning()
+        self._clear_pending("saturation")
         self._refresh()
 
     # --- local contrast live preview ---
@@ -2805,6 +3647,7 @@ class MainWindow(QMainWindow):
         """The Local Contrast slider moved: stash the value and (re)start debounce."""
         self._lc_pending = amount
         self._lc_timer.start(90)
+        self._sync_step_controls()
 
     def _render_lc_preview(self) -> None:
         """Non-committing live preview of the current Local Contrast setting."""
@@ -2820,6 +3663,7 @@ class MainWindow(QMainWindow):
         """The Recover Core slider moved: stash the value and (re)start debounce."""
         self._recover_pending = amount
         self._recover_timer.start(90)
+        self._sync_step_controls()
 
     def _render_recover_preview(self) -> None:
         """Non-committing live preview of the current Recover Core setting."""
@@ -2852,6 +3696,7 @@ class MainWindow(QMainWindow):
         """The curve was edited: stash the points and (re)start debounce."""
         self._curve_pending = list(points)
         self._curve_timer.start(90)
+        self._sync_step_controls()
 
     def _render_curve_preview(self) -> None:
         """Non-committing live preview of the current curve."""
@@ -2974,6 +3819,7 @@ class MainWindow(QMainWindow):
         self._fringe_pending = strength
         if self._fringe_ready:
             self._fringe_timer.start(90)
+        self._sync_step_controls()
 
     def _render_fringe_preview(self) -> None:
         if (self.project is None or self.current_stage_id() != "green_fringe"
@@ -2986,14 +3832,15 @@ class MainWindow(QMainWindow):
     def _apply_green_fringe(self, strength) -> None:
         if self.project is None or not self._fringe_ready or self._busy or not self._fringe_layers:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._fringe_preceding()))
+        if not self._truncate_for("green_fringe", "Apply"):
+            return
         result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
         self._clear_warning()
+        self._clear_pending("green_fringe")
         self._refresh()
 
     # --- star reduction live preview (cached StarX split) ---
@@ -3086,6 +3933,7 @@ class MainWindow(QMainWindow):
         self._sr_pending = amount
         if self._sr_ready:
             self._sr_timer.start(90)
+        self._sync_step_controls()
 
     def _render_sr_preview(self) -> None:
         """Non-committing live preview of the current reduction against the cached
@@ -3103,8 +3951,8 @@ class MainWindow(QMainWindow):
         StarX rerun, so Apply is instant."""
         if self.project is None or not self._sr_ready or self._busy or not self._sr_layers:
             return
-        self.project.jump_back(
-            self._leading_kept(self.project.entries(), self._sr_preceding()))
+        if not self._truncate_for("star_reduction", "Apply"):
+            return
         _, starless, stars = self._sr_layers
         result = reduce_stars(starless, stars, float(amount))
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
@@ -3112,6 +3960,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
         self._clear_warning()
+        self._clear_pending("star_reduction")
         self._refresh()
 
     # --- history ---
@@ -3164,7 +4013,7 @@ class MainWindow(QMainWindow):
         target = next((i for i, s in enumerate(self._stages)
                        if s.id == sid and s.enabled), None) if sid else None
         if target is not None:
-            self._go_to(target)
+            self._go_to(target, user_initiated=False)
         else:
             self._refresh()
 
@@ -3527,6 +4376,13 @@ class MainWindow(QMainWindow):
             self._sr_pending = None
         if stage.id == "color":
             self._rg_pending = None
+            # _tint_pending was missing here (Task 1): a rebuilt Color panel's
+            # slider reads 0 but the slot stayed set from a prior visit, so an
+            # untouched Color read as pending. Worse than a false prompt, the
+            # guard's default button then commits that stale (0.0, 0.0) tint —
+            # which is a real apply, and _apply_tint_step's jump_back deletes
+            # every step applied since. Clear it beside _rg_pending.
+            self._tint_pending = None
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
@@ -3558,12 +4414,14 @@ class MainWindow(QMainWindow):
             on_fringe_change=self._on_fringe_change,
             on_fringe_apply=self._apply_green_fringe,
             on_show_model=self._on_show_background_model,
+            on_option_change=self._sync_step_controls,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
             on_curve_expand=self._open_curves_dialog,
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
+            on_reset_step=self._reset_step,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
@@ -3889,6 +4747,7 @@ class MainWindow(QMainWindow):
         self._update_clipping_line()
         self._sync_background_model_toggle()
         self._sync_stretch_preview()
+        self._sync_step_controls()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
         # Hidden, not merely disabled, on the last step. A greyed-out "Next →"
         # sitting under Export reads as something you have failed to satisfy
