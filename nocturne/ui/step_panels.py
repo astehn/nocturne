@@ -403,9 +403,10 @@ def build_panel(
         # "reach for this only if a cast survives the stretch" is finally
         # advice the user can act on.
         lay.addWidget(_desc_label(
-            "Optional, and usually unnecessary: the stretch already neutralises "
-            "the sky. Reach for this only if a green cast survives it, then drag "
-            "for strength (right = stronger)."))
+            "Optional, and usually unnecessary. Look at the sky you just "
+            "stretched: if it carries a green cast, drag for strength (right = "
+            "stronger). If it does not, leave this at 0 — on data with no cast "
+            "this makes the sky greener, not less green."))
         rg_slider = ResetSlider(0)           # off until the user asks for it
         rg_val = QLabel("0.00")
         rg_row = QHBoxLayout()
