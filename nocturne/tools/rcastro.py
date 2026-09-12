@@ -133,7 +133,7 @@ class RCAstro:
 
         `unscreen` defaults True: the stars image is prepared for SCREEN
         recombine — `1-(1-starless)*(1-stars)` reconstructs the original exactly.
-        Every caller here screen-recombines (Star Reduction, Remove Green Fringe,
+        Every caller here screen-recombines (Star Reduction, De-green Stars,
         Nebula Saturation, Narrowband), so this is required — the un-`--unscreen`
         (subtractive/additive) stars screen-recombine WRONG, dimming and puffing
         the stars even at zero reduction."""

@@ -344,7 +344,7 @@ def test_color_apply_and_continue_commits_remove_green_too(
     """The remove-green branch of `_pending_apply_targets` had no coverage:
     deleting it left the whole file green. Untested, that is precisely the
     bug this task exists to fix, just for Color's other slider — 'Apply and
-    continue' on a pending Remove Green silently discarding it."""
+    continue' on a pending De-green Sky silently discarding it."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._panel.rg_slider.setValue(40)   # -> 0.40; fires _on_removegreen_change
@@ -356,7 +356,7 @@ def test_color_apply_and_continue_commits_remove_green_too(
     qtbot.waitUntil(lambda: len(win.project.entries()) == len(before) + 1,
                     timeout=5000)
     name, option = win.project.entries()[-1]
-    assert name == "Remove Green"
+    assert name == "De-green Sky"
     assert option == pytest.approx(0.4), f"committed {option!r}, not 0.40"
     assert win._rg_pending is None
 
@@ -1429,7 +1429,7 @@ def test_reset_step_is_alive_after_a_remove_green_only_commit(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._remove_green(0.5)
-    assert [n for n, _ in win.project.entries()] == ["Remove Green"]
+    assert [n for n, _ in win.project.entries()] == ["De-green Sky"]
 
     win._sync_step_controls()
     assert win._panel.reset_step_btn.isEnabled()
@@ -1501,13 +1501,13 @@ def test_apply_at_the_frontier_still_never_prompts(qtbot, tmp_path, monkeypatch)
 
 
 def test_remove_green_frontier_apply_does_not_prompt(qtbot, tmp_path):
-    """Replacing your own Remove Green at the frontier must stay silent — the
+    """Replacing your own De-green Sky at the frontier must stay silent — the
     autouse `_ask_truncation` stub raises if it is asked at all, so a clean
     run here is itself the proof."""
     win = _win(qtbot, tmp_path)
     win._remove_green(0.5)
     win._remove_green(0.6)
-    assert win.project.entries()[-1][0] == "Remove Green"
+    assert win.project.entries()[-1][0] == "De-green Sky"
 
 
 def test_remove_green_revisited_asks_and_declining_keeps_later_work(
@@ -1526,7 +1526,7 @@ def test_remove_green_revisited_asks_and_declining_keeps_later_work(
 
     assert seen and "Stretch" in seen[0]
     assert list(win.project.entries()) == before, (
-        "Remove Green truncated after the user declined")
+        "De-green Sky truncated after the user declined")
 
 
 def test_tint_frontier_apply_does_not_prompt(qtbot, tmp_path):
@@ -1538,13 +1538,13 @@ def test_tint_frontier_apply_does_not_prompt(qtbot, tmp_path):
 
 def test_tint_revisited_names_remove_green_and_declining_keeps_it(
         qtbot, tmp_path, monkeypatch):
-    """Re-applying a tint over [Colour Tint, Remove Green] must name Remove
-    Green as a casualty: it is genuinely later work, even though both are
+    """Re-applying a tint over [Colour Tint, De-green Sky] must name
+    De-green Sky as a casualty: it is genuinely later work, even though both are
     buttons on the same Color stage — different from Reset on the stage
     itself, where all three names count as the stage's own."""
     win = _win(qtbot, tmp_path)
     win._apply_tint_step(0.2, 0.0)
-    win._remove_green(0.4)   # later work; frontier for Remove Green, so silent
+    win._remove_green(0.4)   # later work; frontier for De-green Sky, so silent
     before = list(win.project.entries())
     from nocturne.ui import main_window as mw
     seen = []
@@ -1553,7 +1553,7 @@ def test_tint_revisited_names_remove_green_and_declining_keeps_it(
 
     win._apply_tint_step(0.5, 0.1)
 
-    assert seen and "Remove Green" in seen[0]
+    assert seen and "De-green Sky" in seen[0]
     assert list(win.project.entries()) == before
 
 
@@ -1583,7 +1583,7 @@ def test_saturation_revisited_asks_and_declining_keeps_later_work(
 
     win._apply_saturation(0.7, 0.0)
 
-    assert seen and "Remove Green Fringe" in seen[0]
+    assert seen and "De-green Stars" in seen[0]
     assert list(win.project.entries()) == before
 
 
@@ -1597,7 +1597,7 @@ def test_green_fringe_frontier_apply_does_not_prompt(qtbot, tmp_path):
     win._fringe_ready = True
     win._apply_green_fringe(0.5)
     win._apply_green_fringe(0.6)
-    assert win.project.entries()[-1][0] == "Remove Green Fringe"
+    assert win.project.entries()[-1][0] == "De-green Stars"
 
 
 def test_green_fringe_revisited_asks_and_declining_keeps_later_work(
@@ -1788,7 +1788,7 @@ def test_color_a_successful_tint_apply_still_lets_remove_green_proceed(
 
     committed = [n for n, _ in win.project.entries()]
     assert "Colour Tint" in committed, "the first button never committed"
-    assert "Remove Green" in committed, (
+    assert "De-green Sky" in committed, (
         "the loop stopped after a SUCCESSFUL first apply — break is too eager")
     assert not win._has_pending()
 
@@ -1962,7 +1962,7 @@ def test_with_method_and_tint_pending_the_green_and_note_are_on_apply_color(
 
 def test_apply_color_asks_before_discarding_a_committed_tint(
         qtbot, tmp_path, monkeypatch):
-    """CRITICAL. "Colour Tint" and "Remove Green" are the COLOR STAGE's own
+    """CRITICAL. "Colour Tint" and "De-green Sky" are the COLOR STAGE's own
     work (so Reset can take them back), but they are not what Apply Color
     commits. Serving both questions from one set told the Apply confirm that a
     committed tint was this button's own work at the frontier, so Apply Color
@@ -1974,7 +1974,7 @@ def test_apply_color_asks_before_discarding_a_committed_tint(
     win._apply_tint_step(0.20, 0.0)
     win._remove_green(0.40)
     before = list(win.project.entries())
-    assert [n for n, _ in before] == ["Color", "Colour Tint", "Remove Green"]
+    assert [n for n, _ in before] == ["Color", "Colour Tint", "De-green Sky"]
 
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
@@ -1983,7 +1983,7 @@ def test_apply_color_asks_before_discarding_a_committed_tint(
 
     win._panel.apply_btn.click()
 
-    assert seen == [["Colour Tint", "Remove Green"]], (
+    assert seen == [["Colour Tint", "De-green Sky"]], (
         f"Apply Color must name the tint and the green it would discard: {seen}")
     assert list(win.project.entries()) == before, (
         "Apply Color destroyed the committed tint the user declined to lose")

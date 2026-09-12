@@ -2671,7 +2671,7 @@ class MainWindow(QMainWindow):
         Reset is a stage-wide action: one button on the panel, undoing whatever
         that panel applied. So Crop's stage owns Crop/Rotate/Flip, Enhancements
         owns every tap, and Color owns all three of "Color", "Colour Tint" and
-        "Remove Green" — the stage id matches only the first, and without the
+        "De-green Sky" — the stage id matches only the first, and without the
         other two Reset reads disabled over a real tint-only commit.
 
         Deliberately NOT the same question as `_commit_own_names`, which asks
@@ -2690,7 +2690,7 @@ class MainWindow(QMainWindow):
         if step_id == "enhancements":
             return set(ENHANCE_NAMES)
         if step_id == "color":
-            return {"Color", "Colour Tint", "Remove Green"}
+            return {"Color", "Colour Tint", "De-green Sky"}
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
@@ -3336,10 +3336,10 @@ class MainWindow(QMainWindow):
             return
         base = self.project.current()
         result = self._step_for("remove_green").apply(base, strength)
-        self.project.run_step(_PrecomputedStep("Remove Green", result), strength)
+        self.project.run_step(_PrecomputedStep("De-green Sky", result), strength)
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Remove Green", f"{strength:.2f}", rms_delta(base, result)))
+            format_log_entry("De-green Sky", f"{strength:.2f}", rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("remove_green")
         self._refresh()
@@ -3742,7 +3742,7 @@ class MainWindow(QMainWindow):
 
     # --- green fringe live preview (cached StarX split) ---
     def _fringe_preceding(self) -> set:
-        """Names of the steps that precede Remove Green Fringe — the predecessors
+        """Names of the steps that precede De-green Stars — the predecessors
         a commit preserves (and whose state the split runs on)."""
         return set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
@@ -3755,7 +3755,7 @@ class MainWindow(QMainWindow):
             self._leading_kept(self.project.entries(), self._fringe_preceding()))
 
     def _setup_green_fringe(self) -> None:
-        """On entering Remove Green Fringe: run the split (StarX, or the free
+        """On entering De-green Stars: run the split (StarX, or the free
         fallback without RC-Astro) once, off-thread, and cache it. The slider
         then previews the instant de-green recombine. A cached split for the
         same base is reused; without RC-Astro a note is shown but the
@@ -3766,26 +3766,29 @@ class MainWindow(QMainWindow):
         panel = self._panel
         if not rcastro_valid(self.settings) and hasattr(panel, "fringe_status"):
             panel.fringe_status.setText(_FREE_STAR_NOTE)
-        # (fall through — the split runs via _remove_stars, free or StarX)
+        # (fall through — _fringe_prepare runs the real split with RC-Astro,
+        # or just builds a star mask without it; the busy label below has to
+        # match whichever one is actually about to happen.)
         base = self._fringe_base()
         sig = self._sr_sig(base)
+        has_rc = rcastro_valid(self.settings)
+        busy_label = "Separating stars…" if has_rc else "Building star mask…"
         if self._fringe_layers and self._fringe_layers[0] == sig:
             self._fringe_ready = True
             if hasattr(panel, "fringe_slider"):
                 panel.fringe_slider.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
-                panel.fringe_status.setText(
-                    "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+                panel.fringe_status.setText("" if has_rc else _FREE_STAR_NOTE)
             self._render_fringe_preview()
             return
         self._fringe_ready = False
         if hasattr(panel, "fringe_slider"):
             panel.fringe_slider.setEnabled(False)
             panel.apply_btn.setEnabled(False)
-            panel.fringe_status.setText("Separating stars…")
+            panel.fringe_status.setText(busy_label)
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
-                       "Separating stars…", "Star separation failed")
+                       busy_label, "Star separation failed" if has_rc else "Star mask failed")
 
     def _fringe_prepare(self, base):
         """Off-thread: build what the fringe preview de-greens. StarX gives a
@@ -3835,10 +3838,10 @@ class MainWindow(QMainWindow):
         if not self._truncate_for("green_fringe", "Apply"):
             return
         result = self._fringe_result(strength)
-        self.project.run_step(_PrecomputedStep("Remove Green Fringe", result), float(strength))
+        self.project.run_step(_PrecomputedStep("De-green Stars", result), float(strength))
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Remove Green Fringe", f"{float(strength):.2f}", None))
+            format_log_entry("De-green Stars", f"{float(strength):.2f}", None))
         self._clear_warning()
         self._clear_pending("green_fringe")
         self._refresh()
@@ -3993,7 +3996,7 @@ class MainWindow(QMainWindow):
     def _stage_for_step_name(self, name):
         """Map a history step name to the stepper stage that produced it, for
         undo/redo navigation. Geometry -> Crop, Enhancements taps -> Enhancements,
-        Remove Green (a Color-step button, no own stage) -> Color. Toolbar-tool
+        De-green Sky (a Color-step button, no own stage) -> Color. Toolbar-tool
         steps (Narrowband, Star Spikes) have no stepper stage -> None (stay put)."""
         if not name:
             return None

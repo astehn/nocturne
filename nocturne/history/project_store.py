@@ -45,6 +45,22 @@ _REPRODUCIBLE_STAGES = {
     "local_contrast", "remove_green", "rotate", "flip_h", "flip_v",
 }   # NOTE: crop excluded — serialize_option drops its bounds.
 
+# A cached step (anything NOT in _REPRODUCIBLE_STAGES) restores via
+# `record_precomputed(name, ...)` — the DISPLAY NAME is its only restore key,
+# there is no stage id to fall back on. Renaming a step's display name (a
+# `Stage(...)` label / `STEP_NAME` entry) therefore breaks reload for every
+# `.nocturne` bundle saved before the rename, unless the old name is
+# translated here on the way in. Extend this map on every future rename —
+# never grow an inline `if` in load_project for it.
+_RENAMED_STEPS = {
+    "Remove Green": "De-green Sky",
+    "Remove Green Fringe": "De-green Stars",
+}
+
+
+def _migrate_step_name(name: str) -> str:
+    return _RENAMED_STEPS.get(name, name)
+
 
 def _ensure_serialized(stage, option):
     """Uniform JSON option, whether it came from run_step (native) or
@@ -222,7 +238,7 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
             if step["cached"]:
                 data = _bytes_to_array(zf.read(step["cache"]))
                 img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
-                project.record_precomputed(step["name"], step["option"], img)
+                project.record_precomputed(_migrate_step_name(step["name"]), step["option"], img)
             else:
                 native = deserialize_option(step["stage"], step["option"])
                 step_obj = make_step(step["stage"], settings)

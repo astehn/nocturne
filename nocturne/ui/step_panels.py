@@ -300,7 +300,7 @@ def build_panel(
         # Why these exist: Seestar data arrives with a magenta cast that is the
         # SENSOR's, not ours — measured on a raw sub at +0.041 on a (R+B)/2 - G
         # axis and passed through to the master essentially unchanged (+0.037).
-        # Nocturne shipped Remove Green for a cast its own stacks never have, and
+        # Nocturne shipped De-green Sky for a cast its own stacks never have, and
         # nothing for the one they always do.
         #
         # Multiplicative gains on linear data, applied here rather than after the
@@ -351,7 +351,7 @@ def build_panel(
         lay.addWidget(apply_tint_btn)
         w.apply_tint_btn = apply_tint_btn
 
-        # Remove Green (SCNR) with a strength dial + live preview — a knob, not a
+        # De-green Sky (SCNR) with a strength dial + live preview — a knob, not a
         # hammer. 1.00 == the classic full clamp.
         #
         # Default OFF, not 0.40. SCNR clamps green only where it exceeds the
@@ -370,7 +370,7 @@ def build_panel(
         rg_row = QHBoxLayout()
         rg_row.addWidget(QLabel("Green removal"))
         rg_row.addWidget(rg_val)
-        remove_green_btn = QPushButton("Remove Green")
+        remove_green_btn = QPushButton("De-green Sky")
         # Same reasoning as apply_tint_btn above: without this objectName the
         # pending styling has no selector to attach to and the button never
         # visibly changes.
@@ -594,11 +594,22 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "green_fringe":
+        # With RC-Astro (StarX) the split gives a clean stars layer, so
+        # de-greening it and screen-recombining really does touch only the
+        # stars. Without it there is no clean stars layer to de-green in
+        # isolation (see remove_green_fringe_masked's docstring), so the free
+        # path de-greens the WHOLE image instead, blended by a dilated,
+        # feathered star mask. Measured on a real NGC 7000 master at
+        # FRINGE_MASK_SCALE 2.5: the mask touches 68.1% of the frame (13.2% at
+        # >=50% weight, 2.5% at full strength) — enough that background green
+        # noise visibly shifts too. The description below has to say so.
         lay.addWidget(_desc_label(
-            "Remove the green colour fringe around stars. De-greens only the region "
-            "around stars, so nebula colour is untouched. 0 = off. Works without "
-            "RC-Astro; RC-Astro (StarX) gives a cleaner result."))
-        status = _desc_label("")   # main_window sets "Separating stars…" / gate text
+            "Remove the green colour fringe around stars. With RC-Astro (StarX), "
+            "only the stars are de-greened and nebula colour is untouched. Without "
+            "it, the free path de-greens the whole image instead, blended by a "
+            "feathered mask centred on stars — background colour can shift too. "
+            "0 = off."))
+        status = _desc_label("")   # main_window sets the split/mask label or gate text
         lay.addWidget(status)
         slider = ResetSlider(0)
         fringe_val = QLabel(f"{slider.value() / 100:.2f}")
@@ -609,7 +620,7 @@ def build_panel(
                 on_fringe_change(slider.value() / 100.0)
 
         slider.valueChanged.connect(_emit_fringe)
-        apply_btn = QPushButton("Apply Remove Green Fringe")
+        apply_btn = QPushButton("Apply De-green Stars")
         apply_btn.setObjectName("primary")
         if on_fringe_apply is not None:
             apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))

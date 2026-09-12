@@ -330,7 +330,7 @@ _TOPIC_LIST = (
        "<p>Seestar data tends to land slightly magenta. That's the camera, not the stacking: a "
        "single raw sub already shows it. If the image looks a touch purple, drag <b>Green ←→ "
        "Magenta</b> to the left.</p>"
-       "<p><b>3 — Remove Green.</b> You'll usually <i>not</i> need this on your own stacks; it's "
+       "<p><b>3 — De-green Sky.</b> You'll usually <i>not</i> need this on your own stacks; it's "
        "mainly for images stacked in other software, which often arrive green. Use it only if "
        "stars or background still take on a green tinge. It has a <b>strength</b> dial with a "
        "live preview — start gentle and drag up only as far as the green needs; full strength can "
@@ -339,8 +339,8 @@ _TOPIC_LIST = (
        "<p>This is the step that cleans up the colour left over after Background extraction. It's "
        "mainly for broadband/OSC data. Photometric (SPCC) needs enough stars to match, so it "
        "suits star-rich fields.</p>"
-       "<p>Tint and Remove Green do different jobs. The tint <i>shifts</i> colour and keeps the "
-       "relationships between stars; Remove Green <i>clamps</i> one channel, which removes a cast "
+       "<p>Tint and De-green Sky do different jobs. The tint <i>shifts</i> colour and keeps the "
+       "relationships between stars; De-green Sky <i>clamps</i> one channel, which removes a cast "
        "but flattens colour along with it. Reach for the tint first.</p>"),
 
     _t("ai_denoise", "AI Denoise",
@@ -588,24 +588,27 @@ _TOPIC_LIST = (
        "acts on the stars alone.</p>"
 ),
 
-    _t("green_fringe", "Remove Green Fringe",
+    _t("green_fringe", "De-green Stars",
        "Remove the green colour fringe around stars.",
        "<h4>What it does</h4>"
        "<p>Stars are never truly green, so a green fringe or halo around them is an "
-       "artifact (chromatic aberration or debayering). It suppresses the green excess "
-       "only in the region around stars, so the nebula and background colour are left "
-       "untouched. With <b>StarXTerminator</b> (RC-Astro) the stars are cleanly split "
-       "out first for the most precise result; without it, a built-in star detector "
-       "finds the stars and de-greens around them in place.</p>"
+       "artifact (chromatic aberration or debayering). With <b>StarXTerminator</b> "
+       "(RC-Astro), the stars are cleanly split out first, so only that layer is "
+       "de-greened and the nebula/background colour is left untouched. Without it, "
+       "there's no clean stars layer to de-green in isolation, so the free path "
+       "de-greens the whole image instead, blended by a feathered mask around the "
+       "stars — background colour can shift a little too.</p>"
        "<h4>How to use it</h4>"
        "<p>Raise <b>Strength</b> until the green fringe on the stars fades (0 = off). "
        "The star detection runs once when you enter the step, then the slider previews "
        "instantly. Works without RC-Astro; setting RC-Astro (StarXTerminator) in "
-       "Settings gives a cleaner separation.</p>"
+       "Settings gives a cleaner, stars-only result.</p>"
        "<h4>Tips</h4>"
-       "<p>A little usually does it. Because only the stars are affected, you can be "
-       "fairly aggressive without shifting the overall colour. Removing the green often "
-       "leaves the star a touch blue — a perfectly natural star colour.</p>"),
+       "<p>A little usually does it. With RC-Astro, only the stars are affected, so "
+       "you can be fairly aggressive without shifting the overall colour. Without it, "
+       "keep an eye on the background as you raise Strength — it can pick up a shift "
+       "too. Removing the green often leaves the star a touch blue — a perfectly "
+       "natural star colour.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
@@ -969,7 +972,7 @@ _TOPIC_LIST = (
        "<h4>RC-Astro (paid, optional)</h4>"
        "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise), and "
        "<b>StarXTerminator</b> (the star/starless split behind Star Reduction, Star Colour, the "
-       "nebula saturation boost, Remove Green Fringe, and the starless+stars export). "
+       "nebula saturation boost, De-green Stars, and the starless+stars export). "
        "Set its path in Settings and Test it.</p>"
        "<h4>ASTAP (free, optional)</h4>"
        "<p>A free plate-solver that powers <b>Plate Solve</b> — identifying the field and "
@@ -1010,7 +1013,7 @@ _TOPIC_LIST = (
        "<p><b>Levels</b> — a black point measured off the stretched image (median minus 3.5 "
        "\u00d7 MAD), not a fixed number. Gamma and white are left alone.</p>"
        "<p><b>Saturation</b> at <b>0.50</b> with a light <b>0.20</b> nebula boost.</p>"
-       "<p><b>Remove Green Fringe</b> at full strength.</p>"
+       "<p><b>De-green Stars</b> at full strength.</p>"
        "<p><b>Noise Reduction</b> at <i>strong</i>, always. The engine follows what you have "
        "installed — NoiseXTerminator if RC-Astro is set up, else GraXpert\u2019s denoiser, else "
        "Nocturne\u2019s own. The <i>level</i> is fixed rather than judged from the image: "
@@ -1641,8 +1644,8 @@ _t("upscale", "Upscale Crop",
        "image open at all.</p>"
        "<h4>Saving a recipe — and the two steps it cannot hold</h4>"
        "<p>Process one image the way you want it, then click <b>Save Recipe</b>. Everything in "
-       "the stepper is recorded: Background, Color, Colour Tint, Remove Green, Deconvolution, "
-       "Stretch, Recover Core, Levels, Curves, Saturation, Remove Green Fringe, "
+       "the stepper is recorded: Background, Color, Colour Tint, De-green Sky, Deconvolution, "
+       "Stretch, Recover Core, Levels, Curves, Saturation, De-green Stars, "
        "Noise Reduction, Local Contrast and Star Reduction — plus Crop, Rotate and Flip, the "
        "<b>Narrowband</b> and <b>Colour Balance</b> tools, and all eleven <b>Enhancements</b> "
        "taps.</p>"

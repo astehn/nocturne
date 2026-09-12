@@ -221,7 +221,7 @@ def test_async_three_sources_all_commit_method_first(qtbot, tmp_path, monkeypatc
     w.land()
 
     assert [n for n, _ in win.project.entries()] == [
-        "Color", "Colour Tint", "Remove Green"]
+        "Color", "Colour Tint", "De-green Sky"]
     assert not win._has_pending()
     assert win.current_stage_id() != "color"
 

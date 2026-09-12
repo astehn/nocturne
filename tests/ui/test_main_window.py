@@ -779,12 +779,12 @@ def test_remove_green_records_undoable_entry_and_reduces_green(qtbot, tmp_path):
     green_before = float(before.data[..., 1].mean()) if before.data.ndim == 3 else 0.0
     win._remove_green()
     names = [n for n, _ in win.project.entries()]
-    assert names[-1] == "Remove Green"
+    assert names[-1] == "De-green Sky"
     after = win.project.current()
     if after.data.ndim == 3:
         assert float(after.data[..., 1].mean()) <= green_before + 1e-6
     win.project.undo()
-    assert "Remove Green" not in [n for n, _ in win.project.entries()]
+    assert "De-green Sky" not in [n for n, _ in win.project.entries()]
 
 
 def test_remove_green_preserved_after_later_step(qtbot, tmp_path):
@@ -795,8 +795,8 @@ def test_remove_green_preserved_after_later_step(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     names = [n for n, _ in win.project.entries()]
-    assert "Remove Green" in names and "Stretch" in names
-    assert names.index("Remove Green") < names.index("Stretch")
+    assert "De-green Sky" in names and "Stretch" in names
+    assert names.index("De-green Sky") < names.index("Stretch")
 
 
 def test_reset_action_disabled_until_loaded(qtbot, tmp_path):
@@ -1539,7 +1539,7 @@ def test_green_fringe_apply_records_step(qtbot, tmp_path, monkeypatch):
     win._go_to_id("green_fringe")
     win._apply_green_fringe(0.6)
     names = [name for name, _ in win.project.entries()]
-    assert names[-1] == "Remove Green Fringe"
+    assert names[-1] == "De-green Stars"
 
 
 def test_star_spikes_tool_records_step_on_apply(qtbot, tmp_path):
@@ -2803,6 +2803,68 @@ def test_save_project_as_and_open_project_round_trip(qtbot, tmp_path, monkeypatc
     assert win.project is not None
     assert win.project.position == position_before
     np.testing.assert_array_equal(win.project.current().data, data_before)
+
+
+def test_opening_a_bundle_saved_under_the_old_green_tool_names_recognises_them(
+        qtbot, tmp_path):
+    """A bundle saved before the "De-green Sky"/"De-green Stars" rename has
+    the OLD names as its cached steps' only restore key
+    (history/project_store._RENAMED_STEPS). A round-trip test that only ever
+    writes and reads the CURRENT names would never exercise that migration —
+    it has to start from a manifest that genuinely carries the old strings.
+
+    Built as close to a real old bundle as a test can get without shipping
+    one: write a real bundle via save_project, then rewrite its manifest.json
+    names back to what they were before the rename, exactly as save_project
+    itself would have written them at the time.
+    """
+    import json
+    import zipfile
+
+    from nocturne.core.image import AstroImage
+    from nocturne.history.project import Project
+    from nocturne.history.project_store import save_project
+
+    base = AstroImage(np.full((6, 6, 3), 0.2, np.float32), is_linear=False)
+    proj = Project(base, str(tmp_path / "cache"))
+    proj.record_precomputed(
+        "De-green Sky", 0.5,
+        AstroImage(np.full((6, 6, 3), 0.18, np.float32), is_linear=False))
+    proj.record_precomputed(
+        "De-green Stars", 0.6,
+        AstroImage(np.full((6, 6, 3), 0.16, np.float32), is_linear=False))
+
+    out = str(tmp_path / "old.nocturne")
+    save_project(proj, out)
+
+    with zipfile.ZipFile(out) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        members = {n: zf.read(n) for n in zf.namelist()}
+    renamed = {"De-green Sky": "Remove Green", "De-green Stars": "Remove Green Fringe"}
+    for step in manifest["steps"]:
+        step["name"] = renamed.get(step["name"], step["name"])
+    members["manifest.json"] = json.dumps(manifest, default=str).encode()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.project = None  # reset in-memory state to prove the reload is real
+    win._open_project(out)
+
+    names = [n for n, _ in win.project.entries()]
+    assert names == ["De-green Sky", "De-green Stars"], (
+        f"old-named cached steps did not come back under the new names: {names}")
+
+    # Coming back under the right STRING is necessary but not sufficient —
+    # the pipeline reasoning that keys off these names (Reset/Apply's
+    # own-work and truncation logic) has to recognise the migrated entries
+    # too, or Reset reads disabled and Apply can't tell what it would discard.
+    assert names[0] in win._stage_own_names("color"), (
+        "the migrated De-green Sky entry is not recognised as Color's own work")
+    assert win._truncation_target("noise_sharpen") == len(names), (
+        "the migrated entries broke the leading-kept walk _truncation_target relies on")
 
 
 def test_reset_works_on_a_loaded_project(qtbot, tmp_path, monkeypatch):

@@ -43,7 +43,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
     "noise_sharpen":  ("Noise Reduction", "RC-Astro", "rcastro"),
     "star_reduction": ("Star Reduction", "RC-Astro", "rcastro"),
     "saturation":     ("Saturation", "RC-Astro", "rcastro"),
-    "green_fringe":   ("Remove Green Fringe", "RC-Astro", "rcastro"),
+    "green_fringe":   ("De-green Stars", "RC-Astro", "rcastro"),
     "narrowband":     ("Narrowband", "RC-Astro", "rcastro"),
     "color_balance":  ("Colour Balance", "RC-Astro", "rcastro"),
 }

@@ -312,7 +312,7 @@ def test_the_colour_balance_help_explains_that_ranges_are_independent():
 
 
 def test_colour_help_names_the_tint_controls_that_exist():
-    """The Color topic described only calibration and Remove Green.
+    """The Color topic described only calibration and De-green Sky.
 
     Two sliders were added to that panel and the help would happily have gone on
     describing the old one — the exact drift this file exists to catch. Pin the
@@ -337,7 +337,7 @@ def test_colour_help_gets_the_order_of_operations_right():
             < PROCESSING_ORDER.index("tint")
             < PROCESSING_ORDER.index("remove_green"))
     # the prose must present them in that same order
-    assert b.index("1 — Calibrate") < b.index("2 — Nudge") < b.index("3 — Remove Green")
+    assert b.index("1 — Calibrate") < b.index("2 — Nudge") < b.index("3 — De-green Sky")
 
 
 def test_colour_help_does_not_claim_nocturne_creates_the_magenta():

@@ -25,6 +25,13 @@ _NAME_TO_STAGE["Narrowband"] = "narrowband"   # tool step, not a stepper stage
 LEGACY_OIII_REASON = ("saved before the oxygen controls changed — "
                       "open it in Narrowband and re-save the recipe")
 _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
+# Pre-rename display names (see history/project_store._RENAMED_STEPS). A
+# cached step from an old bundle is translated to its new name on load, but
+# _stage_for must still resolve the old name too — belt-and-suspenders for an
+# old-named entry that somehow reaches save_project without going through
+# load_project first (e.g. a partially-migrated in-memory project).
+_NAME_TO_STAGE["Remove Green"] = "remove_green"        # now "De-green Sky"
+_NAME_TO_STAGE["Remove Green Fringe"] = "green_fringe"  # now "De-green Stars"
 # Starless Levels is deliberately ABSENT. Its two numbers come from a person
 # looking at one picture — that is the whole premise of the tool — so replaying
 # them across a folder of different targets would mean something different on
@@ -68,7 +75,7 @@ def serialize_option(stage_id, option):
         try:
             return float(option)
         except (TypeError, ValueError):
-            return option   # legacy string ("" from the old parameterless Remove Green)
+            return option   # legacy string ("" from the old parameterless De-green Sky)
     if stage_id == "curves":
         pts = option if option else [(0.0, 0.0), (1.0, 1.0)]
         return [[float(x), float(y)] for x, y in pts]

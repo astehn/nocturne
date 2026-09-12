@@ -14,7 +14,7 @@ class TintStep(Step):
     it if it is not to taste. Bundled into ColorSettings the sliders could only
     take effect by re-running the calibration, and a preview taken before it.
 
-    Not a visible step: like Remove Green, it lives in the Color panel and maps
+    Not a visible step: like De-green Sky, it lives in the Color panel and maps
     back to the Color stage in the stepper.
     """
 

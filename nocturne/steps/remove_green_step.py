@@ -6,7 +6,7 @@ from ..history.step import Step
 
 
 class RemoveGreenStep(Step):
-    name = "Remove Green"
+    name = "De-green Sky"
 
     def options(self) -> list[str]:
         return []

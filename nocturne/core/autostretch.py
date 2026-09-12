@@ -126,7 +126,7 @@ def neutral_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     of red and blue because it has twice as many green photosites — so green was
     amplified about 1.9x harder than the other channels. On a real M 31 mosaic
     that turned a 3.6% green DEFICIT in the data into a 4.7% green EXCESS on
-    screen, and in the exported file. Remove Green could not fix it: it runs
+    screen, and in the exported file. De-green Sky could not fix it: it runs
     before the stretch, and the stretch re-normalised each channel afterwards.
 
     Two jobs were conflated. Setting a black point per channel is right — it is

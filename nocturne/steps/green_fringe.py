@@ -13,7 +13,7 @@ FRINGE_MASK_SCALE = 2.5
 
 
 class GreenFringeStep(Step):
-    name = "Remove Green Fringe"
+    name = "De-green Stars"
 
     def __init__(self, rcastro: RCAstro | None = None) -> None:
         self._rc = rcastro

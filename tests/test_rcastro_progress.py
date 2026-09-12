@@ -10,7 +10,7 @@ until the operation ends. Its `--json` mode is newline-delimited instead:
 
 which carries a percentage, an ETA, phase names and a schemaVersion — a contract
 rather than a scrape. One change in `_run` covers Deconvolution, Noise Reduction,
-Star Reduction, Saturation, Remove Green Fringe, Narrowband, Colour Balance and
+Star Reduction, Saturation, De-green Stars, Narrowband, Colour Balance and
 Starless Levels, because every RC-Astro operation funnels through it.
 """
 import numpy as np
@@ -96,7 +96,7 @@ def test_without_json_support_the_run_is_unchanged(monkeypatch):
 def test_the_star_split_reports_progress_too(monkeypatch):
     """StarXTerminator does NOT go through `_run`, and it is the slow one — the
     split that Narrowband, Colour Balance, Starless Levels, Star Reduction,
-    Saturation and Remove Green Fringe all wait on. A fix that only covered
+    Saturation and De-green Stars all wait on. A fix that only covered
     `_run` would have missed the wait people actually feel."""
     import nocturne.tools.rcastro as rc
 

@@ -59,7 +59,7 @@ def test_recipe_from_entries_maps_and_skips():
 
 def test_remove_green_entry_maps_and_serializes():
     from nocturne.recipe import recipe_from_entries
-    rec = recipe_from_entries([("Color", None), ("Remove Green", "")])
+    rec = recipe_from_entries([("Color", None), ("De-green Sky", "")])
     stages = [s["stage"] for s in rec.steps]
     assert "remove_green" in stages
 

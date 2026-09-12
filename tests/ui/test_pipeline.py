@@ -49,7 +49,7 @@ def test_geometry_names():
 
 
 def test_remove_green_positioned_after_color():
-    """Intent preserved: Remove Green runs AFTER the colour calibration.
+    """Intent preserved: De-green Sky runs AFTER the colour calibration.
 
     It is no longer adjacent — Colour Tint sits between them, so the order is
     calibrate, nudge to taste, then de-green imported data. Asserting the
@@ -57,7 +57,7 @@ def test_remove_green_positioned_after_color():
     test breaking every time something is inserted nearby.
     """
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
-    assert STEP_NAME["remove_green"] == "Remove Green"
+    assert STEP_NAME["remove_green"] == "De-green Sky"
     assert PROCESSING_ORDER.index("remove_green") > PROCESSING_ORDER.index("color")
 
 
@@ -148,7 +148,7 @@ def test_green_fringe_placed_after_saturation():
     ids = [s.id for s in path_stages()]
     assert ids.index("green_fringe") == ids.index("saturation") + 1
     assert ids.index("green_fringe") < ids.index("noise_sharpen")
-    assert STEP_NAME["green_fringe"] == "Remove Green Fringe"
+    assert STEP_NAME["green_fringe"] == "De-green Stars"
     assert "green_fringe" in POST_STRETCH_IDS
 
 
