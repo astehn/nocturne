@@ -1468,3 +1468,31 @@ def test_color_cancelling_the_first_confirm_never_clicks_the_second_button(
     assert win._rg_pending == pytest.approx(0.4), (
         "the still-pending remove-green edit was disturbed")
     assert win.current_stage_id() == "color"
+
+
+def test_color_a_successful_tint_apply_still_lets_remove_green_proceed(
+        qtbot, tmp_path, monkeypatch):
+    """The loop breaks only on a DECLINED confirm, not on any click.
+
+    Without this, "always stop after the first button" passes the whole suite:
+    the declined-case test cannot tell a correct break from an over-eager one,
+    because both stop. Colour is the one stage with two independent pending
+    edits, so it is the only place the difference is observable.
+    """
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._on_tint_change(0.2, 0.0)
+    win._on_removegreen_change(0.4)
+    win._sync_step_controls()
+    assert len(win._pending_apply_targets()) == 2, "need both pending to test this"
+
+    win._apply_current_step()
+
+    committed = [n for n, _ in win.project.entries()]
+    assert "Colour Tint" in committed, "the first button never committed"
+    assert "Remove Green" in committed, (
+        "the loop stopped after a SUCCESSFUL first apply — break is too eager")
+    assert not win._has_pending()
