@@ -2386,8 +2386,13 @@ class MainWindow(QMainWindow):
         whether you are about to lose ten minutes of GraXpert.
         """
         own = STEP_NAME.get(step_id)
-        casualties = [name for name, _ in self.project.entries()[target:]
-                      if name != own]
+        # Deduplicated, first appearance wins. Trim is deliberately append-only
+        # (see _trim), so it can legitimately appear twice in one history —
+        # "This discards Trim, Curves and Trim" reads like a bug in the dialog.
+        casualties: list[str] = []
+        for name, _ in self.project.entries()[target:]:
+            if name != own and name not in casualties:
+                casualties.append(name)
         if not casualties:
             return True
         return self._ask_truncation(casualties, verb)

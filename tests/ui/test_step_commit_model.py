@@ -813,3 +813,26 @@ def test_declining_the_confirm_returns_false_and_truncates_nothing(
     target = win._truncation_target("levels")
     assert win._confirm_truncation("levels", target, "Apply") is False
     assert list(win.project.entries()) == before
+
+
+def test_a_repeated_step_is_named_once_in_the_confirm(qtbot, tmp_path, monkeypatch):
+    """Trim appends rather than reaching back (see _trim), so it can appear
+    twice in one history. Naming it twice reads as a bug in the dialog."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: seen.append(list(names)) or False)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+    # Two Trims around a Curves, the shape _trim's append-only design produces.
+    for name in ("Trim", "Curves", "Trim"):
+        win.project.run_step(mw._PrecomputedStep(name, win.project.current()), "")
+
+    win._confirm_truncation("levels", win._truncation_target("levels"), "Apply")
+
+    assert seen, "no confirm was raised"
+    assert seen[0].count("Trim") == 1, f"Trim named twice: {seen[0]}"
+    assert "Curves" in seen[0]
