@@ -1572,7 +1572,7 @@ def test_saturation_revisited_asks_and_declining_keeps_later_work(
     win._fringe_layers = (
         win._sr_sig(base), "split",
         AstroImage(base.data * 0.4, is_linear=base.is_linear),
-        AstroImage(base.data * 0.6, is_linear=base.is_linear))
+        AstroImage(base.data * 0.6, is_linear=base.is_linear), None)
     win._fringe_ready = True
     win._apply_green_fringe(0.5)   # later work; frontier for the fringe, so silent
     before = list(win.project.entries())
@@ -1593,7 +1593,7 @@ def test_green_fringe_frontier_apply_does_not_prompt(qtbot, tmp_path):
     win._fringe_layers = (
         win._sr_sig(base), "split",
         AstroImage(base.data * 0.4, is_linear=base.is_linear),
-        AstroImage(base.data * 0.6, is_linear=base.is_linear))
+        AstroImage(base.data * 0.6, is_linear=base.is_linear), None)
     win._fringe_ready = True
     win._apply_green_fringe(0.5)
     win._apply_green_fringe(0.6)
@@ -1607,7 +1607,7 @@ def test_green_fringe_revisited_asks_and_declining_keeps_later_work(
     win._fringe_layers = (
         win._sr_sig(base), "split",
         AstroImage(base.data * 0.4, is_linear=base.is_linear),
-        AstroImage(base.data * 0.6, is_linear=base.is_linear))
+        AstroImage(base.data * 0.6, is_linear=base.is_linear), None)
     win._fringe_ready = True
     win._apply_green_fringe(0.5)
     sr_base = win.project.current()
@@ -2374,11 +2374,11 @@ def test_the_fringe_step_says_which_of_its_two_paths_ran(qtbot, tmp_path):
     de-greens the whole image inside a star mask and moves the sky more than
     the stars. Nothing anywhere said which one you got."""
     win = _win(qtbot, tmp_path)
-    win._fringe_layers = ("sig", "split", None, None)
+    win._fringe_layers = ("sig", "split", None, None, None)
     assert win._fringe_path_label() == "StarX"
     assert "StarX" in win._fringe_status_text()
 
-    win._fringe_layers = ("sig", "mask", None, None)
+    win._fringe_layers = ("sig", "mask", None, None, None)
     assert win._fringe_path_label() == "mask"
     text = win._fringe_status_text()
     assert "whole image" in text, (

@@ -57,7 +57,7 @@ from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
 from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
-from ..steps.green_fringe import FRINGE_MASK_SCALE
+from ..steps.green_fringe import FRINGE_MASK_SCALE, SPLIT_MASK_SCALE
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
@@ -3797,8 +3797,11 @@ class MainWindow(QMainWindow):
         star-neighbourhood mask and de-green the image in place inside it."""
         if rcastro_valid(self.settings):
             starless, stars = self._remove_stars(base)
-            return ("split", starless, stars)
-        return ("mask", base, star_mask(base, FRINGE_MASK_SCALE))
+            # The confinement mask is built HERE, off-thread and once, not in
+            # _fringe_result: that runs on every slider tick, and star_mask on a
+            # 4331x3464 frame is not a per-tick cost.
+            return ("split", starless, stars, star_mask(base, SPLIT_MASK_SCALE))
+        return ("mask", base, star_mask(base, FRINGE_MASK_SCALE), None)
 
     def _fringe_status_text(self) -> str:
         """What the panel says once the layers are ready.
@@ -3832,9 +3835,9 @@ class MainWindow(QMainWindow):
         return "StarX" if self._fringe_layers[1] == "split" else "mask"
 
     def _fringe_result(self, strength) -> AstroImage:
-        _, kind, a, b = self._fringe_layers
+        _, kind, a, b, c = self._fringe_layers
         if kind == "split":
-            return remove_green_fringe(a, b, float(strength))
+            return remove_green_fringe(a, b, float(strength), c)
         return remove_green_fringe_masked(a, b, float(strength))
 
     def _on_fringe_split(self, sig, payload) -> None:

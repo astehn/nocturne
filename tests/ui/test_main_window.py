@@ -1509,12 +1509,25 @@ def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
 
 
 def _fake_rc_layers(win, monkeypatch):
+    """A stand-in split that returns layers the SIZE OF WHAT IT WAS GIVEN.
+
+    It used to return a fixed 16x16 pair whatever the base was, which is not
+    something a real split can do — and the fringe step now builds a
+    confinement mask from the base, so mismatched shapes stop broadcasting.
+    A fake that breaks the contract it stands in for only holds while nothing
+    relies on that contract.
+    """
     import numpy as np
     from nocturne.core.image import AstroImage
-    starless = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=False)
-    stars = np.zeros((16, 16, 3), np.float32); stars[8, 8] = (0.2, 0.9, 0.3)
-    stars = AstroImage(stars, is_linear=False)
-    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+
+    def _split(img):
+        h, w = img.data.shape[:2]
+        starless = AstroImage(np.full((h, w, 3), 0.3, np.float32), is_linear=False)
+        st = np.zeros((h, w, 3), np.float32)
+        st[h // 2, w // 2] = (0.2, 0.9, 0.3)          # one green-fringed star
+        return starless, AstroImage(st, is_linear=False)
+
+    monkeypatch.setattr(win, "_remove_stars", _split)
     monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
 
 
@@ -5504,7 +5517,12 @@ def _prime_split(win, stage):
     elif stage == "green_fringe":
         base = win._fringe_base()
         starless, stars = split_stars(base)
-        win._fringe_layers = (win._sr_sig(base), "split", starless, stars)
+        # the same confinement mask _fringe_prepare caches, or preview and
+        # apply would legitimately disagree
+        from nocturne.core.starless import star_mask
+        from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
+        win._fringe_layers = (win._sr_sig(base), "split", starless, stars,
+                              star_mask(base, SPLIT_MASK_SCALE))
         win._fringe_ready = True
 
 

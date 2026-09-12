@@ -96,15 +96,32 @@ def _suppress_green_excess(data: np.ndarray, strength: float) -> np.ndarray:
 
 
 def remove_green_fringe(starless: AstroImage, stars: AstroImage,
-                        strength: float) -> AstroImage:
-    """De-green the stars layer (green-excess suppression) and screen-recombine
-    with the untouched starless background — so only stars change and the
-    background/nebula colour is preserved. `strength` 0 = plain recombine."""
+                        strength: float, mask: np.ndarray | None = None) -> AstroImage:
+    """De-green the stars layer and screen-recombine with the untouched starless
+    background. `strength` 0 = plain recombine.
+
+    `mask` confines the de-green to the star neighbourhood, and is not optional
+    in practice — it is what makes the claim "only stars change" true.
+
+    Without it this is only sound while the stars layer is SPARSE, and nothing
+    guarantees that. StarX returns everything it removed, which on a noisy frame
+    is mostly noise: measured on a real drizzled NGC 7000 master sitting after
+    Deconvolution, the stars layer carried content over 99.9% of the frame, and
+    de-greening it moved the far background (2.44/255) three times as much as
+    the star cores (0.78) — the exact inverse of what this function is for, and
+    a visible green cast across the image. Andreas found it by eye; the numbers
+    came after.
+    """
     strength = float(np.clip(strength, 0.0, 1.0))
     base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
     st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
     if strength > 0.0:
-        st = _suppress_green_excess(st, strength)
+        degreened = _suppress_green_excess(st, strength)
+        if mask is None:
+            st = degreened
+        else:
+            m = mask[..., None]
+            st = (1.0 - m) * st + m * degreened
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))

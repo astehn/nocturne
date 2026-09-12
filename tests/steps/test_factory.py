@@ -98,5 +98,54 @@ def test_green_fringe_step_splits_then_degreens():
             return starless, stars
 
     step = GreenFringeStep(_FakeRC())
-    out = step.apply(AstroImage(np.full((4, 4, 3), 0.5, np.float32)), 0.6).data
-    assert np.allclose(out, remove_green_fringe(starless, stars, 0.6).data)
+    img = AstroImage(np.full((4, 4, 3), 0.5, np.float32))
+    out = step.apply(img, 0.6).data
+    # Masked now: the stars-layer de-green is confined to the star
+    # neighbourhood, so the step must match the MASKED call, not the bare one.
+    from nocturne.core.starless import star_mask
+    from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
+    expected = remove_green_fringe(starless, stars, 0.6,
+                                   star_mask(img, SPLIT_MASK_SCALE)).data
+    assert np.allclose(out, expected)
+
+
+def test_the_stars_layer_degreen_is_confined_to_the_star_neighbourhood():
+    """StarX returns everything it removed, which on a noisy frame is mostly
+    NOISE — measured at 99.9% of the frame on a real drizzled master. De-greening
+    that unmasked moved the far background three times as much as the star cores,
+    the exact inverse of what this step is for. The mask is what makes "only
+    stars change" true rather than merely intended."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.color import remove_green_fringe
+    from nocturne.core.starless import star_mask
+    from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
+
+    rng = np.random.default_rng(0)
+    h = w = 96
+    base = np.full((h, w, 3), 0.25, np.float32)
+    base[..., 1] += 0.05                                   # a green cast everywhere
+    base += rng.normal(0, 0.01, base.shape).astype(np.float32)
+    base[46:50, 46:50] = (0.8, 0.95, 0.8)                  # one bright green-ish star
+    img = AstroImage(np.clip(base, 0, 1), is_linear=False)
+
+    starless = AstroImage(np.clip(base - 0.02, 0, 1).astype(np.float32), is_linear=False)
+    # NOISE everywhere, and GREEN-heavy — a neutral grey stars layer has no
+    # green excess to suppress, so de-greening it is a no-op and the test would
+    # pass against any implementation.
+    noise = np.zeros((h, w, 3), np.float32)
+    noise[..., 0] = 0.01
+    noise[..., 1] = 0.04
+    noise[..., 2] = 0.01
+    stars = AstroImage(noise, is_linear=False)
+
+    mask = star_mask(img, SPLIT_MASK_SCALE)
+    confined = remove_green_fringe(starless, stars, 1.0, mask).data
+    unmasked = remove_green_fringe(starless, stars, 1.0).data
+
+    far = mask <= 0.0
+    assert far.any(), "no unmasked region to check — the fixture has no clean sky"
+    assert np.allclose(confined[far], np.clip(1 - (1 - starless.data) * (1 - stars.data), 0, 1)[far]), \
+        "the confined de-green still moved sky outside the star neighbourhood"
+    assert not np.allclose(unmasked[far], confined[far]), \
+        "the fixture cannot tell masked from unmasked — it proves nothing"
