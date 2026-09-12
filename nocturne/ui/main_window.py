@@ -2495,16 +2495,32 @@ class MainWindow(QMainWindow):
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
-    def _ask_truncation(self, names: list[str], verb: str) -> bool:
-        """Split out so tests can answer it. True means go ahead."""
-        listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 \
-            else names[0]
+    def _ask_truncation(self, names: list[str], step_label: str,
+                        verb: str) -> bool:
+        """Split out so tests can answer it. True means go ahead.
+
+        Names the step in the headline. macOS drops a QMessageBox window title
+        entirely, so without it the only text on screen is "This discards X,
+        applied after it" — and "it" has no antecedent anywhere the user can
+        see. The Apply and Reset dialogs were otherwise word for word identical.
+
+        The default is Cancel, held by reference. `buttons()` returns LAYOUT
+        order, not insertion order, so `buttons()[-1]` handed the default to the
+        DESTRUCTIVE button — Return, or the reflex of hitting the highlighted
+        one, irreversibly discarded the named steps (jump_back deletes the
+        paths; there is no redo). Same reasoning as _ask_pending above and
+        _reset_image below: the safe default is still "change nothing".
+        """
+        listed = (", ".join(names[:-1]) + f" and {names[-1]}"
+                  if len(names) > 1 else names[0])
         box = QMessageBox(self)
         box.setWindowTitle(f"{APP_NAME} — {verb}")
-        box.setText(f"This discards {listed}, applied after it.")
+        box.setText(f"{verb} {step_label} again?" if verb == "Apply"
+                    else f"{verb} {step_label}?")
+        box.setInformativeText(f"This discards {listed}, applied after it.")
         go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
-        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(box.buttons()[-1])
+        cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
         box.exec()
         return box.clickedButton() is go
 
@@ -2527,7 +2543,8 @@ class MainWindow(QMainWindow):
                 casualties.append(name)
         if not casualties:
             return True
-        return self._ask_truncation(casualties, verb)
+        return self._ask_truncation(
+            casualties, STEP_NAME.get(step_id, step_id), verb)
 
     def _truncate_for(self, step_id: str, verb: str) -> bool:
         """Confirm, then truncate. False means the user cancelled and the
