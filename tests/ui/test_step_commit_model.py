@@ -1116,3 +1116,44 @@ def test_reset_step_on_enhancements_stays_disabled_with_only_a_trim(qtbot, tmp_p
     win._go_to_id("enhancements")
 
     assert not win._panel.reset_step_btn.isEnabled()
+
+
+def test_reset_step_is_alive_after_a_tint_only_commit_on_color(qtbot, tmp_path):
+    """The Color stage commits under three names, and the stage id matches only
+    one of them. Without the other two a tint-only edit is not recognised as
+    this stage's own work and Reset reads disabled over a real commit."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._apply_tint_step(0.3, 0.1)
+    assert [n for n, _ in win.project.entries()] == ["Colour Tint"]
+
+    win._sync_step_controls()
+    assert win._panel.reset_step_btn.isEnabled(), (
+        "Reset is dead over a committed tint")
+
+
+def test_reset_step_is_alive_after_a_remove_green_only_commit(qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._remove_green(0.5)
+    assert [n for n, _ in win.project.entries()] == ["Remove Green"]
+
+    win._sync_step_controls()
+    assert win._panel.reset_step_btn.isEnabled()
+
+
+def test_resetting_color_does_not_call_the_users_own_tint_a_casualty(
+        qtbot, tmp_path, monkeypatch):
+    """Frontier silence, on the stage where "own work" spans three names."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: seen.append(list(names)) or True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._apply_tint_step(0.3, 0.1)
+
+    win._reset_step()
+
+    assert seen == [], f"named the user's own tint as a casualty: {seen}"
+    assert list(win.project.entries()) == []

@@ -2436,14 +2436,27 @@ class MainWindow(QMainWindow):
         _confirm_truncation compares casualties against this to tell "you are
         replacing your own work at the frontier" (silent) from "you are
         discarding later work" (named). Most steps commit under exactly one
-        name, but Crop's stage commits under several (Crop/Rotate/Flip — Trim
-        is deliberately excluded: it is a distinct, later action, not this
-        stage's own edit) and Enhancements under any of ENHANCE_NAMES.
+        name, but three stages commit under several.
+
+        Crop's stage commits as Crop/Rotate/Flip — Trim is deliberately
+        excluded: it is a distinct, later action, not this stage's own edit.
+        Enhancements commits under any of ENHANCE_NAMES. And Color carries
+        three buttons that commit as "Color", "Colour Tint" and "Remove Green"
+        — the stage id matches only the first, so without the other two a
+        tint-only or green-only edit is not recognised as this stage's own
+        work: Reset reads disabled over a real commit, and a confirm would
+        name the user's own tint as a casualty.
+
+        Toolbar tools (Narrowband, Colour Balance, Star Spikes, Starless
+        Levels) also commit under their own names, and are deliberately absent:
+        no stepper stage owns them, so they are always someone else's work.
         """
         if step_id == "crop":
             return {"Crop", "Rotate", "Flip H", "Flip V"}
         if step_id == "enhancements":
             return set(ENHANCE_NAMES)
+        if step_id == "color":
+            return {"Color", "Colour Tint", "Remove Green"}
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
