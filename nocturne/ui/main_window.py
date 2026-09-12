@@ -3778,7 +3778,7 @@ class MainWindow(QMainWindow):
             if hasattr(panel, "fringe_slider"):
                 panel.fringe_slider.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
-                panel.fringe_status.setText("" if has_rc else _FREE_STAR_NOTE)
+                panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
             return
         self._fringe_ready = False
@@ -3799,6 +3799,37 @@ class MainWindow(QMainWindow):
             starless, stars = self._remove_stars(base)
             return ("split", starless, stars)
         return ("mask", base, star_mask(base, FRINGE_MASK_SCALE))
+
+    def _fringe_status_text(self) -> str:
+        """What the panel says once the layers are ready.
+
+        Names the path rather than staying blank on the StarX branch: the two
+        implementations behave differently enough that "which one ran" is part
+        of reading the result, not a detail.
+        """
+        if self._fringe_path_label() == "StarX":
+            return "Using RC-Astro (StarX): only the stars are de-greened."
+        # NOT _FREE_STAR_NOTE, which is shared with Star Reduction and
+        # Saturation and says the free path is merely a less clean separation.
+        # Here it is a different operation: the whole image is de-greened
+        # inside a star mask, so the sky moves too.
+        return ("Using free star detection — de-greens the whole image inside a "
+                "star mask, so background colour shifts too. Set RC-Astro "
+                "(StarX) in Settings to de-green only the stars.")
+
+    def _fringe_path_label(self) -> str:
+        """Which of the two quite different implementations actually ran.
+
+        StarX de-greens a stars layer and screen-recombines, touching almost
+        nothing off the stars. Without it the free path de-greens the WHOLE
+        image inside a dilated star mask, which on a dense field moves the sky
+        more than the stars. Same button, same slider, same step name — and
+        nothing anywhere said which one you got, which is why telling them
+        apart took a measurement rather than a glance.
+        """
+        if not self._fringe_layers:
+            return ""
+        return "StarX" if self._fringe_layers[1] == "split" else "mask"
 
     def _fringe_result(self, strength) -> AstroImage:
         _, kind, a, b = self._fringe_layers
@@ -3837,11 +3868,14 @@ class MainWindow(QMainWindow):
             return
         if not self._truncate_for("green_fringe", "Apply"):
             return
+        base = self.project.current()
         result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("De-green Stars", result), float(strength))
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("De-green Stars", f"{float(strength):.2f}", None))
+            format_log_entry("De-green Stars",
+                             f"{float(strength):.2f} ({self._fringe_path_label()})",
+                             rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("green_fringe")
         self._refresh()

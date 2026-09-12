@@ -2365,3 +2365,21 @@ def test_apply_and_continue_from_crop_commits_the_crop(
 
     assert [n for n, _ in win.project.entries()] == ["Crop"]
     assert win.current_stage_id() != "crop"
+
+
+def test_the_fringe_step_says_which_of_its_two_paths_ran(qtbot, tmp_path):
+    """Same button, same slider, same step name — two implementations that
+    behave differently enough that telling them apart took a measurement
+    rather than a glance. StarX de-greens a stars layer; the free path
+    de-greens the whole image inside a star mask and moves the sky more than
+    the stars. Nothing anywhere said which one you got."""
+    win = _win(qtbot, tmp_path)
+    win._fringe_layers = ("sig", "split", None, None)
+    assert win._fringe_path_label() == "StarX"
+    assert "StarX" in win._fringe_status_text()
+
+    win._fringe_layers = ("sig", "mask", None, None)
+    assert win._fringe_path_label() == "mask"
+    text = win._fringe_status_text()
+    assert "whole image" in text, (
+        "the free path's note does not say it moves the background")
