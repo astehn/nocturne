@@ -836,3 +836,165 @@ def test_a_repeated_step_is_named_once_in_the_confirm(qtbot, tmp_path, monkeypat
     assert seen, "no confirm was raised"
     assert seen[0].count("Trim") == 1, f"Trim named twice: {seen[0]}"
     assert "Curves" in seen[0]
+
+
+# --- Task 4: Reset step ---
+
+def test_every_committing_stage_offers_reset_step(qtbot, tmp_path):
+    """Driven from the real stage list, not a hand-written one, so a stage
+    added later is covered automatically."""
+    win = _win(qtbot, tmp_path)
+    for stage in win._stages:
+        if stage.id in ("load", "export"):
+            continue
+        win._go_to_id(stage.id)
+        assert getattr(win._panel, "reset_step_btn", None) is not None, (
+            f"{stage.id} has no Reset step button")
+
+
+def test_load_and_export_have_no_reset_step_button(qtbot, tmp_path):
+    """Import has nothing to reset (the toolbar Reset owns that) and Export
+    writes a file rather than committing one — neither should even show the
+    button, not merely disable it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("load")
+    assert win._panel.reset_step_btn is None
+    win._go_to_id("export")
+    assert win._panel.reset_step_btn is None
+
+
+def test_reset_step_is_disabled_with_nothing_to_reset(qtbot, tmp_path):
+    """Never a no-op that looks like it did something."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    assert not win._panel.reset_step_btn.isEnabled()
+
+
+def test_clicking_reset_step_drops_this_steps_commit(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+
+    qtbot.mouseClick(win._panel.reset_step_btn, Qt.MouseButton.LeftButton)
+
+    assert win._committed_option("levels") is None
+
+
+def test_reset_step_leaves_everything_before_it_untouched(qtbot, tmp_path):
+    """The 'must not' case: capture the earlier state and assert UNCHANGED."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    assert win._committed_option("stretch") is not None
+    kept = np.array(win.project.state_at(1).data, copy=True)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+
+    win._reset_step()
+
+    assert np.array_equal(win.project.state_at(1).data, kept)
+
+
+def test_reset_step_asks_before_discarding_later_work(
+        qtbot, tmp_path, monkeypatch):
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: False)
+    win = _win(qtbot, tmp_path)
+    for sid, opt in (("stretch", 0.5), ("levels", (0.1, 1.0, 0.9)),
+                     ("curves", [(0.0, 0.0), (1.0, 1.0)])):
+        win._go_to_id(sid)
+        win.apply_current(opt)
+        assert win._committed_option(sid) is not None
+    win._go_to_id("levels")
+    before = list(win.project.entries())
+
+    win._reset_step()
+
+    assert list(win.project.entries()) == before
+
+
+def test_reset_step_button_enables_once_the_crop_stage_has_committed(qtbot, tmp_path):
+    """`crop` has no STEP_NAME entry (it isn't a PROCESSING_ORDER step), so an
+    enablement check that reused `_committed_option` would read permanently
+    None here and leave the button dead even after a real Rotate."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("crop")
+    assert not win._panel.reset_step_btn.isEnabled()
+
+    win._rotate()
+
+    assert win._panel.reset_step_btn.isEnabled()
+
+
+def test_reset_step_on_crop_truncates_to_the_start_and_is_silent(qtbot, tmp_path):
+    """Crop is first in the pipeline, so resetting it means discarding the
+    whole history, not truncating to some prefix. Rotate is the crop stage's
+    OWN work, so nothing else is at risk and the confirm must stay silent —
+    the autouse `_ask_truncation` stub raises if it is asked at all."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win._rotate()
+    assert win.project.entries() == [("Rotate", "")]
+
+    win._reset_step()
+
+    assert win.project.entries() == []
+    assert not win._panel.reset_step_btn.isEnabled()
+
+
+def test_reset_step_on_crop_names_later_real_work_and_can_be_declined(
+        qtbot, tmp_path, monkeypatch):
+    """Once something real happened after the crop, resetting the framing
+    would take that with it — the confirm must name it, and declining must
+    leave the history exactly as it was."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, verb: seen.append(list(names)) or False)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win._rotate()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("crop")
+    before = list(win.project.entries())
+
+    win._reset_step()
+
+    assert seen and "Stretch" in seen[0]
+    assert "Rotate" not in seen[0], "named the crop stage's own work as a casualty"
+    assert list(win.project.entries()) == before
+
+
+def test_reset_step_button_enables_once_an_enhancement_tap_lands(qtbot, tmp_path):
+    """Same gap as crop: `enhancements` has no STEP_NAME entry either."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("enhancements")
+    assert not win._panel.reset_step_btn.isEnabled()
+
+    win._enhance("Boost Red")
+
+    assert win._panel.reset_step_btn.isEnabled()
+
+
+def test_reset_step_on_enhancements_drops_the_whole_trailing_run_not_one_tap(
+        qtbot, tmp_path):
+    """Enhancements appends one entry per tap. Resetting the step must drop
+    every tap it added in one action — not the most recent one, and not
+    anything committed before the run started."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("enhancements")
+    win._enhance("Boost Red")
+    win._enhance("Vibrance")
+    assert [n for n, _ in win.project.entries()] == ["Stretch", "Boost Red", "Vibrance"]
+
+    win._reset_step()
+
+    assert [n for n, _ in win.project.entries()] == ["Stretch"]

@@ -74,6 +74,7 @@ def build_panel(
     on_recover_change=None,
     on_sr_change=None,
     on_sr_apply=None,
+    on_reset_step=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
     option_default: str | None = None,
@@ -754,6 +755,20 @@ def build_panel(
 
     else:  # placeholder / unknown
         lay.addWidget(QLabel("Coming soon."))
+
+    # Every stage that can commit gets this, in the same place. Import has
+    # nothing to reset (the toolbar Reset owns that) and Export commits nothing.
+    # NOT `reset_btn`: the Curves panel already owns that name for its
+    # curve-preset Reset (step_panels.py, clicked by tests/ui/test_step_panels.py),
+    # and the shared tail runs last, so reusing the name would silently clobber
+    # it and the curve reset would start resetting the whole step.
+    w.reset_step_btn = None
+    if stage.id not in ("load", "export"):
+        w.reset_step_btn = QPushButton("Reset step")
+        w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
+        if on_reset_step is not None:
+            w.reset_step_btn.clicked.connect(lambda: on_reset_step())
+        lay.addWidget(w.reset_step_btn)
 
     # Every stage, one place. The preview is pixel-identical to the commit by
     # design, so this line is the only thing that distinguishes them.

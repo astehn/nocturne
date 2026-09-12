@@ -2221,6 +2221,21 @@ class MainWindow(QMainWindow):
                 break
         return n
 
+    @staticmethod
+    def _trailing_kept(entries, drop_names) -> int:
+        """Length once a trailing contiguous run of drop_names is removed.
+
+        Mirrors _leading_kept (drop a suffix here instead of keeping a prefix):
+        Enhancements appends one entry per tap, so "reset this step" means
+        peeling taps off the end, not truncating to a fixed index."""
+        n = len(entries)
+        for name, _ in reversed(entries):
+            if name in drop_names:
+                n -= 1
+            else:
+                break
+        return n
+
     # Step id -> the attribute holding its uncommitted preview values. These
     # slots already exist, one per live-preview step; this maps them rather
     # than replacing them, so the ten steps stay independently revertable.
@@ -2342,6 +2357,19 @@ class MainWindow(QMainWindow):
                 btn.setProperty("pending", state)
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
+        reset_btn = getattr(self._panel, "reset_step_btn", None)
+        if reset_btn is not None:
+            # NOT `_committed_option(sid) is not None`: that reads STEP_NAME,
+            # which has no entry for "crop" or "enhancements" (they are
+            # stepper stages, not PROCESSING_ORDER steps), so it would read
+            # permanently None and leave the button dead on both of them even
+            # after a real crop or a real tap. "Would Reset actually change
+            # anything" is answered the same way Reset itself decides that:
+            # by asking whether truncating would drop anything at all.
+            sid = self.current_stage_id()
+            has_commit = (self.project is not None
+                          and self._truncation_target(sid) < len(self.project.entries()))
+            reset_btn.setEnabled(pending or has_commit)
 
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
@@ -2356,12 +2384,44 @@ class MainWindow(QMainWindow):
 
         Extracted verbatim from the Apply path so both callers cannot drift —
         the same number decides what Apply discards and what Reset discards.
+
+        `crop` and `enhancements` are stepper stages, not PROCESSING_ORDER
+        steps — PROCESSING_ORDER.index would raise ValueError for them (also
+        true of `load` and `export`, but those two never call this: neither
+        gets a Reset step button). Each needs its own rule rather than the
+        preceding-names one below: Crop, Rotate and Flip all append under the
+        Crop stage, and it is first in the pipeline, so resetting it means
+        discarding the whole history, not truncating to a prefix. Enhancements
+        appends one entry per tap with nothing ever able to follow it (Export
+        commits nothing), so resetting it means dropping the trailing run of
+        taps it added — see ENHANCE_NAMES.
         """
+        if step_id == "crop":
+            return 0
+        if step_id == "enhancements":
+            return self._trailing_kept(self.project.entries(), set(ENHANCE_NAMES))
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]
         }
         return self._leading_kept(self.project.entries(), preceding)
+
+    def _step_own_names(self, step_id: str) -> set:
+        """Entry names this step's own commit can produce.
+
+        _confirm_truncation compares casualties against this to tell "you are
+        replacing your own work at the frontier" (silent) from "you are
+        discarding later work" (named). Most steps commit under exactly one
+        name, but Crop's stage commits under several (Crop/Rotate/Flip — Trim
+        is deliberately excluded: it is a distinct, later action, not this
+        stage's own edit) and Enhancements under any of ENHANCE_NAMES.
+        """
+        if step_id == "crop":
+            return {"Crop", "Rotate", "Flip H", "Flip V"}
+        if step_id == "enhancements":
+            return set(ENHANCE_NAMES)
+        name = STEP_NAME.get(step_id)
+        return {name} if name else set()
 
     def _ask_truncation(self, names: list[str], verb: str) -> bool:
         """Split out so tests can answer it. True means go ahead."""
@@ -2385,17 +2445,36 @@ class MainWindow(QMainWindow):
         Names the steps rather than counting them: "3 steps" does not tell you
         whether you are about to lose ten minutes of GraXpert.
         """
-        own = STEP_NAME.get(step_id)
+        own = self._step_own_names(step_id)
         # Deduplicated, first appearance wins. Trim is deliberately append-only
         # (see _trim), so it can legitimately appear twice in one history —
         # "This discards Trim, Curves and Trim" reads like a bug in the dialog.
         casualties: list[str] = []
         for name, _ in self.project.entries()[target:]:
-            if name != own and name not in casualties:
+            if name not in own and name not in casualties:
                 casualties.append(name)
         if not casualties:
             return True
         return self._ask_truncation(casualties, verb)
+
+    def _reset_step(self) -> None:
+        """Put this step back to unapplied: controls to defaults, commit removed.
+
+        Removing the commit means truncating, because jump_back cannot take an
+        entry out of the middle — see the spec's §4. The confirm is shared with
+        Apply, so both destructive paths ask the same question.
+        """
+        if self.project is None:
+            return
+        sid = self.current_stage_id()
+        target = self._truncation_target(sid)
+        if not self._confirm_truncation(sid, target, "Reset"):
+            return
+        self.project.jump_back(target)
+        self._mark_dirty()
+        self._rebuild_panel()      # controls back to their defaults
+        self._refresh()
+        self.log_panel.append_entry(f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}")
 
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
@@ -3944,6 +4023,7 @@ class MainWindow(QMainWindow):
             on_recover_change=self._on_recover_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
+            on_reset_step=self._reset_step,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
             option_default=(self._step_for(stage.id).default_option()
