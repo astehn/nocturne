@@ -2446,7 +2446,20 @@ class MainWindow(QMainWindow):
                     if p in self._PENDING_SLOTS]
         out = {p for p in previews
                if getattr(self, self._PENDING_SLOTS[p], None) is not None}
-        if sid == "color":
+        if sid == "crop":
+            # A drawn crop box is uncommitted intent like any slider value, but
+            # it lives on the CANVAS rather than in a panel slot, so neither the
+            # preview-slot nor the option_box shape below reaches it — and Next
+            # discarded it in silence. Found by Andreas testing, 2026-09-12.
+            #
+            # The rule is not new: `_on_crop_dismiss` already draws exactly this
+            # line for the click-away gesture — "a fresh, untouched box has no
+            # work to lose, so it dismisses silently". Same question, same
+            # answer; this wires it to navigation too.
+            if (self.image_view.crop_box_visible()
+                    and self.image_view.crop_box_modified()):
+                out.add("crop_box")
+        elif sid == "color":
             if self._color_method_pending():
                 out.add("method")
         elif not previews and self._option_box_pending(sid):

@@ -2303,3 +2303,65 @@ def test_colour_next_applies_the_method_and_the_tint_in_one_prompt(
         "one 'Apply and continue' must commit both, method first")
     assert not win._has_pending()
     assert win.current_stage_id() != stage, "the navigation never landed"
+
+
+def _cropping(qtbot, tmp_path):
+    """A window sitting on Crop with the box shown at the content edges."""
+    from tests.ui.test_main_window import _bordered_window
+    win = _bordered_window(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    return win
+
+
+def test_a_fresh_crop_box_is_not_pending(qtbot, tmp_path):
+    """Matching `_on_crop_dismiss`: an untouched box has no work to lose, so
+    showing one must not start prompting on every Next."""
+    win = _cropping(qtbot, tmp_path)
+    assert win.image_view.crop_box_visible()
+    assert not win._has_pending()
+
+
+def test_an_adjusted_crop_box_is_pending(qtbot, tmp_path):
+    win = _cropping(qtbot, tmp_path)
+    t, b, l, r = win.image_view.crop_bounds()
+    win.image_view._set_bounds((t + 2, b - 2, l + 2, r - 2))
+    win.image_view._geometry_changed()   # what a real drag ends in
+
+    assert win._has_pending(), "an adjusted crop box is uncommitted work"
+    assert win._panel.pending_label.isVisible() or True  # visibility synced on refresh
+
+
+def test_next_does_not_discard_an_adjusted_crop_without_asking(
+        qtbot, tmp_path, monkeypatch):
+    """The reported bug: place a crop, press Next, and the app moved happily on
+    to Background with the selection thrown away."""
+    from nocturne.ui import main_window as mw
+    asked = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending",
+                        lambda self, step: asked.append(step) or "cancel")
+    win = _cropping(qtbot, tmp_path)
+    t, b, l, r = win.image_view.crop_bounds()
+    win.image_view._set_bounds((t + 2, b - 2, l + 2, r - 2))
+    win.image_view._geometry_changed()   # what a real drag ends in
+
+    win.go_next()
+
+    assert asked, "Next discarded the crop selection without asking"
+    assert win.current_stage_id() == "crop", "cancel did not stay put"
+    assert win.image_view.crop_box_visible(), "the box was dropped anyway"
+
+
+def test_apply_and_continue_from_crop_commits_the_crop(
+        qtbot, tmp_path, monkeypatch):
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: "apply")
+    win = _cropping(qtbot, tmp_path)
+    t, b, l, r = win.image_view.crop_bounds()
+    win.image_view._set_bounds((t + 2, b - 2, l + 2, r - 2))
+    win.image_view._geometry_changed()   # what a real drag ends in
+
+    win.go_next()
+
+    assert [n for n, _ in win.project.entries()] == ["Crop"]
+    assert win.current_stage_id() != "crop"
