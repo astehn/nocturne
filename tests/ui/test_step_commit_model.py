@@ -1878,3 +1878,41 @@ def test_the_truncation_dialog_says_reset_when_resetting(
     assert "Reset Deconvolution" in seen["text"], seen["text"]
     assert "again" not in seen["text"], "Reset borrowed Apply's wording"
     assert seen["default"] == "Cancel"
+
+
+def test_color_offers_apply_when_only_the_method_is_pending(qtbot, tmp_path):
+    """A method-only change IS applicable, by pressing Apply Color.
+
+    Refusing to target it left `_ask_pending` saying "this step can't be applied
+    right now, so continuing will discard the change" about a step one button
+    press would have applied. The refusal exists to protect a waiting tint; with
+    no tint waiting there is nothing to protect.
+    """
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    box = win._panel.method_box
+    other = next(box.itemText(i) for i in range(box.count())
+                 if box.itemText(i) != box.currentText())
+    box.setCurrentText(other)
+
+    assert win._has_pending()
+    targets = win._pending_apply_targets()
+    assert targets == [win._panel.apply_btn], (
+        "the prompt would claim the step cannot be applied")
+
+
+def test_color_still_refuses_apply_color_when_a_tint_is_waiting(qtbot, tmp_path):
+    """The protection that refusal exists for, unchanged: Apply Color commits
+    the method AND discards the tint."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    box = win._panel.method_box
+    other = next(box.itemText(i) for i in range(box.count())
+                 if box.itemText(i) != box.currentText())
+    box.setCurrentText(other)
+    win._on_tint_change(0.2, 0.0)
+
+    targets = win._pending_apply_targets()
+    assert win._panel.apply_btn not in targets, (
+        "Apply Color offered while a tint is waiting — it would discard it")
+    assert win._panel.apply_tint_btn in targets

@@ -1951,6 +1951,15 @@ class MainWindow(QMainWindow):
                 btn = getattr(self._panel, "remove_green_btn", None)
                 if btn is not None and btn.isEnabled():
                     targets.append(btn)
+            if not targets and self._color_method_pending():
+                # The method is the ONLY pending thing, so Apply Color is now
+                # the honest target: it commits the method and discards nothing.
+                # The refusal above exists to protect a waiting tint; with none
+                # waiting, refusing left the prompt claiming "this step can't be
+                # applied right now" about a step one button press would apply.
+                btn = getattr(self._panel, "apply_btn", None)
+                if btn is not None and btn.isEnabled():
+                    targets.append(btn)
             return targets
         btn = getattr(self._panel, "apply_btn", None)
         return [btn] if btn is not None and btn.isEnabled() else []
@@ -2360,19 +2369,32 @@ class MainWindow(QMainWindow):
         if slots and any(getattr(self, s, None) is not None for s in slots):
             return True
         if sid == "color":
-            # Color's method choice lives on method_box, not option_box, and
-            # has no preview slot of its own (nothing renders live for it) —
-            # so unlike every stage that shares its step id with its own
-            # slot, it would never reach the option_box fallback below: the
-            # `if slots:` shape used to return before this point was ever
-            # checked, and method changes went completely uncovered.
-            method_box = getattr(self._panel, "method_box", None)
-            baseline = getattr(self._panel, "method_baseline", None)
-            if method_box is None or not isinstance(baseline, str):
-                return False
-            return method_box.currentText() != baseline
+            return self._color_method_pending()
         if slots:
             return False
+        return self._option_box_pending(sid)
+
+    def _color_method_pending(self) -> bool:
+        """Whether Color's method dropdown differs from what was committed.
+
+        Its own predicate because two places need the same answer: `_has_pending`
+        above, and `_pending_apply_targets`, which must offer "Apply Color" when
+        the method is the ONLY pending thing and refuse it when a tint is also
+        waiting. Two readings of one fact would drift.
+
+        The choice lives on `method_box`, not `option_box`, and has no preview
+        slot of its own because nothing renders live for it — so it never
+        reached the option_box fallback, and method changes went completely
+        uncovered on one of sixteen stages.
+        """
+        method_box = getattr(self._panel, "method_box", None)
+        baseline = getattr(self._panel, "method_baseline", None)
+        if method_box is None or not isinstance(baseline, str):
+            return False
+        return method_box.currentText() != baseline
+
+    def _option_box_pending(self, sid: str) -> bool:
+        """The dropdown-vs-baseline comparison the compute stages use."""
         box = getattr(self._panel, "option_box", None)
         baseline = getattr(self._panel, "option_baseline", None)
         if box is None or not isinstance(baseline, str):
