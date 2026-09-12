@@ -1918,6 +1918,40 @@ def test_color_still_refuses_apply_color_when_a_tint_is_waiting(qtbot, tmp_path)
     assert win._panel.apply_tint_btn in targets
 
 
+def test_with_method_and_tint_pending_the_green_and_note_are_on_apply_color(
+        qtbot, tmp_path):
+    """MEDIUM. With the method AND a tint pending, `_apply_sequence` presses
+    Apply Color first — it prepends it ahead of Apply Tint specifically to
+    avoid the destructive order (Tint-then-Color commits the tint, then asks
+    to discard it applying the method; Color-first discards nothing). But
+    `_sync_step_controls` used to light and anchor on `_pending_apply_targets`
+    instead, which orders Tint before Color (that ordering is right for
+    REFUSING Apply Color while a tint waits — see the test above — but wrong
+    for "which button gets pressed first"). So the green and the "Not applied
+    yet" note both sat on Apply Tint while Next pressed Apply Color: following
+    the app's own highlight walked the user into the order the fix exists to
+    avoid. Both affordances must follow `_apply_sequence()[0]` instead."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    box = win._panel.method_box
+    other = next(box.itemText(i) for i in range(box.count())
+                 if box.itemText(i) != box.currentText())
+    box.setCurrentText(other)
+    win._on_tint_change(0.2, 0.0)
+    win._sync_step_controls()
+
+    assert win._apply_sequence()[0] is win._panel.apply_btn, (
+        "fixture: Apply Color must be the first press in this situation")
+    assert win._panel.apply_btn.property("pending") == "true", (
+        "the green does not follow _apply_sequence's first press")
+
+    lay = win._panel.layout()
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+    assert order.index(win._panel.pending_label) == \
+        order.index(win._panel.apply_btn) - 1, (
+            "the note still anchors on Apply Tint, not the button Next presses first")
+
+
 # --- Second whole-branch review -------------------------------------------
 #
 # All five findings sat at the SEAMS between the branch's mechanisms, not
@@ -2022,7 +2056,17 @@ def test_reset_on_a_never_applied_step_leaves_later_work_alone(
 
     assert list(win.project.entries()) == before, (
         "Reset on a step with no commit of its own discarded the later work")
-    assert not win._has_pending(), "Reset left the controls pending"
+    # Not `not win._has_pending()`: that is a model accessor, and a Reset that
+    # cleared the pending slot without touching the sliders would pass it too
+    # — _rebuild_panel gives us a fresh panel either way. Read the RENDERED
+    # sliders back, against the defaults build_panel sets them to (ResetSlider
+    # defaults: black=0, gamma=100 i.e. 1.00, white=100 i.e. 1.00).
+    assert win._panel.black_slider.value() == 0, (
+        "Reset left the black-point slider at the nudged value")
+    assert win._panel.gamma_slider.value() == 100, (
+        "Reset left the midtones slider at the nudged value")
+    assert win._panel.white_slider.value() == 100, (
+        "Reset left the white-point slider at the nudged value")
 
 
 def test_reset_still_removes_this_steps_own_commit(qtbot, tmp_path, monkeypatch):
@@ -2110,6 +2154,68 @@ def test_the_reset_dialog_still_says_applied_after_it_for_later_work(
     win._reset_step()
 
     assert seen["informative"] == "This discards Curves, applied after it.", seen
+
+
+def test_the_reset_dialog_uses_the_stage_label_on_crop(qtbot, tmp_path, monkeypatch):
+    """LOW. `crop` and `enhancements` are stepper stages with a Reset button
+    but no STEP_NAME entry, so `STEP_NAME.get(step_id, step_id)` fell back to
+    the raw id: "Reset crop?", lowercase, against the stage label "Crop" that
+    the log line for the same action already used (`self._stages[self._stage]
+    .label`). Assert on the RENDERED text, not the stubbed `names` list every
+    other Reset test checks — that stub cannot see which label reached the
+    dialog."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["text"] = self.text()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("crop")
+    win._rotate()
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("crop", user_initiated=False)
+
+    win._reset_step()
+
+    assert seen["text"] == "Reset Crop?", (
+        f"the dialog fell back to the raw stage id: {seen}")
+
+
+def test_the_reset_dialog_uses_the_stage_label_on_enhancements(
+        qtbot, tmp_path, monkeypatch):
+    """Same gap, the other stepper stage that carries a Reset button."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        mw.MainWindow._real_ask_truncation)
+    seen = {}
+
+    def fake_exec(self):
+        seen["text"] = self.text()
+        for b in self.buttons():
+            if b.text() == "Cancel":
+                b.click()
+        return 0
+
+    monkeypatch.setattr(mw.QMessageBox, "exec", fake_exec)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("enhancements")
+    win._enhance("Boost Red")
+
+    win._reset_step()
+
+    assert seen["text"] == "Reset Enhancements?", (
+        f"the dialog fell back to the raw stage id: {seen}")
 
 
 def test_a_first_ever_apply_does_not_say_again(qtbot, tmp_path, monkeypatch):

@@ -2520,14 +2520,19 @@ class MainWindow(QMainWindow):
         # The hero green means "there is an edit to commit" (theme.py). Spend it
         # only when that is true: a colour worn on every step at all times says
         # nothing when the step genuinely wants pressing. The buttons that would
-        # commit the pending thing are the ones _pending_apply_targets names, so
-        # Color lights the tint button rather than Apply Color.
-        # `_pending_apply_targets` answers "which buttons WOULD commit it", and
-        # is consulted only after the guard has established that something is
-        # pending (or, for a compute stage, that arriving IS the invitation) —
-        # it is not itself a pending check, and returns candidates on an
-        # untouched step. Gate it, or the green never goes out.
-        wanted = set(map(id, self._pending_apply_targets())) if show_green else set()
+        # commit the pending thing are the ones _apply_sequence names, in the
+        # order a press (or Next) actually fires them — NOT _pending_apply_targets,
+        # which orders Apply Tint before Apply Color and so lit the button that
+        # Next does NOT press first. With both the method and a tint pending
+        # that put the green on the destructive order (Apply Color after a
+        # committed tint asks to discard it) while Next quietly took the safe
+        # one — the highlight was steering users at the order the fix in
+        # `_apply_sequence` exists to avoid. `_apply_sequence` is consulted
+        # only after the guard has established that something is pending (or,
+        # for a compute stage, that arriving IS the invitation) — it is not
+        # itself a pending check, and returns candidates on an untouched step.
+        # Gate it, or the green never goes out.
+        wanted = set(map(id, self._apply_sequence())) if show_green else set()
         for name in ("apply_btn", "apply_tint_btn", "remove_green_btn"):
             btn = getattr(self._panel, name, None)
             if btn is None:
@@ -2569,7 +2574,11 @@ class MainWindow(QMainWindow):
         """
         if self.current_stage_id() != "color":
             return
-        targets = self._pending_apply_targets() if pending else []
+        # `_apply_sequence`, not `_pending_apply_targets`: the note has to sit
+        # above whichever button a press (or Next) fires FIRST, and with the
+        # method and a tint both pending that is Apply Color, not Apply Tint —
+        # see the `wanted` computation above for the same swap and why.
+        targets = self._apply_sequence() if pending else []
         anchor = targets[0] if targets else getattr(self._panel, "apply_tint_btn", None)
         if anchor is None:
             return
@@ -2692,6 +2701,23 @@ class MainWindow(QMainWindow):
         name = STEP_NAME.get(step_id)
         return {name} if name else set()
 
+    def _display_step_label(self, step_id: str) -> str:
+        """Human label for a step id, for dialogs — not `STEP_NAME.get(step_id,
+        step_id)`, which falls back to the raw id itself.
+
+        STEP_NAME only covers PROCESSING_ORDER steps. `crop` and `enhancements`
+        are stepper stages with a Reset button but no STEP_NAME entry, so that
+        raw fallback rendered "Reset crop?" / "Reset enhancements?" — lowercase,
+        against the stage labels "Crop" and "Enhancements" — while the log line
+        for the same action already used `self._stages[self._stage].label` and
+        so read correctly. Look up the stage's own label before giving up.
+        """
+        name = STEP_NAME.get(step_id)
+        if name is not None:
+            return name
+        stage = next((s for s in self._stages if s.id == step_id), None)
+        return stage.label if stage is not None else step_id
+
     def _ask_truncation(self, names: list[str], step_label: str, verb: str,
                         *, repeat: bool = False, own_work: bool = False) -> bool:
         """Split out so tests can answer it. True means go ahead.
@@ -2754,7 +2780,7 @@ class MainWindow(QMainWindow):
         if not casualties:
             return True
         return self._ask_truncation(
-            casualties, STEP_NAME.get(step_id, step_id), verb, repeat=repeat)
+            casualties, self._display_step_label(step_id), verb, repeat=repeat)
 
     def _confirm_reset(self, step_id: str, target: int) -> bool:
         """Reset's own version of _confirm_truncation's silence rule.
@@ -2779,9 +2805,9 @@ class MainWindow(QMainWindow):
             elif name not in later:
                 later.append(name)
         if later:
-            return self._ask_truncation(later, STEP_NAME.get(step_id, step_id), "Reset")
+            return self._ask_truncation(later, self._display_step_label(step_id), "Reset")
         if own_here:
-            return self._ask_truncation(own_here, STEP_NAME.get(step_id, step_id),
+            return self._ask_truncation(own_here, self._display_step_label(step_id),
                                         "Reset", own_work=True)
         return True
 
