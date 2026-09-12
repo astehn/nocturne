@@ -2363,12 +2363,22 @@ class MainWindow(QMainWindow):
             # which has no entry for "crop" or "enhancements" (they are
             # stepper stages, not PROCESSING_ORDER steps), so it would read
             # permanently None and leave the button dead on both of them even
-            # after a real crop or a real tap. "Would Reset actually change
-            # anything" is answered the same way Reset itself decides that:
-            # by asking whether truncating would drop anything at all.
+            # after a real crop or a real tap.
+            #
+            # NOT `_truncation_target(sid) < len(entries)` either — that
+            # answers "would truncating change anything", which is true
+            # whenever LATER steps hold real work, not just when THIS step
+            # does. On [Stretch, Curves], sitting on Levels (never applied),
+            # that reading truncation target is < len(entries) because Curves
+            # is there to discard — so Reset would sit enabled on a step that
+            # holds nothing of its own, and pressing it would silently eat
+            # Curves. The tail past the truncation point has to actually
+            # contain one of THIS step's own names.
             sid = self.current_stage_id()
-            has_commit = (self.project is not None
-                          and self._truncation_target(sid) < len(self.project.entries()))
+            has_commit = False
+            if self.project is not None:
+                tail = self.project.entries()[self._truncation_target(sid):]
+                has_commit = any(n in self._step_own_names(sid) for n, _ in tail)
             reset_btn.setEnabled(pending or has_commit)
 
     def _stretch_preceding(self) -> set:
@@ -2392,14 +2402,28 @@ class MainWindow(QMainWindow):
         preceding-names one below: Crop, Rotate and Flip all append under the
         Crop stage, and it is first in the pipeline, so resetting it means
         discarding the whole history, not truncating to a prefix. Enhancements
-        appends one entry per tap with nothing ever able to follow it (Export
-        commits nothing), so resetting it means dropping the trailing run of
-        taps it added — see ENHANCE_NAMES.
+        appends one entry per tap with nothing ever able to follow it except
+        Trim — Trim is by design a LATE finishing crop appended after the
+        tail (see GEOMETRY_NAMES), so a history ending in taps-then-Trim is
+        the ordinary path, not an edge case. Walking back over Trim too, not
+        just ENHANCE_NAMES, is what keeps the button alive there instead of
+        going permanently dead the moment anyone trims. _step_own_names does
+        NOT add Trim to enhancements' own names, so it still shows up as a
+        named casualty in the confirm — honest, since resetting the taps
+        really does cost you the trim.
         """
         if step_id == "crop":
             return 0
         if step_id == "enhancements":
-            return self._trailing_kept(self.project.entries(), set(ENHANCE_NAMES))
+            # Trim is TRANSPARENT to this walk, not one of the taps. It is a
+            # late finishing crop appended after the tail, so taps-then-Trim is
+            # the ordinary shape; stopping at it left the button permanently
+            # dead the moment anyone trimmed. _step_own_names deliberately does
+            # NOT claim Trim for this stage, so it still appears as a named
+            # casualty in the confirm — honest, because resetting the taps does
+            # cost you the trim.
+            return self._trailing_kept(
+                self.project.entries(), set(ENHANCE_NAMES) | {"Trim"})
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]
@@ -2463,8 +2487,15 @@ class MainWindow(QMainWindow):
         Removing the commit means truncating, because jump_back cannot take an
         entry out of the middle — see the spec's §4. The confirm is shared with
         Apply, so both destructive paths ask the same question.
+
+        Guarded on `_busy` like every other commit path: a running worker
+        (GraXpert, RC-Astro, …) holds `base = self.project.current()` captured
+        before this call and commits it in `on_result` once it lands — onto
+        whatever history is current THEN, not now. Truncating out from under
+        it does not cancel it; it just makes the eventual commit land on the
+        wrong base, or silently undo the reset.
         """
-        if self.project is None:
+        if self.project is None or self._busy:
             return
         sid = self.current_stage_id()
         target = self._truncation_target(sid)
@@ -2729,6 +2760,12 @@ class MainWindow(QMainWindow):
         self._next_btn.setDisabled(busy)
         if hasattr(self._panel, "apply_btn"):
             self._panel.apply_btn.setDisabled(busy)
+        reset_btn = getattr(self._panel, "reset_step_btn", None)
+        if reset_btn is not None:
+            if busy:
+                reset_btn.setDisabled(True)
+            else:
+                self._sync_step_controls()   # restore real enablement, not just "on"
         if not busy:
             self._land_deferred_nav()
 

@@ -998,3 +998,121 @@ def test_reset_step_on_enhancements_drops_the_whole_trailing_run_not_one_tap(
     win._reset_step()
 
     assert [n for n, _ in win.project.entries()] == ["Stretch"]
+
+
+# --- Fix round 1: enablement must be scoped to THIS step's own work ---
+
+def test_reset_step_disabled_on_untouched_levels_with_later_work(qtbot, tmp_path):
+    """Reproduces the Critical: `_truncation_target(sid) < len(entries)`
+    answers 'would truncating change anything', which is true here because
+    CURVES holds real work — not because Levels does. Levels was never
+    applied; the button must stay off, and pressing it would otherwise eat
+    Curves silently."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (1.0, 1.0)])
+    win._go_to_id("levels")
+
+    assert win._committed_option("levels") is None
+    assert not win._panel.reset_step_btn.isEnabled()
+
+
+def test_reset_step_disabled_on_untouched_crop_with_later_work(qtbot, tmp_path):
+    """Same reproduction on crop: never cropped or rotated, but Stretch and
+    Curves are real work after it. The old check would offer to wipe the
+    whole history from a stage with nothing of its own in it."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("curves")
+    win.apply_current([(0.0, 0.0), (1.0, 1.0)])
+    win._go_to_id("crop")
+
+    assert not win._panel.reset_step_btn.isEnabled()
+
+
+# --- Fix round 1: Reset step must respect the busy guard ---
+
+def test_reset_step_does_nothing_while_busy(qtbot, tmp_path):
+    """A running worker (GraXpert, RC-Astro, ...) captured its base image
+    before this call and commits onto whatever history is current when it
+    lands. Truncating out from under it must not happen."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+    before = list(win.project.entries())
+    win._busy = True
+
+    win._reset_step()
+
+    assert list(win.project.entries()) == before
+
+
+def test_reset_step_button_is_disabled_while_busy(qtbot, tmp_path):
+    """`_set_busy` disabled Back/Next/Apply already; the Reset step button
+    must join them so it cannot be pressed in the first place, rather than
+    relying on the handler's guard alone."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+    assert win._panel.reset_step_btn.isEnabled()
+
+    win._set_busy(True)
+    assert not win._panel.reset_step_btn.isEnabled()
+
+    win._set_busy(False)
+    assert win._panel.reset_step_btn.isEnabled(), (
+        "real enablement was not restored once busy cleared")
+
+
+# --- Fix round 1 (Minor 1): a trailing Trim must not kill the button ---
+
+def test_reset_step_on_enhancements_survives_a_trailing_trim(qtbot, tmp_path):
+    """Trim is BY DESIGN a late finishing crop appended after the tail (see
+    GEOMETRY_NAMES / _trim), so taps-then-Trim is the ordinary path, not an
+    edge case. The button must still walk back over the taps and reset them,
+    naming Trim as an honest casualty rather than going permanently dead."""
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("enhancements")
+    win._enhance("Boost Red")
+    win._enhance("Vibrance")
+    win.project.run_step(mw._PrecomputedStep("Trim", win.project.current()), "")
+    # The real Trim action refreshes on its own; injecting the entry directly
+    # (bypassing that action) does not, so force the same recompute here
+    # rather than reading the button's stale pre-Trim state.
+    win._sync_step_controls()
+    assert [n for n, _ in win.project.entries()] == \
+        ["Stretch", "Boost Red", "Vibrance", "Trim"]
+    assert win._panel.reset_step_btn.isEnabled(), (
+        "a trailing Trim killed the Reset step button")
+
+    seen = []
+    from unittest.mock import patch
+    with patch.object(mw.MainWindow, "_ask_truncation",
+                       lambda self, names, verb: seen.append(list(names)) or True):
+        win._reset_step()
+
+    assert seen == [["Trim"]], f"expected Trim named as the only casualty, got {seen}"
+    assert [n for n, _ in win.project.entries()] == ["Stretch"]
+
+
+def test_reset_step_on_enhancements_stays_disabled_with_only_a_trim(qtbot, tmp_path):
+    """No taps were ever applied — only a trailing Trim. There is nothing of
+    this step's own to reset, so the button must stay off (this is the
+    Critical fix and Minor 1 combined, as the review specifically called
+    out)."""
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win.project.run_step(mw._PrecomputedStep("Trim", win.project.current()), "")
+    win._go_to_id("enhancements")
+
+    assert not win._panel.reset_step_btn.isEnabled()
