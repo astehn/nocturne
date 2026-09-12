@@ -274,6 +274,16 @@ def build_panel(
         method_box.addItems(["Sky balance", "Photometric (SPCC)"])
         lay.addWidget(method_box)
         w.method_box = method_box
+        # What the dropdown read on arrival — same idea as option_baseline for
+        # a compute stage's dropdown (see _has_pending): the method choice has
+        # no preview slot of its own, so this is the only way to tell "moved
+        # since the last commit" from "just arrived here".
+        w.method_baseline = method_box.currentText()
+        if on_option_change is not None:
+            # The pending label (and the hero green) read this dropdown, so
+            # they have to hear it move — same wiring the process-stage
+            # dropdown below gets, for the same reason.
+            method_box.currentTextChanged.connect(lambda _t: on_option_change())
 
         def _color_option():
             photometric = method_box.currentText().startswith("Photometric")
@@ -329,6 +339,10 @@ def build_panel(
         w.temp_slider = temp_slider
 
         apply_tint_btn = QPushButton("Apply Tint")
+        # Without this, theme.py's `QPushButton#primary[pending=...]` selector
+        # never matches it at all — _sync_step_controls sets the Qt property
+        # every time regardless, so the button silently never changes colour.
+        apply_tint_btn.setObjectName("primary")
         apply_tint_btn.setEnabled(apply_enabled)
         if on_apply_tint is not None:
             apply_tint_btn.clicked.connect(
@@ -357,6 +371,10 @@ def build_panel(
         rg_row.addWidget(QLabel("Green removal"))
         rg_row.addWidget(rg_val)
         remove_green_btn = QPushButton("Remove Green")
+        # Same reasoning as apply_tint_btn above: without this objectName the
+        # pending styling has no selector to attach to and the button never
+        # visibly changes.
+        remove_green_btn.setObjectName("primary")
         remove_green_btn.setEnabled(apply_enabled)
         if on_removegreen_change is not None:
             rg_slider.valueChanged.connect(

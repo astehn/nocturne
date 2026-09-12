@@ -724,6 +724,40 @@ def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
     assert win._panel.pending_label.objectName() == "pendingNote"
 
 
+# --- Whole-branch review Critical #3: on Colour, the note sat above the
+# wrong button. `_pending_apply_targets` deliberately refuses to target Apply
+# Color (pressing it commits the method and discards the tint), so it must
+# never be the button the note sits above.
+
+def test_the_pending_note_sits_above_apply_tint_when_a_tint_is_pending(
+        qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._on_tint_change(0.2, 0.0)
+    win._sync_step_controls()
+
+    lay = win._panel.layout()
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+    assert order.index(win._panel.pending_label) == \
+        order.index(win._panel.apply_tint_btn) - 1
+    assert order.index(win._panel.pending_label) != order.index(win._panel.apply_btn) - 1, (
+        "the note still sits above Apply Color, which would discard the "
+        "pending tint rather than commit it")
+
+
+def test_the_pending_note_sits_above_remove_green_when_it_is_pending(
+        qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._on_removegreen_change(0.4)
+    win._sync_step_controls()
+
+    lay = win._panel.layout()
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+    assert order.index(win._panel.pending_label) == \
+        order.index(win._panel.remove_green_btn) - 1
+
+
 def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
         qtbot, tmp_path):
     """`SUCCESS` is documented in theme.py as "there is an edit to commit". A
@@ -738,18 +772,167 @@ def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
     assert win._panel.apply_btn.property("pending") == "true"
 
 
+# --- Whole-branch review Critical #2: the hero green goes out on the three
+# compute steps (background, deconvolution, noise_sharpen). They render no
+# live preview, so Apply is the only action ever available there, and
+# arriving with nothing yet committed on this image IS the invitation.
+
+def test_arriving_at_a_never_applied_compute_stage_is_green(qtbot, tmp_path):
+    """Reproduces the review exactly: arrive at Deconvolution, nothing
+    touched, and the button used to read grey with no other affordance on
+    screen for what to do next."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("deconvolution")
+    assert win._has_pending() is False, "fixture: nothing touched yet"
+    assert win._panel.apply_btn.property("pending") == "true", (
+        "a never-applied compute stage must invite its own Apply")
+
+
+def test_a_compute_stage_stops_being_green_once_it_has_actually_run(
+        qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("deconvolution")
+    win._panel.option_box.setCurrentText("strong")
+    win.apply_current("strong")
+    qtbot.waitUntil(lambda: win._has_pending() is False, timeout=10000)
+    win._sync_step_controls()
+
+    assert win._panel.apply_btn.property("pending") == "false"
+
+
+def test_a_live_preview_stage_is_not_green_just_for_arriving(qtbot, tmp_path):
+    """The compute-stage exception must not leak onto stages that render a
+    live preview — those already have `_has_pending` to say when pressing is
+    warranted, and a permanently green button there would say nothing."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("saturation")
+    assert win._panel.apply_btn.property("pending") == "false"
+
+
+def test_background_off_does_not_stay_green_after_being_applied(qtbot, tmp_path):
+    """Background's "off" records no history entry at all (see
+    apply_current), so a naive `_committed_option is None` check alone would
+    read this compute stage as still needing its first Apply forever — even
+    right after the user explicitly committed that decision."""
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("background")
+    win._panel.option_box.setCurrentText("off")
+    win.apply_current("off")
+    win._sync_step_controls()
+
+    assert win._panel.apply_btn.property("pending") == "false"
+
+
 def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         qtbot, tmp_path):
     """Color carries three commit buttons. Lighting Apply Color when a TINT is
-    pending would point the user at the one button that does not commit it."""
+    pending would point the user at the one button that does not commit it.
+
+    Reads the RENDERED background, not just the Qt property (whole-branch
+    review Critical #4): theme.py styles `QPushButton#primary[pending=...]`,
+    and apply_tint_btn/remove_green_btn had no objectName "primary" at all —
+    the property was set faithfully forever with zero visual effect. A test
+    on the property alone cannot see that; this fails against exactly the
+    no-op the review flagged.
+    """
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QColor
+    from nocturne.ui.theme import build_stylesheet, SUCCESS
+    win = _win(qtbot, tmp_path)
+    app = QApplication.instance()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win._go_to_id("color")
+        win._on_tint_change(0.2, 0.0)
+        win._sync_step_controls()
+
+        assert win._panel.apply_tint_btn.property("pending") == "true"
+        assert win._panel.apply_btn.property("pending") == "false", (
+            "Apply Color is lit for a pending tint it does not commit")
+        assert win._panel.apply_tint_btn.objectName() == "primary", (
+            "apply_tint_btn is not wired into the #primary[pending=...] selector")
+        assert win._panel.remove_green_btn.objectName() == "primary", (
+            "remove_green_btn is not wired into the #primary[pending=...] selector")
+
+        btn = win._panel.apply_tint_btn
+        pm = btn.grab()
+        rendered = pm.toImage().pixelColor(pm.width() // 2, pm.height() // 2)
+        expected = QColor(SUCCESS)
+        assert (rendered.red(), rendered.green(), rendered.blue()) == \
+            (expected.red(), expected.green(), expected.blue()), (
+                f"Apply Tint does not actually render green while pending: {rendered.name()}")
+    finally:
+        app.setStyleSheet("")
+
+
+# --- Whole-branch review Critical #5: Colour's method choice is not covered
+# by pending at all. _has_pending checked _STAGE_PREVIEWS["color"] = ("tint",
+# "remove_green") and fell back to option_box, but Colour's selector is
+# method_box — so the originally reported bug was fully intact on this one
+# choice, which materially changes the result.
+
+def test_the_color_method_choice_is_covered_by_pending(qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    assert win._has_pending() is False, "fixture: nothing touched yet"
+
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
+
+    assert win._has_pending() is True
+
+
+def test_changing_the_color_method_shows_the_pending_note(qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    qtbot.wait(1)
+    assert not win._panel.pending_label.isVisible()
+
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
+    qtbot.wait(1)
+
+    assert win._panel.pending_label.isVisible()
+
+
+def test_changing_the_color_method_makes_next_prompt(qtbot, tmp_path, monkeypatch):
+    asked = []
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_pending",
+                        lambda self, step: asked.append(step) or "cancel")
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
+    win.go_next()
+
+    assert asked, "changing the colour-calibration method did not prompt Next"
+
+
+def test_applying_color_clears_the_method_pending_state(qtbot, tmp_path):
+    """Otherwise the method reads pending forever after committing exactly
+    what it said, the same class of bug _clear_pending exists to prevent for
+    every other dropdown."""
+    from nocturne.core.color import ColorSettings
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
+    assert win._has_pending() is True
+
+    win.apply_current(ColorSettings(method="photometric"))
+
+    assert win._has_pending() is False
+
+
+def test_a_pending_tint_does_not_falsely_mark_the_method_pending_too(
+        qtbot, tmp_path):
+    """The two mechanisms (slot-based previews, dropdown baseline) must not
+    cross-contaminate: nudging the tint must not make method_box itself read
+    as having moved."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._on_tint_change(0.2, 0.0)
-    win._sync_step_controls()
+    assert win._has_pending() is True
 
-    assert win._panel.apply_tint_btn.property("pending") == "true"
-    assert win._panel.apply_btn.property("pending") == "false", (
-        "Apply Color is lit for a pending tint it does not commit")
+    assert win._panel.method_box.currentText() == win._panel.method_baseline
 
 
 def test_truncation_is_silent_when_only_this_step_would_go(
@@ -870,8 +1053,12 @@ def test_reset_step_is_disabled_with_nothing_to_reset(qtbot, tmp_path):
     assert not win._panel.reset_step_btn.isEnabled()
 
 
-def test_clicking_reset_step_drops_this_steps_commit(qtbot, tmp_path):
+def test_clicking_reset_step_drops_this_steps_commit(qtbot, tmp_path, monkeypatch):
     from PySide6.QtCore import Qt
+    from nocturne.ui import main_window as mw
+    # Reset at the frontier now confirms (Critical #1 below) -- accept it.
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     win._on_levels_change(0.1, 1.0, 0.9)
@@ -882,8 +1069,12 @@ def test_clicking_reset_step_drops_this_steps_commit(qtbot, tmp_path):
     assert win._committed_option("levels") is None
 
 
-def test_reset_step_leaves_everything_before_it_untouched(qtbot, tmp_path):
+def test_reset_step_leaves_everything_before_it_untouched(qtbot, tmp_path, monkeypatch):
     """The 'must not' case: capture the earlier state and assert UNCHANGED."""
+    from nocturne.ui import main_window as mw
+    # Reset at the frontier now confirms (Critical #1 below) -- accept it.
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -916,6 +1107,97 @@ def test_reset_step_asks_before_discarding_later_work(
     assert list(win.project.entries()) == before
 
 
+# --- Whole-branch review Critical #1: Reset at the frontier is silent AND
+# unrecoverable. _confirm_truncation's own-work exemption is reasoned for
+# Apply, where your commit is immediately replaced by your own new one --
+# Reset replaces it with nothing, and jump_back has no redo (Undo walks past
+# the removed entry rather than restoring it), so Reset must confirm even
+# when the only casualty is its own commit.
+
+def test_reset_step_at_the_frontier_now_confirms_and_names_its_own_commit(
+        qtbot, tmp_path, monkeypatch):
+    """Reproduces the review exactly: apply Stretch, apply Levels, Reset
+    Levels — before the fix this fell through _confirm_truncation's own-work
+    exemption silently, entries() dropped to [Stretch] with no way back."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: seen.append(list(names)) or True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("levels")
+    win.apply_current((0.1, 1.0, 0.9))
+
+    win._reset_step()
+
+    assert seen == [["Levels"]], (
+        f"a frontier Reset must confirm and name its own commit: {seen}")
+    assert win._committed_option("levels") is None
+    assert win._committed_option("stretch") is not None
+
+
+def test_declining_a_frontier_reset_confirm_keeps_the_commit(
+        qtbot, tmp_path, monkeypatch):
+    """The other half: declining must leave the commit exactly as it was, not
+    a half-truncated state."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: False)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+    before = list(win.project.entries())
+
+    win._reset_step()
+
+    assert list(win.project.entries()) == before
+    assert win._committed_option("levels") is not None
+
+
+def test_reset_step_logs_and_clears_the_warning_like_every_other_commit_path(
+        qtbot, tmp_path, monkeypatch):
+    """_reset_step used to log with a bare f-string while every neighbouring
+    commit path uses format_log_entry, and skipped _clear_warning() — both
+    fixed alongside the confirm above."""
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("levels")
+    win._on_levels_change(0.1, 1.0, 0.9)
+    win.apply_current((0.1, 1.0, 0.9))
+    win._show_warning("stale warning from something else")
+
+    win._reset_step()
+
+    assert "stale warning" not in win._warning.text()
+    log_text = win.log_panel.text()
+    assert "Reset Levels" in log_text
+
+
+def test_reset_step_on_a_repeated_own_name_is_named_once(qtbot, tmp_path, monkeypatch):
+    """Enhancements can commit the same tap name twice in one run — the
+    confirm must dedupe its own-work list exactly as it already does for
+    later work."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: seen.append(list(names)) or True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._go_to_id("enhancements")
+    win._enhance("Boost Red")
+    win._enhance("Boost Red")
+    assert [n for n, _ in win.project.entries()] == ["Stretch", "Boost Red", "Boost Red"]
+
+    win._reset_step()
+
+    assert seen == [["Boost Red"]], f"Boost Red named more than once: {seen}"
+
+
 def test_reset_step_button_enables_once_the_crop_stage_has_committed(qtbot, tmp_path):
     """`crop` has no STEP_NAME entry (it isn't a PROCESSING_ORDER step), so an
     enablement check that reused `_committed_option` would read permanently
@@ -929,11 +1211,17 @@ def test_reset_step_button_enables_once_the_crop_stage_has_committed(qtbot, tmp_
     assert win._panel.reset_step_btn.isEnabled()
 
 
-def test_reset_step_on_crop_truncates_to_the_start_and_is_silent(qtbot, tmp_path):
+def test_reset_step_on_crop_at_the_frontier_now_confirms_and_names_rotate(
+        qtbot, tmp_path, monkeypatch):
     """Crop is first in the pipeline, so resetting it means discarding the
-    whole history, not truncating to some prefix. Rotate is the crop stage's
-    OWN work, so nothing else is at risk and the confirm must stay silent —
-    the autouse `_ask_truncation` stub raises if it is asked at all."""
+    whole history — here, just Rotate, the crop stage's OWN work and nothing
+    else. That used to be silent AND unrecoverable (Critical #1: jump_back has
+    no redo, and Undo walks past the removed entry rather than restoring it).
+    It must now confirm, naming the thing that is actually going."""
+    from nocturne.ui import main_window as mw
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: seen.append(list(names)) or True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("crop")
     win._rotate()
@@ -941,6 +1229,7 @@ def test_reset_step_on_crop_truncates_to_the_start_and_is_silent(qtbot, tmp_path
 
     win._reset_step()
 
+    assert seen == [["Rotate"]], f"must name its own commit as what is going: {seen}"
     assert win.project.entries() == []
     assert not win._panel.reset_step_btn.isEnabled()
 
@@ -983,10 +1272,14 @@ def test_reset_step_button_enables_once_an_enhancement_tap_lands(qtbot, tmp_path
 
 
 def test_reset_step_on_enhancements_drops_the_whole_trailing_run_not_one_tap(
-        qtbot, tmp_path):
+        qtbot, tmp_path, monkeypatch):
     """Enhancements appends one entry per tap. Resetting the step must drop
     every tap it added in one action — not the most recent one, and not
     anything committed before the run started."""
+    from nocturne.ui import main_window as mw
+    # Reset at the frontier now confirms (Critical #1 below) -- accept it.
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("stretch")
     win.apply_current(0.5)
@@ -1142,9 +1435,11 @@ def test_reset_step_is_alive_after_a_remove_green_only_commit(qtbot, tmp_path):
     assert win._panel.reset_step_btn.isEnabled()
 
 
-def test_resetting_color_does_not_call_the_users_own_tint_a_casualty(
+def test_resetting_color_confirms_and_names_its_own_tint(
         qtbot, tmp_path, monkeypatch):
-    """Frontier silence, on the stage where "own work" spans three names."""
+    """Frontier reset now confirms even on the stage where "own work" spans
+    three names — naming the tint actually being discarded, not staying
+    silent the way _confirm_truncation's Apply-only exemption used to."""
     from nocturne.ui import main_window as mw
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
@@ -1155,7 +1450,7 @@ def test_resetting_color_does_not_call_the_users_own_tint_a_casualty(
 
     win._reset_step()
 
-    assert seen == [], f"named the user's own tint as a casualty: {seen}"
+    assert seen == [["Colour Tint"]], f"must name the tint being discarded: {seen}"
     assert list(win.project.entries()) == []
 
 

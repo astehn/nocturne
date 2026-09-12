@@ -2317,6 +2317,13 @@ class MainWindow(QMainWindow):
         target = panel if panel is not None else self._panel
         if applied_option is not None and getattr(target, "option_box", None) is not None:
             target.option_baseline = applied_option
+        if step_id == "color" and getattr(target, "method_box", None) is not None:
+            # Color's method choice has no PENDING_SLOTS entry of its own — the
+            # dropdown IS its own baseline, exactly like a compute stage's
+            # option_box (see _has_pending) — so a successful Apply Color has
+            # to re-baseline it here or the method would read pending forever
+            # after committing exactly what it said.
+            target.method_baseline = target.method_box.currentText()
 
     def _committed_option(self, stage_id: str) -> object | None:
         """The option recorded by this stage's last commit, or None if it has
@@ -2350,8 +2357,22 @@ class MainWindow(QMainWindow):
         slots = [self._PENDING_SLOTS[p]
                  for p in self._STAGE_PREVIEWS.get(sid, (sid,))
                  if p in self._PENDING_SLOTS]
+        if slots and any(getattr(self, s, None) is not None for s in slots):
+            return True
+        if sid == "color":
+            # Color's method choice lives on method_box, not option_box, and
+            # has no preview slot of its own (nothing renders live for it) —
+            # so unlike every stage that shares its step id with its own
+            # slot, it would never reach the option_box fallback below: the
+            # `if slots:` shape used to return before this point was ever
+            # checked, and method changes went completely uncovered.
+            method_box = getattr(self._panel, "method_box", None)
+            baseline = getattr(self._panel, "method_baseline", None)
+            if method_box is None or not isinstance(baseline, str):
+                return False
+            return method_box.currentText() != baseline
         if slots:
-            return any(getattr(self, s, None) is not None for s in slots)
+            return False
         box = getattr(self._panel, "option_box", None)
         baseline = getattr(self._panel, "option_baseline", None)
         if box is None or not isinstance(baseline, str):
@@ -2370,9 +2391,28 @@ class MainWindow(QMainWindow):
         enabled a button would be a lie by its name.
         """
         pending = self._has_pending()
+        sid = self.current_stage_id()
+        # The three compute stages (background, deconvolution, noise_sharpen)
+        # render no live preview, so Apply is the ONLY action ever available
+        # there — arriving with nothing yet committed on this image IS the
+        # invitation to press it (the reported bug: "for deconv, noise
+        # reduction, etc. you need to click the green button"). Background's
+        # "off" records no history entry at all (see apply_current), so
+        # `_committed_option` alone would read "never applied" forever after
+        # the user explicitly chose it — recognise that decision too, via the
+        # baseline `_clear_pending` writes when "off" commits.
+        never_applied = (
+            self._stages[self._stage].kind == "process"
+            and self._committed_option(sid) is None
+            and not (sid == "background"
+                     and getattr(self._panel, "option_baseline", None) == "off"
+                     and getattr(self._panel, "option_box", None) is not None
+                     and self._panel.option_box.currentText() == "off"))
+        show_green = pending or never_applied
         label = getattr(self._panel, "pending_label", None)
         if label is not None:
             label.setVisible(pending)
+            self._position_pending_label(label, pending)
         # The hero green means "there is an edit to commit" (theme.py). Spend it
         # only when that is true: a colour worn on every step at all times says
         # nothing when the step genuinely wants pressing. The buttons that would
@@ -2380,9 +2420,10 @@ class MainWindow(QMainWindow):
         # Color lights the tint button rather than Apply Color.
         # `_pending_apply_targets` answers "which buttons WOULD commit it", and
         # is consulted only after the guard has established that something is
-        # pending — it is not itself a pending check, and returns candidates on
-        # an untouched step. Gate it, or the green never goes out.
-        wanted = set(map(id, self._pending_apply_targets())) if pending else set()
+        # pending (or, for a compute stage, that arriving IS the invitation) —
+        # it is not itself a pending check, and returns candidates on an
+        # untouched step. Gate it, or the green never goes out.
+        wanted = set(map(id, self._pending_apply_targets())) if show_green else set()
         for name in ("apply_btn", "apply_tint_btn", "remove_green_btn"):
             btn = getattr(self._panel, name, None)
             if btn is None:
@@ -2409,12 +2450,34 @@ class MainWindow(QMainWindow):
             # holds nothing of its own, and pressing it would silently eat
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
-            sid = self.current_stage_id()
             has_commit = False
             if self.project is not None:
                 tail = self.project.entries()[self._truncation_target(sid):]
                 has_commit = any(n in self._step_own_names(sid) for n, _ in tail)
             reset_btn.setEnabled(pending or has_commit)
+
+    def _position_pending_label(self, label, pending: bool) -> None:
+        """Keep the note directly above whichever button would actually
+        commit the pending thing.
+
+        build_panel's static anchor (above w.apply_btn) is correct for every
+        stage but Color: Color carries two independent live previews on two
+        OTHER buttons, and Apply Color commits neither — pressing it would
+        commit a method nobody asked for and still discard whichever of
+        tint/remove-green is pending (see _pending_apply_targets). Every
+        other stage has exactly one commit button, so this is a no-op there.
+        """
+        if self.current_stage_id() != "color":
+            return
+        targets = self._pending_apply_targets() if pending else []
+        anchor = targets[0] if targets else getattr(self._panel, "apply_tint_btn", None)
+        if anchor is None:
+            return
+        lay = self._panel.layout()
+        if lay.indexOf(label) == lay.indexOf(anchor) - 1:
+            return   # already in place; skip the pointless remove/insert
+        lay.removeWidget(label)
+        lay.insertWidget(lay.indexOf(anchor), label)
 
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
@@ -2546,6 +2609,34 @@ class MainWindow(QMainWindow):
         return self._ask_truncation(
             casualties, STEP_NAME.get(step_id, step_id), verb)
 
+    def _confirm_reset(self, step_id: str, target: int) -> bool:
+        """Reset's own version of _confirm_truncation's silence rule.
+
+        `_confirm_truncation`'s own-work exemption is reasoned for Apply: your
+        own commit is immediately replaced by your own new one, so there is
+        nothing to warn about. Reset replaces it with nothing — jump_back has
+        no redo, and Undo then walks past the removed entry rather than
+        restoring it — so this asks even when the only thing at risk is the
+        step's own commit, naming that commit since there is nothing else to
+        say. When later work is ALSO at risk, this still asks exactly the way
+        `_confirm_truncation` always has: name the surprising later work, not
+        the step's own edit that pressing "Reset" obviously discards.
+        """
+        own = self._step_own_names(step_id)
+        own_here: list[str] = []
+        later: list[str] = []
+        for name, _ in self.project.entries()[target:]:
+            if name in own:
+                if name not in own_here:
+                    own_here.append(name)
+            elif name not in later:
+                later.append(name)
+        if later:
+            return self._ask_truncation(later, STEP_NAME.get(step_id, step_id), "Reset")
+        if own_here:
+            return self._ask_truncation(own_here, STEP_NAME.get(step_id, step_id), "Reset")
+        return True
+
     def _truncate_for(self, step_id: str, verb: str) -> bool:
         """Confirm, then truncate. False means the user cancelled and the
         caller must return without applying anything.
@@ -2566,8 +2657,12 @@ class MainWindow(QMainWindow):
         """Put this step back to unapplied: controls to defaults, commit removed.
 
         Removing the commit means truncating, because jump_back cannot take an
-        entry out of the middle — see the spec's §4. The confirm is shared with
-        Apply, so both destructive paths ask the same question.
+        entry out of the middle — see the spec's §4. Uses `_confirm_reset`, NOT
+        `_confirm_truncation`: Apply's frontier silence is safe because your
+        own commit is immediately replaced by your own new one, but Reset
+        replaces it with nothing, and jump_back has no redo — Undo then walks
+        past the removed entry instead of restoring it. So Reset confirms even
+        when the only thing at risk is its own commit.
 
         Guarded on `_busy` like every other commit path: a running worker
         (GraXpert, RC-Astro, …) holds `base = self.project.current()` captured
@@ -2580,13 +2675,15 @@ class MainWindow(QMainWindow):
             return
         sid = self.current_stage_id()
         target = self._truncation_target(sid)
-        if not self._confirm_truncation(sid, target, "Reset"):
+        if not self._confirm_reset(sid, target):
             return
         self.project.jump_back(target)
         self._mark_dirty()
+        self._clear_warning()      # every other commit path clears a stale warning too
         self._rebuild_panel()      # controls back to their defaults
         self._refresh()
-        self.log_panel.append_entry(f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}")
+        self.log_panel.append_entry(format_log_entry(
+            f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}", "", None))
 
     def apply_current(self, option) -> None:
         if self.project is None or self._busy:
