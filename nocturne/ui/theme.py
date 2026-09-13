@@ -108,6 +108,7 @@ QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {T
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
+QLabel#zoomLevel {{ color: {TEXT_DIM}; font-size: 12px; font-variant-numeric: tabular-nums; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}
 QLabel#objectListTitle {{ color: {TEXT}; font-size: 12px; font-weight: 600; }}

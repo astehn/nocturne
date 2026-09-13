@@ -404,6 +404,12 @@ class ImageView(QGraphicsView):
         the overlay rebuild is cheap but not free, and nothing visible changes
         below that."""
         z = self.transform().m11()
+        # The readout updates UNTHROTTLED, before the 2% gate below. That gate
+        # exists to stop a drag-resize rebuilding overlays per pixel; applied to
+        # a number on screen it would leave it reading up to 2% wrong, which at
+        # whole-percent precision is visible.
+        if self._zoom_pill is not None:
+            self._zoom_pill.set_zoom(z)
         prev = getattr(self, "_last_zoom", 0.0)
         if z > 0 and (prev <= 0 or abs(z - prev) / max(prev, 1e-9) > 0.02):
             self._last_zoom = z
