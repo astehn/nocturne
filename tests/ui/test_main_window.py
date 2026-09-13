@@ -5012,8 +5012,23 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path, mo
     """The general form, across every step with a live preview. Measured
     2026-08-18: Stretch was the ONLY one whose default was not a no-op — Curves,
     Saturation, Recover Core, Local Contrast and Levels all default to exact
-    identities. This guards the others against acquiring the same fault when
-    someone changes a default.
+    identities. This guards them against acquiring the same fault when someone
+    changes a default.
+
+    Stretch JOINED the guard on 2026-09-13, when deleting the Target dropdown
+    let its default be derived from the stretch targets instead of picked. At
+    the old 50 the step landed on a background of 0.2750 against the display
+    preview's 0.25 — measured at +8.9% mean brightness with 94.7% of pixels
+    moving by more than one 8-bit step. At the derived 43 it is bit-identical.
+
+    Its assertion is deliberately BELT-AND-BRACES, and says so because the
+    alternative is a test that looks stronger than it is: putting the default
+    back to 50 does NOT fail it, because `_sync_stretch_preview` re-syncs the
+    canvas to what the stretch will produce on arrival, which is exactly what
+    that method exists for. What catches a drifted default is
+    test_the_stretch_default_is_derived_from_the_targets in test_step_panels.
+    This line fails only if the default AND the sync both break, which is the
+    state the user would actually see.
 
     The loop deliberately revisits Recover Core after Curves/Saturation are
     already committed (PROCESSING_ORDER puts it earlier), which now raises a
@@ -5028,7 +5043,11 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path, mo
     win.open_fits(_make_fits(tmp_path))
     win._async_enabled = False
     win._go_to_id("stretch")
+    stretch_on_screen = to_rgb8(win._canvas_img).copy()
     win.apply_current(win._panel.stretch_slider.value() / 100.0)   # get non-linear
+    assert np.array_equal(to_rgb8(win.project.current()), stretch_on_screen), (
+        "Stretch at its default changed the picture — the slider default has "
+        "drifted from the display preview's target again")
 
     for sid, attr in (("curves", None), ("saturation", "sat_slider"),
                       ("recover_core", "recover_slider"),
