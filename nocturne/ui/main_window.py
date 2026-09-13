@@ -145,6 +145,24 @@ def _same_option(a, b) -> bool:
         return False
 
 
+# Channel tints for the hover readout. Andreas, 2026-09-13, on the pixel
+# values: "these numbers mostly read as numbers that the user might not pay
+# attention to, but they are kind of important" — so the letter AND the number
+# carry the tint, which is what makes the segment scannable.
+#
+# TINTS, not the pure hues. #f00/#0f0/#00f on this dark pill are hard to read at
+# 13px and blue is the worst of the three; these sit at roughly the same
+# lightness as each other and as the surrounding text.
+_CHANNEL_TINT = {"R": "#ff8a80", "G": "#8fe38f", "B": "#8ab4f8"}
+
+
+def _tinted(label: str, text: str) -> str:
+    """Wrap a readout segment in its channel colour. Mono ("V") and luminance
+    ("L") are not channels and stay the default text colour."""
+    colour = _CHANNEL_TINT.get(label)
+    return f'<span style="color:{colour}">{text}</span>' if colour else text
+
+
 def _listed(names: list[str]) -> str:
     """"A, B and C" — the human form. Shared by the two destructive confirms so
     they cannot drift into listing the same casualties differently."""
@@ -4854,7 +4872,9 @@ class MainWindow(QMainWindow):
             return ""
         places = 4 if img.is_linear else 2
         labels = ("R", "G", "B") if len(s.channels) == 3 else ("V",)
-        vals = "  ".join(f"{lab} {v:.{places}f}" for lab, v in zip(labels, s.channels))
+        vals = "  ".join(
+            _tinted(lab, f"{lab} {v:.{places}f}")
+            for lab, v in zip(labels, s.channels))
         parts = [f"{x}, {y}", vals]
         if s.luminance is not None:
             parts.append(f"L {s.luminance:.{places}f}")

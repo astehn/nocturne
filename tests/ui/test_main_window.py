@@ -3476,7 +3476,11 @@ def test_hover_before_stretch_labels_linear_and_uses_four_decimals(qtbot, tmp_pa
     win._on_hover(3, 3, "main")
     text = win.image_view.readout_pill.text()
     assert text.endswith("linear")
-    assert len(text.split("R ")[1].split()[0]) == 6      # 0.0031 -> four decimals
+    # The pill is rich text now (R/G/B carry their channel tint), so strip the
+    # markup before counting digits — otherwise "0.0031</span>" is the token.
+    import re
+    plain = re.sub(r"<[^>]+>", "", text)
+    assert len(plain.split("R ")[1].split()[0]) == 6     # 0.0031 -> four decimals
 
 
 def test_hover_leaving_the_image_hides_the_pill(qtbot, tmp_path):
