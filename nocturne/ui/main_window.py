@@ -123,6 +123,28 @@ _GEOMETRY_LABEL = {
 }
 
 
+def _same_option(a, b) -> bool:
+    """Exact-enough equality for a recorded step option against a live preview
+    value. Numbers compare with a tolerance a slider tick cannot fall inside
+    (the sliders quantise to 1/100 or 1/1000), sequences compare element-wise,
+    and anything else falls back to ==. Never raises: an option shape this does
+    not understand answers False, which keeps the step pending.
+    """
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-9
+    # `(list, tuple)` and NOT an abstract Sequence: a str is a Sequence, and
+    # widening this would compare "auto" character by character against a
+    # three-element Levels tuple. Strings fall through to the `==` below, which
+    # is what they want. (An explicit str branch here was dead code — mutation
+    # testing removed it with no test noticing, because `==` already answers.)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(_same_option(x, y) for x, y in zip(a, b))
+    try:
+        return bool(a == b)
+    except Exception:                       # pragma: no cover - defensive
+        return False
+
+
 def _listed(names: list[str]) -> str:
     """"A, B and C" — the human form. Shared by the two destructive confirms so
     they cannot drift into listing the same casualties differently."""
@@ -2592,7 +2614,8 @@ class MainWindow(QMainWindow):
         previews = [p for p in self._STAGE_PREVIEWS.get(sid, (sid,))
                     if p in self._PENDING_SLOTS]
         out = {p for p in previews
-               if getattr(self, self._PENDING_SLOTS[p], None) is not None}
+               if getattr(self, self._PENDING_SLOTS[p], None) is not None
+               and not self._slot_is_the_commit(p, getattr(self, self._PENDING_SLOTS[p]))}
         if sid == "crop":
             # A drawn crop box is uncommitted intent like any slider value, but
             # it lives on the CANVAS rather than in a panel slot, so neither the
@@ -2615,6 +2638,25 @@ class MainWindow(QMainWindow):
             # neighbour's baseline.
             out.add("option")
         return frozenset(out)
+
+    def _slot_is_the_commit(self, step_id: str, value) -> bool:
+        """Is this preview value exactly what the step already committed?
+
+        The spec says pending means "describes something the committed image
+        does not reflect". The code said "the slot is non-None", so nudging a
+        slider away and back left the step prompting about a preview that IS
+        the commit — harmless, but it asks the user to decide about nothing.
+
+        Conservative by construction: only a confident match clears it.
+        Levels can record the string "auto" for values it derived, Curves
+        records a list of points, Colour's tint a pair — anything this cannot
+        call equal stays pending, which is the safe direction. A needless
+        prompt is a nuisance; a missed one is lost work.
+        """
+        committed = self._committed_option(step_id)
+        if committed is None:
+            return False        # never applied here: nothing to match
+        return _same_option(committed, value)
 
     def _color_method_pending(self) -> bool:
         """Whether Color's method dropdown differs from what was committed.
