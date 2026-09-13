@@ -829,22 +829,51 @@ def build_panel(
     # curve-preset Reset (step_panels.py, clicked by tests/ui/test_step_panels.py),
     # and the shared tail runs last, so reusing the name would silently clobber
     # it and the curve reset would start resetting the whole step.
-    w.reset_step_btn = None
-    if stage.id not in ("load", "export"):
-        w.reset_step_btn = QPushButton("Reset step")
-        w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
-        if on_reset_step is not None:
-            w.reset_step_btn.clicked.connect(lambda: on_reset_step())
-        lay.addWidget(w.reset_step_btn)
-
     # Names the affordance he already had (Space peek) on every stage where
-    # comparing is the point — same exclusion as Reset step above. Muted
+    # comparing is the point — same exclusion as Reset step below. Muted
     # help-text level: this is ambient orientation, not a status the user
     # must notice (that's pending_label, below).
     w.compare_hint = None
     if stage.id not in ("load", "export"):
         w.compare_hint = _desc_label("Press Space to toggle before and after.")
         lay.addWidget(w.compare_hint)
+
+    # Every stage that can commit gets this, in the same place. Import has
+    # nothing to reset (the toolbar Reset owns that) and Export commits nothing.
+    # NOT `reset_btn`: the Curves panel already owns that name for its
+    # curve-preset Reset (step_panels.py, clicked by tests/ui/test_step_panels.py),
+    # and the shared tail runs last, so reusing the name would silently clobber
+    # it and the curve reset would start resetting the whole step.
+    #
+    # BELOW the compare hint and behind a rule, moved 2026-09-13. It sat
+    # directly under Apply, where Andreas read it as part of the tool: "now they
+    # risk reading like they are part of the tool". It is not a parameter — it
+    # is recovery, used occasionally and deliberately.
+    #
+    # Deliberately NOT moved to the bottom of the sidebar, which was the other
+    # option considered. That buys a consistent screen position at the cost of
+    # distance from the thing it acts on, and "Reset step" isolated at the foot
+    # of the pane invites the reading "reset everything" — the label argues
+    # against that and placement argues louder. Consistency also earns less here
+    # than it would for Apply or Next: nobody builds muscle memory for a button
+    # they press once in a while, and when they do press it they are already
+    # looking at the panel, having just decided they dislike the result.
+    #
+    # Same divider idiom as the Colour step's "Optional" group, so the panel has
+    # one grammar for "below this line is not the main action".
+    w.reset_step_btn = None
+    if stage.id not in ("load", "export"):
+        lay.addSpacing(12)
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setObjectName("panelRule")
+        lay.addWidget(rule)
+        lay.addSpacing(8)
+        w.reset_step_btn = QPushButton("Reset step")
+        w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
+        if on_reset_step is not None:
+            w.reset_step_btn.clicked.connect(lambda: on_reset_step())
+        lay.addWidget(w.reset_step_btn)
 
     # Every stage, one place. The preview is pixel-identical to the commit by
     # design, so this line is the only thing that distinguishes them.

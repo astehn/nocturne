@@ -619,3 +619,45 @@ def test_zero_tint_is_bit_identical(qtbot):
     data = (rng.random((24, 24, 3)) * 0.4 + 0.05).astype(np.float32)
     out = TintStep().apply(AstroImage(data.copy(), is_linear=True, metadata={}), (0.0, 0.0))
     assert np.array_equal(out.data, data)
+
+
+def test_reset_step_sits_below_the_compare_hint_behind_a_rule(qtbot):
+    """Moved 2026-09-13. It sat directly under Apply, where Andreas read it as
+    part of the tool: "now they risk reading like they are part of the tool".
+    It is recovery, not a parameter.
+
+    Asserted by ORDER in the layout rather than by pixel position, which is the
+    part that carries the meaning: whatever the step's controls are, Reset comes
+    after the step's own affordances and after a divider.
+    """
+    from PySide6.QtWidgets import QFrame
+    w = build_panel(_stage("stretch"), on_apply=lambda v: None,
+                    on_reset_step=lambda: None)
+    qtbot.addWidget(w)
+    lay = w.layout()
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+
+    i_apply = order.index(w.apply_btn)
+    i_hint = order.index(w.compare_hint)
+    i_reset = order.index(w.reset_step_btn)
+    rules = [x for x in order if isinstance(x, QFrame) and x.objectName() == "panelRule"]
+    assert rules, "no divider separates Reset from the tool"
+    i_rule = order.index(rules[-1])
+
+    assert i_apply < i_hint < i_rule < i_reset, (
+        "Reset must come after Apply, after the compare hint, and after a rule")
+
+
+def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot):
+    """Neither can reset — Import has nothing committed and the toolbar Reset
+    owns that; Export commits nothing. The divider must not appear on its own."""
+    from PySide6.QtWidgets import QFrame
+    for sid in ("load", "export"):
+        w = build_panel(_stage(sid))
+        qtbot.addWidget(w)
+        assert w.reset_step_btn is None, sid
+        lay = w.layout()
+        rules = [lay.itemAt(i).widget() for i in range(lay.count())]
+        assert not [r for r in rules
+                    if isinstance(r, QFrame) and r.objectName() == "panelRule"], (
+            f"{sid}: a divider with nothing under it")
