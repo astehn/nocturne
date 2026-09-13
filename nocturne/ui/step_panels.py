@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider,
     QVBoxLayout, QWidget,
 )
 
+from ..core.autostretch import _TARGET_BG
 from ..core.color import ColorSettings
+from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
@@ -29,8 +31,27 @@ EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"
 # because its label starts with "Starless" — two genuinely 16-bit TIFFs locked
 # to sRGB while the export path was converting and tagging correctly all along.
 SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"})
-# Target-type stretch presets → default aggressiveness (slider 0–100).
-STRETCH_TARGET_DEFAULTS = {"Auto": 50, "Nebula": 60, "Galaxy": 40, "Cluster": 50}
+# The Stretch slider's default, DERIVED rather than chosen, so it follows if the
+# stretch targets ever move: the slider maps linearly onto a target background
+# median, and this is the position whose target equals the one the display
+# preview already uses. 43 gives 0.2505 against a target of 0.25.
+#
+# It replaces a "Target" dropdown (Auto/Nebula/Galaxy/Cluster) deleted 2026-09-13.
+# Four entries, three distinct values, two identical — "Cluster" and "Auto" were
+# the same number, and "Auto" set the slider to the value it already had, so it
+# did nothing. None carried a measurement, against this project's own rule. The
+# binding was also ONE-WAY: picking a target moved the slider but nudging the
+# slider never moved the dropdown, so it went on reading "Nebula" over a value
+# that was no longer Nebula's — a control misreporting its own state.
+#
+# The damning detail, and why this default matters: the display preview targets
+# 0.25, and the old mid-slider 50 mapped to 0.2750. "Auto" was therefore FURTHER
+# from the picture you had been looking at than "Galaxy" (0.2400) was. That
+# mismatch is the documented cause of the WYSIWYG violation `_sync_stretch_preview`
+# exists to patch — measured at +8.9% mean brightness, 94.7% of pixels moving by
+# more than one 8-bit step, on a real M 45 master.
+STRETCH_DEFAULT = round(
+    (_TARGET_BG - _STRETCH_MIN) / (_STRETCH_MAX - _STRETCH_MIN) * 100)
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
     "background": "Needs GraXpert — set its path in Settings.",
@@ -64,7 +85,6 @@ def build_panel(
     on_levels_auto=None,
     on_sat_change=None,
     on_sat_apply=None,
-    on_fringe_change=None,
     on_fringe_apply=None,
     on_lc_change=None,
     on_show_model=None,
@@ -309,9 +329,25 @@ def build_panel(
         # gain survives. It also leaves the background alone (also 0.00000), which
         # is what we want -- the magenta is in the nebulosity, and the background
         # is already faintly GREEN from chroma noise.
+        # De-green Sky moved out to its own stage, which freed the room this
+        # uses. Andreas, 2026-09-13: the two groups "feel a bit crammed together
+        # now". A rule and a heading, not just padding — the point is that what
+        # follows is OPTIONAL, and the step's own copy already said so in prose
+        # nobody reads. This is the Colour half of the decided 2026-09-12
+        # "separate and label the optional tools"; with De-green Sky gone, only
+        # Tint remains, so it is one divider and one label rather than a layout.
+        lay.addSpacing(14)
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setObjectName("panelRule")
+        lay.addWidget(rule)
+        lay.addSpacing(10)
+        optional = QLabel("Optional")
+        optional.setObjectName("panelSectionLabel")
+        lay.addWidget(optional)
         lay.addWidget(_desc_label(
-            "Optional. Nudge the overall colour if it looks too magenta or too "
-            "green. Double-click a slider to re-centre it."))
+            "Nudge the overall colour if it looks too magenta or too green. "
+            "Double-click a slider to re-centre it."))
         tint_slider = ResetSlider(0, minimum=-100, maximum=100)
         tint_val = QLabel("0.00")
         tint_row = QHBoxLayout()
@@ -337,6 +373,11 @@ def build_panel(
         lay.addWidget(temp_slider)
         w.tint_slider = tint_slider
         w.temp_slider = temp_slider
+        # What the controls describe UNTOUCHED. main_window compares the live
+        # value against this, so putting a slider back where you found it stops
+        # the step reading as pending. Must stay in step with _emit_tint above —
+        # test_neutral_option_matches_the_emit fires both and compares.
+        w.neutral_option = (tint_slider.value() / 100.0, temp_slider.value() / 100.0)
 
         apply_tint_btn = QPushButton("Apply Tint")
         # Without this, theme.py's `QPushButton#primary[pending=...]` selector
@@ -354,12 +395,7 @@ def build_panel(
 
     elif stage.kind == "stretch":
         lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
-        slider = ResetSlider(50)
-        target = QComboBox()
-        target.addItems(list(STRETCH_TARGET_DEFAULTS))
-        target.currentTextChanged.connect(
-            lambda t: slider.setValue(STRETCH_TARGET_DEFAULTS[t])
-        )
+        slider = ResetSlider(STRETCH_DEFAULT)
         stretch_val = QLabel(f"{slider.value() / 100:.2f}")
 
         def _emit_stretch(*_):
@@ -367,21 +403,19 @@ def build_panel(
             if on_stretch_change is not None:
                 on_stretch_change(slider.value() / 100.0)
 
+        w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_stretch)
         apply_btn = QPushButton("Apply Stretch")
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
-        lay.addWidget(QLabel("Target"))
-        lay.addWidget(target)
         agg_row = QHBoxLayout()
         agg_row.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
         agg_row.addWidget(stretch_val)
         lay.addLayout(agg_row)
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
-        w.target_box = target
         w.stretch_slider = slider
         w.stretch_val = stretch_val
         w.apply_btn = apply_btn
@@ -412,6 +446,7 @@ def build_panel(
         rg_row = QHBoxLayout()
         rg_row.addWidget(QLabel("Green removal"))
         rg_row.addWidget(rg_val)
+        w.neutral_option = rg_slider.value() / 100.0
         if on_removegreen_change is not None:
             rg_slider.valueChanged.connect(
                 lambda v: (rg_val.setText(f"{v / 100:.2f}"), on_removegreen_change(v / 100.0)))
@@ -463,6 +498,8 @@ def build_panel(
                     white.value() / 100.0
                 )
 
+        w.neutral_option = (black.value() / BLACK_STEPS, gamma.value() / 100.0,
+                            white.value() / 100.0)
         black.valueChanged.connect(_emit)
         gamma.valueChanged.connect(_emit)
         white.valueChanged.connect(_emit)
@@ -515,6 +552,8 @@ def build_panel(
         # in the one widget where area is precision. It draws SQUARE now, so
         # extra height also buys width up to the pane.
         editor.setMinimumHeight(320)
+        # Curves' neutral is the identity curve the editor is built with.
+        w.neutral_option = list(editor.points())
         if on_curve_change is not None:
             editor.curveChanged.connect(lambda pts: on_curve_change(pts))
         lay.addWidget(editor, 1)
@@ -569,6 +608,7 @@ def build_panel(
             if on_sat_change is not None:
                 on_sat_change(slider.value() / 100.0, neb.value() / 100.0)
 
+        w.neutral_option = (slider.value() / 100.0, neb.value() / 100.0)
         slider.valueChanged.connect(_emit_sat)
         neb.valueChanged.connect(_emit_sat)
         apply_btn = QPushButton("Apply Saturation")
@@ -597,11 +637,14 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "green_fringe":
-        # A switch, not a slider: no star is green (blackbody colour runs
-        # red-orange-yellow-white-blue and never passes through green), so a
-        # green pixel on a star is always wrong and there is no such thing as
-        # wanting 40% of it. The toggle doubles as the A/B — tick and untick to
-        # see the difference live, which beats a strength you have to guess.
+        # NO control at all: Apply IS the switch. No star is green (blackbody
+        # colour runs red-orange-yellow-white-blue and never passes through it),
+        # so a green pixel on a star is always wrong and there is nothing to
+        # choose. This briefly had a checkbox; Andreas, 2026-09-13: "Why do the
+        # user have to click a checkbox and then press apply, since its only a
+        # one step process... there is nothing to choose." He is right — a
+        # control with one meaningful position is a step the user performs for
+        # the app's benefit.
         #
         # With RC-Astro (StarX) the split gives a clean stars layer, so
         # de-greening it and screen-recombining really does touch only the
@@ -620,25 +663,14 @@ def build_panel(
             "feathered mask centred on stars, so background colour can shift too."))
         status = _desc_label("")   # main_window sets the split/mask label or gate text
         lay.addWidget(status)
-        toggle = QCheckBox("Remove green from stars")
-
-        def _emit_fringe(*_):
-            if on_fringe_change is not None:
-                on_fringe_change(1.0 if toggle.isChecked() else 0.0)
-
-        toggle.toggled.connect(_emit_fringe)
         apply_btn = QPushButton("Apply De-green Stars")
         apply_btn.setObjectName("primary")
         if on_fringe_apply is not None:
-            apply_btn.clicked.connect(
-                lambda: on_fringe_apply(1.0 if toggle.isChecked() else 0.0))
+            apply_btn.clicked.connect(lambda: on_fringe_apply(1.0))
         # Start disabled — main_window enables once the (slow) StarX split is ready.
-        toggle.setEnabled(False)
         apply_btn.setEnabled(False)
-        lay.addWidget(toggle)
         lay.addWidget(apply_btn)
         w.fringe_status = status
-        w.fringe_toggle = toggle
         w.apply_btn = apply_btn
 
     elif stage.kind == "recover_core":
@@ -653,6 +685,7 @@ def build_panel(
             if on_recover_change is not None:
                 on_recover_change(slider.value() / 100.0)
 
+        w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_recover)
         apply_btn = QPushButton("Apply Recover Core")
         apply_btn.setObjectName("primary")
@@ -680,6 +713,7 @@ def build_panel(
             if on_lc_change is not None:
                 on_lc_change(slider.value() / 100.0)
 
+        w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_lc)
         apply_btn = QPushButton("Apply Local Contrast")
         apply_btn.setObjectName("primary")
@@ -710,6 +744,7 @@ def build_panel(
             if on_sr_change is not None:
                 on_sr_change(slider.value() / 100.0)
 
+        w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_sr)
         apply_btn = QPushButton("Apply Star Reduction")
         apply_btn.setObjectName("primary")

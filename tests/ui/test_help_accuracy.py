@@ -1246,7 +1246,7 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
     from nocturne.core.levels import _BLACK_SIGMA
     from nocturne.settings import Settings
     from nocturne.ui.pipeline import STEP_NAME
-    from nocturne.ui.step_panels import STRETCH_TARGET_DEFAULTS
+    from nocturne.ui.step_panels import STRETCH_DEFAULT
     b = _body("auto-enhance")
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
 
@@ -1262,8 +1262,11 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
     # while both move away from the prose, which is the failure this file exists
     # to catch.
     assert plan["stretch"] == AUTO_STRETCH_AMOUNT
+    # Formatted from STRETCH_DEFAULT, which is itself derived from the stretch
+    # targets — so if the manual default ever moves, this prose fails rather
+    # than quietly describing a number the step no longer uses.
     assert f"<b>{AUTO_STRETCH_AMOUNT:.2f}</b>, gentler than the " \
-           f"{STRETCH_TARGET_DEFAULTS['Auto'] / 100:.2f}" in b
+           f"{STRETCH_DEFAULT / 100:.2f}" in b
     assert plan["saturation"] == (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)
     assert f"<b>{AUTO_SATURATION_AMOUNT:.2f}</b> with a light " \
            f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost" in b

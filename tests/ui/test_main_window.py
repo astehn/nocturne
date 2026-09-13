@@ -1529,7 +1529,7 @@ def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("green_fringe")               # no RC-Astro configured -> free split used
     assert win._fringe_ready is True
-    assert win._panel.fringe_toggle.isEnabled() is True
+    assert win._panel.apply_btn.isEnabled() is True
     assert "RC-Astro" in win._panel.fringe_status.text()            # free-detection note
     assert "Needs RC-Astro" not in win._panel.fringe_status.text()  # not the old gate text
 
@@ -1563,9 +1563,11 @@ def test_green_fringe_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
     _fake_rc_layers(win, monkeypatch)
     win._go_to_id("green_fringe")               # sync split (_async_enabled False)
     assert win._fringe_ready is True
-    assert win._panel.fringe_toggle.isEnabled() is True
+    assert win._panel.apply_btn.isEnabled() is True
     entries_before = [name for name, _ in win.project.entries()]
-    win._on_fringe_change(0.6)
+    # The step has no control, so drive the slot the way a test must: Apply is
+    # the only thing that sets it in the app.
+    win._fringe_pending = 0.6
     win._render_fringe_preview()
     assert not win.image_view._item.pixmap().isNull()
     assert [name for name, _ in win.project.entries()] == entries_before   # no commit

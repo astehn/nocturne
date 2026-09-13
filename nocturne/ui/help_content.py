@@ -618,18 +618,18 @@ _TOPIC_LIST = (
        "de-greens the whole image instead, blended by a feathered mask around the "
        "stars — background colour can shift a little too.</p>"
        "<h4>How to use it</h4>"
-       "<p>Tick <b>Remove green from stars</b> and Apply. It is a switch rather than "
-       "a strength, because there is no such thing as wanting a star to keep 40% of "
-       "a colour it should never have had. The star detection runs once when you "
-       "enter the step, then ticking and unticking previews instantly — that is also "
-       "the easiest way to see what it changed. Works without RC-Astro; setting "
-       "RC-Astro (StarXTerminator) in Settings gives a cleaner, stars-only result.</p>"
+       "<p>Press <b>Apply De-green Stars</b>. There is nothing to set: no star is "
+       "green, so there is no such thing as wanting to keep 40% of a colour it "
+       "should never have had. The star detection runs once when you enter the "
+       "step, which is the only wait. Works without RC-Astro; setting RC-Astro "
+       "(StarXTerminator) in Settings gives a cleaner, stars-only result.</p>"
        "<h4>Tips</h4>"
        "<p>Only pixels that actually read green are touched, and they become grey of "
        "the same brightness — a cyan, yellow or orange star keeps its colour exactly. "
-       "So if you tick it and almost nothing moves, that is the honest answer: your "
+       "So if you apply it and almost nothing moves, that is the honest answer: your "
        "stars had no green to remove. Removing the green often leaves the star a "
-       "touch blue — a perfectly natural star colour.</p>"),
+       "touch blue — a perfectly natural star colour. If you do not like the result, "
+       "Reset step puts it back.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
@@ -1028,7 +1028,7 @@ _TOPIC_LIST = (
        "<p><b>Color</b> — <b>photometric</b> if ASTAP is set up (colour measured against "
        "catalogue stars), otherwise a plain sky-neutralise. Both aim at natural, white-balanced "
        "colour.</p>"
-       "<p><b>Stretch</b> at <b>0.30</b>, gentler than the 0.50 the manual step defaults to. A "
+       "<p><b>Stretch</b> at <b>0.30</b>, gentler than the 0.43 the manual step defaults to. A "
        "conservative stretch leaves you room to push further; an aggressive one cannot be "
        "undone by later steps.</p>"
        "<p><b>Levels</b> — a black point measured off the stretched image (median minus 3.5 "

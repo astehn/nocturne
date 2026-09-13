@@ -75,9 +75,13 @@ def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     # guard on its own) — without it this hangs on an unstubbed _ask_pending.
     win._go_to_id("saturation", user_initiated=False)
     qtbot.wait(1)                     # same rebuild lag as above
-    win._on_sat_change(0.5, 0.0)      # nebula 0: no star split, so this is instant
+    # 0.70, not the panel's own default of 0.50: since 2026-09-13 a value equal
+    # to what the controls read untouched is NOT pending, so driving the step to
+    # its default would assert the opposite of what this line means. Nebula
+    # stays 0 so no star split runs and this is instant.
+    win._on_sat_change(0.70, 0.0)
     assert win._panel.pending_label.isVisible()
-    win._apply_saturation(0.5, 0.0)
+    win._apply_saturation(0.70, 0.0)
     qtbot.wait(1)
     assert not win._panel.pending_label.isVisible()
 

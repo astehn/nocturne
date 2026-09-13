@@ -46,11 +46,22 @@ def test_a_value_that_differs_is_still_pending(qtbot, tmp_path):
     assert win._has_pending()
 
 
-def test_a_never_applied_step_is_pending_the_moment_it_is_touched(qtbot, tmp_path):
-    """No commit to compare against means no match — not a free pass."""
+def test_a_never_applied_step_back_at_its_starting_value_is_not_pending(qtbot, tmp_path):
+    """CORRECTED 2026-09-13. This test previously asserted the opposite, on the
+    reasoning that with no commit to compare against there is no match — "not a
+    free pass". That is true of a value which might be work and false of one
+    that is provably where the user found it, and Andreas hit the consequence
+    on nine steps: nudge a slider, put it back, and Apply stays green while Next
+    demands a choice between Cancel and Discard over nothing.
+
+    The panel's `neutral_option` is what it reads untouched, so this is now
+    answerable without a commit."""
     win = _stretched(qtbot, tmp_path)
-    win._on_stretch_change(0.5)
-    assert win._has_pending()
+    start = win._panel.neutral_option
+    win._on_stretch_change(0.8)
+    assert win._has_pending(), "moved away: pending"
+    win._on_stretch_change(start)
+    assert not win._has_pending(), "back where it started: nothing to apply"
 
 
 @pytest.mark.parametrize("a,b,expect", [

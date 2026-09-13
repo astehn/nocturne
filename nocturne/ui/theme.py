@@ -113,6 +113,8 @@ QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_
 # sheet is applied to — eleven lines of noise on startup. The label carries a
 # fixed width instead, which is what actually stops the pill jittering.
 QLabel#zoomLevel {{ color: {TEXT_DIM}; font-size: 12px; }}
+QFrame#panelRule {{ color: {BORDER}; }}
+QLabel#panelSectionLabel {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}
 QLabel#objectListTitle {{ color: {TEXT}; font-size: 12px; font-weight: 600; }}

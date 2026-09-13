@@ -422,9 +422,6 @@ class MainWindow(QMainWindow):
         self._fringe_layers = None    # (sig, starless, stars) once the split lands
         self._fringe_pending = None
         self._fringe_ready = False
-        self._fringe_timer = QTimer(self)
-        self._fringe_timer.setSingleShot(True)
-        self._fringe_timer.timeout.connect(self._render_fringe_preview)
         # Colour-cast (tint/temperature) live preview: multiplicative gains, so
         # cheap. Debounced 90 ms like the others. SKY method only — see
         # _render_tint_preview for why photometric cannot be previewed live.
@@ -2660,19 +2657,31 @@ class MainWindow(QMainWindow):
         return frozenset(out)
 
     def _slot_is_the_commit(self, step_id: str, value) -> bool:
-        """Is this preview value exactly what the step already committed?
+        """Does this preview value describe no change the user has to decide about?
 
-        The spec says pending means "describes something the committed image
-        does not reflect". The code said "the slot is non-None", so nudging a
-        slider away and back left the step prompting about a preview that IS
-        the commit — harmless, but it asks the user to decide about nothing.
+        Two ways to be nothing. It matches what this step already committed, or
+        it matches what the controls read when the panel was BUILT — put a
+        slider back where you found it and there is nothing to apply.
 
-        Conservative by construction: only a confident match clears it.
-        Levels can record the string "auto" for values it derived, Curves
-        records a list of points, Colour's tint a pair — anything this cannot
-        call equal stays pending, which is the safe direction. A needless
-        prompt is a nuisance; a missed one is lost work.
+        The second half is the one that matters in practice, and the first
+        version of this shipped without it. Andreas found it on nine steps at
+        once: "the user might want to move the slider but then decides that they
+        dont want what it does so they move the slider back to its default
+        position and then the apply button stays green." Worse, Next then asked
+        him to choose between Cancel and Discard over a change that did not
+        exist. A test here had actually PINNED that behaviour, on the reasoning
+        that staying pending is the safe direction — which is true of a value
+        that might be work, and false of one that is provably the starting
+        point.
+
+        Still conservative where it cannot tell: Levels records the string
+        "auto" for values it derived, Curves a list of points, Colour's tint a
+        pair. Anything `_same_option` cannot call equal stays pending, because
+        a needless prompt is a nuisance and a missed one is lost work.
         """
+        neutral = getattr(self._panel, "neutral_option", None)
+        if neutral is not None and _same_option(neutral, value):
+            return True
         committed = self._committed_option(step_id)
         if committed is None:
             return False        # never applied here: nothing to match
@@ -4075,15 +4084,13 @@ class MainWindow(QMainWindow):
         busy_label = "Separating stars…" if has_rc else "Building star mask…"
         if self._fringe_layers and self._fringe_layers[0] == sig:
             self._fringe_ready = True
-            if hasattr(panel, "fringe_toggle"):
-                panel.fringe_toggle.setEnabled(True)
+            if hasattr(panel, "fringe_status"):
                 panel.apply_btn.setEnabled(True)
                 panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
             return
         self._fringe_ready = False
-        if hasattr(panel, "fringe_toggle"):
-            panel.fringe_toggle.setEnabled(False)
+        if hasattr(panel, "fringe_status"):
             panel.apply_btn.setEnabled(False)
             panel.fringe_status.setText(busy_label)
         self._run_busy(lambda: self._fringe_prepare(base),
@@ -4152,8 +4159,7 @@ class MainWindow(QMainWindow):
             return
         self._fringe_layers = (sig,) + tuple(payload)
         self._fringe_ready = True
-        if hasattr(self._panel, "fringe_toggle"):
-            self._panel.fringe_toggle.setEnabled(True)
+        if hasattr(self._panel, "fringe_status"):
             self._panel.apply_btn.setEnabled(True)
             # _fringe_status_text(), same as the cached-split branch in
             # _setup_green_fringe. This used to set "" (StarX) or the generic
@@ -4162,18 +4168,15 @@ class MainWindow(QMainWindow):
             self._panel.fringe_status.setText(self._fringe_status_text())
         self._render_fringe_preview()
 
-    def _on_fringe_change(self, strength: float) -> None:
-        self._fringe_pending = strength
-        if self._fringe_ready:
-            self._fringe_timer.start(90)
-        self._sync_step_controls()
-
     def _render_fringe_preview(self) -> None:
         if (self.project is None or self.current_stage_id() != "green_fringe"
                 or not self._fringe_ready or not self._fringe_layers):
             return
-        strength = (self._fringe_pending if self._fringe_pending is not None
-                    else (1.0 if self._panel.fringe_toggle.isChecked() else 0.0))
+        # No control to read: the step has one action and Apply performs it.
+        # The preview shows the image UNCHANGED until then, so walking through
+        # the step without pressing anything neither previews nor commits
+        # anything — and never reads as pending.
+        strength = self._fringe_pending if self._fringe_pending is not None else 0.0
         self._show_preview(self._fringe_result(strength).data)
 
     def _apply_green_fringe(self, strength) -> None:
@@ -4769,7 +4772,6 @@ class MainWindow(QMainWindow):
             on_sat_change=self._on_sat_change,
             on_sat_apply=self._apply_saturation,
             on_lc_change=self._on_lc_change,
-            on_fringe_change=self._on_fringe_change,
             on_fringe_apply=self._apply_green_fringe,
             on_show_model=self._on_show_background_model,
             on_option_change=self._sync_step_controls,

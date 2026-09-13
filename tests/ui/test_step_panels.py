@@ -215,13 +215,40 @@ def test_stretch_panel_slider_emits_amount(qtbot):
     assert got == [0.70]
 
 
-def test_stretch_target_sets_slider(qtbot):
+def test_stretch_has_no_target_dropdown(qtbot):
+    """Deleted 2026-09-13. Four entries, three distinct values, two identical;
+    "Auto" set the slider to the value it already had; and the binding was
+    one-way, so the box went on reading "Nebula" over a value that was not
+    Nebula's. Andreas: "they should be removed as it's clearly a UI thing".
+    """
     w = build_panel(_stage("stretch"), on_apply=lambda v: None)
     qtbot.addWidget(w)
-    w.target_box.setCurrentText("Nebula")
-    assert w.stretch_slider.value() == 60
-    w.target_box.setCurrentText("Galaxy")
-    assert w.stretch_slider.value() == 40
+    assert not hasattr(w, "target_box")
+    from PySide6.QtWidgets import QComboBox
+    assert not w.findChildren(QComboBox), "nothing left to pick on this step"
+
+
+def test_the_stretch_default_is_derived_from_the_targets(qtbot):
+    """Not a new magic number. The slider maps linearly onto a target
+    background median, and the default is the position whose target equals the
+    one the DISPLAY PREVIEW already uses — so arriving at Stretch and pressing
+    Apply changes nothing visible. The old mid-slider 50 mapped to 0.2750
+    against a preview target of 0.25, which is the WYSIWYG violation
+    `_sync_stretch_preview` exists to patch.
+    """
+    from nocturne.ui.step_panels import STRETCH_DEFAULT
+    from nocturne.core.autostretch import _TARGET_BG
+    from nocturne.core import stretch as core_stretch
+
+    w = build_panel(_stage("stretch"), on_apply=lambda v: None)
+    qtbot.addWidget(w)
+    assert w.stretch_slider.value() == STRETCH_DEFAULT
+
+    lo, hi = core_stretch._TARGET_MIN, core_stretch._TARGET_MAX
+    landed = lo + (STRETCH_DEFAULT / 100.0) * (hi - lo)
+    assert abs(landed - _TARGET_BG) < 0.006, (
+        f"slider {STRETCH_DEFAULT} targets {landed:.4f}, preview targets "
+        f"{_TARGET_BG} — the default has drifted from the preview")
 
 
 def test_saturation_panel_default_is_native(qtbot):
@@ -324,9 +351,11 @@ def test_export_panel_formats(qtbot):
 
 
 def test_sliders_are_reset_sliders_with_defaults(qtbot):
+    from nocturne.ui.step_panels import STRETCH_DEFAULT
     from nocturne.ui.reset_slider import ResetSlider
     st = build_panel(_stage("stretch")); qtbot.addWidget(st)
-    assert isinstance(st.stretch_slider, ResetSlider) and st.stretch_slider._default == 50
+    assert isinstance(st.stretch_slider, ResetSlider) \
+        and st.stretch_slider._default == STRETCH_DEFAULT
     lv = build_panel(_stage("levels")); qtbot.addWidget(lv)
     assert isinstance(lv.black_slider, ResetSlider) and lv.black_slider._default == 0
     assert isinstance(lv.gamma_slider, ResetSlider) and lv.gamma_slider._default == 100
@@ -339,9 +368,10 @@ def test_sliders_are_reset_sliders_with_defaults(qtbot):
 def test_stretch_slider_double_click_resets(qtbot):
     from PySide6.QtCore import Qt
     st = build_panel(_stage("stretch")); qtbot.addWidget(st)
+    from nocturne.ui.step_panels import STRETCH_DEFAULT
     st.stretch_slider.setValue(20)
     qtbot.mouseDClick(st.stretch_slider, Qt.MouseButton.LeftButton)
-    assert st.stretch_slider.value() == 50
+    assert st.stretch_slider.value() == STRETCH_DEFAULT
 
 
 def test_deconvolution_panel_emits_strength(qtbot):
@@ -479,29 +509,24 @@ def test_noise_no_dropdown_when_not_both_installed(qtbot):
 
 
 def test_green_fringe_panel_gated_and_wired(qtbot):
-    changed, applied = {}, {}
+    applied = {}
     w = build_panel(_stage("green_fringe"),
-                    on_fringe_change=lambda s: changed.__setitem__("s", s),
                     on_fringe_apply=lambda s: applied.__setitem__("s", s))
     qtbot.addWidget(w)
     assert w.panel_kind == "green_fringe"
-    assert hasattr(w, "fringe_status") and hasattr(w, "fringe_toggle")
-    # toggle + Apply start disabled (main_window enables once the split lands)
-    assert w.fringe_toggle.isEnabled() is False
+    assert hasattr(w, "fringe_status")
+    # NO control: Apply is the switch. Andreas, 2026-09-13 — "since its only a
+    # one step process would it simply be enough to press apply... there is
+    # nothing to choose."
+    from PySide6.QtWidgets import QCheckBox, QSlider
+    assert not w.findChildren(QCheckBox), "the step has nothing to choose"
+    assert not w.findChildren(QSlider), "and no strength either"
+    assert not hasattr(w, "fringe_toggle")
+    # Apply starts disabled — main_window enables it once the (slow) split lands.
     assert w.apply_btn.isEnabled() is False
-    assert w.fringe_toggle.isChecked() is False, \
-        "De-green Stars must arrive off, like every other optional step"
-    w.fringe_toggle.setEnabled(True)
-    w.fringe_toggle.setChecked(True)
-    assert changed.get("s") == 1.0
     w.apply_btn.setEnabled(True)
     w.apply_btn.click()
-    assert applied.get("s") == 1.0
-    # ...and back off again: the toggle IS the A/B, so it has to report both ways.
-    w.fringe_toggle.setChecked(False)
-    assert changed.get("s") == 0.0
-    w.apply_btn.click()
-    assert applied.get("s") == 0.0
+    assert applied.get("s") == 1.0, "Apply must perform the de-green, not nothing"
 
 
 def test_green_removal_starts_at_zero(qtbot):
