@@ -1861,21 +1861,52 @@ class MainWindow(QMainWindow):
     def go_back(self) -> None:
         self._go_to(prev_enabled(self._stages, self._stage))
 
-    def _ensure_stretched(self) -> None:
+    def _ask_auto_stretch(self, names: list[str], dest_label: str) -> bool:
+        """The auto-stretch confirm. True means go ahead.
+
+        A third message rather than a flag on the other two, because the user
+        did not ask for this action at all: they clicked a step, and the app is
+        about to stretch on their behalf and lose work doing it. "Apply Levels
+        again?" would name the wrong action, and "Rotate 90°?" the wrong reason.
+        """
+        return self._confirm_destructive(
+            f"{dest_label} needs a stretched image.",
+            f"Stretching now discards {_listed(names)}.",
+            "Stretch")
+
+    def _ensure_stretched(self, dest_label: str = "This step") -> bool:
         """Commit a default Stretch (amount 0.5) at the stretch position so the
         post-stretch finishing steps have real stretched data. The caller invokes
-        this only when the current image is still linear."""
+        this only when the current image is still linear.
+
+        False means the user cancelled and NOTHING was changed — the caller must
+        abandon the navigation that triggered it.
+
+        This was the seventh unguarded truncation, and the only one reached by
+        merely NAVIGATING. It is gated on `is_linear`, so no pipeline STEP can
+        be lost: everything before Stretch is in the keep set. A toolbar commit
+        made while still linear is not — run Narrowband on a linear image, click
+        Levels, and the combine was discarded with nothing said.
+        """
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
         }
-        self.project.jump_back(self._leading_kept(self.project.entries(), preceding))
+        target = self._leading_kept(self.project.entries(), preceding)
+        casualties: list[str] = []
+        for name, _ in self.project.entries()[target:]:
+            if name not in casualties:
+                casualties.append(name)
+        if casualties and not self._ask_auto_stretch(casualties, dest_label):
+            return False
+        self.project.jump_back(target)
         base = self.project.current()
         result = self._step_for("stretch").apply(base, "")   # "" -> default amount 0.5
         self.project.run_step(_PrecomputedStep("Stretch", result), "")
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))
+        return True
 
     def _go_to(self, index: int, *, user_initiated: bool = True) -> None:
         """`user_initiated` defaults to True so a navigation route added later is
@@ -1926,7 +1957,8 @@ class MainWindow(QMainWindow):
         if (self.project is not None
                 and self._stages[index].id in POST_STRETCH_IDS
                 and self.project.current().is_linear):
-            self._ensure_stretched()
+            if not self._ensure_stretched(self._stages[index].label):
+                return          # cancelled: stay where we are, change nothing
         self._stage = index
         self._nav_seq += 1   # a completed navigation — see _deferred_nav
         self._clear_warning()  # clear any stale error when changing steps

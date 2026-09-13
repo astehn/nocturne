@@ -900,10 +900,20 @@ def test_enhance_appends_undoable_steps(qtbot, tmp_path):
 
 
 def test_enhance_truncated_by_earlier_step(qtbot, tmp_path):
+    """The enhancement still goes — but it is no longer taken silently.
+
+    This used to lose "Boost Blue" with nothing said, and the loss happens on
+    NAVIGATION, not on Apply: Saturation is post-stretch and the image is still
+    linear, so `_go_to` auto-stretches on the user's behalf and that truncates.
+    See test_auto_stretch_confirm.py for the confirm itself.
+    """
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._enhance("Boost Blue")
+    asked = []
+    win._ask_auto_stretch = lambda names, dest: (asked.append((names, dest)), True)[1]
     win._go_to_id("saturation")
+    assert asked == [(["Boost Blue"], "Saturation")], asked
     win.apply_current(0.6)                             # earlier processing step
     names = [n for n, _ in win.project.entries()]
     assert "Boost Blue" not in names                  # trailing enhancement truncated

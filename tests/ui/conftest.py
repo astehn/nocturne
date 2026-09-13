@@ -128,3 +128,27 @@ def _refuse_real_geometry_prompt(monkeypatch):
             f"({label}). Stub MainWindow._ask_geometry via monkeypatch.")
 
     monkeypatch.setattr(mw.MainWindow, "_ask_geometry", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _refuse_real_auto_stretch_prompt(monkeypatch):
+    """And again for the auto-stretch confirm.
+
+    Navigating to a post-stretch step on a still-linear image commits a Stretch
+    on the user's behalf, which truncates — it asks when that would cost a
+    toolbar commit made while linear. Same .exec() hang risk, same loud refusal.
+    """
+    try:
+        from nocturne.ui import main_window as mw
+    except ImportError:
+        return
+
+    monkeypatch.setattr(mw.MainWindow, "_real_ask_auto_stretch",
+                        mw.MainWindow._ask_auto_stretch, raising=False)
+
+    def refuse(self, names, dest_label):
+        raise AssertionError(
+            f"a real auto-stretch confirm was opened in a test for {names!r} "
+            f"(navigating to {dest_label}). Stub MainWindow._ask_auto_stretch.")
+
+    monkeypatch.setattr(mw.MainWindow, "_ask_auto_stretch", refuse)
