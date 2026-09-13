@@ -6,12 +6,25 @@ BG_1 = "#1e1f22"     # window
 BG_2 = "#26282c"     # panels / toolbar
 BG_3 = "#2f3237"     # inputs / raised
 BORDER = "#3c4046"
+# A rule INSIDE a panel, dimmer than BORDER on purpose. BORDER is a structural
+# edge — the boundary of a card; a divider within one is a weaker separation and
+# should read as weaker. Andreas, 2026-09-13: at BORDER "the eye tends to be
+# drawn to it". share_dialog had already hand-rolled #33373d for exactly this,
+# which is the evidence the dimmer value is the right one; it now has a name.
+RULE = "#31343a"
 ACCENT = "#4a90e2"   # blue — interactive accent (sliders, focus, Next/advance)
 ACCENT_HI = "#5fa0ee"
 SUCCESS = "#3fb950"  # green — commit/apply hero ("done with this edit")
 SUCCESS_HI = "#4cc85e"
 WARNING = "#e3b341"  # amber
 DANGER = "#f85149"   # red
+# Reset step's text, warm but well short of DANGER. Reset is not dangerous in
+# the way DANGER marks — it removes ONE step's commit and asks first — but it is
+# the only control on a panel that takes something away, and jump_back has no
+# redo. A tint says "different kind of action"; the full red would say "careful"
+# about a recovery affordance people should feel free to use, and an unused
+# recovery affordance is worse than a slightly bland one.
+DANGER_DIM = "#c47a72"
 TEXT = "#e6e6e6"
 TEXT_DIM = "#8a9099"
 TEXT_FAINT = "#5e636b"
@@ -108,12 +121,28 @@ QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {T
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
-# No font-variant-numeric here: Qt Style Sheets implement a SUBSET of CSS and
-# reject it with 'Unknown property font-variant-numeric' on every widget the
-# sheet is applied to — eleven lines of noise on startup. The label carries a
-# fixed width instead, which is what actually stops the pill jittering.
+/* No font-variant-numeric here: Qt Style Sheets implement a SUBSET of CSS and
+   reject it with 'Unknown property font-variant-numeric' on every widget the
+   sheet is applied to. The label carries a fixed width instead, which is what
+   actually stops the pill jittering.
+
+   And these are C-style comments, not '#'. Qt has no '#' comment syntax: it
+   parses such a line as a SELECTOR, which silently swallows every rule after it
+   until the rule block closes. That is not hypothetical: the '#' version of
+   this very comment ate QLabel#zoomLevel, QFrame#panelRule and all three
+   QPushButton#resetStep rules for several hours on 2026-09-13, which is why the
+   panel divider looked "too bright": it was falling back to Qt's default frame
+   colour, not to ours. */
 QLabel#zoomLevel {{ color: {TEXT_DIM}; font-size: 12px; }}
-QFrame#panelRule {{ color: {BORDER}; }}
+QFrame#panelRule {{ color: {RULE}; }}
+/* Tinted TEXT and border, never a filled red: this button is disabled most of
+   the time (main_window enables it only when the step has something to undo),
+   and a filled danger colour would make the quietest control on the panel the
+   loudest thing on it — beside an Apply button that is meant to be the hero.
+   The disabled state deliberately keeps the ordinary muted grey. */
+QPushButton#resetStep {{ color: {DANGER_DIM}; border-color: {DANGER_DIM}; }}
+QPushButton#resetStep:hover {{ color: {DANGER}; border-color: {DANGER}; }}
+QPushButton#resetStep:disabled {{ color: {TEXT_FAINT}; border-color: {BORDER}; }}
 QLabel#panelSectionLabel {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}

@@ -138,3 +138,51 @@ def test_that_scan_can_actually_fail():
     sheet = "QLabel#x {{ color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }}"
     used = {m.lower() for m in re.findall(r"[{;]\s*([a-z-]+)\s*:", sheet)}
     assert "font-variant-numeric" in used
+
+
+def test_the_stylesheet_has_no_hash_comments():
+    """Qt Style Sheets have NO '#' comment syntax — only C-style /* */.
+
+    A '#' line is parsed as a SELECTOR, which silently swallows every rule after
+    it until the block closes. Nothing errors and nothing warns; the rules simply
+    stop existing. On 2026-09-13 a four-line '#' comment ate QLabel#zoomLevel,
+    QFrame#panelRule and all three QPushButton#resetStep rules for several hours
+    — which is how the panel divider came to look "too bright" to Andreas: it was
+    falling back to Qt's default frame colour because ours had been eaten.
+
+    Cheap to check, and the failure mode is invisible without it.
+    """
+    from nocturne.ui import theme
+    bad = [ln for ln in theme.build_stylesheet().splitlines()
+           if ln.lstrip().startswith("#")]
+    assert not bad, (
+        "these look like comments but Qt reads them as selectors, and every rule "
+        f"after one is discarded: {bad}")
+
+
+def test_the_rules_that_were_eaten_actually_reach_a_widget():
+    """The guard above is syntactic. This one is the consequence: three rules
+    that were silently absent are asserted to take effect on real widgets, so a
+    future swallow is caught by what the user would SEE, not only by grep."""
+    from PySide6.QtWidgets import QApplication, QPushButton, QFrame, QLabel
+    from nocturne.ui import theme
+
+    app = QApplication.instance()
+    app.setStyleSheet(theme.build_stylesheet())
+
+    btn = QPushButton("Reset step"); btn.setObjectName("resetStep")
+    lbl = QLabel("100%"); lbl.setObjectName("zoomLevel")
+    rule = QFrame(); rule.setObjectName("panelRule")
+    rule.setFrameShape(QFrame.Shape.HLine)
+    for w in (btn, lbl, rule):
+        w.show()
+    app.processEvents()
+
+    def warm(widget):
+        img = widget.grab().toImage()
+        return sum(1 for y in range(img.height()) for x in range(img.width())
+                   if (lambda c: c.red() + c.green() + c.blue() > 200
+                       and c.red() - c.blue() > 12)(img.pixelColor(x, y)))
+
+    assert warm(btn) > 0, "QPushButton#resetStep's tint never reached the button"
+    assert lbl.fontInfo().pixelSize() == 12, "QLabel#zoomLevel's size never applied"

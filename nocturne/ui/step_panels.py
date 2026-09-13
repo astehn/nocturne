@@ -870,6 +870,7 @@ def build_panel(
         lay.addWidget(rule)
         lay.addSpacing(8)
         w.reset_step_btn = QPushButton("Reset step")
+        w.reset_step_btn.setObjectName("resetStep")   # warm tint, see theme.py
         w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
         if on_reset_step is not None:
             w.reset_step_btn.clicked.connect(lambda: on_reset_step())
