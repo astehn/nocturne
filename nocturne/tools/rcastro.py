@@ -123,8 +123,45 @@ class RCAstro:
             runner,
         )
 
-    def denoise(self, img: AstroImage, strength: float, *, runner=run_cli) -> AstroImage:
-        return self._run("nxt", img, ["--denoise", str(strength)], runner)
+    def denoise(self, img: AstroImage, strength: float, *,
+                iterations: int | None = None,
+                denoise_color: float | None = None,
+                runner=run_cli) -> AstroImage:
+        """NoiseXTerminator. `strength` is `--denoise`, the overall amount.
+
+        The two optional knobs are NXT's own and are passed only when given, so
+        omitting them reproduces the previous command line exactly:
+
+        `iterations` is `--it/--iterations`, which NXT documents as "number of
+        denoising iterations to perform" and DEFAULTS TO 2. Worth knowing before
+        reaching for it: running this method three times is not three
+        iterations, it is three lots of two, plus three model loads. Found
+        2026-09-13 while asking why AstroWizard invokes the CLI three times.
+
+        `denoise_color` is `--dc/--denoise-color`, the chrominance amount.
+        Giving it REPLACES `--denoise` with the disjoint pair
+        `--denoise-intensity <strength> --denoise-color <colour>`, because NXT
+        refuses the overlap outright:
+
+            Error: Conflicting denoise options: Denoise (denoise) and
+                   Denoise Color (denoise-color) both control the color,
+                   high-frequency noise band. Use options that cover
+                   disjoint bands.
+
+        So `--denoise` is not "overall amount plus optional extras"; it is one
+        of two ways to spell the same coverage, and the two cannot be mixed.
+        Measured on two masters, repeated passes improve chroma (5-15%) and
+        barely move luminance (under 2.5%), which is why this axis is worth
+        reaching at all.
+        """
+        if denoise_color is None:
+            extra = ["--denoise", str(strength)]
+        else:
+            extra = ["--denoise-intensity", str(strength),
+                     "--denoise-color", str(denoise_color)]
+        if iterations is not None:
+            extra += ["--iterations", str(int(iterations))]
+        return self._run("nxt", img, extra, runner)
 
     def remove_stars(
         self, img: AstroImage, *, unscreen: bool = True, runner=run_cli

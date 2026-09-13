@@ -40,6 +40,56 @@ def test_denoise_invokes_nxt_with_strength():
     assert out.data.shape == (8, 8, 3)
 
 
+def test_denoise_passes_no_extra_flags_unless_asked():
+    """The app's own command line must be unchanged by these options existing.
+
+    NoiseXTerminator has its own defaults (--iterations 2, --denoise-color
+    0.90); emitting them explicitly would silently pin values RC-Astro may
+    retune in a later build, and would make every recipe's result depend on
+    which Nocturne version wrote it."""
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+    captured = {}
+    RCAstro("/fake/rc-astro").denoise(
+        img, 0.9, runner=_capture_and_write(img, 1.0, captured))
+    args = captured["args"]
+    assert "--iterations" not in args
+    assert "--denoise-color" not in args
+
+
+def test_denoise_forwards_iterations_when_given():
+    """`--iterations` is the RIGHT way to iterate: calling denoise() three
+    times is three lots of NXT's default two, plus three model loads."""
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+    captured = {}
+    RCAstro("/fake/rc-astro").denoise(
+        img, 0.9, iterations=3, runner=_capture_and_write(img, 1.0, captured))
+    args = captured["args"]
+    assert args[args.index("--iterations") + 1] == "3"
+    assert args[args.index("--denoise") + 1] == "0.9"
+
+
+def test_denoise_colour_REPLACES_denoise_rather_than_joining_it():
+    """NXT rejects the two together, and says why:
+
+        Conflicting denoise options: Denoise (denoise) and Denoise Color
+        (denoise-color) both control the color, high-frequency noise band.
+        Use options that cover disjoint bands.
+
+    So `--denoise` is not "the overall amount, plus optional extras" — it is
+    one of two ways to spell the same coverage. Asking for a colour amount
+    switches to the disjoint pair. Found by the CLI refusing it outright, which
+    is the good kind of API."""
+    img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32))
+    captured = {}
+    RCAstro("/fake/rc-astro").denoise(
+        img, 0.9, denoise_color=0.95,
+        runner=_capture_and_write(img, 1.0, captured))
+    args = captured["args"]
+    assert "--denoise" not in args, "the overlapping option must be dropped"
+    assert args[args.index("--denoise-intensity") + 1] == "0.9"
+    assert args[args.index("--denoise-color") + 1] == "0.95"
+
+
 def test_preserves_is_linear():
     img = AstroImage(np.random.rand(8, 8, 3).astype(np.float32), is_linear=True)
     rc = RCAstro("/fake/rc-astro")

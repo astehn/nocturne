@@ -146,27 +146,37 @@ def _median_star_radius(lum: np.ndarray, stars) -> float:
 
 # ----------------------------------------------------------------- pipeline
 def denoise(img: AstroImage, step, option, passes: int,
-            label: str) -> AstroImage:
+            label: str, knobs: dict | None = None) -> AstroImage:
     """Run the real step `passes` times. AstroWizard runs NoiseXTerminator three
     times; whether repetition beats a single stronger pass is exactly what this
     script is for, so the passes go through the SAME code the app uses."""
     out = img
     for i in range(passes):
         t = time.time()
-        out = step.apply(out, option)
+        if knobs:
+            # Straight at the engine, so --iterations and --denoise-color can be
+            # exercised. The STEP has no opinion on these — they are NXT's own —
+            # and giving it one would mean shipping a setting before knowing
+            # whether it is worth having.
+            out = step._rc.denoise(out, knobs["strength"],
+                                   iterations=knobs.get("iterations"),
+                                   denoise_color=knobs.get("denoise_color"),
+                                   runner=step._runner)
+        else:
+            out = step.apply(out, option)
         print(f"      {label} pass {i + 1}/{passes}  ({time.time() - t:.1f}s)")
     return out
 
 
 def run_variant(base: AstroImage, *, position: str, passes: int, option,
-                stretch_amount: float, step) -> AstroImage:
-    """One variant. Identical to every other except `position` and `passes`."""
+                stretch_amount: float, step, knobs=None) -> AstroImage:
+    """One variant. Identical to every other except the things being swept."""
     img = base
     if position == "pre":
-        img = denoise(img, step, option, passes, "linear NR")
+        img = denoise(img, step, option, passes, "linear NR", knobs)
     img = apply_stretch(img, stretch_amount)
     if position == "post":
-        img = denoise(img, step, option, passes, "post-stretch NR")
+        img = denoise(img, step, option, passes, "post-stretch NR", knobs)
     return img
 
 
@@ -207,6 +217,13 @@ def main() -> int:
                     help="comma-separated: pre,post (default both)")
     ap.add_argument("--stretch", type=float, default=0.43,
                     help="stretch amount; default 0.43, the app's own default")
+    ap.add_argument("--iterations", default="",
+                    help="NXT --iterations values to try, comma-separated. "
+                         "NXT's own default is 2 and is used when this is "
+                         "omitted. rcastro engine only.")
+    ap.add_argument("--denoise-color", default="", dest="denoise_color",
+                    help="NXT --denoise-color values to try, comma-separated. "
+                         "Defaults to whatever --denoise is. rcastro only.")
     ap.add_argument("--crop", default=None, metavar="SPEC",
                     help="also write a 1:1 crop. SIZE (centred), X,Y (500 px "
                          "there) or X,Y,SIZE. e.g. --crop 600  or  --crop 2100,1400,600")
@@ -248,18 +265,45 @@ def main() -> int:
     rows.append(("none", "-", 0, measure(ctrl, stars)))
     _save(ctrl, os.path.join(args.out, "none.png"), crop, args.out, "none")
 
+    iters = [int(v) for v in args.iterations.split(",") if v.strip()] or [None]
+    colours = [float(v) for v in args.denoise_color.split(",") if v.strip()] or [None]
+    if args.engine != "rcastro" and (iters != [None] or colours != [None]):
+        print("note: --iterations and --denoise-color are NoiseXTerminator's "
+              "own options and are ignored for graxpert.")
+        iters, colours = [None], [None]
+
     for position in [p.strip() for p in args.positions.split(",") if p.strip()]:
         for passes in [int(p) for p in args.passes.split(",") if p.strip()]:
-            name = f"{position}_x{passes}"
-            print(f"\n--- {name}: {args.engine} {args.level} "
-                  f"(strength {strength}), {passes} pass(es), NR {position}-stretch ---")
-            t0 = time.time()
-            out = run_variant(base, position=position, passes=passes,
-                              option=option, stretch_amount=args.stretch, step=step)
-            took = time.time() - t0
-            rows.append((position, args.level, passes, measure(out, stars)))
-            rows[-1][3]["seconds"] = round(took, 1)
-            _save(out, os.path.join(args.out, name + ".png"), crop, args.out, name)
+            for it in iters:
+                for dc in colours:
+                    # Only reach past the step when there is something to say;
+                    # otherwise go through step.apply, which is the app's path.
+                    knobs = None
+                    if it is not None or dc is not None:
+                        knobs = {"strength": strength, "iterations": it,
+                                 "denoise_color": dc}
+                    name = f"{position}_x{passes}"
+                    extra = ""
+                    if it is not None:
+                        name += f"_it{it}"; extra += f", --iterations {it}"
+                    if dc is not None:
+                        name += f"_dc{dc}"; extra += f", --denoise-color {dc}"
+                    print(f"\n--- {name}: {args.engine} {args.level} "
+                          f"(strength {strength}), {passes} pass(es), "
+                          f"NR {position}-stretch{extra} ---")
+                    t0 = time.time()
+                    out = run_variant(base, position=position, passes=passes,
+                                      option=option, stretch_amount=args.stretch,
+                                      step=step, knobs=knobs)
+                    took = time.time() - t0
+                    m = measure(out, stars)
+                    m["seconds"] = round(took, 1)
+                    m["label"] = f"{position}-stretch x{passes}" + (
+                        f" it{it}" if it is not None else "") + (
+                        f" dc{dc}" if dc is not None else "")
+                    rows.append((position, args.level, passes, m))
+                    _save(out, os.path.join(args.out, name + ".png"), crop,
+                          args.out, name)
 
     _report(rows, args, strength)
     return 0
@@ -286,13 +330,14 @@ def _report(rows, args, strength) -> None:
     print(f"{args.engine} {args.level} (strength {strength})   "
           f"stretch {args.stretch}   master {os.path.basename(args.master)}")
     print("=" * 78)
-    print(f"{'variant':16s} {'lumN':>9s} {'chroma':>9s} {'starR':>8s} {'secs':>7s}")
+    print(f"{'variant':26s} {'lumN':>9s} {'chroma':>9s} {'starR':>8s} {'secs':>7s}")
     base_lum = rows[0][3]["lumN"]
     for position, level, passes, m in rows:
-        label = "no denoise" if passes == 0 else f"{position}-stretch x{passes}"
+        label = "no denoise" if passes == 0 else m.get(
+            "label", f"{position}-stretch x{passes}")
         drop = ("" if passes == 0 else
                 f"   {(1 - m['lumN'] / base_lum) * 100:.0f}% less noise")
-        print(f"{label:16s} {m['lumN']:9.5f} {m['chroma']:9.5f} "
+        print(f"{label:26s} {m['lumN']:9.5f} {m['chroma']:9.5f} "
               f"{m['starR']:8.3f} {m.get('seconds', 0):7.1f}{drop}")
     print("\nstarR must stay FLAT. A variant that wins on noise and loses star")
     print("radius has removed stars, and is not the better picture.")
