@@ -341,6 +341,8 @@ class MainWindow(QMainWindow):
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
+        # (panel, buttons this op disabled) — see _gate_panel_buttons
+        self._busy_gated = (None, [])
         self._cursor_active = False     # whether an override cursor is currently set
         self._busy_label_text = ""      # base label text (ellipsis animation appends)
         self._ellipsis_n = 0
@@ -3357,16 +3359,48 @@ class MainWindow(QMainWindow):
             self._sync_solve_panel()   # catches an aborted/failed solve stuck at "solving"
         self._back_btn.setDisabled(busy)            # gating stays immediate
         self._next_btn.setDisabled(busy)
-        if hasattr(self._panel, "apply_btn"):
-            self._panel.apply_btn.setDisabled(busy)
-        reset_btn = getattr(self._panel, "reset_step_btn", None)
-        if reset_btn is not None:
-            if busy:
-                reset_btn.setDisabled(True)
-            else:
-                self._sync_step_controls()   # restore real enablement, not just "on"
+        self._gate_panel_buttons(busy)
         if not busy:
+            self._sync_step_controls()   # restore real enablement, not just "on"
             self._land_deferred_nav()
+
+    def _gate_panel_buttons(self, busy: bool) -> None:
+        """Disable every button on the step panel while an operation runs.
+
+        INVERTED on purpose. This used to name the buttons it knew about —
+        apply_btn, then reset_step_btn — so each new control was a fresh chance
+        to forget one, and four separate findings on the step-commit branch
+        were exactly that omission (the background-stack button, Colour's tint
+        and remove-green buttons, Reset step, and Apply/Reset after a stepper
+        navigation rebuilt the panel). Enumerating the exceptions is a list that
+        goes stale; sweeping the panel is a rule that cannot.
+
+        Only buttons that were ENABLED get disabled, and only those get turned
+        back on — a button that was legitimately off (Apply with GraXpert
+        unconfigured) must not come back on just because an unrelated operation
+        finished. `_sync_step_controls` re-derives real enablement afterwards
+        either way.
+
+        The panel can be rebuilt mid-operation, which deletes the C++ objects
+        behind these wrappers, so restoring tolerates a dead widget rather than
+        assuming the panel it captured is still the panel on screen.
+        """
+        if busy:
+            panel = self._panel
+            self._busy_gated = (panel, [b for b in panel.findChildren(QPushButton)
+                                        if b.isEnabled()])
+            for btn in self._busy_gated[1]:
+                btn.setDisabled(True)
+            return
+        panel, buttons = getattr(self, "_busy_gated", (None, []))
+        self._busy_gated = (None, [])
+        if panel is not self._panel:
+            return              # rebuilt while we were away; its own state stands
+        for btn in buttons:
+            try:
+                btn.setEnabled(True)
+            except RuntimeError:
+                pass            # widget deleted under us; nothing to restore
 
     def _show_busy_visuals(self) -> None:
         self._busy_bar.show_over(self.image_view)
