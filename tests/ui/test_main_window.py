@@ -1510,7 +1510,7 @@ def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("green_fringe")               # no RC-Astro configured -> free split used
     assert win._fringe_ready is True
-    assert win._panel.fringe_slider.isEnabled() is True
+    assert win._panel.fringe_toggle.isEnabled() is True
     assert "RC-Astro" in win._panel.fringe_status.text()            # free-detection note
     assert "Needs RC-Astro" not in win._panel.fringe_status.text()  # not the old gate text
 
@@ -1519,10 +1519,10 @@ def _fake_rc_layers(win, monkeypatch):
     """A stand-in split that returns layers the SIZE OF WHAT IT WAS GIVEN.
 
     It used to return a fixed 16x16 pair whatever the base was, which is not
-    something a real split can do — and the fringe step now builds a
-    confinement mask from the base, so mismatched shapes stop broadcasting.
-    A fake that breaks the contract it stands in for only holds while nothing
-    relies on that contract.
+    something a real split can do. A fake that breaks the contract it stands in
+    for only holds while nothing relies on that contract — and something did:
+    the step built a base-sized mask, and mismatched shapes stopped
+    broadcasting. The mask is gone now, but the fake stays honest.
     """
     import numpy as np
     from nocturne.core.image import AstroImage
@@ -1544,7 +1544,7 @@ def test_green_fringe_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
     _fake_rc_layers(win, monkeypatch)
     win._go_to_id("green_fringe")               # sync split (_async_enabled False)
     assert win._fringe_ready is True
-    assert win._panel.fringe_slider.isEnabled() is True
+    assert win._panel.fringe_toggle.isEnabled() is True
     entries_before = [name for name, _ in win.project.entries()]
     win._on_fringe_change(0.6)
     win._render_fringe_preview()
@@ -5531,12 +5531,10 @@ def _prime_split(win, stage):
     elif stage == "green_fringe":
         base = win._fringe_base()
         starless, stars = split_stars(base)
-        # the same confinement mask _fringe_prepare caches, or preview and
-        # apply would legitimately disagree
-        from nocturne.core.starless import star_mask
-        from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
-        win._fringe_layers = (win._sr_sig(base), "split", starless, stars,
-                              star_mask(base, SPLIT_MASK_SCALE))
+        # Same five-slot shape _fringe_prepare caches; the last slot is unused
+        # on the split path (it held the confinement mask before the de-green
+        # became hue-selective and stopped needing one).
+        win._fringe_layers = (win._sr_sig(base), "split", starless, stars, None)
         win._fringe_ready = True
 
 

@@ -485,17 +485,23 @@ def test_green_fringe_panel_gated_and_wired(qtbot):
                     on_fringe_apply=lambda s: applied.__setitem__("s", s))
     qtbot.addWidget(w)
     assert w.panel_kind == "green_fringe"
-    assert hasattr(w, "fringe_status") and hasattr(w, "fringe_slider")
-    # slider + Apply start disabled (main_window enables once the split lands)
-    assert w.fringe_slider.isEnabled() is False
+    assert hasattr(w, "fringe_status") and hasattr(w, "fringe_toggle")
+    # toggle + Apply start disabled (main_window enables once the split lands)
+    assert w.fringe_toggle.isEnabled() is False
     assert w.apply_btn.isEnabled() is False
-    w.fringe_slider.setEnabled(True)
-    w.fringe_slider.setValue(60)
-    assert w.fringe_val.text().strip() == "0.60"
-    assert changed.get("s") == 0.60
+    assert w.fringe_toggle.isChecked() is False, \
+        "De-green Stars must arrive off, like every other optional step"
+    w.fringe_toggle.setEnabled(True)
+    w.fringe_toggle.setChecked(True)
+    assert changed.get("s") == 1.0
     w.apply_btn.setEnabled(True)
     w.apply_btn.click()
-    assert applied.get("s") == 0.60
+    assert applied.get("s") == 1.0
+    # ...and back off again: the toggle IS the A/B, so it has to report both ways.
+    w.fringe_toggle.setChecked(False)
+    assert changed.get("s") == 0.0
+    w.apply_btn.click()
+    assert applied.get("s") == 0.0
 
 
 def test_green_removal_starts_at_zero(qtbot):

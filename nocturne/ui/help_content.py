@@ -618,16 +618,18 @@ _TOPIC_LIST = (
        "de-greens the whole image instead, blended by a feathered mask around the "
        "stars — background colour can shift a little too.</p>"
        "<h4>How to use it</h4>"
-       "<p>Raise <b>Strength</b> until the green fringe on the stars fades (0 = off). "
-       "The star detection runs once when you enter the step, then the slider previews "
-       "instantly. Works without RC-Astro; setting RC-Astro (StarXTerminator) in "
-       "Settings gives a cleaner, stars-only result.</p>"
+       "<p>Tick <b>Remove green from stars</b> and Apply. It is a switch rather than "
+       "a strength, because there is no such thing as wanting a star to keep 40% of "
+       "a colour it should never have had. The star detection runs once when you "
+       "enter the step, then ticking and unticking previews instantly — that is also "
+       "the easiest way to see what it changed. Works without RC-Astro; setting "
+       "RC-Astro (StarXTerminator) in Settings gives a cleaner, stars-only result.</p>"
        "<h4>Tips</h4>"
-       "<p>A little usually does it. With RC-Astro, only the stars are affected, so "
-       "you can be fairly aggressive without shifting the overall colour. Without it, "
-       "keep an eye on the background as you raise Strength — it can pick up a shift "
-       "too. Removing the green often leaves the star a touch blue — a perfectly "
-       "natural star colour.</p>"),
+       "<p>Only pixels that actually read green are touched, and they become grey of "
+       "the same brightness — a cyan, yellow or orange star keeps its colour exactly. "
+       "So if you tick it and almost nothing moves, that is the honest answer: your "
+       "stars had no green to remove. Removing the green often leaves the star a "
+       "touch blue — a perfectly natural star colour.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",
@@ -1032,7 +1034,8 @@ _TOPIC_LIST = (
        "<p><b>Levels</b> — a black point measured off the stretched image (median minus 3.5 "
        "\u00d7 MAD), not a fixed number. Gamma and white are left alone.</p>"
        "<p><b>Saturation</b> at <b>0.50</b> with a light <b>0.20</b> nebula boost.</p>"
-       "<p><b>De-green Stars</b> at full strength.</p>"
+       "<p><b>De-green Stars</b> on — it only touches pixels that read green, so it "
+       "costs nothing on a stack that has none.</p>"
        "<p><b>Noise Reduction</b> at <i>strong</i>, always. The engine follows what you have "
        "installed — NoiseXTerminator if RC-Astro is set up, else GraXpert\u2019s denoiser, else "
        "Nocturne\u2019s own. The <i>level</i> is fixed rather than judged from the image: "

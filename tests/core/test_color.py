@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 from nocturne.core.image import AstroImage
 from nocturne.core.color import ColorSettings, apply_color
@@ -91,12 +92,14 @@ def test_remove_green_preserves_is_linear():
 def test_remove_green_fringe_masked_degreens_inside_mask_only():
     from nocturne.core.color import remove_green_fringe_masked
     data = np.zeros((4, 4, 3), dtype=np.float32)
-    data[..., 0] = 0.2; data[..., 1] = 0.8; data[..., 2] = 0.2   # strong green excess everywhere
+    data[..., 0] = 0.2; data[..., 1] = 0.8; data[..., 2] = 0.3   # green everywhere
     mask = np.zeros((4, 4), dtype=np.float32)
     mask[0, 0] = 1.0                                             # only this pixel is "near a star"
     out = remove_green_fringe_masked(AstroImage(data), mask, 1.0)
-    assert out.data[0, 0, 1] < 0.3                              # masked pixel de-greened to ~avg(R,B)
-    assert np.allclose(out.data[1, 1, 1], 0.8)                  # unmasked pixel untouched
+    r, g, b = out.data[0, 0]
+    assert r == pytest.approx(g, abs=1e-6) and g == pytest.approx(b, abs=1e-6), \
+        "the masked pixel should land on neutral, not merely lose some green"
+    assert np.allclose(out.data[1, 1], (0.2, 0.8, 0.3))          # unmasked pixel untouched
 
 
 def test_remove_green_fringe_masked_strength_zero_and_empty_mask_are_identity():

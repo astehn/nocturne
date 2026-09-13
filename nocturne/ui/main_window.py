@@ -57,7 +57,7 @@ from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
 from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
-from ..steps.green_fringe import FRINGE_MASK_SCALE, SPLIT_MASK_SCALE
+from ..steps.green_fringe import FRINGE_MASK_SCALE
 from ..core.stretch import apply_stretch
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
@@ -356,7 +356,7 @@ class MainWindow(QMainWindow):
         self._curve_timer.setSingleShot(True)
         self._curve_timer.timeout.connect(self._render_curve_preview)
         # Green-fringe live-preview: the (slow) StarX split runs once on entering
-        # the step (async, cached in _fringe_layers); the slider then previews the
+        # the step (async, cached in _fringe_layers); the toggle then previews the
         # instant de-green + recombine via a debounced (90 ms) render.
         self._fringe_layers = None    # (sig, starless, stars) once the split lands
         self._fringe_pending = None
@@ -3750,10 +3750,10 @@ class MainWindow(QMainWindow):
 
     def _setup_green_fringe(self) -> None:
         """On entering De-green Stars: run the split (StarX, or the free
-        fallback without RC-Astro) once, off-thread, and cache it. The slider
+        fallback without RC-Astro) once, off-thread, and cache it. The toggle
         then previews the instant de-green recombine. A cached split for the
         same base is reused; without RC-Astro a note is shown but the
-        slider/Apply stay enabled."""
+        toggle/Apply stay enabled."""
         self._fringe_pending = None
         if self.project is None:
             return
@@ -3769,15 +3769,15 @@ class MainWindow(QMainWindow):
         busy_label = "Separating stars…" if has_rc else "Building star mask…"
         if self._fringe_layers and self._fringe_layers[0] == sig:
             self._fringe_ready = True
-            if hasattr(panel, "fringe_slider"):
-                panel.fringe_slider.setEnabled(True)
+            if hasattr(panel, "fringe_toggle"):
+                panel.fringe_toggle.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
                 panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
             return
         self._fringe_ready = False
-        if hasattr(panel, "fringe_slider"):
-            panel.fringe_slider.setEnabled(False)
+        if hasattr(panel, "fringe_toggle"):
+            panel.fringe_toggle.setEnabled(False)
             panel.apply_btn.setEnabled(False)
             panel.fringe_status.setText(busy_label)
         self._run_busy(lambda: self._fringe_prepare(base),
@@ -3791,10 +3791,9 @@ class MainWindow(QMainWindow):
         star-neighbourhood mask and de-green the image in place inside it."""
         if rcastro_valid(self.settings):
             starless, stars = self._remove_stars(base)
-            # The confinement mask is built HERE, off-thread and once, not in
-            # _fringe_result: that runs on every slider tick, and star_mask on a
-            # 4331x3464 frame is not a per-tick cost.
-            return ("split", starless, stars, star_mask(base, SPLIT_MASK_SCALE))
+            return ("split", starless, stars, None)
+        # The mask is built HERE, off-thread and once, not in _fringe_result:
+        # star_mask on a 4331x3464 frame is not a per-toggle cost.
         return ("mask", base, star_mask(base, FRINGE_MASK_SCALE), None)
 
     def _fringe_status_text(self) -> str:
@@ -3805,7 +3804,13 @@ class MainWindow(QMainWindow):
         of reading the result, not a detail.
         """
         if self._fringe_path_label() == "StarX":
-            return "Using RC-Astro (StarX): only the stars are de-greened."
+            # Says "nothing to remove" out loud because that is the common
+            # case: only pixels that read green move, and a clean stack often
+            # has none. Without this the honest result is indistinguishable
+            # from a broken step — which is exactly how it read.
+            return ("Using RC-Astro (StarX): only the stars layer is touched, "
+                    "and only where it is actually green. No visible change "
+                    "means there was no green to remove.")
         # NOT _FREE_STAR_NOTE, which is shared with Star Reduction and
         # Saturation and says the free path is merely a less clean separation.
         # Here it is a different operation: the whole image is de-greened
@@ -3820,7 +3825,7 @@ class MainWindow(QMainWindow):
         StarX de-greens a stars layer and screen-recombines, touching almost
         nothing off the stars. Without it the free path de-greens the WHOLE
         image inside a dilated star mask, which on a dense field moves the sky
-        more than the stars. Same button, same slider, same step name — and
+        more than the stars. Same button, same toggle, same step name — and
         nothing anywhere said which one you got, which is why telling them
         apart took a measurement rather than a glance.
         """
@@ -3829,9 +3834,9 @@ class MainWindow(QMainWindow):
         return "StarX" if self._fringe_layers[1] == "split" else "mask"
 
     def _fringe_result(self, strength) -> AstroImage:
-        _, kind, a, b, c = self._fringe_layers
+        _, kind, a, b, _c = self._fringe_layers
         if kind == "split":
-            return remove_green_fringe(a, b, float(strength), c)
+            return remove_green_fringe(a, b, float(strength))
         return remove_green_fringe_masked(a, b, float(strength))
 
     def _on_fringe_split(self, sig, payload) -> None:
@@ -3839,11 +3844,14 @@ class MainWindow(QMainWindow):
             return
         self._fringe_layers = (sig,) + tuple(payload)
         self._fringe_ready = True
-        if hasattr(self._panel, "fringe_slider"):
-            self._panel.fringe_slider.setEnabled(True)
+        if hasattr(self._panel, "fringe_toggle"):
+            self._panel.fringe_toggle.setEnabled(True)
             self._panel.apply_btn.setEnabled(True)
-            self._panel.fringe_status.setText(
-                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+            # _fringe_status_text(), same as the cached-split branch in
+            # _setup_green_fringe. This used to set "" (StarX) or the generic
+            # free-star note, so the text that actually names which of the two
+            # implementations ran only ever appeared on a SECOND visit.
+            self._panel.fringe_status.setText(self._fringe_status_text())
         self._render_fringe_preview()
 
     def _on_fringe_change(self, strength: float) -> None:
@@ -3857,7 +3865,7 @@ class MainWindow(QMainWindow):
                 or not self._fringe_ready or not self._fringe_layers):
             return
         strength = (self._fringe_pending if self._fringe_pending is not None
-                    else self._panel.fringe_slider.value() / 100.0)
+                    else (1.0 if self._panel.fringe_toggle.isChecked() else 0.0))
         self._show_preview(self._fringe_result(strength).data)
 
     def _apply_green_fringe(self, strength) -> None:
@@ -3871,7 +3879,11 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("De-green Stars",
-                             f"{float(strength):.2f} ({self._fringe_path_label()})",
+                             # A switch, so the log says on/off rather than
+                             # "1.00", which read like a strength that could
+                             # have been something else.
+                             f"{'on' if float(strength) > 0.0 else 'off'} "
+                             f"({self._fringe_path_label()})",
                              rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("green_fringe")

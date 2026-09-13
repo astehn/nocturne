@@ -95,33 +95,107 @@ def _suppress_green_excess(data: np.ndarray, strength: float) -> np.ndarray:
     return out
 
 
+# Photoshop's Hue/Saturation "Greens" range: full effect over 105-135 deg,
+# ramping in from 75 and out to 165. Not a tuned number of ours — it is the
+# exact selection Andreas validated by eye, pulling a StarX stars layer into
+# Photoshop and dropping the Greens saturation to zero (2026-09-13).
+_GREEN_BAND = (75.0, 105.0, 135.0, 165.0)
+# The same band expressed as |t|, t = (hue - 120) / 60 — see _green_weight for
+# why that substitution is exact. Derived rather than written out so the band
+# above stays the single definition: hard-coding 0.75/0.25 next to it left a
+# constant that documented the code without controlling it.
+# A raise, not an assert: `python -O` strips asserts, and the shipped .app is
+# exactly where a dev-only guard going quiet would hurt.
+if ((_GREEN_BAND[1] - _GREEN_BAND[0]) != (_GREEN_BAND[3] - _GREEN_BAND[2])
+        or (_GREEN_BAND[1] + _GREEN_BAND[2]) != 240.0):
+    raise ValueError("_GREEN_BAND must stay symmetric about pure green (120 deg)")
+_T_OUTER = (120.0 - _GREEN_BAND[0]) / 60.0     # 0.75
+_T_INNER = (120.0 - _GREEN_BAND[1]) / 60.0     # 0.25
+
+
+def _green_weight(rgb: np.ndarray) -> np.ndarray:
+    """Per-pixel 0..1 "this pixel reads green", equivalent to selecting
+    `_GREEN_BAND` by HSV hue but without ever forming the hue angle.
+
+    Two facts collapse it to arithmetic. The band is symmetric about pure green
+    (120 deg), and all 90 deg of it sit inside the 60..180 arc where green is
+    the largest channel — so a pixel green is not the maximum of cannot score at
+    all, and for the rest hue = 120 + 60*(B-R)/span. Writing t for (B-R)/span,
+    the band's four corners 75/105/135/165 are just |t| = 0.75/0.25, giving
+    `w = clip((_T_OUTER - |t|) / (_T_OUTER - _T_INNER), 0, 1)`.
+
+    Worth the algebra: the literal hue-angle version needed boolean fancy
+    indexing over three channel-is-max cases and ran 0.84 s on a 4158x3326
+    frame, which is a visible lag on a control whose whole job is to be toggled
+    back and forth.
+
+    Neutral pixels have no hue and score 0, so a grey or black frame is
+    untouched without needing a separate guard.
+    """
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    span = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+    lit = span > 1e-9
+    t = (b - r) / np.where(lit, span, 1.0)
+    w = np.clip((_T_OUTER - np.abs(t)) / (_T_OUTER - _T_INNER), 0.0, 1.0)
+    # Two parts of this line survive mutation testing because they are
+    # redundant, not because they are untested — don't "fix" either one.
+    # `abs(t)`: the band is symmetric about pure green, so swapping r and b is
+    # an exact no-op. `g >= b`: if g >= r and b > g then r is the minimum, so
+    # span is exactly b - r and t is exactly 1.0, which the band already
+    # rejects. It stays because "green is the largest channel" is the intent,
+    # and one comparison is cheaper than a reader having to prove that.
+    return w * (lit & (g >= r) & (g >= b))
+
+
+def _desaturate_greens(data: np.ndarray, strength: float) -> np.ndarray:
+    """Move green pixels to neutral at the same luminance, leaving every other
+    hue alone. Returns a new float32 array; non-3-channel input is unchanged.
+
+    This is what "de-green" has to mean on a STARS layer, and it is not what
+    SCNR (`_suppress_green_excess`) does. SCNR removes green wherever green
+    exceeds the red/blue average, which is true of cyan and yellow-green too,
+    so on a stars layer it spends most of its effort dragging correctly
+    coloured stars toward magenta. Measured on two real drizzled masters
+    (2026-09-13), share of the green SCNR removes that came from pixels whose
+    hue actually reads green:
+
+                     green   cyan   yellow
+        NGC 281       4.0%   49.5%    9.4%
+        IC 1396A      5.6%    2.4%   35.5%
+
+    Selecting by hue instead is also what makes the star mask unnecessary: a
+    green fringe, green sky residue and a green nebula pixel are all things
+    nobody wants green, and no star is green in the first place (blackbody
+    colour runs red-orange-yellow-white-blue and never passes through green),
+    so there is nothing to protect by aiming.
+    """
+    out = data.astype(np.float32).copy()
+    if out.ndim != 3 or out.shape[-1] < 3:
+        return out
+    rgb = out[..., :3]
+    w = (_green_weight(rgb) * float(strength))[..., None]
+    # Rec.709 luma, so a de-greened fringe keeps the brightness it had and star
+    # size/brightness does not move — "green becomes white", not "green is
+    # deleted" (which is what SCNR's clamp to the red/blue average does).
+    lum = (rgb @ _LUM_WEIGHTS.astype(np.float32))[..., None]
+    out[..., :3] = (1.0 - w) * rgb + w * lum
+    return out
+
+
 def remove_green_fringe(starless: AstroImage, stars: AstroImage,
-                        strength: float, mask: np.ndarray | None = None) -> AstroImage:
+                        strength: float) -> AstroImage:
     """De-green the stars layer and screen-recombine with the untouched starless
     background. `strength` 0 = plain recombine.
 
-    `mask` confines the de-green to the star neighbourhood, and is not optional
-    in practice — it is what makes the claim "only stars change" true.
-
-    Without it this is only sound while the stars layer is SPARSE, and nothing
-    guarantees that. StarX returns everything it removed, which on a noisy frame
-    is mostly noise: measured on a real drizzled NGC 7000 master sitting after
-    Deconvolution, the stars layer carried content over 99.9% of the frame, and
-    de-greening it moved the far background (2.44/255) three times as much as
-    the star cores (0.78) — the exact inverse of what this function is for, and
-    a visible green cast across the image. Andreas found it by eye; the numbers
-    came after.
+    The starless layer is never opened, so nebula colour cannot move: whatever
+    OIII or Ha is in the image stays exactly as it was, and the most this can
+    reach is the faint ghost of it the split left in the stars layer.
     """
     strength = float(np.clip(strength, 0.0, 1.0))
     base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
     st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
     if strength > 0.0:
-        degreened = _suppress_green_excess(st, strength)
-        if mask is None:
-            st = degreened
-        else:
-            m = mask[..., None]
-            st = (1.0 - m) * st + m * degreened
+        st = _desaturate_greens(st, strength)
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))
@@ -129,18 +203,22 @@ def remove_green_fringe(starless: AstroImage, stars: AstroImage,
 
 def remove_green_fringe_masked(img: AstroImage, mask: np.ndarray,
                                strength: float) -> AstroImage:
-    """Free-path green-fringe removal (no StarXTerminator): suppress green excess
-    directly on the image, blended by a feathered star-neighbourhood `mask`, so
-    only the region around stars is de-greened and the nebula/background colour is
-    preserved. The free split can't isolate a broad chromatic halo into a stars
-    layer (a smooth halo is absorbed into the median background), so the
-    stars-layer de-green of `remove_green_fringe` barely touches real fringe —
-    de-greening in place inside the star mask does. `strength` 0 = unchanged."""
+    """Free-path green-fringe removal (no StarXTerminator): de-green directly on
+    the image, blended by a feathered star-neighbourhood `mask`. The free split
+    can't isolate a broad chromatic halo into a stars layer (a smooth halo is
+    absorbed into the median background), so the stars-layer de-green of
+    `remove_green_fringe` barely touches real fringe — de-greening in place
+    inside the star mask does. `strength` 0 = unchanged.
+
+    The mask stays here even though `_desaturate_greens` needs no aiming of its
+    own, because this path works on the ORIGINAL image, nebula included. The
+    StarX path gets its protection from the split (the nebula is in the layer
+    it never opens); without a split, the star mask is that protection."""
     strength = float(np.clip(strength, 0.0, 1.0))
     data = np.clip(img.data.astype(np.float32), 0.0, 1.0)
     if strength <= 0.0 or not img.is_color or mask is None or float(mask.max()) <= 0.0:
         return AstroImage(data, is_linear=img.is_linear, metadata=dict(img.metadata))
-    degreened = _suppress_green_excess(data, strength)
+    degreened = _desaturate_greens(data, strength)
     m = mask[..., None]
     out = (1.0 - m) * data + m * degreened
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),

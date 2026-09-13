@@ -597,6 +597,12 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "green_fringe":
+        # A switch, not a slider: no star is green (blackbody colour runs
+        # red-orange-yellow-white-blue and never passes through green), so a
+        # green pixel on a star is always wrong and there is no such thing as
+        # wanting 40% of it. The toggle doubles as the A/B — tick and untick to
+        # see the difference live, which beats a strength you have to guess.
+        #
         # With RC-Astro (StarX) the split gives a clean stars layer, so
         # de-greening it and screen-recombining really does touch only the
         # stars. Without it there is no clean stars layer to de-green in
@@ -607,38 +613,32 @@ def build_panel(
         # >=50% weight, 2.5% at full strength) — enough that background green
         # noise visibly shifts too. The description below has to say so.
         lay.addWidget(_desc_label(
-            "Remove the green colour fringe around stars. With RC-Astro (StarX), "
-            "only the stars are de-greened and nebula colour is untouched. Without "
-            "it, the free path de-greens the whole image instead, blended by a "
-            "feathered mask centred on stars — background colour can shift too. "
-            "0 = off."))
+            "Neutralise green on stars — green pixels become grey of the same "
+            "brightness, and every other colour is left alone. With RC-Astro "
+            "(StarX), only the stars layer is touched and nebula colour cannot "
+            "move. Without it, the free path works on the whole image inside a "
+            "feathered mask centred on stars, so background colour can shift too."))
         status = _desc_label("")   # main_window sets the split/mask label or gate text
         lay.addWidget(status)
-        slider = ResetSlider(0)
-        fringe_val = QLabel(f"{slider.value() / 100:.2f}")
+        toggle = QCheckBox("Remove green from stars")
 
         def _emit_fringe(*_):
-            fringe_val.setText(f"{slider.value() / 100:.2f}")
             if on_fringe_change is not None:
-                on_fringe_change(slider.value() / 100.0)
+                on_fringe_change(1.0 if toggle.isChecked() else 0.0)
 
-        slider.valueChanged.connect(_emit_fringe)
+        toggle.toggled.connect(_emit_fringe)
         apply_btn = QPushButton("Apply De-green Stars")
         apply_btn.setObjectName("primary")
         if on_fringe_apply is not None:
-            apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(
+                lambda: on_fringe_apply(1.0 if toggle.isChecked() else 0.0))
         # Start disabled — main_window enables once the (slow) StarX split is ready.
-        slider.setEnabled(False)
+        toggle.setEnabled(False)
         apply_btn.setEnabled(False)
-        fringe_row = QHBoxLayout()
-        fringe_row.addWidget(QLabel("Strength (off → full)"))
-        fringe_row.addWidget(fringe_val)
-        lay.addLayout(fringe_row)
-        lay.addWidget(slider)
+        lay.addWidget(toggle)
         lay.addWidget(apply_btn)
         w.fringe_status = status
-        w.fringe_slider = slider
-        w.fringe_val = fringe_val
+        w.fringe_toggle = toggle
         w.apply_btn = apply_btn
 
     elif stage.kind == "recover_core":

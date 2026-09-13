@@ -1269,7 +1269,7 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
            f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost" in b
     assert plan["local_contrast"] == AUTO_LOCAL_CONTRAST
     assert f"<b>{AUTO_LOCAL_CONTRAST:.2f}</b>" in b
-    assert plan["green_fringe"] == AUTO_GREEN_FRINGE == 1.0 and "at full strength" in b
+    assert plan["green_fringe"] == AUTO_GREEN_FRINGE == 1.0 and "De-green Stars</b> on" in b
     assert plan["noise_sharpen"]["level"] == AUTO_DENOISE_STRONG
     assert f"at <i>{AUTO_DENOISE_STRONG}</i>, always" in b
     assert plan["noise_sharpen"]["engine"] is None      # nothing installed

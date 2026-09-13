@@ -100,52 +100,87 @@ def test_green_fringe_step_splits_then_degreens():
     step = GreenFringeStep(_FakeRC())
     img = AstroImage(np.full((4, 4, 3), 0.5, np.float32))
     out = step.apply(img, 0.6).data
-    # Masked now: the stars-layer de-green is confined to the star
-    # neighbourhood, so the step must match the MASKED call, not the bare one.
-    from nocturne.core.starless import star_mask
-    from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
-    expected = remove_green_fringe(starless, stars, 0.6,
-                                   star_mask(img, SPLIT_MASK_SCALE)).data
+    expected = remove_green_fringe(starless, stars, 0.6).data
     assert np.allclose(out, expected)
 
 
-def test_the_stars_layer_degreen_is_confined_to_the_star_neighbourhood():
-    """StarX returns everything it removed, which on a noisy frame is mostly
-    NOISE — measured at 99.9% of the frame on a real drizzled master. De-greening
-    that unmasked moved the far background three times as much as the star cores,
-    the exact inverse of what this step is for. The mask is what makes "only
-    stars change" true rather than merely intended."""
+def test_the_stars_layer_degreen_touches_only_pixels_that_READ_green():
+    """What replaced the star mask, and the reason it could go.
+
+    The step used to confine itself to a star-neighbourhood mask because its
+    operator was SCNR, which removes green wherever green exceeds the red/blue
+    average — true of cyan and yellow-green too. Measured on two real drizzled
+    masters (2026-09-13), only 4.0% (NGC 281) and 5.6% (IC 1396A) of the green
+    SCNR removed came from pixels whose hue actually reads green; on NGC 281
+    49.5% of it came from CYAN. So the mask was fencing off a badly aimed
+    operator rather than aiming a good one.
+
+    Selecting by hue is self-aiming, so the guarantee is no longer spatial
+    ("only near stars") but chromatic. Three separate things have to hold and
+    each swatch below is chosen so that exactly ONE of them protects it:
+
+      * the green-is-max gate      (magenta, violet — inside the |t| band, but
+                                    green is not their largest channel)
+      * the band edges             (hue 170 just outside; hue 150 half in)
+      * Rec.709 luma preservation  (the green swatch's exact landing value)
+
+    Picked that way on purpose. A first version used a plain cyan and a plain
+    yellow, and BOTH mechanisms rejected each of them — so widening the band
+    and deleting the gate were each invisible, and two of three mutations
+    passed against a test that looked thorough.
+    """
     import numpy as np
     from nocturne.core.image import AstroImage
-    from nocturne.core.color import remove_green_fringe
-    from nocturne.core.starless import star_mask
-    from nocturne.steps.green_fringe import SPLIT_MASK_SCALE
+    from nocturne.core.color import remove_green_fringe, _LUM_WEIGHTS
 
-    rng = np.random.default_rng(0)
-    h = w = 96
-    base = np.full((h, w, 3), 0.25, np.float32)
-    base[..., 1] += 0.05                                   # a green cast everywhere
-    base += rng.normal(0, 0.01, base.shape).astype(np.float32)
-    base[46:50, 46:50] = (0.8, 0.95, 0.8)                  # one bright green-ish star
-    img = AstroImage(np.clip(base, 0, 1), is_linear=False)
+    # (name, rgb, expected weight). Deliberately asymmetric channel values: a
+    # fixture whose numbers commute cannot tell a correct hue rule from one
+    # with red and blue swapped.
+    swatches = [
+        ("green   hue 120", (0.21, 0.83, 0.21), 1.0),    # dead centre of the band
+        ("grn-cyan hue 150", (0.05, 0.75, 0.40), 0.5),   # t=+0.5, half weight
+        ("grn-cyan hue 170", (0.05, 0.75, 0.633), 0.0),  # t=+0.833, just outside
+        ("yel-grn hue  90", (0.40, 0.75, 0.05), 0.5),    # t=-0.5, the mirror
+        ("magenta hue 330", (0.90, 0.50, 0.70), 0.0),    # |t|=0.5 but red is max
+        ("violet  hue 260", (0.70, 0.60, 0.90), 0.0),    # |t|=0.667 but blue is max
+        ("cyan    hue 180", (0.11, 0.80, 0.80), 0.0),
+        ("blue    hue 240", (0.18, 0.31, 0.88), 0.0),
+    ]
+    stars = np.zeros((1, len(swatches), 3), np.float32)
+    for i, (_n, rgb, _w) in enumerate(swatches):
+        stars[0, i] = rgb
+    starless = AstroImage(np.zeros((1, len(swatches), 3), np.float32), is_linear=False)
 
-    starless = AstroImage(np.clip(base - 0.02, 0, 1).astype(np.float32), is_linear=False)
-    # NOISE everywhere, and GREEN-heavy — a neutral grey stars layer has no
-    # green excess to suppress, so de-greening it is a no-op and the test would
-    # pass against any implementation.
-    noise = np.zeros((h, w, 3), np.float32)
-    noise[..., 0] = 0.01
-    noise[..., 1] = 0.04
-    noise[..., 2] = 0.01
-    stars = AstroImage(noise, is_linear=False)
+    out = remove_green_fringe(starless, AstroImage(stars, is_linear=False), 1.0).data
+    for i, (name, rgb, weight) in enumerate(swatches):
+        px = np.asarray(rgb, np.float32)
+        lum = float(px @ _LUM_WEIGHTS.astype(np.float32))
+        want = (1.0 - weight) * px + weight * lum
+        assert np.allclose(out[0, i], want, atol=1e-5), \
+            f"{name}: expected {want} at weight {weight}, got {out[0, i]}"
 
-    mask = star_mask(img, SPLIT_MASK_SCALE)
-    confined = remove_green_fringe(starless, stars, 1.0, mask).data
-    unmasked = remove_green_fringe(starless, stars, 1.0).data
 
-    far = mask <= 0.0
-    assert far.any(), "no unmasked region to check — the fixture has no clean sky"
-    assert np.allclose(confined[far], np.clip(1 - (1 - starless.data) * (1 - stars.data), 0, 1)[far]), \
-        "the confined de-green still moved sky outside the star neighbourhood"
-    assert not np.allclose(unmasked[far], confined[far]), \
-        "the fixture cannot tell masked from unmasked — it proves nothing"
+def test_degreening_a_star_preserves_its_brightness():
+    """Green becomes WHITE, not gone.
+
+    SCNR clamps green to the red/blue average, which on a green-dominant pixel
+    deletes the light rather than neutralising it — a de-greened star gets
+    dimmer and smaller. Andreas asked for the Photoshop move (select greens,
+    drop saturation to zero), and keeping luma is what makes it that move.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.color import remove_green_fringe, _LUM_WEIGHTS
+
+    stars = np.zeros((1, 1, 3), np.float32)
+    stars[0, 0] = (0.21, 0.83, 0.21)
+    starless = AstroImage(np.zeros((1, 1, 3), np.float32), is_linear=False)
+    out = remove_green_fringe(starless, AstroImage(stars, is_linear=False), 1.0).data
+
+    w = _LUM_WEIGHTS.astype(np.float32)
+    before = float(stars[0, 0] @ w)
+    after = float(out[0, 0] @ w)
+    assert abs(after - before) < 1e-5, \
+        f"de-greening changed the star's brightness: {before} -> {after}"
+    r, g, b = out[0, 0]
+    assert abs(r - g) < 1e-5 and abs(g - b) < 1e-5, "and it should land neutral"
