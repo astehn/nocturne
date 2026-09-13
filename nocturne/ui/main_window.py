@@ -112,6 +112,25 @@ def _clip_phrase(frac: float, channel: str, verb: str) -> str:
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
 _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 
+# What the confirm calls each geometry action, in the user's words rather than
+# the history's. The history stores "Flip H" because the provenance report and
+# the recipe need a stable key; a dialog asking "Flip H?" reads like a column
+# heading. Same split as GEOMETRY_NAMES vs the toolbar labels.
+_GEOMETRY_LABEL = {
+    "Rotate": "Rotate 90°",
+    "Flip H": "Flip horizontally",
+    "Flip V": "Flip vertically",
+}
+
+
+def _listed(names: list[str]) -> str:
+    """"A, B and C" — the human form. Shared by the two destructive confirms so
+    they cannot drift into listing the same casualties differently."""
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
 _FREE_STAR_NOTE = (
     "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
 )
@@ -2823,20 +2842,57 @@ class MainWindow(QMainWindow):
         paths; there is no redo). Same reasoning as _ask_pending above and
         _reset_image below: the safe default is still "change nothing".
         """
-        listed = (", ".join(names[:-1]) + f" and {names[-1]}"
-                  if len(names) > 1 else names[0])
+        return self._confirm_destructive(
+            f"{verb} {step_label} again?" if repeat else f"{verb} {step_label}?",
+            f"This discards {_listed(names)}, "
+            + ("applied at this step." if own_work else "applied after it."),
+            verb)
+
+    def _confirm_destructive(self, headline: str, detail: str, verb: str) -> bool:
+        """The one destructive-confirm dialog. True means go ahead.
+
+        The default is Cancel, held BY REFERENCE. `buttons()` returns LAYOUT
+        order, not insertion order, so `buttons()[-1]` handed the default to the
+        DESTRUCTIVE button — Return, or the reflex of hitting the highlighted
+        one, irreversibly discarded the named steps (jump_back deletes the
+        paths; there is no redo). That defect reached review because no test
+        ever executed the body. It lives in ONE place now so a second caller
+        cannot reintroduce it by copying an older shape.
+        """
         box = QMessageBox(self)
         box.setWindowTitle(f"{APP_NAME} — {verb}")
-        box.setText(f"{verb} {step_label} again?" if repeat
-                    else f"{verb} {step_label}?")
-        box.setInformativeText(
-            f"This discards {listed}, "
-            + ("applied at this step." if own_work else "applied after it."))
+        box.setText(headline)
+        box.setInformativeText(detail)
         go = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
         cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel)
         box.exec()
         return box.clickedButton() is go
+
+    def _ask_geometry(self, names: list[str], label: str) -> bool:
+        """Rotate / Flip discard ALL processing, and say so in their own words.
+
+        Its own message rather than a flag on `_ask_truncation`: that one's
+        "applied after it" is about work that happened later than the step being
+        re-applied, and here there is no "after" — re-framing the picture
+        invalidates every processing step there is, whenever it was applied.
+        Mixing the two readings into one sentence muddled both, which is why
+        the step-commit branch deliberately left this path alone.
+        """
+        return self._confirm_destructive(
+            f"{label}?",
+            f"This discards {_listed(names)}. Rotating or flipping re-frames "
+            "the picture, so the processing has to be done again.",
+            label)
+
+    def _confirm_geometry(self, label: str, target: int) -> bool:
+        casualties: list[str] = []
+        for name, _ in self.project.entries()[target:]:
+            if name not in casualties:
+                casualties.append(name)
+        if not casualties:
+            return True
+        return self._ask_geometry(casualties, label)
 
     def _confirm_truncation(self, step_id: str, target: int, verb: str) -> bool:
         """False means the user cancelled and NOTHING may be discarded.
@@ -3378,7 +3434,10 @@ class MainWindow(QMainWindow):
     def _apply_geometry(self, name: str, params) -> None:
         if self.project is None or self._busy:
             return
-        self.project.jump_back(self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES)))
+        target = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
+        if not self._confirm_geometry(_GEOMETRY_LABEL.get(name, name), target):
+            return
+        self.project.jump_back(target)
         result = self._step_for("crop").apply(self.project.current(), params)
         self.project.run_step(_PrecomputedStep(name, result), "")
         self._mark_dirty()

@@ -101,3 +101,30 @@ def _refuse_real_truncation_prompt(monkeypatch):
             f"{names!r}. Stub MainWindow._ask_truncation via monkeypatch.")
 
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _refuse_real_geometry_prompt(monkeypatch):
+    """Same guard again, for the Rotate/Flip confirm.
+
+    Rotate and Flip discard ALL processing, so `_apply_geometry` asks before
+    truncating — and like the two above it builds its own QMessageBox and calls
+    .exec(), which headless blocks forever instead of failing. Refusing loudly
+    is deliberately not "return True": a test that unexpectedly opens this
+    prompt has discovered that its fixture now has processing history to lose,
+    which is worth knowing rather than papering over.
+    """
+    try:
+        from nocturne.ui import main_window as mw
+    except ImportError:
+        return
+
+    monkeypatch.setattr(mw.MainWindow, "_real_ask_geometry", mw.MainWindow._ask_geometry,
+                        raising=False)
+
+    def refuse(self, names, label):
+        raise AssertionError(
+            f"a real geometry-confirm prompt was opened in a test for {names!r} "
+            f"({label}). Stub MainWindow._ask_geometry via monkeypatch.")
+
+    monkeypatch.setattr(mw.MainWindow, "_ask_geometry", refuse)

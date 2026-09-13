@@ -29,6 +29,15 @@ def _window(qtbot, tmp_path):
     return win
 
 
+
+def _allow_geometry(win):
+    """These tests discard real processing on purpose, so the Rotate/Flip
+    confirm has to be answered. Bound to the INSTANCE, not the class, so it
+    cannot leak into a sibling test that should still be caught by the
+    conftest guard."""
+    win._ask_geometry = lambda names, label: True
+    return win
+
 def test_open_fits_stays_on_import_with_metadata(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -846,7 +855,7 @@ def test_reset_declined_keeps_edits(qtbot, tmp_path, monkeypatch):
 
 def test_geometry_after_processing_reapply_no_corruption(qtbot, tmp_path):
     from nocturne.core.crop import CropParams
-    win = _window(qtbot, tmp_path)
+    win = _allow_geometry(_window(qtbot, tmp_path))
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("crop")
     win._apply_geometry("Crop", CropParams(bounds=(4, 20, 4, 20)))  # -> 16x16
@@ -2012,7 +2021,7 @@ def test_solve_sig_stable_under_tonal_steps_changes_on_geometry(qtbot, tmp_path)
     # The plate-solve cache keys on FRAMING (shape + geometry ops), not pixel
     # content: the WCS is invariant under tonal steps (which don't move stars),
     # so a solve stays valid through them; only Crop/Rotate/Flip re-solve.
-    win = _window(qtbot, tmp_path)
+    win = _allow_geometry(_window(qtbot, tmp_path))
     win.open_fits(_make_fits(tmp_path))
     base = win._solve_sig()
 
@@ -2667,7 +2676,7 @@ def test_share_receives_the_annotated_frame_when_solved(qtbot, tmp_path, monkeyp
 def test_share_gets_no_annotations_when_the_solve_is_stale(qtbot, tmp_path, monkeypatch):
     """A solution belongs to the framing it was made for; burning a stale one
     into a shared image would publish labels in the wrong places."""
-    win = _stretched_window(qtbot, tmp_path)
+    win = _allow_geometry(_stretched_window(qtbot, tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
     (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
