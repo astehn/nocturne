@@ -19,7 +19,7 @@ from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
 
-_SPLIT_MSG = "Removing stars…\n(one-time, then tweak live)"
+_SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
 _TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
 
@@ -213,7 +213,7 @@ class NarrowbandDialog(QDialog):
         self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
 
     def _on_starless(self, layers) -> None:
-        # A compare set up while "Removing stars..." was on screen would be left
+        # A compare set up while "Separating stars..." was on screen would be left
         # pointing at an image the dialog is about to replace.
         self.compare_check.setChecked(False)
         self.preview.view.set_compare(None)
@@ -358,7 +358,7 @@ class NarrowbandDialog(QDialog):
         again, had run through run_async in this same dialog all along.
         """
         if self._starless is None:
-            self.status.setText("Still removing stars…")
+            self.status.setText("Still separating stars…")
             return
         if self._applying:
             return

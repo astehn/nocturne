@@ -19,7 +19,7 @@ from .range_handles import RangeHandles
 from .reset_slider import ResetSlider
 from .worker import run_async
 
-_SPLIT_MSG = "Removing stars…\n(one-time, then tweak live)"
+_SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
 _PREVIEW_MAX = 640
 _DEBOUNCE_MS = 90
@@ -476,7 +476,7 @@ class ColorBalanceDialog(QDialog):
         that once cost a whole session.
         """
         if self._starless is None:
-            self.status.setText("Still removing stars…")
+            self.status.setText("Still separating stars…")
             return
         # Read every control HERE, on the GUI thread, and hand the worker plain
         # values. The controls are frozen too: with a snapshot a mid-Apply drag
