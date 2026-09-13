@@ -170,6 +170,27 @@ def run_variant(base: AstroImage, *, position: str, passes: int, option,
     return img
 
 
+def parse_crop(spec: str | None):
+    """`SIZE` | `X,Y` | `X,Y,SIZE` -> (x, y, size) or (None, None, size) for a
+    centred crop. Forgiving on purpose: a bare number is the obvious thing to
+    type and there is no reason to refuse it."""
+    if not spec:
+        return None
+    parts = [p.strip() for p in str(spec).split(",") if p.strip()]
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        raise ValueError(f"--crop wants whole numbers, got {spec!r}")
+    if len(nums) == 1:
+        return (None, None, nums[0])          # centred crop of this size
+    if len(nums) == 2:
+        return (nums[0], nums[1], 500)
+    if len(nums) == 3:
+        return (nums[0], nums[1], nums[2])
+    raise ValueError(
+        f"--crop takes SIZE, X,Y or X,Y,SIZE — got {len(nums)} values in {spec!r}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -186,9 +207,18 @@ def main() -> int:
                     help="comma-separated: pre,post (default both)")
     ap.add_argument("--stretch", type=float, default=0.43,
                     help="stretch amount; default 0.43, the app's own default")
-    ap.add_argument("--crop", default=None, metavar="X,Y,SIZE",
-                    help="also write a 1:1 crop at this pixel, e.g. 2000,1500,400")
+    ap.add_argument("--crop", default=None, metavar="SPEC",
+                    help="also write a 1:1 crop. SIZE (centred), X,Y (500 px "
+                         "there) or X,Y,SIZE. e.g. --crop 600  or  --crop 2100,1400,600")
     args = ap.parse_args()
+
+    # Validated HERE, before the minute of loading, calibrating and star
+    # detection — a bad argument used to crash after all of that, on the first
+    # _save. Cheap checks belong before expensive work, not after it.
+    try:
+        crop = parse_crop(args.crop)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     # The SAME settings file the app uses, so the engines and their paths
     # are exactly what you get when you press the button in Nocturne.
@@ -216,7 +246,7 @@ def main() -> int:
     n = 0 if stars is None else len(stars[0])
     print(f"  {n} reference stars, measured at these positions in every variant")
     rows.append(("none", "-", 0, measure(ctrl, stars)))
-    _save(ctrl, os.path.join(args.out, "none.png"), args.crop, args.out, "none")
+    _save(ctrl, os.path.join(args.out, "none.png"), crop, args.out, "none")
 
     for position in [p.strip() for p in args.positions.split(",") if p.strip()]:
         for passes in [int(p) for p in args.passes.split(",") if p.strip()]:
@@ -229,20 +259,23 @@ def main() -> int:
             took = time.time() - t0
             rows.append((position, args.level, passes, measure(out, stars)))
             rows[-1][3]["seconds"] = round(took, 1)
-            _save(out, os.path.join(args.out, name + ".png"), args.crop, args.out, name)
+            _save(out, os.path.join(args.out, name + ".png"), crop, args.out, name)
 
     _report(rows, args, strength)
     return 0
 
 
-def _save(img: AstroImage, path: str, crop: str | None, out_dir: str, name: str) -> None:
+def _save(img: AstroImage, path: str, crop, out_dir: str, name: str) -> None:
     from PIL import Image
     from nocturne.ui.preview import to_rgb8
     rgb = to_rgb8(img)
     Image.fromarray(rgb).save(path)
     if crop:
-        x, y, size = (int(v) for v in crop.split(","))
+        x, y, size = crop
         h, w = rgb.shape[:2]
+        size = max(16, min(size, h, w))
+        if x is None:
+            x, y = (w - size) // 2, (h - size) // 2
         x = max(0, min(x, w - size)); y = max(0, min(y, h - size))
         Image.fromarray(rgb[y:y + size, x:x + size]).save(
             os.path.join(out_dir, f"crop_{name}.png"))
