@@ -1675,7 +1675,7 @@ def test_green_fringe_revisited_asks_and_declining_keeps_later_work(
     win._sr_layers = (
         win._sr_sig(sr_base),
         AstroImage(sr_base.data * 0.4, is_linear=sr_base.is_linear),
-        AstroImage(sr_base.data * 0.6, is_linear=sr_base.is_linear))
+        AstroImage(sr_base.data * 0.6, is_linear=sr_base.is_linear), "StarX")
     win._sr_ready = True
     win._apply_star_reduction(0.5)   # later work; frontier for SR, so silent
     before = list(win.project.entries())
@@ -1696,7 +1696,7 @@ def test_star_reduction_frontier_apply_does_not_prompt(qtbot, tmp_path):
     win._sr_layers = (
         win._sr_sig(base),
         AstroImage(base.data * 0.4, is_linear=base.is_linear),
-        AstroImage(base.data * 0.6, is_linear=base.is_linear))
+        AstroImage(base.data * 0.6, is_linear=base.is_linear), "StarX")
     win._sr_ready = True
     win._apply_star_reduction(0.5)
     win._apply_star_reduction(0.6)
@@ -1710,7 +1710,7 @@ def test_star_reduction_revisited_asks_and_declining_keeps_later_work(
     win._sr_layers = (
         win._sr_sig(base),
         AstroImage(base.data * 0.4, is_linear=base.is_linear),
-        AstroImage(base.data * 0.6, is_linear=base.is_linear))
+        AstroImage(base.data * 0.6, is_linear=base.is_linear), "StarX")
     win._sr_ready = True
     win._apply_star_reduction(0.5)
     win._enhance("Boost Red")   # later work; a plain append, no truncation at all

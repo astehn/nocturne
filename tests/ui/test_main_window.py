@@ -1469,7 +1469,7 @@ def test_star_reduction_preview_renders(qtbot, tmp_path):
     base = win.project.current()
     starless = AstroImage(base.data * 0.4, is_linear=base.is_linear)
     stars = AstroImage(base.data * 0.6, is_linear=base.is_linear)
-    win._sr_layers = (win._sr_sig(base), starless, stars)
+    win._sr_layers = (win._sr_sig(base), starless, stars, "StarX")
     win._sr_ready = True
     win._on_sr_change(0.7)
     win._render_sr_preview()
@@ -1488,7 +1488,7 @@ def test_apply_star_reduction_commits(qtbot, tmp_path):
     base = win.project.current()
     starless = AstroImage(base.data * 0.4, is_linear=base.is_linear)
     stars = AstroImage(base.data * 0.6, is_linear=base.is_linear)
-    win._sr_layers = (win._sr_sig(base), starless, stars)
+    win._sr_layers = (win._sr_sig(base), starless, stars, "StarX")
     win._sr_ready = True
     win._apply_star_reduction(0.5)
     assert win.project.entries()[-1][0] == "Star Reduction"
@@ -4835,7 +4835,7 @@ def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monk
     cur = win.project.current()
     starless = AstroImage(cur.data * 0.8, is_linear=False, metadata=dict(cur.metadata))
     stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
-    win._sr_layers = (win._sr_sig(cur), starless, stars)
+    win._sr_layers = (win._sr_sig(cur), starless, stars, "StarX")
 
     win._open_color_balance()
     assert _RecordingCB.opened[-1]["starless"] is starless, (
@@ -5526,7 +5526,7 @@ def _prime_split(win, stage):
     if stage == "star_reduction":
         base = win._preview_base("star_reduction")
         starless, stars = split_stars(base)
-        win._sr_layers = (win._sr_sig(base), starless, stars)
+        win._sr_layers = (win._sr_sig(base), starless, stars, "StarX")
         win._sr_ready = True
     elif stage == "green_fringe":
         base = win._fringe_base()
@@ -5610,7 +5610,7 @@ def test_saturation_preview_equals_what_its_handler_commits(qtbot, tmp_path):
 
     base = win._preview_base("saturation")
     starless, stars = split_stars(base)
-    win._sat_layers = (win._sr_sig(base), starless, stars)
+    win._sat_layers = (win._sr_sig(base), starless, stars, "StarX")
 
     win._sat_pending = (1.4, 0.3)
     win._render_saturation_preview()

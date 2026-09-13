@@ -332,7 +332,7 @@ class MainWindow(QMainWindow):
         self._sat_timer = QTimer(self)
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
-        self._sat_layers = None   # (sig, starless, stars) once a split lands
+        self._sat_layers = None   # (sig, starless, stars, path) once a split lands
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
         self._lc_timer = QTimer(self)
@@ -379,7 +379,7 @@ class MainWindow(QMainWindow):
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
-        self._sr_layers = None    # (sig, starless, stars) once the split lands
+        self._sr_layers = None    # (sig, starless, stars, path) once the split lands
         self._cb_layers = None    # the same, for Colour Balance — see _cached_split
         self._sr_pending = None
         self._sr_ready = False
@@ -1066,7 +1066,7 @@ class MainWindow(QMainWindow):
         base = self.project.current()
 
         def work():
-            return self._remove_stars(base)
+            return self._split_tagged(base)
 
         def on_result(split) -> None:
             # Deferred to the next event-loop turn, NOT opened here. `.exec()`
@@ -1093,7 +1093,11 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return              # workspace closed while the split was running
         from .starless_levels_dialog import StarlessLevelsDialog
-        starless, stars = split
+        starless, stars, path = split
+        # Stashed rather than passed in: the dialog does not split and has no
+        # business knowing about engines, but the log line this tool writes is
+        # the only place a user can learn which separation they got.
+        self._starless_levels_path = path
         StarlessLevelsDialog(starless, stars, parent=self,
                               on_apply=self._apply_starless_levels).exec()
 
@@ -1104,7 +1108,9 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         black, white = values
         self.log_panel.append_entry(format_log_entry(
-            "Starless Levels", f"black {black:.2f} / white {white:.2f}", None))
+            "Starless Levels",
+            f"black {black:.2f} / white {white:.2f} "
+            f"({getattr(self, '_starless_levels_path', 'StarX')})", None))
         self._clear_warning()
         self._refresh()
 
@@ -1612,11 +1618,48 @@ class MainWindow(QMainWindow):
         self.image_view.set_annotations(build_annotation_group(prims, (h, w)),
                                         keep_visibility=keep_visibility)
 
-    def _remove_stars(self, img):
+    def _split_tagged(self, img):
+        """`(starless, stars, path)` — the split, plus WHICH engine produced it.
+
+        The path travels back with the result instead of being read off the
+        settings afterwards. The split runs on a worker thread and the settings
+        can change while it is in flight, so "which one ran" is only honest if
+        it is recorded where the choice is actually made. Same reason
+        `_fringe_layers` carries its own kind.
+        """
         if rcastro_valid(self.settings):
             rc = RCAstro(resolve_binary(self.settings.rcastro_path))
-            return rc.remove_stars(img, runner=self._rc_runner)
-        return split_stars(img)
+            return (*rc.remove_stars(img, runner=self._rc_runner), "StarX")
+        return (*split_stars(img), "free")
+
+    def _remove_stars(self, img):
+        starless, stars, _path = self._split_tagged(img)
+        return starless, stars
+
+    def _sat_log_option(self, amount: float, nebula: float) -> str:
+        """Saturation's log line, naming the split path only when there WAS one.
+
+        The nebula boost is the only part that splits, and it is lazy — at
+        `neb 0.00` no separation has run, so naming an engine there would be
+        reporting work the step did not do.
+        """
+        text = f"{amount:.2f} / neb {nebula:.2f}"
+        if nebula > 0.0 and self._sat_layers:
+            text += f" ({self._sat_layers[3]})"
+        return text
+
+    @staticmethod
+    def _split_note(path: str) -> str:
+        """What the panel says once a split has landed.
+
+        Names BOTH paths. Saying nothing on the StarX branch was the bug: the
+        free branch already showed a note, so silence read as "no note applies
+        here" rather than "you got the good one" — and the two separations are
+        different enough that which one ran is part of reading the result.
+        """
+        if path == "StarX":
+            return "Separated with RC-Astro (StarX)."
+        return _FREE_STAR_NOTE
 
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
@@ -3572,7 +3615,10 @@ class MainWindow(QMainWindow):
         if self.project is None or not hasattr(self._panel, "neb_slider"):
             return
         self._panel.neb_slider.setEnabled(True)
-        self._panel.neb_status.setText("" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+        # Before the split has run there is no path to name yet, so this is the
+        # only place that still previews the choice from the settings.
+        self._panel.neb_status.setText(
+            "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
 
     def _on_sat_change(self, amount: float, nebula: float) -> None:
         """A Saturation slider moved: stash both values; lazily split for the
@@ -3583,7 +3629,7 @@ class MainWindow(QMainWindow):
             sig = self._sr_sig(base)
             if not (self._sat_layers and self._sat_layers[0] == sig):
                 self._panel.neb_status.setText("Separating stars…")
-                self._run_busy(lambda: self._remove_stars(base),
+                self._run_busy(lambda: self._split_tagged(base),
                                lambda layers: self._on_sat_split(sig, layers),
                                "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
@@ -3592,10 +3638,9 @@ class MainWindow(QMainWindow):
     def _on_sat_split(self, sig, layers) -> None:
         if self.current_stage_id() != "saturation":
             return
-        self._sat_layers = (sig, layers[0], layers[1])
+        self._sat_layers = (sig, layers[0], layers[1], layers[2])
         if hasattr(self._panel, "neb_status"):
-            self._panel.neb_status.setText(
-                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+            self._panel.neb_status.setText(self._split_note(layers[2]))
         self._render_saturation_preview()
 
     def _sat_result(self, base, amount, nebula):
@@ -3604,7 +3649,7 @@ class MainWindow(QMainWindow):
         when the split isn't ready."""
         img = base
         if nebula > 0.0 and self._sat_layers and self._sat_layers[0] == self._sr_sig(base):
-            _, starless, stars = self._sat_layers
+            _, starless, stars, _path = self._sat_layers
             img = nebula_saturate(starless, stars, nebula)
         return saturate(img, amount)
 
@@ -3631,7 +3676,7 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Saturation", f"{amount:.2f} / neb {nebula:.2f}", None))
+            format_log_entry("Saturation", self._sat_log_option(amount, nebula), None))
         self._clear_warning()
         self._clear_pending("saturation")
         self._refresh()
@@ -3947,8 +3992,7 @@ class MainWindow(QMainWindow):
             if hasattr(panel, "sr_slider"):
                 panel.sr_slider.setEnabled(True)
                 panel.apply_btn.setEnabled(True)
-                panel.sr_status.setText(
-                    "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+                panel.sr_status.setText(self._split_note(self._sr_layers[3]))
             self._render_sr_preview()
             return
         self._sr_ready = False
@@ -3956,7 +4000,7 @@ class MainWindow(QMainWindow):
             panel.sr_slider.setEnabled(False)
             panel.apply_btn.setEnabled(False)
             panel.sr_status.setText("Separating stars…")
-        self._run_busy(lambda: self._remove_stars(base),
+        self._run_busy(lambda: self._split_tagged(base),
                        lambda layers: self._on_sr_split(sig, layers),
                        "Separating stars…", "Star separation failed")
 
@@ -3965,13 +4009,12 @@ class MainWindow(QMainWindow):
         user has already navigated away from Star Reduction."""
         if self.current_stage_id() != "star_reduction":
             return
-        self._sr_layers = (sig, layers[0], layers[1])
+        self._sr_layers = (sig, layers[0], layers[1], layers[2])
         self._sr_ready = True
         if hasattr(self._panel, "sr_slider"):
             self._panel.sr_slider.setEnabled(True)
             self._panel.apply_btn.setEnabled(True)
-            self._panel.sr_status.setText(
-                "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+            self._panel.sr_status.setText(self._split_note(layers[2]))
         self._render_sr_preview()
 
     def _on_sr_change(self, amount: float) -> None:
@@ -3989,7 +4032,7 @@ class MainWindow(QMainWindow):
             return
         amount = (self._sr_pending if self._sr_pending is not None
                   else self._panel.sr_slider.value() / 100.0)
-        _, starless, stars = self._sr_layers
+        _, starless, stars, _path = self._sr_layers
         self._show_preview(reduce_stars(starless, stars, amount).data)
 
     def _apply_star_reduction(self, amount) -> None:
@@ -3999,12 +4042,13 @@ class MainWindow(QMainWindow):
             return
         if not self._truncate_for("star_reduction", "Apply"):
             return
-        _, starless, stars = self._sr_layers
+        _, starless, stars, _path = self._sr_layers
         result = reduce_stars(starless, stars, float(amount))
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Star Reduction", f"{float(amount):.2f}", None))
+            format_log_entry("Star Reduction",
+                             f"{float(amount):.2f} ({self._sr_layers[3]})", None))
         self._clear_warning()
         self._clear_pending("star_reduction")
         self._refresh()
