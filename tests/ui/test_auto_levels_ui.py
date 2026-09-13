@@ -147,6 +147,10 @@ def test_opening_another_image_forgets_that_auto_was_pressed(qtbot, tmp_path):
     assert win._levels_auto is True
     second = tmp_path / "second"
     second.mkdir()
+    # Auto leaves a pending Levels preview, and opening another image now asks
+    # about one rather than taking it silently. Answer it: this test is about
+    # what B inherits, not about the prompt.
+    win._ask_pending = lambda label: "discard"
     win.open_fits(_make_fits(second))
     win._go_to_id("levels")
     assert win._levels_auto is False

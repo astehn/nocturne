@@ -704,7 +704,35 @@ class MainWindow(QMainWindow):
 
     def _confirm_save_if_dirty(self) -> bool:
         """Guard for actions that discard the current project (open/close). Returns
-        True when it's safe to proceed. If dirty, offers Save / Discard / Cancel."""
+        True when it's safe to proceed. If dirty, offers Save / Discard / Cancel.
+
+        A pending PREVIEW is asked about first, and separately, because `_dirty`
+        cannot see one: it tracks commits, and a preview has not been committed.
+        That was the last silent-loss hole left by the step-commit branch —
+        navigation guarded a pending change, but opening another image or
+        quitting took it without a word. It is the same question in both cases,
+        so it is deliberately the same dialog, `_ask_pending`.
+
+        Order matters: pending first. Saving would write a bundle that does not
+        contain the preview, so asking "save?" before "what about the change you
+        have not applied?" invites someone to save and still lose it.
+        """
+        if self.project is not None and self._has_pending():
+            answer = self._ask_pending(self._stages[self._stage].label)
+            if answer == "cancel":
+                return False
+            if answer == "apply":
+                self._apply_current_step()
+                if self._busy:
+                    # A compute stage dispatched its commit off the UI thread.
+                    # Navigation defers and lands later (`_deferred_nav`); there
+                    # is no equivalent for replacing the workspace, and pushing
+                    # on would delete the snapshot files the worker is still
+                    # reading — the race `_save_and_wait` documents. Stop, say
+                    # so, and let them repeat the action when it lands.
+                    self._show_output(
+                        "Applying — try again once it finishes.")
+                    return False
         if not self._dirty or self.project is None:
             return True
         resp = QMessageBox.question(

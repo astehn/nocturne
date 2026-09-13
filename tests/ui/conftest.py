@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 
 
@@ -72,6 +74,12 @@ def _refuse_real_pending_prompt(monkeypatch):
                         raising=False)
 
     def refuse(self, step_label):
+        # Quitting with an unapplied preview asks, and qtbot closes every test
+        # window at teardown — which is not a user quitting. Answer "discard"
+        # for that one caller instead of failing the test that owned it.
+        # Tests that actually exercise the quit prompt stub this themselves.
+        if any(f.function == "closeEvent" for f in inspect.stack()[1:8]):
+            return "discard"
         raise AssertionError(
             f"a real pending-change prompt was opened in a test for "
             f"{step_label!r}. Stub MainWindow._ask_pending via monkeypatch.")
