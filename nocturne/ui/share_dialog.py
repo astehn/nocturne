@@ -6,7 +6,7 @@ from dataclasses import replace
 import numpy as np
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -103,13 +103,22 @@ class ShareDialog(QDialog):
         self._image_view.cropBoxChanged.connect(lambda *_: self._refresh_preview())
         self._image_view.cropBoxShown.connect(self._refresh_preview)
 
-        self._preview_label = QLabel()
-        self._preview_label.setMinimumSize(240, 220)
-        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Ignored, or the scaled pixmap becomes the label's size hint and a large
-        # preview walks the splitter wider every time it is repainted.
-        self._preview_label.setSizePolicy(QSizePolicy.Policy.Ignored,
-                                          QSizePolicy.Policy.Ignored)
+        # An ImageView, not a QLabel holding a scaled pixmap. Andreas asked for
+        # pan/tilt/zoom here (2026-09-13) so he can judge the title plate's
+        # placement, colour and size — at pane scale a 4096 px share renders
+        # around 25%, which is not a size anyone can decide typography at.
+        #
+        # The left pane already uses this widget, and it brings fit-on-new-image,
+        # fit-across-resize-unless-deliberately-zoomed, and the zoom pill with
+        # it. That deleted the bespoke `_paint_preview` scaling plus the
+        # resizeEvent and showEvent workarounds that existed to re-fit a pixmap
+        # by hand. Crop overlay is left OFF: the reframing box belongs to the
+        # left pane, and a second one here would be the third crop tool on
+        # screen.
+        self._preview_view = ImageView()
+        self._preview_view.setMinimumSize(240, 220)
+        self._preview_view.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                         QSizePolicy.Policy.Ignored)
         self._preview_image = None
 
         self._reframe_hint = QLabel(
@@ -348,7 +357,7 @@ class ShareDialog(QDialog):
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self._image_view)
-        self.splitter.addWidget(self._preview_label)
+        self.splitter.addWidget(self._preview_view)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([500, 500])
@@ -661,39 +670,23 @@ class ShareDialog(QDialog):
         self._paint_preview()
 
     def _paint_preview(self) -> None:
-        """Scale the last composed image to whatever room the label has NOW.
+        """Hand the composed image to the view.
 
-        Split from _refresh_preview because __init__ calls that before the
-        layout has run, when the label is still at its 240x220 minimum: the
-        preview was scaled to a fraction of the pane it eventually occupied and
-        never re-scaled, so it sat as a small picture in a large empty box for
-        the life of the dialog. That is tolerable for checking a crop and not
-        for judging type, which is what this pane is now for.
+        Still a separate method from `_refresh_preview` so a resize can repaint
+        without recomposing — a drag emits a resize per frame and composing a
+        4096 px share on each one would make the dialog crawl. The view does the
+        fitting itself, including the first-open case that used to need a
+        showEvent workaround here.
         """
         if getattr(self, "_preview_image", None) is None:
             return
-        self._preview_label.setPixmap(QPixmap.fromImage(self._preview_image).scaled(
-            self._preview_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation))
+        self._preview_view.set_image(self._preview_image)
 
     def resizeEvent(self, event) -> None:
         # Re-scale from the stored image rather than recomposing: a drag emits a
         # resize per frame, and composing a 4096 px share on each one would make
         # the dialog crawl.
         super().resizeEvent(event)
-        self._paint_preview()
-
-    def showEvent(self, event) -> None:  # noqa: N802
-        """Paint once more after the layout has settled.
-
-        resizeEvent alone is not enough: the resizes that happen while the
-        dialog is being shown arrive before the splitter has taken its final
-        geometry, so the preview was still scaled to a stale, smaller pane —
-        measured 276x345 inside a 547x473 pane on first open. Same shape as the
-        workaround narrowband_dialog carries, and as ImageView.resizeEvent now
-        solves for the widget case.
-        """
-        super().showEvent(event)
         self._paint_preview()
 
     # --- export / copy ---

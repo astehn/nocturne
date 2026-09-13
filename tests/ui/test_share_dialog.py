@@ -513,25 +513,37 @@ def test_an_empty_plate_does_not_inherit_the_last_warning(qtbot):
     assert d.status.text() == ""
 
 
+def _shown_size(view):
+    """How large the image actually renders, in view pixels. The preview is an
+    ImageView now, so the picture's size is the scene rect times the zoom
+    rather than a pixmap's dimensions."""
+    rect = view._item.boundingRect()
+    z = view.zoom()
+    return rect.width() * z, rect.height() * z
+
+
 def test_the_preview_fills_the_pane_it_is_given(qtbot):
-    """__init__ composes before the layout has run, when the label is still at
+    """__init__ composes before the layout has run, when the pane is still at
     its 240x220 minimum. Without a re-fit the preview stayed that size for the
     life of the dialog — a small picture in a large empty box. Tolerable for
-    checking a crop, not for judging type, which is what this pane is now for."""
+    checking a crop, not for judging type, which is what this pane is now for.
+
+    ImageView re-fits on resize by itself (unless the user has deliberately
+    zoomed), which is what removed the hand-rolled scaling this used to test."""
     d = _dlg(qtbot)
     d.resize(1200, 760)
     d.show()
     qtbot.waitExposed(d)
-    small = d._preview_label.pixmap().size()
+    small_w, _ = _shown_size(d._preview_view)
     d.resize(1600, 1000)
-    qtbot.waitUntil(lambda: d._preview_label.pixmap().width() > small.width(), timeout=2000)
-    assert d._preview_label.pixmap().width() > small.width()
+    qtbot.waitUntil(lambda: _shown_size(d._preview_view)[0] > small_w, timeout=2000)
     # ...and it must actually USE the pane. Fitting means filling ONE axis: a
     # portrait share in a wide pane is limited by height, and asserting on
     # width alone failed the moment the controls moved into a side column and
     # left the preview much wider than it is tall.
-    pm, pane = d._preview_label.pixmap(), d._preview_label
-    assert pm.height() >= pane.height() * 0.95 or pm.width() >= pane.width() * 0.95
+    w, h = _shown_size(d._preview_view)
+    pane = d._preview_view.viewport()
+    assert h >= pane.height() * 0.95 or w >= pane.width() * 0.95
 
 
 def test_resizing_does_not_recompose(qtbot):
@@ -575,10 +587,10 @@ def test_the_preview_is_right_sized_on_FIRST_open(qtbot):
     d.resize(1120, 700)
     d.show()
     qtbot.waitExposed(d)
-    pane = d._preview_label
-    pm = pane.pixmap()
-    assert pm.height() >= pane.height() * 0.95 or pm.width() >= pane.width() * 0.95, (
-        f"first open shows {pm.width()}x{pm.height()} in a {pane.width()}x{pane.height()} pane")
+    pane = d._preview_view.viewport()
+    w, h = _shown_size(d._preview_view)
+    assert h >= pane.height() * 0.95 or w >= pane.width() * 0.95, (
+        f"first open shows {w:.0f}x{h:.0f} in a {pane.width()}x{pane.height()} pane")
 
 
 def test_a_build_with_no_bundled_fonts_says_so_instead_of_lying(qtbot, monkeypatch):
