@@ -85,3 +85,56 @@ def test_the_width_does_not_change_with_the_value(qtbot):
     narrow = pill.level.sizeHint().width()
     pill.set_zoom(32.0)
     assert pill.level.sizeHint().width() == narrow
+
+
+def test_the_stylesheet_uses_no_properties_qt_rejects():
+    """Qt Style Sheets are a SUBSET of CSS, and an unsupported property is not
+    an error — Qt prints "Unknown property x" to stderr, once per widget the
+    sheet touches, and carries on.
+
+    Andreas saw eleven of those on startup because `font-variant-numeric:
+    tabular-nums` went into the zoom label: a web habit Qt does not implement.
+    It was redundant anyway — the label's fixed width is what stops the pill
+    jittering.
+
+    A STATIC scan of the built sheet, not a runtime probe. The runtime version
+    of this test was written first and was toothless: Qt emits the warning when
+    it polishes a widget against a freshly parsed rule, and re-setting the
+    sheet inside a test that already has one produced no warning at all. It
+    passed with the bad property restored, which is the worst kind of guard.
+
+    A blocklist rather than a whitelist, and deliberately so: enumerating
+    everything Qt DOES support would break on the next legitimate property,
+    while these are the CSS names most likely to be reached for out of habit.
+    """
+    import re
+    from nocturne.ui import theme
+
+    # CSS properties Qt Style Sheets do not implement. Each would be silently
+    # ignored, with a line of stderr noise per styled widget.
+    unsupported = {
+        "font-variant-numeric", "font-variant", "font-feature-settings",
+        "box-shadow", "text-shadow", "transition", "transform", "animation",
+        "filter", "backdrop-filter", "flex", "flex-direction", "gap",
+        "grid-template-columns", "align-items", "justify-content",
+        "cursor", "overflow", "z-index", "content", "user-select",
+        "pointer-events", "object-fit", "aspect-ratio",
+    }
+    sheet = theme.build_stylesheet()
+    used = {m.lower() for m in re.findall(r"(?m)^\s*([a-z-]+)\s*:", sheet)}
+    # ...and properties inside a one-line rule body, which is most of this sheet.
+    used |= {m.lower() for m in re.findall(r"[{;]\s*([a-z-]+)\s*:", sheet)}
+
+    bad = sorted(used & unsupported)
+    assert not bad, (
+        f"Qt Style Sheets do not implement {bad} — it will be ignored and print "
+        f"'Unknown property' once per styled widget on startup")
+
+
+def test_that_scan_can_actually_fail():
+    """Proves the regex reaches into a rule body. The property that caused this
+    sits mid-line in a single-line rule, which a line-anchored scan misses."""
+    import re
+    sheet = "QLabel#x {{ color: #888; font-size: 12px; font-variant-numeric: tabular-nums; }}"
+    used = {m.lower() for m in re.findall(r"[{;]\s*([a-z-]+)\s*:", sheet)}
+    assert "font-variant-numeric" in used

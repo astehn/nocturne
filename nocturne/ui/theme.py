@@ -108,7 +108,11 @@ QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {T
     font-size: 15px; padding: 0; }}
 QWidget#zoomPill QPushButton:hover {{ color: {ACCENT}; }}
 QWidget#zoomPill QPushButton:pressed {{ background: transparent; color: {ACCENT_HI}; }}
-QLabel#zoomLevel {{ color: {TEXT_DIM}; font-size: 12px; font-variant-numeric: tabular-nums; }}
+# No font-variant-numeric here: Qt Style Sheets implement a SUBSET of CSS and
+# reject it with 'Unknown property font-variant-numeric' on every widget the
+# sheet is applied to — eleven lines of noise on startup. The label carries a
+# fixed width instead, which is what actually stops the pill jittering.
+QLabel#zoomLevel {{ color: {TEXT_DIM}; font-size: 12px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}
 QLabel#objectListTitle {{ color: {TEXT}; font-size: 12px; font-weight: 600; }}
