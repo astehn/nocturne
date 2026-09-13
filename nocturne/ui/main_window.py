@@ -3239,10 +3239,22 @@ class MainWindow(QMainWindow):
             label = option
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
-    def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
+    def _run_busy(self, work, on_result, label: str, err_prefix: str,
+                  *, over_image: bool = True) -> None:
         """Run `work` off the UI thread with busy indication; `on_result(result)`
         on success, `f"{err_prefix}: {exc}"` in the status label on failure.
         Busy is always cleared in a finally (even if `on_result` raises).
+
+        `over_image=False` keeps the sweeping bar OFF the picture and reports in
+        the right panel alone. Andreas's rule, 2026-09-13: the bar over the
+        image belongs to work the user asked for that is about to change the
+        image. Walking into a step and finding it separating stars is neither —
+        nothing is being changed and nothing was requested — so the panel's
+        label, elapsed time, progress and Cancel carry it on their own.
+
+        The busy CURSOR stays in both cases. It is not "over the image"; it is
+        what tells you the click you just made is being ignored, and an app that
+        silently swallows input reads as broken rather than busy.
 
         Publishes a `CancelToken` (`self._active_token`) so `_cancel_active()` can
         request a clean stop; the token is set as the AMBIENT token on the worker
@@ -3255,6 +3267,8 @@ class MainWindow(QMainWindow):
         # already published to the worker thread just below.
         token.on_progress = self._tool_progress.progress.emit
         self._active_token = token
+        # Read by _show_busy_visuals, which fires on a timer rather than here.
+        self._busy_over_image = over_image
         self._busy_start = _time.monotonic()
         self._set_busy(True, label)
         gen = self._project_gen        # the workspace this result will belong to
@@ -3421,7 +3435,8 @@ class MainWindow(QMainWindow):
                 pass            # widget deleted under us; nothing to restore
 
     def _show_busy_visuals(self) -> None:
-        self._busy_bar.show_over(self.image_view)
+        if getattr(self, "_busy_over_image", True):
+            self._busy_bar.show_over(self.image_view)
         self._ellipsis_n = 0
         self._busy_label.setText(self._busy_label_text)
         self._ellipsis_timer.start()
@@ -3439,8 +3454,9 @@ class MainWindow(QMainWindow):
         self._ellipsis_timer.stop()
         self._elapsed_timer.stop()
         if self._busy_shown:
-            self._busy_bar.hide_bar()
+            self._busy_bar.hide_bar()       # no-op when it was never shown
             self._busy_label.setText("")
+        self._busy_over_image = True        # the default for the next op
         if self._cursor_active:
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
@@ -3872,9 +3888,11 @@ class MainWindow(QMainWindow):
             sig = self._sr_sig(base)
             if not (self._sat_layers and self._sat_layers[0] == sig):
                 self._panel.neb_status.setText("Separating stars…")
+                # Step-entry preparation: panel only, no bar over the picture.
                 self._run_busy(lambda: self._split_tagged(base),
                                lambda layers: self._on_sat_split(sig, layers),
-                               "Separating stars…", "Star separation failed")
+                               "Separating stars…", "Star separation failed",
+                               over_image=False)
         self._sat_timer.start(90)
         self._sync_step_controls()
 
@@ -4070,7 +4088,9 @@ class MainWindow(QMainWindow):
             panel.fringe_status.setText(busy_label)
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
-                       busy_label, "Star separation failed" if has_rc else "Star mask failed")
+                       busy_label,
+                       "Star separation failed" if has_rc else "Star mask failed",
+                       over_image=False)      # step-entry preparation
 
     def _fringe_prepare(self, base):
         """Off-thread: build what the fringe preview de-greens. StarX gives a
@@ -4245,7 +4265,8 @@ class MainWindow(QMainWindow):
             panel.sr_status.setText("Separating stars…")
         self._run_busy(lambda: self._split_tagged(base),
                        lambda layers: self._on_sr_split(sig, layers),
-                       "Separating stars…", "Star separation failed")
+                       "Separating stars…", "Star separation failed",
+                       over_image=False)      # step-entry preparation
 
     def _on_sr_split(self, sig, layers) -> None:
         """The split finished: cache it and enable the slider — unless the
