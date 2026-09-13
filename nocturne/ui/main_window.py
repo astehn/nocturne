@@ -2440,6 +2440,36 @@ class MainWindow(QMainWindow):
             # after committing exactly what it said.
             target.method_baseline = target.method_box.currentText()
 
+    def _process_option_default(self, stage_id: str) -> str:
+        """What a process stage's dropdown should READ on arrival.
+
+        The committed option when there is one, so a revisited step reports the
+        image it is actually looking at. It used to be `default_option()`
+        unconditionally: apply Deconvolution at "strong", navigate away, come
+        back, and the box read "medium" over an image with "strong" baked into
+        it. The panel misreported its own subject.
+
+        `option_baseline` is taken straight off the box in `build_panel`, so
+        seeding this correctly also stops a revisited stage reading as pending
+        on arrival — which is how the step-commit review found it, as a false
+        prompt for a step nobody had touched.
+
+        **Background's "off" is not recoverable here, deliberately.** Choosing
+        it records no history entry (see `apply_current`), so
+        `_committed_option` cannot tell "off" from "never applied", and both
+        land on the step's default of "strong". Reading the history the other
+        way — no entry therefore "off" — is worse: it is right for the user who
+        chose "off" and wrong for every freshly-opened image, and it would also
+        switch off the `never_applied` green that exists to say "this step
+        needs pressing". One stage after one choice keeps a stale reading;
+        three stages after every commit no longer do.
+        """
+        step = self._step_for(stage_id)
+        committed = self._committed_option(stage_id)
+        if isinstance(committed, str) and committed in step.options():
+            return committed
+        return step.default_option()
+
     def _committed_option(self, stage_id: str) -> object | None:
         """The option recorded by this stage's last commit, or None if it has
         never been applied to this image."""
@@ -4518,7 +4548,7 @@ class MainWindow(QMainWindow):
             on_reset_step=self._reset_step,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
-            option_default=(self._step_for(stage.id).default_option()
+            option_default=(self._process_option_default(stage.id)
                             if stage.kind == "process" else None),
             denoise_engine_choices=denoise_choices,
             denoise_default_engine=self.settings.denoise_engine,
