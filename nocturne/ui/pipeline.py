@@ -102,8 +102,14 @@ def core_stages() -> list[Stage]:
     return list(_CORE)
 
 
-def path_stages() -> list[Stage]:
-    return list(_CORE) + list(_IN_APP_TAIL)
+def path_stages(omit: frozenset[str] = frozenset()) -> list[Stage]:
+    """The visible pipeline, minus any stage ids in `omit`.
+
+    Filtered rather than flag-mutated because `Stage` is frozen and `_CORE` is
+    module level: every caller is handed the SAME objects, so mutating one would
+    poison every later project in the session.
+    """
+    return [s for s in list(_CORE) + list(_IN_APP_TAIL) if s.id not in omit]
 
 
 def next_enabled(stages: list[Stage], index: int) -> int:

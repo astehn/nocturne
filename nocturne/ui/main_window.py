@@ -278,7 +278,13 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
-        self._stages = path_stages()
+        # How LINEAR data is DRAWN. A view preference, never image state: it is
+        # a property of how you are looking, not of what you captured, so it
+        # lives here rather than on AstroImage.metadata. Measurements keep the
+        # default deliberately — see core.autostretch.autostretch. Set BEFORE
+        # the stage list, which asks it which stages to omit.
+        self._view_linked = True
+        self._stages = path_stages(self._omitted_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -356,11 +362,6 @@ class MainWindow(QMainWindow):
         self._canvas_img = None  # the AstroImage actually on the canvas (peek-aware)
         self._compare_img = None  # the AstroImage shown left of the before/after divider
         self._show_clipping = False
-        # How LINEAR data is DRAWN. A view preference, never image state: it is
-        # a property of how you are looking, not of what you captured, so it
-        # lives here rather than on AstroImage.metadata. Measurements keep the
-        # default deliberately — see core.autostretch.autostretch.
-        self._view_linked = True
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -3819,8 +3820,34 @@ class MainWindow(QMainWindow):
         if linked == self._view_linked:
             return
         self._view_linked = linked
+        self._rebuild_stages()
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
+
+    def _omitted_stages(self) -> frozenset[str]:
+        """Colour does NOTHING under an unlinked stretch, so it is not offered.
+
+        Both of its jobs are per-channel and multiplicative — a background
+        balance and photometric gains — and a per-channel normalisation is
+        exactly what removes those. Measured on IC 1396A at 0.000 and 0.0004 of
+        an 8-bit level. De-green is not in this step; it moved to its own
+        post-stretch stage on 2026-09-13, so nothing is lost by hiding it.
+        """
+        return frozenset() if self._view_linked else frozenset({"color"})
+
+    def _rebuild_stages(self) -> None:
+        """Re-derive the visible pipeline, keeping the user where they are.
+
+        Tracked by stage ID, not by index: the list changes length, so a
+        preserved index would silently teleport the user to a different step.
+        """
+        here = self._stages[self._stage].id if self._stages else None
+        self._stages = path_stages(self._omitted_stages())
+        ids = [s.id for s in self._stages]
+        self._stage = ids.index(here) if here in ids else 0
+        self.stepper.set_stages(self._stages)
+        self.stepper.set_current(self._stage)
+        self._refresh()
 
     def _canvas_rgb8(self):
         """What the canvas is currently showing, for tests."""
