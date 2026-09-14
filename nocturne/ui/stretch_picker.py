@@ -26,10 +26,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QGridLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
+    QDialog, QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout,
+    QWidget,
 )
 
 from ..core.image import AstroImage
@@ -59,7 +60,24 @@ STRETCH_PICKS: list[tuple[str, float]] = [
 ]
 
 _PREVIEW_MAX = 640      # as curves_dialog and color_balance_dialog
+_PREVIEW_MIN = 160      # smaller than this and faint nebulosity cannot be
+                        # judged, which is the whole point of looking
 _COLUMNS = 3
+_SCREEN_USE = 0.9       # leave the dock and menu bar visible
+
+
+def preview_edge(available: QSize, chrome: QSize, rows: int) -> int:
+    """The largest square one preview may occupy for the grid to fit on screen.
+
+    The dialog first shipped sizing itself from `_PREVIEW_MAX` alone: six 640 px
+    panels in a 3x2 grid is about 1950x1450 before chrome, which overflowed a
+    large monitor and would have been unusable on the 1280x800 floor this app
+    targets. `chrome` is MEASURED from the real widgets rather than estimated,
+    so this cannot drift the next time the dialog gains a line of text.
+    """
+    per_col = (available.width() - chrome.width()) // max(_COLUMNS, 1)
+    per_row = (available.height() - chrome.height()) // max(rows, 1)
+    return max(_PREVIEW_MIN, min(per_col, per_row, _PREVIEW_MAX))
 
 
 @dataclass
@@ -118,10 +136,14 @@ class StretchPickerDialog(QDialog):
         self._hint.setWordWrap(True)
         self._root.addWidget(self._hint)
         self._grid_host = QWidget()
-        self._root.addWidget(self._grid_host)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
-        self._root.addWidget(cancel)
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._scroll.setWidget(self._grid_host)
+        self._root.addWidget(self._scroll)
+        self._cancel = QPushButton("Cancel")
+        self._cancel.clicked.connect(self.reject)
+        self._root.addWidget(self._cancel)
         self._render()
 
     # --- state ---------------------------------------------------------
@@ -153,21 +175,38 @@ class StretchPickerDialog(QDialog):
     def _render(self) -> None:
         pick = self._picks[self._index]
         self._title.setText(pick.title)
-        old = self._grid_host
+        options = pick.options(dict(self._state))
+        rows = -(-len(options) // _COLUMNS)
+        edge = preview_edge(self._available(), self._chrome(rows), rows)
         self._grid_host = QWidget()
         grid = QGridLayout(self._grid_host)
-        for i, (name, value, img) in enumerate(pick.options(dict(self._state))):
-            grid.addWidget(self._panel(i, name, value, img),
+        for i, (name, value, img) in enumerate(options):
+            grid.addWidget(self._panel(i, name, value, img, edge),
                            i // _COLUMNS, i % _COLUMNS)
-        self._root.replaceWidget(old, self._grid_host)
-        old.deleteLater()          # or every re-render leaks a grid of previews
+        old = self._scroll.takeWidget()
+        self._scroll.setWidget(self._grid_host)
+        if old is not None:
+            old.deleteLater()      # or every re-render leaks a grid of previews
+        # Sized explicitly, NOT by adjustSize(): a QScrollArea's size hint does
+        # not grow with its contents, so asking the layout would open a window
+        # smaller than the grid it just fitted and hand the user scrollbars on a
+        # screen with room to spare. The scroll area is the backstop for a
+        # screen too small for _PREVIEW_MIN, not the thing that picks the size.
+        chrome = self._chrome(rows)
+        self.resize(chrome.width() + _COLUMNS * edge,
+                    chrome.height() + rows * edge)
 
     def _panel(self, index: int, name: str, value: float,
-               img: AstroImage) -> QWidget:
+               img: AstroImage, edge: int) -> QWidget:
         holder = QWidget()
         lay = QVBoxLayout(holder)
         shot = QLabel()
-        shot.setPixmap(QPixmap.fromImage(to_qimage(img)))
+        # Rendered at _PREVIEW_MAX and scaled DOWN here, rather than rendered at
+        # `edge`: the render is the expensive half and its cost does not change,
+        # while scaling from the larger pixmap keeps a small panel sharp.
+        shot.setPixmap(QPixmap.fromImage(to_qimage(img)).scaled(
+            edge, edge, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
         shot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(shot)
         # Name AND numbers. The name is a handle to think with; the number is
@@ -181,6 +220,41 @@ class StretchPickerDialog(QDialog):
         button.clicked.connect(lambda _checked=False, i=index: self.choose(i))
         lay.addWidget(button)
         return holder
+
+    # --- fitting ---------------------------------------------------------
+    def _available(self) -> QSize:
+        """How much screen this dialog may occupy."""
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:                     # offscreen platform in tests
+            return QSize(1280, 800)            # the size floor the app targets
+        size = screen.availableGeometry().size()
+        return QSize(int(size.width() * _SCREEN_USE),
+                     int(size.height() * _SCREEN_USE))
+
+    def _chrome(self, rows: int) -> QSize:
+        """Everything in the dialog that is not a preview, MEASURED.
+
+        Estimating this is how it goes stale: the numbers below all come from
+        the real widgets' size hints, so adding a line of explanatory text
+        shrinks the previews to match instead of pushing the window off screen.
+        """
+        margins = self._root.contentsMargins()
+        spacing = self._root.spacing()
+        caption = QLabel("Name\n0.00 \u00b7 sky 0.000")
+        caption.setObjectName("stepDesc")
+        per_row = (caption.sizeHint().height()
+                   + QPushButton("Use this one").sizeHint().height()
+                   + 3 * spacing)
+        width = (margins.left() + margins.right()
+                 + self._scroll.verticalScrollBar().sizeHint().width()
+                 + (_COLUMNS + 1) * spacing)
+        height = (margins.top() + margins.bottom()
+                  + self._title.sizeHint().height()
+                  + self._hint.heightForWidth(self._available().width())
+                  + self._cancel.sizeHint().height()
+                  + 4 * spacing
+                  + rows * per_row)
+        return QSize(width, height)
 
 
 def _sky(img: AstroImage) -> float:

@@ -96,3 +96,57 @@ def test_a_pick_receives_the_answers_so_far(qtbot):
     qtbot.addWidget(d)
     d.choose(0)
     assert seen == {"mode": 0.0}, "the second pick never saw the first's answer"
+
+
+# --- fitting on screen ---------------------------------------------------
+# Six 640 px panels in a 3x2 grid is a 1984x1527 window. It shipped that way for
+# one afternoon and did not fit a 2560x1440 monitor: the bottom row ran off the
+# screen edge and Cancel was below it, unreachable. Anything that grows the
+# dialog has to shrink the previews instead of the window.
+
+_SCREENS = [
+    ("MacBook Air floor", 1280, 800),      # the size floor this app targets
+    ("MacBook Pro 14", 1512, 982),
+    ("27 inch", 2560, 1440),               # the monitor it overflowed on
+    ("5K", 5120, 2880),
+]
+
+
+@pytest.mark.parametrize("label,width,height", _SCREENS)
+def test_the_grid_fits_the_screen_it_opens_on(qtbot, label, width, height):
+    from PySide6.QtCore import QSize
+    from nocturne.ui.stretch_picker import preview_edge, _COLUMNS
+
+    d = StretchPickerDialog(_linear())
+    qtbot.addWidget(d)
+    chrome = d._chrome(2)
+    available = QSize(int(width * 0.9), int(height * 0.9))
+    edge = preview_edge(available, chrome, 2)
+
+    assert chrome.width() + _COLUMNS * edge <= available.width(), label
+    assert chrome.height() + 2 * edge <= available.height(), label
+
+
+def test_the_dialog_fits_the_screen_it_is_actually_on(qtbot):
+    """The whole point, asserted on the real widget rather than the arithmetic.
+
+    `_chrome` is measured from live size hints, so this also catches a new row
+    of text that the pure-function test above would happily size around.
+    """
+    d = StretchPickerDialog(_linear())
+    qtbot.addWidget(d)
+    available = d._available()
+    # size(), not sizeHint(): the grid lives in a QScrollArea, whose hint does
+    # not grow with its contents, so sizeHint() would pass no matter how far the
+    # window overflowed. That version of this test survived the mutation.
+    assert d.size().width() <= available.width()
+    assert d.size().height() <= available.height()
+
+
+def test_previews_never_shrink_below_judging_size(qtbot):
+    """A screen too small for six panels scrolls; it does not serve previews so
+    small that faint nebulosity — the thing being judged — is invisible."""
+    from PySide6.QtCore import QSize
+    from nocturne.ui.stretch_picker import preview_edge, _PREVIEW_MIN
+
+    assert preview_edge(QSize(320, 240), QSize(64, 247), 2) == _PREVIEW_MIN
