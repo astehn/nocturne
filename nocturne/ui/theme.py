@@ -151,6 +151,10 @@ QPushButton#pickPanel {{ background: transparent; border: 2px solid transparent;
     border-radius: 6px; padding: 0; }}
 QPushButton#pickPanel:hover {{ border-color: {ACCENT}; }}
 QPushButton#pickPanel:focus {{ border-color: {ACCENT_HI}; }}
+/* A consequence, not a scolding: an unlinked stretch annihilates a photometric
+   calibration (measured 0.0004 of a level), so the panel that would discard it
+   says so. Amber, not red — it is a real cost, not a mistake. */
+QLabel#pickCaveat {{ color: {WARNING}; font-size: 11px; }}
 QLabel#panelSectionLabel {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}

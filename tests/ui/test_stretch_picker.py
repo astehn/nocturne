@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 from nocturne.core.image import AstroImage
-from nocturne.ui.stretch_picker import STRETCH_PICKS, Pick, StretchPickerDialog
+from nocturne.ui.stretch_picker import (
+    STRETCH_PICKS, Pick, StretchPickerDialog, _sky, brightness_pick,
+    colour_pick,
+)
 
 
 def _linear():
@@ -213,3 +216,102 @@ def test_the_fit_survives_the_real_stylesheet(qtbot):
         assert d.size().height() <= available.height()
     finally:
         app.setStyleSheet(previous)
+
+
+# --- pick 1 of 2: the colour ---------------------------------------------
+# AstroWizard asks colour BEFORE depth, renders both equally bright on purpose,
+# and says "ignore brightness - depth is the next pick". One variable per
+# question is the good idea worth copying; Andreas chose unlinked by eye twice.
+
+def _wide_red_linear():
+    """Red given the wider spread, as on the real data (R/G MAD 2.67 on
+    IC 1396A). Channels that commute cannot tell the two stretches apart."""
+    rng = np.random.default_rng(3)
+    d = np.clip(rng.normal(0.02, 0.005, (200, 160, 3)), 0, 1).astype(np.float32)
+    d[..., 0] = np.clip(0.02 + (d[..., 0] - 0.02) * 2.67, 0, 1)
+    return AstroImage(d, is_linear=True)
+
+
+def test_the_colour_pick_offers_exactly_two_named_coldly():
+    """Cold naming on purpose: "Unlinked" describes the mechanism and stays true
+    on every image, where "Warmer sky" is a claim that will be wrong on some
+    other one. Neither may be labelled correct — the measurement that would
+    justify that is still unresolved."""
+    opts = colour_pick(_wide_red_linear()).options({})
+    assert [n for n, _v, _i in opts] == ["Linked", "Unlinked"]
+    assert [v for _n, v, _i in opts] == [True, False]
+
+
+def test_neither_colour_panel_claims_to_be_the_correct_one():
+    p = colour_pick(_wide_red_linear())
+    text = " ".join(p.caption(n, v, i) for n, v, i in p.options({})).lower()
+    for banned in ("true", "faithful", "correct", "photometric", "accurate"):
+        assert banned not in text, banned
+
+
+def test_both_colour_panels_render_at_the_same_brightness():
+    """The pick is one-variable BY CONSTRUCTION — both stretches take the same
+    target. Which is exactly why it needs a test: nothing else would notice if
+    one of them stopped honouring it, and the whole decomposition would quietly
+    become two variables at once."""
+    skies = [_sky(i) for _n, _v, i in colour_pick(_wide_red_linear()).options({})]
+    assert abs(skies[0] - skies[1]) < 0.02, skies
+
+
+def test_the_two_colour_panels_are_different_pictures():
+    opts = colour_pick(_wide_red_linear()).options({})
+    assert not np.allclose(opts[0][2].data, opts[1][2].data)
+
+
+def test_the_brightness_panels_honour_the_colour_choice():
+    """The guard on options(state) being USED rather than merely accepted. This
+    is the property the whole pick-sequence architecture exists for."""
+    from nocturne.core.stretch import apply_stretch
+    from nocturne.ui.preview import downscale
+
+    base = _wide_red_linear()
+    _name, amount, img = brightness_pick(base).options({"linked": False})[2]
+    expected = apply_stretch(downscale(base, 640), amount, linked=False)
+    assert np.array_equal(img.data, expected.data)
+
+
+def test_the_brightness_panels_default_to_linked():
+    from nocturne.core.stretch import apply_stretch
+    from nocturne.ui.preview import downscale
+
+    base = _wide_red_linear()
+    _n, amount, img = brightness_pick(base).options({})[2]
+    assert np.array_equal(img.data,
+                          apply_stretch(downscale(base, 640), amount, linked=True).data)
+
+
+def test_the_spcc_caveat_appears_only_when_spcc_ran():
+    """An unlinked stretch annihilates a photometric calibration — measured at
+    0.0004 of an 8-bit level, i.e. not at all. Saying so unconditionally would
+    warn the many people who never ran it."""
+    assert colour_pick(_wide_red_linear()).caveats == {}
+    warned = colour_pick(_wide_red_linear(), spcc_applied=True).caveats
+    assert list(warned) == [False]                       # only under Unlinked
+    assert "calibration" in warned[False].lower()
+
+
+def test_a_two_pick_sequence_accumulates_in_order(qtbot):
+    base = _wide_red_linear()
+    d = StretchPickerDialog(base, picks=[colour_pick(base), brightness_pick(base)])
+    qtbot.addWidget(d)
+    d.choose(1)                                  # Unlinked
+    assert d.result_option() is None             # not finished: one pick left
+    d.choose(2)                                  # Balanced
+    assert d.result_option() == {"linked": False, "amount": 0.24}
+
+
+def test_a_two_panel_pick_still_fits_the_screen(qtbot):
+    """The colour pick is a 2-panel grid, not the 6-panel one the fitting maths
+    was written and checked against on 2026-09-14."""
+    base = _wide_red_linear()
+    d = StretchPickerDialog(base, picks=[colour_pick(base), brightness_pick(base)])
+    qtbot.addWidget(d)
+    d.show()
+    qtbot.waitExposed(d)
+    assert d._grid_host.sizeHint().height() <= d._scroll.viewport().height()
+    assert d.size().height() <= d._available().height()

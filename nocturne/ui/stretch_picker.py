@@ -22,7 +22,7 @@ See docs/superpowers/specs/2026-09-14-visual-stretch-picker-design.md.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
@@ -66,7 +66,36 @@ _COLUMNS = 3
 _SCREEN_USE = 0.9       # leave the dock and menu bar visible
 
 
-def preview_edge(available: QSize, chrome: QSize, rows: int) -> int:
+# Cold naming on purpose. A descriptive name ("Warmer sky") is a claim about one
+# image and will be wrong on another; "Unlinked" describes the mechanism and
+# stays true forever — the property that made the brightness numbers safe beside
+# their names. It is also what Siril, PixInsight and AstroWizard all call it, so
+# it transfers to every tutorial the user will ever read, and the app already
+# ships a harder word than this as a step name ("Deconvolution").
+#
+# NEITHER may be labelled the correct one. The five-capture table in
+# neutral_stretch favours linked on colour drift; sky neutrality measured over
+# four of Andreas's masters favours unlinked; they measure different quantities
+# and the first has never been reproduced. A correctness label would ship a
+# claim we cannot support.
+COLOUR_PICKS: list[tuple[str, bool, str]] = [
+    ("Linked", True, "keeps the sky's own colour"),
+    ("Unlinked", False, "evens the channels out"),
+]
+
+# An unlinked stretch does not weaken a photometric calibration, it ANNIHILATES
+# it: a per-channel normalisation is exactly what removes a per-channel gain.
+# Measured on IC 1396A at 0.0004 of an 8-bit level, at every gain tested.
+_SPCC_CAVEAT = "Photometric calibration will be discarded"
+
+# The brightness at which BOTH colour panels are rendered. Mid-ladder, so the
+# picture is representative of what follows without the pick accidentally
+# becoming a brightness decision too.
+_COLOUR_TARGET = 0.24
+
+
+def preview_edge(available: QSize, chrome: QSize, rows: int,
+                 columns: int = _COLUMNS) -> int:
     """The largest square one preview may occupy for the grid to fit on screen.
 
     The dialog first shipped sizing itself from `_PREVIEW_MAX` alone: six 640 px
@@ -75,7 +104,7 @@ def preview_edge(available: QSize, chrome: QSize, rows: int) -> int:
     targets. `chrome` is MEASURED from the real widgets rather than estimated,
     so this cannot drift the next time the dialog gains a line of text.
     """
-    per_col = (available.width() - chrome.width()) // max(_COLUMNS, 1)
+    per_col = (available.width() - chrome.width()) // max(columns, 1)
     per_row = (available.height() - chrome.height()) // max(rows, 1)
     return max(_PREVIEW_MIN, min(per_col, per_row, _PREVIEW_MAX))
 
@@ -92,15 +121,63 @@ class Pick:
     """
     title: str
     key: str
-    options: Callable[[dict], list[tuple[str, float, AstroImage]]]
+    options: Callable[[dict], list[tuple[str, object, AstroImage]]]
+    caption: Callable[[str, object, AstroImage], str] = None
+    caveats: dict = field(default_factory=dict)
+    columns: int = _COLUMNS
+
+    def __post_init__(self):
+        if self.caption is None:
+            self.caption = _amount_caption
+
+
+def _amount_caption(name: str, value, img: AstroImage) -> str:
+    """Name AND numbers: the name is a handle to think with, the number is the
+    slider value you land on and can nudge from, so a name can never drift away
+    from what it actually does."""
+    return f"{name} \u00b7 {value:.2f} \u00b7 sky {_sky(img):.3f}"
+
+
+def _colour_caption(name: str, value, img: AstroImage) -> str:
+    """No number: unlike brightness there is no control to land on, so a figure
+    here would be decoration. The subtitle carries the meaning instead."""
+    sub = dict((n, s) for n, _v, s in COLOUR_PICKS)[name]
+    return f"{name}\n{sub}"
+
+
+def colour_pick(base: AstroImage, *, spcc_applied: bool = False) -> Pick | None:
+    """Linked or unlinked? Returns None for mono, which has no colour to pick.
+
+    Both panels are rendered at the SAME target so only colour varies — one
+    variable per question, which is the decomposition AstroWizard gets right
+    ("ignore brightness - depth is the next pick"). Two columns rather than
+    three, because judging colour wants the larger picture.
+    """
+    if base.data.ndim != 3 or base.data.shape[-1] < 3:
+        return None
+    small = downscale(base, _PREVIEW_MAX)
+    at = _COLOUR_TARGET
+
+    def options(_state: dict):
+        return [(name, linked, apply_stretch(small, at, linked=linked))
+                for name, linked, _sub in COLOUR_PICKS]
+
+    return Pick(title="How should the colour be balanced?",
+                key="linked", options=options, caption=_colour_caption,
+                caveats={False: _SPCC_CAVEAT} if spcc_applied else {},
+                columns=2)
 
 
 def brightness_pick(base: AstroImage) -> Pick:
-    """How bright should the background be? The only pick today."""
+    """How bright should the background be?"""
     small = downscale(base, _PREVIEW_MAX)      # once, not per panel
 
-    def options(_state: dict):
-        return [(name, amount, apply_stretch(small, amount))
+    def options(state: dict):
+        # Rendered THROUGH the colour answer, which is the entire reason
+        # options() takes the accumulated state: a linked and an unlinked
+        # stretch are different pictures at the same brightness.
+        linked = bool(state.get("linked", True))
+        return [(name, amount, apply_stretch(small, amount, linked=linked))
                 for name, amount in STRETCH_PICKS]
 
     return Pick(title="How bright should the background be?",
@@ -176,8 +253,15 @@ class StretchPickerDialog(QDialog):
         pick = self._picks[self._index]
         self._title.setText(pick.title)
         options = pick.options(dict(self._state))
-        rows = -(-len(options) // _COLUMNS)
-        edge = preview_edge(self._available(), self._chrome(rows), rows)
+        columns = pick.columns
+        rows = -(-len(options) // max(columns, 1))
+        # Probe with the caption this pick will ACTUALLY draw, not a stand-in:
+        # the colour pick's caption is two lines to the brightness pick's one,
+        # and a one-line stand-in undercounted the chrome by exactly that and
+        # overflowed the single-row grid by 3 px.
+        sample = pick.caption(*options[0]) if options else ""
+        edge = preview_edge(self._available(),
+                            self._chrome(rows, sample), rows, columns)
         self._grid_host = QWidget()
         grid = QGridLayout(self._grid_host)
         # Zeroed so the fit has no unmeasured term: _chrome counts the layout
@@ -185,8 +269,8 @@ class StretchPickerDialog(QDialog):
         # difference between fitting and a scrollbar.
         grid.setContentsMargins(0, 0, 0, 0)
         for i, (name, value, img) in enumerate(options):
-            grid.addWidget(self._panel(i, name, value, img, edge),
-                           i // _COLUMNS, i % _COLUMNS)
+            grid.addWidget(self._panel(i, name, value, img, edge, pick),
+                           i // columns, i % columns)
         old = self._scroll.takeWidget()
         self._scroll.setWidget(self._grid_host)
         if old is not None:
@@ -196,12 +280,12 @@ class StretchPickerDialog(QDialog):
         # smaller than the grid it just fitted and hand the user scrollbars on a
         # screen with room to spare. The scroll area is the backstop for a
         # screen too small for _PREVIEW_MIN, not the thing that picks the size.
-        chrome = self._chrome(rows)
-        self.resize(chrome.width() + _COLUMNS * edge,
+        chrome = self._chrome(rows, sample)
+        self.resize(chrome.width() + columns * edge,
                     chrome.height() + rows * edge)
 
-    def _panel(self, index: int, name: str, value: float,
-               img: AstroImage, edge: int) -> QWidget:
+    def _panel(self, index: int, name: str, value, img: AstroImage,
+               edge: int, pick: "Pick") -> QWidget:
         """One preview. The PICTURE is the button.
 
         It started as an image above a "Use this one" button, which is a row of
@@ -219,7 +303,7 @@ class StretchPickerDialog(QDialog):
         shot.setObjectName("pickPanel")
         shot.setFlat(True)
         shot.setCursor(Qt.CursorShape.PointingHandCursor)
-        shot.setToolTip(f"Use {name} — stretch {value:.2f}")
+        shot.setToolTip(f"Use {name}")
         # Rendered at _PREVIEW_MAX and scaled DOWN here, rather than rendered at
         # `edge`: the render is the expensive half and its cost does not change,
         # while scaling from the larger pixmap keeps a small panel sharp.
@@ -234,10 +318,17 @@ class StretchPickerDialog(QDialog):
         # Name AND numbers, on ONE line: the name is a handle to think with, the
         # number is the slider value you land on and can nudge from, so a name
         # can never drift away from what it actually does.
-        caption = QLabel(f"{name} · {value:.2f} · sky {_sky(img):.3f}")
+        caption = QLabel(pick.caption(name, value, img))
         caption.setObjectName("stepDesc")
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(caption)
+        note = pick.caveats.get(value)
+        if note:
+            warn = QLabel(note)
+            warn.setObjectName("pickCaveat")
+            warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            warn.setWordWrap(True)
+            lay.addWidget(warn)
         return holder
 
     # --- fitting ---------------------------------------------------------
@@ -250,7 +341,7 @@ class StretchPickerDialog(QDialog):
         return QSize(int(size.width() * _SCREEN_USE),
                      int(size.height() * _SCREEN_USE))
 
-    def _chrome(self, rows: int) -> QSize:
+    def _chrome(self, rows: int, caption_text: str = "Name") -> QSize:
         """Everything in the dialog that is not a preview, MEASURED.
 
         Estimating this is how it goes stale: the numbers below all come from
@@ -259,9 +350,11 @@ class StretchPickerDialog(QDialog):
         """
         margins = self._root.contentsMargins()
         spacing = self._root.spacing()
-        caption = QLabel("Name \u00b7 0.00 \u00b7 sky 0.000")
+        caption = QLabel(caption_text)
         caption.setObjectName("stepDesc")
         per_row = caption.sizeHint().height() + 8 + 2 * spacing
+        if any(p.caveats for p in self._picks):
+            per_row += caption.sizeHint().height() + spacing
         width = (margins.left() + margins.right()
                  + self._scroll.verticalScrollBar().sizeHint().width()
                  + (_COLUMNS + 1) * spacing)
