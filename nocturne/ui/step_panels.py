@@ -90,6 +90,7 @@ def build_panel(
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
     on_stretch_change=None,
+    on_visual_stretch=None,
     on_levels_change=None,
     on_levels_auto=None,
     on_sat_change=None,
@@ -419,12 +420,22 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+        # Optional, and BELOW the slider: the slider keeps working untouched
+        # for anyone who already knows the number they want. The picker is for
+        # the case a number cannot answer — four of Andreas's own targets wanted
+        # three different values, so no default can serve them all.
+        visual_btn = QPushButton("Visual stretch…")
+        visual_btn.setEnabled(apply_enabled)
+        if on_visual_stretch is not None:
+            visual_btn.clicked.connect(lambda: on_visual_stretch())
         agg_row = QHBoxLayout()
         agg_row.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
         agg_row.addWidget(stretch_val)
         lay.addLayout(agg_row)
         lay.addWidget(slider)
         lay.addWidget(apply_btn)
+        lay.addWidget(visual_btn)
+        w.visual_btn = visual_btn
         w.stretch_slider = slider
         w.stretch_val = stretch_val
         w.apply_btn = apply_btn

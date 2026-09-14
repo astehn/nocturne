@@ -143,6 +143,14 @@ QFrame#panelRule {{ color: {RULE}; }}
 QPushButton#resetStep {{ color: {DANGER_DIM}; border-color: {DANGER_DIM}; }}
 QPushButton#resetStep:hover {{ color: {DANGER}; border-color: {DANGER}; }}
 QPushButton#resetStep:disabled {{ color: {TEXT_FAINT}; border-color: {BORDER}; }}
+/* The visual stretch picker: the PICTURE is the button, so it must not look
+   like one. Flat and transparent at rest, with the accent appearing on hover
+   and focus — the only cue that the six previews are clickable, since the
+   "Use this one" buttons that used to say so were removed on 2026-09-14. */
+QPushButton#pickPanel {{ background: transparent; border: 2px solid transparent;
+    border-radius: 6px; padding: 0; }}
+QPushButton#pickPanel:hover {{ border-color: {ACCENT}; }}
+QPushButton#pickPanel:focus {{ border-color: {ACCENT_HI}; }}
 QLabel#panelSectionLabel {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}
