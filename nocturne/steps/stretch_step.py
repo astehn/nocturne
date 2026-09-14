@@ -32,6 +32,18 @@ def parse_stretch_option(option) -> float:
         return _DEFAULT
 
 
+def parse_stretch_linked(option) -> bool:
+    """A SIBLING of `parse_stretch_option` rather than a change to its return
+    type, which would break its three callers.
+
+    Defaults True in every shape: an option written before 2026-09-14 predates
+    the choice, and a linked stretch is what it produced.
+    """
+    if isinstance(option, dict):
+        return bool(option.get("linked", True))
+    return True
+
+
 class StretchStep(Step):
     name = "Stretch"
 
@@ -42,4 +54,5 @@ class StretchStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        return apply_stretch(img, parse_stretch_option(option))
+        return apply_stretch(img, parse_stretch_option(option),
+                             linked=parse_stretch_linked(option))
