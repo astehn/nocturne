@@ -47,6 +47,7 @@ from nocturne.core.color import ColorSettings, apply_color          # noqa: E402
 from nocturne.core.fits_io import load_fits                          # noqa: E402
 from nocturne.core.image import AstroImage                           # noqa: E402
 from nocturne.core.stretch import apply_stretch                      # noqa: E402
+from nocturne.steps.deconvolution_step import _LEVELS as _DECON_LEVELS  # noqa: E402
 from nocturne.settings import (                                      # noqa: E402
     load_settings, resolve_settings_path,
 )
@@ -168,10 +169,26 @@ def denoise(img: AstroImage, step, option, passes: int,
     return out
 
 
+def deconvolve(img: AstroImage, rc, strength: float) -> AstroImage:
+    """BlurXTerminator, at the pipeline position the app uses: after colour,
+    BEFORE the stretch. It is a linear-domain tool, which is the whole reason
+    this cannot be tested by exporting a finished TIFF and working on that.
+
+    Both sharpen knobs move together, matching DeconvolutionStep's own _LEVELS.
+    """
+    t = time.time()
+    out = rc.deconvolve(img, sharpen_stars=strength, sharpen_nonstellar=strength)
+    print(f"      deconvolution {strength}  ({time.time() - t:.1f}s)")
+    return out
+
+
 def run_variant(base: AstroImage, *, position: str, passes: int, option,
-                stretch_amount: float, step, knobs=None) -> AstroImage:
+                stretch_amount: float, step, knobs=None, decon=None, rc=None
+                ) -> AstroImage:
     """One variant. Identical to every other except the things being swept."""
     img = base
+    if decon is not None:
+        img = deconvolve(img, rc, decon)
     if position == "pre":
         img = denoise(img, step, option, passes, "linear NR", knobs)
     img = apply_stretch(img, stretch_amount)
@@ -217,6 +234,11 @@ def main() -> int:
                     help="comma-separated: pre,post (default both)")
     ap.add_argument("--stretch", type=float, default=0.43,
                     help="stretch amount; default 0.43, the app's own default")
+    ap.add_argument("--decon", default="",
+                    help="Deconvolution strengths to sweep, comma-separated. "
+                         "Level names (light/medium/strong = 0.3/0.5/0.7) or "
+                         "bare numbers. Runs BEFORE the stretch, where the app "
+                         "runs it. Omit for no deconvolution at all.")
     ap.add_argument("--iterations", default="",
                     help="NXT --iterations values to try, comma-separated. "
                          "NXT's own default is 2 and is used when this is "
@@ -265,6 +287,15 @@ def main() -> int:
     rows.append(("none", "-", 0, measure(ctrl, stars)))
     _save(ctrl, os.path.join(args.out, "none.png"), crop, args.out, "none")
 
+    decons = []
+    for v in (x.strip() for x in args.decon.split(",")):
+        if not v:
+            continue
+        decons.append(_DECON_LEVELS[v][0] if v in _DECON_LEVELS else float(v))
+    decons = decons or [None]
+    if decons != [None] and getattr(step, "_rc", None) is None:
+        raise SystemExit("--decon needs RC-Astro (BlurXTerminator); none configured.")
+
     iters = [int(v) for v in args.iterations.split(",") if v.strip()] or [None]
     colours = [float(v) for v in args.denoise_color.split(",") if v.strip()] or [None]
     if args.engine != "rcastro" and (iters != [None] or colours != [None]):
@@ -272,7 +303,8 @@ def main() -> int:
               "own options and are ignored for graxpert.")
         iters, colours = [None], [None]
 
-    for position in [p.strip() for p in args.positions.split(",") if p.strip()]:
+    for dec in decons:
+      for position in [p.strip() for p in args.positions.split(",") if p.strip()]:
         for passes in [int(p) for p in args.passes.split(",") if p.strip()]:
             for it in iters:
                 for dc in colours:
@@ -284,6 +316,8 @@ def main() -> int:
                                  "denoise_color": dc}
                     name = f"{position}_x{passes}"
                     extra = ""
+                    if dec is not None:
+                        name += f"_bxt{dec}"; extra += f", deconvolution {dec}"
                     if it is not None:
                         name += f"_it{it}"; extra += f", --iterations {it}"
                     if dc is not None:
@@ -294,11 +328,13 @@ def main() -> int:
                     t0 = time.time()
                     out = run_variant(base, position=position, passes=passes,
                                       option=option, stretch_amount=args.stretch,
-                                      step=step, knobs=knobs)
+                                      step=step, knobs=knobs, decon=dec,
+                                      rc=getattr(step, "_rc", None))
                     took = time.time() - t0
                     m = measure(out, stars)
                     m["seconds"] = round(took, 1)
-                    m["label"] = f"{position}-stretch x{passes}" + (
+                    m["label"] = (f"bxt{dec} " if dec is not None else "") + \
+                        f"{position}-stretch x{passes}" + (
                         f" it{it}" if it is not None else "") + (
                         f" dc{dc}" if dc is not None else "")
                     rows.append((position, args.level, passes, m))
@@ -339,8 +375,18 @@ def _report(rows, args, strength) -> None:
                 f"   {(1 - m['lumN'] / base_lum) * 100:.0f}% less noise")
         print(f"{label:26s} {m['lumN']:9.5f} {m['chroma']:9.5f} "
               f"{m['starR']:8.3f} {m.get('seconds', 0):7.1f}{drop}")
-    print("\nstarR must stay FLAT. A variant that wins on noise and loses star")
-    print("radius has removed stars, and is not the better picture.")
+    if any("bxt" in (m.get("label") or "") for *_x, m in rows):
+        # The guard rail INVERTS when deconvolution is in play. BlurX exists to
+        # tighten stars, so a falling starR is the intended effect here, not a
+        # warning — measured on NGC 6888, bxt0.5 took 7.58 -> 5.52 and bxt0.7 to
+        # 4.79. Printing "starR must stay FLAT" over that would have told
+        # Andreas his good result was a bad one.
+        print("\nstarR FALLING is the POINT here — that is what deconvolution")
+        print("does. Watch instead for stars going hard-edged or dark-ringed,")
+        print("and for nebulosity turning crunchy. Neither is in these numbers.")
+    else:
+        print("\nstarR must stay FLAT. A variant that wins on noise and loses star")
+        print("radius has removed stars, and is not the better picture.")
     print(f"\nPNGs in {args.out}/ — look at them. The metrics cannot see 'plastic'.")
     with open(os.path.join(args.out, "results.json"), "w") as f:
         json.dump([{"position": p, "level": l, "passes": n, **m}
