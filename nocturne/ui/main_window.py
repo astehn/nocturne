@@ -356,6 +356,11 @@ class MainWindow(QMainWindow):
         self._canvas_img = None  # the AstroImage actually on the canvas (peek-aware)
         self._compare_img = None  # the AstroImage shown left of the before/after divider
         self._show_clipping = False
+        # How LINEAR data is DRAWN. A view preference, never image state: it is
+        # a property of how you are looking, not of what you captured, so it
+        # lives here rather than on AstroImage.metadata. Measurements keep the
+        # default deliberately — see core.autostretch.autostretch.
+        self._view_linked = True
         QApplication.instance().installEventFilter(self)
         self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
@@ -3803,6 +3808,24 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
+    def _set_view_linked(self, linked: bool) -> None:
+        """Change how linear data is drawn. Touches no pixel and no history.
+
+        The clipping BASELINE is deliberately not recomputed: it is a
+        measurement, and a number that moves because of how the user is looking
+        at the image is the failure this project has hit three times.
+        """
+        linked = bool(linked)
+        if linked == self._view_linked:
+            return
+        self._view_linked = linked
+        if self._canvas_img is not None:
+            self._set_canvas(self._canvas_img)
+
+    def _canvas_rgb8(self):
+        """What the canvas is currently showing, for tests."""
+        return to_rgb8(self._canvas_img, linked=self._view_linked)
+
     def _set_canvas(self, img) -> None:
         """The ONE path to the canvas. Paints the clipping overlay when it is on
         and records what is on screen, so the hover readout can never disagree
@@ -3812,7 +3835,7 @@ class MainWindow(QMainWindow):
         the Starless Levels clipping view. Two implementations meant two
         legends, and they said opposite things: white was "all three crushed"
         here and "all three blown" there."""
-        rgb = to_rgb8(img)
+        rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
         self._structural_clip = None if img.is_linear else structural_clipping(rgb)
@@ -4811,6 +4834,8 @@ class MainWindow(QMainWindow):
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_visual_stretch=self._open_stretch_picker,
+            on_view_linked=self._set_view_linked,
+            view_linked=self._view_linked,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,

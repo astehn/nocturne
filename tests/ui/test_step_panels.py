@@ -429,7 +429,12 @@ def test_import_panel_has_linear_preview_note(qapp):
     w = build_panel(_stage("load"))
     from PySide6.QtWidgets import QLabel
     texts = " ".join(l.text() for l in w.findChildren(QLabel))
-    assert "histogram" in texts.lower() or "un-stretched" in texts.lower()
+    # Reworded on 2026-09-14: the panel no longer explains away a cast it can
+    # now offer an alternative to. It must still say this is unstretched data
+    # and that the switch is a view, not a commitment.
+    low = texts.lower()
+    assert "unstretched" in low or "un-stretched" in low
+    assert "commit" in low and "stretch" in low
 
 
 def test_crop_panel_labels_and_grouping_polish(qapp):
