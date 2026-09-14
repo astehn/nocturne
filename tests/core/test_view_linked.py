@@ -82,3 +82,32 @@ def test_a_measurement_does_not_follow_the_canvas():
     before = rms_delta(a, b)
     autostretch(a, linked=False)          # flip the view...
     assert rms_delta(a, b) == before      # ...the measurement does not move
+
+
+def test_every_picture_exporter_carries_the_view():
+    """display_data exists SO the canvas and the file cannot drift apart — its
+    own docstring says so. Adding a view choice to the canvas without adding it
+    here would reintroduce exactly that drift for anyone exporting before they
+    stretch, which is a real path (reaching Export unstretched used to write a
+    file 10x darker than the canvas).
+    """
+    import inspect
+    from nocturne.core import export
+
+    for name in ("save_tiff", "save_png", "save_jpeg"):
+        sig = inspect.signature(getattr(export, name))
+        assert "linked" in sig.parameters, name
+        assert sig.parameters["linked"].default is True, name
+
+
+def test_an_unlinked_export_matches_an_unlinked_canvas(tmp_path):
+    """The invariant, not just the signature."""
+    import numpy as np
+    from PIL import Image
+    from nocturne.core.export import save_png
+    from nocturne.ui.preview import to_rgb8
+
+    img = _linear()
+    p = str(tmp_path / "out.png")
+    save_png(img, p, linked=False)
+    assert np.array_equal(np.asarray(Image.open(p)), to_rgb8(img, linked=False))

@@ -4709,7 +4709,11 @@ class MainWindow(QMainWindow):
         if self._ba_act.isChecked():
             before, _ = self.project.before_after()
             self._compare_img = before
-            self.image_view.set_compare(to_qimage(before))
+            # linked, or pressing Space on an unlinked view would flip the
+            # COLOUR as well as the before/after — two changes for one gesture,
+            # and no way to tell which one you are looking at.
+            self.image_view.set_compare(
+                to_qimage(before, linked=self._view_linked))
         else:
             self._compare_img = None
             self.image_view.set_compare(None)
@@ -4764,8 +4768,10 @@ class MainWindow(QMainWindow):
                 starless, stars = rc.remove_stars(img, runner=self._rc_runner)
                 sl, icc = self._prepare_for_export(starless, space)
                 st, _ = self._prepare_for_export(stars, space)
-                save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc)
-                save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc)
+                save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc,
+                          linked=self._view_linked)
+                save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc,
+                          linked=self._view_linked)
 
             self._run_busy(_split,
                            lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
@@ -4797,7 +4803,7 @@ class MainWindow(QMainWindow):
             else:
                 def save(i, path):
                     out, icc = self._prepare_for_export(i, space)
-                    save_png(out, path, icc=icc)
+                    save_png(out, path, icc=icc, linked=self._view_linked)
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
@@ -4809,7 +4815,7 @@ class MainWindow(QMainWindow):
                 path += ".tiff"
             def save(i, path):
                 out, icc = self._prepare_for_export(i, space)
-                save_tiff(out, path, icc=icc)
+                save_tiff(out, path, icc=icc, linked=self._view_linked)
             name = os.path.basename(path)
         self._run_busy(lambda: save(img, path),
                        lambda _: self.log_panel.append_entry(f"Exported {name}"),
@@ -4820,7 +4826,7 @@ class MainWindow(QMainWindow):
         h, w = img.data.shape[:2]
         _sig, _res, objs = self._solve
         prims = self._annotation_primitives(res, objs, (h, w), ui_scale=scale_for((h, w)))
-        out = to_qimage(img)
+        out = to_qimage(img, linked=self._view_linked)
         paint_annotations(out, prims, (h, w))
         # The annotated PNG goes through QImage.save, NOT core/export, so it
         # needs tagging here or it ships untagged while the plain PNG next to it

@@ -110,3 +110,39 @@ def test_it_does_not_leak_into_a_measurement(qtbot, tmp_path):
     before = win._structural_baseline
     win._set_view_linked(False)
     assert win._structural_baseline == before
+
+
+def test_the_before_after_peek_does_not_double_as_a_colour_toggle(qtbot, tmp_path):
+    """Space shows before/after. On an unlinked view it must not ALSO flip the
+    colour — two changes for one gesture, and the user could not tell which one
+    they were looking at.
+
+    Read off the compare item's own pixmap, not recomputed: the same
+    independent-witness rule that the canvas tests needed.
+    """
+    from nocturne.ui.preview import qimage_to_rgb8, to_rgb8
+    win = _window(qtbot, tmp_path)
+    win._set_view_linked(False)
+    win._ba_act.setChecked(True)
+    win._toggle_before_after()
+    item = win.image_view._compare_item
+    assert item is not None, "before/after did not arm"
+    shown = qimage_to_rgb8(item.pixmap().toImage())
+    assert np.array_equal(shown, to_rgb8(win._compare_img, linked=False))
+    assert not np.array_equal(shown, to_rgb8(win._compare_img, linked=True))
+
+
+def test_a_picture_export_matches_what_the_canvas_shows(qtbot, tmp_path):
+    """display_data exists so the canvas and the file cannot drift apart. The
+    view switch must not reintroduce that drift for anyone exporting before they
+    have stretched — a real path, and the reason display_data exists at all."""
+    from PIL import Image
+    from nocturne.core.export import save_png
+    from nocturne.ui.preview import to_rgb8
+
+    win = _window(qtbot, tmp_path)
+    win._set_view_linked(False)
+    out = str(tmp_path / "shot.png")
+    save_png(win._canvas_img, out, linked=win._view_linked)
+    assert np.array_equal(np.asarray(Image.open(out)),
+                          to_rgb8(win._canvas_img, linked=False))
