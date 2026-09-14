@@ -9,6 +9,7 @@ from .ui.pipeline import STEP_NAME, ENHANCE_NAMES
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
 from .core.levels import AUTO as LEVELS_AUTO   # re-exported: the one definition
+from . import RELEASE_STAGE, __version__
 
 _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
 _NAME_TO_STAGE["Rotate"] = "rotate"
@@ -356,12 +357,49 @@ def preflight_summary(plans) -> str:
             else f"All {n} steps will run as saved.")
 
 
+class RecipeVersionError(ValueError):
+    """A recipe written by a different pre-1.0 build of Nocturne."""
+
+
 def save_recipe(recipe: Recipe, path: str) -> None:
+    # `app` is the Nocturne that wrote it; `version` is the FILE SCHEMA and is
+    # a different thing. See load_recipe for why the app version is recorded.
     with open(path, "w") as f:
-        json.dump({"version": 1, "steps": recipe.steps}, f, indent=2)
+        json.dump({"version": 1, "app": __version__, "steps": recipe.steps},
+                  f, indent=2)
 
 
 def load_recipe(path: str) -> Recipe:
+    """Read a recipe, refusing one written by a different pre-1.0 build.
+
+    Andreas, 2026-09-14, having watched replay compatibility cost something on
+    nearly every change: *"quite a lot of effort goes into fixing recipes when
+    we do changes... i could probably argue for that we should remove that
+    functionality entirely"* until 1.0.
+
+    The diagnosis was right and deletion was the wrong cure — Batch dies with
+    recipes, and it would not even fix the problem, because Saved Projects
+    replay too. This is the cheap version of the same goal: stop PROTECTING
+    compatibility instead of removing the feature. A step's meaning can then
+    change freely while the pipeline is still being settled, and a recipe from
+    an older build says so out loud rather than quietly producing a different
+    picture.
+
+    Gated on RELEASE_STAGE, so the strictness lifts itself at 1.0 rather than
+    needing someone to remember. A recipe with no `app` field predates this and
+    is refused for the same reason: it was written by an unknown older build.
+    """
     with open(path) as f:
         data = json.load(f)
+    if RELEASE_STAGE:
+        wrote = data.get("app")
+        if wrote != __version__:
+            raise RecipeVersionError(
+                f"This recipe was saved by Nocturne "
+                f"{wrote or 'an earlier version'}, and you are running "
+                f"{__version__}. While Nocturne is in {RELEASE_STAGE}, steps "
+                f"still change shape between versions, so replaying it could "
+                f"quietly give you a different picture. Open an image, apply "
+                f"the steps you want and save the recipe again."
+            )
     return Recipe(steps=data.get("steps", []))

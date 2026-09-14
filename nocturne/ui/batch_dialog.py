@@ -11,7 +11,9 @@ from PySide6.QtWidgets import (
 
 from ..batch import overwrites_source, run_batch
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
-from ..recipe import load_recipe, missing_tools, preflight, preflight_summary
+from ..recipe import (
+    RecipeVersionError, load_recipe, missing_tools, preflight, preflight_summary,
+)
 from ..settings import start_dir
 from .worker import run_async
 from . import file_dialogs
@@ -115,6 +117,12 @@ class BatchDialog(QDialog):
         elif path:
             try:
                 recipe = load_recipe(path)
+            except RecipeVersionError as exc:
+                # Its own branch: the generic message below would say the file
+                # "isn't a Nocturne recipe", which is both wrong and unhelpful
+                # — it is one, just from another build, and the message already
+                # explains what to do about it.
+                self._blocked = str(exc)
             except Exception:
                 self._blocked = "That file isn't a Nocturne recipe."
             else:
@@ -176,7 +184,14 @@ class BatchDialog(QDialog):
         if not recipe_path or not self.output_edit.text().strip():
             self.status.setText("Pick a recipe and an output folder.")
             return
-        recipe = load_recipe(recipe_path)
+        try:
+            recipe = load_recipe(recipe_path)
+        except (RecipeVersionError, OSError, ValueError) as exc:
+            # Belt and braces: the preflight above has already loaded it, so
+            # reaching here means the file changed under us between picking and
+            # pressing Run. Crashing on that would lose the dialog's state.
+            self.status.setText(str(exc))
+            return
         paths = self._input_files()
         if not paths:
             # "Done — 0/0 succeeded" reads as success. Name the folder and what

@@ -1,4 +1,5 @@
 import pytest
+from nocturne import __version__
 from nocturne.core.crop import CropParams
 from nocturne.core.color import ColorSettings
 from nocturne.recipe import (
@@ -418,3 +419,63 @@ def test_preflight_still_passes_every_real_stage():
         plans = preflight(r, Settings())
         assert plans[0].outcome != "fail" or plans[0].reason, (
             f"{sid} was refused: {plans[0]}")
+
+
+def test_a_recipe_from_another_pre_1_0_build_is_refused(tmp_path):
+    """Andreas, 2026-09-14, on replay compatibility costing something on nearly
+    every change: *"i could probably argue for that we should remove that
+    functionality entirely"* until 1.0.
+
+    The cheap cure for the same goal: stop PROTECTING compatibility instead of
+    removing the feature. A step's meaning can then change freely while the
+    pipeline is still being settled, and an older recipe says so out loud
+    instead of quietly producing a different picture.
+    """
+    import json
+    from nocturne.recipe import RecipeVersionError, load_recipe
+
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"version": 1, "app": "0.29.0",
+                             "steps": [{"stage": "stretch", "option": 0.5}]}))
+    with pytest.raises(RecipeVersionError) as exc:
+        load_recipe(str(p))
+    msg = str(exc.value)
+    assert "0.29.0" in msg and __version__ in msg, \
+        "the message must name BOTH versions, or it cannot be acted on"
+    assert "save the recipe again" in msg, "and say what to do about it"
+
+
+def test_a_recipe_with_no_app_field_is_refused_too(tmp_path):
+    """Recipes written before this existed carry no `app`. They were produced by
+    an unknown older build, which is the case being guarded against."""
+    import json
+    from nocturne.recipe import RecipeVersionError, load_recipe
+
+    p = tmp_path / "ancient.json"
+    p.write_text(json.dumps({"version": 1, "steps": []}))
+    with pytest.raises(RecipeVersionError):
+        load_recipe(str(p))
+
+
+def test_a_recipe_this_build_wrote_still_loads(tmp_path):
+    """The half that matters: the guard must not break the feature. Round-trips
+    through save_recipe rather than a hand-written file, so the two stay in
+    step — a `save_recipe` that stopped writing `app` would make every recipe
+    it produced unreadable, and only this catches that."""
+    from nocturne.recipe import Recipe, load_recipe, save_recipe
+
+    p = tmp_path / "fresh.json"
+    save_recipe(Recipe(steps=[{"stage": "stretch", "option": 0.5}]), str(p))
+    assert load_recipe(str(p)).steps == [{"stage": "stretch", "option": 0.5}]
+
+
+def test_the_strictness_lifts_itself_at_1_0(tmp_path, monkeypatch):
+    """Gated on RELEASE_STAGE so nobody has to remember to remove it. Once
+    Nocturne ships stable, an older recipe loads again."""
+    import json
+    import nocturne.recipe as r
+
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"version": 1, "app": "0.29.0", "steps": []}))
+    monkeypatch.setattr(r, "RELEASE_STAGE", "")
+    assert r.load_recipe(str(p)).steps == []
