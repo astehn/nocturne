@@ -31,27 +31,36 @@ EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"
 # because its label starts with "Starless" — two genuinely 16-bit TIFFs locked
 # to sRGB while the export path was converting and tagging correctly all along.
 SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"})
-# The Stretch slider's default, DERIVED rather than chosen, so it follows if the
-# stretch targets ever move: the slider maps linearly onto a target background
-# median, and this is the position whose target equals the one the display
-# preview already uses. 43 gives 0.2505 against a target of 0.25.
+# The Stretch slider's default: the background brightness a new image starts at.
 #
-# It replaces a "Target" dropdown (Auto/Nebula/Galaxy/Cluster) deleted 2026-09-13.
-# Four entries, three distinct values, two identical — "Cluster" and "Auto" were
-# the same number, and "Auto" set the slider to the value it already had, so it
-# did nothing. None carried a measurement, against this project's own rule. The
-# binding was also ONE-WAY: picking a target moved the slider but nudging the
-# slider never moved the dropdown, so it went on reading "Nebula" over a value
-# that was no longer Nebula's — a control misreporting its own state.
+# 30 is MEASURED PREFERENCE, not a derivation. Andreas picked from six-panel
+# ladders of four of his own masters (2026-09-14), after the same comparison
+# established that Nocturne's sky lands about twice as bright as AstroWizard's
+# and that this — not denoising — was why its images looked cleaner to him:
 #
-# The damning detail, and why this default matters: the display preview targets
-# 0.25, and the old mid-slider 50 mapped to 0.2750. "Auto" was therefore FURTHER
-# from the picture you had been looking at than "Galaxy" (0.2400) was. That
-# mismatch is the documented cause of the WYSIWYG violation `_sync_stretch_preview`
-# exists to patch — measured at +8.9% mean brightness, 94.7% of pixels moving by
-# more than one 8-bit step, on a real M 45 master.
-STRETCH_DEFAULT = round(
-    (_TARGET_BG - _STRETCH_MIN) / (_STRETCH_MAX - _STRETCH_MIN) * 100)
+#     M 16  0.10    M 33  0.10    IC 1396A  0.10    M 45  0.20-0.30
+#
+# M 45 decides it. At 0.10 "too much of the nebulosity is not visible", and that
+# loss is unrecoverable: too bright and you see noise and drag it down, too dark
+# and you never learn what you missed. So the default takes the most
+# conservative of his four answers and fails in the recoverable direction.
+# It also matches AUTO_STRETCH_AMOUNT, which was already 0.30 — before this the
+# manual default was MORE aggressive than the automatic one.
+#
+# It replaced a "Target" dropdown (Auto/Nebula/Galaxy/Cluster) deleted
+# 2026-09-13: four entries, three distinct values, two identical, "Auto" set the
+# slider to the value it already had, and the binding was one-way so the box
+# went on reading "Nebula" over a value that was not Nebula's.
+#
+# Briefly (2026-09-13 to -14) this was DERIVED as the slider position whose
+# target equals autostretch's _TARGET_BG, so that pressing Apply on arrival was
+# bit-identical to the canvas. That property is not lost by choosing 30:
+# `_sync_stretch_preview` renders the canvas to what Apply will commit when you
+# arrive at the step, so Apply is still a no-op. What 30 does leave is a modest
+# darkening when you WALK INTO Stretch, because the linear display autostretch
+# still targets 0.25. Whether _TARGET_BG should follow the same evidence is a
+# separate question — it governs every linear preview, including Import.
+STRETCH_DEFAULT = 30
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
     "background": "Needs GraXpert — set its path in Settings.",

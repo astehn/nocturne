@@ -1262,11 +1262,14 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
     # while both move away from the prose, which is the failure this file exists
     # to catch.
     assert plan["stretch"] == AUTO_STRETCH_AMOUNT
-    # Formatted from STRETCH_DEFAULT, which is itself derived from the stretch
-    # targets — so if the manual default ever moves, this prose fails rather
-    # than quietly describing a number the step no longer uses.
-    assert f"<b>{AUTO_STRETCH_AMOUNT:.2f}</b>, gentler than the " \
-           f"{STRETCH_DEFAULT / 100:.2f}" in b
+    # Both numbers formatted from the constants, so if either moves the prose
+    # fails rather than quietly describing a plan the app no longer runs. They
+    # were 0.30 and 0.43 until 2026-09-14, when the manual default came down to
+    # the value Andreas picked from ladders of four of his own masters — at
+    # which point "gentler than" stopped being true.
+    assert AUTO_STRETCH_AMOUNT == STRETCH_DEFAULT / 100.0, (
+        "the help says these are the same; make them so, or reword it")
+    assert f"<b>{AUTO_STRETCH_AMOUNT:.2f}</b>, the same as the manual" in b
     assert plan["saturation"] == (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)
     assert f"<b>{AUTO_SATURATION_AMOUNT:.2f}</b> with a light " \
            f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost" in b

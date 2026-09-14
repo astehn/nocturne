@@ -228,27 +228,35 @@ def test_stretch_has_no_target_dropdown(qtbot):
     assert not w.findChildren(QComboBox), "nothing left to pick on this step"
 
 
-def test_the_stretch_default_is_derived_from_the_targets(qtbot):
-    """Not a new magic number. The slider maps linearly onto a target
-    background median, and the default is the position whose target equals the
-    one the DISPLAY PREVIEW already uses — so arriving at Stretch and pressing
-    Apply changes nothing visible. The old mid-slider 50 mapped to 0.2750
-    against a preview target of 0.25, which is the WYSIWYG violation
-    `_sync_stretch_preview` exists to patch.
+def test_the_stretch_default_is_the_one_he_measured(qtbot):
+    """30, from ladders of four of his own masters (2026-09-14): M16, M33 and
+    IC1396A all wanted 0.10; M45 wanted 0.20-0.30 because at 0.10 "too much of
+    the nebulosity is not visible".
+
+    The default takes the most conservative answer deliberately. Losing faint
+    signal is unrecoverable — too bright and you see noise and drag it down, too
+    dark and you never learn what you missed — so the default must fail in the
+    recoverable direction. Pinned because it is EVIDENCE, and a future edit that
+    drifts it should have to come back and disagree with the evidence.
     """
     from nocturne.ui.step_panels import STRETCH_DEFAULT
-    from nocturne.core.autostretch import _TARGET_BG
-    from nocturne.core import stretch as core_stretch
-
     w = build_panel(_stage("stretch"), on_apply=lambda v: None)
     qtbot.addWidget(w)
+    assert STRETCH_DEFAULT == 30
     assert w.stretch_slider.value() == STRETCH_DEFAULT
 
-    lo, hi = core_stretch._TARGET_MIN, core_stretch._TARGET_MAX
-    landed = lo + (STRETCH_DEFAULT / 100.0) * (hi - lo)
-    assert abs(landed - _TARGET_BG) < 0.006, (
-        f"slider {STRETCH_DEFAULT} targets {landed:.4f}, preview targets "
-        f"{_TARGET_BG} — the default has drifted from the preview")
+
+def test_the_manual_default_is_not_harsher_than_the_automatic_one(qtbot):
+    """Before 2026-09-14 the manual default was 0.43 while Auto Enhance used
+    0.30 — the hand-driven path was MORE aggressive than the automatic one,
+    which nobody would design deliberately. Asserted as an inequality rather
+    than equality so the two may diverge for a reason, but never back the wrong
+    way round."""
+    from nocturne.ui.step_panels import STRETCH_DEFAULT
+    from nocturne.core.auto_enhance import AUTO_STRETCH_AMOUNT
+    assert STRETCH_DEFAULT / 100.0 <= AUTO_STRETCH_AMOUNT + 1e-9, (
+        f"manual default {STRETCH_DEFAULT/100:.2f} is harsher than Auto "
+        f"Enhance's {AUTO_STRETCH_AMOUNT:.2f}")
 
 
 def test_saturation_panel_default_is_native(qtbot):
