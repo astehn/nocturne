@@ -315,3 +315,18 @@ def test_a_two_panel_pick_still_fits_the_screen(qtbot):
     qtbot.waitExposed(d)
     assert d._grid_host.sizeHint().height() <= d._scroll.viewport().height()
     assert d.size().height() <= d._available().height()
+
+
+def test_no_colour_pick_when_the_channels_are_the_same_picture():
+    """Both stretches would render identically, so the pick would be a question
+    with one answer.
+
+    Tested on a CONSTRUCTED image, not a mono FITS: `load_fits` treats a 2-D
+    frame as a Bayer mosaic and demosaics it, so a "mono" file arrives with
+    genuinely different channels (max channel difference 0.77 on a synthetic
+    one). There is no mono path through the loader to exercise — the guard is
+    for data that has become grey, not for a grey file.
+    """
+    grey = np.repeat(_linear().data[..., :1], 3, axis=2)
+    assert colour_pick(AstroImage(grey, is_linear=True)) is None
+    assert colour_pick(_wide_red_linear()) is not None

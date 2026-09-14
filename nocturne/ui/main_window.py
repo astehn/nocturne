@@ -3912,9 +3912,32 @@ class MainWindow(QMainWindow):
         from .stretch_picker import StretchPickerDialog
         # The same image the step's own preview and commit act on, so what the
         # panels show is what Apply produces.
-        dlg = StretchPickerDialog(self._preview_base("stretch"), parent=self)
+        dlg = StretchPickerDialog(self._preview_base("stretch"), parent=self,
+                                  picks=self._stretch_picks())
         dlg.exec()
         self._apply_picked_stretch(dlg.result_option())
+
+    def _stretch_picks(self):
+        """Colour first, then brightness — one variable per question.
+
+        The colour pick is omitted for mono, which has no colour to choose:
+        `unlinked_stretch` already falls back to linked for 2-D input, so it
+        would be a question with one answer.
+        """
+        from .stretch_picker import brightness_pick, colour_pick
+        base = self._preview_base("stretch")
+        colour = colour_pick(base, spcc_applied=self._spcc_was_applied())
+        return ([colour] if colour is not None else []) + [brightness_pick(base)]
+
+    def _spcc_was_applied(self) -> bool:
+        """Did the committed Colour step use photometric calibration?
+
+        Only then is the caveat true. An unlinked stretch annihilates SPCC
+        (measured 0.0004 of a level), but saying so unconditionally would warn
+        the many people who never ran it.
+        """
+        opt = self._committed_option("color")
+        return getattr(opt, "method", None) == "photometric"
 
     def _apply_picked_stretch(self, option) -> None:
         """Put the pick on the slider. It does NOT commit.
@@ -3931,7 +3954,21 @@ class MainWindow(QMainWindow):
         panel = self._panel
         if not hasattr(panel, "stretch_slider"):
             return
-        from ..steps.stretch_step import parse_stretch_option
+        from ..steps.stretch_step import parse_stretch_linked, parse_stretch_option
+        linked = parse_stretch_linked(option)
+        panel.stretch_linked = linked
+        # Option A, decided 2026-09-14: Import set a DEFAULT, not a lock. Someone
+        # who skipped Colour and then chose Linked must not silently commit a
+        # linked stretch having never been offered the calibration that only a
+        # linked stretch preserves. Re-enable it and say so; do not move them.
+        if linked and not self._view_linked:
+            self._view_linked = True
+            here = self.current_stage_id()
+            self._rebuild_stages()
+            self._go_to_id(here, user_initiated=False)
+            self.log_panel.append_entry(
+                "Colour is available again — go back to it if you want "
+                "photometric calibration, which only a linked stretch keeps.")
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
 
     def _sync_stretch_preview(self) -> None:
@@ -3965,7 +4002,10 @@ class MainWindow(QMainWindow):
         img = self._preview_base("stretch")
         amount = (self._stretch_pending if self._stretch_pending is not None
                   else self._panel.stretch_slider.value() / 100.0)
-        self._show_preview(apply_stretch(img, amount).data)
+        # linked from the panel, so the live preview equals what Apply commits.
+        # "Probably the same" is a bug (CLAUDE.md).
+        self._show_preview(apply_stretch(
+            img, amount, linked=bool(getattr(self._panel, "stretch_linked", True))).data)
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
     def _setup_saturation(self) -> None:
@@ -4863,6 +4903,7 @@ class MainWindow(QMainWindow):
             on_visual_stretch=self._open_stretch_picker,
             on_view_linked=self._set_view_linked,
             view_linked=self._view_linked,
+            stretch_linked=self._view_linked,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,

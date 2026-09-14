@@ -145,15 +145,31 @@ def _colour_caption(name: str, value, img: AstroImage) -> str:
     return f"{name}\n{sub}"
 
 
+def _is_grey(data: np.ndarray) -> bool:
+    """Are the three channels the same picture?
+
+    NOT `ndim == 3`: Nocturne promotes a mono capture to three identical
+    channels at load, so `AstroImage.is_color` is True for every image and a
+    shape test never fires. Identical channels are the reachable condition —
+    and the one that matters, since a linked and an unlinked stretch then
+    produce the same picture and the pick would be a question with one answer.
+    """
+    if data.ndim != 3 or data.shape[-1] < 3:
+        return True
+    s = data[::8, ::8, :3]                       # a sample is enough for this
+    return bool(np.array_equal(s[..., 0], s[..., 1])
+                and np.array_equal(s[..., 1], s[..., 2]))
+
+
 def colour_pick(base: AstroImage, *, spcc_applied: bool = False) -> Pick | None:
-    """Linked or unlinked? Returns None for mono, which has no colour to pick.
+    """Linked or unlinked? None when the channels are identical.
 
     Both panels are rendered at the SAME target so only colour varies — one
     variable per question, which is the decomposition AstroWizard gets right
     ("ignore brightness - depth is the next pick"). Two columns rather than
     three, because judging colour wants the larger picture.
     """
-    if base.data.ndim != 3 or base.data.shape[-1] < 3:
+    if _is_grey(base.data):
         return None
     small = downscale(base, _PREVIEW_MAX)
     at = _COLOUR_TARGET

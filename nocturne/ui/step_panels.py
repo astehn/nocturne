@@ -93,6 +93,7 @@ def build_panel(
     on_visual_stretch=None,
     on_view_linked=None,
     view_linked=True,
+    stretch_linked=True,
     on_levels_change=None,
     on_levels_auto=None,
     on_sat_change=None,
@@ -446,7 +447,13 @@ def build_panel(
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            # A DICT, not a bare float: the stretch now carries its MECHANISM
+            # as well as its amount, and both have to reach the commit. Anchored
+            # on the Visual-stretch comment below, because this exact Apply line
+            # appears in three panels and a bare replace patched all three.
+            apply_btn.clicked.connect(
+                lambda: on_apply({"amount": slider.value() / 100.0,
+                                  "linked": bool(w.stretch_linked)}))
         # Optional, and BELOW the slider: the slider keeps working untouched
         # for anyone who already knows the number they want. The picker is for
         # the case a number cannot answer — four of Andreas's own targets wanted
@@ -463,6 +470,7 @@ def build_panel(
         lay.addWidget(apply_btn)
         lay.addWidget(visual_btn)
         w.visual_btn = visual_btn
+        w.stretch_linked = bool(stretch_linked)
         w.stretch_slider = slider
         w.stretch_val = stretch_val
         w.apply_btn = apply_btn

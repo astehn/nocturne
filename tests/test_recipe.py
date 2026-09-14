@@ -486,3 +486,21 @@ def test_the_strictness_lifts_itself_at_1_0(tmp_path, monkeypatch):
     p.write_text(json.dumps({"version": 1, "app": "0.29.0", "steps": []}))
     monkeypatch.setattr(r, "RELEASE_STAGE", "")
     assert r.load_recipe(str(p)).steps == []
+
+
+def test_recipe_roundtrips_the_stretch_mechanism():
+    """The dict shape landed on 2026-09-14 precisely so `linked` could be added
+    without changing the stored format a second time. Asserted through the
+    STEP's parsers: what matters is that a replay produces the same stretch."""
+    from nocturne.steps.stretch_step import parse_stretch_linked, parse_stretch_option
+    o = deserialize_option("stretch", serialize_option("stretch",
+                                                       {"amount": 0.6, "linked": False}))
+    assert parse_stretch_option(o) == 0.6
+    assert parse_stretch_linked(o) is False
+
+
+def test_a_recipe_without_the_flag_replays_as_linked():
+    """Everything written before today predates the choice."""
+    from nocturne.steps.stretch_step import parse_stretch_linked
+    assert parse_stretch_linked(deserialize_option(
+        "stretch", serialize_option("stretch", 0.6))) is True
