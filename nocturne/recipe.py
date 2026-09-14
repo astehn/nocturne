@@ -70,7 +70,11 @@ def serialize_option(stage_id, option):
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
     if stage_id == "stretch":
-        return float(option) if option not in (None, "") else 0.5
+        # The dict is what the visual picker produces; a bare float is every
+        # recipe saved before 2026-09-14. Serialize to the dict either way, so
+        # the stored shape is ONE thing rather than two that drift.
+        from .steps.stretch_step import parse_stretch_option
+        return {"amount": parse_stretch_option(option)}
     if stage_id in ("local_contrast", "star_reduction", "recover_core", "green_fringe",
                     "remove_green"):
         try:

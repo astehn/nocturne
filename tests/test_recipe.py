@@ -9,7 +9,14 @@ from nocturne.recipe import (
 
 
 def test_option_roundtrips():
-    assert deserialize_option("stretch", serialize_option("stretch", 0.6)) == 0.6
+    # Stretch serializes to {"amount": x} as of 2026-09-14, so the visual picker
+    # can add a `linked` key later without changing the format again. Asserted
+    # through the STEP's parser rather than against a literal, because what
+    # matters is that a replay produces the same stretch — not the shape it
+    # travelled in.
+    from nocturne.steps.stretch_step import parse_stretch_option
+    assert parse_stretch_option(
+        deserialize_option("stretch", serialize_option("stretch", 0.6))) == 0.6
     assert deserialize_option("noise_sharpen",
                               serialize_option("noise_sharpen", "medium")) == "medium"
     lv = deserialize_option("levels", serialize_option("levels", (0.1, 1.2, 0.9)))
