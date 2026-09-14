@@ -2727,6 +2727,16 @@ class MainWindow(QMainWindow):
         """
         pending = self._has_pending()
         sid = self.current_stage_id()
+        # The visual stretch picker is only meaningful on data that has not been
+        # stretched yet — it renders six stretches of the current image, and
+        # offering that on an already-stretched frame would silently stretch it
+        # twice. Gated HERE rather than in the panel because `apply_enabled`,
+        # which build_panel does get, is about tool availability and stays True
+        # after a commit; the panel has no way to know the image is linear.
+        visual = getattr(self._panel, "visual_btn", None)
+        if visual is not None:
+            visual.setEnabled(
+                self.project is not None and self.project.current().is_linear)
         # The three compute stages (background, deconvolution, noise_sharpen)
         # render no live preview, so Apply is the ONLY action ever available
         # there — arriving with nothing yet committed on this image IS the
@@ -3841,6 +3851,39 @@ class MainWindow(QMainWindow):
         self._stretch_timer.start(90)
         self._sync_step_controls()
 
+    def _open_stretch_picker(self) -> None:
+        """Choose a stretch by looking at six previews of THIS image.
+
+        Modal, and it reports inside itself — the rule settled 2026-09-13 for a
+        tool the user's whole attention is already inside.
+        """
+        if self.project is None or self._busy:
+            return
+        from .stretch_picker import StretchPickerDialog
+        # The same image the step's own preview and commit act on, so what the
+        # panels show is what Apply produces.
+        dlg = StretchPickerDialog(self._preview_base("stretch"), parent=self)
+        dlg.exec()
+        self._apply_picked_stretch(dlg.result_option())
+
+    def _apply_picked_stretch(self, option) -> None:
+        """Put the pick on the slider. It does NOT commit.
+
+        Apply is still the only thing that does, and the slider's own signal
+        makes the step read "not applied yet" exactly as dragging would — so the
+        choice is visible as unapplied work rather than quietly lost on Next.
+
+        Split from `_open_stretch_picker` so a test can drive the result without
+        a real modal, which headless blocks on forever.
+        """
+        if not option:
+            return                      # cancelled: change nothing at all
+        panel = self._panel
+        if not hasattr(panel, "stretch_slider"):
+            return
+        from ..steps.stretch_step import parse_stretch_option
+        panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
+
     def _sync_stretch_preview(self) -> None:
         """On the Stretch step, show what Apply will actually commit.
 
@@ -4767,6 +4810,7 @@ class MainWindow(QMainWindow):
             on_apply_tint=self._apply_tint_step,
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
+            on_visual_stretch=self._open_stretch_picker,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,
