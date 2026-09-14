@@ -27,7 +27,7 @@ def _to_uint(data: np.ndarray, bits: int) -> np.ndarray:
 _ICC_TAG = 34675
 
 
-def display_data(img: AstroImage) -> np.ndarray:
+def display_data(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     """What a PICTURE format should contain: exactly what the canvas shows.
 
     A linear image is autostretched here for the same reason preview.to_rgb8
@@ -45,7 +45,8 @@ def display_data(img: AstroImage) -> np.ndarray:
     arises.
     """
     from .autostretch import autostretch
-    return autostretch(img) if img.is_linear else np.clip(img.data, 0.0, 1.0)
+    return (autostretch(img, linked=linked) if img.is_linear
+            else np.clip(img.data, 0.0, 1.0))
 
 
 def save_tiff(img: AstroImage, path: str, icc: bytes | None = None) -> None:
