@@ -27,7 +27,7 @@ from typing import Callable
 
 import numpy as np
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QGuiApplication, QPixmap
+from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout,
     QWidget,
@@ -180,6 +180,10 @@ class StretchPickerDialog(QDialog):
         edge = preview_edge(self._available(), self._chrome(rows), rows)
         self._grid_host = QWidget()
         grid = QGridLayout(self._grid_host)
+        # Zeroed so the fit has no unmeasured term: _chrome counts the layout
+        # spacing between cells, and a stray default margin here would be the
+        # difference between fitting and a scrollbar.
+        grid.setContentsMargins(0, 0, 0, 0)
         for i, (name, value, img) in enumerate(options):
             grid.addWidget(self._panel(i, name, value, img, edge),
                            i // _COLUMNS, i % _COLUMNS)
@@ -198,27 +202,42 @@ class StretchPickerDialog(QDialog):
 
     def _panel(self, index: int, name: str, value: float,
                img: AstroImage, edge: int) -> QWidget:
+        """One preview. The PICTURE is the button.
+
+        It started as an image above a "Use this one" button, which is a row of
+        chrome per row of previews and was what tipped the grid off the bottom
+        of a 1440 px screen. AstroWizard's equivalent has no button either: you
+        click the one you want. Clicking the thing you are choosing between is
+        the more obvious gesture anyway — the button only ever restated it.
+        """
         holder = QWidget()
         lay = QVBoxLayout(holder)
-        shot = QLabel()
+        lay.setContentsMargins(0, 0, 0, 0)
+        # A QPushButton rather than a clickable QLabel, so the picture keeps a
+        # button's hover, focus ring and keyboard activation for free.
+        shot = QPushButton()
+        shot.setObjectName("pickPanel")
+        shot.setFlat(True)
+        shot.setCursor(Qt.CursorShape.PointingHandCursor)
+        shot.setToolTip(f"Use {name} — stretch {value:.2f}")
         # Rendered at _PREVIEW_MAX and scaled DOWN here, rather than rendered at
         # `edge`: the render is the expensive half and its cost does not change,
         # while scaling from the larger pixmap keeps a small panel sharp.
-        shot.setPixmap(QPixmap.fromImage(to_qimage(img)).scaled(
+        pix = QPixmap.fromImage(to_qimage(img)).scaled(
             edge, edge, Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation))
-        shot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(shot)
-        # Name AND numbers. The name is a handle to think with; the number is
-        # the slider value you land on and can nudge from, so a name can never
-        # drift away from what it actually does.
-        caption = QLabel(f"{name}\n{value:.2f} · sky {_sky(img):.3f}")
+            Qt.TransformationMode.SmoothTransformation)
+        shot.setIcon(QIcon(pix))
+        shot.setIconSize(pix.size())
+        shot.setFixedSize(pix.width() + 8, pix.height() + 8)
+        shot.clicked.connect(lambda _checked=False, i=index: self.choose(i))
+        lay.addWidget(shot, alignment=Qt.AlignmentFlag.AlignCenter)
+        # Name AND numbers, on ONE line: the name is a handle to think with, the
+        # number is the slider value you land on and can nudge from, so a name
+        # can never drift away from what it actually does.
+        caption = QLabel(f"{name} · {value:.2f} · sky {_sky(img):.3f}")
         caption.setObjectName("stepDesc")
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(caption)
-        button = QPushButton("Use this one")
-        button.clicked.connect(lambda _checked=False, i=index: self.choose(i))
-        lay.addWidget(button)
         return holder
 
     # --- fitting ---------------------------------------------------------
@@ -240,11 +259,9 @@ class StretchPickerDialog(QDialog):
         """
         margins = self._root.contentsMargins()
         spacing = self._root.spacing()
-        caption = QLabel("Name\n0.00 \u00b7 sky 0.000")
+        caption = QLabel("Name \u00b7 0.00 \u00b7 sky 0.000")
         caption.setObjectName("stepDesc")
-        per_row = (caption.sizeHint().height()
-                   + QPushButton("Use this one").sizeHint().height()
-                   + 3 * spacing)
+        per_row = caption.sizeHint().height() + 8 + 2 * spacing
         width = (margins.left() + margins.right()
                  + self._scroll.verticalScrollBar().sizeHint().width()
                  + (_COLUMNS + 1) * spacing)

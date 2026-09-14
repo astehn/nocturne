@@ -104,11 +104,15 @@ def test_a_pick_receives_the_answers_so_far(qtbot):
 # screen edge and Cancel was below it, unreachable. Anything that grows the
 # dialog has to shrink the previews instead of the window.
 
+# AVAILABLE geometry, not panel size: macOS excludes the menu bar, so the 2560
+# x1440 monitor this overflowed on reports 1410 of usable height. Sizing against
+# the raw panel number was part of how the first fix still overflowed -- the
+# table said 1295 <= 1296 and the real ceiling was 1269.
 _SCREENS = [
-    ("MacBook Air floor", 1280, 800),      # the size floor this app targets
-    ("MacBook Pro 14", 1512, 982),
-    ("27 inch", 2560, 1440),               # the monitor it overflowed on
-    ("5K", 5120, 2880),
+    ("MacBook Air floor", 1280, 775),      # the size floor this app targets
+    ("MacBook Pro 14", 1512, 957),
+    ("27 inch", 2560, 1410),               # the monitor it overflowed on
+    ("5K", 5120, 2855),
 ]
 
 
@@ -150,3 +154,62 @@ def test_previews_never_shrink_below_judging_size(qtbot):
     from nocturne.ui.stretch_picker import preview_edge, _PREVIEW_MIN
 
     assert preview_edge(QSize(320, 240), QSize(64, 247), 2) == _PREVIEW_MIN
+
+
+def test_the_picture_is_the_button(qtbot):
+    """No "Use this one" under each preview: you click the picture.
+
+    A button per panel is a row of chrome per row of previews, and it was what
+    tipped the grid off the bottom of a 1440 px screen even after the fit went
+    in. AstroWizard has no such button either.
+    """
+    from PySide6.QtWidgets import QPushButton
+
+    d = StretchPickerDialog(_linear())
+    qtbot.addWidget(d)
+    labels = [b.text() for b in d.findChildren(QPushButton) if b.text()]
+    assert labels == ["Cancel"], labels
+
+    clickable = d.findChildren(QPushButton, "pickPanel")
+    assert len(clickable) == len(STRETCH_PICKS)
+    clickable[2].click()
+    assert d.result_option() == {"amount": STRETCH_PICKS[2][1]}
+
+
+def test_the_fit_survives_the_real_stylesheet(qtbot):
+    """The rendered grid must fit WITHOUT a scrollbar, on the real stylesheet.
+
+    Asserted against the laid-out widgets rather than against `_chrome()`. The
+    first version of this test compared the dialog size to `_chrome()`-derived
+    numbers and passed happily with the bug restored: the fit is COMPUTED from
+    `_chrome()`, so checking it with `_chrome()` is self-consistent no matter
+    how wrong that measurement is. The viewport is an independent witness.
+
+    Run under the real stylesheet because the themed #stageTitle is 20px + 8px
+    padding against an unstyled 16px, and every size in the fit depends on it.
+    """
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import apply_dark_theme
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    try:
+        apply_dark_theme(app)
+        d = StretchPickerDialog(_linear())
+        qtbot.addWidget(d)
+        d.show()
+        qtbot.waitExposed(d)
+        assert d._title.sizeHint().height() > 16, "stylesheet did not take"
+
+        needed = d._grid_host.sizeHint()
+        viewport = d._scroll.viewport().size()
+        assert needed.height() <= viewport.height(), (
+            f"grid needs {needed.height()}px in a {viewport.height()}px "
+            "viewport - the previews were sized against undercounted chrome")
+        assert needed.width() <= viewport.width()
+
+        available = d._available()
+        assert d.size().width() <= available.width()
+        assert d.size().height() <= available.height()
+    finally:
+        app.setStyleSheet(previous)
