@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
@@ -22,6 +22,11 @@ from ..core.share import (
 from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
 from ..settings import start_dir
 from .fonts import PLATE_FAMILIES, available_families
+
+# Typing pause before the preview recomposes. 90 ms is what main_window uses for
+# its tint/de-green/levels previews; curves uses 60 for a drag, which is a
+# faster gesture than typing.
+_TEXT_DEBOUNCE_MS = 90
 from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, last_layout
 from .theme import TEXT_DIM
@@ -211,8 +216,19 @@ class ShareDialog(QDialog):
         self._common_edit.setPlaceholderText("Common name")
         self._credit_edit = QLineEdit(text.credit)
         self._credit_edit.setPlaceholderText("Exposure, date, @handle")
+        # DEBOUNCED, like every other live preview in the app. Composing per
+        # keystroke means one whole share image per character, and at "Full
+        # size" that is the cropped resolution — an image the size of the
+        # master, allocated and thrown away on every key. This dialog's own
+        # resizeEvent already refuses to do that ("composing a 4096 px share on
+        # each one would make the dialog crawl") and the text fields did it
+        # anyway. Share was the only such dialog with no debounce at all.
+        self._text_timer = QTimer(self)
+        self._text_timer.setSingleShot(True)
+        self._text_timer.setInterval(_TEXT_DEBOUNCE_MS)
+        self._text_timer.timeout.connect(self._refresh_preview)
         for edit in (self._designation_edit, self._common_edit, self._credit_edit):
-            edit.textChanged.connect(lambda _t: self._refresh_preview())
+            edit.textChanged.connect(lambda _t: self._text_timer.start())
             # Show the START of the line. A QLineEdit leaves the cursor at the
             # end, so in the side column the credit opened reading
             # "25m · 1233 × 10s · @andreas" — the tail of its own text, which

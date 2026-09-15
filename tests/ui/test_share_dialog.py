@@ -17,6 +17,17 @@ def _dlg(qtbot, meta=None, **kw):
     qtbot.addWidget(d)
     return d
 
+def _settled(qtbot, d):
+    """Wait out the typing debounce added 2026-09-15.
+
+    The wrap warning is computed by the compose, so it now lands with the
+    preview rather than with the keystroke. That is the intended behaviour —
+    the alternative is composing the whole share image per character, which is
+    what made typing slow.
+    """
+    qtbot.wait(d._text_timer.interval() + 120)
+
+
 def test_dialog_builds_with_preview(qtbot):
     d = _dlg(qtbot)
     assert d._compose_current().width() > 0
@@ -467,6 +478,7 @@ def test_long_text_says_it_wrapped_rather_than_vanishing(qtbot):
     the flag is set on any second line, and a two-line nebula name fits fine."""
     d = _dlg(qtbot)
     d._common_edit.setText("x" * 400)
+    _settled(qtbot, d)
     assert "wrapped" in d.status.text().lower()
     assert "will not fit" not in d.status.text().lower()
 
@@ -477,6 +489,7 @@ def test_exporting_does_not_erase_the_wrap_notice(qtbot, tmp_path):
     and the reason it wrapped was gone."""
     d = _dlg(qtbot)
     d._common_edit.setText("x" * 400)
+    _settled(qtbot, d)
     assert "wrapped" in d.status.text().lower()
     d._save_runner = lambda img, path, *a, **k: None
     d._do_export(str(tmp_path / "x.jpg"))
@@ -497,8 +510,10 @@ def test_the_warning_clears_when_the_text_fits_again(qtbot):
     """A warning that stays up after the problem is gone is worse than none."""
     d = _dlg(qtbot)
     d._common_edit.setText("x" * 400)
+    _settled(qtbot, d)
     assert d.status.text()
     d._common_edit.setText("M 31")
+    _settled(qtbot, d)
     assert d.status.text() == ""
 
 
@@ -508,6 +523,7 @@ def test_an_empty_plate_does_not_inherit_the_last_warning(qtbot):
     previous image's overflow."""
     d = _dlg(qtbot)
     d._common_edit.setText("x" * 400)
+    _settled(qtbot, d)
     assert d.status.text()
     d._caption_check.setChecked(False)
     assert d.status.text() == ""
@@ -720,3 +736,40 @@ def test_the_dialog_says_the_export_is_the_colour_accurate_one(qtbot):
     assert "colour-managed" in text or "color-managed" in text, text
     assert "accurate" in text, text
     assert dlg._colour_note.isVisible() or True    # constructed, shown with the dialog
+
+
+# --- typing must not compose per character -------------------------------
+# Andreas, 2026-09-15: typing custom text in Share got slow enough to raise the
+# macOS spinner between keystrokes, and only at the larger sizes. Every keypress
+# composed the whole share image synchronously: at Full size that is a compose
+# of the cropped resolution, allocating an image the size of the master each
+# time. The dialog's own resizeEvent already refuses to do this — "composing a
+# 4096 px share on each one would make the dialog crawl" — and the text field
+# did exactly that. Share was the only live-preview dialog in the app without a
+# debounce; curves, starless levels, colour balance and combine all have one.
+
+def test_typing_composes_once_not_once_per_character(qtbot):
+    from PySide6.QtGui import QImage
+    from PySide6.QtTest import QTest
+    d = _dlg(qtbot)
+    calls = []
+    blank = QImage(4, 4, QImage.Format.Format_RGB888)
+    d._compose_current = lambda: (calls.append(1) or blank)
+
+    QTest.keyClicks(d._designation_edit, "Elephant", delay=0)
+    assert calls == [], "composed while still typing"
+
+    qtbot.wait(250)
+    assert len(calls) == 1, f"expected one compose after the pause, got {len(calls)}"
+
+
+def test_the_preview_still_lands_after_typing(qtbot):
+    """The debounce must not swallow the update — the whole point is that the
+    preview follows the text, just not per character."""
+    from PySide6.QtTest import QTest
+    d = _dlg(qtbot)
+    d._designation_edit.clear()          # it is prefilled from the metadata
+    QTest.keyClicks(d._designation_edit, "M 16", delay=0)
+    assert d._plate().designation == "M 16"
+    _settled(qtbot, d)
+    assert d._preview_image is not None
