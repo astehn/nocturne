@@ -171,7 +171,12 @@ _TOPIC_LIST = (
        "<b>Local Contrast</b>, <b>Star Reduction</b> and <b>Enhancements</b> are tone and colour "
        "polish — they work on the stretched image you can actually see. Nocturne enforces this "
        "ordering, and auto-stretches for you if you jump ahead, so a finishing step never lands "
-       "on linear data.</p>"),
+       "on linear data.</p>"
+       "<h4>Reading the step list</h4>"
+       "<p>A green tick is a step you applied. A hollow circle is one you have not reached yet. "
+       "A circle with a line through it is one you walked past and left alone — most steps are "
+       "optional, so skipping them is perfectly normal, and the mark is only there so you can "
+       "see at the end which ones you passed over. Click any of them to go back.</p>"),
 
     _t("history", "Non-destructive history",
        "Every step is cached; undo, redo, and jump-back are instant and lossless.",

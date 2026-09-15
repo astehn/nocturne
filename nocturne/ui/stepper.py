@@ -7,14 +7,32 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
 from .theme import ACCENT, BG_3, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT
 
 
-def step_state(index: int, current_index: int, done_indexes, enabled: bool) -> str:
-    """Pure state decision for a stepper row."""
+def step_state(index: int, current_index: int, done_indexes, enabled: bool,
+               high_water: int | None = None) -> str:
+    """Pure state decision for a stepper row.
+
+    `high_water` is the furthest row reached this session. It separates a step
+    you walked PAST and chose not to apply from one you have never been to —
+    "upcoming" used to render both identically grey, and at the end of a pass
+    "which steps did I skip?" is a real question the list is uniquely placed to
+    answer.
+
+    A high-water mark rather than `index < current_index`, because jumping back
+    makes the current index go DOWN: walk to 8, return to 3, and rows 4-7 would
+    quietly become unreached again — exactly when the question is hardest to
+    answer from memory.
+
+    Defaults to None, which restores the old four-state behaviour for any caller
+    that has not been taught about it.
+    """
     if not enabled:
         return "locked"
     if index == current_index:
         return "current"
     if index in done_indexes:
         return "done"
+    if high_water is not None and index < high_water:
+        return "skipped"
     return "upcoming"
 
 
@@ -45,7 +63,7 @@ class StepDelegate(QStyledItemDelegate):
                                            r.height() - 12), 1.5, 1.5)
 
         # badge
-        badge = {"done": SUCCESS, "current": ACCENT,
+        badge = {"done": SUCCESS, "current": ACCENT, "skipped": TEXT_DIM,
                  "upcoming": TEXT_FAINT, "locked": TEXT_FAINT}[state]
         painter.setPen(QPen(QColor(badge), 2))
         if state == "done":
@@ -63,10 +81,21 @@ class StepDelegate(QStyledItemDelegate):
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QRectF(cx - 6, cy - 6, 12, 12))
+            if state == "skipped":
+                # A dash through the empty ring: you were here and left it
+                # alone. Deliberately NOT amber — pending was considered and
+                # rejected for this list on 2026-09-13, and reusing its colour
+                # would make a future reader think the two ideas were one.
+                # Deliberately quiet, too: in a normal pass MOST steps are
+                # skipped, so anything louder would shout at the common case.
+                painter.drawLine(int(cx - 3), int(cy), int(cx + 3), int(cy))
 
         # label
         label = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        color = {"done": TEXT, "current": TEXT,
+        # Skipped keeps UPCOMING's label colour, not locked's fainter one: a
+        # skipped step is still available to go back to, and dimming it would
+        # read as unavailable.
+        color = {"done": TEXT, "current": TEXT, "skipped": TEXT_DIM,
                  "upcoming": TEXT_DIM, "locked": TEXT_FAINT}[state]
         font = QFont(painter.font())
         font.setBold(state == "current")
@@ -96,6 +125,7 @@ class Stepper(QListWidget):
         self._stages = []
         self._current = -1
         self._done: set = set()
+        self._high_water: int | None = None
         self.setItemDelegate(StepDelegate(self))
         self.itemClicked.connect(self._on_click)
 
@@ -118,10 +148,16 @@ class Stepper(QListWidget):
         self.setCurrentRow(index)
         self.viewport().update()
 
+    def set_high_water(self, index: int | None) -> None:
+        """The furthest row reached this session; None disables skipped marks."""
+        self._high_water = index
+        self.viewport().update()
+
     def mark_done(self, done_ids: set) -> None:
         self._done = {i for i, s in enumerate(self._stages) if s.id in done_ids}
         self.viewport().update()
 
     def state_at(self, index: int) -> str:
         stage = self._stages[index]
-        return step_state(index, self._current, self._done, stage.enabled)
+        return step_state(index, self._current, self._done, stage.enabled,
+                          self._high_water)

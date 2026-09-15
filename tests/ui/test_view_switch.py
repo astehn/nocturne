@@ -146,3 +146,45 @@ def test_a_picture_export_matches_what_the_canvas_shows(qtbot, tmp_path):
     save_png(win._canvas_img, out, linked=win._view_linked)
     assert np.array_equal(np.asarray(Image.open(out)),
                           to_rgb8(win._canvas_img, linked=False))
+
+
+# --- the high-water mark ---------------------------------------------------
+
+def _stage_ids(win):
+    return [s.id for s in win._stages]
+
+
+def test_walking_forward_marks_what_you_passed_as_skipped(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.go_next(); win.go_next()                    # Import -> Crop -> Background
+    assert win.stepper.state_at(0) in ("done", "skipped")
+    assert win.stepper.state_at(_stage_ids(win).index("crop")) == "skipped"
+
+
+def test_jumping_back_keeps_the_rows_you_passed_marked(qtbot, tmp_path):
+    """The whole reason it is a high-water mark: going back must not un-mark
+    the steps you already walked past."""
+    win = _window(qtbot, tmp_path)
+    ids = _stage_ids(win)
+    win._go_to(ids.index("deconvolution"))
+    passed = ids.index("background")
+    assert win.stepper.state_at(passed) == "skipped"
+    win._go_to(ids.index("crop"))                   # jump back
+    assert win.stepper.state_at(passed) == "skipped", "un-marked on the way back"
+
+
+def test_a_new_image_resets_the_high_water_mark(qtbot, tmp_path):
+    """Otherwise the previous image's walk would mark steps as skipped in a
+    session that has not touched them."""
+    win = _window(qtbot, tmp_path)
+    win._go_to(_stage_ids(win).index("deconvolution"))
+    assert win.stepper.state_at(1) == "skipped"
+    win.open_fits(_make_fits(tmp_path, "second.fits"))
+    assert win.stepper.state_at(1) == "upcoming"
+
+
+def test_nothing_is_skipped_before_you_have_walked_anywhere(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win.current_stage_id() == "load"
+    for i in range(1, len(win._stages)):
+        assert win.stepper.state_at(i) != "skipped", i

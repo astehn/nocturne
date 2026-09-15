@@ -284,6 +284,12 @@ class MainWindow(QMainWindow):
         # default deliberately — see core.autostretch.autostretch. Set BEFORE
         # the stage list, which asks it which stages to omit.
         self._view_linked = True
+        # Furthest stage index reached with THIS image. It separates a step you
+        # walked past and left alone from one you have never been to — the
+        # current index alone cannot, because jumping back makes it go down.
+        # Reset on a new image and on Close Project, or the previous image's
+        # walk would mark steps as skipped in a session that never touched them.
+        self._high_water = 0
         self._stages = path_stages(self._omitted_stages())
         self._stage = 0
         self._bg_runner = run_cli
@@ -2033,6 +2039,8 @@ class MainWindow(QMainWindow):
             if not self._ensure_stretched(self._stages[index].label):
                 return          # cancelled: stay where we are, change nothing
         self._stage = index
+        self._high_water = max(self._high_water, index)
+        self.stepper.set_high_water(self._high_water)
         self._nav_seq += 1   # a completed navigation — see _deferred_nav
         self._clear_warning()  # clear any stale error when changing steps
         if self.image_view.compare_active():  # before/after is per-image; reset on nav
@@ -2298,6 +2306,9 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
         )
+        # Before the navigation, or max() would carry the previous image's mark
+        # over and show steps as skipped in a session that never touched them.
+        self._reset_high_water()
         self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
         self._rebuild_panel()
         self._dirty = False
@@ -3824,6 +3835,13 @@ class MainWindow(QMainWindow):
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
 
+    def _reset_high_water(self) -> None:
+        """Forget how far this session walked. A new image (or Close Project)
+        starts a fresh pass, and carrying the mark over would mark steps as
+        skipped that the user has never been to."""
+        self._high_water = 0
+        self.stepper.set_high_water(0)
+
     def _omitted_stages(self) -> frozenset[str]:
         """Colour does NOTHING under an unlinked stretch, so it is not offered.
 
@@ -5201,6 +5219,7 @@ class MainWindow(QMainWindow):
         image."""
         if not self._confirm_save_if_dirty():
             return
+        self._reset_high_water()
         self._swap_workspace()
         self.project = None
         self._clip_baseline = None
