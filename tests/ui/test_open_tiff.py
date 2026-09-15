@@ -161,3 +161,40 @@ def test_the_panel_says_why_it_is_sparse(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_any(_write_linear_tiff(tmp_path))
     assert "TIFF" in win._panel.meta_label.text()
+
+
+def test_a_corrected_tiff_survives_a_save_and_reopen(qtbot, tmp_path):
+    """Open a TIFF, correct the verdict, save the project, reopen it.
+
+    `is_linear` is per-snapshot state in the bundle (project_store writes it for
+    the base and every step), so this should hold — but the whole point of the
+    override is that the stored reading is the user's, not ours, and a bundle
+    that forgot it would silently re-apply our guess.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    assert win.project.current().is_linear is False
+    win._set_opened_as_linear(True)
+
+    bundle = str(tmp_path / "corrected.nocturne")
+    win._save_project_to(bundle) if hasattr(win, "_save_project_to") else win._do_save_project(bundle)
+
+    win2 = _window(qtbot, tmp_path)
+    win2._open_project(bundle)
+    assert win2.project is not None, "the bundle did not reopen"
+    assert win2.project.current().is_linear is True, "the correction was forgotten"
+
+
+def test_batch_does_not_silently_skip_tiffs(qtbot, tmp_path):
+    """Batch globs .fit/.fits/.fts only, so a folder of TIFFs yields nothing.
+
+    Pinned as a KNOWN limitation rather than a bug: it fails visibly (no files
+    matched) rather than half-processing, and extending it is separate work.
+    This test exists so the next person meets the decision instead of the
+    symptom.
+    """
+    from nocturne.ui.batch_dialog import _INPUT_PATTERNS
+    assert _INPUT_PATTERNS == ("*.fit", "*.fits", "*.fts"), _INPUT_PATTERNS
+    assert not any("tif" in p for p in _INPUT_PATTERNS), (
+        "Batch grew TIFF support — update this test, the help, and batch.py's "
+        "docstring, which still says the input glob is FITS-only")

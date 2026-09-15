@@ -35,10 +35,18 @@ def looks_linear(data: np.ndarray) -> bool:
     everything crushed near zero — it measures what actually separates the two
     states rather than a side effect of one particular target.
 
-    Two known failure modes, both recoverable by the user's override in the
-    Import panel: a stretched STARLESS file has no bright tail to key on (and
-    Nocturne exports starless files itself), and a very bright subject — lunar,
-    planetary — could push a linear frame's p99.9 up. Neither is silent.
+    The failure mode to worry about was assumed to be a stretched STARLESS file,
+    on the reasoning that removing the stars removes the bright tail this keys
+    on. MEASURED, it does not: a stretched starless IC 1396A reads 0.579,
+    nowhere near the threshold, because after a stretch the NEBULOSITY carries
+    the bright tail and only the star cores are taken out. (Approximated with a
+    star mask rather than a StarX split, so treat it as the right order of
+    magnitude rather than an exact figure.)
+
+    What remains is a very bright subject — lunar, planetary — which could push
+    a linear frame's p99.9 up. Out of scope for this app, but not impossible.
+    Either way the user's override in the Import panel is one click, and the
+    verdict is stated rather than applied silently.
     """
     finite = data[np.isfinite(data)]
     if finite.size == 0:
