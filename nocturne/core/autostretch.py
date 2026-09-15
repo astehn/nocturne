@@ -177,10 +177,16 @@ def neutral_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     return _apply_params(out, shadow, m)
 
 
-def autostretch(img: AstroImage) -> np.ndarray:
+def autostretch(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     # Display-only: lift the background to a fixed target for a clear preview.
+    #
+    # `linked` is a VIEW preference the caller passes; there is deliberately no
+    # module-level default holding it. A stored one would let every measurement
+    # that renders through here follow the canvas, and a metric that moves with
+    # how you are looking at the image is the failure this project has hit three
+    # times. metrics._display therefore keeps the default, on purpose.
     # Neutralise-then-link, so the sky is neutral and no channel is crushed
     # WITHOUT the stretch inventing a colour cast of its own — see
     # neutral_stretch. Matches the committed stretch, so the preview equals the
     # exported result at every step.
-    return neutral_stretch(img.data, _TARGET_BG)
+    return (neutral_stretch if linked else unlinked_stretch)(img.data, _TARGET_BG)

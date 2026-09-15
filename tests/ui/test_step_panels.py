@@ -206,13 +206,35 @@ def test_star_reduction_apply_emits_amount(qtbot):
     assert got == [0.50]
 
 
-def test_stretch_panel_slider_emits_amount(qtbot):
+def test_stretch_panel_emits_amount_AND_mechanism(qtbot):
+    """A dict since 2026-09-14: the stretch carries its mechanism as well as its
+    amount, and both have to reach the commit."""
     got = []
     w = build_panel(_stage("stretch"), on_apply=got.append)
     qtbot.addWidget(w)
     w.stretch_slider.setValue(70)
     w.apply_btn.click()
-    assert got == [0.70]
+    assert got == [{"amount": 0.70, "linked": True}]
+
+    got.clear()
+    w.stretch_linked = False
+    w.apply_btn.click()
+    assert got == [{"amount": 0.70, "linked": False}]
+
+
+def test_only_the_stretch_panel_emits_a_dict(qtbot):
+    """That exact Apply line appears in three panels, and a bare string replace
+    patched all three — Recover Core and Local Contrast started emitting a
+    stretch dict and their Apply buttons raised AttributeError. They take a bare
+    float and must keep taking one."""
+    for kind, slider_attr in (("recover_core", "recover_slider"),
+                              ("local_contrast", "lc_slider")):
+        got = []
+        w = build_panel(_stage(kind), on_apply=got.append)
+        qtbot.addWidget(w)
+        getattr(w, slider_attr).setValue(60)
+        w.apply_btn.click()
+        assert got == [0.60], (kind, got)
 
 
 def test_stretch_has_no_target_dropdown(qtbot):
@@ -429,7 +451,12 @@ def test_import_panel_has_linear_preview_note(qapp):
     w = build_panel(_stage("load"))
     from PySide6.QtWidgets import QLabel
     texts = " ".join(l.text() for l in w.findChildren(QLabel))
-    assert "histogram" in texts.lower() or "un-stretched" in texts.lower()
+    # Reworded on 2026-09-14: the panel no longer explains away a cast it can
+    # now offer an alternative to. It must still say this is unstretched data
+    # and that the switch is a view, not a commitment.
+    low = texts.lower()
+    assert "unstretched" in low or "un-stretched" in low
+    assert "commit" in low and "stretch" in low
 
 
 def test_crop_panel_labels_and_grouping_polish(qapp):

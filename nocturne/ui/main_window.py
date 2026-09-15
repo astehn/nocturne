@@ -278,7 +278,13 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
-        self._stages = path_stages()
+        # How LINEAR data is DRAWN. A view preference, never image state: it is
+        # a property of how you are looking, not of what you captured, so it
+        # lives here rather than on AstroImage.metadata. Measurements keep the
+        # default deliberately — see core.autostretch.autostretch. Set BEFORE
+        # the stage list, which asks it which stages to omit.
+        self._view_linked = True
+        self._stages = path_stages(self._omitted_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -3803,6 +3809,50 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
+    def _set_view_linked(self, linked: bool) -> None:
+        """Change how linear data is drawn. Touches no pixel and no history.
+
+        The clipping BASELINE is deliberately not recomputed: it is a
+        measurement, and a number that moves because of how the user is looking
+        at the image is the failure this project has hit three times.
+        """
+        linked = bool(linked)
+        if linked == self._view_linked:
+            return
+        self._view_linked = linked
+        self._rebuild_stages()
+        if self._canvas_img is not None:
+            self._set_canvas(self._canvas_img)
+
+    def _omitted_stages(self) -> frozenset[str]:
+        """Colour does NOTHING under an unlinked stretch, so it is not offered.
+
+        Both of its jobs are per-channel and multiplicative — a background
+        balance and photometric gains — and a per-channel normalisation is
+        exactly what removes those. Measured on IC 1396A at 0.000 and 0.0004 of
+        an 8-bit level. De-green is not in this step; it moved to its own
+        post-stretch stage on 2026-09-13, so nothing is lost by hiding it.
+        """
+        return frozenset() if self._view_linked else frozenset({"color"})
+
+    def _rebuild_stages(self) -> None:
+        """Re-derive the visible pipeline, keeping the user where they are.
+
+        Tracked by stage ID, not by index: the list changes length, so a
+        preserved index would silently teleport the user to a different step.
+        """
+        here = self._stages[self._stage].id if self._stages else None
+        self._stages = path_stages(self._omitted_stages())
+        ids = [s.id for s in self._stages]
+        self._stage = ids.index(here) if here in ids else 0
+        self.stepper.set_stages(self._stages)
+        self.stepper.set_current(self._stage)
+        self._refresh()
+
+    def _canvas_rgb8(self):
+        """What the canvas is currently showing, for tests."""
+        return to_rgb8(self._canvas_img, linked=self._view_linked)
+
     def _set_canvas(self, img) -> None:
         """The ONE path to the canvas. Paints the clipping overlay when it is on
         and records what is on screen, so the hover readout can never disagree
@@ -3812,7 +3862,7 @@ class MainWindow(QMainWindow):
         the Starless Levels clipping view. Two implementations meant two
         legends, and they said opposite things: white was "all three crushed"
         here and "all three blown" there."""
-        rgb = to_rgb8(img)
+        rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
         self._structural_clip = None if img.is_linear else structural_clipping(rgb)
@@ -3862,9 +3912,32 @@ class MainWindow(QMainWindow):
         from .stretch_picker import StretchPickerDialog
         # The same image the step's own preview and commit act on, so what the
         # panels show is what Apply produces.
-        dlg = StretchPickerDialog(self._preview_base("stretch"), parent=self)
+        dlg = StretchPickerDialog(self._preview_base("stretch"), parent=self,
+                                  picks=self._stretch_picks())
         dlg.exec()
         self._apply_picked_stretch(dlg.result_option())
+
+    def _stretch_picks(self):
+        """Colour first, then brightness — one variable per question.
+
+        The colour pick is omitted for mono, which has no colour to choose:
+        `unlinked_stretch` already falls back to linked for 2-D input, so it
+        would be a question with one answer.
+        """
+        from .stretch_picker import brightness_pick, colour_pick
+        base = self._preview_base("stretch")
+        colour = colour_pick(base, spcc_applied=self._spcc_was_applied())
+        return ([colour] if colour is not None else []) + [brightness_pick(base)]
+
+    def _spcc_was_applied(self) -> bool:
+        """Did the committed Colour step use photometric calibration?
+
+        Only then is the caveat true. An unlinked stretch annihilates SPCC
+        (measured 0.0004 of a level), but saying so unconditionally would warn
+        the many people who never ran it.
+        """
+        opt = self._committed_option("color")
+        return getattr(opt, "method", None) == "photometric"
 
     def _apply_picked_stretch(self, option) -> None:
         """Put the pick on the slider. It does NOT commit.
@@ -3881,7 +3954,21 @@ class MainWindow(QMainWindow):
         panel = self._panel
         if not hasattr(panel, "stretch_slider"):
             return
-        from ..steps.stretch_step import parse_stretch_option
+        from ..steps.stretch_step import parse_stretch_linked, parse_stretch_option
+        linked = parse_stretch_linked(option)
+        panel.stretch_linked = linked
+        # Option A, decided 2026-09-14: Import set a DEFAULT, not a lock. Someone
+        # who skipped Colour and then chose Linked must not silently commit a
+        # linked stretch having never been offered the calibration that only a
+        # linked stretch preserves. Re-enable it and say so; do not move them.
+        if linked and not self._view_linked:
+            self._view_linked = True
+            here = self.current_stage_id()
+            self._rebuild_stages()
+            self._go_to_id(here, user_initiated=False)
+            self.log_panel.append_entry(
+                "Colour is available again — go back to it if you want "
+                "photometric calibration, which only a linked stretch keeps.")
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
 
     def _sync_stretch_preview(self) -> None:
@@ -3915,7 +4002,10 @@ class MainWindow(QMainWindow):
         img = self._preview_base("stretch")
         amount = (self._stretch_pending if self._stretch_pending is not None
                   else self._panel.stretch_slider.value() / 100.0)
-        self._show_preview(apply_stretch(img, amount).data)
+        # linked from the panel, so the live preview equals what Apply commits.
+        # "Probably the same" is a bug (CLAUDE.md).
+        self._show_preview(apply_stretch(
+            img, amount, linked=bool(getattr(self._panel, "stretch_linked", True))).data)
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
     def _setup_saturation(self) -> None:
@@ -4619,7 +4709,11 @@ class MainWindow(QMainWindow):
         if self._ba_act.isChecked():
             before, _ = self.project.before_after()
             self._compare_img = before
-            self.image_view.set_compare(to_qimage(before))
+            # linked, or pressing Space on an unlinked view would flip the
+            # COLOUR as well as the before/after — two changes for one gesture,
+            # and no way to tell which one you are looking at.
+            self.image_view.set_compare(
+                to_qimage(before, linked=self._view_linked))
         else:
             self._compare_img = None
             self.image_view.set_compare(None)
@@ -4674,8 +4768,10 @@ class MainWindow(QMainWindow):
                 starless, stars = rc.remove_stars(img, runner=self._rc_runner)
                 sl, icc = self._prepare_for_export(starless, space)
                 st, _ = self._prepare_for_export(stars, space)
-                save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc)
-                save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc)
+                save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc,
+                          linked=self._view_linked)
+                save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc,
+                          linked=self._view_linked)
 
             self._run_busy(_split,
                            lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
@@ -4707,7 +4803,7 @@ class MainWindow(QMainWindow):
             else:
                 def save(i, path):
                     out, icc = self._prepare_for_export(i, space)
-                    save_png(out, path, icc=icc)
+                    save_png(out, path, icc=icc, linked=self._view_linked)
         elif fmt == "FITS":
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
@@ -4719,7 +4815,7 @@ class MainWindow(QMainWindow):
                 path += ".tiff"
             def save(i, path):
                 out, icc = self._prepare_for_export(i, space)
-                save_tiff(out, path, icc=icc)
+                save_tiff(out, path, icc=icc, linked=self._view_linked)
             name = os.path.basename(path)
         self._run_busy(lambda: save(img, path),
                        lambda _: self.log_panel.append_entry(f"Exported {name}"),
@@ -4730,7 +4826,7 @@ class MainWindow(QMainWindow):
         h, w = img.data.shape[:2]
         _sig, _res, objs = self._solve
         prims = self._annotation_primitives(res, objs, (h, w), ui_scale=scale_for((h, w)))
-        out = to_qimage(img)
+        out = to_qimage(img, linked=self._view_linked)
         paint_annotations(out, prims, (h, w))
         # The annotated PNG goes through QImage.save, NOT core/export, so it
         # needs tagging here or it ships untagged while the plain PNG next to it
@@ -4811,6 +4907,9 @@ class MainWindow(QMainWindow):
             on_enhance=self._enhance,
             on_stretch_change=self._on_stretch_change,
             on_visual_stretch=self._open_stretch_picker,
+            on_view_linked=self._set_view_linked,
+            view_linked=self._view_linked,
+            stretch_linked=self._view_linked,
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,

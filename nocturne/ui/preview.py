@@ -63,7 +63,7 @@ def qimage_to_rgb8(qi) -> np.ndarray:
     return buf.reshape(h, qi.bytesPerLine())[:, :w * 3].reshape(h, w, 3).copy()
 
 
-def to_rgb8(img: AstroImage) -> np.ndarray:
+def to_rgb8(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     """The uint8 H×W×3 array the canvas displays. Linear images are autostretched
     for display only — the underlying data is untouched, which is why the hover
     readout reports data values and labels them 'linear'.
@@ -77,11 +77,13 @@ def to_rgb8(img: AstroImage) -> np.ndarray:
     instead."""
     # The SAME function the picture exporters use, so the canvas and the file
     # cannot drift apart — see core.export.display_data.
-    data = display_data(img)
+    data = display_data(img, linked=linked)
     if data.ndim == 2:
         data = np.repeat(data[:, :, None], 3, axis=2)
     return (finite_or_zero(data) * 255 + 0.5).astype(np.uint8)
 
 
-def to_qimage(img: AstroImage) -> QImage:
-    return rgb_to_qimage(to_rgb8(img))
+def to_qimage(img: AstroImage, *, linked: bool = True) -> QImage:
+    # Carries `linked` because the stretch picker renders through it — without
+    # it the picker could not show the choice it is asking the user to make.
+    return rgb_to_qimage(to_rgb8(img, linked=linked))

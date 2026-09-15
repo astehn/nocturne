@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..core.autostretch import _TARGET_BG
@@ -91,6 +91,9 @@ def build_panel(
     on_enhance=None,
     on_stretch_change=None,
     on_visual_stretch=None,
+    on_view_linked=None,
+    view_linked=True,
+    stretch_linked=True,
     on_levels_change=None,
     on_levels_auto=None,
     on_sat_change=None,
@@ -120,18 +123,43 @@ def build_panel(
     lay.addWidget(title)
 
     if stage.kind == "import":
-        btn = QPushButton("Open FITS…")
-        if on_open is not None:
-            btn.clicked.connect(lambda: on_open())
-        lay.addWidget(btn)
+        # No "Open FITS…" button: the toolbar has one and the cold-start screen
+        # has its own pair, so this copy was unreachable in every state where it
+        # would have been the entry point.
         meta = _desc_label("Open a stacked Seestar FITS to begin.")
         meta.setObjectName("importMeta")   # brighter/larger than stepDesc — the FITS info must be readable
         meta.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(meta)
         w.meta_label = meta
+
+        # How the LINEAR data is drawn. A view, not a commitment: no pixel is
+        # touched and no history entry is made. It exists because the linked
+        # view leaves a uniform cast on data whose channels have very different
+        # spreads (R/G MAD 2.67 on IC 1396A), and a uniform cast reads as
+        # monochrome however saturated it actually is.
+        heading = QLabel("How to show the unstretched data")
+        heading.setObjectName("panelSectionLabel")
+        lay.addWidget(heading)
+        row = QHBoxLayout()
+        linked_btn = QRadioButton("Linked")
+        linked_btn.setToolTip("Keeps the sky's own colour")
+        unlinked_btn = QRadioButton("Unlinked")
+        unlinked_btn.setToolTip("Evens the channels out")
+        group = QButtonGroup(w)
+        group.addButton(linked_btn); group.addButton(unlinked_btn)
+        (linked_btn if view_linked else unlinked_btn).setChecked(True)
+        row.addWidget(linked_btn); row.addWidget(unlinked_btn); row.addStretch(1)
+        lay.addLayout(row)
+        if on_view_linked is not None:
+            linked_btn.toggled.connect(lambda on: on_view_linked(bool(on)))
+        w.view_linked = linked_btn
+        w.view_unlinked = unlinked_btn
+        w._view_group = group          # or the QButtonGroup is garbage collected
+
         note = _desc_label(
-            "Teal cast and a flat histogram are normal here — this is your "
-            "un-stretched data. Colour and contrast come in the next steps.")
+            "Linked keeps the sky's own colour; Unlinked evens the channels out, "
+            "which usually shows more variety in star and dust colour. This only "
+            "changes what you see — you choose again, and commit, at Stretch.")
         note.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(note)
 
@@ -419,7 +447,13 @@ def build_panel(
         apply_btn.setObjectName("primary")
         apply_btn.setEnabled(apply_enabled)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            # A DICT, not a bare float: the stretch now carries its MECHANISM
+            # as well as its amount, and both have to reach the commit. Anchored
+            # on the Visual-stretch comment below, because this exact Apply line
+            # appears in three panels and a bare replace patched all three.
+            apply_btn.clicked.connect(
+                lambda: on_apply({"amount": slider.value() / 100.0,
+                                  "linked": bool(w.stretch_linked)}))
         # Optional, and BELOW the slider: the slider keeps working untouched
         # for anyone who already knows the number they want. The picker is for
         # the case a number cannot answer — four of Andreas's own targets wanted
@@ -436,6 +470,7 @@ def build_panel(
         lay.addWidget(apply_btn)
         lay.addWidget(visual_btn)
         w.visual_btn = visual_btn
+        w.stretch_linked = bool(stretch_linked)
         w.stretch_slider = slider
         w.stretch_val = stretch_val
         w.apply_btn = apply_btn

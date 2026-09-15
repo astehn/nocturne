@@ -9,6 +9,11 @@ import numpy as np
 from tests.ui.test_main_window import _make_fits, _window
 
 
+def _log_text(win):
+    entries = win.log_panel.entries() if hasattr(win.log_panel, "entries") else None
+    return "\n".join(entries) if entries else win.log_panel.toPlainText()
+
+
 def _at_stretch(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -57,3 +62,49 @@ def test_the_picker_is_offered_only_while_there_is_something_to_stretch(qtbot, t
     win.apply_current(0.30)
     win._go_to_id("stretch")
     assert not win._panel.visual_btn.isEnabled()
+
+
+# --- the colour pick, end to end -----------------------------------------
+
+def test_the_picker_asks_colour_first(qtbot, tmp_path):
+    """Import sets the DEFAULT. A view that disagreed with the commitment would
+    make the first picture Nocturne shows one it cannot produce."""
+    win = _at_stretch(qtbot, tmp_path)
+    assert [p.key for p in win._stretch_picks()] == ["linked", "amount"]
+
+
+def test_picking_sets_both_the_slider_and_the_mechanism(qtbot, tmp_path):
+    win = _at_stretch(qtbot, tmp_path)
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    assert win._panel.stretch_slider.value() == 24
+    assert win._panel.stretch_linked is False
+
+
+def test_picking_linked_brings_the_colour_step_back(qtbot, tmp_path):
+    """Option A, decided 2026-09-14. Import sets a default, not a lock: someone
+    who skipped Colour and then chose Linked must not silently commit a linked
+    stretch having never been offered the calibration it is the only one to
+    preserve."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_view_linked(False)
+    assert "color" not in [s.id for s in win._stages]
+    win._go_to_id("stretch")
+
+    win._apply_picked_stretch({"amount": 0.24, "linked": True})
+
+    assert "color" in [s.id for s in win._stages]
+    assert "colour" in _log_text(win).lower() or "color" in _log_text(win).lower()
+    assert win.current_stage_id() == "stretch"      # and we did NOT get moved
+
+
+def test_picking_unlinked_again_leaves_the_path_UNCHANGED(qtbot, tmp_path):
+    """Captured and asserted unchanged: re-enabling on the wrong branch would
+    put back a step that still does nothing."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_view_linked(False)
+    before = list(win._stages)
+    win._go_to_id("stretch")
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    assert list(win._stages) == before
