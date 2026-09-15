@@ -102,7 +102,7 @@ python -m nocturne
 ## Quick start
 
 1. Open **Settings** and set your **GraXpert** path (and **RC-Astro** if you have it); press **Test**.
-2. **Open FITS** — pick a stacked Seestar master (or use **Stack** to build one from a folder of subs).
+2. **Open Image** — pick a stacked Seestar master (or use **Stack** to build one from a folder of subs). A **TIFF** works too, so a master stacked in Siril, APP or DeepSkyStacker can be finished here; Nocturne measures whether it is still unstretched and says so, and you can correct it.
 3. Step through the pipeline left-to-right; the panel on the right holds each step's controls and explains what it does.
 4. For dualband data, use **Colourise** on the Stretch step for one-press colour.
 5. Finish at **Export**.
