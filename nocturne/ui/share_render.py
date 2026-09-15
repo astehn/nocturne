@@ -44,6 +44,21 @@ def qimage_from_rgb8(rgb8: np.ndarray) -> QImage:
     return QImage(rgb8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
 
+def share_output_size(crop, longest_edge: int | None) -> tuple[int, int]:
+    """The pixel size `compose_share` will produce for this crop and cap.
+
+    Exists so the dialog can ask "how big will the FILE be?" without composing
+    one. `compose_share` uses it too: two ways of knowing the output size is one
+    too many, and the wrap warning depends on this number being right.
+    """
+    top, bottom, left, right = crop
+    w, h = right - left, bottom - top
+    longest = max(w, h)
+    if longest_edge and longest > longest_edge:      # downscale only, keep aspect
+        return (round(w * longest_edge / longest), round(h * longest_edge / longest))
+    return (w, h)
+
+
 def compose_share(rgb8: np.ndarray, crop, caption,
                   longest_edge: int | None = DEFAULT_SIZE,
                   *, style=None,
@@ -69,12 +84,16 @@ def compose_share(rgb8: np.ndarray, crop, caption,
         rgb8 = np.stack([rgb8] * 3, axis=2)
     cropped = rgb8[top:bottom, left:right]
     image = qimage_from_rgb8(cropped)
-    w, h = image.width(), image.height()
-    longest = max(w, h)
-    if longest_edge and longest > longest_edge:      # downscale only, keep aspect
+    out_w, out_h = share_output_size(crop, longest_edge)
+    if (out_w, out_h) != (image.width(), image.height()):
+        # IgnoreAspectRatio because the aspect was already preserved when
+        # out_w/out_h were computed. Asking Qt to keep it as well makes it
+        # re-derive the size from the source, which lands up to a pixel away
+        # from what we asked for (128x72 requested, 127x72 delivered) — and then
+        # share_output_size, which the wrap warning depends on, would be wrong.
         image = image.scaled(
-            round(w * longest_edge / longest), round(h * longest_edge / longest),
-            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            out_w, out_h, Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation)
     if isinstance(caption, str):
         if caption:
             image = _burn_caption(image, caption, size_frac=size_frac, colour=colour,

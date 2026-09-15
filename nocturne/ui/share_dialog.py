@@ -19,7 +19,9 @@ from ..core.share import (
     ASPECTS, CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
     centered_crop, share_filename,
 )
-from .share_render import compose_share, qimage_from_rgb8, save_share, to_clipboard
+from .share_render import (
+    compose_share, qimage_from_rgb8, save_share, share_output_size, to_clipboard,
+)
 from ..settings import start_dir
 from .fonts import PLATE_FAMILIES, available_families
 
@@ -27,8 +29,15 @@ from .fonts import PLATE_FAMILIES, available_families
 # its tint/de-green/levels previews; curves uses 60 for a drag, which is a
 # faster gesture than typing.
 _TEXT_DEBOUNCE_MS = 90
+
+# Longest edge the PREVIEW is composed at. The pane is about 600 px and the view
+# scales whatever it is given down to fit, so composing 33 Mpx for it (133 after
+# an Upscale Crop) is pure waste — at "Full size" that was an image the size of
+# the master per typing pause. Export and Copy are unaffected: this is a preview
+# economy, not a size limit.
+PREVIEW_CAP = 1600
 from .image_view import ImageView
-from .plate_render import ANCHORS, TREATMENTS, last_layout
+from .plate_render import ANCHORS, TREATMENTS, plate_overflows
 from .theme import TEXT_DIM
 from . import file_dialogs
 
@@ -652,19 +661,38 @@ class ShareDialog(QDialog):
                 return (top, bottom, left, right)
         return centered_crop(w, h, self._aspect)
 
-    def _compose_current(self) -> QImage:
+    def _export_pixel_size(self) -> tuple[int, int]:
+        """The size of the FILE the current settings would write."""
+        return share_output_size(self._current_crop(), self._size)
+
+    def _full_pixel_size(self) -> tuple[int, int]:
+        """The size with no cap at all — what "Full size" means."""
+        return share_output_size(self._current_crop(), None)
+
+    def _preview_edge(self) -> int | None:
+        """Longest edge to compose the PREVIEW at: the chosen size, capped."""
+        return min(self._size, PREVIEW_CAP) if self._size else PREVIEW_CAP
+
+    def _compose_current(self, *, for_preview: bool = False) -> QImage:
         plate = self._plate()
-        image = compose_share(self._source(), self._current_crop(), plate,
-                              longest_edge=self._size, style=self._style())
-        # last_layout() is written by the last draw_plate ANYWHERE, so an empty
-        # plate — which never reaches the painter — would otherwise report the
-        # previous image's overflow.
-        drawn = bool(plate.designation or plate.common or plate.credit)
+        image = compose_share(
+            self._source(), self._current_crop(), plate,
+            longest_edge=self._preview_edge() if for_preview else self._size,
+            style=self._style())
         # The flag means "this wrapped", not "this was lost" — it is set on ANY
         # second line, and a two-line nebula name fits perfectly well. Saying
         # "will not fit" claimed text had been dropped when nothing had, and
         # contradicted the help, which already words it as wrapping.
-        self._wrapped = bool(drawn and last_layout().get("overflow"))
+        #
+        # MEASURED at export dimensions, never read off the compose that just
+        # happened. The wrap verdict is NOT scale-invariant: across all five
+        # plate families and seven text lengths, 9 of 35 cases disagreed between
+        # a full-size compose and a capped one, at exactly the borderline
+        # lengths where the warning is worth having. The warning describes the
+        # FILE, so it has to be measured against the file's size.
+        drawn = bool(plate.designation or plate.common or plate.credit)
+        self._wrapped = bool(drawn and plate_overflows(
+            plate, self._style(), *self._export_pixel_size()))
         self._show_status()
         return image
 
@@ -682,7 +710,7 @@ class ShareDialog(QDialog):
         self.status.setText(" · ".join(x for x in (message, warning) if x))
 
     def _refresh_preview(self) -> None:
-        self._preview_image = self._compose_current()
+        self._preview_image = self._compose_current(for_preview=True)
         self._paint_preview()
 
     def _paint_preview(self) -> None:

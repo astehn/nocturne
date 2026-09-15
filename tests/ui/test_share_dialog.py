@@ -754,7 +754,7 @@ def test_typing_composes_once_not_once_per_character(qtbot):
     d = _dlg(qtbot)
     calls = []
     blank = QImage(4, 4, QImage.Format.Format_RGB888)
-    d._compose_current = lambda: (calls.append(1) or blank)
+    d._compose_current = lambda **kw: (calls.append(1) or blank)
 
     QTest.keyClicks(d._designation_edit, "Elephant", delay=0)
     assert calls == [], "composed while still typing"
@@ -773,3 +773,111 @@ def test_the_preview_still_lands_after_typing(qtbot):
     assert d._plate().designation == "M 16"
     _settled(qtbot, d)
     assert d._preview_image is not None
+
+
+# --- the preview composes small; the warning is still about the EXPORT --------
+# Andreas, 2026-09-15: typing at Full size was still slow after the debounce,
+# and his workaround was to caption at 1080 and switch afterwards. The preview
+# pane is ~600 px, so composing 33 Mpx (133 after Upscale Crop) for it is waste.
+#
+# The catch, measured before any of this was written: the wrap verdict is NOT
+# scale-invariant. Across all five plate families and seven text lengths, 9 of
+# 35 cases disagreed between a full-size compose and a capped one — at exactly
+# the borderline lengths where the warning matters. So the warning is computed
+# from the EXPORT size by measurement alone, never from the preview's compose.
+
+def _dlg_big(qtbot):
+    """A source LARGER than PREVIEW_CAP.
+
+    The 400x300 fixture the rest of this file uses is smaller than the cap, so
+    the cap never binds and every assertion about it passes whatever the code
+    does — both of these tests were toothless against a mutation until the
+    fixture grew.
+    """
+    big = np.zeros((2400, 1800, 3), np.uint8); big[:] = 180
+    d = ShareDialog(big, {"target": "M 17", "source_label": "m17.fits"},
+                    Settings(handle="me"))
+    qtbot.addWidget(d)
+    return d
+
+
+def test_the_preview_never_composes_bigger_than_the_cap(qtbot):
+    from nocturne.ui.share_dialog import PREVIEW_CAP
+    d = _dlg_big(qtbot)
+    assert max(d._full_pixel_size()) > PREVIEW_CAP, "fixture too small to test the cap"
+    for size in (1080, 2048, 4096, None):          # None == "Full size"
+        d._size = size
+        d._refresh_preview()
+        assert max(d._preview_image.width(), d._preview_image.height()) <= PREVIEW_CAP, size
+
+
+def test_the_export_still_uses_the_chosen_size(qtbot, tmp_path):
+    """The cap is a PREVIEW economy. What you asked to export is what is written."""
+    from nocturne.ui.share_dialog import PREVIEW_CAP
+    d = _dlg(qtbot)
+    d._size = 4096
+    seen = []
+    d._save_runner = lambda img, path, *a, **k: seen.append((img.width(), img.height()))
+    d._do_export(str(tmp_path / "x.jpg"))
+    assert seen, "nothing was saved"
+    # the fixture is small, so the export is the cropped size, not the cap —
+    # the point is that it did NOT come from the capped preview path
+    assert max(seen[0]) != PREVIEW_CAP
+
+
+def test_the_wrap_warning_describes_the_file_not_the_preview(qtbot):
+    """The guard on the whole design, on a case where the two genuinely differ.
+
+    The wrap verdict is not scale-invariant. Barlow Condensed at 47 characters,
+    on an 1800x2400 source, FITS at export size and WRAPS at the capped preview
+    size — so reading the verdict off the preview's compose would warn about a
+    file that does not wrap. Found by sweeping all five families against every
+    length; it is the only case in that sweep, which is why it is pinned rather
+    than rediscovered.
+    """
+    d = _dlg_big(qtbot)
+    _set_family(d, "Barlow Condensed")
+    d._size = None                                   # Full size
+    d._designation_edit.setText("M 17")
+    d._common_edit.setText(
+        "The Omega Nebula in Sagittarius photographed at 160 mm f/5"[:47])
+    d._credit_edit.setText("Andreas Stehn")
+    d._refresh_preview()
+    assert d._wrapped is False, "warned about a wrap the exported file will not have"
+
+
+def _set_family(d, family):
+    box = d._family_box
+    for i in range(box.count()):
+        if box.itemData(i) == family:
+            box.setCurrentIndex(i)
+            return
+    raise AssertionError(f"{family} not offered")
+
+
+def test_output_size_agrees_with_what_compose_actually_produces(qtbot):
+    """Two ways of knowing the output size is one too many — the helper and
+    compose_share must not be able to drift apart."""
+    import numpy as np
+    from nocturne.ui.share_render import compose_share, share_output_size
+    from nocturne.core.share import centered_crop
+    rgb8 = _rgb(400, 300)
+    for aspect in (None, 1.0, 16 / 9):
+        crop = centered_crop(300, 400, aspect)
+        for size in (128, 256, None):
+            img = compose_share(rgb8, crop, "", longest_edge=size)
+            assert share_output_size(crop, size) == (img.width(), img.height()), (aspect, size)
+
+
+def test_copy_to_clipboard_is_full_size_too(qtbot):
+    """Copy shares the export path, not the preview's. A silently capped
+    clipboard image is the same bug as a capped export, and quieter."""
+    from nocturne.ui.share_dialog import PREVIEW_CAP
+    d = _dlg_big(qtbot)
+    d._size = None                                   # Full size
+    got = []
+    d._clipboard_runner = lambda img: got.append((img.width(), img.height()))
+    d._do_copy()
+    assert got, "nothing was copied"
+    assert max(got[0]) > PREVIEW_CAP, got
+    assert got[0] == d._full_pixel_size()

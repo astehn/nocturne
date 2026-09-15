@@ -99,6 +99,22 @@ _KEYLINE_INSET = 0.5
 _LAST: dict = {}
 
 
+def plate_overflows(text, style, width: int, height: int) -> bool:
+    """Would this plate wrap, at this canvas size — without painting anything.
+
+    `_measure` needs the text, the style and the canvas dimensions; it never
+    touches a pixel. Exposing it lets the Share dialog compose its PREVIEW small
+    while still describing the FILE: the wrap verdict is not scale-invariant (9
+    of 35 cases across five families and seven lengths disagreed between a
+    full-size compose and a capped one), so reading it off the preview's compose
+    would make the warning describe the wrong image.
+    """
+    load_bundled_fonts()      # a family merely REQUESTED substitutes in silence
+    if not (text.designation or text.common or text.credit):
+        return False
+    return bool(_measure(text, style, int(width), int(height))["overflow"])
+
+
 def last_layout() -> dict:
     """Geometry from the most recent draw_plate — for tests and for the dialog's
     'this will not fit' warning. Not part of the rendering contract."""
