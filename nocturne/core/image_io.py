@@ -54,6 +54,28 @@ def looks_linear(data: np.ndarray) -> bool:
     return bool(np.percentile(finite, 99.9) < LINEAR_P999_MAX)
 
 
+def _channels_last(raw: np.ndarray) -> np.ndarray:
+    """Transpose a PLANAR TIFF into the (H, W, C) the rest of the app assumes.
+
+    A TIFF may store its channels as three separate planes rather than
+    interleaved, and `tifffile` hands those back as (C, H, W). Nothing else in
+    Nocturne expects that, and the alpha-drop below would have sliced the WIDTH
+    to three columns — a 240x180 frame came back (3, 240, 3), three pixels of
+    garbage, with the linear/stretched verdict wrong as well because the mangled
+    data has different statistics.
+
+    Shape alone decides, because tifffile has already collapsed the planar flag
+    by the time we see the array. An image only 1-4 pixels TALL would be
+    misread; that is not a photograph.
+    """
+    if raw.ndim != 3:
+        return raw
+    h, _w, c = raw.shape
+    if c > 4 and h <= 4:             # channels first: (C, H, W)
+        return np.transpose(raw, (1, 2, 0))
+    return raw
+
+
 def load_tiff(path: str) -> AstroImage:
     """A TIFF as an `AstroImage`, with `is_linear` decided by measurement.
 
@@ -64,6 +86,7 @@ def load_tiff(path: str) -> AstroImage:
     import tifffile
 
     raw = np.asarray(tifffile.imread(path))
+    raw = _channels_last(raw)
     if raw.ndim == 3 and raw.shape[2] > 3:
         raw = raw[:, :, :3]          # drop alpha: Photoshop writes RGBA readily
     data = _normalize(raw)

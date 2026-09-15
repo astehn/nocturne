@@ -117,3 +117,56 @@ def test_core_stays_qt_free():
     import pathlib
     src = pathlib.Path("nocturne/core/image_io.py").read_text()
     assert "PySide6" not in src and "QtGui" not in src
+
+
+# --- the layouts other stackers actually write ---------------------------
+# Found by writing the variants rather than waiting for a bug report: Siril, APP
+# and DeepSkyStacker do not all write TIFFs the way Nocturne's own tests did.
+
+def test_a_planar_tiff_is_transposed_not_sliced(tmp_path):
+    """A TIFF may store channels as separate PLANES, which tifffile returns as
+    (C, H, W). The alpha-drop then sliced the WIDTH to three columns: a 240x180
+    frame came back (3, 240, 3) — three pixels of garbage — and the
+    linear/stretched verdict was wrong too, because the mangled data has
+    different statistics. Both symptoms are in this assertion.
+    """
+    d = _synthetic_linear()
+    p = tmp_path / "planar.tif"
+    tifffile.imwrite(str(p), d.transpose(2, 0, 1), planarconfig="separate")
+    img = load_tiff(str(p))
+    assert img.data.shape == d.shape
+    assert img.is_linear is True
+
+
+def test_an_interleaved_tiff_is_left_alone(tmp_path):
+    """The guard on the guard: transposing planar files must not transpose the
+    ordinary ones."""
+    d = _synthetic_linear()
+    p = tmp_path / "flat.tif"
+    tifffile.imwrite(str(p), d)
+    assert load_tiff(str(p)).data.shape == d.shape
+
+
+@pytest.mark.parametrize("label,kwargs", [
+    ("deflate", {"compression": "deflate"}),
+    ("tiled", {"tile": (64, 64)}),
+])
+def test_compressed_and_tiled_files_read(tmp_path, label, kwargs):
+    p = tmp_path / f"{label}.tif"
+    tifffile.imwrite(str(p), _synthetic_linear(), **kwargs)
+    assert load_tiff(str(p)).is_linear is True
+
+
+def test_big_endian_16_bit_reads(tmp_path):
+    p = tmp_path / "be.tif"
+    tifffile.imwrite(str(p), (_synthetic_linear() * 65535).astype(">u2"))
+    img = load_tiff(str(p))
+    assert img.data.max() <= 1.0 and img.is_linear is True
+
+
+def test_an_embedded_icc_profile_does_not_break_the_read(tmp_path):
+    """Ignored, not fatal — and the help says it is ignored."""
+    p = tmp_path / "icc.tif"
+    tifffile.imwrite(str(p), _synthetic_linear(),
+                     extratags=[(34675, 1, 8, b"\x00" * 8, True)])
+    assert load_tiff(str(p)).data.shape == (400, 300, 3)
