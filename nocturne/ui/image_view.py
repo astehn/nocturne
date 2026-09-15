@@ -238,10 +238,19 @@ class ImageView(QGraphicsView):
         self.viewport().setMouseTracking(True)
 
     def _position_zoom_pill(self) -> None:
+        """Bottom-right normally; bottom-LEFT while cropping.
+
+        At bottom-right the pill sits over the crop box's bottom-right handle
+        and swallows its drags, which is why crop mode used to hide the pill
+        outright — leaving the Trim tool and Upscale Crop with no zoom control
+        at all. Moving it keeps both. Bottom-left is free during a crop because
+        the readout pill is hidden for the same reason (see set_crop_overlay).
+        """
         pill = self._zoom_pill
         pill.adjustSize()
         m = 12
-        pill.move(self.width() - pill.width() - m, self.height() - pill.height() - m)
+        x = m if self._crop_mode else self.width() - pill.width() - m
+        pill.move(x, self.height() - pill.height() - m)
 
     def _position_readout_pill(self) -> None:
         m = 12
@@ -612,9 +621,10 @@ class ImageView(QGraphicsView):
         self._crop_mode = enabled
         self._aspect = aspect_ratio
         self._content_bounds = content_bounds
-        # Hide the floating zoom pill while cropping so it can't sit over a
-        # bottom-right crop handle and swallow its drags.
-        self._zoom_pill.setVisible(not enabled)
+        # Keep the zoom pill, but move it off the bottom-right crop handle,
+        # which it would otherwise cover and steal drags from. Hiding it was the
+        # old answer and it cost Trim and Upscale Crop their zoom control.
+        self._position_zoom_pill()
         if enabled:
             self.readout_pill.hide()
         if not enabled:

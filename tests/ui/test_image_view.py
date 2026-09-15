@@ -218,15 +218,24 @@ def test_zoom_noop_without_image(qtbot):
     view.zoom_out()
 
 
-def test_zoom_pill_hidden_during_crop(qtbot):
+def test_zoom_pill_moves_aside_during_crop_rather_than_hiding(qtbot):
+    """Was `hidden during crop` until 2026-09-15. Hiding kept the crop handle
+    draggable but cost the Trim tool and Upscale Crop their only zoom control,
+    which is how Andreas found it. It now moves to the opposite corner, which
+    does both."""
     view = ImageView()
     qtbot.addWidget(view)
+    view.resize(400, 300)
     view.set_image(_qimage(40, 30))
+    view._position_zoom_pill()          # settle after the resize, before measuring
+
+    home = view._zoom_pill.geometry()
     view.set_crop_overlay(True)
-    # isHidden() tracks the explicit hide flag (isVisible needs a shown parent)
-    assert view._zoom_pill.isHidden() is True    # hidden so it can't block a crop handle
+    assert view._zoom_pill.isHidden() is False        # still available
+    assert view._zoom_pill.geometry().right() < home.left()   # and out of the way
+
     view.set_crop_overlay(False)
-    assert view._zoom_pill.isHidden() is False    # restored when cropping ends
+    assert view._zoom_pill.geometry() == home
 
 
 def _cropped_view(qtbot, w=200, h=100, bounds=(10, 90, 20, 180)):
