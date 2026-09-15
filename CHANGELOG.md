@@ -2,6 +2,28 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.32.0] — 2026-09-15
+
+Choose your stretch by looking at it — brightness and colour, on your own image.
+
+### Added
+- Visual stretch — a new button on the Stretch step opens six real versions of your own image and you click the one you like. It moves the slider; Apply still commits, and you can nudge it first. There is no single right answer: on four of my own targets I wanted 0.10 three times and 0.20–0.30 on the fourth, which is exactly why this is a choice and not a setting.
+- Linked or unlinked, asked before brightness. A linked stretch puts one curve through every channel and keeps the sky's own colour; an unlinked one normalises each channel on its own, which evens the sky out and usually shows more variety in star and dust colour. Both are rendered side by side at matched brightness so only the colour varies. Neither is labelled the correct one, because neither is.
+- A Linked/Unlinked switch on Import, so you can see what is in the data before committing to anything. It changes only how the unstretched image is drawn, and the choice carries forward as the default for the stretch.
+- Draggable handles on the Starless Levels histogram — round grips with arrows, like the before/after divider, instead of two hairlines the panel told you to drag.
+
+### Changed
+- The default stretch background comes down from 0.43 to 0.30. Nocturne was leaving the sky about twice as bright as it should: on the same master, 0.5% of the frame sat below 0.10 where a reference tool put 68%. Identical noise is far more visible on a lifted grey sky, and this is the whole reason images looked cleaner elsewhere.
+- Choosing an unlinked stretch skips the Colour step, which would do nothing under it — a per-channel normalisation removes exactly the per-channel correction that step applies. Pick linked again and the step comes back.
+- The zoom pill stays put while you crop. It used to vanish, which left the Trim tool and Upscale Crop with no zoom control at all.
+- Typing a title in Share no longer composes the whole image on every keystroke.
+
+### Fixed
+- The visual picker sized itself from its previews rather than from your screen, so on a 1440-tall display the bottom row ran off the edge and Cancel was unreachable.
+- A picture exported before stretching, and the before/after peek, both follow the Import view switch — so the file and the screen cannot disagree.
+- The Stretch help described a Target control that no longer exists.
+- A recipe saved by a different pre-1.0 build is refused with a clear message instead of being silently misread.
+
 ## [0.31.0] — 2026-09-13
 
 Stacking runs in the background while you work, and the pipeline stops discarding your edits without asking
