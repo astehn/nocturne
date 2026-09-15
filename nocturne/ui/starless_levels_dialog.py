@@ -160,9 +160,12 @@ class StarlessLevelsDialog(QDialog):
         self.fit_btn = zoom_row.fit_btn
         self.zoom_in_btn, self.zoom_out_btn = zoom_row.in_btn, zoom_row.out_btn
 
-        note = QLabel("Pull the endpoints in to where the data begins. The stars "
-                      "are held aside and screened back untouched, so the white "
-                      "point cannot clip a star core.")
+        # "handles", not "endpoints": the histogram below calls them handles and
+        # now draws two of them, and one word for one thing is the whole point.
+        note = QLabel("Drag the two handles below the histogram in to where the "
+                      "data begins and ends. The stars are held aside and "
+                      "screened back untouched, so the white point cannot clip "
+                      "a star core.")
         note.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok

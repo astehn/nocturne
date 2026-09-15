@@ -268,3 +268,55 @@ def test_the_data_is_darker_than_both_grounds(qtbot):
     # the handles are dragged to where the data BEGINS and ENDS, so the shape
     # beyond them is the part being judged.
     assert lum(_OUTSIDE) - lum(_DATA) >= 8
+
+
+# --- visible grips --------------------------------------------------------
+# The caption told the user to "drag the two handles" and the handles were two
+# 1-2 px amber lines flush against the edges. Andreas, 2026-09-15: "from a
+# novice user perspective its probably hard to understand what the endpoints
+# actually are". They now carry a round knob, matching the before/after
+# divider's grab handle, which is the affordance he asked to copy.
+
+def test_each_handle_has_a_knob_centred_on_it(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    w.set_range(0.2, 0.8)
+
+    lo, hi = w.knob_center("lo"), w.knob_center("hi")
+    assert abs(lo.x() - w._x_to_px(0.2)) < 1.0
+    assert abs(hi.x() - w._x_to_px(0.8)) < 1.0
+    assert lo.y() == hi.y()                      # same row, so they read as a pair
+
+
+def test_the_knobs_follow_the_handles(qtbot):
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    w.set_range(0.1, 0.9)
+    before = w.knob_center("lo").x()
+    w.set_range(0.4, 0.9)
+    assert w.knob_center("lo").x() > before
+
+
+def test_the_knobs_sit_clear_of_the_histogram_bars(qtbot):
+    """On the gradient strip, not over the data.
+
+    A knob at mid-height would land on top of the tallest bars — and the
+    handles are dragged to where the data BEGINS, which is exactly where the
+    bars are. The strip row is always empty, and it is also where Photoshop
+    puts its level triangles."""
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    w.resize(400, 120)
+    _ox, oy, _pw, ph = w._plot()
+    assert w.knob_center("lo").y() > oy + ph     # below the histogram area
+
+
+def test_the_cursor_says_it_is_draggable(qtbot):
+    """Clicking anywhere grabs the nearer handle, so the whole widget is a
+    horizontal drag surface and the cursor should say so."""
+    from PySide6.QtCore import Qt
+    w = RangeHandles()
+    qtbot.addWidget(w)
+    assert w.cursor().shape() == Qt.CursorShape.SplitHCursor

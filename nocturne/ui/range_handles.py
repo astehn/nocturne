@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -13,6 +13,9 @@ _ACCENT = "#ffd479"
 _STRIP_GAP = 3        # breathing room between the histogram and the strip
 _DATA = "#0d0e10"     # the histogram itself: darker than either ground
 _OUTSIDE = "#1e2024"  # ground beyond the handles, so dark bars still read
+_KNOB_PX = 18         # round grab handle, as the before/after divider has.
+                      # 14 was tried first: the two arrows inside it read as a
+                      # ring with a dot rather than "drag me sideways".
 
 
 class RangeHandles(QWidget):
@@ -34,8 +37,13 @@ class RangeHandles(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumHeight(96)
+        # 96 was the height before the knobs had a row of their own; without
+        # this the extra row comes out of the histogram instead.
+        self.setMinimumHeight(96 + _STRIP_GAP + _KNOB_PX)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # The whole widget is a horizontal drag surface — a press anywhere
+        # grabs the nearer bound — so the cursor should say so everywhere.
+        self.setCursor(Qt.CursorShape.SplitHCursor)
         self._lo, self._hi = 0.0, 1.0
         self._hist = None
         self._drag: str | None = None
@@ -104,7 +112,8 @@ class RangeHandles(QWidget):
     def _plot(self):
         """The histogram/handle area, excluding the gradient strip below it."""
         return (_MARGIN, _MARGIN, max(1, self.width() - 2 * _MARGIN),
-                max(1, self.height() - 2 * _MARGIN - self.STRIP_H - _STRIP_GAP))
+                max(1, self.height() - 2 * _MARGIN - self.STRIP_H - _STRIP_GAP
+                    - _STRIP_GAP - _KNOB_PX))
 
     def _x_to_px(self, x: float) -> float:
         ox, _oy, w, _h = self._plot()
@@ -113,6 +122,21 @@ class RangeHandles(QWidget):
     def _px_to_x(self, px: float) -> float:
         ox, _oy, w, _h = self._plot()
         return float(np.clip((px - ox) / w, 0.0, 1.0))
+
+    def knob_center(self, which: str) -> QPointF:
+        """Where the round grab handle for "lo"/"hi" is drawn.
+
+        BELOW the gradient strip, in a row of its own. Two other places were
+        tried and are worse: at mid-height it covers the tallest bars, which is
+        exactly where the handles are being aimed; on the strip itself, the
+        default full range parks both knobs on the ramp's black and white ends —
+        the two reference points that make the axis self-explanatory. Below it
+        is also where Photoshop puts its level triangles.
+        """
+        _ox, oy, _w, h = self._plot()
+        x = self._x_to_px(self._lo if which == "lo" else self._hi)
+        return QPointF(x, oy + h + _STRIP_GAP + self.STRIP_H
+                       + _STRIP_GAP + _KNOB_PX / 2.0)
 
     # --- mouse ---
     def mousePressEvent(self, e) -> None:
@@ -177,7 +201,8 @@ class RangeHandles(QWidget):
 
         p.setPen(QPen(QColor(_ACCENT), 2))
         for x in (lo_px, hi_px):
-            p.drawLine(int(x), oy, int(x), oy + h + _STRIP_GAP + self.STRIP_H)
+            p.drawLine(int(x), oy, int(x),
+                       int(oy + h + _STRIP_GAP + self.STRIP_H + _STRIP_GAP))
 
         strip_y = oy + h + _STRIP_GAP
         ramp = QLinearGradient(float(ox), 0.0, float(ox + w), 0.0)
@@ -186,3 +211,23 @@ class RangeHandles(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(ramp)
         p.drawRect(ox, int(strip_y), w, self.STRIP_H)
+
+        # The grab handles. Two amber hairlines told the user nothing — the
+        # caption said "drag the two handles" and there was nothing that looked
+        # like one. Shaped like the before/after divider's knob on purpose, so
+        # the gesture is recognisable from a control they have already used.
+        r = _KNOB_PX / 2.0
+        for which in ("lo", "hi"):
+            c = self.knob_center(which)
+            p.setPen(QPen(QColor(_ACCENT), 2))
+            p.setBrush(QColor(BG_0))
+            p.drawEllipse(c, r, r)
+            # Two small arrows, so it reads as "drag me sideways" rather than
+            # as a dot someone left on the axis.
+            p.setPen(QPen(QColor(_ACCENT), 1.5))
+            for direction in (-1, 1):
+                tip = direction * (r - 2.0)
+                p.drawLine(QPointF(c.x() + tip, c.y()),
+                           QPointF(c.x() + tip - direction * 3.2, c.y() - 3.2))
+                p.drawLine(QPointF(c.x() + tip, c.y()),
+                           QPointF(c.x() + tip - direction * 3.2, c.y() + 3.2))
