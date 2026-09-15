@@ -20,6 +20,7 @@ from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import format_integration, import_summary, resolve_integration
+from ..core.image_io import load_tiff
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -283,6 +284,7 @@ class MainWindow(QMainWindow):
         # lives here rather than on AstroImage.metadata. Measurements keep the
         # default deliberately — see core.autostretch.autostretch. Set BEFORE
         # the stage list, which asks it which stages to omit.
+        self._opened_as_tiff = False
         self._view_linked = True
         # Furthest stage index reached with THIS image. It separates a step you
         # walked past and left alone from one you have never been to — the
@@ -1764,9 +1766,9 @@ class MainWindow(QMainWindow):
         self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
-        tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
+        tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
         # Projects (a saved bundle: image + full edit history + solve state) — a
-        # distinct concept from Open FITS (a source) and Save Recipe (steps only),
+        # distinct concept from Open Image (a source) and Save Recipe (steps only),
         # tinted with the accent so the two project actions read as a pair.
         self._open_project_act = tb.addAction(
             load_icon("open", ACCENT), "Open Project", lambda: self._open_project())
@@ -2266,18 +2268,40 @@ class MainWindow(QMainWindow):
 
     # --- file / project ---
     def _choose_fits(self) -> None:
-        path = file_dialogs.open_file(self, "Open FITS", start_dir(self.settings.base_dir), "FITS (*.fit *.fits)")
+        path = file_dialogs.open_file(
+            self, "Open Image", start_dir(self.settings.base_dir),
+            "Images (*.fit *.fits *.tif *.tiff)")
         if path:
-            self.open_fits(path)
+            self.open_any(path)
 
     def open_fits(self, path: str) -> None:
+        """Kept as a name: many callers and tests say open_fits, and a FITS is
+        still the common case. Dispatches like everything else."""
+        self.open_any(path)
+
+    def open_any(self, path: str) -> None:
+        """A FITS or a TIFF, told apart by the extension.
+
+        A TIFF needs no new entry point into the pipeline. A linear one arrives
+        `is_linear=True` and starts at the top exactly as a FITS does; a
+        stretched one arrives False, and `_ensure_stretched` already gates the
+        finishing steps on that, so the whole post-stretch tail is reachable
+        with nothing committed on the way in.
+        """
         if not self._confirm_save_if_dirty():
             return
+        # Lowered: macOS hands back whatever the file is actually called, and a
+        # case-sensitive test would send a .TIF down the FITS reader.
+        tiff = path.lower().endswith((".tif", ".tiff"))
         try:
-            base = load_fits(path)
+            base = load_tiff(path) if tiff else load_fits(path)
         except Exception as exc:
             self._show_warning(f"Could not open file: {exc}")
             return
+        # Whether the SOURCE was a TIFF, not whether the pixels are linear: the
+        # Import panel offers its verdict switch only for a file that could
+        # plausibly be either, and a FITS never is.
+        self._opened_as_tiff = tiff
         self.open_image(base, os.path.basename(path))   # clears _project_path itself
 
     def open_image(self, base, label: str) -> None:
