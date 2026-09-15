@@ -20,6 +20,7 @@ from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
 from ..core.export import save_fits, save_png, save_tiff, _to_uint
 from ..core.fits_io import format_integration, import_summary, resolve_integration
+from ..core.image_io import load_tiff
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -283,6 +284,7 @@ class MainWindow(QMainWindow):
         # lives here rather than on AstroImage.metadata. Measurements keep the
         # default deliberately — see core.autostretch.autostretch. Set BEFORE
         # the stage list, which asks it which stages to omit.
+        self._opened_as_tiff = False
         self._view_linked = True
         # Furthest stage index reached with THIS image. It separates a step you
         # walked past and left alone from one you have never been to — the
@@ -1764,9 +1766,9 @@ class MainWindow(QMainWindow):
         self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
-        tb.addAction(load_icon("open"), "Open FITS", self._choose_fits)
+        tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
         # Projects (a saved bundle: image + full edit history + solve state) — a
-        # distinct concept from Open FITS (a source) and Save Recipe (steps only),
+        # distinct concept from Open Image (a source) and Save Recipe (steps only),
         # tinted with the accent so the two project actions read as a pair.
         self._open_project_act = tb.addAction(
             load_icon("open", ACCENT), "Open Project", lambda: self._open_project())
@@ -2266,18 +2268,40 @@ class MainWindow(QMainWindow):
 
     # --- file / project ---
     def _choose_fits(self) -> None:
-        path = file_dialogs.open_file(self, "Open FITS", start_dir(self.settings.base_dir), "FITS (*.fit *.fits)")
+        path = file_dialogs.open_file(
+            self, "Open Image", start_dir(self.settings.base_dir),
+            "Images (*.fit *.fits *.tif *.tiff)")
         if path:
-            self.open_fits(path)
+            self.open_any(path)
 
     def open_fits(self, path: str) -> None:
+        """Kept as a name: many callers and tests say open_fits, and a FITS is
+        still the common case. Dispatches like everything else."""
+        self.open_any(path)
+
+    def open_any(self, path: str) -> None:
+        """A FITS or a TIFF, told apart by the extension.
+
+        A TIFF needs no new entry point into the pipeline. A linear one arrives
+        `is_linear=True` and starts at the top exactly as a FITS does; a
+        stretched one arrives False, and `_ensure_stretched` already gates the
+        finishing steps on that, so the whole post-stretch tail is reachable
+        with nothing committed on the way in.
+        """
         if not self._confirm_save_if_dirty():
             return
+        # Lowered: macOS hands back whatever the file is actually called, and a
+        # case-sensitive test would send a .TIF down the FITS reader.
+        tiff = path.lower().endswith((".tif", ".tiff"))
         try:
-            base = load_fits(path)
+            base = load_tiff(path) if tiff else load_fits(path)
         except Exception as exc:
             self._show_warning(f"Could not open file: {exc}")
             return
+        # Whether the SOURCE was a TIFF, not whether the pixels are linear: the
+        # Import panel offers its verdict switch only for a file that could
+        # plausibly be either, and a FITS never is.
+        self._opened_as_tiff = tiff
         self.open_image(base, os.path.basename(path))   # clears _project_path itself
 
     def open_image(self, base, label: str) -> None:
@@ -3835,6 +3859,29 @@ class MainWindow(QMainWindow):
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
 
+    def _set_opened_as_linear(self, linear: bool) -> None:
+        """Correct the reading of a TIFF. Changes no pixel.
+
+        `looks_linear` is nearly always right, but it has two blind spots the
+        person looking at the picture can see instantly: a stretched STARLESS
+        file has no bright tail for it to key on (and Nocturne exports starless
+        files itself), and a very bright subject can push a linear frame's
+        p99.9 up. Neither is recoverable by measurement, so it is one click.
+
+        Rebuilt through `open_image` rather than mutated in place: `is_linear`
+        is baked into every cached history state, so flipping the current one
+        would leave the snapshots disagreeing with it.
+        """
+        linear = bool(linear)
+        if self.project is None or self.project.current().is_linear == linear:
+            return
+        base = self.project.current()
+        self.open_image(AstroImage(base.data, is_linear=linear,
+                                   metadata=dict(base.metadata)),
+                        self._source_label or "")
+        self._opened_as_tiff = True          # open_image cannot know; it is a re-read
+        self._rebuild_panel()
+
     def _reset_high_water(self) -> None:
         """Forget how far this session walked. A new image (or Close Project)
         starts a fresh pass, and carrying the mark over would mark steps as
@@ -4928,6 +4975,10 @@ class MainWindow(QMainWindow):
             on_view_linked=self._set_view_linked,
             view_linked=self._view_linked,
             stretch_linked=self._view_linked,
+            on_opened_as_linear=self._set_opened_as_linear,
+            opened_as_linear=(self.project.current().is_linear
+                              if (self._opened_as_tiff and self.project is not None)
+                              else None),
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,
@@ -4952,7 +5003,20 @@ class MainWindow(QMainWindow):
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
-                import_summary(self.project.current().metadata, filename=self._source_label))
+                import_summary(self.project.current().metadata,
+                               filename=self._source_label,
+                               # A TIFF names no camera, and the default would
+                               # print the S30 Pro's sensor, pixel size, focal
+                               # length and image scale as though they had been
+                               # READ from the file. Image scale in particular
+                               # feeds plate solving.
+                               assume_instrument=not self._opened_as_tiff)
+                # Say WHY it is sparse. An Import panel with one row reads as
+                # broken; the reason is that the format carries no headers, and
+                # that is worth one sentence.
+                + ("<p style='color:#8a9099'>A TIFF carries no capture details, "
+                   "so this is what could be read from the file and its name.</p>"
+                   if self._opened_as_tiff else ""))
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):

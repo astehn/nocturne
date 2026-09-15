@@ -25,7 +25,7 @@ class WelcomeScreen(QWidget):
         hint.setObjectName("welcomeHint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.open_btn = QPushButton("Open FITS")
+        self.open_btn = QPushButton("Open Image")
         self.open_btn.clicked.connect(lambda: on_open())
         self.stack_btn = QPushButton("Stack…")
         self.stack_btn.setObjectName("primary")
