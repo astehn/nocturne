@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.33.0] — 2026-09-15
+
+Open a TIFF — finish a master stacked in Siril, APP or DeepSkyStacker.
+
+### Added
+- Open Image now takes a TIFF as well as a FITS. A master stacked elsewhere can be finished here, and a picture you already finished can still reach Share, Star Spikes, Upscale and the plate-solve annotations. Nocturne measures whether the file is still unstretched — in which case the whole process applies, exactly as for a FITS — or has already been stretched, in which case it opens at the finishing steps and nothing tries to stretch it again. It says which it decided, and you can correct it in one click if a starless frame or an unusually bright subject fools it.
+- The step list now tells a step you walked past and left alone from one you have not reached yet. At the end of a pass, "which steps did I skip?" is a question the list is uniquely placed to answer, and it could not before.
+
+### Changed
+- "Open FITS" is now "Open Image", since it takes three extensions.
+- Typing a title in Share is fast at every size. The preview used to be composed at full resolution for a pane a few hundred pixels wide — at "Full size" that meant an image the size of your master for every pause in typing.
+
+### Fixed
+- A TIFF that stores its channels as separate planes — which some stackers write — opened as three pixels of nonsense, and misreported whether it was stretched.
+- Nocturne no longer invents a camera for a file that does not name one. It used to show the S30 Pro's sensor, pixel size, focal length and image scale as though they had been read from the file; image scale in particular feeds plate solving.
+- The Starless Levels histogram has real grab handles, instead of two hairlines the panel told you to drag.
+
 ## [0.32.0] — 2026-09-15
 
 Choose your stretch by looking at it — brightness and colour, on your own image.
