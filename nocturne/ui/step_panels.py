@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.autostretch import _TARGET_BG
+from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
@@ -52,15 +53,15 @@ SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"
 # slider to the value it already had, and the binding was one-way so the box
 # went on reading "Nebula" over a value that was not Nebula's.
 #
-# Briefly (2026-09-13 to -14) this was DERIVED as the slider position whose
-# target equals autostretch's _TARGET_BG, so that pressing Apply on arrival was
-# bit-identical to the canvas. That property is not lost by choosing 30:
-# `_sync_stretch_preview` renders the canvas to what Apply will commit when you
-# arrive at the step, so Apply is still a no-op. What 30 does leave is a modest
-# darkening when you WALK INTO Stretch, because the linear display autostretch
-# still targets 0.25. Whether _TARGET_BG should follow the same evidence is a
-# separate question — it governs every linear preview, including Import.
-STRETCH_DEFAULT = 30
+# DERIVED, again and for good. It was briefly derived (2026-09-13/14), then
+# pinned to 30 when the default moved — and that left the canvas DARKENING by
+# 18% when you walked into Stretch, because the linear display autostretch still
+# targeted 0.25. Andreas noticed it independently on 2026-09-15.
+#
+# Fixed at the source instead: autostretch.DEFAULT_TARGET_BG is now the single
+# fact and both the preview and the slider default derive from it, so a third
+# hand-written copy here would drift the same way a third time.
+STRETCH_DEFAULT = round(_STEP_DEFAULT * 100)
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
     "background": "Needs GraXpert — set its path in Settings.",

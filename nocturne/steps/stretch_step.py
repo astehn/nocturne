@@ -5,10 +5,15 @@ from ..core.stretch import apply_stretch
 from ..history.step import Step
 
 
-# The panel's default, so pressing Apply without touching anything produces what
-# the slider already showed. This lived here as a separate 0.5 while the panel
-# said 0.43 and then 0.30 — two numbers for one fact, which is how they drift.
-_DEFAULT = 0.30
+# DERIVED from the display target, not copied beside it. It lived here as a
+# separate 0.5 while the panel said 0.43 and then 0.30 — two numbers for one
+# fact, which is how they drift, and on 2026-09-14 they did: the default moved
+# and the linear preview's target did not follow, so arriving at Stretch
+# darkened the canvas 18% before the user touched anything.
+from ..core.autostretch import DEFAULT_TARGET_BG
+from ..core.stretch import target_to_amount
+
+_DEFAULT = target_to_amount(DEFAULT_TARGET_BG)
 
 
 def parse_stretch_option(option) -> float:

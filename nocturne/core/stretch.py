@@ -17,6 +17,13 @@ def amount_to_target(amount: float) -> float:
     return _TARGET_MIN + a * (_TARGET_MAX - _TARGET_MIN)
 
 
+def target_to_amount(target: float) -> float:
+    """The inverse of `amount_to_target`, so the slider default can be DERIVED
+    from the one background target rather than copied beside it."""
+    span = _TARGET_MAX - _TARGET_MIN
+    return min(1.0, max(0.0, (float(target) - _TARGET_MIN) / span))
+
+
 def apply_stretch(img: AstroImage, amount: float, *,
                   linked: bool = True) -> AstroImage:
     """Adaptive nonlinear stretch (linear -> display). `amount` in [0, 1] is the
