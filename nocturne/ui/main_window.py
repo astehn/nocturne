@@ -3859,6 +3859,29 @@ class MainWindow(QMainWindow):
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
 
+    def _set_opened_as_linear(self, linear: bool) -> None:
+        """Correct the reading of a TIFF. Changes no pixel.
+
+        `looks_linear` is nearly always right, but it has two blind spots the
+        person looking at the picture can see instantly: a stretched STARLESS
+        file has no bright tail for it to key on (and Nocturne exports starless
+        files itself), and a very bright subject can push a linear frame's
+        p99.9 up. Neither is recoverable by measurement, so it is one click.
+
+        Rebuilt through `open_image` rather than mutated in place: `is_linear`
+        is baked into every cached history state, so flipping the current one
+        would leave the snapshots disagreeing with it.
+        """
+        linear = bool(linear)
+        if self.project is None or self.project.current().is_linear == linear:
+            return
+        base = self.project.current()
+        self.open_image(AstroImage(base.data, is_linear=linear,
+                                   metadata=dict(base.metadata)),
+                        self._source_label or "")
+        self._opened_as_tiff = True          # open_image cannot know; it is a re-read
+        self._rebuild_panel()
+
     def _reset_high_water(self) -> None:
         """Forget how far this session walked. A new image (or Close Project)
         starts a fresh pass, and carrying the mark over would mark steps as
@@ -4952,6 +4975,10 @@ class MainWindow(QMainWindow):
             on_view_linked=self._set_view_linked,
             view_linked=self._view_linked,
             stretch_linked=self._view_linked,
+            on_opened_as_linear=self._set_opened_as_linear,
+            opened_as_linear=(self.project.current().is_linear
+                              if (self._opened_as_tiff and self.project is not None)
+                              else None),
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
             on_sat_change=self._on_sat_change,
@@ -4976,7 +5003,20 @@ class MainWindow(QMainWindow):
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
-                import_summary(self.project.current().metadata, filename=self._source_label))
+                import_summary(self.project.current().metadata,
+                               filename=self._source_label,
+                               # A TIFF names no camera, and the default would
+                               # print the S30 Pro's sensor, pixel size, focal
+                               # length and image scale as though they had been
+                               # READ from the file. Image scale in particular
+                               # feeds plate solving.
+                               assume_instrument=not self._opened_as_tiff)
+                # Say WHY it is sparse. An Import panel with one row reads as
+                # broken; the reason is that the format carries no headers, and
+                # that is worth one sentence.
+                + ("<p style='color:#8a9099'>A TIFF carries no capture details, "
+                   "so this is what could be read from the file and its name.</p>"
+                   if self._opened_as_tiff else ""))
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):

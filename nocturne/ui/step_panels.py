@@ -94,6 +94,8 @@ def build_panel(
     on_view_linked=None,
     view_linked=True,
     stretch_linked=True,
+    on_opened_as_linear=None,
+    opened_as_linear=None,
     on_levels_change=None,
     on_levels_auto=None,
     on_sat_change=None,
@@ -155,6 +157,30 @@ def build_panel(
         w.view_linked = linked_btn
         w.view_unlinked = unlinked_btn
         w._view_group = group          # or the QButtonGroup is garbage collected
+
+        # Only for a file that could plausibly be either. A FITS is linear by
+        # the definition of the format we accept, and offering the choice there
+        # would invite someone to get it wrong.
+        if opened_as_linear is not None:
+            head = QLabel("How this file was read")
+            head.setObjectName("panelSectionLabel")
+            lay.addWidget(head)
+            row2 = QHBoxLayout()
+            lin_btn = QRadioButton("Unstretched data")
+            stretched_btn = QRadioButton("Already stretched")
+            grp2 = QButtonGroup(w)
+            grp2.addButton(lin_btn); grp2.addButton(stretched_btn)
+            (lin_btn if opened_as_linear else stretched_btn).setChecked(True)
+            row2.addWidget(lin_btn); row2.addWidget(stretched_btn); row2.addStretch(1)
+            lay.addLayout(row2)
+            if on_opened_as_linear is not None:
+                lin_btn.toggled.connect(lambda on: on_opened_as_linear(bool(on)))
+            w.opened_as_linear = lin_btn
+            w._opened_group = grp2      # or the QButtonGroup is garbage collected
+            lay.addWidget(_desc_label(
+                "Nocturne measured the pixels to decide this. It is nearly always "
+                "right, but a starless file or a very bright subject can fool it — "
+                "if the picture looks wrong from here, switch it."))
 
         note = _desc_label(
             "Linked keeps the sky's own colour; Unlinked evens the channels out, "

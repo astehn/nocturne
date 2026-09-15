@@ -86,3 +86,78 @@ def test_the_target_comes_from_the_filename_when_there_is_no_header(qtbot, tmp_p
     win = _window(qtbot, tmp_path)
     win.open_any(_write_linear_tiff(tmp_path, name="M 42 final.tif"))
     assert "M 42" in win._panel.meta_label.text()
+
+
+# --- the verdict, and honest metadata ------------------------------------
+
+def test_the_panel_states_which_it_decided(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    assert hasattr(win._panel, "opened_as_linear")
+    assert win._panel.opened_as_linear.isChecked() is False      # already stretched
+    win2 = _window(qtbot, tmp_path)
+    win2.open_any(_write_linear_tiff(tmp_path))
+    assert win2._panel.opened_as_linear.isChecked() is True
+
+
+def test_the_override_re_enters_at_the_other_point(qtbot, tmp_path):
+    """One click, because both known failure modes — a stretched STARLESS file
+    with no bright tail, and a very bright subject — are invisible to us and
+    obvious to the person looking at the picture."""
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    assert win.project.current().is_linear is False
+    win._set_opened_as_linear(True)
+    assert win.project.current().is_linear is True
+
+
+def test_the_override_does_not_touch_the_pixels(qtbot, tmp_path):
+    """Captured and asserted UNCHANGED. It corrects how the file is READ, and a
+    reading is not an edit."""
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    before = np.array(win.project.current().data, copy=True)
+    win._set_opened_as_linear(True)
+    assert np.array_equal(win.project.current().data, before)
+
+
+def test_no_switch_for_a_fits(qtbot, tmp_path):
+    """A FITS is linear by the definition of the format we accept. Offering the
+    choice would invite someone to get it wrong."""
+    win = _window(qtbot, tmp_path)
+    win.open_any(_make_fits(tmp_path))
+    assert getattr(win._panel, "opened_as_linear", None) is None
+
+
+def test_the_panel_names_no_camera_for_a_tiff(qtbot, tmp_path):
+    """Asserted as ABSENT, not as "not the wrong camera" — per CLAUDE.md, a
+    check that one wrong value is missing passes while a different wrong value
+    is written.
+
+    import_summary({}) assumes the S30 Pro and prints a sensor, a pixel size, a
+    focal length and an image scale. Every one of those is a fabrication for a
+    file that carries no headers, and image scale in particular feeds plate
+    solving.
+    """
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_linear_tiff(tmp_path))
+    text = win._panel.meta_label.text()
+    for banned in ("IMX585", "IMX662", "Seestar", "Pixel size", "Focal length",
+                   "Image scale", "Sensor"):
+        assert banned not in text, banned
+
+
+def test_a_fits_still_gets_its_camera(qtbot, tmp_path):
+    """The guard on the guard: omitting the block for a TIFF must not omit it
+    for the file type that genuinely carries the information."""
+    win = _window(qtbot, tmp_path)
+    win.open_any(_make_fits(tmp_path))
+    assert "Sensor" in win._panel.meta_label.text()
+
+
+def test_the_panel_says_why_it_is_sparse(qtbot, tmp_path):
+    """An empty panel reads as broken. It should say that a TIFF carries no
+    capture details rather than leave the user wondering."""
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_linear_tiff(tmp_path))
+    assert "TIFF" in win._panel.meta_label.text()

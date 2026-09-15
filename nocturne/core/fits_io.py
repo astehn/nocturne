@@ -282,15 +282,27 @@ def _target_from_filename(filename: str | None) -> str | None:
 
 
 def import_summary(meta: dict, instrument=None,
-                    filename: str | None = None) -> str:
+                    filename: str | None = None, *,
+                    assume_instrument: bool = True) -> str:
     """Grouped rich-HTML readout: 'Your stack' (header, present fields only) +
     'Camera & scope' (per-file where available, else instrument profile).
 
     `instrument` defaults to whichever camera the file names, so an S50 stack
     is not labelled with the S30 Pro's sensor. Callers may still pass one
-    explicitly; None means "work it out"."""
+    explicitly; None means "work it out".
+
+    `assume_instrument=False` drops the camera block entirely when the file does
+    not name one. That is the honest answer for a TIFF, which carries no headers
+    at all: the default would otherwise print the S30 Pro's sensor, pixel size,
+    focal length and image scale as though they had been read from the file.
+    `identify()` is explicit that None means unknown and "the caller decides
+    whether to assume, and should say that it did" — this is a caller declining
+    to.
+    """
     if instrument is None:
-        instrument = identify(meta) or DEFAULT_INSTRUMENT
+        instrument = identify(meta)
+        if instrument is None:
+            instrument = DEFAULT_INSTRUMENT if assume_instrument else None
     stack: list[tuple[str, str]] = []
     target = meta.get("target") or _target_from_filename(filename)
     if target:
@@ -332,18 +344,17 @@ def import_summary(meta: dict, instrument=None,
     if not stack:
         stack.append(("", "Couldn't read capture details from this file's header."))
 
-    focal = meta.get("focal_length") or instrument.focal_length_mm
-    pix = meta.get("pixel_size") or instrument.pixel_size_um
-    scale = 206.265 * float(pix) / float(focal)
-    scope = [
-        ("Sensor", f"{instrument.sensor} (colour)"),
-        ("Pixel size", f"{float(pix):g} µm"),
-        ("Focal length", f"{float(focal):g} mm · f/{instrument.f_ratio:g}"),
-        ("Image scale", f"~{scale:.1f}″ / pixel"),
-    ]
-
     html = _summary_section("Your stack", stack)
-    html += _summary_section("Camera &amp; scope", scope)
+    if instrument is not None:
+        focal = meta.get("focal_length") or instrument.focal_length_mm
+        pix = meta.get("pixel_size") or instrument.pixel_size_um
+        scale = 206.265 * float(pix) / float(focal)
+        html += _summary_section("Camera &amp; scope", [
+            ("Sensor", f"{instrument.sensor} (colour)"),
+            ("Pixel size", f"{float(pix):g} µm"),
+            ("Focal length", f"{float(focal):g} mm · f/{instrument.f_ratio:g}"),
+            ("Image scale", f"~{scale:.1f}″ / pixel"),
+        ])
     return html
 
 
