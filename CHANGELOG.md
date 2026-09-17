@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.34.0] — 2026-09-17
+
+Nocturne now tells you what leaves your Mac, and asks before counting anything.
+
+### Added
+- A privacy page at nocturne.stehn.com/privacy.html, an FAQ entry answering "does Nocturne phone home?", and an honest account of it in About. Nocturne has always asked GitHub whether a newer version exists, on every launch — ordinary behaviour, but nothing said so and there was no way to decline. Both are fixed: the request is described in About, on the website, and in Settings, where you can switch it off.
+- Nocturne asks once, on first run, whether it may count your use of it. Saying yes sends {"event": "daily", "version", "id"} once a day and nothing else — the id is a random number for that installation which changes every month, no IP address is stored, and nothing about you, your machine or your images is ever sent. Saying no sends nothing and is never asked again. Either answer can be changed in Settings at any time. It exists for one reason: downloads say nothing about whether anyone actually uses the app, and that decides whether things like a proper support system are worth building.
+
+### Changed
+- Visual stretch… now sits above Apply Stretch. It was the only step in the app with a control below its commit button, which read as "press this after applying" — the picker only moves the slider, and Apply still commits.
+- A stack no longer fills the Dock with a Nocturne icon per worker. Registration runs in eight processes and macOS gave each one its own tile, so a single stack produced eleven icons.
+- Those same workers no longer build the entire interface before doing their work — 69 MB and about half a second each, 550 MB across a stack, held by processes with no window. On a 16 GB laptop that is fewer workers and a slower stack.
+
+### Fixed
+- Opening Settings and pressing OK no longer discards settings the dialog does not show. Your Share plate preset and saved plate looks, the recent-projects list, the help-expanded preference and annotation density were all reset by a dialog you may have opened only to read a tool path.
+- The picture no longer darkens when you walk into Stretch. Arriving at the step dropped the canvas by 16% — about 11 levels of 255 — before you touched anything, because the display preview and the default stretch had drifted apart.
+- The provenance report no longer states things that are not so. Star Spikes recorded none of its six sliders, the automatic stretch recorded no amount, Levels, Saturation and Starless Levels printed bare numbers with no names, and the footer credited the version that generated the report rather than the one that made the image.
+- The Open dialog now offers .fts files. Nocturne could always read them — the loader and batch processing both accept the extension — but the file picker did not list it, so browsing for your own .fts file simply would not show it.
+
 ## [0.33.0] — 2026-09-15
 
 Open a TIFF — finish a master stacked in Siril, APP or DeepSkyStacker.
