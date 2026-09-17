@@ -92,3 +92,20 @@ def test_no_surface_spells_out_beta_on_its_own(monkeypatch, qtbot, tmp_path):
     # The splash is deliberately NOT in this guard: its beta wording is part of
     # the artwork and no code can clear it. See the note beside RELEASE_STAGE --
     # a stable release needs that image swapped by hand.
+
+
+def test_the_about_box_states_what_leaves_the_machine():
+    """Nocturne asked GitHub for the latest release on every launch, disclosed
+    nowhere, from the day that check was added until 2026-09-17. A user who
+    discovers an undisclosed connection is right to distrust everything else
+    the app says — and "it is on the website" is not being told.
+
+    Pinned here, next to the beta notice, because both are promises the app
+    makes about itself that no feature test would notice going missing.
+    """
+    from nocturne.ui.about import about_html
+    html = about_html()
+    assert "Privacy" in html
+    assert "github.com" in html, "the one request Nocturne makes must be named"
+    assert "Settings" in html, "and the way to turn it off"
+    assert "privacy.html" in html

@@ -635,7 +635,11 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
 
-        if check_updates:
+        # BOTH gates. The argument is how the test suite keeps itself off the
+        # network; the setting is the user's answer, and until 2026-09-17 there
+        # was no way for them to give one — the request went out on every launch
+        # with nothing anywhere saying it would.
+        if check_updates and self.settings.check_updates:
             run_async(self._pool, latest_release_version, self._on_update_check)
 
     def _toggle_fullscreen(self) -> None:

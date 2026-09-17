@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..settings import (TOOL_CANDIDATES, Settings, astap_valid, is_tool,
@@ -64,6 +64,14 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
+        # Kept so result_settings can AMEND it. It used to build a fresh
+        # Settings() from the fields on this form, which silently reset every
+        # field the form does not show — measured 2026-09-17: opening Settings
+        # and pressing OK discarded the user's plate preset, their saved plate
+        # looks, the recent-projects list, help_expanded and annotation_density.
+        # Six kinds of state, lost to a dialog they may have opened to read a
+        # path. A new setting added anywhere else in the app would join them.
+        self._settings = settings
         self._probe_runner = None  # injectable for tests
         self._dir = QLineEdit(settings.base_dir)
         self._gx = QLineEdit(settings.graxpert_path)
@@ -80,6 +88,14 @@ class SettingsDialog(QDialog):
         self.denoise_box.addItems(["RC-Astro", "GraXpert"])
         self.denoise_box.setCurrentText(
             "GraXpert" if settings.denoise_engine == "graxpert" else "RC-Astro")
+
+        self.check_updates = QCheckBox("Check for a new version at startup")
+        self.check_updates.setChecked(settings.check_updates)
+        self.check_updates.setToolTip(
+            "Asks github.com whether a newer Nocturne has been released. Your IP "
+            "address reaches GitHub as part of that request, as it does for any "
+            "web request. Nothing about you or your images is sent, and Nocturne "
+            "itself receives nothing.")
 
         self.rescan_btn = QPushButton("Rescan for installed apps")
         self.rescan_btn.clicked.connect(self._rescan)
@@ -107,6 +123,7 @@ class SettingsDialog(QDialog):
         form.addRow("", self.rescan_result)
         form.addRow("Handle (for shares)", self._handle)
         form.addRow("Preferred denoise engine", self.denoise_box)
+        form.addRow("", self.check_updates)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
                       "ASTAP adds plate-solving — install it and its D05 star database "
                       "(from the ASTAP page) for target identification and annotation.")
@@ -189,7 +206,15 @@ class SettingsDialog(QDialog):
         self._astap_result.setText("✓ Found ASTAP" if ok else "✗ Not found")
 
     def result_settings(self) -> Settings:
-        return Settings(
+        """The settings this dialog was given, with THIS FORM's fields changed.
+
+        `replace`, not a new Settings: anything not on this form must survive
+        untouched. tests/ui/test_settings_dialog.py captures the whole dataclass
+        before and asserts field-by-field that only these changed.
+        """
+        import dataclasses
+        return dataclasses.replace(
+            self._settings,
             graxpert_path=self._gx.text().strip(),
             rcastro_path=self._rc.text().strip(),
             astap_path=self._astap.text().strip(),
@@ -197,4 +222,5 @@ class SettingsDialog(QDialog):
             denoise_engine=("graxpert" if self.denoise_box.currentText() == "GraXpert"
                             else "rcastro"),
             handle=self._handle.text().strip(),
+            check_updates=self.check_updates.isChecked(),
         )

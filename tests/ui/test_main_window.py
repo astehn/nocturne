@@ -5732,3 +5732,21 @@ def test_a_new_image_does_not_inherit_the_last_ones_channel_curves(qtbot, tmp_pa
     second.mkdir()
     win.open_fits(_make_fits(second))
     assert win._curve_matrix == {}
+
+
+def test_no_update_request_when_the_user_has_turned_it_off(qtbot, tmp_path, monkeypatch):
+    """The switch has to reach the REQUEST, not just the dialog. Asserts the
+    network function is never called — the only check that distinguishes "off"
+    from "off in the UI and still calling github on every launch"."""
+    import nocturne.ui.main_window as mw
+    from nocturne.settings import Settings, save_settings
+
+    calls = []
+    monkeypatch.setattr(mw, "latest_release_version", lambda *a, **k: calls.append(1))
+
+    path = str(tmp_path / "settings.json")
+    save_settings(Settings(check_updates=False), path)
+    win = mw.MainWindow(settings_path=path, check_updates=True)   # the app's own default
+    qtbot.addWidget(win)
+    qtbot.wait(150)
+    assert calls == [], "the update check ran against the user's explicit no"
