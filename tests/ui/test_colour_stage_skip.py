@@ -34,7 +34,7 @@ def _make_fits(tmp_path, name="stack.fits"):
 
 
 def _window(qtbot, tmp_path, name="stack.fits"):
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     win._async_enabled = False
     qtbot.addWidget(win)
     win.open_fits(_make_fits(tmp_path, name))

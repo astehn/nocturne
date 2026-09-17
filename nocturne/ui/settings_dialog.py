@@ -97,6 +97,17 @@ class SettingsDialog(QDialog):
             "web request. Nothing about you or your images is sent, and Nocturne "
             "itself receives nothing.")
 
+        # The consent dialog promises "you can change this any time in Settings",
+        # so this box is part of that promise, not a nicety. A checkbox, though
+        # the setting has THREE values: "unset" only exists until the question is
+        # answered, and ticking or unticking here is an answer either way.
+        self.telemetry = QCheckBox("Count my use of Nocturne (once a day, anonymously)")
+        self.telemetry.setChecked(settings.telemetry == "on")
+        self.telemetry.setToolTip(
+            "Sends {\"event\": \"daily\", \"version\": …, \"id\": …} once a day. "
+            "The id is a random number for this installation that changes every "
+            "month. No IP address is stored and nothing about your images is sent.")
+
         self.rescan_btn = QPushButton("Rescan for installed apps")
         self.rescan_btn.clicked.connect(self._rescan)
         self.rescan_result = QLabel("")
@@ -124,6 +135,7 @@ class SettingsDialog(QDialog):
         form.addRow("Handle (for shares)", self._handle)
         form.addRow("Preferred denoise engine", self.denoise_box)
         form.addRow("", self.check_updates)
+        form.addRow("", self.telemetry)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
                       "ASTAP adds plate-solving — install it and its D05 star database "
                       "(from the ASTAP page) for target identification and annotation.")
@@ -223,4 +235,5 @@ class SettingsDialog(QDialog):
                             else "rcastro"),
             handle=self._handle.text().strip(),
             check_updates=self.check_updates.isChecked(),
+            telemetry=("on" if self.telemetry.isChecked() else "off"),
         )

@@ -1165,7 +1165,7 @@ def test_upscale_help_is_right_that_open_as_copy_starts_a_new_project(qtbot, tmp
 
     path = tmp_path / "stack.fits"
     fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16)).writeto(str(path))
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     win._async_enabled = False
     qtbot.addWidget(win)
     win.open_fits(str(path))

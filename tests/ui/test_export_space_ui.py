@@ -83,7 +83,7 @@ def test_the_saved_image_and_its_tag_always_agree(qtbot, tmp_path):
     from nocturne.core.image import AstroImage
     from nocturne.ui.main_window import MainWindow
 
-    win = MainWindow(settings_path=str(tmp_path / "s.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "s.json"), check_updates=False, telemetry=False)
     qtbot.addWidget(win)
     rng = np.random.default_rng(0)
     data = (rng.random((8, 8, 3)) * 0.6 + 0.2).astype(np.float32)

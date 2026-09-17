@@ -164,8 +164,11 @@ def test_ok_does_not_discard_settings_this_dialog_never_shows(qtbot):
     qtbot.addWidget(dlg)
     after = dataclasses.asdict(dlg.result_settings())
 
+    # Everything the form actually shows. A field added to the dialog belongs
+    # here; a field added to Settings and NOT to the dialog must keep surviving,
+    # which is the whole point of the test.
     on_this_form = {"graxpert_path", "rcastro_path", "astap_path", "base_dir",
-                    "denoise_engine", "handle"}
+                    "denoise_engine", "handle", "check_updates", "telemetry"}
     for field, was in snapshot.items():
         if field in on_this_form:
             continue
@@ -199,3 +202,34 @@ def test_the_update_check_can_be_turned_off_and_the_choice_survives(qtbot):
     back = SettingsDialog(Settings(check_updates=False))
     qtbot.addWidget(back)
     assert not back.check_updates.isChecked(), "the dialog must show the saved answer"
+
+
+def test_usage_counting_can_be_changed_after_the_first_run_question(qtbot):
+    """The consent dialog says "you can change this any time in Settings", so
+    this control is part of the promise rather than a convenience."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+
+    on = SettingsDialog(Settings(telemetry="on"))
+    qtbot.addWidget(on)
+    assert on.telemetry.isChecked()
+    on.telemetry.setChecked(False)
+    assert on.result_settings().telemetry == "off"
+
+    off = SettingsDialog(Settings(telemetry="off"))
+    qtbot.addWidget(off)
+    assert not off.telemetry.isChecked()
+    off.telemetry.setChecked(True)
+    assert off.result_settings().telemetry == "on"
+
+
+def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
+    """`unset` must never look like consent. Shown unticked; touching OK at all
+    is the user answering, so it stores "off" rather than leaving it unset and
+    re-asking on the next launch."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(Settings(telemetry="unset"))
+    qtbot.addWidget(dlg)
+    assert not dlg.telemetry.isChecked()
+    assert dlg.result_settings().telemetry == "off"

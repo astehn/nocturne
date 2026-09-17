@@ -50,7 +50,7 @@ def test_the_window_title_says_beta_with_and_without_a_project(qtbot, tmp_path):
     """The splash is gone in two seconds; the title bar is what actually makes
     it unmissable for the rest of the session."""
     from nocturne.ui.main_window import MainWindow
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     qtbot.addWidget(win)
     assert "beta" in win.windowTitle().lower(), win.windowTitle()
     assert nocturne.__version__ in win.windowTitle()
@@ -83,7 +83,7 @@ def test_no_surface_spells_out_beta_on_its_own(monkeypatch, qtbot, tmp_path):
 
     monkeypatch.setattr(nocturne, "RELEASE_STAGE", "")
 
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     qtbot.addWidget(win)
     assert "beta" not in win.windowTitle().lower(), (
         "the window title hardcodes 'beta' instead of deriving it")
@@ -106,6 +106,11 @@ def test_the_about_box_states_what_leaves_the_machine():
     from nocturne.ui.about import about_html
     html = about_html()
     assert "Privacy" in html
-    assert "github.com" in html, "the one request Nocturne makes must be named"
-    assert "Settings" in html, "and the way to turn it off"
+    assert "github.com" in html, "the update check must be named"
+    # BOTH requests, or the box understates what leaves the machine. The page
+    # said "one network request" for the hours between shipping the update-check
+    # disclosure and shipping usage counting, which would have been a false
+    # statement the moment the second one existed.
+    assert '"daily"' in html, "usage counting must be named too"
+    assert "Settings" in html, "and the way to turn them off"
     assert "privacy.html" in html

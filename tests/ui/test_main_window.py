@@ -23,7 +23,7 @@ def _make_fits(tmp_path, filter_card="L"):
 
 
 def _window(qtbot, tmp_path):
-    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False)
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     win._async_enabled = False  # run step processing synchronously in tests
     qtbot.addWidget(win)
     return win
@@ -5745,8 +5745,9 @@ def test_no_update_request_when_the_user_has_turned_it_off(qtbot, tmp_path, monk
     monkeypatch.setattr(mw, "latest_release_version", lambda *a, **k: calls.append(1))
 
     path = str(tmp_path / "settings.json")
-    save_settings(Settings(check_updates=False), path)
-    win = mw.MainWindow(settings_path=path, check_updates=True)   # the app's own default
+    save_settings(Settings(check_updates=False, telemetry=False), path)
+    win = mw.MainWindow(settings_path=path, check_updates=True,   # the app's own default
+                        telemetry=False)                          # not what this test is about
     qtbot.addWidget(win)
     qtbot.wait(150)
     assert calls == [], "the update check ran against the user's explicit no"
