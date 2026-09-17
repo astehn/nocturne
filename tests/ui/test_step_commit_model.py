@@ -2457,3 +2457,22 @@ def test_the_fringe_step_says_which_of_its_two_paths_ran(qtbot, tmp_path):
     text = win._fringe_status_text()
     assert "whole image" in text, (
         "the free path's note does not say it moves the background")
+
+
+def test_the_automatic_stretch_records_the_amount_it_used(qtbot, tmp_path):
+    """A history entry of `""` renders in the provenance report as a bare
+    "Stretch" with no number — indistinguishable from a step whose amount
+    nobody knows, next to manual ones that say "Stretch — 0.30".
+
+    It is the step's own default either way (parse_stretch_option("") resolves
+    to it), so this is about the RECORD, not the picture. Asserted against
+    parse_stretch_option rather than a literal: writing 0.30 here would be the
+    fourth copy of the number whose copies drifted apart on 2026-09-14.
+    """
+    from nocturne.steps.stretch_step import parse_stretch_option
+    win = _linear_win(qtbot, tmp_path)
+    assert win._ensure_stretched("Levels") is True
+    stretches = [(n, o) for n, o in win.project.entries() if n == "Stretch"]
+    assert stretches, "the automatic stretch did not record an entry at all"
+    assert stretches[-1][1] == parse_stretch_option("")
+    assert stretches[-1][1] != "", "an empty option is what made the report silent"

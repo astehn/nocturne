@@ -39,6 +39,11 @@ class LoadedProject:
     # MainWindow._capture_clip_baseline. Optional in the manifest, so a bundle
     # written before it existed simply loads as None.
     clip_baseline: Any = None
+    # Which build last WROTE this bundle. Written since the format existed and
+    # never read until 2026-09-17, when the provenance report's footer was found
+    # claiming the version that GENERATED it as the version that made the image.
+    # Optional: a bundle without it loads as None and the footer says nothing.
+    saved_app_version: Any = None
 
 _REPRODUCIBLE_STAGES = {
     "stretch", "levels", "curves", "recover_core",
@@ -253,4 +258,5 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         solve_state=manifest.get("solve"),
         source_label=manifest.get("source_label", ""),
         clip_baseline=(tuple(cb) if (cb := manifest.get("clip_baseline")) else None),
+        saved_app_version=manifest.get("app_version") or None,
     )

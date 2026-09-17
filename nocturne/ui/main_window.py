@@ -325,6 +325,10 @@ class MainWindow(QMainWindow):
         # (hi_frac, lo_frac) already clipped when this image was imported, or
         # None for a raw linear import. See _capture_clip_baseline.
         self._clip_baseline = None
+        # Which build last saved the bundle we are looking at, for the provenance
+        # footer. None for a project that was never loaded from disk — then the
+        # steps ran in THIS build and the footer's own version is the truth.
+        self._saved_app_version = None
         # Clipping that is a dark REGION rather than single-pixel noise. This is
         # what the warning ALARMS on; the raw histogram figure is what it
         # REPORTS, because the overlay marks exactly those pixels.
@@ -1140,10 +1144,12 @@ class MainWindow(QMainWindow):
         StarSpikesDialog(self.project.current(), parent=self,
                          on_apply=self._apply_star_spikes).exec()
 
-    def _apply_star_spikes(self, result) -> None:
+    def _apply_star_spikes(self, result, params=None) -> None:
         if self.project is None or self._busy:
             return
-        self.project.run_step(_PrecomputedStep("Star Spikes", result), "")
+        # `params or ""` keeps the old single-argument call working (a test
+        # drives this directly), while a real apply records all six sliders.
+        self.project.run_step(_PrecomputedStep("Star Spikes", result), params or "")
         self._mark_dirty()
         self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
         self._clear_warning()
@@ -1982,8 +1988,16 @@ class MainWindow(QMainWindow):
             return False
         self.project.jump_back(target)
         base = self.project.current()
-        result = self._step_for("stretch").apply(base, "")   # "" -> default amount 0.5
-        self.project.run_step(_PrecomputedStep("Stretch", result), "")
+        # The amount is RECORDED, not left as "". It is the step's own default
+        # (parse_stretch_option("") resolves to it), but a history entry of ""
+        # renders in the provenance report as a bare "Stretch" with no number —
+        # indistinguishable from a step whose amount nobody knows. Ask the step
+        # what "" means rather than writing the number here: that is the
+        # duplication which drifted DEFAULT_TARGET_BG apart in the first place.
+        from ..steps.stretch_step import parse_stretch_option
+        amount = parse_stretch_option("")      # 0.30, the derived default
+        result = self._step_for("stretch").apply(base, "")
+        self.project.run_step(_PrecomputedStep("Stretch", result), amount)
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))
@@ -2310,6 +2324,7 @@ class MainWindow(QMainWindow):
         # Project must not receive a callback belonging to the old one.
         self._swap_workspace()
         self._source_label = label
+        self._saved_app_version = None      # not the loaded bundle's any more
         self._curve_matrix = {}      # per-channel curves belong to one picture
         self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
@@ -2452,6 +2467,7 @@ class MainWindow(QMainWindow):
         # it now would bake this session's own clipping into the baseline and
         # permanently silence the warning.
         self._clip_baseline = loaded.clip_baseline
+        self._saved_app_version = loaded.saved_app_version
         self._project_path = path
         self._dirty = False
         self._update_title()
@@ -5319,7 +5335,8 @@ class MainWindow(QMainWindow):
             return
         report = build_report(self.project.entries(), self.project.current().metadata,
                               app_version=__version__, date=datetime.date.today(),
-                              settings=self.settings)
+                              settings=self.settings,
+                              saved_version=self._saved_app_version)
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:
