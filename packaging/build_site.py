@@ -37,6 +37,7 @@ SRC = SITE / "_src"
 # label -> (href from another page, href from the homepage itself)
 NAV = [
     ("Home",      "index.html",          "#top"),
+    ("Gallery",   "gallery.html",        "gallery.html"),
     ("Tools",     "tools.html",          "tools.html"),
     ("Guide",     "guide.html",          "guide.html"),
     ("Sample data", "sample-data.html",  "sample-data.html"),
