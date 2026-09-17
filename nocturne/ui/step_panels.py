@@ -484,6 +484,13 @@ def build_panel(
         # for anyone who already knows the number they want. The picker is for
         # the case a number cannot answer — four of Andreas's own targets wanted
         # three different values, so no default can serve them all.
+        #
+        # ABOVE Apply, though — it was below it until 2026-09-17, which made
+        # Stretch the only step in the app with a control under its commit
+        # button. Reading top to bottom, that said "press this AFTER applying",
+        # and the picker does the opposite: _apply_picked_stretch only moves the
+        # slider, leaving the step for Apply to commit. Enforced for every panel
+        # by test_nothing_sits_below_the_commit_button.
         visual_btn = QPushButton("Visual stretch…")
         visual_btn.setEnabled(apply_enabled)
         if on_visual_stretch is not None:
@@ -493,8 +500,8 @@ def build_panel(
         agg_row.addWidget(stretch_val)
         lay.addLayout(agg_row)
         lay.addWidget(slider)
-        lay.addWidget(apply_btn)
         lay.addWidget(visual_btn)
+        lay.addWidget(apply_btn)
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
         w.stretch_slider = slider
