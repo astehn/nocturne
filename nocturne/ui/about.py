@@ -76,6 +76,24 @@ def about_html(data: dict | None = None) -> str:
         "<h3>✦ Photon Donors</h3>"
         "<p>The absolute legends who lent their light for testing:</p>"
         f"<ul>{donors_html}</ul>"
+        # Said IN THE APP, not only on the website. Nocturne asked GitHub for
+        # the latest release on every launch from the day that check was added
+        # until 2026-09-17, and nothing anywhere told anyone. A person who finds
+        # a connection they were not told about is right to distrust everything
+        # else, and "it is on our website" is not being told.
+        "<h3>✦ Privacy</h3>"
+        "<p>Your images never leave your Mac. Nocturne makes at most <b>two</b> "
+        "network requests, and you can refuse both in Settings:</p>"
+        "<p>1. At startup it asks github.com whether a newer version has been "
+        "released. Your IP address reaches GitHub as part of that request, as it "
+        "does for any web request — Nocturne itself receives nothing.</p>"
+        "<p>2. If you said yes when asked on first run, once a day it sends "
+        "<i>{\"event\": \"daily\", \"version\", \"id\"}</i> and nothing else. The id is "
+        "a random number for this installation that changes every month; no IP "
+        "address is stored. Nothing about your machine or your images is ever "
+        "sent, whatever you choose.</p>"
+        "<p><a href='https://nocturne.stehn.com/privacy.html'>"
+        "nocturne.stehn.com/privacy.html</a></p>"
         "<hr>"
         "<p>Made under the stars. 🔭 Not affiliated with ZWO — just a fan with "
         "a Seestar and too many clear-sky ambitions.</p>"

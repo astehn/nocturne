@@ -132,3 +132,104 @@ def test_rescan_button_fills_the_fields(qtbot, monkeypatch, tmp_path):
     dlg.rescan_btn.click()
     assert dlg._gx.text().endswith("GraXpert.app")      # the broken path was replaced
     assert "GraXpert" in dlg.rescan_result.text()
+
+
+def test_ok_does_not_discard_settings_this_dialog_never_shows(qtbot):
+    """Opening Settings and pressing OK used to reset every field not on the
+    form — measured 2026-09-17: plate preset, saved plate looks, recent
+    projects, help_expanded, annotation_density and share_band_opacity, all
+    gone, from a dialog the user may have opened only to read a path.
+
+    Written as assert-UNCHANGED over the whole dataclass rather than a list of
+    fields: a check against known-bad values would pass while a NEW setting,
+    added later and equally invisible here, was quietly reset. That is the
+    weakness CLAUDE.md records getting through twice on one branch.
+    """
+    import dataclasses
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+
+    before = Settings(
+        graxpert_path="/gx", rcastro_path="/rc", astap_path="/astap",
+        base_dir="/base", denoise_engine="graxpert", handle="@andreas",
+        help_expanded=False, recent_projects=["/a.nocturne", "/b.nocturne"],
+        last_project_dir="/projects", annotation_density="sparse",
+        share_caption_size=0.031, share_band_opacity=0.42,
+        plate_preset="Editorial", plate_style={"scrim": 0.3},
+        plate_user_presets=[{"name": "mine"}],
+    )
+    snapshot = dataclasses.asdict(before)
+
+    dlg = SettingsDialog(before)
+    qtbot.addWidget(dlg)
+    after = dataclasses.asdict(dlg.result_settings())
+
+    # Everything the form actually shows. A field added to the dialog belongs
+    # here; a field added to Settings and NOT to the dialog must keep surviving,
+    # which is the whole point of the test.
+    on_this_form = {"graxpert_path", "rcastro_path", "astap_path", "base_dir",
+                    "denoise_engine", "handle", "check_updates", "telemetry"}
+    for field, was in snapshot.items():
+        if field in on_this_form:
+            continue
+        assert after[field] == was, f"{field} was reset by a dialog that never shows it"
+
+
+def test_the_form_still_saves_what_it_does_show(qtbot):
+    """The other half: `replace` must not have turned the dialog read-only."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(Settings(handle="@old", base_dir="/old"))
+    qtbot.addWidget(dlg)
+    dlg._handle.setText("@new")
+    dlg._dir.setText("/new")
+    out = dlg.result_settings()
+    assert out.handle == "@new" and out.base_dir == "/new"
+
+
+def test_the_update_check_can_be_turned_off_and_the_choice_survives(qtbot):
+    """Until 2026-09-17 Nocturne asked GitHub for the latest release on every
+    launch, with no disclosure and no way to decline — so every start sent the
+    user's IP to github.com tagged as a Nocturne user."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert dlg.check_updates.isChecked(), "default stays on — a beta must be able to say a fix exists"
+    dlg.check_updates.setChecked(False)
+    assert dlg.result_settings().check_updates is False
+
+    back = SettingsDialog(Settings(check_updates=False))
+    qtbot.addWidget(back)
+    assert not back.check_updates.isChecked(), "the dialog must show the saved answer"
+
+
+def test_usage_counting_can_be_changed_after_the_first_run_question(qtbot):
+    """The consent dialog says "you can change this any time in Settings", so
+    this control is part of the promise rather than a convenience."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+
+    on = SettingsDialog(Settings(telemetry="on"))
+    qtbot.addWidget(on)
+    assert on.telemetry.isChecked()
+    on.telemetry.setChecked(False)
+    assert on.result_settings().telemetry == "off"
+
+    off = SettingsDialog(Settings(telemetry="off"))
+    qtbot.addWidget(off)
+    assert not off.telemetry.isChecked()
+    off.telemetry.setChecked(True)
+    assert off.result_settings().telemetry == "on"
+
+
+def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
+    """`unset` must never look like consent. Shown unticked; touching OK at all
+    is the user answering, so it stores "off" rather than leaving it unset and
+    re-asking on the next launch."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(Settings(telemetry="unset"))
+    qtbot.addWidget(dlg)
+    assert not dlg.telemetry.isChecked()
+    assert dlg.result_settings().telemetry == "off"

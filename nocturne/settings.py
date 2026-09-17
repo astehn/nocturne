@@ -41,6 +41,20 @@ class Settings:
     denoise_engine: str = "rcastro"
     astap_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
+    # Nocturne asks GitHub for the latest release on every launch, which means
+    # every start sends the user's IP to github.com tagged as a Nocturne user.
+    # That was true and undisclosed until 2026-09-17; it is now on the privacy
+    # page and it can be turned off here. Default on: a beta that cannot tell
+    # people a fix exists is worse for them than the request is.
+    check_updates: bool = True
+    # Usage counting, opt-in and three-valued: "unset" is "not asked yet", which
+    # must never be confused with "no". See core/telemetry.py for the whole
+    # protocol and why the id rotates monthly.
+    telemetry: str = "unset"
+    telemetry_id: str = ""            # random, regenerated every calendar month
+    telemetry_id_month: str = ""      # the month that id belongs to, e.g. "2026-09"
+    telemetry_last_ping: str = ""     # ISO date of the last daily ping
+    telemetry_first_run_sent: bool = False
     handle: str = ""                # user's @handle, burned onto shared images
     recent_projects: list[str] = field(default_factory=list)  # most-recent-first, capped
     last_project_dir: str = ""      # directory a "new project" file picker should open in
@@ -84,6 +98,17 @@ def load_settings(path: str) -> Settings:
         denoise_engine=data.get("denoise_engine", "rcastro"),
         astap_path=data.get("astap_path", ""),
         help_expanded=data.get("help_expanded", True),
+        # Explicit, like every line here — which means A NEW FIELD MUST BE ADDED
+        # TO THIS LIST or it is written by save_settings and never read back.
+        # check_updates was added on 2026-09-17 and did exactly that: the
+        # checkbox worked, the file held `false`, and the next launch asked
+        # GitHub anyway. Caught by the test that asserts the REQUEST is not made.
+        check_updates=data.get("check_updates", True),
+        telemetry=data.get("telemetry", "unset"),
+        telemetry_id=data.get("telemetry_id", ""),
+        telemetry_id_month=data.get("telemetry_id_month", ""),
+        telemetry_last_ping=data.get("telemetry_last_ping", ""),
+        telemetry_first_run_sent=data.get("telemetry_first_run_sent", False),
         handle=data.get("handle", ""),
         recent_projects=data.get("recent_projects", []),
         last_project_dir=data.get("last_project_dir", ""),

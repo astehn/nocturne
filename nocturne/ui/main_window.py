@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
+from ..core import telemetry as telemetry_mod
 from ..core.provenance import build_report
 from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
@@ -262,7 +263,8 @@ class _SaveSignals(QObject):
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
 
-    def __init__(self, settings_path: str, check_updates: bool = True) -> None:
+    def __init__(self, settings_path: str, check_updates: bool = True,
+                 telemetry: bool = True) -> None:
         super().__init__()
         self.setWindowTitle(app_title())
         self._settings_path = settings_path
@@ -635,8 +637,31 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
 
-        if check_updates:
+        # BOTH gates. The argument is how the test suite keeps itself off the
+        # network; the setting is the user's answer, and until 2026-09-17 there
+        # was no way for them to give one — the request went out on every launch
+        # with nothing anywhere saying it would.
+        if check_updates and self.settings.check_updates:
             run_async(self._pool, latest_release_version, self._on_update_check)
+
+        # Same shape, same reason: the argument keeps the suite off the network,
+        # the setting is the user's answer. Asking happens on a timer rather
+        # than here so the window is UP and visible behind the question — a
+        # modal over a half-built window looks like something went wrong, and a
+        # question about data asked from a blank screen is the worst first
+        # impression this app could make.
+        # An OWNED timer, not QTimer.singleShot: a static singleShot keeps the
+        # callback alive independently of this window, so the question could be
+        # asked after it had gone. Found in the test suite, where a leaked timer
+        # popped the modal in the middle of an unrelated test and blocked it —
+        # the same thing would happen to a user who quit within the delay.
+        # Parented to self, so it dies with the window.
+        self._telemetry_enabled = telemetry
+        self._telemetry_timer = QTimer(self)
+        self._telemetry_timer.setSingleShot(True)
+        self._telemetry_timer.timeout.connect(self._telemetry_first_run)
+        if telemetry:
+            self._telemetry_timer.start(400)
 
     def _toggle_fullscreen(self) -> None:
         """Distraction-free inspection: the image, and nothing else.
@@ -985,6 +1010,53 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         self._make_about_dialog().exec()
+
+    # --- usage counting (opt-in; see core/telemetry.py) ---
+    def _telemetry_first_run(self) -> None:
+        """Ask once, then act on the answer. Nothing is sent before an answer."""
+        if self.settings.telemetry == telemetry_mod.UNSET:
+            from .telemetry_consent import TelemetryConsentDialog
+            import json
+            sample = json.dumps(telemetry_mod.build_payload(
+                "daily", __version__, "7f3a2c91e04b4d8fa1c65e77b0d9a3f2"[:8] + "…"))
+            dlg = TelemetryConsentDialog(sample, parent=self)
+            answered = dlg.exec()
+            self.settings.telemetry = telemetry_mod.ON if answered else telemetry_mod.OFF
+            save_settings(self.settings, self._settings_path)
+            self.log_panel.append_entry(
+                "Usage counting is on — thank you. Turn it off any time in Settings."
+                if answered else
+                "Usage counting stays off. Nothing is sent.")
+        self._telemetry_ping()
+
+    def _telemetry_ping(self) -> None:
+        """One first-run event ever, one daily event per calendar day.
+
+        Off the UI thread, fire-and-forget: nothing here may block a launch, and
+        a failure is never surfaced — see telemetry.send.
+        """
+        if self.settings.telemetry != telemetry_mod.ON:
+            return
+        today = datetime.date.today()
+        payloads = []
+        if not self.settings.telemetry_first_run_sent:
+            payloads.append(telemetry_mod.build_payload("first-run", __version__))
+            self.settings.telemetry_first_run_sent = True
+        if telemetry_mod.should_send_daily(self.settings.telemetry_last_ping, today):
+            new_id, month = telemetry_mod.rotate_id(
+                self.settings.telemetry_id, self.settings.telemetry_id_month, today)
+            self.settings.telemetry_id = new_id
+            self.settings.telemetry_id_month = month
+            self.settings.telemetry_last_ping = today.isoformat()
+            payloads.append(telemetry_mod.build_payload("daily", __version__, new_id))
+        if not payloads:
+            return
+        # Recorded as sent BEFORE the attempt, on purpose: a day that failed to
+        # reach the server must not be retried on the next launch, or a week
+        # offline becomes a burst of pings that maps out when someone was away.
+        save_settings(self.settings, self._settings_path)
+        for payload in payloads:
+            run_async(self._pool, lambda p=payload: telemetry_mod.send(p), lambda _ok: None)
 
     def _on_update_check(self, latest) -> None:
         """Worker result (UI thread): reveal the toolbar item if a newer release
