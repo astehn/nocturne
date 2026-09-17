@@ -99,12 +99,7 @@ def test_the_bundles_entry_point_leaves_the_dock():
     returns from freeze_support(), so a call placed after it would protect
     nothing.
     """
-    root = pathlib.Path(__file__).resolve().parents[1]
-    spec = (root / "packaging" / "nocturne.spec").read_text()
-    m = re.search(r'SCRIPT\s*=\s*os\.path\.join\(SPECPATH,\s*"([^"]+)"\)', spec)
-    assert m, "could not find the entry script in nocturne.spec"
-    entry = root / "packaging" / m.group(1)
-
+    entry = _entry_script()
     tree = ast.parse(entry.read_text())
     guard = [n for n in tree.body
              if isinstance(n, ast.If) and ast.unparse(n.test) == "__name__ == '__main__'"]
@@ -114,3 +109,49 @@ def test_the_bundles_entry_point_leaves_the_dock():
     assert "leave_the_dock" in calls, f"{entry.name} never calls leave_the_dock()"
     assert calls.index("leave_the_dock") < calls.index("multiprocessing.freeze_support"), \
         "leave_the_dock() must run BEFORE freeze_support(), which a worker never returns from"
+
+
+def _entry_script() -> pathlib.Path:
+    """The file the SPEC names. Not nocturne/__main__.py — see the test above."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    spec = (root / "packaging" / "nocturne.spec").read_text()
+    m = re.search(r'SCRIPT\s*=\s*os\.path\.join\(SPECPATH,\s*"([^"]+)"\)', spec)
+    assert m, "could not find the entry script in nocturne.spec"
+    return root / "packaging" / m.group(1)
+
+
+def test_the_entry_point_imports_the_gui_after_freeze_support():
+    """A pool worker must not build the GUI it will never use.
+
+    macOS spawn re-runs this file from the top in every worker, so a module-level
+    `from nocturne.__main__ import main` — which pulls in QApplication, QIcon and
+    MainWindow — was executed by all eight of them before freeze_support() told
+    them what they were. Measured 2026-09-17: 69 MB and ~0.5 s each, 551 MB
+    across a stack, held by processes with no window.
+
+    Two things to hold, and the second is the one that bites: the import must be
+    INSIDE the __main__ guard (module level runs in every worker), and it must
+    come AFTER freeze_support() (which exits, so a worker never reaches it).
+    """
+    tree = ast.parse(_entry_script().read_text())
+
+    module_level = [n for n in tree.body if isinstance(n, ast.ImportFrom)
+                    and n.module == "nocturne.__main__"]
+    assert not module_level, \
+        "nocturne.__main__ is imported at module level — every spawned worker pays for it"
+
+    guard = [n for n in tree.body
+             if isinstance(n, ast.If) and ast.unparse(n.test) == "__name__ == '__main__'"]
+    assert guard, "entry point has no `if __name__ == \"__main__\"` block"
+
+    imports = [n for n in ast.walk(guard[0]) if isinstance(n, ast.ImportFrom)
+               and n.module == "nocturne.__main__"]
+    assert imports, "the entry point never imports main()"
+
+    freeze = [n for n in ast.walk(guard[0]) if isinstance(n, ast.Call)
+              and ast.unparse(n.func) == "multiprocessing.freeze_support"]
+    assert freeze, "the entry point never calls freeze_support()"
+
+    assert imports[0].lineno > freeze[0].lineno, (
+        "the GUI import must come AFTER freeze_support(), or workers import Qt "
+        "before they learn they are workers")
