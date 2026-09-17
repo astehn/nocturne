@@ -25,6 +25,27 @@ the freeze_support test next door for the same reason.
 The cure is the documented one: transform the child into a UI-element process,
 which is what a background helper is. Verified from source against a real Qt
 process — `type="Foreground"` before the call, `type="UIElement"` after.
+
+It REMOVES the tile, it does not prevent it. LaunchServices checks a bundled
+process in at exec, before Python starts, so there is a window no Python code
+can close. Timed against the built bundle on 2026-09-17:
+
+    0.13 s   child checks in     type="Foreground"   (tile appears)
+    0.51 s   this code runs      type="UIElement"    (tile goes)
+
+So each child flashes a tile for about four tenths of a second. Eight workers
+starting together flash together; the `--stack-job` child, which lives for the
+whole stack, is a tile for that same 0.4 s and then gone. Andreas saw exactly
+one brief extra icon on a background stack and called it fine.
+
+Closing that window entirely would mean the children running a DIFFERENT
+executable — a second, console-only binary in the bundle, with
+multiprocessing.set_executable() and job_command() pointed at it. That is a
+build-level change for four tenths of a second, and it was not taken.
+
+An earlier note here claimed the fixed build "never registers". That was a
+measurement artifact: the probe polled for ~0.2 s and stopped before the
+process had checked in at all.
 """
 from __future__ import annotations
 
