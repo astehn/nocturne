@@ -198,3 +198,18 @@ def test_batch_does_not_silently_skip_tiffs(qtbot, tmp_path):
     assert not any("tif" in p for p in _INPUT_PATTERNS), (
         "Batch grew TIFF support — update this test, the help, and batch.py's "
         "docstring, which still says the input glob is FITS-only")
+
+
+def test_the_open_dialog_offers_every_extension_the_loader_reads():
+    """The picker's filter IS the list of files a user can see.
+
+    `.fts` loaded fine and batch's glob accepted it, but the dialog did not
+    list it, so someone browsing for their own file simply could not find it —
+    while the FAQ promised the extension. Asserted against the real filter
+    string rather than a copy of it.
+    """
+    import inspect
+    from nocturne.ui.main_window import MainWindow
+    src = inspect.getsource(MainWindow._choose_fits)
+    for ext in ("*.fit", "*.fits", "*.fts", "*.tif", "*.tiff"):
+        assert ext in src, f"{ext} is readable but not offered in the Open dialog"

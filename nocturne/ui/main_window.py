@@ -2356,7 +2356,11 @@ class MainWindow(QMainWindow):
     def _choose_fits(self) -> None:
         path = file_dialogs.open_file(
             self, "Open Image", start_dir(self.settings.base_dir),
-            "Images (*.fit *.fits *.tif *.tiff)")
+            # .fts belongs here: the loader reads it, batch's glob accepts it
+            # (batch.py:26) and the FAQ has always promised it — only this
+            # picker hid it, so a browsing user could not see their own file.
+            # Found 2026-09-17 while checking whether the FAQ was still true.
+            "Images (*.fit *.fits *.fts *.tif *.tiff)")
         if path:
             self.open_any(path)
 
