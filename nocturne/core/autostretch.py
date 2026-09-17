@@ -4,7 +4,23 @@ import numpy as np
 
 from .image import AstroImage
 
-_TARGET_BG = 0.25  # target median for the stretched display
+# THE one fact: the sky brightness a default stretch aims for. The linear
+# display preview uses it, and the Stretch step's slider default is DERIVED from
+# it (steps/stretch_step._DEFAULT), so the picture cannot change when you arrive
+# at Stretch without touching anything.
+#
+# It was two hand-maintained numbers until 2026-09-15 — 0.25 here and a 0.30
+# slider default targeting 0.205 — and they drifted apart the moment the default
+# moved on 2026-09-14. Walking into Stretch darkened the canvas 18%, about 10
+# levels of 255, before the user did a thing. Andreas noticed independently.
+#
+# 0.205 rather than 0.25 because that is what the committed default produces,
+# and because the whole AstroWizard investigation established Nocturne was
+# showing the sky too bright; this was the last surface still doing it. Checked
+# on IC 1396A, NGC 6888 and M 31 that the darker view still shows the faint
+# structure you need to judge an unstretched frame by.
+DEFAULT_TARGET_BG = 0.205
+_TARGET_BG = DEFAULT_TARGET_BG  # target median for the stretched display
 _SIGMA = 2.8
 
 
