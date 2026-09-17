@@ -696,3 +696,62 @@ def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot):
         assert not [r for r in rules
                     if isinstance(r, QFrame) and r.objectName() == "panelRule"], (
             f"{sid}: a divider with nothing under it")
+
+
+def _controls_after(panel, widget):
+    """Interactive controls laid out below `widget`, in layout order.
+
+    Layout index, not screen geometry: the panels are built unshown, so
+    geometry is meaningless until a window lays them out.
+    """
+    from PySide6.QtWidgets import (
+        QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider,
+    )
+    kinds = (QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider)
+    lay = panel.layout()
+    anchor = lay.indexOf(widget)
+    assert anchor >= 0, "the commit button is in the panel's own layout"
+    after = []
+    for i in range(anchor + 1, lay.count()):
+        item = lay.itemAt(i)
+        child = item.widget()
+        if child is None:                     # a nested row: scan it too
+            sub = item.layout()
+            if sub is not None:
+                after += [sub.itemAt(j).widget() for j in range(sub.count())
+                          if isinstance(sub.itemAt(j).widget(), kinds)]
+            continue
+        if isinstance(child, kinds):
+            after.append(child)
+    return after
+
+
+@pytest.mark.parametrize("stage_id", [s.id for s in path_stages()])
+def test_nothing_sits_below_the_commit_button(qtbot, stage_id):
+    """Apply is the last control of every step.
+
+    Andreas, 2026-09-17, on Visual stretch sitting below Apply Stretch: a
+    control under the commit button reads as something you do AFTER applying,
+    and Stretch was the only step that broke the rule. Reset step is exempt —
+    it is deliberately below a rule as recovery, not a parameter.
+    """
+    panel = build_panel(_stage(stage_id), on_apply=lambda o: None,
+                        on_visual_stretch=lambda: None,
+                        on_apply_tint=lambda *a: None,
+                        on_remove_green=lambda v: None)
+    qtbot.addWidget(panel)
+    commit = getattr(panel, "apply_tint_btn", None) or getattr(panel, "apply_btn", None)
+    if commit is None:
+        pytest.skip(f"{stage_id} commits nothing")
+    # Two deliberate exceptions, both of which are ABOUT having applied:
+    # Reset step is recovery, below a rule (see step_panels.py); and
+    # "Show what was removed" is disabled until background extraction has run,
+    # so it is a post-apply view toggle, not a parameter. That they read
+    # correctly below Apply is the same reason Visual stretch read wrongly.
+    exempt = {panel.reset_step_btn, getattr(panel, "show_model_check", None)}
+    stray = [c for c in _controls_after(panel, commit) if c not in exempt]
+    # Not `c.text()`: half these controls are sliders and combo boxes, which
+    # have no text(), and building the message crashed the assertion into an
+    # AttributeError that hid what it had actually found.
+    assert not stray, [f"{type(c).__name__} {getattr(c, 'text', lambda: '')()}"
+                       for c in stray]
