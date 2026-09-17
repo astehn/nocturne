@@ -82,16 +82,35 @@ def test_preview_is_fitted_once_the_dialog_has_a_real_size(qtbot):
     assert fill < 1.2, f"preview is only filling 1/{fill:.1f} of the viewport"
 
 
-def test_apply_calls_back_with_result(qtbot):
+def test_apply_calls_back_with_result_and_its_parameters(qtbot):
+    """The params travel WITH the picture.
+
+    Star Spikes recorded `""` as its history option until 2026-09-17, so its six
+    sliders left no trace and the provenance report said "Star Spikes" and
+    stopped. The dialog is the only place those numbers exist, so it has to hand
+    them over.
+    """
     got = []
-    d = StarSpikesDialog(_img(), on_apply=got.append)
+    # _many_stars, not _img: the star slider is capped at the number of stars
+    # that actually exist, so a one-star fixture clamps count to 1 and the test
+    # cannot tell a recorded value from a default.
+    d = StarSpikesDialog(_many_stars(), on_apply=lambda img, params: got.append((img, params)))
     qtbot.addWidget(d)
     qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)   # detection is async
+    count = min(9, d.stars_slider.maximum())
     d.length_slider.setValue(50)
+    d.stars_slider.setValue(count)
+    d.angle_slider.setValue(30)
     d._render_preview()
     d.apply_btn.click()
-    assert got and isinstance(got[0], AstroImage)
-    assert got[0].data.shape == (64, 64, 3)
+    assert got
+    img, params = got[0]
+    assert isinstance(img, AstroImage)
+    # The values actually on the sliders, not defaults: a dict built from stale
+    # state would still be a dict.
+    assert params["length"] == 0.5 and params["count"] == count and params["angle"] == 30.0
+    assert set(params) == {"length", "count", "angle", "intensity",
+                           "variation", "colour"}, "all six sliders, or the report lies by omission"
 
 
 def _starless(h=120, w=120):

@@ -233,5 +233,18 @@ class StarSpikesDialog(QDialog):
     def _apply(self) -> None:
         self._render_preview()                 # ensure result matches the sliders
         if self._on_apply is not None:
-            self._on_apply(self._result)
+            # The params go with the picture. Star Spikes recorded `""` until
+            # 2026-09-17, so its six sliders left no trace anywhere — the
+            # provenance report said "Star Spikes" and stopped. Taken from
+            # _params(), the same tuple the render just used, so the record
+            # cannot describe a different image than the one applied.
+            self._on_apply(self._result, self.params_dict())
         self.accept()
+
+    def params_dict(self) -> dict:
+        """_params() by name, for the history entry. Named rather than the bare
+        tuple because a reader of the report has to know which 0.35 is which."""
+        length, count, angle, intensity, variation, colour = self._params()
+        return {"length": round(length, 3), "count": int(count),
+                "angle": angle, "intensity": round(intensity, 3),
+                "variation": round(variation, 3), "colour": round(colour, 3)}
