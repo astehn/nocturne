@@ -57,15 +57,15 @@ FOOTER_LICENCE = ('Released under the <a href="https://www.gnu.org/licenses/gpl-
                   'rel="noopener">GNU General Public License v3.0 (GPLv3)</a>. '
                   '© <span id="year"></span> · <a href="privacy.html">Privacy</a> · '
                   'Not affiliated with ZWO, GraXpert, or RC-Astro.')
-# Transparency about the download counter. Lives only where it is claimed — the
-# homepage, which carries the Download button. It must survive any refactor of
-# this file: it is a privacy disclosure, not decoration.
-FOOTER_PRIVACY = ('No analytics, no trackers, no cookies. Downloads are counted — a click '
-                  'on Download adds 1 to a tally, with no IP address and nothing that '
-                  'identifies you. (It recorded the IP until 2026-09-17; nothing ever read '
-                  'it, so it is gone.) Full detail on the '
-                  '<a href="privacy.html">privacy page</a>. Questions: '
-                  '<a href="mailto:andreas@stehn.com">andreas@stehn.com</a>.')
+# Transparency about the download counter, next to the button it describes.
+# ONE SENTENCE since 2026-09-17, when privacy.html was written: this used to
+# carry the whole disclosure — what is recorded, for how long, who to email —
+# because there was nowhere else to put it. Measured then at 292 characters and
+# 108px, three lines of fine print, twice the height of the licence line above
+# it, plus a SECOND link to the same privacy page the licence line already
+# links. The page holds the detail now; this holds the claim.
+FOOTER_PRIVACY = ('No analytics, no trackers, no cookies. Downloads are counted — '
+                  'a number, not you.')
 
 SOFTWARE_APP = {
     "@context": "https://schema.org",
