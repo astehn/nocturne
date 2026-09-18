@@ -50,8 +50,14 @@ def test_the_things_the_app_actually_needs_still_ship():
     is on this machine, and a fresh install cannot start."""
     entries = _spec_ns()["_assets"]()
     names = [os.path.basename(a) for a, _ in entries]
-    assert any(n.startswith("denoise_") and n.endswith(".onnx") for n in names), \
-        "our own denoise model was pruned"
+    # A denoise model was asserted here until 2026-09-18, when the one that
+    # existed was removed from the repo. It was never required: `ai_denoise` is
+    # not in path_stages() and the spec excludes onnxruntime, so the bundle
+    # could not have run it. Requiring it again would ask the packaging to carry
+    # something the app cannot use — see tests/test_no_model_ships.py, which now
+    # asserts the opposite and is the one to change if a model is ever shipped.
+    assert not any(n.endswith(".onnx") for n in names), \
+        "a model is being packaged; the app has no onnxruntime to run it"
     assert sum(1 for n in names if n.endswith(".ttf")) == 5, "the bundled fonts went"
     assert sum(1 for n in names if n.startswith("OFL-")) == 5, "the font licences went"
     assert any(n.endswith(".svg") for n in names), "the icons went"

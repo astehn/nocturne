@@ -64,6 +64,18 @@ def estimate_sigma(img: np.ndarray) -> float:
 
 
 def model_path(sensor: str = "s30") -> str:
+    """Where a BUNDLED model would live. Nothing is bundled today.
+
+    `denoise_s30_v1.onnx` was removed from the repo on 2026-09-18. It shipped
+    inside every release up to v0.34.0 — 7.7 MB, and unreachable twice over:
+    `ai_denoise` is not in `path_stages()`, and the PyInstaller spec excludes
+    onnxruntime, so the bundle had no way to load an ONNX at all. It was also
+    the model that damaged a 405-frame M 8 master by 19% (see the Nocturne NR
+    project's START-HERE.md). A copy is archived there under work/legacy.
+
+    The function stays because a model may be bundled again when one is good
+    enough; `available()` already answers False when there is none.
+    """
     return os.path.join(_MODEL_DIR, f"denoise_{sensor}_v1.onnx")
 
 
