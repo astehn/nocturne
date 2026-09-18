@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import glob
 import os
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field
 
 
@@ -176,7 +178,7 @@ def resolve_binary(path: str) -> str:
 # A .app is listed as the BUNDLE, not the executable inside it. resolve_binary
 # has always accepted a bundle, which is precisely the affordance nobody could
 # reach, and it keeps this list readable.
-TOOL_CANDIDATES: dict[str, list[str]] = {
+_MAC_CANDIDATES: dict[str, list[str]] = {
     "graxpert_path": ["/Applications/GraXpert.app",
                       "~/Applications/GraXpert.app"],
     "rcastro_path": ["/Applications/RC-Astro/CLI/rc-astro",
@@ -185,6 +187,37 @@ TOOL_CANDIDATES: dict[str, list[str]] = {
                    "~/Applications/ASTAP.app",
                    "/opt/homebrew/bin/astap"],
 }
+
+# Linux, added 2026-09-18 with the port. None of the macOS entries can match
+# here and vice versa, so both lists could have been one — they are separate
+# because a reader asking "where does Nocturne look on my system" should not
+# have to filter someone else's paths out of the answer.
+#
+# The GraXpert entry is what its own zip produces: a PyInstaller directory
+# bundle whose executable sits at the top. There is no installer, so wherever
+# the user unpacked it IS the install — hence the several plausible homes and
+# the AppImage globs. Andreas unpacked his to ~/Applications/GraXpert-linux.
+_LINUX_CANDIDATES: dict[str, list[str]] = {
+    "graxpert_path": ["~/Applications/GraXpert-linux/GraXpert",
+                      "/opt/GraXpert-linux/GraXpert",
+                      "/opt/GraXpert/GraXpert",
+                      "~/GraXpert-linux/GraXpert",
+                      "~/Applications/GraXpert*.AppImage",
+                      "/opt/GraXpert*.AppImage",
+                      "which:graxpert", "which:GraXpert"],
+    "rcastro_path": ["~/Applications/RC-Astro/CLI/rc-astro",
+                     "/opt/RC-Astro/CLI/rc-astro",
+                     "/usr/local/RC-Astro/CLI/rc-astro",
+                     "which:rc-astro"],
+    "astap_path": ["/usr/bin/astap",              # the .deb lands here
+                   "/usr/local/bin/astap",
+                   "/opt/astap/astap",
+                   "~/Applications/astap/astap",
+                   "which:astap", "which:astap_cli"],
+}
+
+TOOL_CANDIDATES: dict[str, list[str]] = (
+    _MAC_CANDIDATES if sys.platform == "darwin" else _LINUX_CANDIDATES)
 
 
 def detect_tool_paths(s: Settings, candidates: dict | None = None,
@@ -209,7 +242,30 @@ def detect_tool_paths(s: Settings, candidates: dict | None = None,
         if current and not (replace_invalid and not is_tool(current)):
             continue                      # configured and working; leave it alone
         for raw in paths:
+            # "which:<name>" is "wherever PATH says", which is how a distro
+            # package or a ~/.local/bin symlink arrives. It lives IN the list
+            # rather than as a hidden extra pass, so a caller passing explicit
+            # candidates gets exactly those and nothing from this machine — the
+            # first version consulted PATH unconditionally and broke
+            # test_detects_nothing_when_nothing_is_installed, which was right to
+            # complain. Listed LAST for each tool, so a real install wins over a
+            # wrapper script of the same name.
+            if raw.startswith("which:"):
+                hit = shutil.which(raw[len("which:"):])
+                if hit and is_tool(hit):
+                    found[field_name] = hit
+                    break
+                continue
             path = os.path.expanduser(raw)
+            if "*" in path:
+                # AppImages carry their version in the filename, so the only way
+                # to name one is a pattern. Newest-looking last, so sorted()[-1]
+                # picks the highest version rather than the oldest.
+                matches = sorted(m for m in glob.glob(path) if is_tool(m))
+                if matches:
+                    found[field_name] = matches[-1]
+                    break
+                continue
             if is_tool(path):
                 found[field_name] = path
                 break
