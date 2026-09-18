@@ -35,6 +35,17 @@ def test_pre_conditioning_model_is_refused_not_silently_used(tmp_path, monkeypat
     import subprocess, pathlib
     import pytest
 
+    # It builds its 3-channel fixture with torch, which lives ONLY in
+    # .venv-train — deliberately, so the shipped app can never depend on it.
+    # A machine without that venv (the Linux laptop, a CI runner, a fresh
+    # clone) must skip rather than fail. Not solved by committing a fixture
+    # .onnx: tests/test_no_model_ships.py asserts no model is tracked, and that
+    # guard is worth more than this test's coverage on every machine.
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
+    venv_train = repo_root / ".venv-train" / "bin" / "python"
+    if not venv_train.exists():
+        pytest.skip("needs .venv-train (torch) to build the 3-channel fixture")
+
     onnx_path = tmp_path / "old_3ch.onnx"
     build_script = (
         "import torch, torch.nn as nn\n"
@@ -46,8 +57,6 @@ def test_pre_conditioning_model_is_refused_not_silently_used(tmp_path, monkeypat
         "    dynamic_axes={'input': {0: 'batch', 2: 'h', 3: 'w'}, 'noise': {0: 'batch', 2: 'h', 3: 'w'}},\n"
         "    opset_version=17)\n"
     )
-    repo_root = pathlib.Path(__file__).resolve().parents[2]
-    venv_train = repo_root / ".venv-train" / "bin" / "python"
     subprocess.run([str(venv_train), "-c", build_script], check=True, cwd=repo_root)
     assert onnx_path.exists()
 

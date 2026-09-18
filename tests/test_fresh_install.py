@@ -34,21 +34,29 @@ def test_the_dev_trees_are_not_part_of_the_distribution():
     tests/test_deploy.py puts that directory on sys.path itself rather than
     relying on an install.
     """
-    from setuptools import find_packages
-    shipped = set(find_packages(include=_pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]))
+    # NO setuptools import. A fresh venv does not ship it — these very tests
+    # failed on the Linux laptop with ModuleNotFoundError, which is a poor
+    # showing for tests whose subject is fresh installs. The include patterns
+    # are simple prefixes, so match them directly.
+    include = _pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]
+    assert include == ["nocturne*"], "this test reads the patterns literally"
     for tree in ("training", "archive", "packaging"):
-        if (ROOT / tree / "__init__.py").exists() or (ROOT / tree).is_dir():
-            assert tree not in shipped, f"{tree} would be installed alongside the app"
-    assert "nocturne" in shipped
+        assert not any(tree.startswith(pat.rstrip("*")) for pat in include), \
+            f"{tree} would be installed alongside the app"
+    assert any("nocturne".startswith(pat.rstrip("*")) for pat in include)
 
 
 def test_every_app_subpackage_is_included():
     """A subpackage missing from the wheel is an ImportError at runtime that no
     test in this repo would see, because the tests import from the source tree."""
-    from setuptools import find_packages
-    shipped = set(find_packages(include=["nocturne*"]))
+    include = _pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]
     on_disk = {
         ".".join(p.relative_to(ROOT).parts[:-1])
         for p in (ROOT / "nocturne").rglob("__init__.py")
     }
-    assert on_disk <= shipped, f"not shipped: {sorted(on_disk - shipped)}"
+    # Every package on disk must be covered by a pattern. Prefix matching, not
+    # find_packages(), for the reason above: no setuptools at runtime.
+    unmatched = {m for m in on_disk
+                 if not any(m.startswith(pat.rstrip("*")) for pat in include)}
+    assert not unmatched, f"not shipped: {sorted(unmatched)}"
+    assert "nocturne.core" in on_disk, "sanity: the walk found the real tree"

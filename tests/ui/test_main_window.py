@@ -1,4 +1,6 @@
 import numpy as np
+import sys
+
 import pytest
 from astropy.io import fits
 
@@ -1740,7 +1742,16 @@ def test_toolbar_overflow_at_the_small_screen_floor(qtbot, tmp_path):
         w = win._toolbar.widgetForAction(act)
         return w is not None and w.isVisible()
 
+    # The newest tool must be REACHABLE at the floor, everywhere. This is the
+    # part that is about Nocturne rather than about a platform.
     assert visible("Starless Levels…") is True
+
+    # The rest is a measurement of macOS layout and only holds there. Toolbar
+    # width depends on font metrics and DPI, so Linux fits more actions at the
+    # same 1280px — not a defect, just a different budget. Asserting the macOS
+    # numbers everywhere made the Linux suite fail on a true statement.
+    if sys.platform != "darwin":
+        return
     # Newly pushed behind the chevron by the sixth "finish it" tool.
     assert visible("Share") is False
     # Unchanged from before this tool: already behind the chevron at this size.
@@ -5211,9 +5222,14 @@ def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     titles = [a.text() for a in win.findChild(QToolBar).actions()]
     assert any("Combine" in t for t in titles), f"no Combine action: {titles}"
+    # Repo root from __file__, never a hardcoded path: "/Volumes/Work/Code/Editor"
+    # does not exist on the Linux machine, so this check silently ran nowhere
+    # and the assertion failed for a reason unrelated to combine.svg.
+    import pathlib
+    repo_root = pathlib.Path(__file__).resolve().parents[2]
     tracked = subprocess.run(
         ["git", "ls-files", "--error-unmatch", "nocturne/assets/icons/combine.svg"],
-        capture_output=True, cwd="/Volumes/Work/Code/Editor")
+        capture_output=True, cwd=str(repo_root))
     assert tracked.returncode == 0, "combine.svg is not tracked by git"
 
 
