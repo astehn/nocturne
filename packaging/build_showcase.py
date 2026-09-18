@@ -161,6 +161,25 @@ scripts: main.js, lightbox.js
 """
 
 
+def prune(entries: list[dict]) -> list[str]:
+    """Delete derivatives that no longer belong to a picture on the page.
+
+    Without this a replaced or skipped image leaves its JPEGs behind for ever:
+    the site rsync deliberately runs WITHOUT --delete (deploy.local.toml says
+    so, to protect server-only files), so anything published once stays
+    published. Swapping M 31 on 2026-09-18 left the old 8 MB mosaic's two files
+    on the server, reachable by URL, after the page had stopped linking them.
+    """
+    keep = {pathlib.Path(v["src"]).name
+            for e in entries for v in e["images"].values()}
+    gone = []
+    for f in sorted(OUT_IMG.glob("*.jpg")):
+        if f.name not in keep:
+            f.unlink()
+            gone.append(f.name)
+    return gone
+
+
 def main() -> int:
     source = pathlib.Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else \
         pathlib.Path.home() / "Desktop" / "Finished Astro Images"
@@ -173,9 +192,15 @@ def main() -> int:
         print("  no images found")
         return 1
     PAGE.write_text(page_html(entries))
+    pruned = prune(entries)
     total = sum(e["images"]["grid"]["bytes"] for e in entries)
     print(f"wrote {PAGE.relative_to(ROOT)} — {len(entries)} pictures, "
           f"{total / 1e6:.1f} MB above the fold (grid sizes)")
+    for name in pruned:
+        print(f"  pruned {name} (no longer on the page)")
+    if pruned:
+        print("  NOTE: the site rsync has no --delete, so remove these from the "
+              "server by hand as well")
     print("now run: .venv/bin/python packaging/build_site.py")
     return 0
 
