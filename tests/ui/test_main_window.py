@@ -726,6 +726,11 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
             base = AstroImage(np.zeros((8, 8, 3), np.float32))
             return base, base
 
+    import nocturne.tools.rcastro as rcmod
+    # The DEFINITION site: steps/star_split.preferred_splitter imports RCAstro
+    # at call time (2026-09-18), so patching the name on main_window no longer
+    # intercepts it. Patching here works for both import styles.
+    monkeypatch.setattr(rcmod, "RCAstro", _FakeRC)
     monkeypatch.setattr(mw, "RCAstro", _FakeRC)
     win.export_final("Starless + Stars (two TIFFs)")
     assert (out / "starless.tif").exists()
@@ -1430,6 +1435,8 @@ def test_setup_star_reduction_caches_split(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings = _fake_rc_settings(tmp_path)
+    import nocturne.tools.rcastro as rcmod
+    monkeypatch.setattr(rcmod, "RCAstro", _FakeSplitRC)   # see the note above
     monkeypatch.setattr(mw, "RCAstro", _FakeSplitRC)
     win._go_to_id("stretch")
     win.apply_current(0.5)               # non-linear image for the finishing tail

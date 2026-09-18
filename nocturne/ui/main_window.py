@@ -31,6 +31,7 @@ from ..settings import (
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
+from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
 from ..tools.base import run_cli, ToolError
@@ -1805,13 +1806,10 @@ class MainWindow(QMainWindow):
         it is recorded where the choice is actually made. Same reason
         `_fringe_layers` carries its own kind.
         """
-        if rcastro_valid(self.settings):
-            rc = RCAstro(resolve_binary(self.settings.rcastro_path))
-            return (*rc.remove_stars(img, runner=self._rc_runner), "StarX")
-        if starnet_valid(self.settings):
-            from ..tools.starnet import StarNet
-            sn = StarNet(resolve_binary(self.settings.starnet_path))
-            return (*sn.remove_stars(img, runner=self._rc_runner), "StarNet2")
+        splitter = preferred_splitter(self.settings)
+        if splitter is not None:
+            kind = "StarX" if type(splitter).__name__ == "RCAstro" else "StarNet2"
+            return (*splitter.remove_stars(img, runner=self._rc_runner), kind)
         return (*split_stars(img), "free")
 
     def _remove_stars(self, img):
@@ -4796,7 +4794,10 @@ class MainWindow(QMainWindow):
         meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
         img = AstroImage(snap.data.copy(), is_linear=snap.is_linear, metadata=meta)
-        rc = RCAstro(resolve_binary(self.settings.rcastro_path))
+        # Whichever splitter is configured, not RC-Astro unconditionally: this
+        # built an RCAstro from an empty path when none was set, which the
+        # upscale then handed to resolve_star_split as though it were real.
+        rc = preferred_splitter(self.settings)
         UpscaleDialog(img, meta, self.settings, rc=rc,
                       on_open_copy=self._open_upscaled, parent=self).exec()
 

@@ -12,7 +12,8 @@ from ..core.narrowband import (
     PALETTE_DESCRIPTIONS, PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
     NarrowbandParams, render, screen,
 )
-from ..settings import rcastro_valid, resolve_binary
+from ..settings import resolve_binary
+from ..steps.star_split import preferred_splitter
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
 from .preview import downscale as _downscale, to_qimage
@@ -181,8 +182,13 @@ class NarrowbandDialog(QDialog):
         body.addWidget(side_wrap)
 
     def _default_starx(self, img: AstroImage):
-        rc = RCAstro(resolve_binary(self._settings.rcastro_path))
-        return rc.remove_stars(img)
+        """Whichever splitter is configured — RC-Astro, else StarNet2.
+
+        Was RC-Astro only, which is why this dialog still said "StarX not
+        configured" after StarNet2 worked in every step (2026-09-18). The rule
+        lives in steps/star_split.preferred_splitter so there is one copy of it.
+        """
+        return preferred_splitter(self._settings).remove_stars(img)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -192,9 +198,10 @@ class NarrowbandDialog(QDialog):
         if self._starless is not None:
             self._on_starless((self._starless, self._stars))
             return
-        if not rcastro_valid(self._settings):
-            self.status.setText("StarX not configured — narrowband applied to the whole "
-                                "image (star colour may look off).")
+        if preferred_splitter(self._settings) is None:
+            self.status.setText("No star separation tool — narrowband applied to the whole "
+                                "image (star colour may look off). Install StarNet2 (free) "
+                                "or RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
         self.preview.show_message(_SPLIT_MSG)

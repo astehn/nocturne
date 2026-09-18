@@ -25,24 +25,7 @@ from .star_reduction import StarReductionStep
 from .stretch_step import StretchStep
 
 
-def _splitter(settings: Settings):
-    """The best available star/starless split, or None for the free fallback.
-
-    RC-Astro first: the user paid for it and it is still the best. StarNet2
-    second — free, and measurably far better than the fallback. Neither is
-    required; `None` means core/starless.py, which never goes away.
-
-    Five steps take this object and use it for nothing but splitting, so a
-    StarNet is a drop-in wherever an RCAstro went. Steps that use RC-Astro for
-    its OWN tools (denoise, deconvolution) keep taking a real RCAstro and are
-    untouched by this.
-    """
-    if rcastro_valid(settings):
-        return RCAstro(resolve_binary(settings.rcastro_path))
-    if starnet_valid(settings):
-        from ..tools.starnet import StarNet
-        return StarNet(resolve_binary(settings.starnet_path))
-    return None
+from .star_split import preferred_splitter as _splitter   # the one place the rule lives
 
 
 def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner=run_cli):
