@@ -40,7 +40,10 @@ class _FakeProc:
     def __init__(self, lines=(), returncode=0):
         self.killed = False
         self.returncode = returncode
-        self.pid = 4242
+        # 0, not a plausible pid: this fake reaches the REAL kill_process in
+        # some tests, and 4242 resolved to a live process group on Linux and
+        # SIGTERMed it (2026-09-18). tasks.kill_process now refuses pid <= 1.
+        self.pid = 0
         self.stdout = iter([str(line) for line in lines])
 
     def wait(self):

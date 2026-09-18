@@ -13,7 +13,7 @@ from nocturne.ui.job_queue import JobQueue, StackJob
 class _FakeProc:
     def __init__(self):
         self.returncode = None
-        self.pid = 1
+        self.pid = 0          # see test_job_queue._FakeProc: never a real pid
 
 
 def _job(name="IC 1396A"):
