@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid, resolve_binary
+from ..settings import (Settings, astap_valid, graxpert_valid, rcastro_valid,
+                        resolve_binary, starnet_valid)
 from ..tools.base import run_cli
 from ..tools.graxpert import GraXpert
 from ..tools.rcastro import RCAstro
@@ -22,6 +23,26 @@ from .tint_step import TintStep
 from .saturation_step import SaturationStep
 from .star_reduction import StarReductionStep
 from .stretch_step import StretchStep
+
+
+def _splitter(settings: Settings):
+    """The best available star/starless split, or None for the free fallback.
+
+    RC-Astro first: the user paid for it and it is still the best. StarNet2
+    second — free, and measurably far better than the fallback. Neither is
+    required; `None` means core/starless.py, which never goes away.
+
+    Five steps take this object and use it for nothing but splitting, so a
+    StarNet is a drop-in wherever an RCAstro went. Steps that use RC-Astro for
+    its OWN tools (denoise, deconvolution) keep taking a real RCAstro and are
+    untouched by this.
+    """
+    if rcastro_valid(settings):
+        return RCAstro(resolve_binary(settings.rcastro_path))
+    if starnet_valid(settings):
+        from ..tools.starnet import StarNet
+        return StarNet(resolve_binary(settings.starnet_path))
+    return None
 
 
 def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner=run_cli):
@@ -53,13 +74,11 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
     if stage_id == "curves":
         return CurvesStep()
     if stage_id == "saturation":
-        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = SaturationStep(rc)
+        step = SaturationStep(_splitter(settings))
         step._runner = rc_runner
         return step
     if stage_id == "green_fringe":
-        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = GreenFringeStep(rc)
+        step = GreenFringeStep(_splitter(settings))
         step._runner = rc_runner
         return step
     if stage_id == "local_contrast":
@@ -78,18 +97,15 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         step._runner = rc_runner
         return step
     if stage_id == "star_reduction":
-        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = StarReductionStep(rc)
+        step = StarReductionStep(_splitter(settings))
         step._runner = rc_runner
         return step
     if stage_id == "color_balance":
-        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = ColorBalanceStep(rc)
+        step = ColorBalanceStep(_splitter(settings))
         step._runner = rc_runner
         return step
     if stage_id == "narrowband":
-        rc = RCAstro(resolve_binary(settings.rcastro_path)) if rcastro_valid(settings) else None
-        step = NarrowbandStep(rc)
+        step = NarrowbandStep(_splitter(settings))
         step._runner = rc_runner
         return step
     raise ValueError(stage_id)

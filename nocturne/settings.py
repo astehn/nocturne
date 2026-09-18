@@ -42,6 +42,11 @@ class Settings:
     base_dir: str = ""
     denoise_engine: str = "rcastro"
     astap_path: str = ""
+    # StarNet2: a FREE star/starless split, the same job StarXTerminator does.
+    # Nine surfaces depend on a split, and without RC-Astro they all fall back to
+    # core/starless.py, which calls itself "an availability fallback, not a
+    # quality match". See docs/superpowers/specs/2026-09-18-starnet2-integration.md.
+    starnet_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
     # Nocturne asks GitHub for the latest release on every launch, which means
     # every start sends the user's IP to github.com tagged as a Nocturne user.
@@ -99,6 +104,7 @@ def load_settings(path: str) -> Settings:
         base_dir=data.get("base_dir", ""),
         denoise_engine=data.get("denoise_engine", "rcastro"),
         astap_path=data.get("astap_path", ""),
+        starnet_path=data.get("starnet_path", ""),
         help_expanded=data.get("help_expanded", True),
         # Explicit, like every line here — which means A NEW FIELD MUST BE ADDED
         # TO THIS LIST or it is written by save_settings and never read back.
@@ -186,6 +192,14 @@ _MAC_CANDIDATES: dict[str, list[str]] = {
     "astap_path": ["/Applications/ASTAP.app",
                    "~/Applications/ASTAP.app",
                    "/opt/homebrew/bin/astap"],
+    # The macOS package is a DIRECTORY holding the binary next to its weights
+    # (StarNet2_weights.mlpackage), which must stay together — so the candidate
+    # names the binary inside it, not the folder. The version is in the folder
+    # name, hence the glob.
+    "starnet_path": ["~/Applications/starnet2*/starnet2",
+                     "/Applications/starnet2*/starnet2",
+                     "~/Applications/StarNet2/starnet2",
+                     "which:starnet2"],
 }
 
 # Linux, added 2026-09-18 with the port. None of the macOS entries can match
@@ -214,6 +228,10 @@ _LINUX_CANDIDATES: dict[str, list[str]] = {
                    "/opt/astap/astap",
                    "~/Applications/astap/astap",
                    "which:astap", "which:astap_cli"],
+    "starnet_path": ["~/Applications/starnet2*/starnet2",
+                     "/opt/starnet2*/starnet2",
+                     "~/StarNet2/starnet2",
+                     "which:starnet2"],
 }
 
 TOOL_CANDIDATES: dict[str, list[str]] = (
@@ -288,6 +306,10 @@ def autoconfigure_tools(path: str, candidates: dict | None = None) -> list[str]:
         setattr(s, field_name, value)
     save_settings(s, path)
     return sorted(found)
+
+
+def starnet_valid(s: Settings) -> bool:
+    return is_tool(resolve_binary(s.starnet_path))
 
 
 def is_tool(path: str) -> bool:
