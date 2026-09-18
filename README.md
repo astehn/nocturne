@@ -51,7 +51,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🧱 **Smart stacking & frame grading** — point it at a folder of subs; it grades every frame (flagging clouds, soft stars, trailing, and anything large in the way — a roof, a tree, a passing cloud bank), rejects the duds, registers (handles alt-az field rotation), brings every frame to a common sky level and integrates a clean master. Keep the full frame or trim the ragged edges, as you prefer. Shot a **mosaic**? It stacks each pointing separately, plate-solves them and assembles one wide picture.
 - ⏳ **Stack in the background** — send a stack to a separate process and carry on working while it runs. Outstanding jobs show their progress in a **Jobs** panel, and a finished master is logged rather than opened, so it never swaps the canvas out from under whatever you're editing. One job runs at a time — two large drizzles at once don't fit in memory — and quitting with jobs running warns, cancels and waits for them to stop.
 - 🔭 **Knows which Seestar you shot with** — the camera is read from the file rather than assumed, so image scale, plate solving and the provenance report are right for an S30 Pro or an S50 alike.
-- 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
+- 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise), **StarNet2** (star separation, free) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
 - 🎨 **Colour Balance** — shift the colour of one tonal range at a time, inside a chosen band of brightness. Each of shadows, midtones and highlights keeps its own three sliders, so you can warm the arms of a galaxy and leave its golden core alone in a single adjustment. The band is set with two handles over the histogram, *Show the mask* lights exactly the areas that will change, and your stars are separated out and laid back untouched. It's a finishing tool, so it appends to your history rather than discarding the work done after it.
 - 🌗 **Starless Levels** — set black and white points on the starless layer alone, then screen the untouched stars back. Pulling the white point in is how a stretched image gets its colour, and also how star colour is destroyed — which is why auto Levels will not choose one for you. On a starless layer there are no star cores to clip, so the move is safe there. The endpoints sit as two handles on a full-width histogram of that layer, a clipping view follows Photoshop's polarity and marks only what *your* endpoints add, and a compare control gives a wipe divider or a side-by-side pair locked to one zoom and pan.
 - ⭐ **Star & tone tools** — star reduction, artistic diffraction spikes, Curves (with draggable black and white points and arrow-key precision), auto Levels, and HDR core recovery — each with a live preview.
@@ -72,8 +72,10 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 
 ## Requirements
 
-- **macOS on Apple Silicon** (M1 or newer) — a prebuilt `Nocturne.app`; see below. There's no Intel-Mac build yet; Windows/Linux is possible from source or via CI — see [Building](#building).
+- **macOS on Apple Silicon** (M1 or newer) — a prebuilt `Nocturne.app`; see below. No Intel-Mac build yet.
+- **Linux on x86-64** — a prebuilt tarball, built on Ubuntu 24.04 so it needs glibc 2.39 or newer. Unpack it anywhere and run `Nocturne/Nocturne`; there is nothing to install. Windows is possible from source — see [Building](#building).
 - **[GraXpert](https://www.graxpert.com/)** — free. Powers background/gradient extraction and one of the denoise engines; the one tool worth installing first. Point Nocturne at it in **Settings**.
+- **[StarNet2](https://starnetastro.com/cli-tools/starnet/)** — free. Splits an image into starless and stars, which eleven steps and tools depend on (Star Reduction, De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen Nebulosity, Upscale Crop, Auto Enhance, Colour Balance and the starless+stars export). Take the **CLI** package, not the PixInsight module. Without it those fall back to Nocturne's own separator, which leaves roughly twice as much star flux behind.
 - **[ASTAP](https://www.hnsky.org/astap.htm)** — free, **optional**. Adds plate-solving, target identification and annotation. Install it *and its D05 star database* (from the ASTAP page), then set the path in Settings.
 - **[RC-Astro](https://www.rc-astro.com/) (BlurXTerminator / NoiseXTerminator / StarXTerminator)** — paid, **optional**. Every RC-Astro step has a built-in free fallback, so Nocturne works fully without it — it's simply better with it. Set its path in Settings if you own it.
 
@@ -81,12 +83,24 @@ Nocturne drives these as separate installs and does not bundle them.
 
 ## Install
 
-### Download (macOS)
+### Download
 
-Grab the latest `Nocturne.app` from [Releases](../../releases) (**Apple Silicon**, M1 or newer), drag it to Applications, and open it.
+Every release, for both platforms, is on the [downloads page](https://nocturne.stehn.com/download.html) or in [Releases](../../releases).
+
+**macOS** — grab `Nocturne.app` (**Apple Silicon**, M1 or newer), drag it to Applications, and open it.
 
 > [!NOTE]
 > The app isn't notarized yet, so on first launch macOS may block it. Right-click the app → **Open** → **Open**, or allow it under **System Settings → Privacy & Security**. (Notarization is planned.)
+
+**Linux** — grab the `-linux-x86_64.tar.gz` tarball, unpack it anywhere and run the binary inside:
+
+```bash
+tar -xzf Nocturne-<version>-linux-x86_64.tar.gz
+./Nocturne/Nocturne
+```
+
+> [!NOTE]
+> Built on Ubuntu 24.04, so it needs **glibc 2.39 or newer** (`ldd --version`). It will not start on Ubuntu 22.04.
 
 ### Run from source
 
@@ -101,7 +115,7 @@ python -m nocturne
 
 ## Quick start
 
-1. Open **Settings** and set your **GraXpert** path (and **RC-Astro** if you have it); press **Test**.
+1. Open **Settings**. Nocturne looks for GraXpert, StarNet2, ASTAP and RC-Astro in the usual places on first launch, so there is often nothing to do — press **Test** on any row to confirm, or **Browse…** if yours lives somewhere else.
 2. **Open Image** — pick a stacked Seestar master (or use **Stack** to build one from a folder of subs). A **TIFF** works too, so a master stacked in Siril, APP or DeepSkyStacker can be finished here; Nocturne measures whether it is still unstretched and says so, and you can correct it.
 3. Step through the pipeline left-to-right; the panel on the right holds each step's controls and explains what it does.
 4. For dualband data, use **Colourise** on the Stretch step for one-press colour.
