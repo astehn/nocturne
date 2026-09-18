@@ -87,17 +87,8 @@ def test_the_panel_turns_the_label_back_into_the_engine_id(qtbot):
     assert got[-1]["engine"] == "graxpert"
 
 
-def test_no_model_file_is_tracked_outside_the_one_that_already_shipped():
-    """A Nocturne NR export must never be committed. The bundled v1 is a
-    separate, older problem (it ships unreachable and should be removed), so it
-    is named here rather than silently permitted.
-    """
-    import subprocess
-    # THREE levels: core/ -> nocturne/ -> the repo. Two put git ls-files inside
-    # the package, where it returned the same file under a different relative
-    # path and the assertion failed for a reason that had nothing to do with
-    # what it tests.
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(dm.__file__))))
-    tracked = subprocess.run(["git", "ls-files", "*.onnx"], cwd=root,
-                             capture_output=True, text=True).stdout.split()
-    assert sorted(tracked) == ["nocturne/assets/models/denoise_s30_v1.onnx"], tracked
+# The "no model is committed" guard used to live here, asserting that the
+# already-shipping v1 was the only tracked .onnx. v1 was removed from the repo
+# on 2026-09-18, so the fact is now simply "none", and it belongs with the
+# packaging guards rather than with this engine — see tests/test_no_model_ships.py.
+# Two tests owning one fact is how one of them goes stale unnoticed.
