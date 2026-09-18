@@ -435,3 +435,81 @@ def test_a_chosen_preset_survives_the_migration(tmp_path):
     p = tmp_path / "s.json"
     save_settings(Settings(plate_preset="Keyline"), str(p))
     assert load_settings(str(p)).plate_preset == "Keyline"
+
+
+# --- tool discovery across platforms (added with the Linux port, 2026-09-18) ---
+
+def test_the_candidate_list_is_the_one_for_this_platform():
+    """A macOS .app cannot exist on Linux and vice versa, so shipping one list
+    would mean every user reading their own settings past someone else's paths.
+    """
+    import sys
+    from nocturne.settings import TOOL_CANDIDATES, _LINUX_CANDIDATES, _MAC_CANDIDATES
+    expected = _MAC_CANDIDATES if sys.platform == "darwin" else _LINUX_CANDIDATES
+    assert TOOL_CANDIDATES is expected
+    assert set(_MAC_CANDIDATES) == set(_LINUX_CANDIDATES), \
+        "both platforms must cover the same three tools"
+
+
+def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeypatch):
+    """GraXpert for Linux ships as a PyInstaller directory bundle in a zip —
+    there is no installer, so wherever it was unpacked IS the install. Andreas
+    unpacked his to ~/Applications/GraXpert-linux, which the app now finds with
+    nothing configured."""
+    from nocturne.settings import Settings, detect_tool_paths
+    binary = tmp_path / "Applications" / "GraXpert-linux" / "GraXpert"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    found = detect_tool_paths(Settings(), {"graxpert_path": [str(binary)]})
+    assert found == {"graxpert_path": str(binary)}
+
+
+def test_an_appimage_is_matched_by_pattern_newest_last(tmp_path):
+    """AppImages carry their version in the filename, so a pattern is the only
+    way to name one — and with two installed, the higher version must win."""
+    from nocturne.settings import Settings, detect_tool_paths
+    for name in ("GraXpert-3.0.2.AppImage", "GraXpert-3.1.0.AppImage"):
+        f = tmp_path / name
+        f.write_text("#!/bin/sh\n")
+        f.chmod(0o755)
+    found = detect_tool_paths(Settings(), {"graxpert_path": [str(tmp_path / "GraXpert*.AppImage")]})
+    assert found["graxpert_path"].endswith("GraXpert-3.1.0.AppImage")
+
+
+def test_a_tool_merely_on_PATH_is_found_but_only_as_a_last_resort(tmp_path, monkeypatch):
+    """How a distro package or a ~/.local/bin symlink arrives. Checked AFTER the
+    explicit locations, so a real install still beats a wrapper of the same name.
+    """
+    import nocturne.settings as st
+    real = tmp_path / "opt" / "astap" / "astap"
+    real.parent.mkdir(parents=True)
+    real.write_text("#!/bin/sh\n")
+    real.chmod(0o755)
+    on_path = tmp_path / "bin" / "astap"
+    on_path.parent.mkdir(parents=True)
+    on_path.write_text("#!/bin/sh\n")
+    on_path.chmod(0o755)
+    monkeypatch.setattr(st.shutil, "which", lambda name: str(on_path) if name == "astap" else None)
+
+    # explicit location present -> it wins, because "which:" is listed after it
+    found = st.detect_tool_paths(st.Settings(),
+                                 {"astap_path": [str(real), "which:astap"]})
+    assert found["astap_path"] == str(real)
+
+    # explicit location absent -> PATH answers
+    found = st.detect_tool_paths(st.Settings(),
+                                 {"astap_path": [str(tmp_path / "nope"), "which:astap"]})
+    assert found["astap_path"] == str(on_path)
+
+
+def test_path_lookup_never_overrides_a_configured_tool(tmp_path, monkeypatch):
+    """The whole safety model of detect_tool_paths: someone whose tool lives
+    somewhere unusual has already paid the cost of finding it."""
+    import nocturne.settings as st
+    stray = tmp_path / "astap"
+    stray.write_text("#!/bin/sh\n")
+    stray.chmod(0o755)
+    monkeypatch.setattr(st.shutil, "which", lambda name: str(stray))
+    configured = st.Settings(astap_path="/somewhere/of/my/own/astap")
+    assert st.detect_tool_paths(configured, {"astap_path": ["which:astap"]}) == {}
