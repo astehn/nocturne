@@ -71,6 +71,12 @@ class DeployConfig:
     # astro data into the web root by accident, and that guard stays. Sample
     # masters are published deliberately, by their own explicit step.
     samples_path: str | None = None
+    # The Linux build host: a machine that can run packaging/build_linux.sh.
+    # Optional, and absent means `--linux` refuses rather than guesses. Andreas'
+    # is a laptop on a shelf; a CI runner would work identically, which is why
+    # the build script knows nothing about either.
+    linux_ssh_host: str | None = None
+    linux_repo_path: str | None = None
 
 
 def load_config(path: Path) -> DeployConfig:
@@ -89,6 +95,8 @@ def load_config(path: Path) -> DeployConfig:
             exclude=list(web["exclude"]),
             download_path=web.get("download_path"),
             samples_path=web.get("samples_path"),
+            linux_ssh_host=(data.get("linux") or {}).get("ssh_host"),
+            linux_repo_path=(data.get("linux") or {}).get("repo_path"),
         )
     except KeyError as e:
         raise ValueError(f"deploy config missing required key: {e}") from e
@@ -184,6 +192,32 @@ def release_asset_name(version: str) -> str:
     return f"Nocturne-{version}.zip"
 
 
+def linux_asset_name(version: str, arch: str = "x86_64") -> str:
+    """Must match what build_linux.sh writes, and the arch it is built on."""
+    return f"Nocturne-{version}-linux-{arch}.tar.gz"
+
+
+def build_linux_cmds(config: DeployConfig, version: str) -> list[list[str]]:
+    """Build on the Linux host and bring the tarball back. Two ordinary
+    commands, so they take their place in the same numbered step list as
+    everything else — and so a failure names itself the same way.
+
+    Runs AFTER the tag is pushed, and checks that tag out: the artifact must be
+    the tagged source, not whatever the build host happened to have. That is the
+    whole reason this cannot run earlier in the sequence.
+    """
+    if not (config.linux_ssh_host and config.linux_repo_path):
+        raise ValueError(
+            "--linux needs [linux] ssh_host and repo_path in the deploy config")
+    asset = linux_asset_name(version)
+    repo = config.linux_repo_path
+    return [
+        ["ssh", config.linux_ssh_host,
+         f"bash {repo}/packaging/build_linux.sh v{version}"],
+        ["scp", f"{config.linux_ssh_host}:{repo}/dist/{asset}", str(DIST / asset)],
+    ]
+
+
 def _resolve_includes(config: DeployConfig, site_dir: Path) -> list[str]:
     sources: list[str] = []
     for pat in config.include:
@@ -228,13 +262,23 @@ def build_chown_cmd(config: DeployConfig) -> list[str]:
     return ["ssh", config.ssh_host, remote]
 
 
-def build_download_cmd(config: DeployConfig, asset: str) -> list[str] | None:
-    """rsync the built release zip to the website's self-hosted download slot
-    (as root via sudo), or None when no download_path is configured."""
+def build_download_cmd(config: DeployConfig, asset: str,
+                       remote_name: str | None = None) -> list[str] | None:
+    """rsync a built artifact to the website's self-hosted download slot (as
+    root via sudo), or None when no download_path is configured.
+
+    `download_path` names the macOS file exactly (…/download/Nocturne.zip), so
+    the site can link one stable URL. A second platform cannot reuse that name,
+    hence `remote_name`: the Linux tarball lands beside it in the same
+    directory, under its own versioned filename.
+    """
     if not config.download_path:
         return None
+    dest = config.download_path
+    if remote_name:
+        dest = os.path.dirname(config.download_path.rstrip("/")) + "/" + remote_name
     return ["rsync", "-av", "--rsync-path=sudo rsync",
-            str(DIST / asset), f"{config.ssh_host}:{config.download_path}"]
+            str(DIST / asset), f"{config.ssh_host}:{dest}"]
 
 
 def build_samples_cmd(config: DeployConfig, samples_dir: Path) -> list[str] | None:
@@ -350,6 +394,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--notes-json")
     ap.add_argument("--preflight", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--linux", action="store_true",
+                    help="also build the Linux tarball on the configured build "
+                         "host and publish it alongside the macOS release")
     ap.add_argument("--site-only", action="store_true",
                     help="regenerate and publish the website, without cutting a release")
     args = ap.parse_args(argv)
@@ -381,6 +428,11 @@ def main(argv: list[str]) -> int:
     md_block = render_changelog_md(version, today, notes)
     html_block = render_changelog_html(version, today, notes)
     asset = release_asset_name(version)
+    linux_asset = linux_asset_name(version) if args.linux else None
+    if linux_asset:
+        # Fail HERE, before a version bump or a build, rather than after the tag
+        # is pushed: nothing in the remote sequence can be undone.
+        build_linux_cmds(config, version)
 
     if args.dry_run:
         print(f"[dry-run] version -> {version}")
@@ -390,11 +442,19 @@ def main(argv: list[str]) -> int:
         print(f"[dry-run] build: pyinstaller packaging/nocturne.spec -> dist/{asset}")
         print("[dry-run] remote plan:")
         print("  " + " ".join(["git", "commit/push", f"v{version}"]))
-        print("  " + f"gh release create v{version} dist/{asset}")
+        if linux_asset:
+            for cmd in build_linux_cmds(config, version):
+                print("  " + " ".join(cmd))
+        print("  " + f"gh release create v{version} dist/{asset}"
+              + (f" dist/{linux_asset}" if linux_asset else ""))
         print("  " + " ".join(build_rsync_cmd(config, SITE)))
         dl = build_download_cmd(config, asset)
         if dl:
             print("  " + " ".join(dl))
+        if linux_asset:
+            dl_linux = build_download_cmd(config, linux_asset, remote_name=linux_asset)
+            if dl_linux:
+                print("  " + " ".join(dl_linux))
         samples = build_samples_cmd(config, SAMPLES)
         if samples:
             print("  " + " ".join(samples))
@@ -415,7 +475,7 @@ def main(argv: list[str]) -> int:
     # release entry there would be erased by generate_site() moments later.
     prepend_file(SITE_SRC / "changelog.html", html_block, anchor='<article class="release">')
     generate_site(real_run)
-    _remote_release(config, version, notes, asset, real_run)
+    _remote_release(config, version, notes, asset, real_run, linux_asset=linux_asset)
     return 0
 
 
@@ -476,7 +536,8 @@ def zip_app(version: str, run=real_run) -> Path:
     return out
 
 
-def _remote_release(config, version, notes, asset, run=real_run) -> None:
+def _remote_release(config, version, notes, asset, run=real_run,
+                    linux_asset: str | None = None) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
         f.write(render_release_notes(notes))
         notes_path = f.name
@@ -486,13 +547,25 @@ def _remote_release(config, version, notes, asset, run=real_run) -> None:
         ["git", "push", "origin", "main"],
         ["git", "tag", f"v{version}"],
         ["git", "push", "origin", f"v{version}"],
-        ["gh", "release", "create", f"v{version}", str(DIST / asset),
-         "--title", f"Nocturne {version}", "--notes-file", notes_path],
-        build_rsync_cmd(config, SITE),
     ]
+    # The Linux build goes between the tag and the release: it checks the tag
+    # out, so the artifact is the tagged source rather than whatever the build
+    # host had lying around — and the release is then created with BOTH assets
+    # in one call, so there is never a published release missing one of them.
+    if linux_asset:
+        steps += build_linux_cmds(config, version)
+    steps.append(
+        ["gh", "release", "create", f"v{version}", str(DIST / asset)]
+        + ([str(DIST / linux_asset)] if linux_asset else [])
+        + ["--title", f"Nocturne {version}", "--notes-file", notes_path])
+    steps.append(build_rsync_cmd(config, SITE))
     dl = build_download_cmd(config, asset)
     if dl:
         steps.append(dl)
+    if linux_asset:
+        dl_linux = build_download_cmd(config, linux_asset, remote_name=linux_asset)
+        if dl_linux:
+            steps.append(dl_linux)
     samples = build_samples_cmd(config, SAMPLES)
     if samples:
         steps.append(samples)
