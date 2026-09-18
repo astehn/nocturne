@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.35.0] — 2026-09-18
+
+Star separation without paying for it — and Nocturne runs on Linux.
+
+### Added
+- StarNet2 as a free star-separation engine. Eleven steps and tools depend on splitting an image into starless and stars — Star Reduction, De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen Nebulosity, Upscale Crop, Auto Enhance, Colour Balance and the starless+stars export. Without RC-Astro, which is paid, every one of them fell back to Nocturne's own separator: measured on a real NGC 7635 master, that leaves 40.3% of star flux behind against StarNet2's 20.9%, and the 1:1 crops are not close — grey blobs where the bright stars were, against a clean frame. Star Reduction at 0.5 now moves a real image 3.3x as much, and looks like star reduction rather than nothing happening. StarNet2 is free, auto-detected where its own installers put it, and never bundled.
+- A Linux build. x86-64, shipped as a tarball built on Ubuntu 24.04, so it needs glibc 2.39 or newer. Unpack it anywhere and run Nocturne/Nocturne — there is nothing to install.
+- A downloads page listing every release for both platforms, a gallery of finished images, and a dedicated Install & set up page covering both platforms and all four external tools.
+
+### Changed
+- Narrowband, Colour Balance and Upscale Crop use StarNet2 when RC-Astro is not installed. They were the three places that quietly stayed RC-Astro-or-nothing while everything else had a fallback.
+- Every download is 7.7 MB smaller. A denoise model shipped inside every release up to 0.34.0 that the app had no way to load — it was not selectable, and the bundle excludes the runtime that would have run it.
+
+### Fixed
+- StarNet2 installed through its own macOS .pkg or Linux .deb is now found. Those put the binary where a Finder-launched app cannot see it, so the most convenient install was the one auto-detection missed — found from a terminal, invisible in the app.
+- On Linux, Nocturne now looks for GraXpert, ASTAP and RC-Astro where Linux actually puts them, instead of in macOS application folders that cannot exist.
+
 ## [0.34.0] — 2026-09-17
 
 Nocturne now tells you what leaves your Mac, and asks before counting anything.
