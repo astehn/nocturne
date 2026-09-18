@@ -11,7 +11,8 @@ from ..core.color_balance import TONES, Balance, apply_balance
 from ..core.image import AstroImage
 from ..core.mask import BAND_PRESETS, band_preset, range_mask
 from ..core.narrowband import screen
-from ..settings import rcastro_valid, resolve_binary
+from ..settings import resolve_binary
+from ..steps.star_split import preferred_splitter
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
 from .preview import to_qimage
@@ -215,8 +216,13 @@ class ColorBalanceDialog(QDialog):
 
     # --- star split, exactly as NarrowbandDialog does it -------------------
     def _default_starx(self, img: AstroImage):
-        rc = RCAstro(resolve_binary(self._settings.rcastro_path))
-        return rc.remove_stars(img)
+        """Whichever splitter is configured — RC-Astro, else StarNet2.
+
+        Was RC-Astro only, which is why this dialog still said "StarX not
+        configured" after StarNet2 worked in every step (2026-09-18). The rule
+        lives in steps/star_split.preferred_splitter so there is one copy of it.
+        """
+        return preferred_splitter(self._settings).remove_stars(img)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -226,9 +232,10 @@ class ColorBalanceDialog(QDialog):
         if self._starless is not None:
             self._on_starless((self._starless, self._stars))
             return
-        if not rcastro_valid(self._settings):
-            self.status.setText("StarX not configured — the whole image is adjusted, "
-                                "so star colour shifts with the rest.")
+        if preferred_splitter(self._settings) is None:
+            self.status.setText("No star separation tool — the whole image is adjusted, so star "
+                                "colour shifts with the rest. Install StarNet2 (free) or "
+                                "RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
         self.preview.show_message(_SPLIT_MSG)

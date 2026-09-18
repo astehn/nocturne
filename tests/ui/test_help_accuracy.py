@@ -531,7 +531,10 @@ def test_narrowband_help_names_every_control_the_dialog_shows():
     assert "Preserve lightness" in b and 'QCheckBox("Preserve lightness' in nd
     assert "Reset" in b and 'QPushButton("Reset")' in nd
     assert "Apply" in b and 'QPushButton("Apply")' in nd
-    assert "StarXTerminator" in b and "rcastro_valid" in nd
+    # Both tools, because both work since 2026-09-18 — the help said only
+    # StarXTerminator, which stopped being true the hour StarNet2 landed.
+    assert "StarXTerminator" in b and "StarNet2" in b
+    assert "preferred_splitter" in nd
     assert "stretched" in b and "Narrowband works on the " in _src("nocturne/ui/main_window.py")
     assert "Recipes and Batch" in b and _NAME_TO_STAGE["Narrowband"] == "narrowband"
 

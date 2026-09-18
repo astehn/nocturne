@@ -117,7 +117,12 @@ def test_narrowband_and_colour_balance_are_NOT_silent_choosers():
     from nocturne.ui import color_balance_dialog, narrowband_dialog
     for mod in (narrowband_dialog, color_balance_dialog):
         src = inspect.getsource(mod)
-        assert "rcastro_valid" in src, mod.__name__
+        # They must GATE on having a splitter and say so. Pinned as behaviour,
+        # not as the symbol `rcastro_valid`: on 2026-09-18 the gate became
+        # "any configured splitter" so StarNet2 counts too, and the old spelling
+        # would have failed a change that strengthened exactly what this guards.
+        assert "preferred_splitter" in src, mod.__name__
+        assert "is None" in src, f"{mod.__name__} must still gate on having one"
         assert "split_stars" not in src, (
             f"{mod.__name__} gained a free-split fallback; it used to GATE on "
             "StarX and say so, and if it now chooses silently it needs a path "

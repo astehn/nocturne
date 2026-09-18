@@ -26,3 +26,26 @@ def resolve_star_split(img: AstroImage, splitter, runner=run_cli):
     if splitter is not None:
         return splitter.remove_stars(img, runner=runner)
     return split_stars(img)
+
+
+def preferred_splitter(settings):
+    """The best available splitter for these settings, or None for the free path.
+
+    RC-Astro first: the user paid for it and it is still the best. StarNet2
+    second — free, and measurably far better than the fallback. None means
+    core/starless.py, which never goes away.
+
+    THE ONE PLACE THIS IS DECIDED. It lives here rather than in steps/factory
+    because three UI paths — Narrowband, Colour Balance and Upscale Crop — build
+    their own splitter and would otherwise each need their own copy of the rule.
+    They did, for RC-Astro, which is why they all still said "StarX not
+    configured" hours after StarNet2 worked everywhere else (2026-09-18).
+    """
+    from ..settings import rcastro_valid, resolve_binary, starnet_valid
+    if rcastro_valid(settings):
+        from ..tools.rcastro import RCAstro
+        return RCAstro(resolve_binary(settings.rcastro_path))
+    if starnet_valid(settings):
+        from ..tools.starnet import StarNet
+        return StarNet(resolve_binary(settings.starnet_path))
+    return None
