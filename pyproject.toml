@@ -26,6 +26,17 @@ dependencies = [
     # box, but it must be a declared dependency and bundled, or the frozen app
     # raises ImportError the first time anyone tries it.
     "drizzle>=2.0",
+    # Not imported by Nocturne directly — astropy's WCS path (plate solve) pulls
+    # it in lazily via astropy.visualization, and the packaged app raised
+    # "matplotlib.__spec__ is not set" at solve time when it was excluded (see
+    # the note at the top of packaging/nocturne.spec).
+    #
+    # UNDECLARED UNTIL 2026-09-18. It was present on the Mac by accident, so the
+    # release built there and nobody noticed. The first clean build host — the
+    # Linux laptop — died in PyInstaller's analysis with "Skipped: could not
+    # import 'matplotlib'". A dependency that only one machine on earth
+    # satisfies is not a dependency, it is a coincidence.
+    "matplotlib>=3.8",
 ]
 
 [project.optional-dependencies]

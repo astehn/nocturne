@@ -6,6 +6,7 @@
 #       solve time in the packaged app (worked from source where matplotlib is
 #       installed). Keep it bundled so the import resolves cleanly.
 import os
+import sys
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = os.path.dirname(SPECPATH)                 # repo root (SPECPATH = packaging/)
@@ -106,11 +107,22 @@ a = Analysis(
               "onnx", "torch"],   # matplotlib intentionally NOT excluded (see top-of-file note)
     noarchive=False,
 )
+# One spec, two platforms. The Analysis above is the valuable part — the prune
+# list, the named assets, the excludes, each with a scar behind it — and a
+# second spec for Linux would be a copy of all of it, free to drift. Only the
+# packaging tail differs: macOS wants a .app BUNDLE, Linux wants the COLLECT
+# directory, which build_linux.sh tars up.
+_MAC = sys.platform == "darwin"
+
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Nocturne",
-          console=False, argv_emulation=True)
+          console=False,
+          # macOS only: it makes a double-clicked .app receive dropped files as
+          # argv. PyInstaller warns and ignores it elsewhere, and a warning that
+          # is always printed is a warning nobody reads.
+          argv_emulation=_MAC)
 coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne")
-app = BUNDLE(
+app = _MAC and BUNDLE(
     coll,
     name="Nocturne.app",
     icon=ICON,
