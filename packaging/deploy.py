@@ -558,6 +558,13 @@ def _remote_release(config, version, notes, asset, run=real_run,
         ["gh", "release", "create", f"v{version}", str(DIST / asset)]
         + ([str(DIST / linux_asset)] if linux_asset else [])
         + ["--title", f"Nocturne {version}", "--notes-file", notes_path])
+    # The downloads page is regenerated FROM GITHUB, after the release exists
+    # and before the site is uploaded. That ordering is the whole guarantee: the
+    # page lists what GitHub actually serves, so it cannot advertise a file that
+    # was never published or miss one that was. --refresh needs the network and
+    # `gh`, which is why an ordinary site build never does it.
+    steps.append([sys.executable, str(ROOT / "packaging" / "build_downloads.py"), "--refresh"])
+    steps.append([sys.executable, str(ROOT / "packaging" / "build_site.py")])
     steps.append(build_rsync_cmd(config, SITE))
     dl = build_download_cmd(config, asset)
     if dl:

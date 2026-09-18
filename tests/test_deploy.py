@@ -698,3 +698,24 @@ def test_a_mac_only_release_is_completely_unchanged(tmp_path):
                            linux_asset=deploy.linux_asset_name("0.35.0"))
     assert not any("build_linux" in " ".join(c) for c in plain)
     assert len(with_flag) == len(plain) + 3      # ssh build, scp fetch, rsync tarball
+
+
+def test_the_downloads_page_is_rebuilt_after_the_release_and_before_the_upload(tmp_path):
+    """Ordering IS the guarantee. Refreshed from GitHub after the release exists,
+    the page lists what GitHub actually serves — so it can neither advertise a
+    file that was never published nor miss one that was. Rebuilt before the
+    rsync, or the upload would carry yesterday's table."""
+    seen = []
+    cfg = _linux_config(tmp_path)
+    deploy._remote_release(cfg, "0.35.0", deploy.Notes("h", ["a"], [], []),
+                           "Nocturne-0.35.0.zip", run=lambda cmd, **k: seen.append(cmd))
+    def at(pred):
+        return next(i for i, c in enumerate(seen) if pred(c))
+    release = at(lambda c: c[:3] == ["gh", "release", "create"])
+    refresh = at(lambda c: any("build_downloads.py" in a for a in c))
+    rebuild = at(lambda c: any("build_site.py" in a for a in c))
+    # the SITE rsync: the one carrying pages. Identified by a .html argument
+    # rather than by sitemap.xml, which this fixture's include list omits — the
+    # first version of this test looked for it and died with StopIteration.
+    upload = at(lambda c: c[0] == "rsync" and any(a.endswith(".html") for a in c))
+    assert release < refresh < rebuild < upload
