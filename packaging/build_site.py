@@ -43,7 +43,10 @@ NAV = [
     ("Sample data", "sample-data.html",  "sample-data.html"),
     ("FAQ",       "faq.html",            "faq.html"),
     ("Changelog", "changelog.html",      "changelog.html"),
-    ("Download",  "index.html#download", "#download"),
+    # The dedicated page, not the homepage anchor: with two platforms and 38
+    # releases, one button cannot serve a Linux visitor or anyone who wants the
+    # version they were running last week (2026-09-18).
+    ("Download",  "download.html",       "download.html"),
 ]
 GITHUB = "https://github.com/astehn/nocturne"
 
