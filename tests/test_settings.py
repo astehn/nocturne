@@ -513,3 +513,21 @@ def test_path_lookup_never_overrides_a_configured_tool(tmp_path, monkeypatch):
     monkeypatch.setattr(st.shutil, "which", lambda name: str(stray))
     configured = st.Settings(astap_path="/somewhere/of/my/own/astap")
     assert st.detect_tool_paths(configured, {"astap_path": ["which:astap"]}) == {}
+
+
+def test_starnet_installer_locations_are_named_not_left_to_PATH():
+    """StarNet2's own installers — the macOS .pkg and the Linux .deb — put the
+    binary somewhere `which:` cannot reach from the shipped app.
+
+    launchd hands a Finder-launched .app PATH=/usr/bin:/bin:/usr/sbin:/sbin, so
+    /usr/local/bin is not on it. The .pkg is the install route the README calls
+    "easiest", and it was the one Nocturne would have failed to detect — found
+    from a terminal, invisible in the app, which is the worst shape of bug
+    because it cannot be reproduced the obvious way.
+    """
+    from nocturne.settings import _LINUX_CANDIDATES, _MAC_CANDIDATES
+    assert "/usr/local/bin/starnet2" in _MAC_CANDIDATES["starnet_path"]
+    assert "/usr/bin/starnet2" in _LINUX_CANDIDATES["starnet_path"]
+    for candidates in (_MAC_CANDIDATES, _LINUX_CANDIDATES):
+        explicit = [c for c in candidates["starnet_path"] if not c.startswith("which:")]
+        assert explicit, "PATH alone is not a discovery strategy for a GUI app"

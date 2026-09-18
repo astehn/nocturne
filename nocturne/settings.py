@@ -196,7 +196,13 @@ _MAC_CANDIDATES: dict[str, list[str]] = {
     # (StarNet2_weights.mlpackage), which must stay together — so the candidate
     # names the binary inside it, not the folder. The version is in the folder
     # name, hence the glob.
-    "starnet_path": ["~/Applications/starnet2*/starnet2",
+    # The .pkg installer puts the binary in /usr/local/bin and its weights in
+    # /usr/local/lib/starnet2. That path is NOT reachable through `which:` from
+    # a bundled .app: launchd hands a Finder-launched process
+    # PATH=/usr/bin:/bin:/usr/sbin:/sbin, so the same install that is found
+    # from a terminal is invisible to the shipped app. Named explicitly.
+    "starnet_path": ["/usr/local/bin/starnet2",
+                     "~/Applications/starnet2*/starnet2",
                      "/Applications/starnet2*/starnet2",
                      "~/Applications/StarNet2/starnet2",
                      "which:starnet2"],
@@ -228,7 +234,12 @@ _LINUX_CANDIDATES: dict[str, list[str]] = {
                    "/opt/astap/astap",
                    "~/Applications/astap/astap",
                    "which:astap", "which:astap_cli"],
-    "starnet_path": ["~/Applications/starnet2*/starnet2",
+    # The .deb lands in /usr/bin; the portable CLI zip is unpacked wherever the
+    # user put it, hence the globs. Same reasoning as the macOS list: name the
+    # installer's path rather than trusting PATH.
+    "starnet_path": ["/usr/bin/starnet2",
+                     "/usr/local/bin/starnet2",
+                     "~/Applications/starnet2*/starnet2",
                      "/opt/starnet2*/starnet2",
                      "~/StarNet2/starnet2",
                      "which:starnet2"],

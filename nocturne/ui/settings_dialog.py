@@ -16,7 +16,10 @@ DOWNLOAD_URLS = {
     "graxpert": "https://graxpert.com",
     "rcastro": "https://www.rc-astro.com",
     "astap": "https://www.hnsky.org/astap.htm",
-    "starnet": "https://www.starnetastro.com/",
+    # The CLI page, not the homepage: the homepage links no downloads, and
+    # the site also ships a PixInsight module that Nocturne cannot drive.
+    # Sending someone to the wrong one of those two is a support email.
+    "starnet": "https://starnetastro.com/cli-tools/starnet/",
 }
 
 
