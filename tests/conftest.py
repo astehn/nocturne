@@ -64,3 +64,23 @@ def _settings_sandbox():
     _settings.resolve_settings_path = _sandboxed_resolve
     yield
     _settings.resolve_settings_path = _REAL_RESOLVE
+
+
+# The suite must describe a RELEASE, not this machine. `~/.nocturne/models`
+# holds models from the separate Nocturne NR project during internal testing,
+# and MainWindow inserts an AI Denoise stage when it finds one — so on
+# 2026-09-18 three navigation tests failed here and passed everywhere else,
+# because a file in a developer's home directory had changed the pipeline.
+#
+# Pointed at an empty directory for the whole session. A test that wants the
+# stage sets EXTERNAL_DIR itself, which also makes that intent visible.
+import nocturne.core.denoise_model as _denoise_model  # noqa: E402
+
+_NO_MODELS = tempfile.mkdtemp(prefix="nocturne_no_models_")
+_denoise_model.EXTERNAL_DIR = _NO_MODELS
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _no_external_models():
+    _denoise_model.EXTERNAL_DIR = _NO_MODELS
+    yield

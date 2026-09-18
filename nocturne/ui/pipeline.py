@@ -66,7 +66,13 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    "background", "color", "tint", "deconvolution", "stretch", "remove_green",
+    # `ai_denoise` sits between deconvolution and stretch because that is where
+    # its stage appears when one is offered (see _OPTIONAL). It is listed even
+    # though the stage is normally absent: this order answers "what came before
+    # this step", and a saved project or an internal test run that contains an
+    # AI Denoise entry has to place it correctly. A missing id raises ValueError
+    # from .index() — which is exactly how it announced itself.
+    "background", "color", "tint", "deconvolution", "ai_denoise", "stretch", "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
@@ -102,14 +108,45 @@ def core_stages() -> list[Stage]:
     return list(_CORE)
 
 
-def path_stages(omit: frozenset[str] = frozenset()) -> list[Stage]:
-    """The visible pipeline, minus any stage ids in `omit`.
+# Stages that are NOT part of the pipeline and must be asked for by id.
+#
+# `ai_denoise` is out of _CORE deliberately and stays out — the only trained
+# model over-corrected deep stacks and damaged a 405-frame M 8 by 19%, which is
+# pinned by test_ai_denoise_is_built_but_not_shipped. It is offered ONLY when a
+# model from the separate Nocturne NR project is sitting in ~/.nocturne/models,
+# which no release build can contain.
+#
+# Opt-IN rather than default-plus-omit, so the guard above keeps its meaning:
+# `path_stages()` with no arguments is still the shipped pipeline, and anything
+# extra has to be named by a caller that knows why.
+_OPTIONAL = {
+    # id -> (stage, the id it is inserted BEFORE)
+    "ai_denoise": (Stage("ai_denoise", "AI Denoise", "process"), "stretch"),
+}
+
+
+def path_stages(omit: frozenset[str] = frozenset(),
+                include: frozenset[str] = frozenset()) -> list[Stage]:
+    """The visible pipeline, minus any ids in `omit`, plus any in `include`.
 
     Filtered rather than flag-mutated because `Stage` is frozen and `_CORE` is
     module level: every caller is handed the SAME objects, so mutating one would
     poison every later project in the session.
+
+    An included stage lands at a FIXED position — AI Denoise before Stretch,
+    because that is where the model was trained and the only place it can work.
+    A stretch derives its curve from the image's own statistics, so afterwards
+    the noise has been shaped by a transfer function the model never saw, and
+    the single sigma value it is conditioned on no longer describes the frame.
     """
-    return [s for s in list(_CORE) + list(_IN_APP_TAIL) if s.id not in omit]
+    stages = [s for s in list(_CORE) + list(_IN_APP_TAIL) if s.id not in omit]
+    for sid in include:
+        stage, before = _OPTIONAL[sid]
+        if stage.id in {s.id for s in stages}:
+            continue
+        at = next((i for i, s in enumerate(stages) if s.id == before), len(stages))
+        stages.insert(at, stage)
+    return stages
 
 
 def next_enabled(stages: list[Stage], index: int) -> int:

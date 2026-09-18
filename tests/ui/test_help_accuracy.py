@@ -749,11 +749,13 @@ def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
     from nocturne.recipe import _NAME_TO_STAGE, uncaptured_step_names
     from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, STEP_NAME
     b = _body("recipes")
-    # Iterate the VISIBLE pipeline, not STEP_NAME. STEP_NAME deliberately keeps
-    # ai_denoise so a saved project naming it still resolves, but a step that is
-    # not in the stepper must not be advertised in the help — that is the drift
-    # this file exists to catch, pointing the other way.
-    for stage in PROCESSING_ORDER:
+    # Every step the help must name. `ai_denoise` is the one exception, added to
+    # PROCESSING_ORDER on 2026-09-18 without joining the stepper: it appears only
+    # when a Nocturne NR model is installed, which no release has. Excluded by
+    # NAME rather than by filtering on path_stages(), which would also drop
+    # `tint` — a real, documented control that is part of the Colour step rather
+    # than a stage of its own.
+    for stage in [s for s in PROCESSING_ORDER if s != "ai_denoise"]:
         assert STEP_NAME[stage] in b, \
             f"the topic never mentions the {STEP_NAME[stage]!r} step"
     for name in ("Crop", "Rotate", "Flip", "Narrowband", "Colour Balance"):
@@ -1305,7 +1307,9 @@ def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
     planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
                                                           astap_path="/bin/echo"))}
-    omitted = [s for s in PROCESSING_ORDER if s not in planned]
+    # Same exception as the recipes topic above: ai_denoise is in
+    # PROCESSING_ORDER but in no release's stepper, so the help cannot name it.
+    omitted = [s for s in PROCESSING_ORDER if s not in planned and s != "ai_denoise"]
     assert omitted == ["tint", "deconvolution", "remove_green",
                        "recover_core", "curves", "star_reduction"], \
         "the set of stages Auto Enhance skips changed"

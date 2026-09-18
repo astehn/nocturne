@@ -89,7 +89,13 @@ def model_path(sensor: str = "s30") -> str:
 # Added 2026-09-17 for internal testing of the v6 model, at Andreas's request —
 # *"its not something that should be pushed in any release, its just for
 # internal testing at this point in time."*
-EXTERNAL_DIR = os.path.join(os.path.expanduser("~"), ".nocturne", "models")
+# Two names on purpose. EXTERNAL_DIR is what the code reads and the test suite
+# redirects (tests/conftest.py points it at an empty folder, so the suite
+# describes a RELEASE rather than whatever is on a developer's machine).
+# _DEFAULT_EXTERNAL_DIR is the real answer and is never patched, so a test can
+# still assert that models live outside the app — which is the whole guarantee.
+_DEFAULT_EXTERNAL_DIR = os.path.join(os.path.expanduser("~"), ".nocturne", "models")
+EXTERNAL_DIR = _DEFAULT_EXTERNAL_DIR
 
 
 def external_models() -> list[tuple[str, str]]:
