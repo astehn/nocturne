@@ -27,7 +27,7 @@ from ..history.project_store import NewerVersionError, load_project, save_projec
 from ..history.step import Step
 from ..settings import (
     add_recent_project, astap_valid, graxpert_valid, is_tool, load_settings,
-    rcastro_valid,
+    rcastro_valid, starnet_valid,
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
@@ -1808,6 +1808,10 @@ class MainWindow(QMainWindow):
         if rcastro_valid(self.settings):
             rc = RCAstro(resolve_binary(self.settings.rcastro_path))
             return (*rc.remove_stars(img, runner=self._rc_runner), "StarX")
+        if starnet_valid(self.settings):
+            from ..tools.starnet import StarNet
+            sn = StarNet(resolve_binary(self.settings.starnet_path))
+            return (*sn.remove_stars(img, runner=self._rc_runner), "StarNet2")
         return (*split_stars(img), "free")
 
     def _remove_stars(self, img):

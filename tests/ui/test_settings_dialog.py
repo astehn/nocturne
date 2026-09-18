@@ -64,7 +64,9 @@ def test_settings_dialog_round_trips_astap_path(qtbot):
 def test_settings_dialog_has_tool_download_links(qtbot):
     from nocturne.ui.settings_dialog import SettingsDialog, DOWNLOAD_URLS
     from nocturne.settings import Settings
-    assert set(DOWNLOAD_URLS) == {"graxpert", "rcastro", "astap"}
+    # StarNet2 joined on 2026-09-18 — a free star/starless split, which nine
+    # features depend on and which was RC-Astro-only before.
+    assert set(DOWNLOAD_URLS) == {"graxpert", "rcastro", "astap", "starnet"}
     assert all(u.startswith("https://") for u in DOWNLOAD_URLS.values())
     dlg = SettingsDialog(Settings())
     qtbot.addWidget(dlg)

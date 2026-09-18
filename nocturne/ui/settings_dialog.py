@@ -16,6 +16,7 @@ DOWNLOAD_URLS = {
     "graxpert": "https://graxpert.com",
     "rcastro": "https://www.rc-astro.com",
     "astap": "https://www.hnsky.org/astap.htm",
+    "starnet": "https://www.starnetastro.com/",
 }
 
 
@@ -77,11 +78,14 @@ class SettingsDialog(QDialog):
         self._gx = QLineEdit(settings.graxpert_path)
         self._rc = QLineEdit(settings.rcastro_path)
         self._astap = QLineEdit(settings.astap_path)
+        self._starnet = QLineEdit(settings.starnet_path)
         self._handle = QLineEdit(settings.handle)
         self._handle.setPlaceholderText("@yourhandle — shown on shared images")
         self._gx_result = QLabel("")
         self._rc_result = QLabel("")
         self._astap_result = QLabel("")
+        self._starnet_result = QLabel("")
+        self._starnet_result.setWordWrap(True)
         self._gx_result.setWordWrap(True)
         self._rc_result.setWordWrap(True)
         self.denoise_box = QComboBox()
@@ -123,6 +127,10 @@ class SettingsDialog(QDialog):
                     _path_row(self._rc, self._test_rcastro, self._rc_result,
                               DOWNLOAD_URLS["rcastro"],
                               "Select the rc-astro command (RC-Astro/CLI/rc-astro)"))
+        form.addRow("StarNet2 (optional)",
+                    _path_row(self._starnet, self._test_starnet, self._starnet_result,
+                              DOWNLOAD_URLS["starnet"],
+                              "Select the starnet2 executable"))
         form.addRow("ASTAP (optional)",
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"],
@@ -147,6 +155,15 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def _test_starnet(self) -> None:
+        """Runs it with no arguments: StarNet2 prints its usage and exits, which
+        is enough to prove the binary and its weights package are both there —
+        the usual failure is a copied executable without the weights beside it.
+        """
+        path = resolve_binary(self._starnet.text().strip())
+        self._starnet_result.setText(
+            "Found" if is_tool(path) else "Not found — point at the starnet2 executable")
 
     def _rescan(self) -> None:
         """Look again, and repair anything broken.
@@ -230,6 +247,7 @@ class SettingsDialog(QDialog):
             graxpert_path=self._gx.text().strip(),
             rcastro_path=self._rc.text().strip(),
             astap_path=self._astap.text().strip(),
+            starnet_path=self._starnet.text().strip(),
             base_dir=self._dir.text().strip(),
             denoise_engine=("graxpert" if self.denoise_box.currentText() == "GraXpert"
                             else "rcastro"),

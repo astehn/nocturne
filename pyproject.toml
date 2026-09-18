@@ -37,6 +37,12 @@ dependencies = [
     # import 'matplotlib'". A dependency that only one machine on earth
     # satisfies is not a dependency, it is a coincidence.
     "matplotlib>=3.8",
+    # LZW-compressed TIFF, which is what StarNet2 writes. tifffile cannot decode
+    # it alone, and Pillow reads the same file while silently returning 8 bits —
+    # a precision loss that would surface as banding in faint gradients long
+    # after anyone could connect it to a cause. 12 MB, accepted deliberately:
+    # nine features depend on a good star split.
+    "imagecodecs>=2024.1",
 ]
 
 [project.optional-dependencies]
