@@ -608,3 +608,93 @@ def test_a_self_test_that_cannot_run_does_not_break_the_release(tmp_path, capsys
 
     deploy._verify_bundle_https(tmp_path / "Nocturne", run=boom)
     assert "could not run" in capsys.readouterr().out
+
+
+# --- the Linux build host (added with the port, 2026-09-18) ------------------
+
+def _linux_config(tmp_path):
+    """A config with BOTH a download slot and a Linux build host.
+
+    `_write_config` has no download_path, so build_download_cmd returns None
+    there — fine for the tests that predate this, and useless for these, which
+    are about where two artifacts land.
+    """
+    cfg = _write_config(tmp_path)
+    with open(cfg, "a") as f:
+        f.write('download_path = "/var/www/nocturne/download/Nocturne.zip"\n'
+                '\n[linux]\nssh_host = "builder@10.0.0.9"\n'
+                'repo_path = "/home/builder/nocturne"\n')
+    return deploy.load_config(cfg)
+
+
+def test_the_linux_build_checks_out_the_tag_it_is_building(tmp_path):
+    """The artifact must be the TAGGED source, not whatever the build host had
+    lying around. That is why the build cannot run before the tag is pushed, and
+    it is the whole reason the step sits where it does in the sequence."""
+    cmds = deploy.build_linux_cmds(_linux_config(tmp_path), "0.35.0")
+    build, fetch = cmds
+    assert build[:2] == ["ssh", "builder@10.0.0.9"]
+    assert "build_linux.sh v0.35.0" in build[2]
+    assert fetch[0] == "scp"
+    assert fetch[1].endswith("Nocturne-0.35.0-linux-x86_64.tar.gz")
+
+
+def test_linux_without_config_refuses_rather_than_guessing(tmp_path):
+    """No build host configured is a mistake to report, not a default to invent
+    — and it must surface BEFORE the version bump, since nothing in the remote
+    sequence can be undone."""
+    plain = deploy.load_config(_write_config(tmp_path))
+    with pytest.raises(ValueError, match="ssh_host"):
+        deploy.build_linux_cmds(plain, "0.35.0")
+
+
+def test_the_two_artifacts_do_not_overwrite_each_other(tmp_path):
+    """`download_path` names the macOS file exactly, so the site can link one
+    stable URL. The Linux tarball lands BESIDE it under its own name — pointing
+    both at the same path would publish a tarball called Nocturne.zip."""
+    cfg = _linux_config(tmp_path)
+    mac = deploy.build_download_cmd(cfg, "Nocturne-0.35.0.zip")
+    linux_name = deploy.linux_asset_name("0.35.0")
+    lin = deploy.build_download_cmd(cfg, linux_name, remote_name=linux_name)
+    assert mac[-1] != lin[-1]
+    assert mac[-1].endswith("/Nocturne.zip")
+    assert lin[-1].endswith("/" + linux_name)
+    # same directory, so one chown covers both
+    assert mac[-1].rsplit("/", 1)[0] == lin[-1].rsplit("/", 1)[0]
+
+
+def test_one_release_carries_both_assets(tmp_path, monkeypatch):
+    """Not two `gh release` calls: a failure between them would leave a
+    published release missing a platform, which users would find before we did.
+    """
+    seen = []
+    cfg = _linux_config(tmp_path)
+    notes = deploy.Notes("h", ["a"], [], [])
+    deploy._remote_release(cfg, "0.35.0", notes, "Nocturne-0.35.0.zip",
+                           run=lambda cmd, **k: seen.append(cmd),
+                           linux_asset=deploy.linux_asset_name("0.35.0"))
+    releases = [c for c in seen if c[:3] == ["gh", "release", "create"]]
+    assert len(releases) == 1, "exactly one release call"
+    assets = [a for a in releases[0] if a.endswith((".zip", ".tar.gz"))]
+    assert len(assets) == 2, assets
+
+    # and the build must precede the release, or there is nothing to attach
+    build_at = next(i for i, c in enumerate(seen) if c[0] == "ssh" and "build_linux" in c[-1])
+    release_at = seen.index(releases[0])
+    tag_at = next(i for i, c in enumerate(seen) if c[:2] == ["git", "tag"])
+    assert tag_at < build_at < release_at
+
+
+def test_a_mac_only_release_is_completely_unchanged(tmp_path):
+    """The flag is opt-in. Without it, not one command differs — a release must
+    not start depending on a laptop being awake."""
+    cfg = _linux_config(tmp_path)
+    notes = deploy.Notes("h", ["a"], [], [])
+    plain, with_flag = [], []
+    deploy._remote_release(cfg, "0.35.0", notes, "Nocturne-0.35.0.zip",
+                           run=lambda cmd, **k: plain.append(cmd))
+    deploy._remote_release(cfg, "0.35.0", notes, "Nocturne-0.35.0.zip",
+                           run=lambda cmd, **k: with_flag.append(cmd),
+                           linux_asset=deploy.linux_asset_name("0.35.0"))
+    assert not any("build_linux" in " ".join(c) for c in plain)
+    assert len(with_flag) == len(plain) + 3      # ssh build, scp fetch, rsync tarball

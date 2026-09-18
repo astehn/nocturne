@@ -24,3 +24,10 @@ exclude = [
   "_research_external_tools.md", "tests/",
   "config*.php", "db/", "uploads/", "*.fits", "*.fit", "admin/",
 ]
+
+# The Linux build host, used only by `deploy.py --linux`. Omit the section and
+# that flag refuses rather than guessing. `repo_path` is a checkout of THIS repo
+# on that machine, with a .venv — packaging/build_linux.sh does the rest.
+[linux]
+ssh_host = "192.168.1.135"
+repo_path = "/home/you/nocturne"
