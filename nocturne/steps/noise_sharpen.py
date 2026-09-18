@@ -34,6 +34,11 @@ _NXT_LEVELS = {"light": 0.75, "medium": 0.90, "strong": 0.95}  # RC-Astro NoiseX
 # noise 36% on the same image, for the same runtime.
 _GX_LEVELS = {"light": 0.7, "medium": 0.9, "strong": 1.0}      # GraXpert AI denoise
 
+# Strength for a Nocturne NR model. Same numbers as steps/ai_denoise.py, where
+# 0.75 was measured: full strength over-smoothed the held-out target to 0.000004
+# background noise against the 128-frame truth's 0.000032.
+_NR_LEVELS = {"light": 0.5, "medium": 0.75, "strong": 1.0}
+
 _TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallback
 
 
@@ -84,8 +89,27 @@ class NoiseSharpenStep(Step):
                 return "graxpert"
         return "free"
 
+    # Engines whose name starts with this are models from the separate Nocturne
+    # NR project, living in ~/.nocturne/models and never in a build. Internal
+    # testing only — see core/denoise_model.EXTERNAL_DIR.
+    NR_PREFIX = "nr:"
+
     def apply(self, img: AstroImage, option) -> AstroImage:
         engine, level = parse_noise_option(option)
+        if isinstance(engine, str) and engine.startswith(self.NR_PREFIX):
+            from ..core.denoise_model import denoise, external_path
+            label = engine[len(self.NR_PREFIX):]
+            path = external_path(label)
+            # NO FALLBACK, on purpose. Every other engine here degrades to the
+            # next one, which is right when the user asked for "denoise" and
+            # the app picks how. This engine is a question about ONE model: if
+            # it is not there, quietly running GraXpert instead would answer a
+            # different question and look like an answer to this one.
+            if path is None:
+                raise FileNotFoundError(
+                    f"no model '{label}' in ~/.nocturne/models — it was offered "
+                    "when this panel was built and has gone since")
+            return denoise(img, _NR_LEVELS[level], path=path)
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
         for e in order:
             if e == "rcastro" and self._rc is not None:

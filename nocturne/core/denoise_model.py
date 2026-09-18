@@ -67,6 +67,45 @@ def model_path(sensor: str = "s30") -> str:
     return os.path.join(_MODEL_DIR, f"denoise_{sensor}_v1.onnx")
 
 
+# --- models that are NOT part of the app ------------------------------------
+#
+# A model dropped in ~/.nocturne/models/ is offered in the Noise Reduction step
+# as its own engine. This is how a model from the separate Nocturne NR project
+# gets tried in the real app WITHOUT becoming part of it: the folder is outside
+# the repo, outside the PyInstaller spec and outside the website rsync, so a
+# release build cannot contain one and the engine simply does not exist there.
+# Added 2026-09-17 for internal testing of the v6 model, at Andreas's request —
+# *"its not something that should be pushed in any release, its just for
+# internal testing at this point in time."*
+EXTERNAL_DIR = os.path.join(os.path.expanduser("~"), ".nocturne", "models")
+
+
+def external_models() -> list[tuple[str, str]]:
+    """(label, path) for every .onnx in EXTERNAL_DIR, newest name last.
+
+    The label is the filename stem, so dropping `v7.onnx` beside `v6.onnx` and
+    relaunching is the whole workflow for comparing two runs.
+    """
+    try:
+        names = sorted(n for n in os.listdir(EXTERNAL_DIR) if n.lower().endswith(".onnx"))
+    except OSError:
+        return []
+    return [(os.path.splitext(n)[0], os.path.join(EXTERNAL_DIR, n)) for n in names]
+
+
+def external_path(label: str) -> str | None:
+    """The file behind a label, or None if it is gone.
+
+    None is a real answer the caller must handle: the folder is outside the
+    app's control and a file can vanish between the dropdown being built and
+    Apply being pressed.
+    """
+    for name, path in external_models():
+        if name == label:
+            return path
+    return None
+
+
 def available(sensor: str = "s30") -> bool:
     return os.path.isfile(model_path(sensor))
 
@@ -152,21 +191,30 @@ def _feather(tile: int, overlap: int) -> np.ndarray:
 
 
 def denoise(img: AstroImage, strength: float = 0.75, *, sensor: str = "s30",
-            on_progress=None) -> AstroImage:
-    """Apply the model. `strength` scales the predicted noise; 0 is a no-op."""
+            on_progress=None, path: str | None = None) -> AstroImage:
+    """Apply the model. `strength` scales the predicted noise; 0 is a no-op.
+
+    `path` runs a model from outside the app (see EXTERNAL_DIR) instead of the
+    bundled one. Everything else is identical, because a Nocturne NR export
+    speaks exactly this protocol: 4 channels in, 3 out, 256 tiles, sigma / 0.0015
+    and asinh a = 0.01. If that ever stops being true, _check_conditioned below
+    is what will say so rather than onnxruntime.
+    """
     if not img.is_linear:
         raise ValueError(
             "the denoise model runs on linear data, before Stretch — it was "
             "trained there and its input transform assumes it")
-    if not available(sensor):
+    if path is None and not available(sensor):
         raise FileNotFoundError(f"no denoise model for {sensor}: {model_path(sensor)}")
+    if path is not None and not os.path.isfile(path):
+        raise FileNotFoundError(f"no model at {path}")
     if strength <= 0:
         return AstroImage(img.data.copy(), is_linear=True, metadata=dict(img.metadata))
 
     a = float(metadata(sensor).get("asinh_a", 0.01))
     sigma_scale = float(metadata(sensor).get("sigma_scale", _DEFAULT_SIGMA_SCALE))
-    sess = _session(model_path(sensor))
-    _check_conditioned(sess, sensor)
+    sess = _session(path or model_path(sensor))
+    _check_conditioned(sess, path or sensor)
     name = sess.get_inputs()[0].name
 
     src = _to_model_space(np.ascontiguousarray(img.data, np.float32), a)

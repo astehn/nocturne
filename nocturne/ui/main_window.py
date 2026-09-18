@@ -5046,6 +5046,15 @@ class MainWindow(QMainWindow):
         split_enabled = loaded and rcastro_valid(self.settings)
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", "RC-Astro", "GraXpert"] if both_denoise else None
+        # Models from the separate Nocturne NR project, if any are sitting in
+        # ~/.nocturne/models. A release build has that folder empty or absent,
+        # so this list is empty and the dropdown is exactly what it was. The
+        # engine list appears even without both external tools, because trying
+        # the model is the point and GraXpert's presence is beside it.
+        from ..core.denoise_model import external_models
+        nr = [f"Nocturne NR ({label})" for label, _ in external_models()]
+        if nr:
+            denoise_choices = (denoise_choices or ["Default"]) + nr
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,

@@ -1,0 +1,103 @@
+"""A Nocturne NR model can be tried in the app without becoming part of it.
+
+Andreas, 2026-09-18: *"since its not done its not something that should be
+pushed in any release, its just for internal testing at this point in time."*
+
+The guarantee is structural rather than a flag: the models live in
+~/.nocturne/models, which is outside the repo, outside the PyInstaller spec and
+outside the website rsync. A release build has nothing there, so the engine does
+not exist in it. These tests pin that, and pin the routing that only matters
+while it does exist.
+"""
+import os
+
+import pytest
+
+from nocturne.core import denoise_model as dm
+from nocturne.steps.noise_sharpen import NoiseSharpenStep
+
+
+def test_the_model_folder_is_outside_the_app():
+    """If this ever points inside the package, a model becomes shippable — and
+    the whole "cannot reach a release" argument quietly stops being true."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(dm.__file__)))
+    assert not dm.EXTERNAL_DIR.startswith(here), "models must not live in the package"
+    assert dm.EXTERNAL_DIR.startswith(os.path.expanduser("~"))
+
+
+def test_no_models_means_no_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path / "nothing-here"))
+    assert dm.external_models() == []
+    assert dm.external_path("v6") is None
+
+
+def test_each_onnx_becomes_one_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))
+    (tmp_path / "v6.onnx").write_bytes(b"not a real model")
+    (tmp_path / "v7.onnx").write_bytes(b"not a real model")
+    (tmp_path / "notes.txt").write_text("ignored")
+    assert [label for label, _ in dm.external_models()] == ["v6", "v7"]
+    assert dm.external_path("v7") == str(tmp_path / "v7.onnx")
+
+
+def test_a_missing_model_refuses_instead_of_running_a_different_engine(tmp_path, monkeypatch):
+    """THE one that matters. Every other engine here degrades to the next, which
+    is right when the user asked for "denoise" and the app picks how. This engine
+    is a question about ONE model: silently running GraXpert would answer a
+    different question and look like an answer to this one — which is exactly how
+    the old 3-channel model kept running after everyone believed it was gone
+    (see denoise_model._check_conditioned).
+    """
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))      # empty
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    img = AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True)
+    step = NoiseSharpenStep(rcastro=None, graxpert=None)
+    with pytest.raises(FileNotFoundError):
+        step.apply(img, {"engine": "nr:v6", "level": "medium"})
+
+
+def test_the_ordinary_engines_are_untouched(tmp_path, monkeypatch):
+    """The prefix must not capture anything that is not ours."""
+    from nocturne.steps.noise_sharpen import parse_noise_option
+    assert parse_noise_option({"engine": "graxpert", "level": "light"}) == ("graxpert", "light")
+    assert parse_noise_option({"engine": "rcastro", "level": "strong"}) == ("rcastro", "strong")
+    engine, level = parse_noise_option({"engine": "nr:v6", "level": "medium"})
+    assert engine.startswith(NoiseSharpenStep.NR_PREFIX) and level == "medium"
+
+
+def test_the_panel_turns_the_label_back_into_the_engine_id(qtbot):
+    """"Nocturne NR (v6)" -> "nr:v6". The label carries the file name so two
+    runs sit side by side in the dropdown; the id is what the step routes on."""
+    from nocturne.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    stage = next(s for s in path_stages() if s.id == "noise_sharpen")
+    got = []
+    panel = build_panel(stage, on_apply=got.append, apply_enabled=True,
+                        denoise_engine_choices=["Default", "RC-Astro", "GraXpert",
+                                                "Nocturne NR (v6)"],
+                        denoise_default_engine="rcastro")
+    qtbot.addWidget(panel)
+    panel.engine_box.setCurrentText("Nocturne NR (v6)")
+    panel.apply_btn.click()
+    assert got and got[-1]["engine"] == "nr:v6"
+
+    panel.engine_box.setCurrentText("GraXpert")
+    panel.apply_btn.click()
+    assert got[-1]["engine"] == "graxpert"
+
+
+def test_no_model_file_is_tracked_outside_the_one_that_already_shipped():
+    """A Nocturne NR export must never be committed. The bundled v1 is a
+    separate, older problem (it ships unreachable and should be removed), so it
+    is named here rather than silently permitted.
+    """
+    import subprocess
+    # THREE levels: core/ -> nocturne/ -> the repo. Two put git ls-files inside
+    # the package, where it returned the same file under a different relative
+    # path and the assertion failed for a reason that had nothing to do with
+    # what it tests.
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(dm.__file__))))
+    tracked = subprocess.run(["git", "ls-files", "*.onnx"], cwd=root,
+                             capture_output=True, text=True).stdout.split()
+    assert sorted(tracked) == ["nocturne/assets/models/denoise_s30_v1.onnx"], tracked

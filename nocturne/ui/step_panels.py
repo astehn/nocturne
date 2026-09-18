@@ -300,8 +300,13 @@ def build_panel(
                 return level                              # background / deconvolution: bare level
             if engine_box is not None:
                 sel = engine_box.currentText()
-                engine = (denoise_default_engine if sel == "Default"
-                          else "graxpert" if sel == "GraXpert" else "rcastro")
+                if sel.startswith("Nocturne NR ("):
+                    # "Nocturne NR (v6)" -> "nr:v6". The label carries the file
+                    # name so two runs can sit side by side in the dropdown.
+                    engine = "nr:" + sel[len("Nocturne NR ("):-1]
+                else:
+                    engine = (denoise_default_engine if sel == "Default"
+                              else "graxpert" if sel == "GraXpert" else "rcastro")
             else:
                 engine = denoise_default_engine
             return {"engine": engine, "level": level}
