@@ -287,7 +287,7 @@ def build_panel(
                 show_model.toggled.connect(on_show_model)
 
         engine_box = None
-        if stage.id == "noise_sharpen" and denoise_engine_choices:
+        if stage.id in ("noise_sharpen", "ai_denoise") and denoise_engine_choices:
             engine_box = QComboBox()
             engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
             lay.addWidget(QLabel("Engine"))
@@ -296,12 +296,17 @@ def build_panel(
 
         def _noise_apply_option():
             level = box.currentText()
-            if stage.id != "noise_sharpen":
+            if stage.id not in ("noise_sharpen", "ai_denoise"):
                 return level                              # background / deconvolution: bare level
             if engine_box is not None:
                 sel = engine_box.currentText()
-                engine = (denoise_default_engine if sel == "Default"
-                          else "graxpert" if sel == "GraXpert" else "rcastro")
+                if sel.startswith("Nocturne NR ("):   # ai_denoise, and nothing else
+                    # "Nocturne NR (v6)" -> "nr:v6". The label carries the file
+                    # name so two runs can sit side by side in the dropdown.
+                    engine = "nr:" + sel[len("Nocturne NR ("):-1]
+                else:
+                    engine = (denoise_default_engine if sel == "Default"
+                              else "graxpert" if sel == "GraXpert" else "rcastro")
             else:
                 engine = denoise_default_engine
             return {"engine": engine, "level": level}

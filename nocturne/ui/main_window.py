@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
         # Reset on a new image and on Close Project, or the previous image's
         # walk would mark steps as skipped in a session that never touched them.
         self._high_water = 0
-        self._stages = path_stages(self._omitted_stages())
+        self._stages = path_stages(self._omitted_stages(), self._included_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -3992,6 +3992,17 @@ class MainWindow(QMainWindow):
         """
         return frozenset() if self._view_linked else frozenset({"color"})
 
+    def _included_stages(self) -> frozenset[str]:
+        """Stages that are not part of the shipped pipeline and must be asked for.
+
+        AI Denoise appears only when a model from the separate Nocturne NR
+        project is sitting in ~/.nocturne/models — internal testing, and a
+        release build cannot contain one (that folder is outside the bundle, and
+        the spec excludes onnxruntime besides).
+        """
+        from ..core.denoise_model import external_models
+        return frozenset({"ai_denoise"}) if external_models() else frozenset()
+
     def _rebuild_stages(self) -> None:
         """Re-derive the visible pipeline, keeping the user where they are.
 
@@ -3999,7 +4010,7 @@ class MainWindow(QMainWindow):
         preserved index would silently teleport the user to a different step.
         """
         here = self._stages[self._stage].id if self._stages else None
-        self._stages = path_stages(self._omitted_stages())
+        self._stages = path_stages(self._omitted_stages(), self._included_stages())
         ids = [s.id for s in self._stages]
         self._stage = ids.index(here) if here in ids else 0
         self.stepper.set_stages(self._stages)
@@ -5046,6 +5057,17 @@ class MainWindow(QMainWindow):
         split_enabled = loaded and rcastro_valid(self.settings)
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", "RC-Astro", "GraXpert"] if both_denoise else None
+        # Models from the separate Nocturne NR project, if any are sitting in
+        # ~/.nocturne/models. A release build has that folder empty or absent,
+        # so this list is empty and the dropdown is exactly what it was. The
+        # engine list appears even without both external tools, because trying
+        # the model is the point and GraXpert's presence is beside it.
+        from ..core.denoise_model import external_models
+        nr = [f"Nocturne NR ({label})" for label, _ in external_models()]
+        if stage.id == "ai_denoise":
+            # This stage exists only because a model is installed, so the model
+            # list IS its engine list — there is no "Default" to fall back to.
+            denoise_choices = nr
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,

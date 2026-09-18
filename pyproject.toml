@@ -36,6 +36,23 @@ train = ["torch>=2.2", "onnx>=1.16", "onnxruntime>=1.18"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# WHAT THE DISTRIBUTION IS. Without this, setuptools auto-discovery walks the
+# repo root, finds four importable top-level trees — archive, training,
+# nocturne, packaging — and REFUSES to build rather than guess:
+#
+#     error: Multiple top-level packages discovered in a flat-layout
+#
+# A long-lived venv never sees it, because the install predates the trees that
+# now collide. A FRESH one fails immediately, which is how it surfaced: the
+# first `pip install -e ".[dev]"` on the Linux laptop, 2026-09-18.
+#
+# Only `nocturne` ships. `training` and `archive` are deliberately outside the
+# app (the shipped app must never depend on torch), and `packaging` holds build
+# and deploy scripts that are run by path, not imported — tests/test_deploy.py
+# puts that directory on sys.path itself.
+[tool.setuptools.packages.find]
+include = ["nocturne*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # archive/ is the retired training-v1 system, kept for reference and never run.

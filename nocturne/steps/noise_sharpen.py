@@ -34,6 +34,11 @@ _NXT_LEVELS = {"light": 0.75, "medium": 0.90, "strong": 0.95}  # RC-Astro NoiseX
 # noise 36% on the same image, for the same runtime.
 _GX_LEVELS = {"light": 0.7, "medium": 0.9, "strong": 1.0}      # GraXpert AI denoise
 
+# Strength for a Nocturne NR model. Same numbers as steps/ai_denoise.py, where
+# 0.75 was measured: full strength over-smoothed the held-out target to 0.000004
+# background noise against the 128-frame truth's 0.000032.
+_NR_LEVELS = {"light": 0.5, "medium": 0.75, "strong": 1.0}
+
 _TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallback
 
 

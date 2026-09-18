@@ -31,8 +31,14 @@ def test_step_name_and_order():
     assert STEP_NAME["levels"] == "Levels"
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
+    # ai_denoise is LISTED here while its stage stays out of the shipped
+    # pipeline (test_ai_denoise_is_built_but_not_shipped). This list answers
+    # "what came before this step" for a history entry, and an internally
+    # tested or saved AI Denoise entry has to place correctly — a missing id
+    # raises ValueError from .index().
     assert PROCESSING_ORDER == [
-        "background", "color", "tint", "deconvolution", "stretch", "remove_green",
+        "background", "color", "tint", "deconvolution", "ai_denoise", "stretch",
+        "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
     ]
@@ -82,7 +88,10 @@ def test_deconvolution_stage_and_order():
     assert STEP_NAME["noise_sharpen"] == "Noise Reduction"
     i = PROCESSING_ORDER.index("deconvolution")
     assert PROCESSING_ORDER[i - 1] == "tint"
-    assert PROCESSING_ORDER[i + 1] == "stretch"
+    # What this test is really about: deconvolution is LINEAR work, before the
+    # stretch. ai_denoise landed between them in 2026-09-18 — also linear, also
+    # pre-stretch — so the assertion is the relationship, not the adjacency.
+    assert PROCESSING_ORDER.index("deconvolution") < PROCESSING_ORDER.index("stretch")
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")
 
@@ -181,7 +190,15 @@ def test_ai_denoise_is_built_but_not_shipped():
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME, core_stages, path_stages
     assert "ai_denoise" not in [s.id for s in core_stages()]
     assert "ai_denoise" not in [s.id for s in path_stages()]
-    assert "ai_denoise" not in PROCESSING_ORDER
+    # It IS in PROCESSING_ORDER since 2026-09-18, which does not weaken this
+    # guard: that list is "what came before what", and a history entry naming
+    # AI Denoise has to place correctly whether or not the stage is offered.
+    # The guard that matters is the two lines above — the stage is absent from
+    # the pipeline unless a caller asks for it by id, which only happens when a
+    # Nocturne NR model is sitting in ~/.nocturne/models.
+    assert "ai_denoise" in PROCESSING_ORDER
+    assert PROCESSING_ORDER.index("ai_denoise") < PROCESSING_ORDER.index("stretch"), \
+        "the model runs on linear data; after the stretch it cannot"
     assert STEP_NAME["ai_denoise"] == "AI Denoise", "keep the name for old projects"
     from nocturne.steps.factory import make_step
     from nocturne.settings import Settings

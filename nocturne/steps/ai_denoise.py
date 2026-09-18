@@ -33,7 +33,28 @@ class AiDenoiseStep(Step):
         return "medium"
 
     def apply(self, img: AstroImage, option) -> AstroImage:
+        """`option` is a level, or {"engine": "nr:<label>", "level": ...}.
+
+        The dict form runs a model from ~/.nocturne/models — internal testing of
+        the separate Nocturne NR project, never present in a release. See
+        core/denoise_model.EXTERNAL_DIR.
+        """
+        from ..core.denoise_model import external_path
+        label = None
+        if isinstance(option, dict):
+            engine = str(option.get("engine") or "")
+            label = engine[3:] if engine.startswith("nr:") else None
+            option = option.get("level")
         level = option if option in _LEVELS else self.default_option()
+        if label:
+            path = external_path(label)
+            if path is None:
+                # Loud, not a no-op: the whole point of this engine is to answer
+                # a question about ONE model, and silently returning the input
+                # would look like "the model did nothing".
+                raise FileNotFoundError(
+                    f"no model '{label}' in ~/.nocturne/models")
+            return denoise(img, _LEVELS[level], path=path)
         if not available(self._sensor):
             return img          # no model for this camera; a no-op beats an error
         return denoise(img, _LEVELS[level], sensor=self._sensor)
