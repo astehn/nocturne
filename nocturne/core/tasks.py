@@ -15,10 +15,34 @@ class Cancelled(BaseException):
 
 
 def kill_process(proc) -> None:
-    """Terminate a Popen and its process group; never raises."""
+    """Terminate a Popen and its process group; never raises.
+
+    THE GROUP WE ARE IN IS NEVER A TARGET. Every process this app kills was
+    spawned with `start_new_session=True` (job_queue.py), so a real child leads
+    its own group and can never share ours. If the pid we are handed resolves to
+    OUR group, the pid is wrong — and killing that group means killing Nocturne,
+    the shell that launched it, and over SSH the login session itself.
+
+    That is not hypothetical. A test fake carrying `pid = 4242` reached this
+    function on the Linux laptop, 2026-09-18: the number resolved to a real
+    process group and SIGTERMed it, dropping Andreas's SSH connection at the
+    same point in the suite every time. On macOS the same pids are absent or
+    root-owned, so the call failed with EPERM and was swallowed — which is why
+    three thousand tests had passed over it for months.
+
+    pid <= 1 is refused for the same reason: group 1 is init's, never ours.
+    """
+    pid = getattr(proc, "pid", None)
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)     # POSIX: whole group
-    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        if not isinstance(pid, int) or pid <= 1:
+            raise ValueError(f"not a process this app spawned: pid={pid!r}")
+        pgid = os.getpgid(pid)
+        if pgid == os.getpgrp():
+            raise ValueError(
+                f"pid {pid} is in our own process group ({pgid}) — a child of "
+                "ours leads its own session, so this pid is not one of ours")
+        os.killpg(pgid, signal.SIGTERM)                     # POSIX: whole group
+    except (AttributeError, ValueError, ProcessLookupError, PermissionError, OSError):
         try:
             proc.terminate()
         except Exception:
