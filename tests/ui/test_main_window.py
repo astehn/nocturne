@@ -4878,7 +4878,11 @@ def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monk
     cur = win.project.current()
     starless = AstroImage(cur.data * 0.8, is_linear=False, metadata=dict(cur.metadata))
     stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
-    win._sr_layers = (win._sr_sig(cur), starless, stars, "StarX")
+    # Published to the shared store, which is how every surface now shares a
+    # split. Star Reduction used to keep its own and _cached_split reached into
+    # it by name; four surfaces each doing that is what left Saturation's split
+    # invisible to the other three (2026-09-19).
+    win._remember_split(cur, starless, stars, "StarX")
 
     win._open_color_balance()
     assert _RecordingCB.opened[-1]["starless"] is starless, (
@@ -5774,3 +5778,162 @@ def test_no_update_request_when_the_user_has_turned_it_off(qtbot, tmp_path, monk
     qtbot.addWidget(win)
     qtbot.wait(150)
     assert calls == [], "the update check ran against the user's explicit no"
+
+
+# --- one shared split store, 2026-09-19 --------------------------------------
+#
+# Four surfaces each kept their own cache of the same thing and only two were
+# ever consulted, so Saturation could compute a split that Colour Balance, on
+# the identical pixels, then paid for again — 38 s on a drizzled frame.
+
+def test_a_mirrored_image_does_not_match_a_cached_split(qtbot, tmp_path):
+    """THE reason the key carries a content hash.
+
+    shape + mean + std are invariant under a mirror and under a 180 rotate, so
+    with statistics alone a Flip kept the signature identical and the cache
+    handed back the UNflipped split: stars reduced where there are none, colour
+    balanced against the wrong starless frame. Nothing about the result would
+    look like a caching bug, which is what makes it worth a test.
+    """
+    import numpy as np
+    win = _stretched_window(qtbot, tmp_path)
+    cur = win.project.current()
+    mirrored = AstroImage(cur.data[:, ::-1].copy(), is_linear=cur.is_linear,
+                          metadata=dict(cur.metadata))
+    rotated = AstroImage(cur.data[::-1, ::-1].copy(), is_linear=cur.is_linear,
+                         metadata=dict(cur.metadata))
+
+    # the statistics really are identical — the hash is doing all the work here
+    assert np.isclose(cur.data.mean(), mirrored.data.mean())
+    assert np.isclose(cur.data.std(), mirrored.data.std())
+
+    starless = AstroImage(cur.data * 0.8, is_linear=False, metadata=dict(cur.metadata))
+    stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
+    win._remember_split(cur, starless, stars, "StarX")
+
+    assert win._cached_split(cur)[0] is starless, "the exact image must still hit"
+    assert win._cached_split(mirrored) == (None, None), "a flip must miss"
+    assert win._cached_split(rotated) == (None, None), "a 180 rotate must miss"
+
+
+def test_saturations_split_is_visible_to_colour_balance(qtbot, tmp_path, monkeypatch):
+    """The gap that started this. _sat_layers was never consulted by
+    _cached_split, so a nebula-boost split was invisible to every other tool."""
+    import numpy as np
+    import nocturne.ui.color_balance_dialog as cbd
+    _RecordingCB.opened = []
+    monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    win = _stretched_window(qtbot, tmp_path)
+
+    cur = win.project.current()
+    starless = AstroImage(cur.data * 0.7, is_linear=False, metadata=dict(cur.metadata))
+    stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
+    # exactly what _on_sat_split now does
+    win._remember_split(cur, starless, stars, "StarNet2")
+
+    win._open_color_balance()
+    assert _RecordingCB.opened[-1]["starless"] is starless
+
+
+def test_the_store_is_bounded_and_evicts_the_oldest(qtbot, tmp_path):
+    """A starless + stars pair is ~800 MB on a 33 Mpx drizzled frame, so this
+    cache cannot be allowed to grow. The newest entries survive."""
+    import numpy as np
+    from nocturne.ui.main_window import _SPLIT_CACHE_MAX
+    win = _stretched_window(qtbot, tmp_path)
+    cur = win.project.current()
+
+    images = []
+    for i in range(_SPLIT_CACHE_MAX + 2):
+        data = cur.data.copy()
+        data[0, 0, 0] = 0.1 + i * 0.05          # distinct pixels -> distinct signature
+        img = AstroImage(data, is_linear=False, metadata=dict(cur.metadata))
+        images.append(img)
+        win._remember_split(img, AstroImage(data * 0.5, is_linear=False),
+                            AstroImage(np.zeros_like(data), is_linear=False), "StarX")
+
+    assert len(win._splits) == _SPLIT_CACHE_MAX
+    assert win._cached_split(images[-1])[0] is not None, "the newest must survive"
+    assert win._cached_split(images[0]) == (None, None), "the oldest must be evicted"
+
+
+def test_re_publishing_an_image_keeps_it_from_being_evicted(qtbot, tmp_path):
+    """The step the user is standing in must not be dropped because another
+    surface split something else while they were away and came back."""
+    import numpy as np
+    win = _stretched_window(qtbot, tmp_path)
+    cur = win.project.current()
+
+    def _img(seed):
+        data = cur.data.copy()
+        data[0, 0, 0] = seed
+        return AstroImage(data, is_linear=False, metadata=dict(cur.metadata))
+
+    a, b, c = _img(0.11), _img(0.22), _img(0.33)
+    for img in (a, b):
+        win._remember_split(img, AstroImage(img.data * 0.5, is_linear=False),
+                            AstroImage(np.zeros_like(img.data), is_linear=False), "StarX")
+    win._remember_split(a, AstroImage(a.data * 0.5, is_linear=False),
+                        AstroImage(np.zeros_like(a.data), is_linear=False), "StarX")
+    win._remember_split(c, AstroImage(c.data * 0.5, is_linear=False),
+                        AstroImage(np.zeros_like(c.data), is_linear=False), "StarX")
+
+    assert win._cached_split(a)[0] is not None, "re-publishing must refresh its place"
+    assert win._cached_split(b) == (None, None), "b was the oldest and should go"
+
+
+class _RecordingNB:
+    """Stands in for NarrowbandDialog and records what it was handed."""
+    opened: list = []
+
+    def __init__(self, settings, base, parent=None, on_apply=None,
+                 starless=None, stars=None, on_split=None):
+        _RecordingNB.opened.append({"starless": starless, "stars": stars,
+                                    "on_split": on_split, "base": base})
+
+    def exec(self):
+        return 0
+
+
+def test_narrowband_is_given_a_split_someone_else_already_paid_for(qtbot, tmp_path, monkeypatch):
+    """Narrowband consulted no cache at all — it always re-split, even standing
+    on pixels Star Reduction or Saturation had just separated."""
+    import numpy as np
+    import nocturne.ui.narrowband_dialog as nbd
+    _RecordingNB.opened = []
+    monkeypatch.setattr(nbd, "NarrowbandDialog", _RecordingNB)
+    win = _stretched_window(qtbot, tmp_path)
+
+    cur = win.project.current()
+    starless = AstroImage(cur.data * 0.6, is_linear=False, metadata=dict(cur.metadata))
+    stars = AstroImage(np.zeros_like(cur.data), is_linear=False)
+    win._remember_split(cur, starless, stars, "StarNet2")
+
+    win._open_narrowband()
+    assert _RecordingNB.opened, "the dialog was never opened"
+    assert _RecordingNB.opened[-1]["starless"] is starless
+    assert _RecordingNB.opened[-1]["on_split"] is not None, \
+        "and a fresh split must be publishable back"
+
+
+def test_a_narrowband_run_with_no_splitter_does_not_poison_the_store(qtbot, tmp_path):
+    """Its no-splitter and error paths both hand _on_starless (base, None) — an
+    image with every star still in it. Publishing that would be the right SHAPE
+    and completely wrong, and every other surface would then use it silently."""
+    import numpy as np
+    from nocturne.ui.narrowband_dialog import NarrowbandDialog
+    from nocturne.settings import Settings
+
+    published = []
+    data = np.clip(np.random.default_rng(2).normal(0.3, 0.05, (24, 24, 3)), 0, 1).astype(np.float32)
+    base = AstroImage(data, is_linear=False, metadata={})
+    dlg = NarrowbandDialog(Settings(), base, on_split=lambda sl, st: published.append((sl, st)))
+    qtbot.addWidget(dlg)
+
+    dlg._on_starless((base, None))          # the no-splitter path, verbatim
+    assert published == [], "an unsplit image must never enter the shared store"
+
+    starless = AstroImage(data * 0.5, is_linear=False, metadata={})
+    stars = AstroImage(np.zeros_like(data), is_linear=False)
+    dlg._on_starless((starless, stars))     # a real split
+    assert published == [(starless, stars)]

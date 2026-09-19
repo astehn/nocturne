@@ -66,7 +66,7 @@ class NarrowbandDialog(QDialog):
     recolour live, and on Apply the stars are screened back."""
 
     def __init__(self, settings, base: AstroImage, parent=None, on_apply=None,
-                 starless=None, stars=None) -> None:
+                 starless=None, stars=None, on_split=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Narrowband")
         self.resize(1100, 720)
@@ -77,6 +77,9 @@ class NarrowbandDialog(QDialog):
         self._starx_runner = self._default_starx
         self._starless = starless
         self._stars = stars
+        # Hand a fresh split back so the app can cache it for every other
+        # surface, exactly as ColorBalanceDialog does.
+        self._on_split = on_split
         self._prev_starless = None
         self._prev_stars = None
         self._last = None                 # last COMPOSED AstroImage (what the preview shows)
@@ -225,6 +228,12 @@ class NarrowbandDialog(QDialog):
         self.compare_check.setChecked(False)
         self.preview.view.set_compare(None)
         self._starless, self._stars = layers
+        # Only a REAL split is worth sharing. The no-splitter and error paths
+        # both call this with (base, None), and publishing that would poison the
+        # store for every other surface with an image that has all its stars in
+        # it — silently, because it is the right shape.
+        if self._on_split is not None and self._stars is not None:
+            self._on_split(self._starless, self._stars)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.apply_btn.setEnabled(True)

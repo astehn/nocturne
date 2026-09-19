@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 
 import numpy as np
@@ -261,6 +262,12 @@ class _SaveSignals(QObject):
 
 
 
+# Two star splits at most. Each is a starless + stars pair — about 800 MB for a
+# 33 Mpx drizzled frame — so this is a real memory decision, not a free win. Two
+# is still fewer copies than the three per-surface caches it replaced.
+_SPLIT_CACHE_MAX = 2
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
 
@@ -414,7 +421,7 @@ class MainWindow(QMainWindow):
         self._sat_timer = QTimer(self)
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
-        self._sat_layers = None   # (sig, starless, stars, path) once a split lands
+        self._sat_layers = None   # the ACTIVE step's handle into _splits (see _remember_split)
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
         self._lc_timer = QTimer(self)
@@ -458,8 +465,11 @@ class MainWindow(QMainWindow):
         # Star-reduction live-preview: the (slow) StarX split runs once on entering
         # the step (async, cached in _sr_layers); the slider then previews the fast
         # wing-curve reduce_stars instantly via a debounced (90 ms) render.
-        self._sr_layers = None    # (sig, starless, stars, path) once the split lands
-        self._cb_layers = None    # the same, for Colour Balance — see _cached_split
+        self._sr_layers = None    # the ACTIVE step's handle into _splits
+        # THE store. sig -> (starless, stars, tag), shared by Star Reduction,
+        # Saturation, Colour Balance and Narrowband. Insertion-ordered, so the
+        # oldest entry is the one evicted. See _remember_split.
+        self._splits: dict = {}
         self._sr_pending = None
         self._sr_ready = False
         self._sr_timer = QTimer(self)
@@ -1304,8 +1314,15 @@ class MainWindow(QMainWindow):
             self._show_warning("Narrowband needs a colour image.")
             return
         from .narrowband_dialog import NarrowbandDialog
-        NarrowbandDialog(self.settings, self.project.current(), parent=self,
-                         on_apply=self._apply_narrowband).exec()
+        # Shares the one split store, like Colour Balance: opening Narrowband on
+        # an image Star Reduction or Saturation already separated should not pay
+        # for the same pixels twice.
+        base = self.project.current()
+        starless, stars = self._cached_split(base)
+        NarrowbandDialog(self.settings, base, parent=self,
+                         on_apply=self._apply_narrowband,
+                         starless=starless, stars=stars,
+                         on_split=lambda sl, st: self._remember_split(base, sl, st)).exec()
 
     def _apply_narrowband(self, result, params) -> None:
         if self.project is None or self._busy:
@@ -1334,23 +1351,45 @@ class MainWindow(QMainWindow):
                                 starless=starless, stars=stars,
                                 on_split=lambda sl, st: self._remember_split(base, sl, st)).exec()
 
-    def _cached_split(self, img):
-        """A star split already computed for this exact image, or (None, None).
+    def _cached_layers(self, img):
+        """(starless, stars, tag) already computed for these exact pixels, or None.
 
-        Star Reduction's cache is consulted too: it is the same split of the same
-        pixels, and paying for StarX twice because two tools each kept their own
-        store would be pure waste. Keyed on _sr_sig, so any upstream change to
-        the image misses — a stale split is the same shape as a good one and
-        would recolour against the wrong layer with nothing to show for it.
+        ONE store, shared by every surface that needs a split of the whole
+        image: Star Reduction, Saturation's nebula boost, Colour Balance and
+        Narrowband. Each of those used to keep its own, and only two of the
+        three were ever consulted — so Saturation could compute a split that
+        Colour Balance, looking at the identical pixels, would then pay for
+        again. On a drizzled frame that is 38 seconds for pixels already in
+        memory.
+
+        Upscale Crop is deliberately NOT a client: it splits a CROP of the
+        image, so its pixels differ by construction and a full-frame entry
+        would be wrong for it rather than merely useless.
+
+        Keyed on _sr_sig, so any upstream change misses — a stale split is the
+        same shape as a good one and would work against the wrong layers with
+        nothing to show for it.
+        """
+        return self._splits.get(self._sr_sig(img))
+
+    def _cached_split(self, img):
+        """Just the two layers, for callers that do not care which tool ran."""
+        hit = self._cached_layers(img)
+        return (hit[0], hit[1]) if hit else (None, None)
+
+    def _remember_split(self, img, starless, stars, tag: str = "") -> None:
+        """Publish a split so every other surface can use it.
+
+        Bounded, because these are big: starless + stars for a 33 Mpx frame is
+        about 800 MB. Two entries is still LESS than the three independent
+        caches this replaces, and one entry would evict the step the user is
+        standing in as soon as another surface split something else.
         """
         sig = self._sr_sig(img)
-        for entry in (self._cb_layers, self._sr_layers):
-            if entry and entry[0] == sig:
-                return entry[1], entry[2]
-        return None, None
-
-    def _remember_split(self, img, starless, stars) -> None:
-        self._cb_layers = (self._sr_sig(img), starless, stars)
+        self._splits.pop(sig, None)          # re-insert so it counts as newest
+        self._splits[sig] = (starless, stars, tag)
+        while len(self._splits) > _SPLIT_CACHE_MAX:
+            self._splits.pop(next(iter(self._splits)))
 
     def _apply_color_balance(self, result, opts) -> None:
         """Appends, like Trim. A finishing tool must never truncate the history
@@ -4198,7 +4237,10 @@ class MainWindow(QMainWindow):
         if nebula > 0.0 and not self._busy:
             base = self._preview_base("saturation")
             sig = self._sr_sig(base)
-            if not (self._sat_layers and self._sat_layers[0] == sig):
+            hit = self._cached_layers(base)
+            if hit:
+                self._sat_layers = (sig, hit[0], hit[1], hit[2])
+            else:
                 self._panel.neb_status.setText("Separating stars…")
                 # Step-entry preparation: panel only, no bar over the picture.
                 self._run_busy(lambda: self._split_tagged(base),
@@ -4212,6 +4254,7 @@ class MainWindow(QMainWindow):
         if self.current_stage_id() != "saturation":
             return
         self._sat_layers = (sig, layers[0], layers[1], layers[2])
+        self._remember_split(self._sr_base(), layers[0], layers[1], layers[2])
         if hasattr(self._panel, "neb_status"):
             self._panel.neb_status.setText(self._split_note(layers[2]))
         self._render_saturation_preview()
@@ -4520,10 +4563,25 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _sr_sig(img):
         """A cheap fingerprint of the base image so a cached split can be reused
-        when the user re-enters the step without changing the upstream pipeline."""
-        return (img.data.shape,
-                round(float(img.data.mean()), 6),
-                round(float(img.data.std()), 6))
+        when the user re-enters the step without changing the upstream pipeline.
+
+        The hash is not decoration. shape + mean + std alone are INVARIANT under
+        a mirror and under a 180 rotate — measured 2026-09-19, an image and its
+        flip produce byte-identical signatures — so after a Flip the cache would
+        hand back the unflipped split and every consumer would work against
+        mirrored layers: stars reduced where there are none, colour balanced
+        against the wrong starless frame. Nothing about the result would look
+        like a caching bug.
+
+        Every 8th pixel in each axis: ~2 MB of a 33 Mpx frame, about a
+        millisecond, and it cannot survive a reordering of the image.
+        """
+        data = img.data
+        sample = np.ascontiguousarray(data[::8, ::8])
+        return (data.shape,
+                round(float(data.mean()), 6),
+                round(float(data.std()), 6),
+                hashlib.blake2b(sample, digest_size=16).hexdigest())
 
     def _solve_sig(self):
         """Framing fingerprint for the plate-solve cache: image shape + the
@@ -4555,8 +4613,11 @@ class MainWindow(QMainWindow):
             panel.sr_status.setText(_FREE_STAR_NOTE)
         base = self._sr_base()
         sig = self._sr_sig(base)
-        if self._sr_layers and self._sr_layers[0] == sig:
-            # Already split for this exact base — reuse it, no rerun.
+        hit = self._cached_layers(base)
+        if hit:
+            # Already split for these exact pixels — by this step on a previous
+            # visit, or by Saturation, Colour Balance or Narrowband. No rerun.
+            self._sr_layers = (sig, hit[0], hit[1], hit[2])
             self._sr_ready = True
             if hasattr(panel, "sr_slider"):
                 panel.sr_slider.setEnabled(True)
@@ -4580,6 +4641,7 @@ class MainWindow(QMainWindow):
         if self.current_stage_id() != "star_reduction":
             return
         self._sr_layers = (sig, layers[0], layers[1], layers[2])
+        self._remember_split(self._sr_base(), layers[0], layers[1], layers[2])
         self._sr_ready = True
         if hasattr(self._panel, "sr_slider"):
             self._panel.sr_slider.setEnabled(True)
