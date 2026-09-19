@@ -109,25 +109,30 @@ def test_the_stars_layer_degreen_touches_only_pixels_that_READ_green():
 
     The step used to confine itself to a star-neighbourhood mask because its
     operator was SCNR, which removes green wherever green exceeds the red/blue
-    average — true of cyan and yellow-green too. Measured on two real drizzled
-    masters (2026-09-13), only 4.0% (NGC 281) and 5.6% (IC 1396A) of the green
-    SCNR removed came from pixels whose hue actually reads green; on NGC 281
-    49.5% of it came from CYAN. So the mask was fencing off a badly aimed
-    operator rather than aiming a good one.
+    average. Selecting by hue is self-aiming, so the guarantee is no longer
+    spatial ("only near stars") but chromatic.
 
-    Selecting by hue is self-aiming, so the guarantee is no longer spatial
-    ("only near stars") but chromatic. Three separate things have to hold and
-    each swatch below is chosen so that exactly ONE of them protects it:
+    REWRITTEN 2026-09-19 when the band widened from green to green-through-cyan.
+    The old swatches were chosen to sit on the OLD edges, so after the widening
+    four of them landed inside the new plateau together and the test stopped
+    distinguishing anything — it still passed on three of the four mechanisms
+    by accident. These sit on the new boundaries instead.
 
-      * the green-is-max gate      (magenta, violet — inside the |t| band, but
-                                    green is not their largest channel)
-      * the band edges             (hue 170 just outside; hue 150 half in)
-      * Rec.709 luma preservation  (the green swatch's exact landing value)
+    Three separate things have to hold, and each swatch is chosen so that
+    exactly ONE of them protects it:
 
-    Picked that way on purpose. A first version used a plain cyan and a plain
-    yellow, and BOTH mechanisms rejected each of them — so widening the band
-    and deleting the gate were each invisible, and two of three mutations
-    passed against a test that looked thorough.
+      * `g >= r`, which protects WARM stars  (orange, magenta — inside no band
+                                              because red is their largest
+                                              channel, and that is the only
+                                              thing saving them)
+      * the cool edge at 190-214 deg         (202 half in; 220 just outside —
+                                              this is what keeps blue stars)
+      * Rec.709 luma preservation            (the green swatch's exact landing)
+
+    The TEAL swatch is the point of the whole change: it scored 0.0 before
+    2026-09-19 and must score 1.0. Andreas, after three passes at this tool:
+    *"the tool still does nothing for my images"* — teal is what his stars
+    actually are, and the band did not reach it.
     """
     import numpy as np
     from nocturne.core.image import AstroImage
@@ -137,14 +142,14 @@ def test_the_stars_layer_degreen_touches_only_pixels_that_READ_green():
     # fixture whose numbers commute cannot tell a correct hue rule from one
     # with red and blue swapped.
     swatches = [
-        ("green   hue 120", (0.21, 0.83, 0.21), 1.0),    # dead centre of the band
-        ("grn-cyan hue 150", (0.05, 0.75, 0.40), 0.5),   # t=+0.5, half weight
-        ("grn-cyan hue 170", (0.05, 0.75, 0.633), 0.0),  # t=+0.833, just outside
-        ("yel-grn hue  90", (0.40, 0.75, 0.05), 0.5),    # t=-0.5, the mirror
-        ("magenta hue 330", (0.90, 0.50, 0.70), 0.0),    # |t|=0.5 but red is max
-        ("violet  hue 260", (0.70, 0.60, 0.90), 0.0),    # |t|=0.667 but blue is max
-        ("cyan    hue 180", (0.11, 0.80, 0.80), 0.0),
-        ("blue    hue 240", (0.18, 0.31, 0.88), 0.0),
+        ("green    hue 120", (0.21, 0.83, 0.21), 1.0),   # dead centre
+        ("yel-grn  hue  90", (0.40, 0.75, 0.05), 1.0),   # warm end of the plateau
+        ("TEAL     hue 185", (0.05, 0.69, 0.75), 1.0),   # THE defect: 0.0 before this change
+        ("cool ramp hue 202", (0.10, 0.48, 0.70), 0.5),  # half in, on the cool ramp
+        ("just out hue 220", (0.10, 0.30, 0.70), 0.0),   # outside: blue stars start here
+        ("blue     hue 229", (0.18, 0.31, 0.88), 0.0),   # a real blue star, untouched
+        ("magenta  hue 330", (0.90, 0.50, 0.70), 0.0),   # red is max -> the warm guard
+        ("orange   hue  26", (0.92, 0.46, 0.12), 0.0),   # red is max -> the warm guard
     ]
     stars = np.zeros((1, len(swatches), 3), np.float32)
     for i, (_n, rgb, _w) in enumerate(swatches):

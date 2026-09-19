@@ -60,9 +60,14 @@ def test_repeat_application_settles_greens_but_keeps_eroding_the_band_edges():
 
     Desaturating toward grey preserves HUE, so a pixel at full weight lands on
     neutral and has no hue left to match on the next pass (stable), while one
-    in the ramp keeps its green hue at lower saturation and gets pulled a
-    further fraction of the way each time. Measured: a hue-150 pixel goes
-    0.933 -> 0.528 -> 0.283 -> 0.146 saturation over four applications.
+    in the ramp keeps its hue at lower saturation and gets pulled a further
+    fraction of the way each time.
+
+    The ramp pixel was hue 150 until 2026-09-19, when the band widened to reach
+    cyan and hue 150 became plateau — full weight, neutral in one pass, nothing
+    left to erode. The property under test did not change; only where the ramp
+    is. It now sits at hue 202, between the 190 plateau edge and the 214 cutoff
+    that keeps blue stars.
 
     That is reachable — Auto Enhance's De-green Stars plus a manual one are two
     separate history entries, and a recipe can replay onto an image that
@@ -76,7 +81,7 @@ def test_repeat_application_settles_greens_but_keeps_eroding_the_band_edges():
     assert np.allclose(_desaturate_greens(once, 1.0), once, atol=1e-6), \
         "a pixel already on neutral must never move again"
 
-    edge = np.array([[[0.05, 0.75, 0.40]]], np.float32)     # hue 150, weight 0.5
+    edge = np.array([[[0.10, 0.48, 0.70]]], np.float32)     # hue 202, weight 0.5
     def sat(a):
         mx, mn = float(a.max()), float(a.min())
         return (mx - mn) / max(mx, 1e-9)
@@ -98,3 +103,45 @@ def test_degreening_leaves_a_fourth_channel_alone():
     out = _desaturate_greens(data, 1.0)
     assert np.allclose(out[..., 3], 0.55), "alpha must be untouched"
     assert abs(float(out[0, 0, 0] - out[0, 0, 1])) < 1e-6, "...and RGB still de-greened"
+
+
+def test_teal_stars_are_drained_and_blue_stars_are_not():
+    """The defect this tool exists for, and the star colour it must never touch.
+
+    Andreas, after three passes at De-green Stars: *"the tool still does nothing
+    for my images."* It was working correctly and finding almost nothing,
+    because his stars are not green — they are TEAL, and the band ran 75-165 deg
+    with a `g >= b` guard, so cyan at 180 deg scored exactly zero by
+    construction.
+
+    Both halves are pinned here because they are in tension: every widening that
+    reaches teal moves toward blue, and blue stars are real. Stars are never
+    green and never cyan — the blackbody locus runs red-orange-yellow-white-blue
+    and passes through neither — which is exactly why one is safe to drain and
+    the other is not.
+    """
+    from nocturne.core.color import _green_weight
+
+    def w(rgb):
+        return float(_green_weight(np.array([[rgb]], np.float32))[0, 0])
+
+    # the defect
+    assert w((0.05, 0.69, 0.75)) == 1.0, "a teal star must be fully drained"
+    assert w((0.11, 0.80, 0.80)) == 1.0, "and so must pure cyan"
+    # the colours that must survive, each for a different reason
+    assert w((0.18, 0.31, 0.88)) == 0.0, "a blue star is real — the band stops short"
+    assert w((0.10, 0.30, 0.70)) == 0.0, "and so is the blue side of the cutoff"
+    assert w((0.92, 0.46, 0.12)) == 0.0, "orange is protected by g >= r, not by the band"
+    assert w((0.90, 0.85, 0.35)) == 0.0, "so is yellow"
+    assert w((0.9, 0.9, 0.9)) == 0.0, "and a neutral star has no hue to match"
+
+
+def test_the_band_cannot_be_widened_into_blue_stars_by_accident():
+    """A guard on the constant itself. The band reaching blue is the one way
+    this tool can damage real star colour, and it is a plausible edit: every
+    round of "it still does not catch my stars" pushes the cutoff outward."""
+    from nocturne.core.color import _GREEN_BAND
+
+    assert _GREEN_BAND[3] <= 220.0, \
+        "past ~220 deg the band starts draining genuinely blue stars"
+    assert _GREEN_BAND[0] < _GREEN_BAND[1] < _GREEN_BAND[2] < _GREEN_BAND[3]
