@@ -172,3 +172,44 @@ def test_the_star_floor_spares_faint_noise_and_keeps_bright_stars():
 
     # and with no floor the faint pixel IS treated — otherwise this pins nothing
     assert not np.allclose(_desaturate_greens(data, 1.0)[0, 1], faint)
+
+
+def test_pixels_with_no_star_signal_are_left_exactly_alone():
+    """The invariant behind the floor, and the answer to a scare of my own making.
+
+    Andreas reported the background going red, and a first measurement agreed:
+    +0.90 of an 8-bit level on his NGC 281 master. That measurement called
+    everything outside the brightest 0.5% of the stars layer "background" —
+    which on a dense field is 94.5% of the frame and still contains most of the
+    stars. Defining background as "the stars layer has no signal here" instead,
+    the shift is +0.00 on NGC 281, NGC 7635 and M 45 alike.
+
+    So the step does not tint the sky; what reads as background changing is
+    thousands of faint stars losing their teal. A neutrality correction was
+    written for the imagined defect and reverted — this test is what stays, so
+    the claim is checked rather than remembered.
+    """
+    from nocturne.core.color import remove_green_fringe
+    from nocturne.core.image import AstroImage
+
+    rng = np.random.default_rng(11)
+    h = w = 48
+    # a cool-leaning sky, the condition that produced the scare
+    sky = np.stack([rng.normal(0.18, 0.01, (h, w)),
+                    rng.normal(0.20, 0.01, (h, w)),
+                    rng.normal(0.21, 0.01, (h, w))], -1).astype(np.float32)
+    starless = AstroImage(np.clip(sky, 0, 1), is_linear=False)
+
+    st = np.zeros((h, w, 3), np.float32)
+    st[24, 24] = (0.05, 0.69, 0.75)          # one bright teal star, and nothing else
+    stars = AstroImage(st, is_linear=False)
+
+    plain = remove_green_fringe(starless, stars, 0.0).data
+    out = remove_green_fringe(starless, stars, 1.0).data
+
+    empty = np.ones((h, w), bool)
+    empty[23:26, 23:26] = False              # everywhere the stars layer is zero
+    assert np.allclose(out[empty], plain[empty], atol=1e-6), \
+        "a pixel with no star signal must come through the step untouched"
+    assert not np.allclose(out[24, 24], plain[24, 24]), \
+        "and the one star must still be drained, or this proves nothing"
