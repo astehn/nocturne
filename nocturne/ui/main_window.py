@@ -4419,15 +4419,15 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         panel = self._panel
-        if not rcastro_valid(self.settings) and hasattr(panel, "fringe_status"):
+        has_split = preferred_splitter(self.settings) is not None
+        if not has_split and hasattr(panel, "fringe_status"):
             panel.fringe_status.setText(_FREE_STAR_NOTE)
-        # (fall through — _fringe_prepare runs the real split with RC-Astro,
-        # or just builds a star mask without it; the busy label below has to
-        # match whichever one is actually about to happen.)
+        # (fall through — _fringe_prepare runs a real split when ANY splitter is
+        # configured, or just builds a star mask without one; the busy label
+        # below has to match whichever one is actually about to happen.)
         base = self._fringe_base()
         sig = self._sr_sig(base)
-        has_rc = rcastro_valid(self.settings)
-        busy_label = "Separating stars…" if has_rc else "Building star mask…"
+        busy_label = "Separating stars…" if has_split else "Building star mask…"
         if self._fringe_layers and self._fringe_layers[0] == sig:
             self._fringe_ready = True
             if hasattr(panel, "fringe_status"):
@@ -4442,7 +4442,7 @@ class MainWindow(QMainWindow):
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
                        busy_label,
-                       "Star separation failed" if has_rc else "Star mask failed",
+                       "Star separation failed" if has_split else "Star mask failed",
                        over_image=False)      # step-entry preparation
 
     def _fringe_prepare(self, base):
@@ -4450,12 +4450,24 @@ class MainWindow(QMainWindow):
         clean (starless, stars) split we can de-green cleanly; without RC-Astro
         the split can't isolate a broad chromatic halo, so we cache a widened
         star-neighbourhood mask and de-green the image in place inside it."""
-        if rcastro_valid(self.settings):
-            starless, stars = self._remove_stars(base)
-            return ("split", starless, stars, None)
+        # preferred_splitter, NOT rcastro_valid — this was the last surface still
+        # asking for RC-Astro by name (2026-09-19). The consequence was not a
+        # subtle quality difference: removing RC-Astro to try StarNet2 silently
+        # switched this step to the star-MASK path, which is a different
+        # operation on the whole image. Measured on a real NGC 7635 master, the
+        # committed change is 0.000863 mean absolute through the split and
+        # 0.000145 through the mask — which is why the step read as "does not
+        # really do anything".
+        if preferred_splitter(self.settings) is not None:
+            hit = self._cached_layers(base)          # the shared store, 5th client
+            if hit:
+                return ("split", hit[0], hit[1], hit[2])
+            starless, stars, tag = self._split_tagged(base)
+            self._remember_split(base, starless, stars, tag)
+            return ("split", starless, stars, tag)
         # The mask is built HERE, off-thread and once, not in _fringe_result:
         # star_mask on a 4331x3464 frame is not a per-toggle cost.
-        return ("mask", base, star_mask(base, FRINGE_MASK_SCALE), None)
+        return ("mask", base, star_mask(base, FRINGE_MASK_SCALE), "")
 
     def _fringe_status_text(self) -> str:
         """What the panel says once the layers are ready.
@@ -4464,12 +4476,14 @@ class MainWindow(QMainWindow):
         implementations behave differently enough that "which one ran" is part
         of reading the result, not a detail.
         """
-        if self._fringe_path_label() == "StarX":
+        label = self._fringe_path_label()
+        if label and label != "mask":
             # Says "nothing to remove" out loud because that is the common
             # case: only pixels that read green move, and a clean stack often
             # has none. Without this the honest result is indistinguishable
             # from a broken step — which is exactly how it read.
-            return ("Using RC-Astro (StarX): only the stars layer is touched, "
+            tool = {"StarX": "RC-Astro (StarX)", "StarNet2": "StarNet2"}.get(label, label)
+            return (f"Using {tool}: only the stars layer is touched, "
                     "and only where it is actually green. No visible change "
                     "means there was no green to remove.")
         # NOT _FREE_STAR_NOTE, which is shared with Star Reduction and
@@ -4477,8 +4491,8 @@ class MainWindow(QMainWindow):
         # Here it is a different operation: the whole image is de-greened
         # inside a star mask, so the sky moves too.
         return ("Using free star detection — de-greens the whole image inside a "
-                "star mask, so background colour shifts too. Set RC-Astro "
-                "(StarX) in Settings to de-green only the stars.")
+                "star mask, so background colour shifts too. Set StarNet2 "
+                "(free) or RC-Astro in Settings to de-green only the stars.")
 
     def _fringe_path_label(self) -> str:
         """Which of the two quite different implementations actually ran.
@@ -4492,7 +4506,12 @@ class MainWindow(QMainWindow):
         """
         if not self._fringe_layers:
             return ""
-        return "StarX" if self._fringe_layers[1] == "split" else "mask"
+        if self._fringe_layers[1] != "split":
+            return "mask"
+        # The tool that actually ran — "StarX", "StarNet2" or "free" — not the
+        # word "StarX" for all of them, which is what it said when RC-Astro was
+        # the only splitter this step could reach.
+        return self._fringe_layers[4] or "StarX"
 
     def _fringe_result(self, strength) -> AstroImage:
         _, kind, a, b, _c = self._fringe_layers
