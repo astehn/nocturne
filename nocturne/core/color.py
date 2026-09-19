@@ -234,16 +234,40 @@ def _desaturate_greens(data: np.ndarray, strength: float,
         return out
     rgb = out[..., :3]
     w = _green_weight(rgb) * float(strength)
-    # Rec.709 luma for the floor as well as for the landing colour, so "how
-    # bright is this pixel" has exactly one meaning in this function.
-    lum1 = rgb @ _LUM_WEIGHTS.astype(np.float32)
+    # Rec.709 luma for the FLOOR — the question there is "is this bright enough
+    # to be a star", which is perceptual. The landing colour below uses HSL
+    # lightness instead; the two answer different questions and differ on
+    # purpose.
     if floor > 0.0:
-        w = w * (lum1 >= float(floor))
+        w = w * (rgb @ _LUM_WEIGHTS.astype(np.float32) >= float(floor))
     w = w[..., None]
-    # Rec.709 luma, so a de-greened fringe keeps the brightness it had and star
-    # size/brightness does not move — "green becomes white", not "green is
-    # deleted" (which is what SCNR's clamp to the red/blue average does).
-    out[..., :3] = (1.0 - w) * rgb + w * lum1[..., None]
+    # HSL LIGHTNESS, (max + min) / 2 — not Rec.709 luma, which is what this did
+    # until 2026-09-19 and which was ADDING RED TO THE SKY.
+    #
+    # Luma weights green at 0.7152, so a teal pixel's luma is dominated by its
+    # large green channel: neutralising (0.05, 0.69, 0.75) toward luma lands it
+    # at 0.558 and RAISES RED BY +0.508. Do that to the thousands of faint teal
+    # stars in a dense field and the frame gains red light. Measured on his
+    # NGC 281 master, background change in 8-bit levels:
+    #
+    #     toward luma  R +0.71  G -0.19  B -0.18   net +0.34   (adds light)
+    #     toward HSL   R +0.48  G -0.41  B -0.40   net -0.33   (removes light)
+    #
+    # Andreas: *"much of the background moves towards red and I actually like
+    # the before better"* — then he did the same job in Photoshop with a
+    # Hue/Saturation layer on the stars and got no red at all. That layer
+    # desaturates toward HSL lightness. Replicating his exact adjustment
+    # (Cyans, -75) gives R +0.46 G -0.36 B -0.40 — the same shape as the second
+    # line above and nothing like the first. The defect was the TARGET, not the
+    # band, the floor, or the pipeline order.
+    #
+    # The old comment justified luma as "green becomes white, not deleted", and
+    # that still holds against the other extreme: blending to the MINIMUM
+    # channel never raises red at all but drags a teal star to near black,
+    # deleting it. HSL lightness sits between — the star stays, at the lightness
+    # it had, without red being invented to hold its luma constant.
+    mid = ((rgb.max(axis=-1) + rgb.min(axis=-1)) / 2.0)[..., None]
+    out[..., :3] = (1.0 - w) * rgb + w * mid
     return out
 
 
