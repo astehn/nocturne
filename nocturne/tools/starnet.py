@@ -21,18 +21,46 @@ separate Nocturne NR project however convenient a labeller it would make.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 
 import numpy as np
 import tifffile
 
 from ..core.image import AstroImage
+from ..core.tasks import report_progress
 from .base import run_cli
 
 # 16-bit, because that is what StarNet2 writes by default and what the round
 # trip should preserve. 8-bit (its --eight) would quantise the faint end that
 # every later step works in.
 _MAX16 = 65535.0
+
+# StarNet2 reports per-tile progress as `Working: 11.1%`, and the updates are
+# separated by CARRIAGE RETURNS so that a terminal overwrites one line in place.
+# That looks like it would defeat line streaming, and it does not: Python's
+# universal-newline mode treats a lone \r as a line ending, so run_cli hands
+# each update over AS IT HAPPENS. Measured 2026-09-19 — updates arrived at
+# 0.07 s, 0.12 s, 0.17 s rather than in one lump at the end.
+_PROGRESS_RE = re.compile(r"\bWorking:\s*(\d{1,3}(?:\.\d+)?)\s*%")
+
+
+def parse_progress(line: str):
+    """The percentage in a StarNet2 progress line, or None.
+
+    Anchored on the word, like GraXpert's parser, so a percentage that is not
+    progress cannot be mistaken for one — the non-quiet output also prints
+    ranges and percentages of its own.
+
+    Deliberately NOT `--machine-progress`, which reports the same tile counts as
+    JSON Lines. That flag exists only in 2.6.2 and later; both of Andreas's
+    macOS installs are 2.5.2, whose argument parser REJECTS an unknown flag, so
+    using it would need a capability probe and would fail every split on a
+    machine that has the older build. `Working: N%` is emitted by every version
+    with no flag at all.
+    """
+    m = _PROGRESS_RE.search(line or "")
+    return float(m.group(1)) if m else None
 
 
 def _write_tiff(img: AstroImage, path: str) -> None:
@@ -74,10 +102,25 @@ class StarNet:
         src = os.path.join(tmp, "in.tif")
         starless = os.path.join(tmp, "starless.tif")
         stars = os.path.join(tmp, "stars.tif")
+
+        def _line(text: str) -> None:
+            pct = parse_progress(text)
+            if pct is not None:
+                report_progress(int(round(pct)), 100)
+
         try:
             _write_tiff(img, src)
+            # NO --quiet. It was here from the first version, and it is the
+            # whole reason a split showed nothing: measured 2026-09-19, with
+            # --quiet StarNet2 prints a single newline and NOTHING else, so
+            # there was never any progress to miss — the app was asking for the
+            # silence. Without it the tool reports every tile. The step is
+            # 2.9 s on a master and ~38 s on a drizzled frame (33 Mpx, and time
+            # is linear in area), six times that on the Linux CPU build, which
+            # is far too long to show nothing. Its routine output also lands in
+            # ToolError on a failure, so a broken run now says more, not less.
             runner([self.binary_path, "--input", src, "--output", starless,
-                    "--unscreen", stars, "--quiet"])
+                    "--unscreen", stars], on_line=_line)
             if not (os.path.isfile(starless) and os.path.isfile(stars)):
                 raise RuntimeError(
                     "StarNet2 finished without writing both outputs — the "

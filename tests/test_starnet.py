@@ -93,3 +93,90 @@ def test_rc_astro_still_wins_when_both_are_installed(tmp_path):
     assert isinstance(_splitter(both), RCAstro)
     assert isinstance(_splitter(Settings(starnet_path=str(sn))), StarNet)
     assert _splitter(Settings()) is None, "nothing installed falls back to core/starless"
+
+
+# --- progress, added 2026-09-19 ---------------------------------------------
+#
+# A split is 2.9 s on a master and ~38 s on a drizzled frame, six times that on
+# the Linux CPU build, and it showed NOTHING throughout. Andreas: *"no progress
+# indicators at all when separating stars with StarNet2"*.
+
+@pytest.mark.parametrize("line, expected", [
+    ("Working: 11.1%", 11.1),
+    ("Working: 100.0%", 100.0),
+    ("Working:  22.2 %", 22.2),
+    ("Working: 5%", 5.0),
+    ("Working: Done! ", None),
+    ("Reading input from /tmp/in.tif...", None),
+    ("", None),
+    (None, None),
+])
+def test_parse_progress_reads_a_percentage_only_when_it_is_progress(line, expected):
+    from nocturne.tools.starnet import parse_progress
+    assert parse_progress(line) == expected
+
+
+def test_a_percentage_that_is_not_progress_is_not_mistaken_for_one():
+    """The non-quiet output is full of other numbers — it prints value ranges
+    with their own percentages. Anchoring on the word is what keeps
+    `below_zero=0 (0%)` from reporting the split as 0% complete forever."""
+    from nocturne.tools.starnet import parse_progress
+    assert parse_progress("physical_range=[3770,56844] below_zero=0 (0%)") is None
+    assert parse_progress("above_one=0 (0%) type_normalized_range=[0.05,0.86]") is None
+
+
+def test_it_does_not_ask_the_tool_to_be_quiet():
+    """The regression that started this. `--quiet` was passed from the first
+    version, and MEASURED 2026-09-19 it makes StarNet2 print one newline and
+    nothing else — so there was never any progress to miss. The silence was
+    requested, not absent.
+
+    Asserted as "the flag is not sent" rather than "some progress arrived",
+    because a fake runner can always be made to emit a line; only the argv says
+    what the real tool would have been told."""
+    import tifffile
+    seen = {}
+
+    def fake_runner(args, **kw):
+        seen["args"] = args
+        out = args[args.index("--output") + 1]
+        stars = args[args.index("--unscreen") + 1]
+        src = tifffile.imread(args[args.index("--input") + 1])
+        tifffile.imwrite(out, src)
+        tifffile.imwrite(stars, np.zeros_like(src))
+
+    StarNet("/fake").remove_stars(_img(), runner=fake_runner)
+    assert "--quiet" not in seen["args"], \
+        "--quiet silences the progress output entirely; that was the bug"
+
+
+def test_progress_reaches_the_cancel_token_sink_as_the_tool_prints_it():
+    """End of the chain: the tool's line -> parse -> report_progress -> the
+    ambient token's sink, which is what the busy panel draws. Reported as a
+    percentage of 100, matching GraXpert, so one bar serves both."""
+    import tifffile
+    from nocturne.core.tasks import CancelToken, set_ambient, clear_ambient
+
+    got = []
+    token = CancelToken()
+    token.on_progress = lambda done, total: got.append((done, total))
+
+    def fake_runner(args, on_line=None, **kw):
+        # exactly what the real tool emits, carriage returns and all
+        for text in ("Reading input from in.tif...", "Working: 11.1%",
+                     "Working: 55.6%", "Working: 100.0%", "Working: Done! "):
+            on_line(text)
+        out = args[args.index("--output") + 1]
+        stars = args[args.index("--unscreen") + 1]
+        src = tifffile.imread(args[args.index("--input") + 1])
+        tifffile.imwrite(out, src)
+        tifffile.imwrite(stars, np.zeros_like(src))
+
+    set_ambient(token)
+    try:
+        StarNet("/fake").remove_stars(_img(), runner=fake_runner)
+    finally:
+        clear_ambient()
+
+    assert got == [(11, 100), (56, 100), (100, 100)], \
+        "every tile update should reach the sink, and nothing else should"

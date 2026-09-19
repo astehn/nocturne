@@ -114,3 +114,44 @@ def _tiny_image():
     import numpy as np
     from nocturne.core.image import AstroImage
     return AstroImage(np.zeros((4, 4, 3), np.float32), is_linear=False, metadata={})
+
+
+# --- carriage-return progress, added 2026-09-19 ------------------------------
+
+def test_a_tool_that_separates_updates_with_carriage_returns_still_streams():
+    """StarNet2 writes `Working: 11.1%\\r` so a terminal overwrites one line in
+    place, which looks like it would defeat line streaming.
+
+    It does not, and this pins the reason: the pipe is opened in text mode with
+    universal newlines, where a lone \\r IS a line ending. The whole StarNet2
+    progress design rests on that, and it is a property of how run_cli opens the
+    pipe — someone passing newline='' here would silently turn every split back
+    into one lump of output at the end, with no other symptom.
+    """
+    body = ("import sys,time\n"
+            "for p in ('11.1','55.6','100.0'):\n"
+            "    sys.stdout.write('Working: %s%%\\r' % p); sys.stdout.flush()\n"
+            "sys.stdout.write('Working: Done! \\n')\n")
+    seen = []
+    run_cli([sys.executable, "-c", body], on_line=seen.append)
+    assert seen == ["Working: 11.1%", "Working: 55.6%", "Working: 100.0%",
+                    "Working: Done! "], \
+        "carriage-return-separated updates must arrive as separate lines"
+
+
+def test_a_sink_that_raises_loses_its_progress_not_the_run():
+    """`on_line` is documented as "a reporting failure must not kill the run",
+    and that guarantee had no test. It is load-bearing: report_progress is
+    called from deep inside tool code on a worker thread, and a UI sink that
+    raises there would otherwise abort a split — losing the user's image to a
+    failure in the thing drawing the progress bar.
+    """
+    token = CancelToken()
+    token.on_progress = lambda done, total: 1 / 0
+    set_ambient(token)
+    try:
+        # raises through report_progress, exactly as a broken UI sink would
+        run_cli(_emitter(["Progress: 50%"]),
+                on_line=lambda _l: report_progress(50, 100))
+    finally:
+        clear_ambient()
