@@ -543,26 +543,51 @@ def test_noise_no_dropdown_when_not_both_installed(qtbot):
     assert captured == [{"engine": "rcastro", "level": "light"}]
 
 
-def test_green_fringe_panel_gated_and_wired(qtbot):
+def test_green_fringe_panel_has_an_amount_slider_defaulting_to_full(qtbot):
+    """An Amount slider, added 2026-09-19 — and it reverses a decision made on
+    2026-09-13, so the distinction is worth pinning.
+
+    The rejected control was a CHECKBOX, and Andreas was right about it: *"since
+    its only a one step process would it simply be enough to press apply...
+    there is nothing to choose."* That was about WHETHER to de-green, and it
+    still stands — the hue is not a choice, since no star is green or cyan.
+
+    HOW FAR became a choice when he set Photoshop's Hue/Saturation to -75 rather
+    than -100 and preferred it, and when the band widened to cyan and took the
+    step from ~3% of pixels to ~20%. The slider is exactly Photoshop's
+    Saturation: both scale how far a selected pixel travels toward neutral.
+
+    Defaults to 100 so a single press is still the full de-green, which is the
+    behaviour he approved.
+    """
+    from PySide6.QtWidgets import QCheckBox
+
     applied = {}
+    changed = []
     w = build_panel(_stage("green_fringe"),
-                    on_fringe_apply=lambda s: applied.__setitem__("s", s))
+                    on_fringe_apply=lambda s: applied.__setitem__("s", s),
+                    on_fringe_change=changed.append)
     qtbot.addWidget(w)
     assert w.panel_kind == "green_fringe"
     assert hasattr(w, "fringe_status")
-    # NO control: Apply is the switch. Andreas, 2026-09-13 — "since its only a
-    # one step process would it simply be enough to press apply... there is
-    # nothing to choose."
-    from PySide6.QtWidgets import QCheckBox, QSlider
-    assert not w.findChildren(QCheckBox), "the step has nothing to choose"
-    assert not w.findChildren(QSlider), "and no strength either"
+    assert not w.findChildren(QCheckBox), "still nothing to TOGGLE"
     assert not hasattr(w, "fringe_toggle")
-    # Apply starts disabled — main_window enables it once the (slow) split lands.
+
+    assert w.fringe_slider.value() == 100, "a single press is still the full de-green"
+
+    # slider and Apply both start disabled — main_window enables them once the
+    # (slow) split lands
+    assert w.fringe_slider.isEnabled() is False
     assert w.apply_btn.isEnabled() is False
+
+    w.fringe_slider.setEnabled(True)
+    w.fringe_slider.setValue(75)                      # Photoshop's Saturation -75
+    assert changed and changed[-1] == 0.75, "the slider must report 0..1 strength"
+    assert w.fringe_val.text() == "75"
+
     w.apply_btn.setEnabled(True)
     w.apply_btn.click()
-    assert applied.get("s") == 1.0, "Apply must perform the de-green, not nothing"
-
+    assert applied.get("s") == 0.75, "Apply must commit the amount on the slider"
 
 def test_green_removal_starts_at_zero(qtbot):
     """Measured 2026-08-15 on a real M 31 mosaic with no green in it: at

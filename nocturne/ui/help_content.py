@@ -649,28 +649,36 @@ _TOPIC_LIST = (
 ),
 
     _t("green_fringe", "De-green Stars",
-       "Remove the green colour fringe around stars.",
+       "Drain the green-to-cyan tint from stars.",
        "<h4>What it does</h4>"
-       "<p>Stars are never truly green, so a green fringe or halo around them is an "
-       "artifact (chromatic aberration or debayering). With a star-separation tool "
-       "(<b>StarNet2</b>, free, or <b>StarXTerminator</b>), the stars are cleanly split out first, so only that layer is "
-       "de-greened and the nebula/background colour is left untouched. Without it, "
-       "there's no clean stars layer to de-green in isolation, so the free path "
-       "de-greens the whole image instead, blended by a feathered mask around the "
-       "stars — background colour can shift a little too.</p>"
+       "<p>Stars are never truly green — and never truly cyan either. Star colour "
+       "runs red, orange, yellow, white, blue, and passes through neither. So a "
+       "green or teal tint on a star is always an artifact (chromatic aberration, "
+       "debayering, or colour calibration), and draining it is safe in a way that "
+       "removing any other colour would not be.</p>"
+       "<p>With a star-separation tool (<b>StarNet2</b>, free, or "
+       "<b>StarXTerminator</b>), the stars are cleanly split out first, so only that "
+       "layer is treated and the nebula and background cannot move. Without one, "
+       "there is no clean stars layer, so the free path works on the whole image "
+       "blended by a feathered mask around the stars — background colour can shift "
+       "a little too.</p>"
        "<h4>How to use it</h4>"
-       "<p>Press <b>Apply De-green Stars</b>. There is nothing to set: no star is "
-       "green, so there is no such thing as wanting to keep 40% of a colour it "
-       "should never have had. The star detection runs once when you enter the "
-       "step, which is the only wait. Works with neither tool; setting <b>StarNet2</b> "
-       "(free) or RC-Astro in Settings gives a cleaner, stars-only result.</p>"
+       "<p>Set <b>Amount</b> and press <b>Apply De-green Stars</b>. 100 removes the "
+       "tint completely; lower values leave some of it, which is the same control as "
+       "the Saturation slider in Photoshop's Hue/Saturation adjustment — 75 here is "
+       "Saturation −75 there. The star detection runs once when you enter the step, "
+       "which is the only wait.</p>"
        "<h4>Tips</h4>"
-       "<p>Only pixels that actually read green are touched, and they become grey of "
-       "the same brightness — a cyan, yellow or orange star keeps its colour exactly. "
-       "So if you apply it and almost nothing moves, that is the honest answer: your "
-       "stars had no green to remove. Removing the green often leaves the star a "
-       "touch blue — a perfectly natural star colour. If you do not like the result, "
-       "Reset step puts it back.</p>"),
+       "<p>Only pixels that read green through to cyan are touched. A yellow or "
+       "orange star keeps its colour exactly, because red is its strongest channel, "
+       "and a blue star is left alone because the range stops short of real blue. "
+       "Treated pixels keep their lightness and lose their colour, so a star stays "
+       "the size and roughly the brightness it was rather than disappearing.</p>"
+       "<p>On a rich star field this can change how the whole frame reads, because "
+       "so much of the picture is faint stars. That is the step working, not "
+       "leaking — but if you prefer the original look, lower the Amount or skip the "
+       "step. <b>De-green Sky</b> earlier in the pipeline changes how much is left "
+       "for this step to do, so the two interact.</p>"),
 
     _t("noise_sharpen", "Noise Reduction",
        "Smooth grain without smearing detail.",

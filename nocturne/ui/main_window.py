@@ -475,6 +475,13 @@ class MainWindow(QMainWindow):
         self._sr_timer = QTimer(self)
         self._sr_timer.setSingleShot(True)
         self._sr_timer.timeout.connect(self._render_sr_preview)
+        # De-green Stars gained an Amount slider on 2026-09-19 and needs the
+        # same debounce: the preview is cheap (the split is already cached) but
+        # a full-frame recombine per slider tick is not free on a drizzled
+        # frame.
+        self._fringe_timer = QTimer(self)
+        self._fringe_timer.setSingleShot(True)
+        self._fringe_timer.timeout.connect(self._render_fringe_preview)
 
         central = QWidget()
         outer = QVBoxLayout(central)
@@ -4432,12 +4439,16 @@ class MainWindow(QMainWindow):
             self._fringe_ready = True
             if hasattr(panel, "fringe_status"):
                 panel.apply_btn.setEnabled(True)
+                if hasattr(panel, "fringe_slider"):
+                    panel.fringe_slider.setEnabled(True)
                 panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
             return
         self._fringe_ready = False
         if hasattr(panel, "fringe_status"):
             panel.apply_btn.setEnabled(False)
+            if hasattr(panel, "fringe_slider"):
+                panel.fringe_slider.setEnabled(False)
             panel.fringe_status.setText(busy_label)
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
@@ -4526,6 +4537,8 @@ class MainWindow(QMainWindow):
         self._fringe_ready = True
         if hasattr(self._panel, "fringe_status"):
             self._panel.apply_btn.setEnabled(True)
+            if hasattr(self._panel, "fringe_slider"):
+                self._panel.fringe_slider.setEnabled(True)
             # _fringe_status_text(), same as the cached-split branch in
             # _setup_green_fringe. This used to set "" (StarX) or the generic
             # free-star note, so the text that actually names which of the two
@@ -4537,11 +4550,14 @@ class MainWindow(QMainWindow):
         if (self.project is None or self.current_stage_id() != "green_fringe"
                 or not self._fringe_ready or not self._fringe_layers):
             return
-        # No control to read: the step has one action and Apply performs it.
-        # The preview shows the image UNCHANGED until then, so walking through
-        # the step without pressing anything neither previews nor commits
-        # anything — and never reads as pending.
-        strength = self._fringe_pending if self._fringe_pending is not None else 0.0
+        # Read the Amount slider when nothing is pending, exactly as Star
+        # Reduction does. Before the slider existed this fell back to 0.0, which
+        # was right when Apply had one fixed action — but with a control on
+        # screen it would show an UNCHANGED image while the slider read 100 and
+        # Apply committed 100. The preview has to equal what Apply commits.
+        strength = (self._fringe_pending if self._fringe_pending is not None
+                    else (self._panel.fringe_slider.value() / 100.0
+                          if hasattr(self._panel, "fringe_slider") else 0.0))
         self._show_preview(self._fringe_result(strength).data)
 
     def _apply_green_fringe(self, strength) -> None:
@@ -4667,6 +4683,13 @@ class MainWindow(QMainWindow):
             self._panel.apply_btn.setEnabled(True)
             self._panel.sr_status.setText(self._split_note(layers[2]))
         self._render_sr_preview()
+
+    def _on_fringe_change(self, amount: float) -> None:
+        """The De-green Stars Amount slider moved: stash it and restart debounce."""
+        self._fringe_pending = amount
+        if self._fringe_ready:
+            self._fringe_timer.start(90)
+        self._sync_step_controls()
 
     def _on_sr_change(self, amount: float) -> None:
         """The Star Reduction slider moved: stash the value and (re)start debounce."""
@@ -5191,6 +5214,7 @@ class MainWindow(QMainWindow):
             on_curve_preset=self._on_curve_preset,
             on_curve_expand=self._open_curves_dialog,
             on_recover_change=self._on_recover_change,
+            on_fringe_change=self._on_fringe_change,
             on_sr_change=self._on_sr_change,
             on_sr_apply=self._apply_star_reduction,
             on_reset_step=self._reset_step,

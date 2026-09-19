@@ -6052,3 +6052,52 @@ def test_degreen_stars_reuses_a_split_another_surface_paid_for(qtbot, tmp_path, 
     assert called == [1], "the second visit must reuse the stored split, not redo it"
     assert win._fringe_layers[2] is first
     assert win._fringe_path_label() == "StarNet2", "and still report the tool that ran"
+
+
+def test_degreen_stars_previews_what_apply_would_commit_on_entry(qtbot, tmp_path, monkeypatch):
+    """The slider brought a WYSIWYG trap with it.
+
+    Before it existed, the preview fell back to 0.0 when nothing was pending and
+    Apply performed one fixed action — consistent, if minimal. With a control on
+    screen reading 100, that fallback would show an UNCHANGED image while Apply
+    committed a full de-green. The preview has to equal what Apply commits, so
+    it reads the slider, exactly as Star Reduction does.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.starnet import StarNet
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_starry_fits(tmp_path))
+
+    def _tagged(img):
+        h, w = img.data.shape[:2]
+        starless = AstroImage(np.full((h, w, 3), 0.3, np.float32), is_linear=False)
+        st = np.zeros((h, w, 3), np.float32)
+        st[h // 2, w // 2] = (0.05, 0.69, 0.75)        # one teal star to act on
+        return starless, AstroImage(st, is_linear=False), "StarNet2"
+
+    monkeypatch.setattr(win, "_split_tagged", _tagged)
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
+                        lambda s: StarNet("/fake"))
+
+    win._go_to_id("green_fringe")
+    assert win._fringe_ready is True
+    assert win._panel.fringe_slider.isEnabled() is True, \
+        "the slider must come alive with Apply once the split lands"
+
+    # Nothing pending — exactly the state entering the step leaves behind. The
+    # renderer is called directly because navigation redraws the canvas after
+    # the split callback, which is what the neighbouring tests do too.
+    assert win._fringe_pending is None
+    win._render_fringe_preview()
+    shown = win._displayed.data.copy()
+    committed = win._fringe_result(win._panel.fringe_slider.value() / 100.0).data
+    assert np.allclose(shown, committed, atol=1e-6), \
+        "what is on screen must be what Apply would commit"
+
+    # and the slider actually steers it, or the check above proves nothing
+    win._on_fringe_change(0.0)
+    win._render_fringe_preview()
+    assert not np.allclose(win._displayed.data, shown), \
+        "moving the slider must change the preview"
