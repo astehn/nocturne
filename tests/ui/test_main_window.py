@@ -5588,7 +5588,19 @@ def _starry_fits(tmp_path, n=64, nstars=14, seed=5):
         cy, cx = rng.uniform(5, n - 5, 2)
         img += rng.uniform(12000.0, 26000.0) * np.exp(
             -((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.5 ** 2))
-    cube = np.stack([img, img * 0.9, img * 0.8]).clip(0, 65535).astype(np.uint16)
+    r, g, b = img.copy(), img * 0.9, img * 0.8
+    # AND SOME TEAL ONES. Every star above is R > G > B — warm — and De-green
+    # Stars protects warm stars absolutely (`g >= r`), so on this fixture the
+    # step had nothing to do and its strength was inert. The WYSIWYG guard's
+    # own anti-vacuity check caught that on 2026-09-19, which is exactly what it
+    # is for. Bright enough to clear _STAR_FLOOR, or they are inert again.
+    for _ in range(3):
+        cy, cx = rng.uniform(5, n - 5, 2)
+        blob = 30000.0 * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2))
+        r += blob * 0.10
+        g += blob * 0.95
+        b += blob * 1.00
+    cube = np.stack([r, g, b]).clip(0, 65535).astype(np.uint16)
     p = tmp_path / "starry.fits"
     hdu = fits.PrimaryHDU(cube)
     hdu.header["FILTER"] = "L"

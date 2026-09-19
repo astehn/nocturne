@@ -169,7 +169,45 @@ def _green_weight(rgb: np.ndarray) -> np.ndarray:
     return np.clip(w, 0.0, 1.0) * (lit & (g >= r))
 
 
-def _desaturate_greens(data: np.ndarray, strength: float) -> np.ndarray:
+# Below this luminance, a stars-layer pixel is noise rather than a star.
+#
+# The stars layer is NOT only stars: it is everything the split did not put in
+# the starless frame, which includes the high-frequency noise speckle. Measured
+# on a real NGC 281 master, 2026-09-19 — without a floor, only 15.5% of the
+# pixels this step changed were on or beside a star core, and ~65% were not near
+# a star at all. Andreas spotted it on screen before any measurement did:
+# *"are you absolutely, 100% sure that this only affects stars?"*
+#
+# IT IS A MODEST HELP, NOT A SOLUTION, and the honest numbers are these —
+# measured against this implementation on that master, as a share of the total
+# change on star pixels versus everywhere else:
+#
+#     floor   on-star kept   off-star kept
+#     0.02        99.9%          87.4%
+#     0.05        99.2%          75.6%
+#     0.20        84.7%          42.5%
+#     0.35        65.5%          23.5%
+#
+# So 0.05 buys a quarter less background change for under 1% of the star
+# correction, and beyond that the trade turns bad fast. An earlier estimate of
+# "two thirds off-star for 0.7% on-star" was wrong: it summed WEIGHTS against a
+# channel mean rather than measuring the committed effect. Faint stars and noise
+# speckle overlap in brightness, so brightness cannot cleanly separate them and
+# no threshold here ever will.
+#
+# THE REAL FIX IS UPSTREAM and is Andreas's: De-green Stars runs BEFORE Noise
+# Reduction, so the noise it sifts through has not been reduced yet. Move the
+# step after NR and most of this disappears at the source. Filed; this floor is
+# the cheap half.
+#
+# A brightness floor rather than a star mask on purpose: the mask this tool used
+# to carry was removed for good reasons, and "is this bright enough to be a
+# star" needs no spatial search.
+_STAR_FLOOR = 0.05
+
+
+def _desaturate_greens(data: np.ndarray, strength: float,
+                       floor: float = 0.0) -> np.ndarray:
     """Move green pixels to neutral at the same luminance, leaving every other
     hue alone. Returns a new float32 array; non-3-channel input is unchanged.
 
@@ -195,12 +233,17 @@ def _desaturate_greens(data: np.ndarray, strength: float) -> np.ndarray:
     if out.ndim != 3 or out.shape[-1] < 3:
         return out
     rgb = out[..., :3]
-    w = (_green_weight(rgb) * float(strength))[..., None]
+    w = _green_weight(rgb) * float(strength)
+    # Rec.709 luma for the floor as well as for the landing colour, so "how
+    # bright is this pixel" has exactly one meaning in this function.
+    lum1 = rgb @ _LUM_WEIGHTS.astype(np.float32)
+    if floor > 0.0:
+        w = w * (lum1 >= float(floor))
+    w = w[..., None]
     # Rec.709 luma, so a de-greened fringe keeps the brightness it had and star
     # size/brightness does not move — "green becomes white", not "green is
     # deleted" (which is what SCNR's clamp to the red/blue average does).
-    lum = (rgb @ _LUM_WEIGHTS.astype(np.float32))[..., None]
-    out[..., :3] = (1.0 - w) * rgb + w * lum
+    out[..., :3] = (1.0 - w) * rgb + w * lum1[..., None]
     return out
 
 
@@ -217,7 +260,7 @@ def remove_green_fringe(starless: AstroImage, stars: AstroImage,
     base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
     st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
     if strength > 0.0:
-        st = _desaturate_greens(st, strength)
+        st = _desaturate_greens(st, strength, floor=_STAR_FLOOR)
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
                       is_linear=starless.is_linear, metadata=dict(starless.metadata))

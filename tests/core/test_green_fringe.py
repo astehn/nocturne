@@ -145,3 +145,30 @@ def test_the_band_cannot_be_widened_into_blue_stars_by_accident():
     assert _GREEN_BAND[3] <= 220.0, \
         "past ~220 deg the band starts draining genuinely blue stars"
     assert _GREEN_BAND[0] < _GREEN_BAND[1] < _GREEN_BAND[2] < _GREEN_BAND[3]
+
+
+def test_the_star_floor_spares_faint_noise_and_keeps_bright_stars():
+    """The stars layer is not only stars — it carries the noise speckle the
+    split did not put in the starless frame. Measured on a real master, without
+    a floor only 15.5% of the pixels this step changed were on or beside a star.
+
+    The floor is honest about being partial: faint stars and noise overlap in
+    brightness, so it buys about a quarter less background change for under 1%
+    of the star correction. The real fix is ordering — De-green Stars runs
+    before Noise Reduction — and is filed separately.
+    """
+    from nocturne.core.color import _desaturate_greens, _STAR_FLOOR, _LUM_WEIGHTS
+
+    teal = np.array([0.05, 0.69, 0.75], np.float32)
+    bright = teal * 1.0                                   # a real star: well above the floor
+    faint = teal * 0.02                                   # speckle: well below it
+    assert float(bright @ _LUM_WEIGHTS) > _STAR_FLOOR
+    assert float(faint @ _LUM_WEIGHTS) < _STAR_FLOOR
+
+    data = np.stack([bright, faint])[None, :, :]
+    out = _desaturate_greens(data, 1.0, floor=_STAR_FLOOR)
+    assert not np.allclose(out[0, 0], bright), "a bright teal star must still be drained"
+    assert np.allclose(out[0, 1], faint), "faint speckle must be left alone"
+
+    # and with no floor the faint pixel IS treated — otherwise this pins nothing
+    assert not np.allclose(_desaturate_greens(data, 1.0)[0, 1], faint)
