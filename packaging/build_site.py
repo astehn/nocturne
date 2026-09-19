@@ -77,11 +77,14 @@ SOFTWARE_APP = {
     "name": "Nocturne",
     "applicationCategory": "MultimediaApplication",
     "applicationSubCategory": "Astrophotography image processing",
-    "operatingSystem": "macOS",
+    # Both, since v0.35.0. This is what a search engine reads to describe the
+    # app, so leaving it at "macOS" told Google the Linux build does not exist.
+    "operatingSystem": "macOS, Linux",
     "url": f"{BASE}/",
     "downloadUrl": f"{BASE}/get.php",
-    "description": ("A free, native macOS app that turns a stacked ZWO Seestar image "
-                    "into a finished picture through a guided, non-destructive pipeline."),
+    "description": ("A free, native app for macOS and Linux that turns a stacked ZWO "
+                    "Seestar image into a finished picture through a guided, "
+                    "non-destructive pipeline."),
     "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
     "license": "https://www.gnu.org/licenses/gpl-3.0.html",
     "isAccessibleForFree": True,
@@ -134,12 +137,26 @@ def nav_html(is_home: bool) -> str:
     links = "\n".join(
         f'      <a href="{home if is_home else other}">{label}</a>'
         for label, other, home in NAV)
+    # The toggle is a CHECKBOX, not a button, so the menu opens with no
+    # JavaScript at all — nine links behind a control that needs a script is
+    # nine links a failed script can hide. The input stays focusable (it is
+    # clipped, not `hidden`) so it works from the keyboard on its own too;
+    # main.js only adds aria-expanded and close-on-choose.
     return f'''  <header class="nav">
     <a class="brand" href="{brand}">
       <img src="img/icon.png" alt="" width="28" height="28">
       <span>Nocturne</span>
     </a>
-    <nav class="nav-links">
+    <input type="checkbox" id="nav-open" class="nav-open">
+    <label class="nav-toggle" for="nav-open" aria-label="Menu" role="button"
+           aria-controls="nav-links" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
+        <path class="bar-top" d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path class="bar-mid" d="M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path class="bar-bot" d="M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </label>
+    <nav class="nav-links" id="nav-links">
 {links}
       <a href="{GITHUB}" rel="noopener">GitHub</a>
     </nav>

@@ -192,6 +192,13 @@ def release_asset_name(version: str) -> str:
     return f"Nocturne-{version}.zip"
 
 
+# The stable Linux URL, mirroring download/Nocturne.zip for macOS. Without it
+# the homepage would have to hardcode a versioned filename, which goes stale at
+# the next release — so the Linux button pointed at the downloads PAGE while
+# macOS got one click. Both platforms now get the same deal.
+LINUX_LATEST = "Nocturne-linux.tar.gz"
+
+
 def linux_asset_name(version: str, arch: str = "x86_64") -> str:
     """Must match what build_linux.sh writes, and the arch it is built on."""
     return f"Nocturne-{version}-linux-{arch}.tar.gz"
@@ -452,9 +459,10 @@ def main(argv: list[str]) -> int:
         if dl:
             print("  " + " ".join(dl))
         if linux_asset:
-            dl_linux = build_download_cmd(config, linux_asset, remote_name=linux_asset)
-            if dl_linux:
-                print("  " + " ".join(dl_linux))
+            for remote in (linux_asset, LINUX_LATEST):
+                dl_linux = build_download_cmd(config, linux_asset, remote_name=remote)
+                if dl_linux:
+                    print("  " + " ".join(dl_linux))
         samples = build_samples_cmd(config, SAMPLES)
         if samples:
             print("  " + " ".join(samples))
@@ -570,9 +578,12 @@ def _remote_release(config, version, notes, asset, run=real_run,
     if dl:
         steps.append(dl)
     if linux_asset:
-        dl_linux = build_download_cmd(config, linux_asset, remote_name=linux_asset)
-        if dl_linux:
-            steps.append(dl_linux)
+        # Twice: once under its versioned name (what the downloads page links)
+        # and once as LINUX_LATEST (what the homepage button links).
+        for remote in (linux_asset, LINUX_LATEST):
+            dl_linux = build_download_cmd(config, linux_asset, remote_name=remote)
+            if dl_linux:
+                steps.append(dl_linux)
     samples = build_samples_cmd(config, SAMPLES)
     if samples:
         steps.append(samples)

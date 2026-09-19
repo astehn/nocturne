@@ -697,7 +697,10 @@ def test_a_mac_only_release_is_completely_unchanged(tmp_path):
                            run=lambda cmd, **k: with_flag.append(cmd),
                            linux_asset=deploy.linux_asset_name("0.35.0"))
     assert not any("build_linux" in " ".join(c) for c in plain)
-    assert len(with_flag) == len(plain) + 3      # ssh build, scp fetch, rsync tarball
+    # ssh build, scp fetch, and TWO rsyncs of the one tarball: its versioned
+    # name (what the downloads page links) and Nocturne-linux.tar.gz (the stable
+    # name the homepage button links, mirroring Nocturne.zip for macOS).
+    assert len(with_flag) == len(plain) + 4
 
 
 def test_the_downloads_page_is_rebuilt_after_the_release_and_before_the_upload(tmp_path):
@@ -719,3 +722,25 @@ def test_the_downloads_page_is_rebuilt_after_the_release_and_before_the_upload(t
     # first version of this test looked for it and died with StopIteration.
     upload = at(lambda c: c[0] == "rsync" and any(a.endswith(".html") for a in c))
     assert release < refresh < rebuild < upload
+
+
+def test_the_linux_tarball_also_lands_under_a_stable_name(tmp_path):
+    """The homepage needs a URL that does not change every release.
+
+    macOS has had one since the beginning (download/Nocturne.zip); Linux had
+    only its versioned filename, so the homepage's Linux button had to point at
+    the downloads PAGE while macOS got a one-click download. Same file, copied
+    twice — the versioned name is what the downloads page links, and it must
+    keep existing.
+    """
+    cfg = _linux_config(tmp_path)
+    notes = deploy.Notes("h", ["a"], [], [])
+    cmds = []
+    deploy._remote_release(cfg, "0.35.0", notes, "Nocturne-0.35.0.zip",
+                           run=lambda cmd, **k: cmds.append(cmd),
+                           linux_asset=deploy.linux_asset_name("0.35.0"))
+    dests = [c[-1] for c in cmds if c and c[0] == "rsync"]
+    assert any(d.endswith("/download/Nocturne-0.35.0-linux-x86_64.tar.gz") for d in dests), \
+        "the versioned name is what the downloads page links"
+    assert any(d.endswith("/download/Nocturne-linux.tar.gz") for d in dests), \
+        "and the stable name is what the homepage button links"
