@@ -456,3 +456,90 @@ def test_a_tiny_NEGATIVE_margin_reads_the_same_in_both_units():
     assert out["real"]["fog"].startswith("-0.7\u00b0F"), out["real"]["fog"]
     # The headline is decided by the RAW margin, never by this rounded string.
     assert celsius["tiny"]["headline"] == "marginal", celsius["tiny"]
+
+
+# --- The factor row: icons and the slot they sit in ---------------------------
+
+
+@needs_node
+def test_every_factor_row_has_an_icon_and_they_all_fit_one_slot():
+    """Three of the six rows had no icon at all.
+
+    Cloud, Wind and Moon rendered with one and had their label pushed right;
+    Darkness, Fog and Targets started flush left -- and the three that DID have
+    one pushed it by three different amounts, because the cloud is 34 wide, the
+    arrow was 22 and the Moon is 26. Six stacked cards, four different left
+    edges, which reads as a rendering fault rather than a choice.
+
+    Two halves, and this pins both:
+
+    * every label the engine can put in the factors array has a builder here,
+      and each one produces a real labelled SVG -- role, aria-label and a
+      <title>, the way the originals do;
+    * the widest of them still fits the fixed slot in styles.css.
+
+    The second is a genuine cross-check and not a grep: the icon widths are read
+    off the rendered markup, the slot width off the stylesheet, and an icon that
+    outgrew the box would fail here rather than in a browser. What it cannot see
+    is the rendered layout -- that the slot is emitted on rows with no icon is a
+    DOM fact, and nothing in this suite can reach it.
+    """
+    out = _node("""
+      const P = %s;
+      console.log(JSON.stringify({
+        darknessDark: P.icons.darkness(true),
+        darknessNone: P.icons.darkness(false),
+        moon: P.icons.moon(0.69, true, true),
+        cloud: P.icons.cloud(34),
+        fog: P.icons.fog('close to the dew point'),
+        wind: P.icons.wind(217),
+        targets: P.icons.targets(),
+      }));
+    """ % _req(PLANNER))
+
+    widest = 0
+    for name, svg in out.items():
+        assert 'role="img"' in svg, name
+        label = re.search(r'aria-label="([^"]+)"', svg)
+        assert label and label.group(1).strip(), f"{name} has no accessible label"
+        assert "<title>" in svg, f"{name} has no <title>"
+        assert re.search(r'viewBox="0 0 (22|26) (22|26)"', svg), f"{name}: odd viewBox"
+        widest = max(widest, int(re.search(r'width="(\d+)"', svg).group(1)))
+
+    # The Sun must actually move between the two darkness states; a constant
+    # here would be an icon that says the same thing about both kinds of night.
+    assert out["darknessDark"] != out["darknessNone"]
+
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.factors li \.ficon\s*\{([^}]*)\}", css)
+    assert rule, "the fixed icon slot is gone from styles.css; the labels will "\
+                 "go back to four different left edges"
+    basis = re.search(r"flex:\s*0\s+0\s+(\d+)px", rule.group(1))
+    assert basis, rule.group(1)
+    assert int(basis.group(1)) >= widest, (
+        f"the widest icon is {widest}px but the slot reserves "
+        f"{basis.group(1)}px -- it will push its own label out of line")
+
+
+def test_the_primary_action_uses_the_sites_own_button():
+    """"Plan tonight" shipped as a bare <button>: default UA chrome, default
+    font, grey, on a page that is otherwise fully themed. It is the page's
+    primary action and it looked like a mistake.
+
+    It now carries the site's own .btn/.btn-primary, rather than a treatment
+    invented for this one page. .btn had only ever landed on an <a>, so it also
+    needed `font-family: inherit` and `cursor: pointer` -- both inert on an
+    anchor -- for a real <button> to pick it up.
+    """
+    h = _html()
+    form = h.split('id="where"', 1)[1].split("</form>", 1)[0]
+    submit = re.search(r"<button[^>]*type=\"submit\"[^>]*>", form)
+    assert submit, form
+    assert "btn" in submit.group(0) and "btn-primary" in submit.group(0), submit.group(0)
+
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    btn = re.search(r"\n\.btn\s*\{([^}]*)\}", css)
+    assert btn, ".btn is gone from styles.css"
+    assert "font-family: inherit" in btn.group(1), \
+        "without it a <button> keeps the UA font and the label looks wrong"
+    assert "cursor: pointer" in btn.group(1)
