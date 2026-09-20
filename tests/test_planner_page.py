@@ -99,3 +99,15 @@ def test_the_privacy_page_admits_what_a_return_visit_does():
         "the return visit fetches before the visitor presses anything; say so"
     assert "exactly as you typed it" in p, \
         "the geocoder receives the place name verbatim, not just coordinates"
+
+
+def test_the_page_reports_a_fog_margin():
+    """Andreas asked for this by name and it is the second weather fact after
+    cloud that decides a night: when temperature closes on the dew point the
+    corrector plate fogs and the session is over. His own sky.stehn.com calls
+    it "fog margin", so this one does too -- two sites, one vocabulary."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "dew_point_2m" in js and "temperature_2m" in js
+    assert "fogMargin" in js
+    assert "Math.min" in js, "the WORST hour fogs the optics, not the average"
+
