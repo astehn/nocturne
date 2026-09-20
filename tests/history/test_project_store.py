@@ -319,3 +319,44 @@ def test_load_project_still_works_without_a_progress_callback(tmp_path):
     out = str(tmp_path / "q.nocturne")
     save_project(project, out)
     assert load_project(out, str(tmp_path / "c2")).project is not None
+
+
+def test_every_renamed_step_still_resolves_under_its_OLD_name():
+    """A display-name rename is a data migration, because the name IS the key.
+
+    Cached steps in a .nocturne bundle are keyed by the step's display name, so
+    renaming one orphans every bundle that already holds it. `_RENAMED_STEPS`
+    is the translation, and until 2026-09-20 nothing tested it directly — the
+    only cover was one bundle round-trip in tests/ui/test_main_window.py that
+    names the two green tools explicitly, so the "AI Denoise" -> "Linear
+    Denoise" entry added that day could be deleted with the whole suite green.
+
+    This asserts the map as a whole rather than one pair, so the next rename is
+    covered the moment it is added rather than the next time someone remembers.
+    """
+    from nocturne.history.project_store import _RENAMED_STEPS, _migrate_step_name
+    from nocturne.ui.pipeline import STEP_NAME
+
+    current = set(STEP_NAME.values())
+    for old, new in _RENAMED_STEPS.items():
+        assert _migrate_step_name(old) == new, f"{old!r} no longer migrates"
+        assert old not in current, \
+            f"{old!r} is both a live step name and a retired one — the map would rewrite it"
+        assert new in current, \
+            f"{old!r} migrates to {new!r}, which is not a step name any more"
+
+    # The rename this test was written for, pinned by name: the astro audience
+    # reads "AI" as "invents detail", so the word is gone from the UI for good.
+    assert _migrate_step_name("AI Denoise") == "Linear Denoise"
+    assert not any("AI" in n.split() for n in current), \
+        f"a step name reintroduced the word 'AI': {sorted(current)}"
+
+
+def test_an_unrenamed_step_name_passes_through_untouched():
+    """The migration must be a lookup, not a rewrite — proving the test above
+    fails for the right reason rather than because everything maps to something.
+    """
+    from nocturne.history.project_store import _migrate_step_name
+    assert _migrate_step_name("Stretch") == "Stretch"
+    assert _migrate_step_name("Linear Denoise") == "Linear Denoise"
+    assert _migrate_step_name("") == ""
