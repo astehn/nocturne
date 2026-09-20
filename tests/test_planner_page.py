@@ -161,6 +161,29 @@ def test_a_fog_MARGIN_is_converted_as_a_difference_not_a_temperature():
         "the margin must convert by the 9/5 ratio alone, never the +32 offset"
 
 
+def test_the_icons_carry_accessible_labels_and_real_data():
+    """Copied from Andreas's own sky.stehn.com so the two sites share one
+    visual family. His moon is COMPUTED, not a glyph: the terminator's
+    x-radius is |2f-1| x r, which is why his markup reads "A 6.693 12" for a
+    77.9% Moon. A static moon would be a regression from his prototype."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "aria-label" in js
+    assert "2 * fraction - 1" in js, "the moon must be drawn to its real phase"
+    assert "rotate(" in js, "the wind arrow points along the bearing"
+
+
+def test_the_wind_arrow_is_backed_by_a_real_bearing():
+    """A rotated arrow with no bearing behind it would be decoration
+    pretending to be data (task-4 brief). The forecast request must actually
+    fetch direction, and the engine must report a real speed range rather
+    than inventing an unmeasured "this is windy" threshold."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "wind_direction_10m" in js and "wind_speed_10m" in js
+    assert "windBearing" in js
+    engine = (SITE / "planner-engine.js").read_text(encoding="utf-8")
+    assert "windMin" in engine and "windMax" in engine
+
+
 def test_the_page_says_which_location_it_used():
     """It fetched five candidates and silently used the first. Ask for
     "Cambridge" and you got one of two countries with no indication. Andreas
