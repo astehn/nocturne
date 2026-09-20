@@ -38,7 +38,7 @@ from ..steps.load import load_fits
 from ..tools.base import run_cli, ToolError
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
-from ..core.update_check import DOWNLOAD_URL, is_newer, latest_release_version
+from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
 from .histogram_view import HistogramView
 from . import help_content
 from .about_dialog import AboutDialog
@@ -895,6 +895,8 @@ class MainWindow(QMainWindow):
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
+        help_menu.addSeparator()
+        self._report_act = help_menu.addAction("Report a problem…", self._report_problem)
 
     def _populate_recent_menu(self) -> None:
         self._recent_menu.clear()
@@ -1022,6 +1024,68 @@ class MainWindow(QMainWindow):
 
     def _copy_diagnostic_to_clipboard(self) -> None:
         QApplication.clipboard().setText(self._last_diagnostic)
+
+    def _report_context(self) -> dict:
+        """What a problem report needs that the reporter should not have to know.
+
+        SCREEN IS THE REASON THIS EXISTS. Users reported GUI sizing problems on
+        Reddit in September 2026 saying only "a MacBook Pro", which is four
+        panel sizes across several scaling settings. The physical panel is
+        irrelevant; the LOGICAL size is what decides whether a toolbar fits, and
+        nobody knows theirs. Measured in TODO.md: at 1280x800 the toolbar wanted
+        2566px and had 1280.
+
+        The window size is separate from the screen on purpose — a maximised
+        window on a large display and a small window on the same display are
+        different reports, and only one of them is our problem.
+        """
+        import platform
+        scr = self.screen() or QApplication.primaryScreen()
+        screen = ""
+        if scr is not None:
+            g = scr.geometry()
+            ratio = scr.devicePixelRatio()
+            screen = f"{g.width()} x {g.height()} at {ratio:g}x"
+            n = len(QApplication.screens())
+            if n > 1:
+                screen += f" ({n} displays)"
+        return {
+            "app_version": __version__,
+            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            "screen": screen,
+            "window_size": f"{self.width()} x {self.height()}",
+            # Capped. _last_diagnostic is a command plus its stderr, and a
+            # StarNet or ASTAP traceback runs past Apache's 8190-byte request
+            # line — the reporter would get a 414 instead of a form. The tail
+            # is kept rather than the head: the error is at the end.
+            "log": (self._last_diagnostic or "")[-2000:],
+        }
+
+    def _report_problem(self) -> None:
+        """Open the support page with the diagnostics already filled in.
+
+        NOTHING IS SENT FROM HERE. The browser opens a form the person reads
+        and submits themselves, so they see every value before it leaves the
+        machine and can delete any of it — the log in particular, which
+        contains file paths and therefore folder names and therefore possibly
+        their own name. Same principle as the telemetry prompt: they see it,
+        they choose. An app that quietly posted a diagnostic bundle would be a
+        different product from the one described on the privacy page.
+        """
+        from urllib.parse import urlencode
+
+        from PySide6.QtGui import QDesktopServices
+        ctx = {k: v for k, v in self._report_context().items() if v}
+        # A FRAGMENT, not a query string. This is the difference between the
+        # claim above being true and being a lie: a browser never transmits
+        # what follows '#', while '?log=...' is written into the server's
+        # access log — with the requester's IP — the moment the page opens,
+        # BEFORE the reporter has read a word of it, let alone deleted the
+        # parts carrying their file paths and user name. Only /ping.php is
+        # excluded from logging (see the telemetry notes), so support.html
+        # would have been recorded in full.
+        url = f"{SUPPORT_URL}#{urlencode(ctx)}" if ctx else SUPPORT_URL
+        QDesktopServices.openUrl(QUrl(url))
 
     def _make_about_dialog(self) -> AboutDialog:
         return AboutDialog(self)

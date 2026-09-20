@@ -61,9 +61,15 @@ GITHUB = "https://github.com/astehn/nocturne"
 FOOTER_CREDIT = ("Created &amp; directed by <strong>Andreas Stehn</strong>. Built with "
                  "PySide6/Qt, NumPy, astropy, SciPy, scikit-image, astroalign, SEP, "
                  "tifffile &amp; Pillow. Works alongside GraXpert and RC-Astro.")
+# Support sits in the FOOTER, not the nav. The nav is nine items and already
+# collapses at 1000px, so a tenth would move that boundary again. It is also
+# not a destination — nobody browses to it — it is where you go when something
+# is wrong, which is what a footer link is for. The in-app Help menu is the
+# route that actually matters.
 FOOTER_LICENCE = ('Released under the <a href="https://www.gnu.org/licenses/gpl-3.0.html" '
                   'rel="noopener">GNU General Public License v3.0 (GPLv3)</a>. '
                   '© <span id="year"></span> · <a href="privacy.html">Privacy</a> · '
+                  '<a href="support.html">Report a problem</a> · '
                   'Not affiliated with ZWO, GraXpert, or RC-Astro.')
 # Transparency about the download counter, next to the button it describes.
 # ONE SENTENCE since 2026-09-17, when privacy.html was written: this used to
