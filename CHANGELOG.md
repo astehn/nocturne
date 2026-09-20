@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.36.0] — 2026-09-20
+
+De-green Stars works on the stars you actually have — and StarNet2 shows its progress.
+
+### Added
+- An Amount slider on De-green Stars. The step had nothing to set — it was all or nothing. The slider is the same control as Saturation in a targeted Hue/Saturation layer in Photoshop: 100 neutralises the cast completely, lower values take out part of it, and the preview follows the slider, so what you see is what Apply commits.
+
+### Changed
+- Steps that need a star split now share one. Star Reduction, Nebula Saturation, Colour Balance and Narrowband each kept a private copy of the same separation, so opening one after another on the same image paid for the split all over again — 38 seconds on a drizzled frame, for layers already in memory. They now publish to and read from one store.
+- The website's menu collapses on a phone, and there is a download link for Linux that does not go stale with each release.
+
+### Fixed
+- De-green Stars did nothing at all unless you had RC-Astro. It asked for StarX by name, so on a machine with StarNet2 installed and working it fell back to a crude star mask and changed almost nothing. It now uses whichever separator you have.
+- De-green Stars did nothing on the stars most Seestar images have. It looked for green between hue 75° and 165°. The colour fringing on a Seestar star is usually teal, nearer 185°, which scored exactly zero — so for many images the step was a no-op you could not see. The band now runs 36°–214°, stopping short of blue so blue stars stay blue. It also keeps off faint background speckle rather than treating it as stars.
+- De-green Stars no longer pushes the background towards red. It desaturated towards Rec.709 luma, which weights green at 0.72 — so a teal pixel's target was dominated by its own green channel, and red had to rise to meet it. It now lands on HSL lightness, which is what Photoshop does, and takes light out rather than adding it.
+- A star split shows its progress. StarNet2 ran with no indication for its whole duration — about 3 seconds on a master, 38 on a drizzled frame, and six times that on Linux. The cause was ours: we had been passing --quiet since the first version, which makes StarNet2 print one newline and nothing else.
+- Re-entering a step after a flip no longer reuses the un-flipped separation. The cache key was shape, mean and standard deviation — all three unchanged by a mirror — so an image and its flip produced identical keys. Stars were reduced where there were none, and nothing about the result looked like a caching problem.
+
 ## [0.35.0] — 2026-09-18
 
 Star separation without paying for it — and Nocturne runs on Linux.
