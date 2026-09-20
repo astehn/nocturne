@@ -9,6 +9,17 @@ Run the release pipeline in `packaging/deploy.py`. One human gate (approve
 notes + version); tests + a successful build are automatic gates before
 anything public.
 
+**ALWAYS PASS `--linux`.** Every release ships both platforms — Andreas,
+2026-09-20: *"we installed and configured the laptop to always be online and
+avaliable, so from now on assume that all builds should be for both Linux and
+Mac."* It is one command, not a second trip: `--linux` ssh's to the build host
+in `[linux]` of `packaging/deploy.local.toml`, runs `packaging/build_linux.sh
+v<version>` there (which fetches the tag, builds, and smoke-tests the binary by
+launching it headless), scp's the tarball back, and publishes it in the SAME
+GitHub release and site rsync, refreshing the stable `Nocturne-linux.tar.gz`
+link. Do not offer macOS-only as a choice; only drop `--linux` if the build
+host is unreachable, and say so rather than silently shipping half a release.
+
 ## Steps
 
 1. **Preflight.** Run `.venv/bin/python packaging/deploy.py --preflight`.
