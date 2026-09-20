@@ -87,9 +87,21 @@ def test_it_OPENS_a_page_and_sends_nothing(main_window, monkeypatch):
     url = urlparse(opened[0])
     assert url.scheme == "https" and url.netloc == "nocturne.stehn.com"
     assert url.path == "/support.html"
-    q = parse_qs(url.query)
-    assert q["app_version"][0]
-    assert q["screen"][0]
+
+    # THE DIAGNOSTICS ARE IN THE FRAGMENT, AND THE QUERY IS EMPTY.
+    # This is the assertion the earlier version of this test should have made.
+    # It checked only that the values were present and passed happily while
+    # they sat in a query string — which a browser sends to the server, so
+    # Apache logged `GET /support.html?log=<file paths, user name>` with the
+    # IP the moment the page opened, BEFORE the reporter could read or delete
+    # anything. The page's promise that they can edit it first was false, and
+    # this test asserted the feature worked.
+    assert url.query == "", (
+        "a query string reaches the server's access log before the user "
+        "consents; the diagnostics must travel in the fragment")
+    frag = parse_qs(url.fragment)
+    assert frag["app_version"][0]
+    assert frag["screen"][0]
 
 
 def test_an_empty_field_is_omitted_rather_than_sent_blank(main_window, monkeypatch):
@@ -101,3 +113,22 @@ def test_an_empty_field_is_omitted_rather_than_sent_blank(main_window, monkeypat
     main_window._last_diagnostic = ""
     main_window._report_problem()
     assert "log=" not in opened[0]
+
+
+def test_a_huge_log_cannot_make_the_page_unopenable(main_window, monkeypatch):
+    """Apache's default LimitRequestLine is 8190 bytes and a URL carries the
+    fragment too. `_last_diagnostic` is a command plus its stderr, so an ASTAP
+    or StarNet traceback runs straight past it and the reporter gets a 414
+    instead of a form — at the exact moment they were trying to tell us
+    something went wrong.
+
+    The TAIL is kept, not the head: the error is at the end.
+    """
+    opened = []
+    from PySide6.QtGui import QDesktopServices
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda u: opened.append(u.toString()))
+    main_window._last_diagnostic = "x" * 50_000 + "THE ACTUAL ERROR"
+    main_window._report_problem()
+    assert len(opened[0]) < 8000, f"URL is {len(opened[0])} bytes"
+    assert "THE+ACTUAL+ERROR" in opened[0] or "THE%20ACTUAL%20ERROR" in opened[0], \
+        "the end of the log is the part worth keeping"

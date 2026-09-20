@@ -1054,7 +1054,11 @@ class MainWindow(QMainWindow):
             "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
             "screen": screen,
             "window_size": f"{self.width()} x {self.height()}",
-            "log": self._last_diagnostic or "",
+            # Capped. _last_diagnostic is a command plus its stderr, and a
+            # StarNet or ASTAP traceback runs past Apache's 8190-byte request
+            # line — the reporter would get a 414 instead of a form. The tail
+            # is kept rather than the head: the error is at the end.
+            "log": (self._last_diagnostic or "")[-2000:],
         }
 
     def _report_problem(self) -> None:
@@ -1072,7 +1076,15 @@ class MainWindow(QMainWindow):
 
         from PySide6.QtGui import QDesktopServices
         ctx = {k: v for k, v in self._report_context().items() if v}
-        url = f"{SUPPORT_URL}?{urlencode(ctx)}" if ctx else SUPPORT_URL
+        # A FRAGMENT, not a query string. This is the difference between the
+        # claim above being true and being a lie: a browser never transmits
+        # what follows '#', while '?log=...' is written into the server's
+        # access log — with the requester's IP — the moment the page opens,
+        # BEFORE the reporter has read a word of it, let alone deleted the
+        # parts carrying their file paths and user name. Only /ping.php is
+        # excluded from logging (see the telemetry notes), so support.html
+        # would have been recorded in full.
+        url = f"{SUPPORT_URL}#{urlencode(ctx)}" if ctx else SUPPORT_URL
         QDesktopServices.openUrl(QUrl(url))
 
     def _make_about_dialog(self) -> AboutDialog:
