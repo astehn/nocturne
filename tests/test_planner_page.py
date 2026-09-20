@@ -184,6 +184,17 @@ def test_the_wind_arrow_is_backed_by_a_real_bearing():
     assert "windMin" in engine and "windMax" in engine
 
 
+def test_the_target_count_and_the_list_cannot_disagree():
+    """Round 1 shipped a page whose verdict said "nothing gets high enough
+    tonight" above three target cards, because two different thresholds were
+    applied in two places. The count in the factors line and the length of the
+    expanded list come from the SAME array for that reason."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "INITIAL_TARGETS" in js
+    assert "Show all ' + ranked.length" in js, \
+        "the button must name the same array the factors line counted"
+
+
 def test_the_page_says_which_location_it_used():
     """It fetched five candidates and silently used the first. Ask for
     "Cambridge" and you got one of two countries with no indication. Andreas
