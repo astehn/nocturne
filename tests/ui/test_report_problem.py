@@ -85,7 +85,7 @@ def test_it_OPENS_a_page_and_sends_nothing(main_window, monkeypatch):
     assert not posted, "no network request may be made from the app"
 
     url = urlparse(opened[0])
-    assert url.scheme == "https" and url.netloc == "nocturne.stehn.com"
+    assert url.scheme == "https" and url.netloc == "nocturneastro.com"
     assert url.path == "/support.html"
 
     # THE DIAGNOSTICS ARE IN THE FRAGMENT, AND THE QUERY IS EMPTY.
