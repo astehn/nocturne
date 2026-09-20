@@ -26,7 +26,12 @@ import json
 import urllib.request
 import uuid
 
-PING_URL = "https://nocturne.stehn.com/ping.php"
+# nocturneastro.com since 2026-09-20. nocturne.stehn.com still SERVES this
+# endpoint and always will: every build from 0.32 to 0.36 posts here, and that
+# host redirects everything EXCEPT /ping.php for exactly that reason — urllib
+# turns a POST into a GET when it follows a 301, so a redirect would leave old
+# clients posting nothing while appearing to work.
+PING_URL = "https://nocturneastro.com/ping.php"
 
 # The closed set. A field not in here cannot be sent, and `build_payload` is
 # checked against it — each extra field narrows the crowd a user hides in, and

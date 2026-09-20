@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pathlib
 
-BASE = "https://nocturne.stehn.com"
+BASE = "https://nocturneastro.com"
 SITE = pathlib.Path(__file__).resolve().parent.parent / "site"
 
 # Pages that exist but should not be advertised: no public entry point, or a

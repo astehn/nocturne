@@ -29,7 +29,7 @@ import pathlib
 import re
 import sys
 
-BASE = "https://nocturne.stehn.com"
+BASE = "https://nocturneastro.com"
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 SRC = SITE / "_src"

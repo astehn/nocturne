@@ -9,11 +9,11 @@ import urllib.request
 from .. import __version__
 
 RELEASES_API_URL = "https://api.github.com/repos/astehn/nocturne/releases/latest"
-DOWNLOAD_URL = "https://nocturne.stehn.com/"
+DOWNLOAD_URL = "https://nocturneastro.com/"
 # Where Help > Report a problem sends people. Lives beside DOWNLOAD_URL rather
 # than in ui/ so there is ONE place the site's address is written down; a
 # hardcoded second copy is how a moved page becomes a dead menu item.
-SUPPORT_URL = "https://nocturne.stehn.com/support.html"
+SUPPORT_URL = "https://nocturneastro.com/support.html"
 
 
 def _parse(v: str) -> tuple[int, int, int] | None:
