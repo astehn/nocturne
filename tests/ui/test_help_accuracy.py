@@ -1553,7 +1553,7 @@ def test_share_help_does_not_promise_a_free_crop_box():
 # never added to SECTIONS, so for months the help contained 406 words that no
 # user could reach. Nothing failed, because nothing checked the wiring.
 
-# AI Denoise is deliberately held back from the shipped app (v0.18.0 kept it out
+# Linear Denoise is deliberately held back from the shipped app (v0.18.0 kept it out
 # of the pipeline), so its topic is reachable from the step and nowhere else.
 _UNLISTED_ON_PURPOSE = {"ai_denoise"}
 
