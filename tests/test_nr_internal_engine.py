@@ -82,8 +82,13 @@ def test_the_stage_is_pre_stretch_or_the_model_cannot_work(qtbot):
     from nocturne.ui.pipeline import path_stages
     ids = [s.id for s in path_stages(include=frozenset({"ai_denoise"}))]
     assert ids.index("ai_denoise") < ids.index("stretch")
-    assert ids.index("deconvolution") < ids.index("ai_denoise"), \
-        "it belongs with the other linear-space work"
+    # And before EVERYTHING that reshapes the image, not just before Stretch.
+    # The model is trained on raw stacker output; after Background the sky it
+    # sees drops from 0.29 to 0.04 in model space, and after Deconvolution the
+    # star profiles are ones it never met. v7 turned a real M 16 grey and ringed
+    # its stars in exactly that position (Nocturne NR, 2026-09-19).
+    assert ids.index("crop") < ids.index("ai_denoise") < ids.index("background"), \
+        "it must see the stack as the stacker left it"
 
 
 def test_the_stage_is_absent_without_a_model(tmp_path, monkeypatch):

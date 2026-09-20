@@ -37,7 +37,7 @@ def test_step_name_and_order():
     # tested or saved AI Denoise entry has to place correctly — a missing id
     # raises ValueError from .index().
     assert PROCESSING_ORDER == [
-        "background", "color", "tint", "deconvolution", "ai_denoise", "stretch",
+        "ai_denoise", "background", "color", "tint", "deconvolution", "stretch",
         "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
@@ -89,8 +89,7 @@ def test_deconvolution_stage_and_order():
     i = PROCESSING_ORDER.index("deconvolution")
     assert PROCESSING_ORDER[i - 1] == "tint"
     # What this test is really about: deconvolution is LINEAR work, before the
-    # stretch. ai_denoise landed between them in 2026-09-18 — also linear, also
-    # pre-stretch — so the assertion is the relationship, not the adjacency.
+    # stretch. The assertion is the relationship, not the adjacency.
     assert PROCESSING_ORDER.index("deconvolution") < PROCESSING_ORDER.index("stretch")
     ids = [s.id for s in path_stages()]
     assert "deconvolution" in ids and ids.index("deconvolution") < ids.index("stretch")

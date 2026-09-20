@@ -15,10 +15,12 @@ _LEVELS = {"light": 0.5, "medium": 0.75, "strong": 1.0}
 class AiDenoiseStep(Step):
     """Nocturne's own denoiser, trained on Seestar stacks.
 
-    Runs on LINEAR data, before Stretch — which is where it was trained and
-    where Deconvolution already sits. A stretch derives its parameters from the
-    image's own statistics, so a model applied afterwards would face a transfer
-    function that was not present in any training pair.
+    Runs FIRST, on the stack as the stacker left it — before Background, Color,
+    Deconvolution and Stretch — because raw stacker output is what it was
+    trained on. Each of those steps reshapes the image into something no
+    training pair contained: Background drops the sky from 0.29 to 0.04 in
+    model space, Deconvolution changes every star profile, and a stretch
+    derives its curve from the image's own statistics.
     """
 
     name = "AI Denoise"

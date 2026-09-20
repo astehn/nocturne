@@ -66,13 +66,13 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    # `ai_denoise` sits between deconvolution and stretch because that is where
-    # its stage appears when one is offered (see _OPTIONAL). It is listed even
+    # `ai_denoise` comes FIRST, before Background, because that is where its
+    # stage appears when one is offered (see _OPTIONAL). It is listed even
     # though the stage is normally absent: this order answers "what came before
     # this step", and a saved project or an internal test run that contains an
     # AI Denoise entry has to place it correctly. A missing id raises ValueError
     # from .index() — which is exactly how it announced itself.
-    "background", "color", "tint", "deconvolution", "ai_denoise", "stretch", "remove_green",
+    "ai_denoise", "background", "color", "tint", "deconvolution", "stretch", "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
@@ -121,7 +121,14 @@ def core_stages() -> list[Stage]:
 # extra has to be named by a caller that knows why.
 _OPTIONAL = {
     # id -> (stage, the id it is inserted BEFORE)
-    "ai_denoise": (Stage("ai_denoise", "AI Denoise", "process"), "stretch"),
+    #
+    # AI Denoise goes before Background — straight after Crop, on the stack as
+    # the stacker left it. The Nocturne NR model is trained on raw stacker
+    # output; placed after Background, Color and Deconvolution it met a sky at
+    # 0.04 instead of 0.29 in model space and star profiles it had never seen,
+    # and on a real M 16 it greyed the nebula and ringed every star
+    # (2026-09-19). Crop before it is fine: cropping does not change the noise.
+    "ai_denoise": (Stage("ai_denoise", "AI Denoise", "process"), "background"),
 }
 
 
