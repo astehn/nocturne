@@ -60,6 +60,13 @@ _REPRODUCIBLE_STAGES = {
 _RENAMED_STEPS = {
     "Remove Green": "De-green Sky",
     "Remove Green Fringe": "De-green Stars",
+    # 2026-09-20. Not a cosmetic rename: the astrophotography audience reads
+    # "AI" as "invents structure that was not in the data", and a number of
+    # them will not run a step that carries the word at all. The step is a
+    # trained model either way and the help says so -- what changed is that
+    # the label now names WHEN it runs (on linear data, before any stretch),
+    # which is both the honest description and the term the field already uses.
+    "AI Denoise": "Linear Denoise",
 }
 
 

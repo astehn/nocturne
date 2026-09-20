@@ -68,7 +68,7 @@ def _settings_sandbox():
 
 # The suite must describe a RELEASE, not this machine. `~/.nocturne/models`
 # holds models from the separate Nocturne NR project during internal testing,
-# and MainWindow inserts an AI Denoise stage when it finds one — so on
+# and MainWindow inserts a Linear Denoise stage when it finds one — so on
 # 2026-09-18 three navigation tests failed here and passed everywhere else,
 # because a file in a developer's home directory had changed the pipeline.
 #

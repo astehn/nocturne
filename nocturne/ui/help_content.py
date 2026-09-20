@@ -363,8 +363,9 @@ _TOPIC_LIST = (
        "<p>If a green cast survives all the way through the <b>Stretch</b>, that's what "
        "<b>De-green Sky</b> — its own step, right after Stretch — is for.</p>"),
 
-    _t("ai_denoise", "AI Denoise",
-       "Nocturne's own denoiser, trained on Seestar stacks. Runs before Stretch.",
+    _t("ai_denoise", "Linear Denoise",
+       "Nocturne's own denoiser, trained on Seestar stacks. Runs on the linear "
+       "image, first of all.",
        "<h4>What it does</h4>"
        "<p>Removes noise using a model trained here on Seestar data — no external "
        "tool needed, and a few seconds rather than minutes. It predicts the "
@@ -376,10 +377,14 @@ _TOPIC_LIST = (
        "would have; strong goes further than that, which looks cleaner but is "
        "smoother than the sky really is.</p>"
        "<h4>Why it sits here</h4>"
-       "<p>Before Stretch, next to Deconvolution, because that is where it was "
-       "trained. The Stretch reshapes tones based on each image's own statistics, "
-       "and a model applied afterwards would meet a transformation it has never "
-       "seen.</p>"
+       "<p>It runs <i>first</i> — on the stack as stacking left it, before "
+       "Background, Colour and Deconvolution — because that is exactly what it "
+       "was trained on. Every one of those steps reshapes the image into "
+       "something no training pair contained: Background extraction drops the "
+       "sky brightness by most of an order of magnitude, Deconvolution changes "
+       "the shape of every star, and the Stretch derives its curve from each "
+       "image's own statistics. Run afterwards, the model meets a picture it "
+       "has never seen and can grey the nebula or ring the stars.</p>"
        "<h4>Tips</h4>"
        "<p>It is trained on the <b>S30 Pro</b>. On other cameras the step does "
        "nothing rather than guess. It is also new — compare against the "

@@ -18,7 +18,7 @@ _CORE = [
     Stage("background", "Background", "process"),
     Stage("color", "Color", "auto"),
     Stage("deconvolution", "Deconvolution", "process"),
-    # AI Denoise is BUILT but deliberately NOT SHIPPED. The only trained model,
+    # Linear Denoise is BUILT but deliberately NOT SHIPPED. The only trained model,
     # denoise_s30_v1, over-corrects deep stacks — it damaged the 405-frame M8
     # master by +19.1%, and 250-450 frames is precisely what users bring. The
     # step stays in STEP_NAME and steps/factory so a saved project that already
@@ -54,7 +54,7 @@ STEP_NAME = {
     "tint": "Colour Tint",
     "remove_green": "De-green Sky",
     "deconvolution": "Deconvolution",
-    "ai_denoise": "AI Denoise",
+    "ai_denoise": "Linear Denoise",
     "stretch": "Stretch",
     "recover_core": "Recover Core",
     "levels": "Levels",
@@ -70,7 +70,7 @@ PROCESSING_ORDER = [
     # stage appears when one is offered (see _OPTIONAL). It is listed even
     # though the stage is normally absent: this order answers "what came before
     # this step", and a saved project or an internal test run that contains an
-    # AI Denoise entry has to place it correctly. A missing id raises ValueError
+    # Linear Denoise entry has to place it correctly. A missing id raises ValueError
     # from .index() — which is exactly how it announced itself.
     "ai_denoise", "background", "color", "tint", "deconvolution", "stretch", "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
@@ -122,13 +122,13 @@ def core_stages() -> list[Stage]:
 _OPTIONAL = {
     # id -> (stage, the id it is inserted BEFORE)
     #
-    # AI Denoise goes before Background — straight after Crop, on the stack as
+    # Linear Denoise goes before Background — straight after Crop, on the stack as
     # the stacker left it. The Nocturne NR model is trained on raw stacker
     # output; placed after Background, Color and Deconvolution it met a sky at
     # 0.04 instead of 0.29 in model space and star profiles it had never seen,
     # and on a real M 16 it greyed the nebula and ringed every star
     # (2026-09-19). Crop before it is fine: cropping does not change the noise.
-    "ai_denoise": (Stage("ai_denoise", "AI Denoise", "process"), "background"),
+    "ai_denoise": (Stage("ai_denoise", "Linear Denoise", "process"), "background"),
 }
 
 
@@ -140,7 +140,7 @@ def path_stages(omit: frozenset[str] = frozenset(),
     module level: every caller is handed the SAME objects, so mutating one would
     poison every later project in the session.
 
-    An included stage lands at a FIXED position — AI Denoise before Stretch,
+    An included stage lands at a FIXED position — Linear Denoise before Stretch,
     because that is where the model was trained and the only place it can work.
     A stretch derives its curve from the image's own statistics, so afterwards
     the noise has been shaped by a transfer function the model never saw, and

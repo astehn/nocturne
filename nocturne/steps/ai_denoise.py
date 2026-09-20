@@ -23,7 +23,7 @@ class AiDenoiseStep(Step):
     derives its curve from the image's own statistics.
     """
 
-    name = "AI Denoise"
+    name = "Linear Denoise"
 
     def __init__(self, sensor: str = "s30") -> None:
         self._sensor = sensor

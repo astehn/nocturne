@@ -31,6 +31,7 @@ _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
 # _stage_for must still resolve the old name too — belt-and-suspenders for an
 # old-named entry that somehow reaches save_project without going through
 # load_project first (e.g. a partially-migrated in-memory project).
+_NAME_TO_STAGE["AI Denoise"] = "ai_denoise"            # now "Linear Denoise"
 _NAME_TO_STAGE["Remove Green"] = "remove_green"        # now "De-green Sky"
 _NAME_TO_STAGE["Remove Green Fringe"] = "green_fringe"  # now "De-green Stars"
 # Starless Levels is deliberately ABSENT. Its two numbers come from a person

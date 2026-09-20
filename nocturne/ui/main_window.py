@@ -4043,7 +4043,7 @@ class MainWindow(QMainWindow):
     def _included_stages(self) -> frozenset[str]:
         """Stages that are not part of the shipped pipeline and must be asked for.
 
-        AI Denoise appears only when a model from the separate Nocturne NR
+        Linear Denoise appears only when a model from the separate Nocturne NR
         project is sitting in ~/.nocturne/models — internal testing, and a
         release build cannot contain one (that folder is outside the bundle, and
         the spec excludes onnxruntime besides).
