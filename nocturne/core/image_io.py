@@ -76,21 +76,129 @@ def _channels_last(raw: np.ndarray) -> np.ndarray:
     return raw
 
 
+_ICC_TAG = 34675            # the same tag core/export.py embeds on the way out
+
+# Profile description -> the name core/colour.py knows it by. Matched on the
+# profile's OWN description rather than on the bytes, because byte-matching
+# would mean importing nocturne/colour_profiles.py, which sources its blobs
+# from Qt — and core/ is Qt-free by rule. Parsing is the better answer anyway:
+# it recognises a profile written by Photoshop or a camera, not only one of
+# ours. The aliases are the names those writers actually use; ROMM RGB is
+# ProPhoto's formal name.
+_ICC_ALIASES = {
+    "srgb": "sRGB",
+    "srgb iec61966-2.1": "sRGB",
+    "srgb built-in": "sRGB",
+    "display p3": "Display P3",
+    "adobe rgb": "Adobe RGB",
+    "adobe rgb (1998)": "Adobe RGB",
+    "prophoto rgb": "ProPhoto RGB",
+    "romm rgb": "ProPhoto RGB",
+    "romm rgb: iso 22028-2:2013": "ProPhoto RGB",
+}
+
+
+def _icc_description(blob: bytes) -> str:
+    """The human-readable name inside an ICC profile, or ''.
+
+    Handles both forms: ICC v2 stores 'desc' as ASCII, v4 as 'mluc' UTF-16BE.
+    Qt writes v4, Photoshop preserves whatever it was given, and a file from
+    elsewhere may be either. Anything malformed returns '' and the caller
+    leaves the pixels alone — a profile we cannot read is one whose numbers we
+    do not understand, and guessing is worse than the status quo.
+    """
+    try:
+        count = int.from_bytes(blob[128:132], "big")
+        for i in range(count):
+            off = 132 + i * 12
+            sig = blob[off:off + 4]
+            if sig != b"desc":
+                continue
+            start = int.from_bytes(blob[off + 4:off + 8], "big")
+            size = int.from_bytes(blob[off + 8:off + 12], "big")
+            tag = blob[start:start + size]
+            if tag[:4] == b"mluc":                       # ICC v4
+                n = int.from_bytes(tag[8:12], "big")
+                if not n:
+                    return ""
+                ln = int.from_bytes(tag[16:20], "big")
+                lo = int.from_bytes(tag[20:24], "big")
+                return tag[lo:lo + ln].decode("utf-16-be", "replace").strip("\x00").strip()
+            if tag[:4] == b"desc":                       # ICC v2
+                ln = int.from_bytes(tag[8:12], "big")
+                return tag[12:12 + ln].decode("latin-1", "replace").strip("\x00").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def _embedded_space(page) -> str | None:
+    """Which colour space this TIFF declares, if we recognise it."""
+    tag = page.tags.get(_ICC_TAG)
+    if tag is None:
+        return None
+    blob = bytes(tag.value) if not isinstance(tag.value, bytes) else tag.value
+    return _ICC_ALIASES.get(_icc_description(blob).lower())
+
+
 def load_tiff(path: str) -> AstroImage:
     """A TIFF as an `AstroImage`, with `is_linear` decided by measurement.
 
-    Metadata is deliberately empty: a TIFF carries no target, frames, gain,
-    exposure, instrument or WCS, and inventing any of them would be worse than
-    leaving the panel to say nothing.
+    Metadata carries only what the FILE states. A TIFF has no target, frames,
+    gain, exposure, instrument or WCS, and inventing any of them would be worse
+    than leaving the panel to say nothing. An embedded colour profile is the
+    exception, because it is not invented provenance — it is a fact about what
+    the numbers mean, and acting on it CHANGES THE PIXELS, which the user is
+    entitled to be told.
+
+    WHY THE PROFILE IS HONOURED AT ALL. core/colour.py's reasoning — that astro
+    data has no source colour space, a FITS being photon counts — is right for
+    the pipeline and wrong for this one case. A tagged TIFF is a finished image
+    that genuinely has a source space. core/export.py:22 already records the
+    mirror of this bug: an untagged export "rendered dark in Photoshop: sRGB
+    data read as ProPhoto", fixed by embedding the profile so the reader stops
+    guessing. We then did the identical thing to files we opened. Measured on
+    Andreas's Veil Nebula master, 2026-09-20: 5.0 levels short of red, 5.6 long
+    of blue, mean dE2000 6.8 across the frame, and a mid grey pushed to
+    dE2000 10.2 — the whole-image cast he reported.
+
+    AN UNTAGGED FILE IS UNTOUCHED, and that matters more than the fix. Every
+    saved project, every FITS-derived export and every file from a tool that
+    does not tag depends on it. So does an unreadable or unrecognised profile:
+    if we cannot say what the numbers mean, we do not change them.
+
+    The conversion clips whatever lies outside sRGB, which is the price of a
+    pipeline that works in sRGB. Measured on his real edit: 0.057% of pixels,
+    because the data originated here and converting to a wider space on export
+    never added gamut.
     """
     import tifffile
 
-    raw = np.asarray(tifffile.imread(path))
+    with tifffile.TiffFile(path) as tf:
+        page = tf.pages[0]
+        raw = np.asarray(page.asarray())
+        space = _embedded_space(page)
+
     raw = _channels_last(raw)
     if raw.ndim == 3 and raw.shape[2] > 3:
         raw = raw[:, :, :3]          # drop alpha: Photoshop writes RGBA readily
     data = _normalize(raw)
     if data.ndim == 2:
         data = np.repeat(data[:, :, None], 3, axis=2)
+
+    metadata: dict = {}
+    if space is not None:
+        metadata["colour_space"] = space
+        if space != "sRGB":
+            from .colour import convert
+            data = np.clip(convert(data, to="sRGB", frm=space), 0.0, 1.0)
+            metadata["colour_note"] = f"Converted from {space} to sRGB on open"
+        else:
+            metadata["colour_note"] = "Already sRGB; opened unchanged"
+
+    # AFTER any conversion, deliberately. The verdict describes the image the
+    # pipeline will work on, and a conversion changes the transfer curve —
+    # ProPhoto's gamma is 1.8 against sRGB's ~2.2, which moves the statistic
+    # this decision reads.
     return AstroImage(data.astype(np.float32),
-                      is_linear=looks_linear(data), metadata={})
+                      is_linear=looks_linear(data), metadata=metadata)

@@ -170,3 +170,194 @@ def test_an_embedded_icc_profile_does_not_break_the_read(tmp_path):
     tifffile.imwrite(str(p), _synthetic_linear(),
                      extratags=[(34675, 1, 8, b"\x00" * 8, True)])
     assert load_tiff(str(p)).data.shape == (400, 300, 3)
+
+
+# --- embedded colour profiles ------------------------------------------------
+#
+# A FITS file is photon counts and has no source colour space — that is the
+# reasoning in core/colour.py, and it is right for the pipeline. A TIFF is not
+# photon counts. It is a finished, tagged image that genuinely HAS a source
+# space, and it was the one case the rule never considered.
+#
+# Andreas, 2026-09-20, after exporting ProPhoto, editing in Photoshop and
+# reopening: *"the colors are all wrong."* Measured on his Veil Nebula master:
+# the page showed it 5.0 levels short of red and 5.6 levels long of blue, mean
+# dE2000 6.8 across the frame, 6.5 on the background alone. A neutral grey went
+# blue, which is the whole-image cast he reported.
+#
+# core/export.py:22 already documents this exact bug in the MIRROR direction:
+# "Photoshop and every other reader assigns its OWN working space to an
+# untagged file — which is why a correct M 16 export rendered dark in
+# Photoshop: sRGB data read as ProPhoto." We fixed it on the way out by
+# embedding the profile, and then did the identical thing to files we open.
+
+
+def _tagged(path, data, space):
+    """Write a TIFF carrying a real ICC profile for `space`.
+
+    The bytes come from nocturne.colour_profiles, which needs Qt — fine in a
+    test, and deliberately impossible inside core/ (see test_core_stays_qt_free).
+    That constraint is why load_tiff identifies a profile by PARSING it rather
+    than by byte-matching against our own.
+    """
+    from nocturne.colour_profiles import icc_bytes
+    blob = icc_bytes(space)
+    tifffile.imwrite(str(path), data, extratags=[(34675, 1, len(blob), blob, True)])
+    return blob
+
+
+def test_a_prophoto_tiff_is_converted_to_srgb(tmp_path):
+    """The defect, in one test.
+
+    The numbers in a ProPhoto file mean different colours than the same numbers
+    in an sRGB file. Reading them as sRGB is not a rounding error — ProPhoto's
+    primaries are far wider and its whitepoint is D50 against sRGB's D65, and
+    the whitepoint alone is what sends a neutral blue.
+    """
+    from nocturne.core.colour import convert
+    from nocturne.core.image_io import _normalize
+    src = _synthetic_linear()
+    p = tmp_path / "pp.tif"
+    _tagged(p, src, "ProPhoto RGB")
+    got = load_tiff(str(p)).data
+    # _normalize runs BEFORE colour, so the expectation must start from its
+    # output. Comparing against the raw array fails for a reason that has
+    # nothing to do with the profile.
+    want = convert(_normalize(src), to="sRGB", frm="ProPhoto RGB")
+    assert np.allclose(got, np.clip(want, 0.0, 1.0), atol=2e-3), \
+        "a ProPhoto file must be re-encoded into the space the pipeline works in"
+    assert not np.allclose(got, _normalize(src), atol=2e-3), \
+        "and it must actually differ from the unconverted numbers, or this proves nothing"
+
+
+def test_a_mid_grey_comes_back_at_the_brightness_it_left(tmp_path):
+    """The real defect, after TWO wrong characterisations of it.
+
+    First I wrote this asserting a neutral stays neutral. It passed against the
+    unfixed loader: both spaces put grey on the diagonal, so it could never
+    fail. Then I assumed the export itself broke neutrality and measured a
+    cast — using colour.RGB_to_XYZ directly, which does NOT adapt between
+    ProPhoto's D50 and sRGB's D65. core/colour.py uses BRADFORD, so neutrals
+    survive the export intact (spread 7e-05).
+
+    What actually goes wrong is TONE. ProPhoto's transfer curve is gamma 1.8
+    against sRGB's ~2.2, so a mid grey exported at 0.5 carries the number
+    0.4247, and reading that back as sRGB shows it AS 0.4247 — the picture
+    comes back dark. Measured on his Veil master: every channel shifted up by
+    4.5 to 7.2 8-bit levels once corrected, mean dE2000 4.4, worst 10.8. Red
+    moves most, so there is a mild cast riding on top, but the dominant term is
+    brightness.
+
+    core/export.py:22 describes the same mechanism in the other direction — "a
+    correct M 16 export rendered dark in Photoshop: sRGB data read as ProPhoto".
+    Same gamma mismatch, mirrored.
+    """
+    from nocturne.core.colour import convert
+    # A white reference, so _normalize is a no-op and the grey's own value
+    # survives to be asserted. Without it, _normalize rescales a flat patch to
+    # full range and the brightness under test is destroyed before the colour
+    # code ever runs — which is how this fixture failed the first time.
+    src = np.full((32, 32, 3), 0.5, np.float32)
+    src[0, 0] = 1.0
+    exported = convert(src, to="ProPhoto RGB", frm="sRGB")
+    assert abs(float(exported[5, 5].mean()) - 0.5) > 0.05, (
+        "if ProPhoto encoded mid grey at 0.5 there would be no bug: the whole "
+        "defect is that the number changes while the colour does not")
+
+    p = tmp_path / "g.tif"
+    _tagged(p, exported, "ProPhoto RGB")
+    patch = load_tiff(str(p)).data[5, 5]
+    assert abs(float(patch.mean()) - 0.5) < 0.01, (
+        f"mid grey came back at {patch.mean():.4f}; unfixed it reads 0.4247, "
+        f"which is the picture opening dark")
+    assert float(patch.max() - patch.min()) < 0.01, "and it must still be neutral"
+
+
+def test_an_UNTAGGED_tiff_is_left_exactly_alone(tmp_path):
+    """The guarantee that matters more than the fix.
+
+    Every project saved before today, every FITS-derived export, and every
+    file from a tool that does not tag, all depend on this path being
+    untouched. His own combined2.tif — Photoshop-saved with the profile
+    deliberately stripped — is the real-world case.
+
+    Asserting UNCHANGED rather than "differs from the ProPhoto answer",
+    per CLAUDE.md: the weaker form passes while the code writes a third,
+    different wrong value.
+    """
+    from nocturne.core.image_io import _normalize
+    src = _synthetic_linear()
+    p = tmp_path / "u.tif"
+    tifffile.imwrite(str(p), src)                      # no extratags: no profile
+    got = load_tiff(str(p)).data
+    # NOT `src` itself: _normalize already rescales float data, so comparing
+    # against the raw array asserts something that was never true and fails for
+    # a reason unrelated to colour. The baseline is everything the loader does
+    # APART from colour.
+    assert np.array_equal(got, _normalize(src).astype(np.float32)), \
+        "an untagged TIFF must come out exactly as it does today"
+
+
+def test_an_srgb_tagged_tiff_is_a_no_op(tmp_path):
+    """Already in the working space: recognised, and nothing done."""
+    from nocturne.core.image_io import _normalize
+    src = _synthetic_linear()
+    p = tmp_path / "s.tif"
+    _tagged(p, src, "sRGB")
+    assert np.allclose(load_tiff(str(p)).data, _normalize(src), atol=1e-6)
+
+
+def test_an_unrecognised_profile_is_left_alone(tmp_path):
+    """Fail safe, not clever.
+
+    A profile we cannot identify means we do not know what the numbers mean.
+    Converting on a guess would be worse than the status quo; leaving them is
+    exactly as wrong as today and no more.
+    """
+    from nocturne.core.image_io import _normalize
+    src = _synthetic_linear()
+    p = tmp_path / "odd.tif"
+    junk = b"\x00" * 128 + b"\x00\x00\x00\x00"        # structurally invalid ICC
+    tifffile.imwrite(str(p), src, extratags=[(34675, 1, len(junk), junk, True)])
+    assert np.array_equal(load_tiff(str(p)).data, _normalize(src).astype(np.float32))
+
+
+def test_the_conversion_is_recorded_where_the_user_can_see_it(tmp_path):
+    """A file whose numbers changed on load is worth being told about.
+
+    Different in kind from the target/gain/exposure a TIFF legitimately lacks:
+    this is not invented provenance, it is a fact about what we did.
+    """
+    p = tmp_path / "pp.tif"
+    _tagged(p, _synthetic_linear(), "ProPhoto RGB")
+    md = load_tiff(str(p)).metadata
+    assert md.get("colour_space") == "ProPhoto RGB"
+    assert "converted" in str(md.get("colour_note", "")).lower()
+
+    q = tmp_path / "u.tif"
+    tifffile.imwrite(str(q), _synthetic_linear())
+    assert load_tiff(str(q)).metadata == {}, \
+        "an untagged file says nothing, exactly as before"
+
+
+def test_the_colour_note_actually_reaches_the_import_panel(tmp_path):
+    """Written because the first version of this did NOT.
+
+    load_tiff recorded `colour_space` and `colour_note` in metadata, and a test
+    called "recorded where the user can see it" passed — but import_summary()
+    builds the panel from an explicit list of keys and colour was not among
+    them, so nothing displayed it. The metadata was real and invisible, which
+    is the worst of both: a test asserting a promise the app did not keep.
+    """
+    from nocturne.core.fits_io import import_summary
+    p = tmp_path / "pp.tif"
+    _tagged(p, _synthetic_linear(), "ProPhoto RGB")
+    html = import_summary(load_tiff(str(p)).metadata, assume_instrument=False)
+    assert "ProPhoto RGB" in html, "the panel must name the space the file declared"
+    assert "Colour" in html
+
+    q = tmp_path / "u.tif"
+    tifffile.imwrite(str(q), _synthetic_linear())
+    assert "Colour" not in import_summary(load_tiff(str(q)).metadata,
+                                          assume_instrument=False), \
+        "an untagged TIFF says nothing about colour, because nothing was done"

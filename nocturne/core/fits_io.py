@@ -341,6 +341,15 @@ def import_summary(meta: dict, instrument=None,
     if meta.get("width") and meta.get("height"):
         stack.append(("Dimensions", f"{meta['width']} × {meta['height']}"))
 
+    # What the file said its colours MEAN, and what we did about it. Different
+    # in kind from everything above: those are capture facts read from a header,
+    # this is a statement about an operation performed on the pixels between the
+    # file and the canvas. A TIFF that opens looking different from the file the
+    # user saved is entitled to say why. Only ever present for a tagged TIFF —
+    # see core/image_io.load_tiff.
+    if meta.get("colour_space"):
+        stack.append(("Colour", meta.get("colour_note") or str(meta["colour_space"])))
+
     if not stack:
         stack.append(("", "Couldn't read capture details from this file's header."))
 
