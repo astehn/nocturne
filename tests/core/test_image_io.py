@@ -164,12 +164,21 @@ def test_big_endian_16_bit_reads(tmp_path):
     assert img.data.max() <= 1.0 and img.is_linear is True
 
 
-def test_an_embedded_icc_profile_does_not_break_the_read(tmp_path):
-    """Ignored, not fatal — and the help says it is ignored."""
+def test_a_junk_icc_profile_does_not_break_the_read(tmp_path):
+    """Eight bytes of nothing is not a profile. It must not stop the file
+    opening, and must not be acted on.
+
+    This said "the help says it is ignored" until 2026-09-20, when profiles
+    stopped being ignored — and the help still said so for as long as it took
+    review to notice. A test docstring that quotes the docs is a tripwire for
+    exactly that drift; this one fired and nobody read it.
+    """
     p = tmp_path / "icc.tif"
     tifffile.imwrite(str(p), _synthetic_linear(),
                      extratags=[(34675, 1, 8, b"\x00" * 8, True)])
-    assert load_tiff(str(p)).data.shape == (400, 300, 3)
+    img = load_tiff(str(p))
+    assert img.data.shape == (400, 300, 3)
+    assert img.metadata.get("colour_space") is None
 
 
 # --- embedded colour profiles ------------------------------------------------
@@ -298,13 +307,53 @@ def test_an_UNTAGGED_tiff_is_left_exactly_alone(tmp_path):
         "an untagged TIFF must come out exactly as it does today"
 
 
-def test_an_srgb_tagged_tiff_is_a_no_op(tmp_path):
-    """Already in the working space: recognised, and nothing done."""
+def test_an_srgb_tagged_tiff_is_RECOGNISED_and_then_left_alone(tmp_path):
+    """Two claims, and the first is the one that matters.
+
+    The earlier version asserted only that the pixels were unchanged — which
+    passes identically against a loader that ignores ICC profiles entirely. It
+    was asserting the FALLBACK, so it could not tell "recognised as sRGB, no
+    conversion needed" from "not recognised, nothing done". It therefore could
+    not see that the v4 description parser was returning mojibake for sRGB.
+    """
     from nocturne.core.image_io import _normalize
     src = _synthetic_linear()
     p = tmp_path / "s.tif"
     _tagged(p, src, "sRGB")
-    assert np.allclose(load_tiff(str(p)).data, _normalize(src), atol=1e-6)
+    img = load_tiff(str(p))
+    assert img.metadata.get("colour_space") == "sRGB", \
+        "it must be IDENTIFIED, not merely left alone by accident"
+    assert np.allclose(img.data, _normalize(src), atol=1e-6)
+
+
+@pytest.mark.parametrize("space", ["sRGB", "Display P3", "Adobe RGB", "ProPhoto RGB"])
+def test_every_space_nocturne_can_EXPORT_can_be_read_back(tmp_path, space):
+    """The round trip, for all four — because it worked for exactly one.
+
+    The ICC v4 `mluc` record is lang(2) country(2) length(4) offset(4) after a
+    16-byte header, so length sits at 20 and offset at 24. Reading them at 16
+    and 20 takes the ASCII "enUS" as the length. ProPhoto RGB still came out
+    right, because its name is exactly twelve characters and the wrong offset
+    landed on bytes str.strip() removes. sRGB, Display P3 and Adobe RGB all
+    returned mojibake and were silently not converted — Adobe RGB opened
+    0.4961 against the 0.5 it was saved at, with no note in the panel.
+
+    Every test at the time used ProPhoto, so the whole feature rested on the
+    one space that worked by accident. Parametrised for that reason: the next
+    space added to SPACES gets covered by adding its name here.
+    """
+    from nocturne.core.colour import convert
+    grey = np.full((32, 32, 3), 0.5, np.float32)
+    grey[0, 0] = 1.0                      # white reference: keeps _normalize a no-op
+    exported = convert(grey, to=space, frm="sRGB")
+    p = tmp_path / "rt.tif"
+    _tagged(p, exported, space)
+    img = load_tiff(str(p))
+    assert img.metadata.get("colour_space") == space, \
+        f"{space} was not identified from its own embedded profile"
+    patch = img.data[5, 5]
+    assert abs(float(patch.mean()) - 0.5) < 0.01, \
+        f"{space} round-tripped mid grey to {patch.mean():.4f}, not 0.5"
 
 
 def test_an_unrecognised_profile_is_left_alone(tmp_path):
@@ -314,12 +363,41 @@ def test_an_unrecognised_profile_is_left_alone(tmp_path):
     Converting on a guess would be worse than the status quo; leaving them is
     exactly as wrong as today and no more.
     """
-    from nocturne.core.image_io import _normalize
+    from nocturne.core.image_io import _normalize, _icc_description
+    from nocturne.colour_profiles import icc_bytes
     src = _synthetic_linear()
+
+    # A STRUCTURALLY VALID profile with a name we do not know. The earlier
+    # version used 132 zero bytes, which fails the header check and returns
+    # before the alias lookup is ever reached — so the path this test is named
+    # for was never exercised. Built by renaming a real profile in place.
+    blob = bytearray(icc_bytes("ProPhoto RGB"))
+    # EXACTLY as long as "ProPhoto RGB" — twelve characters. A longer name
+    # would overflow the desc tag into whatever follows it and the profile
+    # would stop parsing for a reason unrelated to what is being tested.
+    name = "Frobnitz RGB".encode("utf-16-be")
+    count = int.from_bytes(blob[128:132], "big")
+    for i in range(count):
+        o = 132 + i * 12
+        if blob[o:o + 4] != b"desc":
+            continue
+        st = int.from_bytes(blob[o + 4:o + 8], "big")
+        lo = st + int.from_bytes(blob[st + 24:st + 28], "big")
+        blob[st + 20:st + 24] = len(name).to_bytes(4, "big")
+        blob[lo:lo + len(name)] = name
+        break
+    blob = bytes(blob)
+    assert _icc_description(blob) == "Frobnitz RGB", "fixture did not take"
+
     p = tmp_path / "odd.tif"
-    junk = b"\x00" * 128 + b"\x00\x00\x00\x00"        # structurally invalid ICC
-    tifffile.imwrite(str(p), src, extratags=[(34675, 1, len(junk), junk, True)])
-    assert np.array_equal(load_tiff(str(p)).data, _normalize(src).astype(np.float32))
+    tifffile.imwrite(str(p), src, extratags=[(34675, 1, len(blob), blob, True)])
+    img = load_tiff(str(p))
+    assert np.array_equal(img.data, _normalize(src).astype(np.float32)), \
+        "an unknown profile means unknown numbers: do not touch them"
+    # But DO say so. Silence here is the same failure the whole change is
+    # about — an image that may look wrong with nothing explaining why.
+    assert img.metadata.get("colour_space") == "Frobnitz RGB"
+    assert "not a profile nocturne knows" in img.metadata["colour_note"].lower()
 
 
 def test_the_conversion_is_recorded_where_the_user_can_see_it(tmp_path):
@@ -361,3 +439,66 @@ def test_the_colour_note_actually_reaches_the_import_panel(tmp_path):
     assert "Colour" not in import_summary(load_tiff(str(q)).metadata,
                                           assume_instrument=False), \
         "an untagged TIFF says nothing about colour, because nothing was done"
+
+
+def test_a_hostile_tag_count_cannot_hang_the_app(tmp_path):
+    """A profile is attacker-controlled data and slicing does not raise.
+
+    `blob[128:132] = 0xFFFFFFFF` declares 4.3 billion tags. Nothing in Python
+    objects: a slice past the end returns short data rather than throwing, so
+    `except Exception` never fires and the loop simply runs — measured at
+    roughly ten minutes of pure-Python slicing inside load_tiff, with no cancel
+    point and no window repaint. The count is now bounded by what the blob can
+    physically hold.
+    """
+    import time
+    from nocturne.core.image_io import _icc_description
+    blob = b"\x00" * 36 + b"acsp" + b"\x00" * 88 + b"\xff\xff\xff\xff" + b"\x00" * 64
+    t0 = time.monotonic()
+    assert _icc_description(blob) == ""
+    assert time.monotonic() - t0 < 1.0, "the tag count is not bounded"
+
+
+def test_a_profile_that_is_not_even_a_profile_is_rejected_early(tmp_path):
+    """Every ICC profile carries 'acsp' at byte 36. Without that check the
+    parser walks arbitrary bytes and can only fail by luck."""
+    from nocturne.core.image_io import _icc_description
+    assert _icc_description(b"\x00" * 200) == ""
+    assert _icc_description(b"") == ""
+
+
+def test_a_string_typed_icc_tag_cannot_stop_a_file_opening(tmp_path):
+    """A colour profile must never be able to prevent an image loading.
+
+    If a writer types tag 34675 as ASCII rather than UNDEFINED, tifffile hands
+    back a `str`, and `bytes(str)` raises TypeError: "string argument without
+    an encoding". With that call outside the guard, a file that opened fine
+    before this feature existed would have stopped opening at all — a strictly
+    worse outcome than the bug being fixed.
+    """
+    src = _synthetic_linear()
+    p = tmp_path / "strtag.tif"
+    tifffile.imwrite(str(p), src, extratags=[(34675, 2, 5, b"hello", True)])
+    img = load_tiff(str(p))                      # must not raise
+    assert img.data.shape == (400, 300, 3)
+    assert img.metadata.get("colour_space") is None
+
+
+def test_a_multi_page_tiff_reads_its_FIRST_page(tmp_path):
+    """Pinning a silent improvement, so it cannot be silently undone.
+
+    The old path called `tifffile.imread(path)`, which stacks every page: a
+    five-page file came back as a (5, H, W, 3) array, `_channels_last` then saw
+    5 in the leading axis and the result was a few pixels of garbage. Reading
+    `pages[0]` — needed anyway to reach the ICC tag — fixes that as a side
+    effect. Nobody asked for it and no test covered it, which is exactly how it
+    would get reverted.
+    """
+    page = (_synthetic_linear() * 65535).astype(np.uint16)
+    p = tmp_path / "multi.tif"
+    with tifffile.TiffWriter(str(p)) as tw:
+        for _ in range(5):
+            tw.write(page)
+    img = load_tiff(str(p))
+    assert img.data.shape == (400, 300, 3), \
+        f"a five-page TIFF must read as one image, got {img.data.shape}"

@@ -88,13 +88,19 @@ _ICC_TAG = 34675            # the same tag core/export.py embeds on the way out
 _ICC_ALIASES = {
     "srgb": "sRGB",
     "srgb iec61966-2.1": "sRGB",
+    "srgb iec61966-2.1 (linear rgb profile)": "sRGB",
+    "srgb v4 icc preferred": "sRGB",
     "srgb built-in": "sRGB",
+    "gimp built-in srgb": "sRGB",
     "display p3": "Display P3",
+    "apple display p3": "Display P3",
     "adobe rgb": "Adobe RGB",
     "adobe rgb (1998)": "Adobe RGB",
+    "compatible with adobe rgb (1998)": "Adobe RGB",
     "prophoto rgb": "ProPhoto RGB",
     "romm rgb": "ProPhoto RGB",
     "romm rgb: iso 22028-2:2013": "ProPhoto RGB",
+    "gimp built-in prophoto": "ProPhoto RGB",
 }
 
 
@@ -108,7 +114,16 @@ def _icc_description(blob: bytes) -> str:
     do not understand, and guessing is worse than the status quo.
     """
     try:
+        # Sanity-check the header before walking anything. A slice past the end
+        # of a bytes object does NOT raise — it returns short data — so a
+        # malformed profile produces a wrong answer rather than an exception,
+        # and `except Exception` never fires. The tag count in particular is
+        # attacker-controlled: 0xFFFFFFFF is 4.3e9 iterations of pure-Python
+        # slicing, about ten minutes inside load_tiff with no cancel point.
+        if blob[36:40] != b"acsp":          # every ICC profile carries this
+            return ""
         count = int.from_bytes(blob[128:132], "big")
+        count = min(count, max(0, (len(blob) - 132) // 12))
         for i in range(count):
             off = 132 + i * 12
             sig = blob[off:off + 4]
@@ -121,8 +136,17 @@ def _icc_description(blob: bytes) -> str:
                 n = int.from_bytes(tag[8:12], "big")
                 if not n:
                     return ""
-                ln = int.from_bytes(tag[16:20], "big")
-                lo = int.from_bytes(tag[20:24], "big")
+                # An mluc record is lang(2) country(2) LENGTH(4) OFFSET(4)
+                # after the 16-byte header, so length is at 20 and offset at 24.
+                # Reading them at 16 and 20 picks up the ASCII "enUS" as the
+                # length, and it is not obvious from the output: ProPhoto RGB
+                # still parsed correctly because its name is exactly twelve
+                # characters, which made the wrong offset land on bytes that
+                # str.strip() removed. sRGB, Display P3 and Adobe RGB all came
+                # back as mojibake and silently went unconverted. Caught in
+                # review, not by the tests, which only ever exercised ProPhoto.
+                ln = int.from_bytes(tag[20:24], "big")
+                lo = int.from_bytes(tag[24:28], "big")
                 return tag[lo:lo + ln].decode("utf-16-be", "replace").strip("\x00").strip()
             if tag[:4] == b"desc":                       # ICC v2
                 ln = int.from_bytes(tag[8:12], "big")
@@ -132,13 +156,30 @@ def _icc_description(blob: bytes) -> str:
     return ""
 
 
-def _embedded_space(page) -> str | None:
-    """Which colour space this TIFF declares, if we recognise it."""
+def _embedded_space(page) -> tuple[str | None, str]:
+    """(space we recognise or None, the profile's own name or '').
+
+    The name is returned even when the space is not recognised, because the
+    panel should be able to say "this file declares a profile we do not know
+    and its colours were left as they are". Silence there is the same failure
+    the whole change is about: an image that may look wrong with nothing on
+    screen explaining why. Matching is EXACT, not substring — a custom profile
+    called "sRGB-ish something" is not sRGB and must miss.
+    """
     tag = page.tags.get(_ICC_TAG)
     if tag is None:
-        return None
-    blob = bytes(tag.value) if not isinstance(tag.value, bytes) else tag.value
-    return _ICC_ALIASES.get(_icc_description(blob).lower())
+        return None, ""
+    # Inside the guard, not outside it: a writer that types this tag as ASCII
+    # rather than UNDEFINED hands back a str, and bytes(str) raises TypeError
+    # "string argument without an encoding". That would turn a file which opens
+    # fine today into one that cannot be opened at all — a colour profile must
+    # never be able to stop an image loading.
+    try:
+        blob = tag.value if isinstance(tag.value, bytes) else bytes(tag.value)
+    except Exception:
+        return None, ""
+    name = _icc_description(blob)
+    return _ICC_ALIASES.get(name.lower()), name
 
 
 def load_tiff(path: str) -> AstroImage:
@@ -177,7 +218,7 @@ def load_tiff(path: str) -> AstroImage:
     with tifffile.TiffFile(path) as tf:
         page = tf.pages[0]
         raw = np.asarray(page.asarray())
-        space = _embedded_space(page)
+        space, declared = _embedded_space(page)
 
     raw = _channels_last(raw)
     if raw.ndim == 3 and raw.shape[2] > 3:
@@ -191,10 +232,17 @@ def load_tiff(path: str) -> AstroImage:
         metadata["colour_space"] = space
         if space != "sRGB":
             from .colour import convert
-            data = np.clip(convert(data, to="sRGB", frm=space), 0.0, 1.0)
+            data = convert(data, to="sRGB", frm=space)   # convert() clips and de-NaNs
             metadata["colour_note"] = f"Converted from {space} to sRGB on open"
         else:
             metadata["colour_note"] = "Already sRGB; opened unchanged"
+    elif declared:
+        # A profile we could read the name of but do not know. Say so rather
+        # than nothing: the colours may be wrong and this is the only clue the
+        # user would get.
+        metadata["colour_space"] = declared
+        metadata["colour_note"] = (f"{declared} is not a profile Nocturne knows; "
+                                   f"colours left as they are")
 
     # AFTER any conversion, deliberately. The verdict describes the image the
     # pipeline will work on, and a conversion changes the transfer curve —
