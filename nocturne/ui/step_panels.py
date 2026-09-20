@@ -102,6 +102,7 @@ def build_panel(
     on_sat_change=None,
     on_sat_apply=None,
     on_fringe_apply=None,
+    on_fringe_change=None,
     on_lc_change=None,
     on_show_model=None,
     on_option_change=None,
@@ -731,14 +732,26 @@ def build_panel(
         w.apply_btn = apply_btn
 
     elif stage.kind == "green_fringe":
-        # NO control at all: Apply IS the switch. No star is green (blackbody
-        # colour runs red-orange-yellow-white-blue and never passes through it),
-        # so a green pixel on a star is always wrong and there is nothing to
-        # choose. This briefly had a checkbox; Andreas, 2026-09-13: "Why do the
-        # user have to click a checkbox and then press apply, since its only a
-        # one step process... there is nothing to choose." He is right — a
-        # control with one meaningful position is a step the user performs for
-        # the app's benefit.
+        # AN AMOUNT SLIDER, added 2026-09-19 — and it reverses a decision made
+        # here on 2026-09-13, so the reason matters.
+        #
+        # This briefly had a CHECKBOX, and Andreas was right to reject it: *"Why
+        # do the user have to click a checkbox and then press apply, since its
+        # only a one step process... there is nothing to choose."* A control
+        # with one meaningful position is a step performed for the app's
+        # benefit. That argument was about WHETHER to de-green, and it still
+        # stands — the hue is not a choice, because no star is green or cyan.
+        #
+        # HOW FAR is a choice, and three things made it one. He set Photoshop's
+        # Hue/Saturation to -75 rather than -100 and preferred the result, so
+        # full neutralisation is not always wanted. The band now reaches cyan,
+        # taking the step from ~3% of pixels to ~20%, so its swing is far
+        # larger. And it interacts with De-green Sky — maxing that first leaves
+        # this one less to do — which makes the right amount depend on the image
+        # and on what ran before it.
+        #
+        # The slider IS Photoshop's Saturation: both scale how far a selected
+        # pixel travels toward neutral, so 75 here is exactly Saturation -75.
         #
         # With RC-Astro (StarX) the split gives a clean stars layer, so
         # de-greening it and screen-recombining really does touch only the
@@ -750,21 +763,42 @@ def build_panel(
         # >=50% weight, 2.5% at full strength) — enough that background green
         # noise visibly shifts too. The description below has to say so.
         lay.addWidget(_desc_label(
-            "Neutralise green on stars — green pixels become grey of the same "
-            "brightness, and every other colour is left alone. With RC-Astro "
-            "(StarX), only the stars layer is touched and nebula colour cannot "
-            "move. Without it, the free path works on the whole image inside a "
-            "feathered mask centred on stars, so background colour can shift too."))
+            "Drain the green-to-cyan tint from stars — those pixels lose their "
+            "colour and keep their lightness, and every other colour is left "
+            "alone. No star is truly green or cyan, so the tint is always an "
+            "artefact. Amount 100 removes it entirely; lower values leave some "
+            "of it, like Photoshop's Hue/Saturation on Cyans. With a star "
+            "separator configured only the stars layer is touched and nebula "
+            "colour cannot move; without one, the free path works on the whole "
+            "image inside a feathered mask centred on stars, so background "
+            "colour can shift too."))
         status = _desc_label("")   # main_window sets the split/mask label or gate text
         lay.addWidget(status)
+        slider = ResetSlider(100)
+        fringe_val = QLabel(f"{slider.value()}")
+
+        def _emit_fringe(*_):
+            fringe_val.setText(f"{slider.value()}")
+            if on_fringe_change is not None:
+                on_fringe_change(slider.value() / 100.0)
+
+        slider.valueChanged.connect(_emit_fringe)
         apply_btn = QPushButton("Apply De-green Stars")
         apply_btn.setObjectName("primary")
         if on_fringe_apply is not None:
-            apply_btn.clicked.connect(lambda: on_fringe_apply(1.0))
-        # Start disabled — main_window enables once the (slow) StarX split is ready.
+            apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))
+        # Start disabled — main_window enables once the (slow) split is ready.
+        slider.setEnabled(False)
         apply_btn.setEnabled(False)
+        fringe_row = QHBoxLayout()
+        fringe_row.addWidget(QLabel("Amount (none → fully neutral)"))
+        fringe_row.addWidget(fringe_val)
+        lay.addLayout(fringe_row)
+        lay.addWidget(slider)
         lay.addWidget(apply_btn)
         w.fringe_status = status
+        w.fringe_slider = slider
+        w.fringe_val = fringe_val
         w.apply_btn = apply_btn
 
     elif stage.kind == "recover_core":

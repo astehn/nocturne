@@ -109,42 +109,47 @@ def test_the_stars_layer_degreen_touches_only_pixels_that_READ_green():
 
     The step used to confine itself to a star-neighbourhood mask because its
     operator was SCNR, which removes green wherever green exceeds the red/blue
-    average — true of cyan and yellow-green too. Measured on two real drizzled
-    masters (2026-09-13), only 4.0% (NGC 281) and 5.6% (IC 1396A) of the green
-    SCNR removed came from pixels whose hue actually reads green; on NGC 281
-    49.5% of it came from CYAN. So the mask was fencing off a badly aimed
-    operator rather than aiming a good one.
+    average. Selecting by hue is self-aiming, so the guarantee is no longer
+    spatial ("only near stars") but chromatic.
 
-    Selecting by hue is self-aiming, so the guarantee is no longer spatial
-    ("only near stars") but chromatic. Three separate things have to hold and
-    each swatch below is chosen so that exactly ONE of them protects it:
+    REWRITTEN 2026-09-19 when the band widened from green to green-through-cyan.
+    The old swatches were chosen to sit on the OLD edges, so after the widening
+    four of them landed inside the new plateau together and the test stopped
+    distinguishing anything — it still passed on three of the four mechanisms
+    by accident. These sit on the new boundaries instead.
 
-      * the green-is-max gate      (magenta, violet — inside the |t| band, but
-                                    green is not their largest channel)
-      * the band edges             (hue 170 just outside; hue 150 half in)
-      * Rec.709 luma preservation  (the green swatch's exact landing value)
+    Three separate things have to hold, and each swatch is chosen so that
+    exactly ONE of them protects it:
 
-    Picked that way on purpose. A first version used a plain cyan and a plain
-    yellow, and BOTH mechanisms rejected each of them — so widening the band
-    and deleting the gate were each invisible, and two of three mutations
-    passed against a test that looked thorough.
+      * `g >= r`, which protects WARM stars  (orange, magenta — inside no band
+                                              because red is their largest
+                                              channel, and that is the only
+                                              thing saving them)
+      * the cool edge at 190-214 deg         (202 half in; 220 just outside —
+                                              this is what keeps blue stars)
+      * the HSL-lightness landing            (the green swatch's exact value)
+
+    The TEAL swatch is the point of the whole change: it scored 0.0 before
+    2026-09-19 and must score 1.0. Andreas, after three passes at this tool:
+    *"the tool still does nothing for my images"* — teal is what his stars
+    actually are, and the band did not reach it.
     """
     import numpy as np
     from nocturne.core.image import AstroImage
-    from nocturne.core.color import remove_green_fringe, _LUM_WEIGHTS
+    from nocturne.core.color import remove_green_fringe
 
     # (name, rgb, expected weight). Deliberately asymmetric channel values: a
     # fixture whose numbers commute cannot tell a correct hue rule from one
     # with red and blue swapped.
     swatches = [
-        ("green   hue 120", (0.21, 0.83, 0.21), 1.0),    # dead centre of the band
-        ("grn-cyan hue 150", (0.05, 0.75, 0.40), 0.5),   # t=+0.5, half weight
-        ("grn-cyan hue 170", (0.05, 0.75, 0.633), 0.0),  # t=+0.833, just outside
-        ("yel-grn hue  90", (0.40, 0.75, 0.05), 0.5),    # t=-0.5, the mirror
-        ("magenta hue 330", (0.90, 0.50, 0.70), 0.0),    # |t|=0.5 but red is max
-        ("violet  hue 260", (0.70, 0.60, 0.90), 0.0),    # |t|=0.667 but blue is max
-        ("cyan    hue 180", (0.11, 0.80, 0.80), 0.0),
-        ("blue    hue 240", (0.18, 0.31, 0.88), 0.0),
+        ("green    hue 120", (0.21, 0.83, 0.21), 1.0),   # dead centre
+        ("yel-grn  hue  90", (0.40, 0.75, 0.05), 1.0),   # warm end of the plateau
+        ("TEAL     hue 185", (0.05, 0.69, 0.75), 1.0),   # THE defect: 0.0 before this change
+        ("cool ramp hue 202", (0.10, 0.48, 0.70), 0.5),  # half in, on the cool ramp
+        ("just out hue 220", (0.10, 0.30, 0.70), 0.0),   # outside: blue stars start here
+        ("blue     hue 229", (0.18, 0.31, 0.88), 0.0),   # a real blue star, untouched
+        ("magenta  hue 330", (0.90, 0.50, 0.70), 0.0),   # red is max -> the warm guard
+        ("orange   hue  26", (0.92, 0.46, 0.12), 0.0),   # red is max -> the warm guard
     ]
     stars = np.zeros((1, len(swatches), 3), np.float32)
     for i, (_n, rgb, _w) in enumerate(swatches):
@@ -154,33 +159,55 @@ def test_the_stars_layer_degreen_touches_only_pixels_that_READ_green():
     out = remove_green_fringe(starless, AstroImage(stars, is_linear=False), 1.0).data
     for i, (name, rgb, weight) in enumerate(swatches):
         px = np.asarray(rgb, np.float32)
-        lum = float(px @ _LUM_WEIGHTS.astype(np.float32))
-        want = (1.0 - weight) * px + weight * lum
+        # HSL lightness, which is what the step desaturates toward — Rec.709
+        # luma until 2026-09-19, and that inflated red on teal pixels.
+        mid = float((px.max() + px.min()) / 2)
+        want = (1.0 - weight) * px + weight * mid
         assert np.allclose(out[0, i], want, atol=1e-5), \
             f"{name}: expected {want} at weight {weight}, got {out[0, i]}"
 
 
-def test_degreening_a_star_preserves_its_brightness():
-    """Green becomes WHITE, not gone.
+def test_degreening_a_star_lands_on_its_LIGHTNESS_and_invents_no_red():
+    """Green becomes GREY, not white, and above all not red.
 
-    SCNR clamps green to the red/blue average, which on a green-dominant pixel
-    deletes the light rather than neutralising it — a de-greened star gets
-    dimmer and smaller. Andreas asked for the Photoshop move (select greens,
-    drop saturation to zero), and keeping luma is what makes it that move.
+    This test used to assert that Rec.709 luma is preserved, on the stated
+    grounds that *"Andreas asked for the Photoshop move (select greens, drop
+    saturation to zero), and keeping luma is what makes it that move."* **That
+    was wrong about Photoshop**, and he proved it on 2026-09-19 by doing the job
+    there in thirty seconds with a Hue/Saturation layer and getting no red at
+    all. Photoshop desaturates toward HSL LIGHTNESS, (max + min) / 2.
+
+    The difference is not cosmetic. Luma weights green at 0.7152, so a teal
+    pixel's luma is dominated by its green channel and neutralising toward it
+    RAISES RED — measured across his NGC 281 master the background gained +0.71
+    levels of red and net light, where Photoshop's move removes light. That was
+    the "background moves towards red" he reported three times.
+
+    So the property worth pinning is not "brightness is unchanged". It is
+    "nothing is invented": the pixel lands neutral, at the lightness it had, and
+    red does not rise to meet an inflated luma.
     """
     import numpy as np
     from nocturne.core.image import AstroImage
     from nocturne.core.color import remove_green_fringe, _LUM_WEIGHTS
 
+    px = np.array([0.05, 0.69, 0.75], np.float32)       # a teal star
     stars = np.zeros((1, 1, 3), np.float32)
-    stars[0, 0] = (0.21, 0.83, 0.21)
+    stars[0, 0] = px
     starless = AstroImage(np.zeros((1, 1, 3), np.float32), is_linear=False)
     out = remove_green_fringe(starless, AstroImage(stars, is_linear=False), 1.0).data
+    r, g, b = (float(c) for c in out[0, 0])
 
-    w = _LUM_WEIGHTS.astype(np.float32)
-    before = float(stars[0, 0] @ w)
-    after = float(out[0, 0] @ w)
-    assert abs(after - before) < 1e-5, \
-        f"de-greening changed the star's brightness: {before} -> {after}"
-    r, g, b = out[0, 0]
-    assert abs(r - g) < 1e-5 and abs(g - b) < 1e-5, "and it should land neutral"
+    assert abs(r - g) < 1e-5 and abs(g - b) < 1e-5, "it should land neutral"
+
+    lightness = float((px.max() + px.min()) / 2)
+    assert abs(r - lightness) < 1e-5, \
+        f"it should land on HSL lightness {lightness}, not on {r}"
+
+    luma = float(px @ _LUM_WEIGHTS.astype(np.float32))
+    assert r < luma - 0.1, (
+        "landing on luma would raise red from 0.05 to 0.558 — inventing red "
+        "light to hold brightness constant is exactly the defect")
+    assert r > float(px.min()) + 0.05, (
+        "and it must not collapse to the minimum channel either, which would "
+        "delete a faint teal star rather than neutralise it")

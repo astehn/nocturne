@@ -1562,7 +1562,19 @@ def _fake_rc_layers(win, monkeypatch):
         st[h // 2, w // 2] = (0.2, 0.9, 0.3)          # one green-fringed star
         return starless, AstroImage(st, is_linear=False)
 
+    def _tagged(img):
+        starless, stars = _split(img)
+        return starless, stars, "StarX"
+
+    # Patch what the code READS. It used to read `rcastro_valid` and
+    # `_remove_stars`; since 2026-09-19 it asks `preferred_splitter` and
+    # `_split_tagged`, so patching the old pair left these tests silently
+    # exercising the star-MASK path while still passing — they only asserted
+    # that a preview rendered, which the mask path also does.
     monkeypatch.setattr(win, "_remove_stars", _split)
+    monkeypatch.setattr(win, "_split_tagged", _tagged)
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
+                        lambda s: object())
     monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
 
 
@@ -1572,6 +1584,7 @@ def test_green_fringe_caches_split_and_previews(qtbot, tmp_path, monkeypatch):
     _fake_rc_layers(win, monkeypatch)
     win._go_to_id("green_fringe")               # sync split (_async_enabled False)
     assert win._fringe_ready is True
+    assert win._fringe_layers[1] == "split", "this test is about the SPLIT path"
     assert win._panel.apply_btn.isEnabled() is True
     entries_before = [name for name, _ in win.project.entries()]
     # The step has no control, so drive the slot the way a test must: Apply is
@@ -5575,7 +5588,19 @@ def _starry_fits(tmp_path, n=64, nstars=14, seed=5):
         cy, cx = rng.uniform(5, n - 5, 2)
         img += rng.uniform(12000.0, 26000.0) * np.exp(
             -((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.5 ** 2))
-    cube = np.stack([img, img * 0.9, img * 0.8]).clip(0, 65535).astype(np.uint16)
+    r, g, b = img.copy(), img * 0.9, img * 0.8
+    # AND SOME TEAL ONES. Every star above is R > G > B — warm — and De-green
+    # Stars protects warm stars absolutely (`g >= r`), so on this fixture the
+    # step had nothing to do and its strength was inert. The WYSIWYG guard's
+    # own anti-vacuity check caught that on 2026-09-19, which is exactly what it
+    # is for. Bright enough to clear _STAR_FLOOR, or they are inert again.
+    for _ in range(3):
+        cy, cx = rng.uniform(5, n - 5, 2)
+        blob = 30000.0 * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 1.6 ** 2))
+        r += blob * 0.10
+        g += blob * 0.95
+        b += blob * 1.00
+    cube = np.stack([r, g, b]).clip(0, 65535).astype(np.uint16)
     p = tmp_path / "starry.fits"
     hdu = fits.PrimaryHDU(cube)
     hdu.header["FILTER"] = "L"
@@ -5937,3 +5962,142 @@ def test_a_narrowband_run_with_no_splitter_does_not_poison_the_store(qtbot, tmp_
     stars = AstroImage(np.zeros_like(data), is_linear=False)
     dlg._on_starless((starless, stars))     # a real split
     assert published == [(starless, stars)]
+
+
+# --- De-green Stars: the last rcastro_valid gate, 2026-09-19 ----------------
+
+def test_degreen_stars_uses_starnet2_when_rcastro_is_absent(qtbot, tmp_path, monkeypatch):
+    """The bug Andreas hit. Removing RC-Astro to try StarNet2 silently switched
+    this step to the star-MASK path — a different operation, on the whole image
+    rather than the stars layer. Measured on a real NGC 7635 master, the
+    committed change is 0.000863 mean absolute through the split and 0.000145
+    through the mask, which is why the step read as doing nothing.
+
+    Asserted on the PATH, not on the pixels: the mask path also changes pixels,
+    so "something happened" cannot tell the two apart — which is exactly how
+    this survived.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.starnet import StarNet
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+
+    def _tagged(img):
+        h, w = img.data.shape[:2]
+        starless = AstroImage(np.full((h, w, 3), 0.3, np.float32), is_linear=False)
+        return starless, AstroImage(np.zeros((h, w, 3), np.float32), is_linear=False), "StarNet2"
+
+    monkeypatch.setattr(win, "_split_tagged", _tagged)
+    # no RC-Astro, but StarNet2 IS configured
+    monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: False)
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
+                        lambda s: StarNet("/fake/starnet2"))
+
+    win._go_to_id("green_fringe")
+    assert win._fringe_layers[1] == "split", \
+        "with StarNet2 configured this must separate stars, not build a mask"
+    assert win._fringe_path_label() == "StarNet2"
+    assert "StarNet2" in win._panel.fringe_status.text(), \
+        "and the panel must name the tool that actually ran"
+    assert "RC-Astro (StarX)" not in win._panel.fringe_status.text()
+
+
+def test_degreen_stars_still_falls_back_to_a_mask_with_no_splitter(qtbot, tmp_path, monkeypatch):
+    """The free path is not removed — it is what makes the step work with
+    nothing installed at all."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter", lambda s: None)
+    win._go_to_id("green_fringe")
+    assert win._fringe_layers[1] == "mask"
+    assert win._fringe_path_label() == "mask"
+    assert "free star detection" in win._panel.fringe_status.text()
+    assert "StarNet2" in win._panel.fringe_status.text(), \
+        "and it should name the free tool that would fix it, not only the paid one"
+
+
+def test_degreen_stars_reuses_a_split_another_surface_paid_for(qtbot, tmp_path, monkeypatch):
+    """Fifth client of the shared store (2026-09-19). Entering De-green Stars
+    right after Star Reduction separated the same pixels must not pay again."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.starnet import StarNet
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
+                        lambda s: StarNet("/fake"))
+
+    called = []
+
+    def _tagged(img):
+        called.append(1)
+        h, w = img.data.shape[:2]
+        return (AstroImage(np.full((h, w, 3), 0.3, np.float32), is_linear=False),
+                AstroImage(np.zeros((h, w, 3), np.float32), is_linear=False), "StarNet2")
+
+    monkeypatch.setattr(win, "_split_tagged", _tagged)
+
+    win._go_to_id("green_fringe")
+    assert called == [1], "the first visit has to separate"
+    first = win._fringe_layers[2]
+
+    # Drop this step's own handle, exactly as leaving and returning does, and
+    # ask it to prepare again. The SHARED store must answer.
+    win._fringe_layers = None
+    win._setup_green_fringe()
+
+    assert called == [1], "the second visit must reuse the stored split, not redo it"
+    assert win._fringe_layers[2] is first
+    assert win._fringe_path_label() == "StarNet2", "and still report the tool that ran"
+
+
+def test_degreen_stars_previews_what_apply_would_commit_on_entry(qtbot, tmp_path, monkeypatch):
+    """The slider brought a WYSIWYG trap with it.
+
+    Before it existed, the preview fell back to 0.0 when nothing was pending and
+    Apply performed one fixed action — consistent, if minimal. With a control on
+    screen reading 100, that fallback would show an UNCHANGED image while Apply
+    committed a full de-green. The preview has to equal what Apply commits, so
+    it reads the slider, exactly as Star Reduction does.
+    """
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.starnet import StarNet
+
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_starry_fits(tmp_path))
+
+    def _tagged(img):
+        h, w = img.data.shape[:2]
+        starless = AstroImage(np.full((h, w, 3), 0.3, np.float32), is_linear=False)
+        st = np.zeros((h, w, 3), np.float32)
+        st[h // 2, w // 2] = (0.05, 0.69, 0.75)        # one teal star to act on
+        return starless, AstroImage(st, is_linear=False), "StarNet2"
+
+    monkeypatch.setattr(win, "_split_tagged", _tagged)
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
+                        lambda s: StarNet("/fake"))
+
+    win._go_to_id("green_fringe")
+    assert win._fringe_ready is True
+    assert win._panel.fringe_slider.isEnabled() is True, \
+        "the slider must come alive with Apply once the split lands"
+
+    # Nothing pending — exactly the state entering the step leaves behind. The
+    # renderer is called directly because navigation redraws the canvas after
+    # the split callback, which is what the neighbouring tests do too.
+    assert win._fringe_pending is None
+    win._render_fringe_preview()
+    shown = win._displayed.data.copy()
+    committed = win._fringe_result(win._panel.fringe_slider.value() / 100.0).data
+    assert np.allclose(shown, committed, atol=1e-6), \
+        "what is on screen must be what Apply would commit"
+
+    # and the slider actually steers it, or the check above proves nothing
+    win._on_fringe_change(0.0)
+    win._render_fringe_preview()
+    assert not np.allclose(win._displayed.data, shown), \
+        "moving the slider must change the preview"
