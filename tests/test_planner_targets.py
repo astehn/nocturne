@@ -76,6 +76,42 @@ def test_the_rule_is_recorded_in_the_output():
     assert p["rule"]["max_arcmin"] is None, "there is deliberately no upper bound"
 
 
+@pytest.mark.skipif(
+    not SITE.exists(),
+    reason="build() writes into site/, which is decoupled and gitignored",
+)
+def test_build_records_the_rule_it_actually_applied():
+    """The test above only proves `payload()` echoes its own argument back.
+
+    That is worth nothing to a reader of planner-targets.json, which is the
+    point of recording the rule at all: the file could declare a 5' floor while
+    holding 2' objects, or declare no upper bound while a cap silently removed
+    M 31 again, and the assertion above would still pass. `build()` is the one
+    that has to pass the SAME rule to select_targets() and to payload(), so this
+    re-runs the recorded rule and demands it reproduce the written file exactly.
+
+    If it fails, the file is describing a catalogue it does not contain.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import build, read_openngc, select_targets
+
+    data = build()
+    rule, targets = data["rule"], data["targets"]
+    assert targets
+
+    reselected = select_targets(read_openngc(), rule["min_arcmin"])
+    assert [t["id"] for t in targets] == [t["id"] for t in reselected], (
+        "the recorded min_arcmin does not reproduce the targets that were written")
+    assert all(t["size"] >= rule["min_arcmin"] for t in targets)
+    assert rule["requires_name"] is True and all(t["name"].strip() for t in targets)
+    # max_arcmin is recorded as None; prove that is a fact about the file and not
+    # just a field, by finding something wider than the S30 Pro's 135' short axis.
+    assert max(t["size"] for t in targets) > 135.0, (
+        "no target exceeds the frame, so an upper bound could have crept back in "
+        "without this file's rule looking wrong")
+
+
 def test_the_file_stays_inside_its_budget():
     """40 KB uncompressed. Asserted so that widening the rule fails loudly
     rather than quietly doubling the weight of the page."""
