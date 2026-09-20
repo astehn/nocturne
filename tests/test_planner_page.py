@@ -111,3 +111,14 @@ def test_the_page_reports_a_fog_margin():
     assert "fogMargin" in js
     assert "Math.min" in js, "the WORST hour fogs the optics, not the average"
 
+
+def test_the_clock_and_unit_defaults_are_chosen_not_inherited():
+    """Deriving these from the browser locale was tried and failed in the
+    wild: Andreas is in Sweden, his browser reports an English locale, and
+    the page served him "09:30 PM". Astro is a 24-hour-clock hobby and the
+    data is metric, so both defaults are picked outright."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "clock: '24'" in js and "units: 'c'" in js
+    assert "'en-GB'" in js, "pass a locale explicitly or it can reassert 12-hour"
+    h = (SITE / "planner.html").read_text(encoding="utf-8")
+    assert 'id="clock"' in h and 'id="units"' in h
