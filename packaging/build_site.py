@@ -39,6 +39,10 @@ NAV = [
     ("Home",      "index.html",          "#top"),
     ("Gallery",   "gallery.html",        "gallery.html"),
     ("Tools",     "tools.html",          "tools.html"),
+    # The session planner. Its own entry at Andreas's request 2026-09-20 — it is
+    # not a page ABOUT Nocturne, it is a thing you use, and burying a nightly
+    # utility inside Tools (which describes the app's steps) would hide it.
+    ("Planner",   "planner.html",        "planner.html"),
     ("Guide",     "guide.html",          "guide.html"),
     ("Sample data", "sample-data.html",  "sample-data.html"),
     ("FAQ",       "faq.html",            "faq.html"),
