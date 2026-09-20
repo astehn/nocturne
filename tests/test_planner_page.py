@@ -52,7 +52,15 @@ def test_the_privacy_claim_is_on_the_page_itself():
     was not, and an unqualified version of it must not come back.
     """
     h = _html()
-    assert "On a first visit nothing is sent anywhere until you press this" in h
+    # The sentence names the BUTTON, so it has to track the button's label.
+    # It said "press this" when the action sat directly beneath it; the action
+    # moved up beside the location box (there was no visible affordance and
+    # people were left pressing Enter on faith), and "this" then pointed at
+    # nothing. A claim about what a control does must name the control.
+    assert "until you press Plan tonight" in h
+    import re
+    labels = re.findall(r'<button type="submit"[^>]*>([^<]+)</button>', h)
+    assert labels == ["Plan tonight"], f"one submit, and the copy names it: {labels}"
     assert "exactly as you typed it" in h, \
         "the geocoder gets the place name verbatim; say so at the point of entry"
     assert "next time you open this page" in h, \
@@ -676,3 +684,62 @@ def test_a_zone_the_provider_got_wrong_costs_the_zone_not_the_page():
     assert out["bad"] == "19:10", out            # solar, not a crash and not 16:16
     assert out["good"] == "19:16", out
     assert out["twelve"].lower().replace("\u202f", " ") == "07:16 pm", out["twelve"]
+
+
+def test_the_cloud_icon_does_not_claim_rain_the_page_cannot_see():
+    """Andreas, on the live page: *"The cloud icon shows rain under it but the
+    planner does not seem to consider rain or any percipitation at all or?"*
+
+    He was right. The shape came from sky.stehn.com with three blue strokes
+    beneath it, and nothing precipitation-shaped was ever requested — the
+    drawing asserted a fact the page did not have. That is the same test the
+    wind arrow had to pass (it gained a real bearing rather than rotating
+    decoratively) and this one had quietly failed.
+
+    The strokes did not go; they MOVED, to the row that is about rain.
+    """
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "precipitation_probability" in js, "the forecast must actually ask for rain"
+
+    import re
+    cloud = re.search(r"cloud: function[\s\S]*?\n    \},", js).group(0)
+    rain = re.search(r"rain: function[\s\S]*?\n    \},", js).group(0)
+    assert "#5b8dd9" not in cloud, "the cloud must not draw rain it knows nothing about"
+    assert "#5b8dd9" in rain, "the rain row is where the rain strokes belong"
+
+
+def test_rain_gates_the_verdict_but_wind_does_not():
+    """Rain needs no tuned constant to gate on — there is no judgement call in
+    "it is forecast to rain on the telescope" — while no measured "this is
+    windy" threshold exists, and CLAUDE.md forbids inventing one. So the two
+    factors deliberately behave differently, and that asymmetry is the point.
+    """
+    eng = (SITE / "planner-engine.js").read_text(encoding="utf-8")
+    assert "raining" in eng and "rain is forecast during the dark hours" in eng
+    wind = eng[eng.index("label: 'Wind'"):]
+    assert "concern: false" in wind[:400], "wind must not flag a guessed threshold"
+
+
+def test_the_verdict_is_not_the_same_colour_whatever_it_says():
+    """It read in --ink for every outcome, so "skip" and "worth going out" were
+    typographically identical and the answer had to be read to be seen — on a
+    page whose entire job is one word. Colour is never alone: the word says it,
+    and the limiting factor beneath says why.
+    """
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert "verdict v-" in js
+    for cls in ("v-worth-going-out", "v-marginal", "v-skip", "v-can-t-say"):
+        assert f".verdict.{cls}" in css, cls
+
+
+def test_a_target_row_opens_to_show_more():
+    """His ask: collapsed rows show what they show now plus a thumbnail;
+    expanded they describe the target. <details> so the browser owns the
+    state, the keyboard and the screen reader rather than our own JavaScript.
+    """
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "<details class=\"target\"" in js
+    assert "t-thumb" in js, "the thumbnail slot must exist even before images do"
+    for fact in ("Type", "Size", "Framing", "Highest", "Worth giving it"):
+        assert f"'{fact}'" in js or f'"{fact}"' in js, fact
