@@ -13,6 +13,7 @@ the rounding it is checking.
 """
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -177,9 +178,13 @@ needs_node = pytest.mark.skipif(
     reason="node is not installed; the shipped JavaScript cannot be exercised")
 
 
-def _node(script):
+def _node(script, tz=None):
+    """Run a snippet against the shipped files, optionally under a given TZ."""
+    env = dict(os.environ)
+    if tz is not None:
+        env["TZ"] = tz
     r = subprocess.run(["node", "-e", script], capture_output=True, text=True,
-                       cwd=SITE.parent, timeout=60)
+                       cwd=SITE.parent, timeout=60, env=env)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -555,3 +560,119 @@ def test_the_primary_action_uses_the_sites_own_button():
     assert "font-family: inherit" in btn.group(1), \
         "without it a <button> keeps the UA font and the label looks wrong"
     assert "cursor: pointer" in btn.group(1)
+
+
+# --- What the page PRINTS belongs to the location, not to the machine ---------
+#
+# tests/test_planner_engine.py already pins this for darkWindow: the night the
+# engine computes must not depend on where the laptop thinks it is. It did not
+# reach the display layer, and the display layer had the same bug -- the third
+# in this family, after the solar-noon anchor and Open-Meteo's timestamps.
+
+CLOCK_TZ_CASES = ["Europe/Stockholm", "Pacific/Auckland", "America/Los_Angeles", "UTC"]
+
+# Malé. Far from every runtime zone below, and on a half-hour-free offset
+# (UTC+5) that none of them share.
+MALE_LON = 73.51
+MALE_ZONE = "Indian/Maldives"
+DARK_START = "2026-09-20T14:16:00Z"
+DARK_END = "2026-09-20T23:46:00Z"
+
+
+def _clock(zone, tz):
+    """Format the two instants through the SHIPPED clock, under a given TZ."""
+    return _node("""
+      const P = %s;
+      const z = %s;
+      const clock = P.makeClock(z, %s, false);
+      const machine = d => d.toLocaleTimeString('en-GB',
+        { hour: '2-digit', minute: '2-digit', hour12: false });
+      const a = new Date(%s), b = new Date(%s);
+      console.log(JSON.stringify({
+        rendered: clock(a) + '-' + clock(b),
+        machine: machine(a) + '-' + machine(b),
+      }));
+    """ % (_req(PLANNER), json.dumps(zone), MALE_LON,
+           json.dumps(DARK_START), json.dumps(DARK_END)), tz=tz)
+
+
+@needs_node
+def test_times_render_in_the_LOCATIONS_zone_not_the_machines():
+    """Planning Malé from Sweden printed a dark window of 16:16-01:46 for a
+    night that runs 19:16-04:46. Three hours out, across the "Dark from" line
+    and every target card, because fmt() called toLocaleTimeString with no
+    timeZone and got the laptop's.
+
+    It is invisible whenever you plan where you are, which is how it survived
+    two reviews and a rendering pass: you have to type somewhere far away
+    before the page is wrong in a way you can see.
+
+    Four runtime zones, one instant, one location. The rendered time must be
+    the same in all four and must be Malé's.
+    """
+    got = {tz: _clock(MALE_ZONE, tz) for tz in CLOCK_TZ_CASES}
+
+    rendered = {tz: g["rendered"] for tz, g in got.items()}
+    assert len(set(rendered.values())) == 1, (
+        "the page prints a different time depending on the machine's clock:\n"
+        + "\n".join(f"  TZ={tz}: {v}" for tz, v in rendered.items()))
+    assert set(rendered.values()) == {"19:16-04:46"}, rendered
+
+    # And the harness is genuinely sensitive: the machine-zone reading, which
+    # is what the page used to print, really does vary across these four. If
+    # this ever stops being true the test above has quietly stopped proving
+    # anything, because every zone would agree by accident.
+    machine = {g["machine"] for g in got.values()}
+    assert len(machine) == len(CLOCK_TZ_CASES), (
+        f"the runtime zones no longer disagree ({machine}); pick zones that do, "
+        f"or this test cannot tell a fixed clock from a broken one")
+    assert "16:16-01:46" in machine, \
+        "Europe/Stockholm should still reproduce the original wrong reading"
+
+
+@needs_node
+def test_with_no_forecast_the_clock_falls_back_to_SOLAR_time_not_the_browser():
+    """The astronomy works with the network down and times are still shown in
+    that state, so a fallback to the machine's zone would put the bug back
+    exactly where the visitor cannot notice it.
+
+    Mean solar time at the longitude -- one degree to four minutes, the same
+    arithmetic the engine anchors its sample window with -- can sit about 1.5h
+    from civil time. A browser zone can sit 12h out. For Malé the gap is six
+    minutes.
+    """
+    got = {tz: _clock(None, tz) for tz in CLOCK_TZ_CASES}
+    rendered = {g["rendered"] for g in got.values()}
+    assert len(rendered) == 1, (
+        "the no-forecast clock still reads the machine:\n"
+        + "\n".join(f"  TZ={tz}: {g['rendered']}" for tz, g in got.items()))
+    solar = rendered.pop()
+    assert solar == "19:10-04:40", solar
+    # Within the stated bound of civil time, and nowhere near a browser zone.
+    assert abs(int(solar[:2]) * 60 + int(solar[3:5]) - (19 * 60 + 16)) <= 90, solar
+    for tz, g in got.items():
+        if g["machine"] != solar:
+            break
+    else:                                   # pragma: no cover - guards the guard
+        raise AssertionError("no runtime zone disagrees; the test proves nothing")
+
+
+@needs_node
+def test_a_zone_the_provider_got_wrong_costs_the_zone_not_the_page():
+    """An unknown IANA name is a RangeError out of toLocaleTimeString, and it
+    would be thrown once per timestamp from inside render(). makeClock probes
+    the zone once and drops to solar time if it is bad, so a provider typo
+    degrades the clock rather than blanking the results."""
+    out = _node("""
+      const P = %s;
+      const d = new Date(%s);
+      console.log(JSON.stringify({
+        bad: P.makeClock('Nowhere/Fake', %s, false)(d),
+        good: P.makeClock('Indian/Maldives', %s, false)(d),
+        twelve: P.makeClock('Indian/Maldives', %s, true)(d),
+      }));
+    """ % (_req(PLANNER), json.dumps(DARK_START), MALE_LON, MALE_LON, MALE_LON),
+        tz="Europe/Stockholm")
+    assert out["bad"] == "19:10", out            # solar, not a crash and not 16:16
+    assert out["good"] == "19:16", out
+    assert out["twelve"].lower().replace("\u202f", " ") == "07:16 pm", out["twelve"]
