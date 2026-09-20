@@ -14,7 +14,11 @@ dir_mode = "755"
 file_mode = "644"
 # download_path = "/var/www/your-site/download/App.zip"   # if the site serves its own binary, the deploy refreshes it; MUST be inside remote_path
 # Static assets to deploy. rsync runs WITHOUT --delete, so server-only files survive.
-include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "get.php", "img/"]
+# "*.json" and "vendor/" exist for the planner page. The glob is NOT recursive,
+# so a file in a subdirectory needs its directory listed explicitly -- and an
+# asset missing from this allowlist does not fail anywhere: the page renders in
+# local preview and 404s its engine in production.
+include = ["*.html", "styles.css", "main.js", "lightbox.js", "contribute.js", "*.json", "vendor/", "get.php", "img/"]
 # Internal files + server-state paths. REQUIRED (the script refuses to run
 # without them): config*.php, db/, uploads/ protect server state; *.fits and
 # *.fit stop astro data reaching the web root — sample masters are staged
