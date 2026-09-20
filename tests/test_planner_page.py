@@ -159,3 +159,14 @@ def test_a_fog_MARGIN_is_converted_as_a_difference_not_a_temperature():
     assert out["f"].startswith("3.6°F margin"), out["f"]
     assert "35.6" not in out["f"], \
         "the margin must convert by the 9/5 ratio alone, never the +32 offset"
+
+
+def test_the_page_says_which_location_it_used():
+    """It fetched five candidates and silently used the first. Ask for
+    "Cambridge" and you got one of two countries with no indication. Andreas
+    asked for this after typing Helsingborg and not being told what it
+    resolved to."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "Planning for" in js
+    assert "hits.length > 1" in js, "more than one candidate must be offered, not guessed"
+    assert "function esc" in js, "a third-party place name is interpolated into HTML"
