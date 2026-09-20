@@ -1,5 +1,8 @@
 # tests/test_planner_page.py
 """Asserts against the BUILT page, the way tests/test_contribute_page.py does."""
+import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -122,3 +125,37 @@ def test_the_clock_and_unit_defaults_are_chosen_not_inherited():
     assert "'en-GB'" in js, "pass a locale explicitly or it can reassert 12-hour"
     h = (SITE / "planner.html").read_text(encoding="utf-8")
     assert 'id="clock"' in h and 'id="units"' in h
+
+
+def test_a_fog_MARGIN_is_converted_as_a_difference_not_a_temperature():
+    """2°C of margin is 3.6°F, not 35.6°F. The margin and the temperatures
+    it is derived from live in the same sentence and convert by different
+    rules, which is precisely why this is pinned.
+
+    Runs the SHIPPED engine under node with both a Celsius and a Fahrenheit
+    formatter injected into verdict(), and reads the rendered Fog factor back
+    -- not a source-level guess at what the code does.
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed; the JS engine cannot be exercised")
+    engine = SITE / "planner-engine.js"
+    script = """
+      const E = require(%s);
+      const win = { kind: 'astronomical', start: new Date('2026-09-20T20:00:00Z'),
+                    end: new Date('2026-09-21T02:00:00Z') };
+      const weather = { meanCloud: 10, maxCloud: 20, moonIllumination: 5,
+                         moonUpMinutes: 0, fogMargin: 2, tempC: 11, dewC: 9 };
+      const celsius = c => Math.round(c) + '\\u00b0C';
+      const fahrenheit = c => Math.round(c * 9 / 5 + 32) + '\\u00b0F';
+      const fogValue = fmt => E.verdict(win, weather, [], fmt)
+        .factors.find(f => f.label === 'Fog').value;
+      console.log(JSON.stringify({ c: fogValue(celsius), f: fogValue(fahrenheit) }));
+    """ % json.dumps(str(engine))
+    r = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                       cwd=SITE.parent, timeout=30)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["c"].startswith("2°C margin"), out["c"]
+    assert out["f"].startswith("3.6°F margin"), out["f"]
+    assert "35.6" not in out["f"], \
+        "the margin must convert by the 9/5 ratio alone, never the +32 offset"
