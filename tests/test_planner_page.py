@@ -506,9 +506,21 @@ def test_every_factor_row_has_an_icon_and_they_all_fit_one_slot():
         assert re.search(r'viewBox="0 0 (22|26) (22|26)"', svg), f"{name}: odd viewBox"
         widest = max(widest, int(re.search(r'width="(\d+)"', svg).group(1)))
 
-    # The Sun must actually move between the two darkness states; a constant
-    # here would be an icon that says the same thing about both kinds of night.
-    assert out["darknessDark"] != out["darknessNone"]
+    # The Sun must actually MOVE between the two darkness states. Compared on
+    # the drawn circle and not the whole <svg>, for the same reason the Moon
+    # test compares paths: the accessible label also says which night it is, so
+    # an icon pinned to one geometry and labelled two ways still yields two
+    # different strings. Mutation found this assertion passing on exactly that.
+    discs = [re.search(r"<circle[^>]*cy=\"([\d.]+)\"[^>]*>", out[k]).group(1)
+             for k in ("darknessDark", "darknessNone")]
+    assert discs[0] != discs[1], (
+        f"the Sun is drawn at cy={discs[0]} for both a dark night and a night "
+        f"with no real darkness; the icon says the same thing about either")
+    # ...and it must move the right way: below the horizon when it is dark.
+    horizon = re.search(r"M[\d.]+ ([\d.]+) H", out["darknessDark"]).group(1)
+    assert float(discs[0]) > float(horizon) > float(discs[1]), (
+        f"disc centres {discs} straddle the horizon at {horizon} the wrong way "
+        f"round -- the dark night must be the one with the Sun below the line")
 
     css = (SITE / "styles.css").read_text(encoding="utf-8")
     rule = re.search(r"\.factors li \.ficon\s*\{([^}]*)\}", css)
