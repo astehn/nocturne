@@ -94,7 +94,7 @@ def _rows(releases: list[dict]) -> str:
             links.append(
                 f'<a href="get.php?f={a["name"]}">{label}</a> '
                 f'<span class="dl-size">{human_size(a["size"])}</span>')
-        latest = ' <span class="dl-latest">latest</span>' if i == 0 else ""
+        latest = ' <span class="dl-latest">Latest release</span>' if i == 0 else ""
         out.append(
             f'          <tr>\n'
             f'            <td class="dl-version">{rel["version"]}{latest}</td>\n'
