@@ -35,7 +35,7 @@ PAGE = SITE / "_src" / "gallery.html"
 # Reused rather than re-derived: one definition of how a filename becomes facts.
 sys.path.insert(0, str(ROOT / "packaging"))
 from build_gallery import (  # noqa: E402
-    facts_from_filename, read_skips, target_from_name,
+    COMMON, facts_from_filename, read_skips, target_from_name,
 )
 
 GRID_EDGE = 1100       # what the page shows; larger than the strip's 900, the
@@ -98,10 +98,168 @@ def collect(source: pathlib.Path) -> list[dict]:
             continue
         slug = _slug(img.stem)
         print(f"  {img.name}")
-        entries.append({"slug": slug, "source": img.name,
+        entries.append({"slug": slug, "source": img.name, "stem": img.stem,
                         "alt": alt_text(img.stem),
                         "images": write_sizes(img, slug)})
     return entries
+
+
+# --- seeding the wall (2026-09-21) -------------------------------------
+# Spec 2.2: the gallery becomes a database-backed page, so Andreas's own
+# pictures must live in the same table as everyone else's. Two sources for one
+# page drift, and the symptom of that drift is a caption under the wrong
+# picture.
+#
+# This module keeps its job of READING his folder and resolving the facts; what
+# changes is where the result goes -- a `submissions` row rather than an HTML
+# figure.
+
+# His byline on the wall. A seeded row needs one like every other row; `handle`
+# is NOT NULL and the page renders it, so an empty one is a blank byline beside
+# real ones.
+SEED_HANDLE = "@andreas"
+
+# Every picture on the wall is his, and he owns an S30 Pro and nothing else, so
+# this is a fact about the seeded rows rather than a guess. (The S50 material in
+# the training set is licensed public data and never reaches the gallery.)
+SEED_INSTRUMENT = "ZWO Seestar S30 Pro"
+
+# SEEDING READS THE DERIVED JPEGs, not the Desktop source folder collect()
+# uses. Deliberate: these rows point at img/showcase/... URLs, so the deployed
+# files ARE the truth being recorded, the seed runs without that folder
+# mounted, and the tests run anywhere. (It also cannot accidentally pick up a
+# working file: build_gallery.py's folder holds diagnostics like
+# M16_COMPARE_input_corners_after, and every seeded row is `approved`.)
+SHOWCASE = SITE / "img" / "showcase"
+
+
+def collect_showcase() -> list[dict]:
+    """Entries for the ten curated wall images, in `collect()`'s shape.
+
+    Facts come from the FILENAME, which is Andreas's own labelling of his own
+    export -- "ngc7000-drizzle-163x20s-54min-original" -- and is the only
+    record of them now that the burned plates are being removed. `captured_on`
+    stays empty rather than being inferred: a date that is not in the filename
+    would be invented, and the caption renders without one.
+    """
+    entries = []
+    for thumb in sorted(SHOWCASE.glob(f"*-{GRID_EDGE}.jpg")):
+        stem = thumb.stem[: -len(f"-{GRID_EDGE}")]
+        full = SHOWCASE / f"{stem}-{FULL_EDGE}.jpg"
+        if not full.exists():
+            print(f"  skipping {stem}: no {FULL_EDGE}px version", file=sys.stderr)
+            continue
+        e = {"slug": stem, "source": f"{stem}.jpg",
+             "target": target_from_name(stem),
+             "instrument": SEED_INSTRUMENT, "captured_on": ""}
+        e.update({k: v for k, v in facts_from_filename(stem).items() if v})
+        e["images"] = {
+            "grid": {"src": f"img/showcase/{thumb.name}",
+                     "bytes": thumb.stat().st_size},
+            "full": {"src": f"img/showcase/{full.name}",
+                     "bytes": full.stat().st_size},
+        }
+        entries.append(e)
+    return entries
+
+
+def seed_rows(entries: list[dict]) -> list[dict]:
+    """One `submissions` row per gallery entry, keyed by COLUMN NAME.
+
+    Every field is named explicitly rather than copied from the entry. That is
+    not style: `collect()` carries whatever the FITS header happened to hold,
+    and a location key reaching a public table is the one leak this feature
+    must not have. Copying would make that leak the default.
+
+    `catalogue_id` stays NULL -- the site matches it server-side so the mapping
+    can improve without an app release (spec 4).
+    """
+    rows = []
+    for e in entries:
+        images = e.get("images") or {}
+        grid = images.get("grid") or {}
+        full = images.get("full") or {}
+        rows.append({
+            "handle": SEED_HANDLE,
+            "target": e.get("target") or None,
+            "catalogue_id": None,
+            "integration_s": e.get("total_s"),
+            "frames": e.get("frames"),
+            "sub_s": e.get("per_sub_s"),
+            "captured_on": e.get("captured_on") or None,
+            "instrument": e.get("instrument") or None,
+            "stored_2000": full.get("src"),
+            "stored_900": grid.get("src"),
+            "orig_filename": e.get("source") or f"{e.get('slug', '')}.jpg",
+            "size_bytes": full.get("bytes") or grid.get("bytes") or 0,
+            "status": "approved",
+        })
+    return rows
+
+
+def _sql_value(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    # Backslash AND quote: MariaDB treats both as escapes by default, and a
+    # target like "Barnard's Loop" is a real name that would otherwise end the
+    # statement early.
+    return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def seed_sql(entries: list[dict]) -> str:
+    """INSERT statements for the seeded rows.
+
+    Emitted as text rather than executed: the generator runs on Andreas's Mac
+    and the database is on the VPS, so printing SQL to pipe over ssh is both
+    simpler than a tunnel and reviewable before it runs.
+    """
+    rows = seed_rows(entries)
+    if not rows:
+        return ""
+    cols = list(rows[0])
+    out = ["-- Seeded from the gallery folder by build_gallery.py --seed.",
+           "-- Review before piping; these rows are status='approved' and go",
+           "-- straight onto the public wall."]
+    for r in rows:
+        values = ", ".join(_sql_value(r[c]) for c in cols)
+        out.append(f"INSERT INTO submissions ({', '.join(cols)}) VALUES ({values});")
+    return "\n".join(out) + "\n"
+
+
+def caption_html(stem: str) -> str:
+    """The figcaption's inner markup, from the filename's own facts.
+
+    THE MARKUP CONTRACT: gallery_render.php renders the same three elements for
+    a submitted row, so the static fallback page and the dynamic wall cannot
+    look like two different pages. Classes are the ones styles.css already has
+    -- .frame-target, .frame-common, .frame-data were written for this and had
+    never been used, because the plate made them unnecessary.
+
+    Parts are collected and joined, so a picture whose filename carries no
+    numbers renders a name and nothing else rather than a dangling separator.
+    """
+    clean = re.sub(r"_(drizzle|mosaic|Original|2x|fix)\b", " ", stem, flags=re.I)
+    target = target_from_name(clean).strip()
+    facts = facts_from_filename(stem)
+    out = f'<span class="frame-target">{target}</span>'
+    common = COMMON.get(target, "")
+    if common:
+        out += f'<span class="frame-common">{common}</span>'
+    bits = []
+    if facts.get("frames") and facts.get("per_sub_s"):
+        bits.append(f"{facts['frames']} &times; {facts['per_sub_s']:g}s")
+    if facts.get("total_s"):
+        bits.append(_pretty_integration(facts["total_s"]))
+    if bits:
+        out += f'<span class="frame-data">{" &middot; ".join(bits)}</span>'
+    # The byline, as the dynamic wall renders for every row. On this page it is
+    # always his -- the fallback shows his pictures -- but it must be PRESENT,
+    # or the two renderings differ by a line and a database outage visibly
+    # changes the page rather than only its source.
+    out += f'<span class="frame-by">{SEED_HANDLE}</span>'
+    return out
 
 
 def figure(e: dict) -> str:
@@ -110,7 +268,13 @@ def figure(e: dict) -> str:
     Reused rather than invented: they already carry the multicol masonry, the
     `a.frame-img` hook lightbox.js binds to, and the hover transition. A new
     class would have been a second implementation of all three, free to drift.
-    No figcaption, because the Share plate inside the picture already says it.
+
+    IT NOW CARRIES A FIGCAPTION. It did not until 2026-09-21, and the reason is
+    in this module's docstring: every picture was a Share export with the
+    caption burned into the pixels, so a rendered one would have said the same
+    words twice. Andreas is replacing all ten with unannotated exports, which
+    removes the only copy of those facts from the page -- so they come back as
+    text, where they are selectable, translatable, and readable at tile size.
     """
     g, f = e["images"]["grid"], e["images"]["full"]
     return (
@@ -119,6 +283,7 @@ def figure(e: dict) -> str:
         f'            <img src="{g["src"]}" width="{g["w"]}" height="{g["h"]}"\n'
         f'                 loading="lazy" decoding="async" alt="{e["alt"]}">\n'
         f'          </a>\n'
+        f'          <figcaption>{caption_html(e["stem"])}</figcaption>\n'
         f'        </figure>\n')
 
 

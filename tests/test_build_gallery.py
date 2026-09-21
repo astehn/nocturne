@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "packaging"))
 
 build_gallery = pytest.importorskip("build_gallery")
+build_showcase = pytest.importorskip("build_showcase")
 
 # Exactly the `submissions` columns a seeded row may set. `stored_pending`,
 # `ip` and `representative` are deliberately absent: a seeded row was never
@@ -50,7 +51,7 @@ def entry(**over):
 
 
 def test_seed_rows_uses_exactly_the_submissions_column_names():
-    rows = build_gallery.seed_rows([entry()])
+    rows = build_showcase.seed_rows([entry()])
     assert len(rows) == 1
     extra = set(rows[0]) - COLUMNS
     missing = COLUMNS - set(rows[0])
@@ -63,7 +64,7 @@ def test_seed_rows_maps_the_REAL_collect_keys():
 
     Named explicitly because these are the four renames where a typo produces
     a row full of NULLs rather than an error."""
-    r = build_gallery.seed_rows([entry()])[0]
+    r = build_showcase.seed_rows([entry()])[0]
     assert r["frames"] == 333
     assert r["sub_s"] == 10
     assert r["integration_s"] == 3330
@@ -74,13 +75,13 @@ def test_seed_rows_maps_the_REAL_collect_keys():
 
 def test_seeded_rows_are_approved_not_pending():
     """His own pictures are not awaiting his own moderation."""
-    assert build_gallery.seed_rows([entry()])[0]["status"] == "approved"
+    assert build_showcase.seed_rows([entry()])[0]["status"] == "approved"
 
 
 def test_seeded_rows_carry_a_handle():
     """`handle` is NOT NULL and the wall shows it. An empty one would render a
     blank byline beside everyone else's."""
-    assert build_gallery.seed_rows([entry()])[0]["handle"].strip() != ""
+    assert build_showcase.seed_rows([entry()])[0]["handle"].strip() != ""
 
 
 def test_a_sparse_entry_still_produces_a_row():
@@ -90,7 +91,7 @@ def test_a_sparse_entry_still_produces_a_row():
     sparse = {"slug": "x", "target": "M 31",
               "images": {"grid": {"src": "a.jpg", "bytes": 1},
                          "full": {"src": "b.jpg", "bytes": 2}}}
-    r = build_gallery.seed_rows([sparse])[0]
+    r = build_showcase.seed_rows([sparse])[0]
     assert r["frames"] is None and r["sub_s"] is None
     assert r["integration_s"] is None
     assert r["stored_900"] == "a.jpg"
@@ -99,14 +100,14 @@ def test_a_sparse_entry_still_produces_a_row():
 def test_catalogue_id_is_left_for_the_SERVER_to_match():
     """§4: the app knows 'NGC 7000'; the site owns the mapping so it can
     improve without an app release. The importer must not pre-empt it."""
-    assert build_gallery.seed_rows([entry()])[0]["catalogue_id"] is None
+    assert build_showcase.seed_rows([entry()])[0]["catalogue_id"] is None
 
 
 def test_no_location_field_survives_into_a_row():
     """Global constraint: never a location, in any payload or column. collect()
     carries whatever the FITS header held, so the row must be built by naming
     fields, not by copying the entry."""
-    r = build_gallery.seed_rows([entry(
+    r = build_showcase.seed_rows([entry(
         location="Malmö", site="backyard", lat=55.6, lon=13.0,
         sitelat="55.6", sitelong="13.0")])[0]
     blob = " ".join(str(v).lower() for v in r.values())
@@ -118,7 +119,7 @@ def test_seed_sql_quotes_and_escapes():
     """The importer emits SQL to pipe over ssh, so a handle or target with an
     apostrophe must not end the statement — 'Barnard's Loop' is a real target
     name and would otherwise be a syntax error at best."""
-    sql = build_gallery.seed_sql([entry(target="Barnard's Loop")])
+    sql = build_showcase.seed_sql([entry(target="Barnard's Loop")])
     assert "Barnard" in sql
     assert "INSERT INTO submissions" in sql
     # The apostrophe must be escaped, not raw.
@@ -128,7 +129,7 @@ def test_seed_sql_quotes_and_escapes():
 def test_captured_on_is_a_DATE_never_a_time():
     """A capture time says when someone was at their telescope. The date is
     what the caption needs; the rest is a movement record nobody asked for."""
-    r = build_gallery.seed_rows([entry(captured_on="2026-08-09")])[0]
+    r = build_showcase.seed_rows([entry(captured_on="2026-08-09")])[0]
     assert r["captured_on"] == "2026-08-09"
     assert ":" not in str(r["captured_on"])
 
@@ -170,7 +171,7 @@ def test_seed_reads_the_CURATED_showcase_not_the_working_folder():
     `M16_COMPARE_input_corners_after` — a diagnostic image — and every seeded
     row is status='approved', so it would have gone straight onto the public
     wall."""
-    entries = build_gallery.collect_showcase()
+    entries = build_showcase.collect_showcase()
     assert len(entries) == 10, f"expected the ten curated images, got {len(entries)}"
     srcs = [e["images"]["grid"]["src"] for e in entries]
     assert all(s.startswith("img/showcase/") for s in srcs), srcs
@@ -183,7 +184,7 @@ def test_every_curated_entry_resolves_its_capture_facts():
     """The filenames are the only record of these numbers once the burned
     plates are gone, so a stem that stops parsing must fail loudly rather than
     publish a picture with a blank caption."""
-    for e in build_gallery.collect_showcase():
+    for e in build_showcase.collect_showcase():
         assert e["target"], f"{e['slug']}: no target"
         assert e.get("frames"), f"{e['slug']}: no frame count"
         assert e.get("per_sub_s"), f"{e['slug']}: no exposure"
@@ -194,7 +195,7 @@ def test_curated_entries_name_the_instrument_but_invent_no_date():
     """Instrument is a fact — every wall picture is his and he owns an S30 Pro
     and nothing else. A capture date is NOT in the filenames, and inferring one
     would be inventing a fact the caption then states."""
-    rows = build_gallery.seed_rows(build_gallery.collect_showcase())
+    rows = build_showcase.seed_rows(build_showcase.collect_showcase())
     assert {r["instrument"] for r in rows} == {"ZWO Seestar S30 Pro"}
     assert all(r["captured_on"] is None for r in rows)
 
@@ -203,6 +204,6 @@ def test_curated_entries_name_the_instrument_but_invent_no_date():
 def test_both_sizes_are_required_before_a_row_is_emitted():
     """stored_2000 is what the lightbox opens. A row with a thumbnail and no
     full size is a tile that fails when clicked."""
-    for r in build_gallery.seed_rows(build_gallery.collect_showcase()):
+    for r in build_showcase.seed_rows(build_showcase.collect_showcase()):
         assert r["stored_900"] and r["stored_2000"]
         assert r["stored_900"] != r["stored_2000"]
