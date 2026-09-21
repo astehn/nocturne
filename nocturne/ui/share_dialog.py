@@ -5,7 +5,8 @@ from dataclasses import replace
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import (QBuffer, QIODevice, QObject, QRunnable,
+                            QThreadPool, QTimer, Qt, Signal)
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from ..core.plate import PlateText, plate_text
 from ..core.presets import PRESETS, style_from_dict, style_to_dict
+from ..core.submit import submit
 from ..core.share import (
     ASPECTS, CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
     centered_crop, share_filename,
@@ -64,6 +66,34 @@ def _dim(text: str) -> QLabel:
     lb = QLabel(text)
     lb.setStyleSheet("color: #8b8f96;")
     return lb
+
+
+class _SubmitSignals(QObject):
+    done = Signal(bool, str)
+
+
+class _SubmitJob(QRunnable):
+    """POST one picture, off the interface thread.
+
+    IT HOLDS DATA, NEVER THE DIALOG. Qt widgets are not thread-safe, and a
+    worker with a reference to the dialog is one accidental setText() away from
+    repainting from the wrong thread — which does not fail here, it fails on
+    someone else's machine, intermittently.
+
+    A 15 MB upload on a domestic connection is seconds. Inline, that is a
+    frozen window, and a frozen window reads as a crash.
+    """
+
+    def __init__(self, image: bytes, metadata: dict, handle: str):
+        super().__init__()
+        self._image = image
+        self._metadata = metadata
+        self._handle = handle
+        self.signals = _SubmitSignals()
+
+    def run(self) -> None:
+        ok, message = submit(self._image, self._metadata, self._handle)
+        self.signals.done.emit(ok, message)
 
 
 class ShareDialog(QDialog):
@@ -372,9 +402,38 @@ class ShareDialog(QDialog):
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._copy_btn = QPushButton("Copy to clipboard")
         self._copy_btn.clicked.connect(self._do_copy)
+        # SEND TO THE WALL. Beside Export and Copy because this is the third
+        # thing you might do with a finished picture, not a mode of its own.
+        #
+        # The tick is not decoration. The endpoint refuses a submission without
+        # consent, and a button that took consent from the act of being pressed
+        # would be asserting something on the user's behalf — about publishing
+        # their own photograph under their own name.
+        self._consent = QCheckBox("Publish on the Nocturne wall")
+        self._consent.setToolTip(
+            "Sends this picture and its capture details for review.\n"
+            "Your location is never sent.")
+        self._consent.toggled.connect(self._refresh_submit_state)
+        self._submit_btn = QPushButton("Send to the wall")
+        # OFF at construction, not merely off after the first refresh: a
+        # QPushButton is enabled by default, and a button that is live for one
+        # event loop turn before consent exists is a button that can be pressed.
+        self._submit_btn.setEnabled(False)
+        self._submit_btn.clicked.connect(self._on_submit_clicked)
+        self._submit_note = QLabel("")
+        self._submit_note.setWordWrap(True)
+        self._submit_note.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        self._submit_sent = False
+        # Correct from the moment the dialog opens: with no handle set the
+        # note has to be visible BEFORE anyone ticks the box and wonders
+        # why nothing happened.
+        QTimer.singleShot(0, self._refresh_submit_state)
+
         buttons = QHBoxLayout()
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._copy_btn)
+        buttons.addWidget(self._consent)
+        buttons.addWidget(self._submit_btn)
         buttons.addStretch(1)
         self._close_btn = QPushButton("Close")
         self._close_btn.clicked.connect(self.reject)
@@ -754,3 +813,60 @@ class ShareDialog(QDialog):
     def _do_copy(self) -> None:
         self._clipboard_runner(self._compose_current())
         self._show_status("Copied to clipboard.")
+
+    # --- sending to the wall -------------------------------------------
+    def _refresh_submit_state(self) -> None:
+        """Enabled only with consent AND a handle.
+
+        A refusal that does not say where to fix it is a dead end, so the note
+        names Settings -- which is where the handle lives, and where a first
+        sender will not think to look.
+        """
+        if self._submit_sent:
+            return
+        handle = (getattr(self._settings, "handle", "") or "").strip()
+        if not handle:
+            self._submit_btn.setEnabled(False)
+            self._submit_note.setText(
+                "Set a handle in Settings first — it is the only credit shown "
+                "beside your picture.")
+            return
+        self._submit_btn.setEnabled(self._consent.isChecked())
+        self._submit_note.setText("")
+
+    def _compose_for_submission(self) -> QImage:
+        """The reframed picture with NO plate.
+
+        Its own method rather than a flag on _compose_current, so the empty
+        plate cannot be confused with the preview's and cannot be reached by
+        accident: the wall renders its caption from the fields it is sent, and
+        a burned one would print the same words a second time.
+        """
+        return compose_share(
+            self._source(), self._current_crop(), PlateText("", "", ""),
+            longest_edge=self._size, style=self._style())
+
+    def _on_submit_clicked(self) -> None:
+        # Disabled for the whole flight: two presses would queue the same
+        # picture twice, which is work for Andreas and confusing for the sender.
+        self._submit_btn.setEnabled(False)
+        self._submit_note.setText("Sending…")
+        image = self._compose_for_submission()
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buf, "JPEG", 92)
+        job = _SubmitJob(bytes(buf.data()), dict(self._metadata),
+                         (getattr(self._settings, "handle", "") or "").strip())
+        job.signals.done.connect(self._on_submit_finished)
+        QThreadPool.globalInstance().start(job)
+
+    def _on_submit_finished(self, ok: bool, message: str) -> None:
+        self._submit_note.setText(message)
+        if ok:
+            # Spent. The same picture must not go twice.
+            self._submit_sent = True
+            self._submit_btn.setEnabled(False)
+            self._consent.setEnabled(False)
+        else:
+            # A network blip must not cost someone their submission.
+            self._submit_btn.setEnabled(self._consent.isChecked())

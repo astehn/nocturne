@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+SITE = ROOT / "site"
 sys.path.insert(0, str(ROOT / "packaging"))
 
 build_gallery = pytest.importorskip("build_gallery")
@@ -154,7 +155,6 @@ def test_instrument_prefers_CREATOR_over_INSTRUME(monkeypatch):
 
 # --- the source the seeder must read (found the hard way, 2026-09-21) -------
 
-SITE = ROOT / "site"
 
 pytest_showcase = pytest.mark.skipif(
     not (SITE / "img" / "showcase").exists(),
@@ -172,7 +172,10 @@ def test_seed_reads_the_CURATED_showcase_not_the_working_folder():
     row is status='approved', so it would have gone straight onto the public
     wall."""
     entries = build_showcase.collect_showcase()
-    assert len(entries) == 10, f"expected the ten curated images, got {len(entries)}"
+    # Counted from the directory, not hardcoded: the wall's contents change as
+    # Andreas re-exports. What must hold is that it reads the CURATED place.
+    on_disk = len(list((SITE / "img" / "showcase").glob("*-1100.jpg")))
+    assert len(entries) == on_disk, f"expected {on_disk} curated images, got {len(entries)}"
     srcs = [e["images"]["grid"]["src"] for e in entries]
     assert all(s.startswith("img/showcase/") for s in srcs), srcs
     assert not any("compare" in s or "corner" in s for s in srcs), \
@@ -221,8 +224,13 @@ def test_the_seed_CLI_actually_RUNS():
         [str(ROOT / ".venv/bin/python"), "packaging/build_showcase.py", "--seed"],
         capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 0, r.stderr
-    assert r.stdout.count("INSERT INTO submissions") == 10, r.stdout[:400]
-    assert "-- 10 rows" in r.stderr
+    # NOT a hardcoded count: the wall's contents change as Andreas re-exports
+    # and the curated folder grows. What must hold is that the CLI runs, emits
+    # one INSERT per curated image, and agrees with itself.
+    shown = len(list((SITE / "img" / "showcase").glob("*-1100.jpg")))
+    assert shown > 0, "no curated images to seed from"
+    assert r.stdout.count("INSERT INTO submissions") == shown, r.stdout[:400]
+    assert f"-- {shown} rows" in r.stderr
 
 
 def test_build_gallery_no_longer_claims_to_seed():
