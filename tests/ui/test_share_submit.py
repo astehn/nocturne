@@ -254,3 +254,37 @@ def test_a_small_image_is_not_UPSCALED_to_the_submission_size(qtbot):
     d._size = None
     img = d._compose_for_submission()
     assert max(img.width(), img.height()) <= 400
+
+
+def test_the_TITLE_PLATE_supplies_the_object_when_the_file_has_no_headers(qtbot):
+    """Andreas's M 31: "instead of reprocessing the drizzled enourmous file i
+    simply opened my saved tiff, cropped it and shared". A TIFF carries no FITS
+    headers, so it reached the wall with no target, no frames and no caption —
+    and opening a TIFF is a first-class way to use Nocturne.
+
+    The object name is already on screen for such a file, because anyone
+    plating a TIFF types it in. The thing you edited is the thing that is sent.
+    """
+    d = ShareDialog(_rgb(), {"source_label": "m31.tif"}, Settings(handle="@me"))
+    qtbot.addWidget(d)
+    assert not d._submission_metadata().get("target"), "nothing to start from"
+
+    d._designation_edit.setText("M 31")
+    assert d._submission_metadata()["target"] == "M 31"
+
+
+def test_the_headers_WIN_over_the_plate(qtbot):
+    """The plate is a fallback, not an override: a user may retitle a plate
+    for effect, and a FITS header is the capture's own record."""
+    d = _dlg(qtbot)                      # META carries target "NGC 7000"
+    d._designation_edit.setText("Something Else")
+    assert d._submission_metadata()["target"] == "NGC 7000"
+
+
+def test_an_empty_plate_does_not_invent_a_target(qtbot):
+    """A blank designation must leave the field absent, not send an empty
+    string that renders as a dangling separator on the wall."""
+    d = ShareDialog(_rgb(), {"source_label": "m31.tif"}, Settings(handle="@me"))
+    qtbot.addWidget(d)
+    d._designation_edit.setText("   ")
+    assert "target" not in d._submission_metadata()

@@ -238,3 +238,56 @@ def test_build_gallery_no_longer_claims_to_seed():
     src = (ROOT / "packaging" / "build_gallery.py").read_text(encoding="utf-8")
     assert "--seed" not in src
     assert "seed_sql" not in src
+
+
+def test_the_seed_handle_is_READ_from_settings_not_hardcoded():
+    """It was hardcoded "@andreas" while his settings said "@andreasstehn", so
+    the wall showed the same person under two bylines the moment he submitted
+    one from the app. A seeded row and an app row must agree.
+
+    Driven through a stub rather than his real file: conftest.py sandboxes
+    resolve_settings_path so the suite cannot read ~/.nocturne/settings.json,
+    which is correct — and which is why asserting against the real handle
+    would skip for ever and test nothing.
+    """
+    import nocturne.settings as NS
+
+    class _S:
+        handle = "@someoneelse"
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(NS, "load_settings", lambda _p: _S())
+        assert build_showcase._seed_handle() == "@someoneelse"
+    finally:
+        monkey.undo()
+
+
+def test_the_seed_handle_falls_back_rather_than_crashing():
+    """The generator must still run on a machine with no settings file — it is
+    a build script, not the app, and it is run from a checkout."""
+    import nocturne.settings as NS
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(NS, "load_settings",
+                       lambda _p: (_ for _ in ()).throw(FileNotFoundError()))
+        assert build_showcase._seed_handle().startswith("@")
+    finally:
+        monkey.undo()
+
+
+def test_an_empty_handle_in_settings_does_not_produce_a_blank_byline():
+    """`handle` is NOT NULL and the wall renders it; an empty one is a blank
+    line under a picture."""
+    import nocturne.settings as NS
+
+    class _S:
+        handle = "   "
+
+    monkey = pytest.MonkeyPatch()
+    try:
+        monkey.setattr(NS, "load_settings", lambda _p: _S())
+        assert build_showcase._seed_handle().strip() != ""
+    finally:
+        monkey.undo()

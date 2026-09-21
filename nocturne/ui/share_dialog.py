@@ -868,6 +868,26 @@ class ShareDialog(QDialog):
             self._source(), self._current_crop(), PlateText("", "", ""),
             longest_edge=SUBMIT_EDGE, style=self._style())
 
+    def _submission_metadata(self) -> dict:
+        """The capture facts, with the TITLE PLATE as a fallback for the object.
+
+        A TIFF carries no FITS headers, and opening one is a first-class way to
+        use Nocturne — finishing a master stacked in Siril or DeepSkyStacker.
+        Andreas submitted his M 31 that way and it reached the wall with no
+        caption at all: no target, no frames, nothing but a byline.
+
+        Nothing can recover a frame count from a TIFF. But the object name is
+        already on screen, because anyone plating a TIFF types it in — so the
+        thing you have edited is the thing that gets sent, rather than a second
+        field asking for what you just typed.
+        """
+        meta = dict(self._metadata)
+        if not (meta.get("target") or meta.get("target_solved")):
+            designation = self._plate().designation.strip()
+            if designation:
+                meta["target"] = designation
+        return meta
+
     def _on_submit_clicked(self) -> None:
         # Disabled for the whole flight: two presses would queue the same
         # picture twice, which is work for Andreas and confusing for the sender.
@@ -877,7 +897,7 @@ class ShareDialog(QDialog):
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
         image.save(buf, "JPEG", 92)
-        job = _SubmitJob(bytes(buf.data()), dict(self._metadata),
+        job = _SubmitJob(bytes(buf.data()), self._submission_metadata(),
                          (getattr(self._settings, "handle", "") or "").strip())
         job.signals.done.connect(self._on_submit_finished)
         QThreadPool.globalInstance().start(job)

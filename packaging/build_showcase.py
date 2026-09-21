@@ -122,10 +122,26 @@ def collect(source: pathlib.Path) -> list[dict]:
 # changes is where the result goes -- a `submissions` row rather than an HTML
 # figure.
 
-# His byline on the wall. A seeded row needs one like every other row; `handle`
-# is NOT NULL and the page renders it, so an empty one is a blank byline beside
-# real ones.
-SEED_HANDLE = "@andreas"
+def _seed_handle() -> str:
+    """His byline on the wall, READ from Settings rather than guessed.
+
+    It was hardcoded as "@andreas" and his actual handle is "@andreasstehn",
+    so the moment he submitted one from the app the wall showed the same
+    person under two names. A seeded row needs a handle like every other row
+    (`handle` is NOT NULL and the page renders it), and it has to be the SAME
+    handle the app sends.
+    """
+    try:
+        from nocturne.settings import load_settings, resolve_settings_path
+        handle = (load_settings(resolve_settings_path()).handle or "").strip()
+        if handle:
+            return handle
+    except Exception:
+        pass
+    return "@andreas"
+
+
+SEED_HANDLE = _seed_handle()
 
 # Every picture on the wall is his, and he owns an S30 Pro and nothing else, so
 # this is a fact about the seeded rows rather than a guess. (The S50 material in
