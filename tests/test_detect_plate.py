@@ -53,15 +53,46 @@ def test_every_showcase_image_is_present_at_both_sizes():
     assert missing == [], f"missing showcase files: {missing}"
 
 
-@pytest.mark.parametrize("stem", SHOWCASE_STEMS)
-def test_detects_the_plate_on_todays_plated_showcase(stem):
-    """The POSITIVE case, and the thing that proves the detector works at all.
+@pytest.mark.xfail(
+    strict=False,
+    reason="Andreas is re-exporting all ten from Share with an empty plate; "
+           "this XPASSes when the last one lands. Not a failure in the "
+           "meantime — a visible progress signal that needs no chasing.")
+def test_showcase_is_clean():
+    """THE GOAL. A burned caption plus a rendered one says everything twice,
+    and a burned title is wrong on every planner target but its own.
 
-    When Andreas re-exports one of these without a plate, this flips for that
-    stem — move it to a clean list rather than deleting the assertion. A stem
-    expected plated that reads clean means the detector has gone blind, which
-    would publish a duplicated caption with nothing failing."""
-    assert detect_plate.has_plate(SHOWCASE / f"{stem}-1100.jpg") is True
+    Reports which are outstanding rather than just failing, so the message is
+    a worklist. NGC 6888 and NGC 7635 have no .nocturne project and are a real
+    reprocess, so they are expected last."""
+    plated = [s for s in SHOWCASE_STEMS
+              if detect_plate.has_plate(SHOWCASE / f"{s}-1100.jpg")]
+    assert plated == [], (
+        f"{len(plated)} of {len(SHOWCASE_STEMS)} still carry a burned plate: "
+        + ", ".join(s.split("-")[0] for s in plated))
+
+
+def test_the_detector_still_detects_a_real_plate():
+    """Keeps the POSITIVE case alive as the showcase goes clean.
+
+    Once every real image is re-exported, nothing in the repo would prove the
+    detector still works — it could return False always and the suite would be
+    green. This renders a plate and requires it to be found."""
+    np = pytest.importorskip("numpy")
+    from PIL import Image, ImageDraw
+    import tempfile, os
+    a = _starfield(np.random.default_rng(3))
+    img = Image.fromarray(a.astype("uint8"), "L").convert("RGB")
+    d = ImageDraw.Draw(img)
+    d.text((430, 540), "M 16", fill=(255, 255, 255))
+    d.text((390, 578), "Eagle Nebula", fill=(235, 235, 235))
+    d.line((430, 566, 580, 566), fill=(210, 210, 210))
+    fd, path = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
+    try:
+        img.save(path, "JPEG", quality=92)
+        assert detect_plate.has_plate(path) is True
+    finally:
+        os.unlink(path)
 
 
 def test_a_clean_starfield_reads_clean(tmp_path):
@@ -104,6 +135,11 @@ def test_a_degenerate_image_does_not_raise(tmp_path):
     assert detect_plate.has_plate(out) is False
 
 
+@pytest.mark.skipif(
+    not detect_plate.has_plate(
+        SHOWCASE / "m31-mosaic-285x10s-48min-new-original-1100.jpg"),
+    reason="M 31 has been re-exported clean — the margin it used to prove is "
+           "now covered by test_detects_a_plate_at_any_horizontal_placement")
 def test_m31_clears_by_a_MARGIN_not_by_one_row():
     """The test that actually justifies the sliding window.
 

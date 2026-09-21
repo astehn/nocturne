@@ -25,7 +25,7 @@ SUBMISSION_COLUMNS = (
     "id", "created_at", "handle", "target", "catalogue_id", "integration_s",
     "frames", "sub_s", "captured_on", "instrument", "stored_2000", "stored_900",
     "stored_pending", "orig_filename", "size_bytes", "ip", "status",
-    "representative", "has_plate",
+    "representative",
 )
 
 
