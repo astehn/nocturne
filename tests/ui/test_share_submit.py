@@ -206,3 +206,51 @@ def test_the_share_help_explains_the_wall():
         "it must say the picture is not published immediately"
     assert "settings" in body, "the handle comes from Settings — say where"
     assert "location" in body, "the privacy promise belongs where the button is"
+
+
+@pytest.mark.parametrize("chosen", [1080, 2048, 4096, None])
+def test_the_submission_size_IGNORES_the_export_size(qtbot, chosen):
+    """Andreas: "some images can be very large right?"
+
+    At "Full size" (None) on a drizzled master the submission encoded to
+    30.9 MB against a 15 MB endpoint limit — an upload that fails after the
+    wait. And every pixel above 2000 is discarded when the wall builds its
+    derivative, so the large ones were waste even when they fitted.
+    """
+    from nocturne.core.submit import SUBMIT_EDGE
+    # A source LARGER than SUBMIT_EDGE in both axes, or the cap is never
+    # reached and the assertion holds whatever the code does. The first
+    # version used the 400x300 fixture and passed with the cap removed.
+    d = ShareDialog(_rgb(3000, 5000), dict(META), Settings(handle="me"))
+    qtbot.addWidget(d)
+    d._size = chosen
+    img = d._compose_for_submission()
+    assert max(img.width(), img.height()) <= SUBMIT_EDGE, \
+        f"chose {chosen}, submitted {img.width()}x{img.height()}"
+    # And it must actually BE the cap, not something smaller by accident.
+    assert max(img.width(), img.height()) == SUBMIT_EDGE
+
+
+def test_the_EXPORT_still_honours_the_chosen_size(qtbot):
+    """The negative half. Capping the submission must not cap the export —
+    someone choosing Full size for a print still gets full size."""
+    # A source BIGGER than SUBMIT_EDGE, or there is no difference to observe:
+    # the first version of this test used the 400x300 fixture, where both
+    # sides come back 400x300 and the assertion is vacuous.
+    d = ShareDialog(_rgb(2000, 3000), dict(META), Settings(handle="me"))
+    qtbot.addWidget(d)
+    d._size = None
+    exported = d._compose_current()
+    submitted = d._compose_for_submission()
+    assert max(exported.width(), exported.height()) > \
+        max(submitted.width(), submitted.height()), \
+        "the export was capped too"
+
+
+def test_a_small_image_is_not_UPSCALED_to_the_submission_size(qtbot):
+    """compose_share downscales only. A 300px source must stay 300px rather
+    than being inflated to 2400 — pixels without detail, and a bigger upload."""
+    d = _dlg(qtbot)              # the fixture's source is 400x300
+    d._size = None
+    img = d._compose_for_submission()
+    assert max(img.width(), img.height()) <= 400

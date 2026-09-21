@@ -20,6 +20,21 @@ from .update_check import SUBMIT_URL
 
 TIMEOUT = 30.0
 
+# The longest edge a SUBMISSION is composed at, independent of the size chosen
+# for Export.
+#
+# WHY IT IS NOT THE EXPORT SIZE. Approval generates 2000 and 900 px
+# derivatives, so every pixel above 2000 is discarded on arrival. Measured on a
+# drizzled S30 Pro master (7680x4320): "Full size" encodes to 30.9 MB, which is
+# over the endpoint's 15 MB limit — so the sender uploads 31 MB on a domestic
+# connection and is then refused, for an image the wall would have thrown away
+# anyway. 4096 px is 4.1 MB of the same waste.
+#
+# 2400 rather than exactly 2000: a little headroom above the derivative, so
+# approval is downscaling rather than resampling at 1:1, and the wall's sizes
+# can rise slightly without another app release.
+SUBMIT_EDGE = 2400
+
 
 def submission_fields(metadata: dict, handle: str) -> dict[str, str]:
     """The facts the wall renders beside a picture.

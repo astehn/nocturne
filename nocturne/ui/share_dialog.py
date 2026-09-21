@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from ..core.plate import PlateText, plate_text
 from ..core.presets import PRESETS, style_from_dict, style_to_dict
-from ..core.submit import submit
+from ..core.submit import SUBMIT_EDGE, submit
 from ..core.share import (
     ASPECTS, CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
     centered_crop, share_filename,
@@ -852,16 +852,21 @@ class ShareDialog(QDialog):
         self._submit_note.setText("")
 
     def _compose_for_submission(self) -> QImage:
-        """The reframed picture with NO plate.
+        """The reframed picture with NO plate, at SUBMIT_EDGE.
 
         Its own method rather than a flag on _compose_current, so the empty
         plate cannot be confused with the preview's and cannot be reached by
         accident: the wall renders its caption from the fields it is sent, and
         a burned one would print the same words a second time.
+
+        The size is FIXED, not the one chosen for Export. Andreas asked what
+        happens at "Full size" on a large image, and the answer was 30.9 MB
+        over a 15 MB limit — an upload that fails after the wait, for pixels
+        the wall discards when it makes its 2000 px derivative.
         """
         return compose_share(
             self._source(), self._current_crop(), PlateText("", "", ""),
-            longest_edge=self._size, style=self._style())
+            longest_edge=SUBMIT_EDGE, style=self._style())
 
     def _on_submit_clicked(self) -> None:
         # Disabled for the whole flight: two presses would queue the same
