@@ -362,3 +362,41 @@ def test_the_share_page_explains_submitting():
     assert "gallery.html" in t
     assert "wall" in t.lower()
     assert "location" in t.lower(), "the privacy promise travels with the feature"
+
+
+def test_the_admin_can_inspect_a_submission_full_size():
+    """Andreas: "right now its pretty hard to see what you are approving
+    because they are small." A 280px tile is not enough to judge a photograph,
+    and approving is the irreversible-ish half of moderation."""
+    src = ADMIN.read_text(encoding="utf-8")
+    assert 'id="lb"' in src, "no lightbox"
+    assert "data-full" in src
+    assert "Escape" in src, "it must be closable from the keyboard"
+
+
+def test_a_PENDING_image_is_inspected_through_the_STREAM():
+    """It has no public address by design, so the lightbox must open the same
+    authenticated stream the tile does — not a guessed path."""
+    src = ADMIN.read_text(encoding="utf-8")
+    block = src.split("'pending' && $s['stored_pending']", 1)[1][:600]
+    assert 'data-full="download.php?submission=' in block
+    assert "srv/nocturne-submissions" not in block
+
+
+def test_an_APPROVED_image_opens_its_2000px_derivative():
+    """The tile shows the 900; inspecting it should not just scale that up."""
+    src = ADMIN.read_text(encoding="utf-8")
+    assert "stored_2000'] ?: $s['stored_900']" in src, \
+        "the lightbox must prefer the 2000, falling back if it is missing"
+
+
+def test_the_admin_lightbox_does_not_depend_on_a_deployed_site_file():
+    """admin/ is excluded from the deploy rsync. Depending on lightbox.js —
+    which rsync DOES ship — would break the moment the two drifted."""
+    src = ADMIN.read_text(encoding="utf-8")
+    # A REFERENCE, not the word. The first version matched the CSS comment that
+    # explains why this page does not use lightbox.js — a test reading the
+    # prose rather than the code, for the second time today.
+    assert not re.search(r'(src|href)\s*=\s*["\'][^"\']*lightbox\.js', src), \
+        "admin/ is not deployed by rsync; it must not load a site asset"
+    assert "<script" in src, "it carries its own"
