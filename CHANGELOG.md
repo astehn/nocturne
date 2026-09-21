@@ -2,6 +2,19 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.38.0] — 2026-09-21
+
+Send a finished picture to the wall, from inside Nocturne.
+
+### Added
+- Send to the wall, in the Share window. Tick the box and the picture goes to the gallery at nocturneastro.com. It is sent without its title plate, because the page prints the capture details beside it as text — a burned plate would say the same thing twice and is unreadable at thumbnail size. Your location is never sent, and the handle shown beside your picture is the one in Settings.
+- Nothing appears straight away: every submission is looked at first. A picture that is not published is deleted rather than kept, and a published one can be taken down by asking through the support page.
+- If your file carries no capture details — a TIFF finished from another stacker — the object name from the title plate is used instead, so the picture still arrives with a caption.
+
+### Changed
+- The gallery is now a wall that grows. Approved pictures appear on it as they arrive, rather than when the page is rebuilt.
+- Report a problem asks what it is about — a problem, a question, data removal, or a donated file — so it lands in the right place.
+
 ## [0.37.0] — 2026-09-21
 
 Reporting a problem no longer means finding me on Reddit.
