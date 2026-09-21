@@ -14,6 +14,10 @@ DOWNLOAD_URL = "https://nocturneastro.com/"
 # than in ui/ so there is ONE place the site's address is written down; a
 # hardcoded second copy is how a moved page becomes a dead menu item.
 SUPPORT_URL = "https://nocturneastro.com/support.html"
+# Where Share sends a picture for the wall. Beside the others so the site's
+# address is written down ONCE; a hardcoded second copy is how a moved endpoint
+# becomes a silent failure in a dialog nobody is watching.
+SUBMIT_URL = "https://nocturneastro.com/submit.php"
 
 
 def _parse(v: str) -> tuple[int, int, int] | None:
