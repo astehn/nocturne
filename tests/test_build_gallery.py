@@ -207,3 +207,26 @@ def test_both_sizes_are_required_before_a_row_is_emitted():
     for r in build_showcase.seed_rows(build_showcase.collect_showcase()):
         assert r["stored_900"] and r["stored_2000"]
         assert r["stored_900"] != r["stored_2000"]
+
+
+def test_the_seed_CLI_actually_RUNS():
+    """Calling the functions directly is not the same as running the command.
+
+    When seeding moved from build_gallery to build_showcase, the --seed branch
+    stayed behind and called two names that no longer existed in that module.
+    Every unit test still passed, because they call seed_rows() directly. Only
+    invoking the CLI catches that."""
+    import subprocess
+    r = subprocess.run(
+        [str(ROOT / ".venv/bin/python"), "packaging/build_showcase.py", "--seed"],
+        capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.count("INSERT INTO submissions") == 10, r.stdout[:400]
+    assert "-- 10 rows" in r.stderr
+
+
+def test_build_gallery_no_longer_claims_to_seed():
+    """Two entry points for one job is how they drift."""
+    src = (ROOT / "packaging" / "build_gallery.py").read_text(encoding="utf-8")
+    assert "--seed" not in src
+    assert "seed_sql" not in src

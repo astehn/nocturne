@@ -219,7 +219,7 @@ def seed_sql(entries: list[dict]) -> str:
     if not rows:
         return ""
     cols = list(rows[0])
-    out = ["-- Seeded from the gallery folder by build_gallery.py --seed.",
+    out = ["-- Seeded from img/showcase by build_showcase.py --seed.",
            "-- Review before piping; these rows are status='approved' and go",
            "-- straight onto the public wall."]
     for r in rows:
@@ -346,6 +346,16 @@ def prune(entries: list[dict]) -> list[str]:
 
 
 def main() -> int:
+    # --seed prints INSERT statements for the wall instead of writing the page.
+    # Printed rather than executed: the database is on the VPS and this runs on
+    # Andreas's Mac, so `| ssh vps mysql ...` is simpler than a tunnel AND
+    # reviewable before it runs. These rows are status='approved' and land
+    # straight on the public wall, so "reviewable" is the whole point.
+    if "--seed" in sys.argv:
+        rows = collect_showcase()
+        sys.stdout.write(seed_sql(rows))
+        print(f"-- {len(rows)} rows from {SHOWCASE.relative_to(ROOT)}", file=sys.stderr)
+        return 0
     source = pathlib.Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else \
         pathlib.Path.home() / "Desktop" / "Finished Astro Images"
     if not source.is_dir():

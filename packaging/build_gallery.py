@@ -256,14 +256,7 @@ def inject(entries: list[dict]) -> bool:
 
 
 def main() -> int:
-    # --seed prints INSERT statements for the wall instead of writing the page
-    # (spec 2.2). Printed rather than executed: the database is on the VPS and
-    # this runs on Andreas's Mac, so `| ssh vps mysql ...` is both simpler than
-    # a tunnel and reviewable before it runs. These rows are status='approved'
-    # and land straight on the public wall, so "reviewable" is the point.
-    args = [a for a in sys.argv[1:] if a != "--seed"]
-    seeding = "--seed" in sys.argv
-    source = pathlib.Path(args[0]).expanduser() if args else \
+    source = pathlib.Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else \
         pathlib.Path.home() / "Desktop" / "Astro Images"
     if not source.is_dir():
         print(f"no such folder: {source}")
@@ -273,13 +266,6 @@ def main() -> int:
     if not entries:
         print("  no images found")
         return 1
-
-    if seeding:
-        shown = collect_showcase()
-        sys.stdout.write(seed_sql(shown))
-        print(f"-- {len(shown)} rows from {SHOWCASE.relative_to(ROOT)}",
-              file=sys.stderr)
-        return 0
 
     MANIFEST.write_text(json.dumps(entries, indent=2) + "\n")
     injected = inject(entries)
