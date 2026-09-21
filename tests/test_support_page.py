@@ -102,3 +102,68 @@ def test_the_prefill_only_reads_the_fields_it_owns():
     assert ".value =" in code, "it sets .value, which cannot execute markup"
     assert "['app_version', 'os', 'screen', 'window_size', 'log']" in code, \
         "the allowed fields must be an explicit list, not whatever the URL carries"
+
+
+# --- the styled response page (2026-09-21) -------------------------------
+# Andreas, after the first real report: the thank-you page "is totally unstyled,
+# it breaks the experience". support.php answers a POST with a whole page, so it
+# needs the whole shell. The shell is GENERATED, and these tests exist to catch
+# the two ways that goes wrong silently.
+
+SHELL = SITE / "_shell.php"
+
+
+def test_build_site_generates_the_php_shell():
+    assert SHELL.exists(), "run packaging/build_site.py"
+    src = SHELL.read_text()
+    assert "function nocturne_shell(" in src
+    assert 'class="nav"' in src and 'class="footer"' in src
+
+
+def test_shell_asks_for_the_CURRENT_stylesheet_hash():
+    """The reason the shell is generated rather than hand-written.
+
+    head_html() cache-busts styles.css by content hash. A hand-copied shell
+    keeps requesting a hash that no longer exists the moment anyone edits the
+    stylesheet, and the page renders unstyled again with nothing to say so —
+    the exact defect this change was made to fix.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    import build_site
+
+    expected = build_site.asset_url("styles.css")
+    assert expected in SHELL.read_text(), (
+        f"_shell.php does not reference {expected} — rebuild the site")
+
+
+def test_shell_leaves_no_placeholder_behind():
+    src = SHELL.read_text()
+    # Both placeholders must survive into the file (they are substituted at
+    # request time by PHP), and neither may leak into the nowdoc terminator.
+    assert "@@NOCTURNE_TITLE@@" in src and "@@NOCTURNE_BODY@@" in src
+    body = src.split("<<<'NOCTURNE_SHELL_HTML'", 1)[1]
+    assert "NOCTURNE_SHELL_HTML;" in body
+
+
+def test_support_php_renders_through_the_shell_and_survives_without_it():
+    src = (SITE / "support.php").read_text()
+    assert "nocturne_shell($title, $body)" in src
+    # The fallback matters: a missing shell must degrade to an ugly page, never
+    # to a fatal error after someone has already typed out their problem.
+    assert "function_exists('nocturne_shell')" in src
+    assert "is_file($shell)" in src
+
+
+def test_error_list_is_escaped_not_interpolated():
+    src = (SITE / "support.php").read_text()
+    assert "htmlspecialchars($e, ENT_QUOTES, 'UTF-8')" in src
+
+
+def test_shell_is_named_in_the_deploy_allowlist():
+    """The include list is an allowlist resolved by a NON-recursive glob, and
+    every .php is named individually. A new one that is not listed simply never
+    ships, and the live page falls back to unstyled with nothing failing."""
+    toml = (ROOT / "packaging" / "deploy.example.toml").read_text()
+    include = toml.split("include", 1)[1].split("]", 1)[0]
+    assert "_shell.php" in include, "add _shell.php to the deploy include list"

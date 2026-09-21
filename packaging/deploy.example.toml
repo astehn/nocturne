@@ -18,7 +18,7 @@ file_mode = "644"
 # so a file in a subdirectory needs its directory listed explicitly -- and an
 # asset missing from this allowlist does not fail anywhere: the page renders in
 # local preview and 404s its engine in production.
-include = ["*.html", "styles.css", "*.js", "*.json", "vendor/", "get.php", "support.php", "img/"]
+include = ["*.html", "styles.css", "*.js", "*.json", "vendor/", "get.php", "support.php", "_shell.php", "img/"]
 # Internal files + server-state paths. REQUIRED (the script refuses to run
 # without them): config*.php, db/, uploads/ protect server state; *.fits and
 # *.fit stop astro data reaching the web root — sample masters are staged
