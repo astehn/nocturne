@@ -2,6 +2,20 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.37.0] — 2026-09-21
+
+Reporting a problem no longer means finding me on Reddit.
+
+### Added
+- Help ▸ Report a problem… opens a form with your version, operating system, screen size and the recent log already filled in. You can read and edit all of it before sending, and delete anything you would rather not share. The diagnostics travel in the link's fragment, so nothing reaches the server until you press send.
+- A session planner on the website: whether tonight is worth setting up for, and which targets are up while it is dark.
+
+### Changed
+- Nocturne lives at nocturneastro.com. The download and support links inside the app point there.
+
+### Fixed
+- A TIFF with an embedded colour profile is converted on open instead of being read as though it were sRGB. A starless+stars export in ProPhoto, Display P3 or Adobe RGB opened noticeably dark; it now matches what exported it.
+
 ## [0.36.0] — 2026-09-20
 
 De-green Stars works on the stars you actually have — and StarNet2 shows its progress.
