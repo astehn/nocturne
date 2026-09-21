@@ -316,3 +316,40 @@ def test_privacy_and_faq_agree_on_how_many_ways_an_image_can_leave():
     priv = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8").lower()
     for route in ("sample-data", "problem report", "gallery"):
         assert route in priv, f"privacy.html does not mention {route}"
+
+
+def test_an_approved_picture_can_be_taken_off_the_wall():
+    """privacy.html tells people a published picture will come down if they
+    ask. Until 2026-09-21 nothing in the admin could do it — the same gap the
+    reports table had, in a place where the site makes a promise about it."""
+    src = ADMIN.read_text(encoding="utf-8")
+    assert "'unpublish'" in src
+    fn = src.split("function nocturne_sub_actions", 1)[1].split("\n}", 1)[0]
+    assert "unpublish" in fn, "the action must be reachable from an approved row"
+
+
+def test_taking_a_picture_down_DELETES_the_files():
+    """'I took it down' has to mean the file is gone, not hidden. Spec 5.1: a
+    picture that is not published is not kept."""
+    src = ADMIN.read_text(encoding="utf-8")
+    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
+    assert "unlink" in block
+    assert "stored_2000" in block and "stored_900" in block
+    assert "stored_2000=NULL" in block, "the columns must be cleared, not left dangling"
+
+
+def test_taking_a_picture_down_clears_the_planner_slot():
+    """It may have been the planner's picture for an object. Leaving it
+    representative would keep a deleted file in planner-thumbs.json."""
+    src = ADMIN.read_text(encoding="utf-8")
+    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
+    assert "representative=0" in block
+    assert "nocturne_write_planner_thumbs" in block
+
+
+def test_every_row_can_be_deleted_outright():
+    src = ADMIN.read_text(encoding="utf-8")
+    fn = src.split("function nocturne_sub_actions", 1)[1].split("\n}", 1)[0]
+    assert "'remove'" in fn
+    assert fn.index("$acts['remove']") > fn.index("if ($s['status'] === 'approved')"), \
+        "remove must be offered for every status, not only approved"
