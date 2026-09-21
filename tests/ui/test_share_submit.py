@@ -167,3 +167,42 @@ def test_the_worker_never_touches_widgets(qtbot):
     for widget_ish in ("setEnabled", "setText", "_submit_btn", "_consent",
                        "_submit_note", "QMessageBox"):
         assert widget_ish not in code, f"{widget_ish} is touched from the worker"
+
+
+def test_the_note_is_actually_ON_SCREEN(qtbot):
+    """It was created and never added to a layout, so the message explaining
+    why the button is grey was invisible — and a greyed button with no reason
+    is the dead end the note exists to prevent.
+
+    `parent()` is the check that matters: a QLabel with no parent has been
+    built and forgotten, however correct its text is.
+    """
+    d = _dlg(qtbot, handle="")
+    assert d._submit_note.parent() is not None, "the note is not in any layout"
+    d.show()
+    qtbot.waitExposed(d)
+    assert d._submit_note.isVisible(), "the note is in a layout but not visible"
+    assert "settings" in d._submit_note.text().lower()
+
+
+def test_the_note_is_visible_in_the_ORDINARY_case_too(qtbot):
+    """With a handle set the note is empty, but it must still be a real widget
+    in the layout — otherwise the failure message after a send goes nowhere."""
+    d = _dlg(qtbot, handle="@andreas")
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_submit_finished(False, "Could not reach the gallery: timed out")
+    assert d._submit_note.isVisible()
+    assert "could not reach" in d._submit_note.text().lower()
+
+
+def test_the_share_help_explains_the_wall():
+    """A feature nobody can find is not shipped, and `in-app-help-drift`
+    records that help goes stale every cycle with nothing testing it."""
+    from nocturne.ui import help_content
+    body = help_content.TOPICS["share"].body.lower()
+    assert "wall" in body
+    assert "review" in body or "looked at" in body, \
+        "it must say the picture is not published immediately"
+    assert "settings" in body, "the handle comes from Settings — say where"
+    assert "location" in body, "the privacy promise belongs where the button is"

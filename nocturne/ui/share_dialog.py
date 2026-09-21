@@ -424,16 +424,20 @@ class ShareDialog(QDialog):
         self._submit_note.setWordWrap(True)
         self._submit_note.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         self._submit_sent = False
-        # Correct from the moment the dialog opens: with no handle set the
-        # note has to be visible BEFORE anyone ticks the box and wonders
-        # why nothing happened.
-        QTimer.singleShot(0, self._refresh_submit_state)
+
+        # ITS OWN ROW, above the buttons. Inline between "Copy to clipboard"
+        # and "Send to the wall" the tick read as a caption for the button
+        # rather than the control that arms it — Andreas could not work out how
+        # to light the button up, and the answer was a checkbox he had taken
+        # for a label. A consent control has to look like something you act on.
+        wall = QHBoxLayout()
+        wall.addWidget(self._consent)
+        wall.addWidget(self._submit_btn)
+        wall.addStretch(1)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._copy_btn)
-        buttons.addWidget(self._consent)
-        buttons.addWidget(self._submit_btn)
         buttons.addStretch(1)
         self._close_btn = QPushButton("Close")
         self._close_btn.clicked.connect(self.reject)
@@ -489,6 +493,19 @@ class ShareDialog(QDialog):
         root.addWidget(self._colour_note)
         root.addWidget(self.status)
         root.addLayout(buttons)
+        root.addLayout(wall)
+        # UNDER the wall row, full width. It was created and never added to a
+        # layout in the first version, so every message it carries — including
+        # the one naming Settings when no handle is set — went nowhere, and the
+        # button simply sat grey with no reason given. Exactly the dead end the
+        # note exists to prevent.
+        root.addWidget(self._submit_note)
+
+        # SYNCHRONOUS, not deferred. With no handle set the note has to be
+        # readable the moment the dialog opens — before anyone ticks the box
+        # and wonders why nothing happened. A singleShot left it blank for one
+        # event-loop turn, which is exactly when a first-time user is looking.
+        self._refresh_submit_state()
 
         self._refresh_preview()
 

@@ -353,3 +353,12 @@ def test_every_row_can_be_deleted_outright():
     assert "'remove'" in fn
     assert fn.index("$acts['remove']") > fn.index("if ($s['status'] === 'approved')"), \
         "remove must be offered for every status, not only approved"
+
+
+def test_the_share_page_explains_submitting():
+    """The wall's only route in is a button in Share, so the page that
+    documents Share has to mention it."""
+    t = (SITE / "_src" / "share.html").read_text(encoding="utf-8")
+    assert "gallery.html" in t
+    assert "wall" in t.lower()
+    assert "location" in t.lower(), "the privacy promise travels with the feature"
