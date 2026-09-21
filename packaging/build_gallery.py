@@ -112,12 +112,20 @@ def facts_from_master(path: pathlib.Path) -> dict:
             total, per_sub = exp, exp / frames
         else:
             per_sub, total = exp, exp * frames
+    # The wall shows these two beside the exposure (spec 4), and until the
+    # gallery became a database they were never read -- a burned Share plate
+    # carried them instead. CREATOR before INSTRUME: the app does the same,
+    # because INSTRUME is inconsistent in the wild ('imx585' on some files,
+    # 'Seestar S50' on others) while CREATOR names the camera outright.
+    captured = str(h.get("DATE-OBS") or h.get("DATE") or "").strip()
     return {
         "target": str(h.get("OBJECT") or "").strip(),
         "frames": int(frames) if frames else None,
         "per_sub_s": round(per_sub) if per_sub else None,
         "total_s": round(total) if total else None,
         "filter": str(h.get("FILTER") or "").strip(),
+        "captured_on": captured[:10],          # the DATE, never the time of night
+        "instrument": str(h.get("CREATOR") or h.get("INSTRUME") or "").strip(),
         "master": path.name,
     }
 
@@ -211,6 +219,132 @@ def collect(source: pathlib.Path) -> list[dict]:
     return entries
 
 
+# --- seeding the wall (2026-09-21) -------------------------------------
+# Spec 2.2: the gallery becomes a database-backed page, so Andreas's own
+# pictures must live in the same table as everyone else's. Two sources for one
+# page drift, and the symptom of that drift is a caption under the wrong
+# picture.
+#
+# This module keeps its job of READING his folder and resolving the facts; what
+# changes is where the result goes -- a `submissions` row rather than an HTML
+# figure.
+
+# His byline on the wall. A seeded row needs one like every other row; `handle`
+# is NOT NULL and the page renders it, so an empty one is a blank byline beside
+# real ones.
+SEED_HANDLE = "@andreas"
+
+# Every picture on the wall is his, and he owns an S30 Pro and nothing else, so
+# this is a fact about the seeded rows rather than a guess. (The S50 material in
+# the training set is licensed public data and never reaches the gallery.)
+SEED_INSTRUMENT = "ZWO Seestar S30 Pro"
+
+# THE WALL'S IMAGES ARE NOT THIS SCRIPT'S USUAL SOURCE. collect() reads
+# ~/Desktop/Astro Images and feeds the HOMEPAGE strip from img/gallery/. The
+# wall page uses img/showcase/, which is curated by hand -- and the working
+# folder also holds diagnostics like M16_COMPARE_input_corners_after, which a
+# seeder pointed at it would publish as `approved`. So the seed reads the
+# curated directory, and the filenames carry the facts.
+SHOWCASE = SITE / "img" / "showcase"
+_SHOWCASE_EDGE = 1100          # the thumbnail size the page links
+_SHOWCASE_FULL = 2400
+
+
+def collect_showcase() -> list[dict]:
+    """Entries for the ten curated wall images, in `collect()`'s shape.
+
+    Facts come from the FILENAME, which is Andreas's own labelling of his own
+    export -- "ngc7000-drizzle-163x20s-54min-original" -- and is the only
+    record of them now that the burned plates are being removed. `captured_on`
+    stays empty rather than being inferred: a date that is not in the filename
+    would be invented, and the caption renders without one.
+    """
+    entries = []
+    for thumb in sorted(SHOWCASE.glob(f"*-{_SHOWCASE_EDGE}.jpg")):
+        stem = thumb.stem[: -len(f"-{_SHOWCASE_EDGE}")]
+        full = SHOWCASE / f"{stem}-{_SHOWCASE_FULL}.jpg"
+        if not full.exists():
+            print(f"  skipping {stem}: no {_SHOWCASE_FULL}px version", file=sys.stderr)
+            continue
+        e = {"slug": stem, "source": f"{stem}.jpg",
+             "target": target_from_name(stem),
+             "instrument": SEED_INSTRUMENT, "captured_on": ""}
+        e.update({k: v for k, v in facts_from_filename(stem).items() if v})
+        e["images"] = {
+            "grid": {"src": f"img/showcase/{thumb.name}",
+                     "bytes": thumb.stat().st_size},
+            "full": {"src": f"img/showcase/{full.name}",
+                     "bytes": full.stat().st_size},
+        }
+        entries.append(e)
+    return entries
+
+
+def seed_rows(entries: list[dict]) -> list[dict]:
+    """One `submissions` row per gallery entry, keyed by COLUMN NAME.
+
+    Every field is named explicitly rather than copied from the entry. That is
+    not style: `collect()` carries whatever the FITS header happened to hold,
+    and a location key reaching a public table is the one leak this feature
+    must not have. Copying would make that leak the default.
+
+    `catalogue_id` stays NULL -- the site matches it server-side so the mapping
+    can improve without an app release (spec 4).
+    """
+    rows = []
+    for e in entries:
+        images = e.get("images") or {}
+        grid = images.get("grid") or {}
+        full = images.get("full") or {}
+        rows.append({
+            "handle": SEED_HANDLE,
+            "target": e.get("target") or None,
+            "catalogue_id": None,
+            "integration_s": e.get("total_s"),
+            "frames": e.get("frames"),
+            "sub_s": e.get("per_sub_s"),
+            "captured_on": e.get("captured_on") or None,
+            "instrument": e.get("instrument") or None,
+            "stored_2000": full.get("src"),
+            "stored_900": grid.get("src"),
+            "orig_filename": e.get("source") or f"{e.get('slug', '')}.jpg",
+            "size_bytes": full.get("bytes") or grid.get("bytes") or 0,
+            "status": "approved",
+        })
+    return rows
+
+
+def _sql_value(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    # Backslash AND quote: MariaDB treats both as escapes by default, and a
+    # target like "Barnard's Loop" is a real name that would otherwise end the
+    # statement early.
+    return "'" + str(v).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def seed_sql(entries: list[dict]) -> str:
+    """INSERT statements for the seeded rows.
+
+    Emitted as text rather than executed: the generator runs on Andreas's Mac
+    and the database is on the VPS, so printing SQL to pipe over ssh is both
+    simpler than a tunnel and reviewable before it runs.
+    """
+    rows = seed_rows(entries)
+    if not rows:
+        return ""
+    cols = list(rows[0])
+    out = ["-- Seeded from the gallery folder by build_gallery.py --seed.",
+           "-- Review before piping; these rows are status='approved' and go",
+           "-- straight onto the public wall."]
+    for r in rows:
+        values = ", ".join(_sql_value(r[c]) for c in cols)
+        out.append(f"INSERT INTO submissions ({', '.join(cols)}) VALUES ({values});")
+    return "\n".join(out) + "\n"
+
+
 def figure(e: dict) -> str:
     g, f = e["images"]["grid"], e["images"]["full"]
     title = e["target"] + (f" — {e['common']}" if e["common"] else "")
@@ -248,7 +382,14 @@ def inject(entries: list[dict]) -> bool:
 
 
 def main() -> int:
-    source = pathlib.Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else \
+    # --seed prints INSERT statements for the wall instead of writing the page
+    # (spec 2.2). Printed rather than executed: the database is on the VPS and
+    # this runs on Andreas's Mac, so `| ssh vps mysql ...` is both simpler than
+    # a tunnel and reviewable before it runs. These rows are status='approved'
+    # and land straight on the public wall, so "reviewable" is the point.
+    args = [a for a in sys.argv[1:] if a != "--seed"]
+    seeding = "--seed" in sys.argv
+    source = pathlib.Path(args[0]).expanduser() if args else \
         pathlib.Path.home() / "Desktop" / "Astro Images"
     if not source.is_dir():
         print(f"no such folder: {source}")
@@ -258,6 +399,13 @@ def main() -> int:
     if not entries:
         print("  no images found")
         return 1
+
+    if seeding:
+        shown = collect_showcase()
+        sys.stdout.write(seed_sql(shown))
+        print(f"-- {len(shown)} rows from {SHOWCASE.relative_to(ROOT)}",
+              file=sys.stderr)
+        return 0
 
     MANIFEST.write_text(json.dumps(entries, indent=2) + "\n")
     injected = inject(entries)
