@@ -2448,9 +2448,24 @@ def test_the_fringe_step_says_which_of_its_two_paths_ran(qtbot, tmp_path):
     de-greens the whole image inside a star mask and moves the sky more than
     the stars. Nothing anywhere said which one you got."""
     win = _win(qtbot, tmp_path)
-    win._fringe_layers = ("sig", "split", None, None, None)
+
+    # A real split whose tool IS known — name it.
+    win._fringe_layers = ("sig", "split", None, None, "StarX")
     assert win._fringe_path_label() == "StarX"
-    assert "StarX" in win._fringe_status_text()
+    assert "RC-Astro (StarX)" in win._fringe_status_text()
+
+    win._fringe_layers = ("sig", "split", None, None, "StarNet2")
+    assert "StarNet2" in win._fringe_status_text()
+
+    # A real split whose tool is NOT known — say the operation, name no tool.
+    # This asserted "StarX" until 2026-09-22, which was true only while StarX
+    # was the one splitter this step could reach. After StarNet2 it made the
+    # panel tell users with no RC-Astro that RC-Astro had run.
+    win._fringe_layers = ("sig", "split", None, None, None)
+    assert win._fringe_path_label() == "split"
+    unknown = win._fringe_status_text()
+    assert "StarX" not in unknown and "RC-Astro" not in unknown, unknown
+    assert "stars layer" in unknown, "it must still say which operation ran"
 
     win._fringe_layers = ("sig", "mask", None, None, None)
     assert win._fringe_path_label() == "mask"

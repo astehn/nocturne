@@ -500,7 +500,9 @@ def test_the_dialog_reports_its_split_so_it_can_be_cached(qtbot):
     # The third argument is the engine, so this tool's history line can name it
     # the way every pipeline step now does. "" here: the dialog was HANDED a
     # cached split and never ran one, and a tool must not report work it did
-    # not do.
+    # not do. _remember_split treats that "" as "I do not know" and keeps any
+    # tag already in the cache — publishing it used to ERASE the engine the
+    # tool that really split had recorded.
     assert seen[0][2] == ""
 
 

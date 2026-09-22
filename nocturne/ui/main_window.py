@@ -1475,6 +1475,15 @@ class MainWindow(QMainWindow):
         standing in as soon as another surface split something else.
         """
         sig = self._sr_sig(img)
+        # "" means "I do not know which tool made this", and not-knowing must
+        # never overwrite knowing. Colour Balance and Narrowband republish a
+        # split they were HANDED, with no tag of their own — which erased what
+        # the tool that actually split had recorded, and every surface
+        # downstream then read "" for a split it could name a minute earlier.
+        # A real second opinion still wins; only the empty one is refused.
+        previous = self._splits.get(sig)
+        if not tag and previous and previous[2]:
+            tag = previous[2]
         self._splits.pop(sig, None)          # re-insert so it counts as newest
         self._splits[sig] = (starless, stars, tag)
         while len(self._splits) > _SPLIT_CACHE_MAX:
@@ -4629,8 +4638,9 @@ class MainWindow(QMainWindow):
             # case: only pixels that read green move, and a clean stack often
             # has none. Without this the honest result is indistinguishable
             # from a broken step — which is exactly how it read.
-            tool = {"StarX": "RC-Astro (StarX)", "StarNet2": "StarNet2"}.get(label, label)
-            return (f"Using {tool}: only the stars layer is touched, "
+            tool = {"StarX": "RC-Astro (StarX)", "StarNet2": "StarNet2"}.get(label)
+            lead = f"Using {tool}: only" if tool else "Only"
+            return (f"{lead} the stars layer is touched, "
                     "and only where it is actually green. No visible change "
                     "means there was no green to remove.")
         # NOT _FREE_STAR_NOTE, which is shared with Star Reduction and
@@ -4655,10 +4665,12 @@ class MainWindow(QMainWindow):
             return ""
         if self._fringe_layers[1] != "split":
             return "mask"
-        # The tool that actually ran — "StarX", "StarNet2" or "free" — not the
-        # word "StarX" for all of them, which is what it said when RC-Astro was
-        # the only splitter this step could reach.
-        return self._fringe_layers[4] or "StarX"
+        # The tool that actually ran — "StarX", "StarNet2" or "free". This said
+        # `or "StarX"`, which turned "I do not know" into a specific PAID tool:
+        # users with no RC-Astro were told RC-Astro had run. "split" is the
+        # honest answer — a real separation happened and the tool is unknown —
+        # and _fringe_status_text names a tool only when there is one to name.
+        return self._fringe_layers[4] or "split"
 
     def _fringe_result(self, strength) -> AstroImage:
         _, kind, a, b, _c = self._fringe_layers

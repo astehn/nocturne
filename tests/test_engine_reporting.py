@@ -286,3 +286,50 @@ def test_no_option_shape_in_the_pipeline_falls_through_to_a_repr(qtbot, tmp_path
         if "{" in line or "'" in line:
             offenders.append(f"{stage.id}: {line.strip()}")
     assert not offenders, f"raw option reprs in the history log: {offenders}"
+
+
+# --- "I don't know" must never become "RC-Astro" (2026-09-22) --------------
+
+def test_an_unknown_tag_never_overwrites_a_known_one(qtbot, tmp_path):
+    """Opening Colour Balance or Narrowband on a CACHED split republished it
+    with an empty tag, wiping what the tool that actually split had recorded.
+    Every surface downstream then read "" for a split it could name a minute
+    earlier."""
+    from nocturne.ui.main_window import MainWindow
+
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    img = _img()
+
+    win._remember_split(img, img, img, "StarNet2")
+    win._remember_split(img, img, img)              # a dialog handed the cached split
+    assert win._split_engine_for(img) == " (StarNet2)", \
+        "a republish with no tag erased the engine that actually ran"
+
+    # A real second opinion still wins: this is "unknown must not overwrite",
+    # not "the first answer is frozen".
+    win._remember_split(img, img, img, "StarX")
+    assert win._split_engine_for(img) == " (StarX)"
+
+
+def test_de_green_stars_never_invents_rc_astro(qtbot, tmp_path):
+    """`self._fringe_layers[4] or "StarX"` turned an unknown tag into a
+    specific paid tool, so the panel told users on machines with no RC-Astro
+    that RC-Astro had run. The note must name a tool only when one is known."""
+    from nocturne.ui.main_window import MainWindow
+
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    img = _img()
+
+    win._fringe_layers = ("sig", "split", img, img, "")      # a real split, tool unknown
+    assert win._fringe_path_label() != "StarX"
+    note = win._fringe_status_text()
+    assert "RC-Astro" not in note and "StarX" not in note, note
+    assert "stars layer" in note, "it must still say which OPERATION ran"
+
+    win._fringe_layers = ("sig", "split", img, img, "StarNet2")
+    assert "StarNet2" in win._fringe_status_text()
+
+    win._fringe_layers = ("sig", "split", img, img, "StarX")
+    assert "RC-Astro (StarX)" in win._fringe_status_text()
