@@ -21,7 +21,7 @@ from ..core.image import AstroImage
 from ..core.mask import range_mask
 from ..core.narrowband import screen
 from ..history.step import Step
-from .star_split import resolve_star_split
+from .star_split import resolve_star_split, splitter_name
 from ..tools.base import run_cli
 from ..tools.rcastro import RCAstro
 
@@ -62,6 +62,7 @@ class ColorBalanceStep(Step):
         # that without RC-Astro this falls back to the free SEP split like the
         # other four star steps, rather than skipping the split and tinting the
         # stars on any machine that has not configured StarX.
+        self.last_engine = splitter_name(self._rc)
         starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
 
         data = starless.data

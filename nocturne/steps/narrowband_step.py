@@ -37,6 +37,8 @@ class NarrowbandStep(Step):
         if not img.is_color:
             raise ValueError("Narrowband needs a colour image")
         params = parse_narrowband_option(option)
+        from .star_split import splitter_name
+        self.last_engine = splitter_name(self._rc)
         if self._rc is not None:
             starless, stars = self._rc.remove_stars(img, runner=self._runner)
         else:

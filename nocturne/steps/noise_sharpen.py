@@ -92,9 +92,17 @@ class NoiseSharpenStep(Step):
     def apply(self, img: AstroImage, option) -> AstroImage:
         engine, level = parse_noise_option(option)
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
+        # The option is a PREFERENCE and the log used to print it: with
+        # GraXpert installed and RC-Astro absent it said "rcastro" while
+        # GraXpert ran. Record what actually runs, on the same line that
+        # decides it — the distinction already had to be made once for the
+        # busy message (see MainWindow._busy_label_for).
         for e in order:
             if e == "rcastro" and self._rc is not None:
+                self.last_engine = "NoiseX"
                 return self._rc.denoise(img, _NXT_LEVELS[level], runner=self._runner)
             if e == "graxpert" and self._gx is not None:
+                self.last_engine = "GraXpert"
                 return self._gx.denoise(img, _GX_LEVELS[level], runner=self._runner)
+        self.last_engine = "free"
         return reduce_noise(img, _TV_LEVELS[level])

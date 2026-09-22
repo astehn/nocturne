@@ -49,3 +49,21 @@ def preferred_splitter(settings):
         from ..tools.starnet import StarNet
         return StarNet(resolve_binary(settings.starnet_path))
     return None
+
+
+def splitter_name(splitter) -> str:
+    """What a step should report as the engine it used: StarX, StarNet2 or free.
+
+    THE SAME THREE WORDS as `MainWindow._split_tagged`, deliberately. That has
+    tagged its splits since 2026-09-18 and Saturation's log line prints the tag;
+    a second vocabulary for the same three things would let two lines about one
+    split disagree.
+
+    Read at the moment the step runs, never re-derived from settings afterwards.
+    Settings can change while a step is in flight — a GraXpert denoise takes
+    minutes — so asking `rcastro_valid` at log time can report a choice that was
+    never made.
+    """
+    if splitter is None:
+        return "free"
+    return "StarX" if type(splitter).__name__ == "RCAstro" else "StarNet2"

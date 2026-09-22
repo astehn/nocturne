@@ -27,6 +27,8 @@ class GreenFringeStep(Step):
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         strength = float(option) if option not in (None, "") else 0.0
+        from .star_split import splitter_name
+        self.last_engine = splitter_name(self._rc)
         if self._rc is not None:                              # StarX: clean stars layer
             starless, stars = self._rc.remove_stars(img, runner=self._runner)
             return remove_green_fringe(starless, stars, strength)

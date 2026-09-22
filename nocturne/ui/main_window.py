@@ -1393,14 +1393,16 @@ class MainWindow(QMainWindow):
         NarrowbandDialog(self.settings, base, parent=self,
                          on_apply=self._apply_narrowband,
                          starless=starless, stars=stars,
-                         on_split=lambda sl, st: self._remember_split(base, sl, st)).exec()
+                         on_split=lambda sl, st, tag="": self._remember_split(base, sl, st, tag)).exec()
 
     def _apply_narrowband(self, result, params) -> None:
         if self.project is None or self._busy:
             return
+        engine = self._split_engine_for(self.project.current())
         self.project.run_step(_PrecomputedStep("Narrowband", result), params)
         self._mark_dirty()
-        self.log_panel.append_entry(format_log_entry("Narrowband", params.palette, None))
+        self.log_panel.append_entry(
+            format_log_entry("Narrowband", params.palette + engine, None))
         self._clear_warning()
         self._refresh()
 
@@ -1420,7 +1422,7 @@ class MainWindow(QMainWindow):
         _cbd.ColorBalanceDialog(self.settings, base, parent=self,
                                 on_apply=self._apply_color_balance,
                                 starless=starless, stars=stars,
-                                on_split=lambda sl, st: self._remember_split(base, sl, st)).exec()
+                                on_split=lambda sl, st, tag="": self._remember_split(base, sl, st, tag)).exec()
 
     def _cached_layers(self, img):
         """(starless, stars, tag) already computed for these exact pixels, or None.
@@ -1448,6 +1450,22 @@ class MainWindow(QMainWindow):
         hit = self._cached_layers(img)
         return (hit[0], hit[1]) if hit else (None, None)
 
+    def _split_engine_for(self, img) -> str:
+        """" (StarNet2)" for the history line, or "" when nothing split.
+
+        The two dialog-driven tools do not run a Step, so they have no
+        `last_engine` to read. They publish their tag into the shared split
+        cache instead (see _remember_split) and it is read back here — still
+        the value recorded where the choice was made, not a fresh lookup.
+
+        "" is a real answer and must stay one: a dialog handed a CACHED split
+        ran no separation of its own, and a tool must not report work it did
+        not do. Same rule as Saturation at neb 0.00.
+        """
+        hit = self._cached_layers(img)
+        tag = hit[2] if hit and len(hit) > 2 else ""
+        return f" ({'built-in' if tag == 'free' else tag})" if tag else ""
+
     def _remember_split(self, img, starless, stars, tag: str = "") -> None:
         """Publish a split so every other surface can use it.
 
@@ -1467,10 +1485,11 @@ class MainWindow(QMainWindow):
         of work done after the step it conceptually sits beside."""
         if self.project is None or self._busy:
             return
+        engine = self._split_engine_for(self.project.current())
         self.project.run_step(_PrecomputedStep("Colour Balance", result), opts)
         self._mark_dirty()
         self.log_panel.append_entry(
-            format_log_entry("Colour Balance", cb_describe(opts), None))
+            format_log_entry("Colour Balance", cb_describe(opts) + engine, None))
         self._clear_warning()
         self._refresh()
 
@@ -3445,7 +3464,7 @@ class MainWindow(QMainWindow):
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._mark_dirty()
-            self._log_step(stage_id, option, base, result)
+            self._log_step(stage_id, option, base, result, step)
             # The commit now reflects what the slider/dropdown showed. Only
             # _rebuild_panel cleared these before (on navigating away), which
             # left a step falsely "pending" right after its own Apply.
@@ -3485,7 +3504,22 @@ class MainWindow(QMainWindow):
             return "Calibrating colour…"
         return f"Applying {STEP_NAME[stage_id]}…"
 
-    def _log_step(self, stage_id: str, option, base, result) -> None:
+    def _log_step(self, stage_id: str, option, base, result, step=None) -> None:
+        """The history line for one apply, including WHICH ENGINE ran.
+
+        The engine is read off the step, which set it during apply — never
+        re-derived here. Settings can change while a step is in flight (a
+        GraXpert denoise takes minutes), so asking `rcastro_valid` at this
+        point can report a choice that was never made. Same reasoning as
+        `_split_tagged`, which has returned its own tag since 2026-09-18.
+
+        Why it is here at all: elapsed time used to be the only signal about
+        which path ran, and it is a misleading one. Andreas read an instant
+        Deconvolution as proof that the STAR SEPARATION had fallen back — two
+        unrelated steps — and had to be talked out of it with a measurement.
+        A step that is suspiciously fast is also what a silently downgraded
+        pipeline looks like.
+        """
         name = STEP_NAME[stage_id]
         if stage_id == "levels" and option == LEVELS_AUTO:
             # The one Levels option that IS user-facing: it says the black point
@@ -3496,11 +3530,27 @@ class MainWindow(QMainWindow):
         elif stage_id == "saturation" and isinstance(option, (tuple, list)):
             label = f"{float(option[0]):.2f} / neb {float(option[1]):.2f}"
         elif stage_id == "noise_sharpen" and isinstance(option, dict):
-            label = f"{option.get('level', 'medium')} ({option.get('engine') or 'auto'})"
+            # The LEVEL only. This used to print the option's engine too, which
+            # is a PREFERENCE: with GraXpert installed and RC-Astro absent it
+            # said "rcastro" while GraXpert ran. The engine appended below is
+            # what the step recorded actually running.
+            label = str(option.get("level", "medium"))
         elif isinstance(option, float):
             label = f"{option:.2f}"
         else:
             label = option
+        # "free" is the internal tag `_split_tagged` has used since 2026-09-18
+        # and it stays that, so one vocabulary describes one thing. The LOG is
+        # read by a person, though, and "free" names a price rather than a
+        # method — the path it means is Nocturne's own code.
+        engine = {"free": "built-in"}.get(
+            getattr(step, "last_engine", None), getattr(step, "last_engine", None))
+        # Not appended when the label already carries it: Saturation's
+        # _sat_log_option prints the tag itself, and only when the nebula boost
+        # actually split — at neb 0.00 nothing separated and naming an engine
+        # would report work the step did not do.
+        if engine and f"({engine})" not in label:
+            label = f"{label} ({engine})" if label else f"({engine})"
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
 
     def _run_busy(self, work, on_result, label: str, err_prefix: str,
