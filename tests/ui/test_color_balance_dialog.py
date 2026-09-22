@@ -492,11 +492,16 @@ def test_the_dialog_reports_its_split_so_it_can_be_cached(qtbot):
     base, starless, stars = _layers()
     seen = []
     d = ColorBalanceDialog(Settings(), base, starless=starless, stars=stars,
-                           on_split=lambda sl, st: seen.append((sl, st)))
+                           on_split=lambda sl, st, tag="": seen.append((sl, st, tag)))
     qtbot.addWidget(d)
     d.show()
     assert seen, "the split was never handed back"
     assert seen[0][0] is starless and seen[0][1] is stars
+    # The third argument is the engine, so this tool's history line can name it
+    # the way every pipeline step now does. "" here: the dialog was HANDED a
+    # cached split and never ran one, and a tool must not report work it did
+    # not do.
+    assert seen[0][2] == ""
 
 
 def test_no_split_is_reported_when_there_are_no_stars(qtbot):
@@ -506,7 +511,7 @@ def test_no_split_is_reported_when_there_are_no_stars(qtbot):
     base, starless, _stars = _layers()
     seen = []
     d = ColorBalanceDialog(Settings(), base, starless=starless, stars=None,
-                           on_split=lambda sl, st: seen.append((sl, st)))
+                           on_split=lambda sl, st, tag="": seen.append((sl, st, tag)))
     qtbot.addWidget(d)
     d.show()
     assert seen == [], "a split with no stars layer was cached as if it were real"

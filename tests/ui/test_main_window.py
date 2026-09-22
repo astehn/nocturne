@@ -5952,7 +5952,7 @@ def test_a_narrowband_run_with_no_splitter_does_not_poison_the_store(qtbot, tmp_
     published = []
     data = np.clip(np.random.default_rng(2).normal(0.3, 0.05, (24, 24, 3)), 0, 1).astype(np.float32)
     base = AstroImage(data, is_linear=False, metadata={})
-    dlg = NarrowbandDialog(Settings(), base, on_split=lambda sl, st: published.append((sl, st)))
+    dlg = NarrowbandDialog(Settings(), base, on_split=lambda sl, st, tag="": published.append((sl, st, tag)))
     qtbot.addWidget(dlg)
 
     dlg._on_starless((base, None))          # the no-splitter path, verbatim
@@ -5961,7 +5961,10 @@ def test_a_narrowband_run_with_no_splitter_does_not_poison_the_store(qtbot, tmp_
     starless = AstroImage(data * 0.5, is_linear=False, metadata={})
     stars = AstroImage(np.zeros_like(data), is_linear=False)
     dlg._on_starless((starless, stars))     # a real split
-    assert published == [(starless, stars)]
+    # The third value is the engine, published with the split so a later
+    # surface can name it. "" here because this dialog was constructed without
+    # running _default_starx — nothing chose a splitter, so nothing claims one.
+    assert published == [(starless, stars, "")]
 
 
 # --- De-green Stars: the last rcastro_valid gate, 2026-09-19 ----------------

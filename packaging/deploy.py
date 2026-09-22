@@ -212,6 +212,25 @@ def build_linux_cmds(config: DeployConfig, version: str) -> list[list[str]]:
     Runs AFTER the tag is pushed, and checks that tag out: the artifact must be
     the tagged source, not whatever the build host happened to have. That is the
     whole reason this cannot run earlier in the sequence.
+
+    THE CHECKOUT IS A SEPARATE COMMAND, AND IT COMES FIRST. It used to live
+    inside build_linux.sh, which meant that script replaced the very file bash
+    was reading. `git checkout` replaces a file by RENAME, so the path gets a new
+    inode while bash's open descriptor still points at the old, now-unlinked one
+    — and bash reads the PREVIOUS release's script to the end, against the new
+    source tree. (Reproduced on the build host 2026-09-22. A script that rewrites
+    itself with `cp`, in place, does NOT show this: same inode, so bash sees the
+    new bytes. The rename is the whole mechanism.) The v0.39.1 build was
+    correct (the spec came from the tag; the tarball went 184 -> 202 MB) while
+    that script's own new lines were silently skipped, one of which was the
+    blocking --check-codecs gate added the same morning. Every edit to
+    build_linux.sh took effect one release late, invisibly. Caught 2026-09-22 by
+    looking for output that never arrived.
+
+    Doing it here also makes a failed checkout name itself in the numbered step
+    list, instead of surfacing as a confusing build error twenty minutes later.
+    The script keeps its own checkout for standalone use, where it is now a
+    no-op that cannot rewrite the running file.
     """
     if not (config.linux_ssh_host and config.linux_repo_path):
         raise ValueError(
@@ -219,6 +238,11 @@ def build_linux_cmds(config: DeployConfig, version: str) -> list[list[str]]:
     asset = linux_asset_name(version)
     repo = config.linux_repo_path
     return [
+        # `git fetch` because the tag was pushed seconds ago, and `--tags`
+        # because a bare fetch will not bring it.
+        ["ssh", config.linux_ssh_host,
+         f"cd {repo} && git fetch --quiet --tags origin "
+         f"&& git checkout --quiet v{version}"],
         ["ssh", config.linux_ssh_host,
          f"bash {repo}/packaging/build_linux.sh v{version}"],
         ["scp", f"{config.linux_ssh_host}:{repo}/dist/{asset}", str(DIST / asset)],

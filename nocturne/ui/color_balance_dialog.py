@@ -12,7 +12,7 @@ from ..core.image import AstroImage
 from ..core.mask import BAND_PRESETS, band_preset, range_mask
 from ..core.narrowband import screen
 from ..settings import resolve_binary
-from ..steps.star_split import preferred_splitter
+from ..steps.star_split import preferred_splitter, splitter_name
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
 from .preview import to_qimage
@@ -80,7 +80,11 @@ class ColorBalanceDialog(QDialog):
         self._settings = settings
         self._base = base
         self._on_apply = on_apply
-        self._on_split = on_split   # hand the split back so it can be cached:
+        self._on_split = on_split
+        # Set when a split actually runs (see _default_starx). "" until
+        # then, because a dialog closed without splitting has no engine
+        # to report and must not invent one.
+        self.last_engine = ""   # hand the split back so it can be cached:
                                     # a StarX run per open is the main friction
                                     # in the two-applies workflow
         self._pool = QThreadPool.globalInstance()
@@ -221,8 +225,15 @@ class ColorBalanceDialog(QDialog):
         Was RC-Astro only, which is why this dialog still said "StarX not
         configured" after StarNet2 worked in every step (2026-09-18). The rule
         lives in steps/star_split.preferred_splitter so there is one copy of it.
+
+        Records the engine as it picks it, for the history line — the same
+        contract every pipeline step now follows (Step.last_engine). Recorded
+        HERE rather than looked up when the line is written, because this dialog
+        runs for minutes and Settings is reachable throughout.
         """
-        return preferred_splitter(self._settings).remove_stars(img)
+        splitter = preferred_splitter(self._settings)
+        self.last_engine = splitter_name(splitter)
+        return splitter.remove_stars(img)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -252,7 +263,10 @@ class ColorBalanceDialog(QDialog):
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers
         if self._on_split is not None and self._stars is not None:
-            self._on_split(self._starless, self._stars)
+            # WITH the tag. Publishing untagged left the history line for this
+            # tool unable to say which splitter ran, while every pipeline step
+            # could — and the cache is where a later surface reads it from.
+            self._on_split(self._starless, self._stars, self.last_engine)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.handles.set_histogram(self._prev_starless.data)

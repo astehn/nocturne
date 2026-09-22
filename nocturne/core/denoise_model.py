@@ -111,6 +111,37 @@ def external_models() -> list[tuple[str, str]]:
     return [(os.path.splitext(n)[0], os.path.join(EXTERNAL_DIR, n)) for n in names]
 
 
+def runtime_available() -> bool:
+    """Can this build actually LOAD a model?
+
+    Two independent requirements and the gate used to check one. `onnxruntime`
+    is in the spec's excludes — 64 MB, and carrying an inference runtime for an
+    unreachable step took cold start from 9.2 s to 1.0 s (measured 2026-09-01)
+    — so a packaged app with a model folder offered Linear Denoise and then
+    raised at Apply. Only Andreas hits it, on every release he tests, because
+    users have no ~/.nocturne/models at all.
+
+    Not cached: `_session` is, and a false negative here would outlive the
+    import it was wrong about. The import is a dict lookup once onnxruntime is
+    loaded, and a no-op ImportError otherwise.
+    """
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def usable_external_models() -> list[tuple[str, str]]:
+    """The models this build can offer: on disk AND loadable.
+
+    Every UI surface asks THIS, not external_models(). external_models() stays
+    the pure filesystem answer so a test can still assert models live outside
+    the app, which is the guarantee the whole arrangement exists for.
+    """
+    return external_models() if runtime_available() else []
+
+
 def external_path(label: str) -> str | None:
     """The file behind a label, or None if it is gone.
 
@@ -146,9 +177,18 @@ def _session(path: str):
         # unreachable step cost every launch. Measured 2026-09-01: excluding it
         # took a cold start from 9.2 s to 1.0 s on this machine.
         #
-        # The one way to arrive here is a saved project made before v0.18.0,
-        # when the step WAS in the pipeline. Say that, rather than letting an
-        # ImportError for a library the user never heard of reach them.
+        # TWO ways to arrive here, and they need different words. Until
+        # 2026-09-22 this said only the first, and Andreas met the second: he
+        # opened a FITS, pressed Apply on a step the app had just offered him,
+        # and was told to edit a project he did not have.
+        if os.path.dirname(os.path.abspath(path)) == os.path.abspath(EXTERNAL_DIR):
+            raise RuntimeError(
+                "This build of Nocturne cannot load a Nocturne NR model — the "
+                "inference runtime is not packaged with it. Run from source to "
+                "try the model."
+            ) from exc
+        # A saved project made before v0.18.0, when the step WAS in the
+        # pipeline. Better than an ImportError for a library nobody has heard of.
         raise RuntimeError(
             "This project uses Linear Denoise, which is not part of this version of "
             "Nocturne. The step was withdrawn in v0.18.0 because the model "

@@ -23,7 +23,8 @@ class StarReductionStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        from .star_split import resolve_star_split
+        from .star_split import resolve_star_split, splitter_name
+        self.last_engine = splitter_name(self._rc)
         starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
         if isinstance(option, str) and option in _AMOUNT:
             amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)

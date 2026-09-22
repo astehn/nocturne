@@ -28,6 +28,13 @@ class DeconvolutionStep(Step):
 
     def apply(self, img: AstroImage, option: str) -> AstroImage:
         ss, sn = _LEVELS[option]
+        # NOT a star split — this step has no splitter at all. Recorded because
+        # a fast Deconvolution is exactly what Andreas read as proof that the
+        # SEPARATION had fallen back (2026-09-22). The free path is an unsharp
+        # mask and finishes in milliseconds; that is correct and now says so.
+        # "BlurX", not "StarX": RC-Astro is three tools and naming the wrong
+        # one in a log line is worse than naming none.
+        self.last_engine = "BlurX" if self._rc is not None else "free"
         if self._rc is not None:
             return self._rc.deconvolve(
                 img, sharpen_stars=ss, sharpen_nonstellar=sn, runner=self._runner)

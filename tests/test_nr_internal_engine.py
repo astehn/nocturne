@@ -138,3 +138,47 @@ def test_the_panel_turns_the_label_back_into_the_engine_id(qtbot):
 # on 2026-09-18, so the fact is now simply "none", and it belongs with the
 # packaging guards rather than with this engine — see tests/test_no_model_ships.py.
 # Two tests owning one fact is how one of them goes stale unnoticed.
+
+
+# --- and the build has to be able to LOAD one (2026-09-22) -----------------
+
+def test_the_step_is_not_offered_when_the_build_cannot_load_a_model(tmp_path, monkeypatch, qtbot):
+    """A model on disk was the whole gate until a user's report made me look.
+
+    The packaged app excludes onnxruntime, so Andreas — who keeps five models in
+    ~/.nocturne/models — was shown Linear Denoise by every release build and got
+    a failure at Apply. Users never had the folder, so this was invisible to
+    everyone but him, on every release, for weeks.
+    """
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))
+    (tmp_path / "v10.onnx").write_bytes(b"not a real model")
+    from nocturne.ui.main_window import MainWindow
+
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"))
+    qtbot.addWidget(win)
+
+    monkeypatch.setattr(dm, "runtime_available", lambda: True)
+    assert "ai_denoise" in win._included_stages(), \
+        "with a model AND a runtime the step must still be offered"
+
+    monkeypatch.setattr(dm, "runtime_available", lambda: False)
+    assert "ai_denoise" not in win._included_stages(), \
+        "a build that cannot load a model must not offer the step"
+
+
+def test_no_ui_surface_asks_the_filesystem_question_directly(tmp_path):
+    """`external_models()` is the pure filesystem answer and stays that way for
+    the guarantee tests above. Every SURFACE must ask `usable_external_models()`
+    — one place that knows both requirements. A new dropdown reaching for the
+    raw list reintroduces the bug with no test failing."""
+    import pathlib
+    ui = pathlib.Path(dm.__file__).parent.parent / "ui"
+    offenders = []
+    for f in ui.rglob("*.py"):
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "external_models" in line and "usable_external_models" not in line:
+                offenders.append(f"{f.name}:{n}")
+    assert not offenders, f"UI calling the filesystem answer directly: {offenders}"

@@ -235,3 +235,78 @@ def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
     qtbot.addWidget(dlg)
     assert not dlg.telemetry.isChecked()
     assert dlg.result_settings().telemetry == "off"
+
+
+# --- every tool with a path field needs a status on OPEN (2026-09-22) -------
+#
+# StarNet2 arrived 2026-09-18 and was never added to _refresh_status's tuple, so
+# its row was BLANK while GraXpert and ASTAP said "✓ … found". Andreas hit
+# exactly that and doubted StarNet2 was configured at all — then proved from the
+# history log that it had been running the whole time.
+
+def test_a_configured_starnet2_says_so_without_pressing_test(qtbot, tmp_path):
+    exe = tmp_path / "starnet2"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    dlg = SettingsDialog(Settings(starnet_path=str(exe)))
+    qtbot.addWidget(dlg)
+    assert "✓" in dlg._starnet_result.text()
+    assert "StarNet2" in dlg._starnet_result.text()
+
+
+def test_an_unset_starnet2_says_optional_rather_than_nothing(qtbot):
+    dlg = SettingsDialog(Settings(starnet_path=""))
+    qtbot.addWidget(dlg)
+    assert "optional" in dlg._starnet_result.text()
+
+
+def test_every_tool_path_field_has_a_status_on_open(qtbot, tmp_path):
+    """The structural guard. A sixth tool added to the dialog without a status
+    row repeats this silently — the field looks configured and says nothing."""
+    exe = tmp_path / "t"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    dlg = SettingsDialog(Settings(graxpert_path=str(exe), rcastro_path=str(exe),
+                                  starnet_path=str(exe), astap_path=str(exe)))
+    qtbot.addWidget(dlg)
+    blank = [name for name, label in
+             (("GraXpert", dlg._gx_result), ("RC-Astro", dlg._rc_result),
+              ("StarNet2", dlg._starnet_result), ("ASTAP", dlg._astap_result))
+             if not label.text().strip()]
+    assert not blank, f"configured but silent on open: {blank}"
+
+
+def test_typing_a_starnet2_path_updates_its_status_as_you_type(qtbot, tmp_path):
+    """The SAME omission again, four lines below the one the commit fixed: the
+    textChanged tuple also left StarNet2 out. So the row was right on open and
+    then frozen — set the path, get no confirmation, which is the exact state
+    the fix was supposed to end. Found by an adversarial review, not by me."""
+    exe = tmp_path / "starnet2"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert "optional" in dlg._starnet_result.text()
+    dlg._starnet.setText(str(exe))
+    assert "✓" in dlg._starnet_result.text(), "typing a valid path said nothing"
+    dlg._starnet.setText("/gone/missing")
+    assert "✗" in dlg._starnet_result.text(), "a path that stopped working still said found"
+
+
+def test_every_tool_field_is_wired_to_the_status_refresh(qtbot):
+    """Structural, unlike the open-time test beside it: it reads the dialog's
+    OWN list of path fields rather than repeating it, so a fifth tool that is
+    never connected fails here without anyone remembering to add a case."""
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    fields = {"GraXpert": (dlg._gx, dlg._gx_result),
+              "RC-Astro": (dlg._rc, dlg._rc_result),
+              "StarNet2": (dlg._starnet, dlg._starnet_result),
+              "ASTAP": (dlg._astap, dlg._astap_result)}
+    unwired = []
+    for name, (edit, label) in fields.items():
+        before = label.text()
+        edit.setText("/definitely/not/a/program")
+        if label.text() == before:
+            unwired.append(name)
+    assert not unwired, f"path fields that never refresh their status: {unwired}"

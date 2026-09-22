@@ -37,7 +37,8 @@ class SaturationStep(Step):
     def apply(self, img: AstroImage, option) -> AstroImage:
         amount, nebula = parse_saturation_option(option)
         if nebula > 0.0:
-            from .star_split import resolve_star_split
+            from .star_split import resolve_star_split, splitter_name
+            self.last_engine = splitter_name(self._rc)
             starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
             img = nebula_saturate(starless, stars, nebula)
         return saturate(img, amount)
