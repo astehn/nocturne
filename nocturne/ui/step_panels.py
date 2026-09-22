@@ -97,7 +97,7 @@ def _wall_summary(fields: dict, handle: str) -> str:
         bits.append(str(fields["captured_on"]))
     if (handle or "").strip():
         bits.append(handle.strip())
-    return "The wall will show: " + " \u00b7 ".join(bits) if bits else ""
+    return "The gallery will show: " + " \u00b7 ".join(bits) if bits else ""
 
 
 def build_panel(
@@ -974,7 +974,7 @@ def build_panel(
         w.fmt_box = box
         w.export_btn = export_btn
 
-        # --- and, optionally, the wall ---------------------------------
+        # --- and, optionally, the gallery ---------------------------------
         #
         # HERE rather than in the Share dialog (spec 2.4). Share reframes for a
         # destination and composes without the plate, so what it sent differed
@@ -999,12 +999,13 @@ def build_panel(
             wall_rule.setObjectName("panelRule")
             lay.addWidget(wall_rule)
             lay.addSpacing(10)
-            heading = QLabel("Send to the wall")
+            heading = QLabel("Share to the gallery")
             heading.setObjectName("panelSectionLabel")
             lay.addWidget(heading)
             lay.addWidget(_desc_label(
-                "Optional. Your picture goes to the gallery for review — it is "
-                "not published straight away, and it can be taken down later."))
+                "Optional. Publish this picture in the public gallery at "
+                "nocturneastro.com. It is looked at before it appears, and can "
+                "be taken down later by asking."))
 
             # WHAT IT WILL SAY ABOUT YOU, from the same dict that gets posted,
             # so the panel cannot claim one thing and send another.
@@ -1021,8 +1022,8 @@ def build_panel(
                 w.wall_target.setPlaceholderText("M 31 — this file does not name one")
                 lay.addWidget(w.wall_target)
 
-            w.wall_consent = QCheckBox("Publish this on the Nocturne wall")
-            w.wall_btn = QPushButton("Send to the wall")
+            w.wall_consent = QCheckBox("Publish this in the Nocturne gallery")
+            w.wall_btn = QPushButton("Send to the gallery")
             w.wall_btn.setEnabled(False)
             w.wall_note = QLabel("")
             w.wall_note.setWordWrap(True)
@@ -1035,7 +1036,7 @@ def build_panel(
                     w.wall_btn.setEnabled(False)
                     w.wall_note.setText(
                         "Set a handle in Settings first — it is the only credit "
-                        "shown beside your picture.")
+                        "shown beside your picture in the gallery.")
                     return
                 w.wall_btn.setEnabled(w.wall_consent.isChecked())
                 w.wall_note.setText("")

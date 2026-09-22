@@ -292,7 +292,7 @@ def test_privacy_page_no_longer_claims_images_never_leave():
     """The wall makes the old sentence false. Shipping with it live would have
     left the site stating something untrue."""
     t = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8")
-    assert "The gallery wall" in t
+    assert "<h2>The gallery</h2>" in t, "the section naming the third route out"
     assert "handle is public" in t.lower()
     assert "deleted rather than" in t, "rejection must be described"
     assert "support.html" in t, "the takedown route must be stated"
@@ -522,3 +522,13 @@ def test_every_token_the_admin_uses_is_DEFINED_by_the_site():
     used = set(_re.findall(r"var\((--[a-z-]+)\)", COMMON.read_text(encoding="utf-8")))
     missing = [t for t in used if f"{t}:" not in css]
     assert missing == [], f"not defined in styles.css: {missing}"
+
+
+def test_the_SITE_says_gallery_not_wall():
+    """One nomenclature. The page is called Gallery everywhere else, so the
+    pages describing submission say gallery too. The changelog is exempt: its
+    v0.38.0 entry describes a button that really was called "Send to the wall",
+    and rewriting history would make the record false."""
+    for name in ("privacy.html", "gallery.html", "share.html", "faq.html"):
+        t = (SITE / "_src" / name).read_text(encoding="utf-8")
+        assert "the wall" not in t.lower(), f"{name} still says 'the wall'"

@@ -5,7 +5,7 @@ import hashlib
 import os
 
 import numpy as np
-from PySide6.QtCore import (QEvent, QEventLoop, QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl,
+from PySide6.QtCore import (QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer, QUrl,
                             Signal)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -5138,27 +5138,29 @@ class MainWindow(QMainWindow):
         from ..core.export import jpeg_bytes
         data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
 
-        class _Signals(QObject):
-            done = Signal(bool, str)
+        # run_async, NOT a hand-rolled QRunnable.
+        #
+        # The first version built its own QRunnable with its own signals object
+        # and segfaulted on the first press: QRunnable auto-deletes itself in
+        # C++ the moment run() returns, so the queued signal arrived on the main
+        # thread pointing at a destroyed QObject —
+        # PySide::getWrapperForQObject on freed memory. worker.py exists for
+        # exactly this and says so: "otherwise PySide may garbage-collect the
+        # QRunnable (and its signals) before QThreadPool runs it." Every other
+        # background call in this window already goes through it.
+        def _done(result) -> None:
+            ok, message = result
+            if hasattr(panel, "wall_finished"):
+                panel.wall_finished(bool(ok), str(message))
 
-        class _Job(QRunnable):
-            """Holds bytes and a dict, never the window. Qt widgets are not
-            thread-safe, and a worker with a window reference is one setText()
-            from repainting off-thread."""
+        def _failed(exc) -> None:
+            # submit() is documented never to raise, so this is belt and braces
+            # — but a panel left saying "Sending…" for ever is the one outcome
+            # worse than a refusal.
+            if hasattr(panel, "wall_finished"):
+                panel.wall_finished(False, f"Could not send: {exc}")
 
-            def __init__(self):
-                super().__init__()
-                self.signals = _Signals()
-
-            def run(self) -> None:
-                ok, message = _submit(data, meta, handle)
-                self.signals.done.emit(ok, message)
-
-        job = _Job()
-        job.signals.done.connect(
-            lambda ok, msg: panel.wall_finished(ok, msg)
-            if hasattr(panel, "wall_finished") else None)
-        QThreadPool.globalInstance().start(job)
+        run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
 
     def export_final(self, fmt: str, space: str = "sRGB") -> None:
         if self.project is None or self._busy:

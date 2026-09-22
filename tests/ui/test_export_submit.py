@@ -217,9 +217,85 @@ def test_the_help_points_at_EXPORT_not_share():
     A topic describing a button that moved is worse than one that is silent."""
     from nocturne.ui import help_content
     export = help_content.TOPICS["export"].body.lower()
-    assert "wall" in export
+    assert "gallery" in export
     assert "looked at" in export or "review" in export
     assert "settings" in export, "the handle comes from Settings — say where"
     assert "location is never" in export, "the privacy promise travels with it"
     share = help_content.TOPICS["share"].body.lower()
-    assert "send to the wall" not in share
+    assert "send to the wall" not in share and "send to the gallery" not in share
+
+
+def test_the_submit_goes_through_run_async_not_a_hand_rolled_runnable():
+    """It segfaulted on the first real press.
+
+    A hand-rolled QRunnable auto-deletes itself in C++ the moment run()
+    returns, so the queued signal reached the main thread pointing at a
+    destroyed QObject — PySide::getWrapperForQObject on freed memory.
+    worker.py exists for exactly this and its own comment says so; every other
+    background call in this window already uses it.
+    """
+    import inspect
+    from nocturne.ui import main_window
+    src = inspect.getsource(main_window.MainWindow._submit_to_wall)
+    assert "run_async(" in src, "use the house pattern"
+    # Comments stripped before looking: this method's own comment explains the
+    # crash and names QRunnable several times, and a test that reads the prose
+    # rather than the code is a trap this session has already fallen into twice.
+    code = "\n".join(l.split("#", 1)[0] for l in src.split("\n"))
+    assert "QRunnable" not in code, "a hand-rolled runnable is back"
+    assert "class _Job" not in code and "Signal(" not in code
+
+
+def test_the_send_actually_completes_end_to_end(qtbot, tmp_path, monkeypatch):
+    """The one that would have caught the crash.
+
+    Everything before this stubbed the POST or tested the panel alone, so
+    nothing ever ran the thread hop that failed. This drives the real path with
+    the network replaced, and waits for the answer to arrive on the main
+    thread — which is where the segfault happened.
+    """
+    win = _win(qtbot, tmp_path)
+    monkeypatch.setattr("nocturne.core.submit.submit",
+                        lambda *a, **k: (True, "Sent. It will appear once looked at."))
+    # Navigate to Export for real — the first version of this test skipped when
+    # the panel was not the export one, which meant it never ran the path that
+    # crashed. A test that skips is not a test.
+    idx = next(i for i, s in enumerate(win._stages) if s.id == "export")
+    win._go_to(idx)
+    panel = win._panel
+    assert hasattr(panel, "wall_finished"), "the export panel should be current"
+    win._submit_to_wall("")
+    qtbot.waitUntil(lambda: "looked at" in panel.wall_note.text(), timeout=4000)
+    assert panel.wall_btn.isEnabled() is False, "a success must spend the button"
+
+
+def test_the_USER_FACING_words_say_gallery_and_name_the_site(qtbot):
+    """Andreas, seeing it for the first time: "What wall? What gallery?" — and
+    "we should stick with one nomenclature, today we refer to it as the gallery
+    sometimes and the wall other times."
+
+    The page is called Gallery: that is its nav label, its <h1> and every link
+    on the site. "The wall" was internal vocabulary out of the spec that leaked
+    into the interface. Internal names (wall_fields, wall.php, the submissions
+    table) keep it; nothing a user reads does.
+
+    It must also say WHERE. A button offering to publish somewhere unnamed is
+    asking for consent to something the user cannot picture.
+    """
+    from PySide6.QtWidgets import QCheckBox, QPushButton
+    w = _panel(qtbot)
+    words = " ".join(
+        [l.text() for l in w.findChildren(QLabel)]
+        + [b.text() for b in w.findChildren(QPushButton)]
+        + [c.text() for c in w.findChildren(QCheckBox)])
+    assert "wall" not in words.lower(), f"'wall' reached the interface: {words}"
+    assert "gallery" in words.lower()
+    assert "nocturneastro.com" in words, "say where it is being published"
+
+
+def test_the_help_says_gallery_and_where():
+    from nocturne.ui import help_content
+    body = help_content.TOPICS["export"].body
+    assert "wall" not in body.lower()
+    assert "gallery" in body.lower()
+    assert "nocturneastro.com" in body, "a new user does not know where it goes"
