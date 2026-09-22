@@ -75,8 +75,9 @@ def submission_fields(metadata: dict, handle: str) -> dict[str, str]:
     return out
 
 
-def encode_multipart(fields: dict[str, str], image: bytes,
-                     filename: str) -> tuple[bytes, str]:
+def encode_multipart(fields: dict[str, str], image: bytes | None,
+                     filename: str, *, field: str = "image",
+                     content_type: str = "image/jpeg") -> tuple[bytes, str]:
     """`(body, content_type)` for a multipart/form-data POST.
 
     Written out rather than borrowed because the standard library has no
@@ -87,11 +88,19 @@ def encode_multipart(fields: dict[str, str], image: bytes,
     boundary that appears inside the image truncates the upload, and the server
     stores a corrupt file instead of reporting an error — a failure that looks
     like success on both ends.
+
+    `image=None` means FIELDS ONLY, and it is a real case rather than a
+    defensive branch: a support report of words alone is valid, and
+    site/tests/report_validate_test.php asserts that on the server side. The
+    `field`/`content_type` arguments exist for the same caller — a report's
+    part is "attachment" and may be a PNG — and default to the gallery's
+    values so its call site is unchanged.
     """
+    payload = image or b""
     while True:
         boundary = secrets.token_hex(16)
         marker = ("--" + boundary).encode()
-        if marker not in image and not any(
+        if marker not in payload and not any(
                 marker in v.encode("utf-8") for v in fields.values()):
             break
 
@@ -101,12 +110,14 @@ def encode_multipart(fields: dict[str, str], image: bytes,
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
             f"{value}\r\n".encode("utf-8"))
-    parts.append(
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'
-        f"Content-Type: image/jpeg\r\n\r\n".encode("utf-8"))
-    parts.append(image)
-    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    if image is not None:
+        parts.append(
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        parts.append(image)
+        parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
