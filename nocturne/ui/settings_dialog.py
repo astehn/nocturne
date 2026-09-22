@@ -138,11 +138,7 @@ class SettingsDialog(QDialog):
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"],
                               "Select ASTAP.app (or its executable)"))
-        # StarNet2 belongs here too. It was left out of BOTH tuples — this one
-        # and _refresh_status's — when the tool was added on 2026-09-18, so
-        # fixing only the other left the row correct on open and then frozen:
-        # type a valid path, get no confirmation.
-        for edit in (self._gx, self._rc, self._starnet, self._astap):
+        for edit, _label, _name in self.tool_fields().values():
             edit.textChanged.connect(self._refresh_status)
         self._refresh_status()
         form.addRow("", self.rescan_btn)
@@ -181,21 +177,23 @@ class SettingsDialog(QDialog):
         lets it overwrite a path that does not resolve; a working custom path is
         still left alone.
         """
-        fields = {"graxpert_path": self._gx, "rcastro_path": self._rc,
-                  "astap_path": self._astap}
-        current = Settings(**{k: e.text().strip() for k, e in fields.items()})
+        tools = self.tool_fields()
+        current = Settings(**{k: e.text().strip() for k, (e, _l, _n) in tools.items()})
         found = detect_tool_paths(current, TOOL_CANDIDATES, replace_invalid=True)
+        # .get, not [k]: the detector's table is the authority on what exists
+        # and this dialog may not have caught up. A tool it cannot show is a
+        # test failure (test_the_dialog_knows_every_tool_the_detector_knows),
+        # never a KeyError under the user's cursor.
         for key, value in found.items():
-            fields[key].setText(value)
+            if key in tools:
+                tools[key][0].setText(value)
         if found:
-            names = {"graxpert_path": "GraXpert", "rcastro_path": "RC-Astro",
-                     "astap_path": "ASTAP"}
             self.rescan_result.setText(
-                "✓ Found " + ", ".join(names[k] for k in sorted(found)))
+                "✓ Found " + ", ".join(tools[k][2] for k in sorted(found) if k in tools))
         else:
-            configured = [e.text().strip() for e in fields.values() if e.text().strip()]
+            configured = [e.text().strip() for e, _l, _n in tools.values() if e.text().strip()]
             self.rescan_result.setText(
-                "Everything already set up." if len(configured) == len(fields)
+                "Everything already set up." if len(configured) == len(tools)
                 else "Nothing found in the usual places — use Browse… if a tool "
                      "is installed somewhere else.")
 
@@ -205,6 +203,27 @@ class SettingsDialog(QDialog):
             return
         ok, msg = probe_binary(resolve_binary(path.strip()), args, runner=self._probe_runner)
         label.setText(("✓ " if ok else "✗ ") + msg)
+
+    def tool_fields(self) -> dict:
+        """{settings field: (line edit, status label, display name)}.
+
+        THE one place a tool is listed. StarNet2 was added to this dialog on
+        2026-09-18 and left out of FOUR separate hand-written collections: the
+        status loop, the textChanged connections, _rescan's field map and
+        _rescan's name map. Each was found separately, by Andreas, using the
+        app — the last one as `KeyError: 'starnet_path'` under his cursor when
+        he pressed Rescan.
+
+        Keys are the Settings field names, because that is what
+        detect_tool_paths returns; test_the_dialog_knows_every_tool_the_detector_knows
+        fails if the two ever drift.
+        """
+        return {
+            "graxpert_path": (self._gx, self._gx_result, "GraXpert"),
+            "rcastro_path": (self._rc, self._rc_result, "RC-Astro"),
+            "starnet_path": (self._starnet, self._starnet_result, "StarNet2"),
+            "astap_path": (self._astap, self._astap_result, "ASTAP"),
+        }
 
     def _refresh_status(self) -> None:
         """Say where each tool stands the moment the dialog opens.
@@ -217,15 +236,7 @@ class SettingsDialog(QDialog):
         Cheap check only (executable, not run): Test is what actually runs the
         program, and this fires on every keystroke.
         """
-        # EVERY tool with a path field belongs here. StarNet2 was added to the
-        # dialog on 2026-09-18 and not to this tuple, so its row stayed blank
-        # while the others said "✓ … found" — and Andreas reasonably read the
-        # silence as "not configured" while it had been splitting stars all
-        # along. Pinned by test_every_tool_path_field_has_a_status_on_open.
-        for edit, label, name in ((self._gx, self._gx_result, "GraXpert"),
-                                  (self._rc, self._rc_result, "RC-Astro"),
-                                  (self._starnet, self._starnet_result, "StarNet2"),
-                                  (self._astap, self._astap_result, "ASTAP")):
+        for edit, label, name in self.tool_fields().values():
             path = edit.text().strip()
             if not path:
                 label.setText('<span style="color:#6b6f76">Not set — optional</span>'

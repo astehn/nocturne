@@ -310,3 +310,56 @@ def test_every_tool_field_is_wired_to_the_status_refresh(qtbot):
         if label.text() == before:
             unwired.append(name)
     assert not unwired, f"path fields that never refresh their status: {unwired}"
+
+
+# --- one table, or a fifth omission (2026-09-22) ---------------------------
+#
+# StarNet2 was added to the dialog on 2026-09-18 and left out of FOUR separate
+# collections: _refresh_status's tuple, the textChanged tuple, _rescan's
+# `fields` and _rescan's `names`. Each was found separately, by Andreas, using
+# the app. The fix is not a fourth patch.
+
+def test_rescan_handles_every_tool_the_detector_can_find(qtbot, tmp_path, monkeypatch):
+    """Pressing Rescan raised `KeyError: 'starnet_path'` — the detector returns
+    a field the dialog's own map did not contain, so the button crashed for
+    anyone with StarNet2 installed in a usual place."""
+    from nocturne.settings import TOOL_CANDIDATES
+    from nocturne.ui import settings_dialog as sd
+
+    exe = tmp_path / "found"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    # Every field the detector knows about, all found at once — the case the
+    # dialog has to survive.
+    monkeypatch.setattr(sd, "detect_tool_paths",
+                        lambda *a, **k: {key: str(exe) for key in TOOL_CANDIDATES})
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._rescan()                       # must not raise
+    assert "✓" in dlg.rescan_result.text()
+
+
+def test_the_dialog_knows_every_tool_the_detector_knows(qtbot):
+    """The invariant behind all four omissions, asserted once.
+
+    `detect_tool_paths` returns keys from TOOL_CANDIDATES; the dialog must have
+    a line edit for each. A fifth tool added to the detector and not the dialog
+    fails here instead of raising KeyError under the user's cursor.
+    """
+    from nocturne.settings import TOOL_CANDIDATES
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    missing = sorted(set(TOOL_CANDIDATES) - set(dlg.tool_fields()))
+    assert not missing, f"the detector can find these and the dialog cannot show them: {missing}"
+
+
+def test_one_table_drives_the_dialog(qtbot):
+    """Status on open, live refresh, rescan and the rescan summary all read the
+    SAME table. Four hand-written collections is how one tool went missing from
+    four of them."""
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    for key, (edit, label, name) in dlg.tool_fields().items():
+        assert edit is not None and label is not None and name, key
+    assert {"graxpert_path", "rcastro_path", "starnet_path", "astap_path"} \
+        <= set(dlg.tool_fields())
