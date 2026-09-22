@@ -220,13 +220,18 @@ def test_no_location_field_is_accepted():
 
 # --- moderation, retention and the privacy rewrite -------------------------
 
-ADMIN = SITE / "admin" / "admin.php"
+# The wall's moderation moved to admin/wall.php when the admin became tabs on
+# 2026-09-22. These tests kept their assertions and changed where they look —
+# which is the split being visible rather than silent.
+ADMIN = SITE / "admin" / "wall.php"
+ADMIN_ENTRY = SITE / "admin" / "admin.php"
 
 
 def test_admin_lists_pending_submissions_first():
     src = ADMIN.read_text(encoding="utf-8")
     assert "FROM submissions" in src
-    assert "FIELD(status,'pending','approved','rejected')" in src
+    assert "CASE status WHEN 'pending' THEN 0" in src, \
+        "pending must sort first; FIELD() was dropped so a SQLite fixture can run this"
 
 
 def test_every_moderation_action_is_token_guarded():
@@ -257,19 +262,19 @@ def test_approval_never_upscales():
 def test_pending_images_are_streamed_not_linked():
     dl = (SITE / "admin" / "download.php").read_text(encoding="utf-8")
     assert "submission" in dl and "stored_pending" in dl
-    admin = ADMIN.read_text(encoding="utf-8")
-    assert "download.php?submission=" in admin
+    meta = (SITE / "admin" / "wall.php").read_text(encoding="utf-8")
+    assert "download.php?submission=" in meta
 
 
 def test_only_an_approved_catalogue_match_can_be_the_planner_picture():
     src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_sub_actions", 1)[1].split("\n}", 1)[0]
+    fn = src.split("function nocturne_wall_actions", 1)[1].split("\n}", 1)[0]
     assert "'approved'" in fn and "catalogue_id" in fn
 
 
 def test_planner_thumbs_is_written_whole_not_patched():
     src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_write_planner_thumbs", 1)[1].split("\n}", 1)[0]
+    fn = src.split("function nocturne_wall_write_planner_thumbs", 1)[1].split("\n}", 1)[0]
     assert "file_put_contents" in fn and "json_encode" in fn
     assert "representative = 1" in fn and "status = 'approved'" in fn
 
@@ -324,7 +329,7 @@ def test_an_approved_picture_can_be_taken_off_the_wall():
     reports table had, in a place where the site makes a promise about it."""
     src = ADMIN.read_text(encoding="utf-8")
     assert "'unpublish'" in src
-    fn = src.split("function nocturne_sub_actions", 1)[1].split("\n}", 1)[0]
+    fn = src.split("function nocturne_wall_actions", 1)[1].split("\n}", 1)[0]
     assert "unpublish" in fn, "the action must be reachable from an approved row"
 
 
@@ -344,12 +349,12 @@ def test_taking_a_picture_down_clears_the_planner_slot():
     src = ADMIN.read_text(encoding="utf-8")
     block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
     assert "representative=0" in block
-    assert "nocturne_write_planner_thumbs" in block
+    assert "nocturne_wall_write_planner_thumbs" in block
 
 
 def test_every_row_can_be_deleted_outright():
     src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_sub_actions", 1)[1].split("\n}", 1)[0]
+    fn = src.split("function nocturne_wall_actions", 1)[1].split("\n}", 1)[0]
     assert "'remove'" in fn
     assert fn.index("$acts['remove']") > fn.index("if ($s['status'] === 'approved')"), \
         "remove must be offered for every status, not only approved"
@@ -378,9 +383,10 @@ def test_a_PENDING_image_is_inspected_through_the_STREAM():
     """It has no public address by design, so the lightbox must open the same
     authenticated stream the tile does — not a guessed path."""
     src = ADMIN.read_text(encoding="utf-8")
-    block = src.split("'pending' && $s['stored_pending']", 1)[1][:600]
+    block = src.split("Waiting for you", 1)[1][:900]
     assert 'data-full="download.php?submission=' in block
-    assert "srv/nocturne-submissions" not in block
+    assert "srv/nocturne-submissions" not in block, \
+        "the pending store path must never reach the markup"
 
 
 def test_an_APPROVED_image_opens_its_2000px_derivative():
@@ -393,10 +399,109 @@ def test_an_APPROVED_image_opens_its_2000px_derivative():
 def test_the_admin_lightbox_does_not_depend_on_a_deployed_site_file():
     """admin/ is excluded from the deploy rsync. Depending on lightbox.js —
     which rsync DOES ship — would break the moment the two drifted."""
-    src = ADMIN.read_text(encoding="utf-8")
-    # A REFERENCE, not the word. The first version matched the CSS comment that
-    # explains why this page does not use lightbox.js — a test reading the
-    # prose rather than the code, for the second time today.
-    assert not re.search(r'(src|href)\s*=\s*["\'][^"\']*lightbox\.js', src), \
-        "admin/ is not deployed by rsync; it must not load a site asset"
-    assert "<script" in src, "it carries its own"
+    # BEHAVIOUR only. Since 2026-09-22 the admin deliberately links the site's
+    # ../styles.css — a DESIGN dependency, where drift is the point and the
+    # worst failure is looking wrong. lightbox.js would be a BEHAVIOURAL one,
+    # where drift breaks the page silently, and that is still refused.
+    src = ADMIN.read_text(encoding="utf-8") + \
+        (SITE / "admin" / "_common.php").read_text(encoding="utf-8")
+    assert not re.search(r'(src)\s*=\s*["\'][^"\']*lightbox\.js', src), \
+        "the admin must not load the site's lightbox script"
+    assert "<script" in ADMIN.read_text(encoding="utf-8"), "it carries its own"
+
+
+# --- the admin became tabs (2026-09-22) ------------------------------------
+
+ADMIN_DIR = SITE / "admin"
+COMMON = ADMIN_DIR / "_common.php"
+WALL_PHP = ADMIN_DIR / "wall.php"
+
+
+def test_every_admin_file_parses():
+    """Four files now, hand-copied to the server. A parse error is a page that
+    is simply gone, behind auth where nobody would see it fail."""
+    for f in ("admin.php", "_common.php", "wall.php", "_wall_meta.php", "download.php"):
+        r = subprocess.run(["php", "-l", str(ADMIN_DIR / f)], capture_output=True, text=True)
+        assert r.returncode == 0, f"{f}: {r.stdout}{r.stderr}"
+
+
+def test_the_include_only_files_refuse_to_run_alone():
+    """Reached directly they either open a database connection nobody asked for
+    or die on an undefined variable, printing a server path in the error."""
+    for f in ("_common.php", "wall.php", "_wall_meta.php"):
+        src = (ADMIN_DIR / f).read_text(encoding="utf-8")
+        assert "defined('NOCTURNE_ADMIN')" in src, f"{f} is not guarded"
+    assert "define('NOCTURNE_ADMIN'" in (ADMIN_DIR / "admin.php").read_text(encoding="utf-8")
+
+
+def test_the_wall_renders_through_a_FUNCTION_so_actions_run_first():
+    """wall.php handles its own POSTs and redirects. If admin.php emitted the
+    page head before requiring it, header() would fail with 'headers already
+    sent' and a refresh would repeat the action — which is exactly what the
+    first version did."""
+    a = (ADMIN_DIR / "admin.php").read_text(encoding="utf-8")
+    i_require = a.index("require __DIR__ . '/wall.php'")
+    i_head = a.index("nocturne_admin_head('wall'")
+    assert i_require < i_head, "the head must not be emitted before wall.php runs"
+    assert "nocturne_wall_render(" in a
+    assert "function nocturne_wall_render(" in WALL_PHP.read_text(encoding="utf-8")
+
+
+def test_the_ordering_sql_is_portable():
+    """MySQL's FIELD() made the whole tab a fatal error against the SQLite
+    fixture, which is the only way to exercise this page outside production.
+    Untestable SQL is how a page reaches the server having never been run."""
+    src = WALL_PHP.read_text(encoding="utf-8")
+    assert "FIELD(status" not in src
+    assert "CASE status WHEN 'pending'" in src
+
+
+def test_a_row_with_no_capture_facts_prints_nothing_rather_than_separators():
+    """Row 25 — an M 31 finished from a TIFF — had no frames and no exposure,
+    and the page printed a stray "× s"."""
+    src = (ADMIN_DIR / "_wall_meta.php").read_text(encoding="utf-8")
+    assert "$exposure !== ''" in src
+    fn = WALL_PHP.read_text(encoding="utf-8").split(
+        "function nocturne_wall_exposure", 1)[1].split("\n}", 1)[0]
+    assert "return ''" in fn, "it must be able to produce nothing at all"
+
+
+def test_acting_on_a_filtered_page_keeps_the_filter():
+    """Acting on row three of page two must not throw you back to the top of
+    page one."""
+    src = WALL_PHP.read_text(encoding="utf-8")
+    assert "array_flip(['tab', 'status', 'handle', 'p'])" in src
+
+
+def test_the_tables_scroll_instead_of_the_page():
+    """The reports table has eleven columns and dragged the whole document
+    sideways at phone width — 483px of overflow, taking the tab strip with it,
+    so the navigation moved when you scrolled the data."""
+    assert ".adm-scroll" in COMMON.read_text(encoding="utf-8")
+    for f in ("admin.php", "wall.php"):
+        src = (ADMIN_DIR / f).read_text(encoding="utf-8")
+        assert src.count('<table class="adm">') == src.count('adm-scroll"><table'), \
+            f"{f} has an unwrapped table"
+
+
+def test_the_admin_uses_the_SITE_stylesheet_and_its_tokens():
+    """Andreas asked for the admin to look like the site. The tokens matter as
+    much as the link: fresh hex here would be a second palette to maintain."""
+    src = COMMON.read_text(encoding="utf-8")
+    assert 'href="../styles.css"' in src
+    for token in ("var(--ground)", "var(--ink)", "var(--muted)", "var(--rule)",
+                  "var(--oxide-text)", "var(--mono)"):
+        assert token in src, f"{token} unused — is this a second palette?"
+    # The planner's verdict colours carry status, rather than a new green.
+    for v in ("--verdict-go", "--verdict-warn", "--verdict-no"):
+        assert v in src
+
+
+def test_every_token_the_admin_uses_is_DEFINED_by_the_site():
+    """A var() with no definition renders as nothing, which for a colour means
+    transparent text."""
+    import re as _re
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    used = set(_re.findall(r"var\((--[a-z-]+)\)", COMMON.read_text(encoding="utf-8")))
+    missing = [t for t in used if f"{t}:" not in css]
+    assert missing == [], f"not defined in styles.css: {missing}"
