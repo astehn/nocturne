@@ -138,7 +138,11 @@ class SettingsDialog(QDialog):
                     _path_row(self._astap, self._test_astap, self._astap_result,
                               DOWNLOAD_URLS["astap"],
                               "Select ASTAP.app (or its executable)"))
-        for edit in (self._gx, self._rc, self._astap):
+        # StarNet2 belongs here too. It was left out of BOTH tuples — this one
+        # and _refresh_status's — when the tool was added on 2026-09-18, so
+        # fixing only the other left the row correct on open and then frozen:
+        # type a valid path, get no confirmation.
+        for edit in (self._gx, self._rc, self._starnet, self._astap):
             edit.textChanged.connect(self._refresh_status)
         self._refresh_status()
         form.addRow("", self.rescan_btn)

@@ -49,16 +49,33 @@ def test_the_three_engine_names_match_the_ones_already_in_use():
     assert splitter_name(None) == "free"
 
 
-@pytest.mark.parametrize("stage,make", [
-    ("star_reduction", lambda s: __import__(
-        "nocturne.steps.star_reduction", fromlist=["x"]).StarReductionStep(s)),
-    ("color_balance", lambda s: __import__(
-        "nocturne.steps.color_balance_step", fromlist=["x"]).ColorBalanceStep(s)),
+@pytest.mark.parametrize("build,option", [
+    (lambda sp: __import__("nocturne.steps.star_reduction",
+                           fromlist=["x"]).StarReductionStep(sp), 0.5),
+    (lambda sp: __import__("nocturne.steps.color_balance_step",
+                           fromlist=["x"]).ColorBalanceStep(sp), None),
+    (lambda sp: __import__("nocturne.steps.saturation_step",
+                           fromlist=["x"]).SaturationStep(sp), (0.5, 0.4)),
+    (lambda sp: __import__("nocturne.steps.green_fringe",
+                           fromlist=["x"]).GreenFringeStep(sp), 0.5),
 ])
-def test_a_splitter_step_records_the_engine_it_used(stage, make):
-    for name in ("RCAstro", "StarNet"):
-        step = make(_FakeSplitter(name))
-        assert step.last_engine is None, "nothing has run yet"
+@pytest.mark.parametrize("cls,expected", [
+    ("RCAstro", "StarX"), ("StarNet", "StarNet2"), (None, "free")])
+def test_a_splitter_step_records_the_engine_it_used(build, option, cls, expected):
+    """The first version of this never called apply(). It constructed a step and
+    asserted `last_engine is None` — the CLASS DEFAULT — so replacing every
+    `self.last_engine = ...` with `pass` left it passing. Found by an
+    adversarial review after the branch was called finished.
+
+    Parametrised over the engine as well as the step, because a fixture that
+    only ever sees one splitter cannot tell "records what it used" from
+    "records a constant".
+    """
+    splitter = _FakeSplitter(cls) if cls else None
+    step = build(splitter)
+    assert step.last_engine is None, "nothing has run yet"
+    step.apply(_img(), step.default_option() if option is None else option)
+    assert step.last_engine == expected
 
 
 def test_deconvolution_records_which_of_its_two_paths_ran():
