@@ -2,6 +2,17 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.39.1] — 2026-09-22
+
+Star separation with StarNet2 works. In a packaged build, it never had.
+
+### Changed
+- The download is about 12 MB larger. The codecs that decode a compressed TIFF now travel with the app instead of being guessed at, because a TIFF from another program can arrive in any of them.
+- Every build now proves it can decode a compressed TIFF before it is published.
+
+### Fixed
+- Star separation with StarNet2 failed with "could not import name 'lzw_decode' from 'imagecodecs'". StarNet2 hands its result back as a compressed TIFF, and the decoder for that compression was missing from the packaged app — so the separation ran in full and then could not read its own result back. Every version since 0.35.0 was affected, on macOS and Linux, for anyone using StarNet2 rather than StarXTerminator. It also blocked opening a compressed TIFF of your own.
+
 ## [0.39.0] — 2026-09-22
 
 Sharing to the gallery moves to Export — and no longer crashes.
