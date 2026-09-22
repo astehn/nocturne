@@ -60,16 +60,39 @@ def test_an_empty_log_is_also_omitted():
 
 def test_the_context_travels_under_the_names_the_web_form_already_uses():
     """support.php and its validator are shared with the website form. A
-    second vocabulary for the same five values would mean two code paths in
-    the one place that must not break."""
+    second vocabulary for the same values would mean two code paths in the one
+    place that must not break."""
     ctx = {"app_version": "0.39.1", "os": "macOS", "screen": "2560x1440",
-           "window_size": "1600x900", "log": "stderr tail"}
-    fields = report_fields("it broke", "a@b.c", "problem", ctx, diag_log=None)
+           "window_size": "1600x900"}
+    fields = report_fields("it broke", "a@b.c", "problem", ctx, diag_log="x")
     for key, value in ctx.items():
         assert fields[key] == value
     assert fields["problem"] == "it broke"
     assert fields["email"] == "a@b.c"
     assert fields["topic"] == "problem"
+
+
+def test_opting_out_suppresses_EVERY_diagnostic_not_just_the_session_log():
+    """`log` is the failed command plus its stderr — absolute paths, folder
+    names, possibly the reporter's real name. It was copied in unconditionally
+    while the tick governed only `diag_log`, so unticking sent it anyway.
+    Found by review 2026-09-22.
+
+    The machine, screen and version still travel: those are what the report is
+    ABOUT and carry nothing personal."""
+    ctx = {"app_version": "0.39.1", "os": "macOS",
+           "log": "Command: starnet2 /Users/someone/Pictures/M31.tif"}
+    out = report_fields("it broke", "", "problem", ctx, diag_log=None)
+    assert "log" not in out and "diag_log" not in out
+    assert out["app_version"] == "0.39.1", "the version is not a diagnostic leak"
+
+
+def test_ticking_it_sends_every_diagnostic():
+    """Breaks the symmetry: the test above must pass because of the TICK, not
+    because those fields are never sent."""
+    ctx = {"app_version": "0.39.1", "log": "stderr tail"}
+    out = report_fields("it broke", "", "problem", ctx, diag_log="session")
+    assert out["log"] == "stderr tail" and out["diag_log"] == "session"
 
 
 def test_the_honeypot_is_sent_empty():

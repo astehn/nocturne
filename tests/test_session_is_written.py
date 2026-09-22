@@ -135,14 +135,58 @@ def test_the_startup_block_runs_no_subprocesses(tmp_path, session, monkeypatch):
     assert "/x/g" in session()
 
 
-def test_startup_begins_a_session_before_the_window_exists():
-    """Order matters and cannot be asserted at runtime: anything logged while
-    no session is open is silently dropped, and MainWindow's construction is
-    where autoconfigure and the first tool checks happen."""
-    src = (ROOT / "nocturne" / "__main__.py").read_text()
-    body = src.split("def main()")[1]
-    assert "start_session()" in body, "nothing ever opens a session"
-    assert body.index("start_session()") < body.index("MainWindow(")
+def test_startup_actually_opens_a_session(monkeypatch, tmp_path):
+    """The ONLY test that proves the feature is alive at all, so it must not be
+    satisfiable by a comment.
+
+    It was: it read `__main__.py` as TEXT and asserted "start_session()" was in
+    it. Replacing the call with `# MUTATION: start_session() is never called`
+    left it green — while `_active` stayed None and every sessionlog.write() in
+    the app became a silent no-op. The whole feature dead, its designated guard
+    passing. Found by review 2026-09-22; the fourth source-scanning test this
+    session to match its own explanation.
+
+    Now it CALLS main() and watches for the effect.
+    """
+    import nocturne.__main__ as entry
+
+    opened = []
+    monkeypatch.setattr(entry.sessionlog, "start_session",
+                        lambda *a, **k: opened.append(True))
+    monkeypatch.setattr(entry.sys, "argv", ["nocturne", "--no-splash"])
+    # main() is allowed to die however it likes once it is past the part under
+    # test — and it will: a QApplication already exists in this suite, which
+    # raises before the window is ever built. The assertion is the SIDE EFFECT,
+    # and pinning a particular exception made this pass alone and fail in file
+    # order.
+    try:
+        entry.main()
+    except Exception:                             # noqa: BLE001 - see above
+        pass
+    assert opened, "a session must be open before anything can be logged"
+
+
+def test_the_session_opens_BEFORE_the_window_is_built():
+    """Order matters and cannot be asserted from the call above alone: a write
+    with no session open is dropped silently, and MainWindow's construction
+    already autoconfigures tools and probes paths.
+
+    Parsed, not grepped — see the test above for why."""
+    import ast
+    tree = ast.parse((ROOT / "nocturne" / "__main__.py").read_text())
+    main = next(n for n in tree.body
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    starts, windows = [], []
+    for node in ast.walk(main):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr == "start_session":
+                starts.append(node.lineno)
+            if isinstance(f, ast.Name) and f.id == "MainWindow":
+                windows.append(node.lineno)
+    assert starts, "main() never opens a session"
+    assert windows, "main() never builds the window — has it been renamed?"
+    assert min(starts) < min(windows)
 
 
 def test_a_session_that_cannot_be_opened_does_not_stop_the_app(tmp_path, monkeypatch):

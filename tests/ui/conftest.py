@@ -160,3 +160,46 @@ def _refuse_real_auto_stretch_prompt(monkeypatch):
             f"(navigating to {dest_label}). Stub MainWindow._ask_auto_stretch.")
 
     monkeypatch.setattr(mw.MainWindow, "_ask_auto_stretch", refuse)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_generic_modal_exec():
+    """A dialog that is neither a QMessageBox nor a file panel blocks forever.
+
+    The three fixtures above cover the routes that had bitten before: the
+    static QMessageBox.question, the app's own file_dialogs helper, and
+    _ask_pending's hand-built box. Nothing covered a plain `SomeDialog.exec()`,
+    and on 2026-09-22 the new ReportDialog arrived through exactly that gap:
+    three existing tests called `_report_problem`, which had changed from
+    opening a browser to opening a dialog. The run did not fail — it sat there
+    for 1 hour 43 minutes against a normal 3.5, silent, having written zero
+    bytes, until Andreas asked whether it was stuck.
+
+    NOT a QMessageBox patch: _auto_answer_dialogs deliberately ANSWERS those
+    rather than refusing, because closeEvent needs an answer at teardown, and
+    refusing would break every test that closes a window with edits.
+
+    Session-scoped. `setattr` on a PySide6 class is expensive — they are C++
+    types and it invalidates their method caches — and doing it per test across
+    ~1670 UI tests took this directory from 2m48 to over 4m15.
+    """
+    try:
+        from PySide6.QtWidgets import QDialog
+    except ImportError:                       # pragma: no cover - no Qt, no dialogs
+        yield
+        return
+
+    def refuse(self, *a, **k):
+        raise AssertionError(
+            f"{type(self).__name__}.exec() would block the suite on a user who "
+            "is never coming. Patch exec, or call the handler under it directly.")
+
+    # exec_() as well: PySide's deprecation shim SWALLOWS the AssertionError,
+    # prints a traceback and returns 0, so a test using it would neither hang
+    # nor fail — it would silently read a bogus result code.
+    saved = (QDialog.exec, QDialog.exec_)
+    QDialog.exec, QDialog.exec_ = refuse, refuse
+    try:
+        yield
+    finally:
+        QDialog.exec, QDialog.exec_ = saved

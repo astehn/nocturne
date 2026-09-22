@@ -26,10 +26,19 @@ from .update_check import SUPPORT_POST_URL
 
 TIMEOUT = 30.0
 
-# The five values support.php and its validator already know, shared with the
-# website form. A second vocabulary for the same things would mean two code
-# paths in the one place that must not break.
-_CONTEXT_KEYS = ("app_version", "os", "screen", "window_size", "log")
+# Shared with the website form, so support.php and its validator already know
+# them. A second vocabulary for the same things would mean two code paths in
+# the one place that must not break.
+#
+# `log` is NOT here. It is _last_diagnostic — the failed command plus its
+# stderr, so absolute paths, so folder names, so possibly the reporter's real
+# name — and it was copied in unconditionally while the checkbox governed only
+# `diag_log`. Unticking the box sent it anyway, and it was never rendered in
+# the pane, so nobody could have noticed. Found by review 2026-09-22; the
+# reproduction carried "/Users/<name>/Pictures/M31.tif". Both diagnostics are
+# now governed by the same tick.
+_CONTEXT_KEYS = ("app_version", "os", "screen", "window_size")
+_DIAGNOSTIC_KEYS = ("log",)
 
 
 def report_fields(problem: str, email: str, topic: str, context: dict,
@@ -39,6 +48,9 @@ def report_fields(problem: str, email: str, topic: str, context: dict,
     `diag_log` of None or "" is OMITTED, not sent empty. "Declined" and "there
     was nothing to send" are different tickets and the admin view says so; an
     empty field would collapse them into one blank.
+
+    None also suppresses EVERY diagnostic field, not just the session log —
+    see _DIAGNOSTIC_KEYS. One tick, everything it should govern.
     """
     fields = {
         "problem": problem,
@@ -52,6 +64,12 @@ def report_fields(problem: str, email: str, topic: str, context: dict,
         "ajax": "1",
     }
     for key in _CONTEXT_KEYS:
+        value = context.get(key)
+        if value:
+            fields[key] = str(value)
+    if diag_log is None:
+        return fields
+    for key in _DIAGNOSTIC_KEYS:
         value = context.get(key)
         if value:
             fields[key] = str(value)

@@ -80,6 +80,14 @@ def test_opting_out_sends_no_log(qtbot):
     d._send()
     qtbot.waitUntil(lambda: bool(seen), timeout=2000)
     assert "diag_log" not in seen
+    # AND the other one. `log` is _last_diagnostic — the failed command plus
+    # its stderr, so absolute paths, so folder names, so possibly the user's
+    # real name. It was copied into the payload unconditionally and never
+    # shown in the pane, so unticking the box sent it anyway and the reporter
+    # could not have known. Found by review 2026-09-22; reproduced with
+    # "/Users/andreasstehn/Pictures/M31.tif" in it.
+    assert "log" not in seen, (
+        "the last tool error is diagnostic too, and the tick governs it")
 
 
 def test_leaving_it_ticked_sends_the_log(qtbot):
@@ -240,3 +248,163 @@ def test_the_dialog_is_given_the_context_the_handoff_used_to_carry(qtbot, tmp_pa
     win._report_problem()
     assert seen.get("app_version")
     assert "screen" in seen
+
+
+
+def test_the_last_tool_error_is_SHOWN_as_well_as_sent(qtbot):
+    """The consent property is "you send what you see". A field carried in the
+    payload but absent from the pane cannot be consented to, whichever way the
+    tick is set."""
+    d = _dlg(qtbot)
+    shown = d.log_view.toPlainText()
+    assert "lzw_decode" in shown, "the failure is the most important line in a ticket"
+
+
+def test_the_last_tool_error_travels_when_the_box_is_ticked(qtbot):
+    """Breaks the symmetry: the opt-out test above must fail because of the
+    TICK, not because the field is never sent at all."""
+    seen = {}
+
+    def sender(fields, *a, **k):
+        seen.update(fields)
+        return True, "Sent."
+
+    d = _dlg(qtbot, sender=sender)
+    d.problem.setPlainText("it broke")
+    d._send()
+    qtbot.waitUntil(lambda: bool(seen), timeout=2000)
+    assert "lzw_decode" in seen.get("log", "")
+
+
+# --- one send, once (review 2026-09-22) -------------------------------------
+
+def test_typing_during_a_send_does_not_start_a_second_one(qtbot):
+    """`textChanged` re-enables Send, which defeated the in-flight guard: press
+    Send, then fix a typo — the ordinary thing a person does — and two POSTs
+    went out. Reproduced by the review as two concurrent filings."""
+    sent = []
+
+    def sender(fields, *a, **k):
+        sent.append(fields["problem"])
+        return True, "Sent."
+
+    d = _dlg(qtbot, sender=sender)
+    d.problem.setPlainText("it broke")
+    d._send()
+    d.problem.setPlainText("it broke badly")     # a typo fix, mid-flight
+    assert not d.send_btn.isEnabled(), "a second send is one keystroke away"
+
+
+def test_typing_after_a_SUCCESSFUL_send_does_not_re_arm_the_button(qtbot):
+    """Same mechanism, worse outcome: the ticket is filed twice and the
+    reporter cannot see the queue to know they did it."""
+    d = _dlg(qtbot)
+    d.problem.setPlainText("it broke")
+    d._send()
+    d._finish((True, "Sent."))
+    d.problem.setPlainText("it broke, a bit more detail")
+    assert not d.send_btn.isEnabled()
+
+
+def test_the_button_comes_back_after_a_FAILED_send(qtbot):
+    """Breaks the symmetry: the two above must hold without freezing the form
+    permanently. A failure has to be retryable."""
+    d = _dlg(qtbot)
+    d.problem.setPlainText("it broke")
+    d._send()
+    d._finish((False, "Could not reach the server"))
+    assert d.send_btn.isEnabled()
+    d.problem.setPlainText("it broke, clarified")
+    assert d.send_btn.isEnabled()
+
+
+# --- the crash window must measure the START, not the last write ------------
+
+def test_session_age_is_measured_from_when_the_session_STARTED(tmp_path, monkeypatch):
+    """It stat'ed the log's MTIME, which every step and every tool run updates.
+    So a user two hours in who hits an error — which writes a line — and
+    reports immediately read as "seconds old", and the whole previous session
+    was appended to their ticket. The common case, always wrong, and invisible
+    because both crash-window tests inject the age rather than compute it.
+
+    Found by review 2026-09-22.
+    """
+    import time
+    from nocturne.core import sessionlog
+    from nocturne.ui import report_dialog
+
+    sessionlog.start_session(str(tmp_path))
+    assert report_dialog._session_age() < 5, "a session just opened is new"
+
+    # Two hours in...
+    monkeypatch.setattr(sessionlog, "_started_at", time.monotonic() - 7200)
+    assert report_dialog._session_age() > 7000
+
+    # ...and a write NOW is activity, not a restart.
+    sessionlog.write("ERROR something failed")
+    assert report_dialog._session_age() > 7000, (
+        "the mtime moved; the age must not")
+
+
+def test_a_session_that_never_started_is_not_treated_as_a_crash(tmp_path, monkeypatch):
+    """Unknown must not read as "seconds old", or every report with no session
+    would drag a previous one in."""
+    from nocturne.core import sessionlog
+    from nocturne.ui import report_dialog
+    monkeypatch.setattr(sessionlog, "_started_at", None)
+    assert report_dialog._session_age() == float("inf")
+
+
+# --- the fallback the spec requires (review 2026-09-22) ---------------------
+
+def test_a_failed_send_offers_the_browser_fallback(qtbot):
+    """The spec requires it and it was wired to nothing: `grep` found
+    `_report_problem_in_a_browser` only in its own def line, a docstring and a
+    test. Offline, the reporter got "could not reach the server" and no route
+    to the web form at all."""
+    d = _dlg(qtbot, sender=lambda *a, **k: (False, "Could not reach the server"))
+    d.problem.setPlainText("it broke")
+    assert d.fallback_btn.isHidden(), "offered before anything has gone wrong"
+    d._send()
+    d._finish((False, "Could not reach the server"))
+    assert not d.fallback_btn.isHidden(), \
+        "no way out when the send cannot get through"
+
+
+def test_the_fallback_is_not_offered_when_the_send_worked(qtbot):
+    d = _dlg(qtbot)
+    d.problem.setPlainText("it broke")
+    d._send()
+    d._finish((True, "Sent."))
+    assert d.fallback_btn.isHidden()
+
+
+def test_the_fallback_carries_what_was_typed(qtbot):
+    """Opening a blank web form after a failed send would lose the report — the
+    thing this whole path exists to prevent."""
+    opened = {}
+    d = _dlg(qtbot)
+    d._on_fallback = lambda text: opened.setdefault("problem", text)
+    d.problem.setPlainText("a long and carefully written description")
+    d._send()
+    d._finish((False, "offline"))
+    d.fallback_btn.click()
+    assert "carefully written" in opened.get("problem", "")
+
+
+def test_a_late_reply_does_not_touch_a_destroyed_dialog(qtbot):
+    """A probe can run for four tool timeouts and a send for thirty seconds.
+    Quitting inside either window destroys the widget while the worker is still
+    going, and the queued signal lands on freed memory — the v0.38.0 segfault
+    shape, reached by the receiver dying rather than the runnable."""
+    import shiboken6
+    # NOT registered with qtbot: it closes every widget it knows at teardown,
+    # and this one is deliberately destroyed inside the test.
+    d = ReportDialog(Settings(), dict(_CTX), sender=lambda *a, **k: (True, ""),
+                     session_reader=lambda: "", previous_reader=lambda: "",
+                     session_age=lambda: 9999.0, summariser=lambda *a, **k: "")
+    d.problem.setPlainText("it broke")
+    shiboken6.delete(d)
+    # Both callbacks must survive the object they belong to.
+    ReportDialog._finish(d, (True, "Sent."))
+    ReportDialog._summary_ready(d, "Nocturne 0.39.1")

@@ -1123,7 +1123,12 @@ class MainWindow(QMainWindow):
         own disk.
         """
         from .report_dialog import ReportDialog
-        ReportDialog(self.settings, self._report_context(), parent=self).exec()
+        dlg = ReportDialog(self.settings, self._report_context(), parent=self)
+        # Parented dialogs live as long as the window unless told otherwise,
+        # and this one holds the whole log — up to both sessions' worth of text
+        # in a QPlainTextEdit. Two open/close cycles left two of them alive.
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.exec()
 
     def _report_problem_in_a_browser(self) -> None:
         """The old handoff, kept as the FALLBACK when a send cannot get out.

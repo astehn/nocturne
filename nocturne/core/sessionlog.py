@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import datetime
 
 # ~1 MB. A step line is about 80 bytes and a busy session is a few hundred
@@ -34,6 +35,18 @@ _CANNOT = (OSError, ValueError)
 
 _lock = threading.Lock()
 _active: str | None = None
+
+# When this session began, on the monotonic clock. The report dialog asks, to
+# decide whether the PREVIOUS session is worth attaching — the
+# relaunched-after-a-crash signature.
+#
+# Recorded rather than derived from the file's mtime, which was the first
+# version: every step and every tool run appends a line, so the mtime tracks
+# the last ACTIVITY. A user two hours in who hit an error and reported it
+# immediately read as "seconds old" and had their entire previous session
+# attached. Monotonic, so a clock change cannot make a session look older or
+# newer than it is.
+_started_at: float | None = None
 
 
 def _dir(home: str | None) -> str:
@@ -67,6 +80,8 @@ def start_session(home: str | None = None) -> str | None:
         _active = None
         return None
     _active = target
+    global _started_at
+    _started_at = time.monotonic()
     return target
 
 
@@ -77,8 +92,14 @@ def write(line: str) -> None:
     with _lock:
         try:
             stamp = datetime.now().strftime("%H:%M:%S")
+            # EVERY line, not just the first. _report_tool_error writes a whole
+            # stderr block in one call, and stamping once left the rest
+            # unstamped — which also let _trim's "never a half line" cut inside
+            # a block and leave a fragment that reads like a new entry.
+            body = "".join(f"{stamp}  {part}\n"
+                           for part in str(line).rstrip().split("\n"))
             with open(_active, "a", encoding="utf-8") as fh:
-                fh.write(f"{stamp}  {line.rstrip()}\n")
+                fh.write(body)
             if os.path.getsize(_active) > MAX_BYTES:
                 _trim(_active)
         except _CANNOT:
@@ -94,8 +115,16 @@ def _trim(path: str) -> None:
             text = fh.read()
         keep = text[-(MAX_BYTES // 2):]
         keep = keep[keep.find("\n") + 1:]          # never a half line
-        with open(path, "w", encoding="utf-8") as fh:
+        # Write beside it and RENAME, the way start_session rotates. `open(path,
+        # "w")` truncates first, so the file was zero bytes for as long as it
+        # took to write ~500 KB back — and a report opened in that window
+        # carried an EMPTY log while the tick said it was included. A kill
+        # mid-trim lost the log outright, which is exactly the crash the
+        # two-session design exists for. os.replace is atomic.
+        tmp = path + ".trim"
+        with open(tmp, "w", encoding="utf-8") as fh:
             fh.write(keep)
+        os.replace(tmp, path)
     except _CANNOT:
         return
 

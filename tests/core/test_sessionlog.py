@@ -92,3 +92,47 @@ def test_every_line_is_stamped(tmp_path):
     sessionlog.write("step  Crop")
     line = sessionlog.read_session(str(tmp_path)).splitlines()[0]
     assert re.match(r"^\d{2}:\d{2}:\d{2}  step  Crop$", line), line
+
+
+def test_a_multi_line_write_stamps_every_line(tmp_path):
+    """_report_tool_error writes a whole stderr block in one call. Stamping
+    once left the rest unstamped, and _trim's "never a half line" rule could
+    then cut inside the block and leave a fragment reading like a new entry."""
+    import re
+    sessionlog.start_session(str(tmp_path))
+    sessionlog.write("ERROR Star separation failed\nCommand: starnet2\nstderr:\nlzw_decode")
+    lines = sessionlog.read_session(str(tmp_path)).splitlines()
+    assert len(lines) == 4
+    for line in lines:
+        assert re.match(r"^\d{2}:\d{2}:\d{2}  ", line), line
+
+
+def test_the_log_is_never_empty_midway_through_a_trim(tmp_path, monkeypatch):
+    """`open(path, "w")` truncated first, so the file was ZERO BYTES for as
+    long as it took to write ~500 KB back. A report opened in that window
+    carried an empty log while the tick said it was included, and a kill
+    mid-trim lost the log outright — the crash the two-session design exists
+    for. Found by review 2026-09-22.
+
+    Asserted by watching what a reader sees at the moment of the swap."""
+    import os
+    sessionlog.start_session(str(tmp_path))
+
+    seen = []
+    real_replace = os.replace
+
+    def watching(src, dst):
+        # Only the trim's own swap, not start_session's rotation.
+        if str(src).endswith(".trim"):
+            # What a reader would get: new file written, not yet swapped in.
+            seen.append(len(sessionlog.read_session(str(tmp_path))))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", watching)
+    for n in range(20000):
+        sessionlog.write("x" * 80 + f" line {n}")
+    # Two properties, and the first is the atomicity itself: a trim that
+    # truncates in place performs no .trim swap, so an empty `seen` means
+    # either the fixture never reached MAX_BYTES or the write is not atomic.
+    assert seen, "no atomic swap observed: either the trim is in-place, or the fixture never reached MAX_BYTES"
+    assert all(n > 0 for n in seen), f"the log was empty mid-trim: {seen}"

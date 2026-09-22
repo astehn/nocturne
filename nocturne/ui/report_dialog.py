@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout,
                                QLabel, QLineEdit, QPlainTextEdit,
                                QPushButton, QVBoxLayout)
@@ -58,6 +58,8 @@ class ReportDialog(QDialog):
         self._context = dict(context)
         self._sender = sender
         self._pool = pool or QThreadPool.globalInstance()
+        self._sending = False
+        self._sent = False
         self._attachment: bytes | None = None
         self._attachment_name = ""
         self._summary = ""
@@ -127,6 +129,16 @@ class ReportDialog(QDialog):
         box.addWidget(self.status)
 
         buttons = QHBoxLayout()
+        # Shown only when a send has failed. The spec has required this route
+        # from the start and it was wired to nothing: offline, the reporter got
+        # "could not reach the server" and no way to the web form at all.
+        self.fallback_btn = QPushButton("Open the web form instead")
+        self.fallback_btn.setToolTip(
+            "Opens nocturneastro.com with what you have typed. The diagnostic "
+            "log is too large for a web link and will not travel with it.")
+        self.fallback_btn.clicked.connect(self._use_fallback)
+        self.fallback_btn.hide()
+        buttons.addWidget(self.fallback_btn)
         buttons.addStretch(1)
         self.close_btn = QPushButton("Close")
         self.close_btn.clicked.connect(self.reject)
@@ -144,6 +156,12 @@ class ReportDialog(QDialog):
         parts = []
         if self._summary:
             parts.append(self._summary)
+        # The failed command and its stderr. Shown because it is SENT — the
+        # consent property is "you send what you see", and this field used to
+        # travel without appearing here at all.
+        failure = self._context.get("log")
+        if failure:
+            parts.append("--- the last thing that failed ---\n" + str(failure))
         if self._previous:
             parts.append("--- the session before this one ---\n" + self._previous)
         parts.append(self._session)
@@ -166,14 +184,36 @@ class ReportDialog(QDialog):
             self._pool,
             lambda: summariser(self._context.get("app_version", ""),
                                self._context.get("os", ""),
-                               self._context.get("screen", ""), self._settings),
+                               self._context.get("screen", ""), self._settings,
+                               failure=_first_line(self._context.get("log", "")),
+                               steps=_last_steps(self._session)),
             self._summary_ready, self._summary_failed)
 
+    def _alive(self) -> bool:
+        """Whether this dialog's C++ side still exists.
+
+        A probe can take up to four tool timeouts and a send up to thirty
+        seconds; quitting inside either window destroys the widget while the
+        worker is still running, and its queued signal then lands on freed
+        memory. That is the shape of the segfault that shipped in v0.38.0,
+        reached by a different route — the QRunnable is fine here, the
+        RECEIVER is gone.
+        """
+        from shiboken6 import isValid
+        try:
+            return isValid(self)
+        except Exception:                         # noqa: BLE001 - see docstring
+            return False
+
     def _summary_ready(self, text) -> None:
+        if not self._alive():
+            return
         self._summary = str(text or "")
         self._render_log()
 
     def _summary_failed(self, exc) -> None:
+        if not self._alive():
+            return
         # A probe is a nicety; the report is the point. Say nothing and carry
         # on rather than showing the reporter a failure that is not theirs.
         self._summary = ""
@@ -202,7 +242,25 @@ class ReportDialog(QDialog):
 
     # --- sending ------------------------------------------------------------
 
+    def _use_fallback(self) -> None:
+        self._on_fallback(self.problem.toPlainText().strip())
+
+    def _on_fallback(self, problem: str) -> None:
+        """Overridden per instance by a test, so it can watch this without
+        opening a real browser."""
+        _open_web_form(problem)
+
     def _refresh_send(self) -> None:
+        """Enable Send when there is something to send AND nothing in flight.
+
+        The in-flight half is not belt-and-braces. `textChanged` calls this on
+        every keystroke, so without it pressing Send and then fixing a typo —
+        the ordinary thing a person does — re-armed the button and filed the
+        ticket twice, with no queue for the reporter to see it in.
+        """
+        if self._sending or self._sent:
+            self.send_btn.setEnabled(False)
+            return
         self.send_btn.setEnabled(bool(self.problem.toPlainText().strip()))
 
     def _log_to_send(self) -> str | None:
@@ -211,6 +269,9 @@ class ReportDialog(QDialog):
         return self.log_view.toPlainText() or None
 
     def _send(self) -> None:
+        if self._sending or self._sent:
+            return
+        self._sending = True
         self.send_btn.setEnabled(False)
         self.status.setText("Sending…")
         fields = report_fields(
@@ -233,24 +294,81 @@ class ReportDialog(QDialog):
             lambda exc: self._finish((False, f"Could not send the report: {exc}")))
 
     def _finish(self, result) -> None:
-        ok, message = result
-        self.status.setText(str(message))
-        if ok:
-            # A second press would file it twice, and the reporter cannot see
-            # the queue to know they did.
-            self.send_btn.setEnabled(False)
-            self.close_btn.setText("Done")
+        if not self._alive():
+            # The report still went out; only the dialog that asked for it is
+            # gone. Nothing to update and nothing to apologise for.
             return
-        # Everything the person typed is still in the form. A report that
-        # vanishes because the wifi dropped is worse than the handoff this
+        ok, message = result
+        self._sending = False
+        self.status.setText(str(message))
+        # Latched, not merely disabled: `textChanged` re-enables the button on
+        # the next keystroke, so the flag is the only thing that holds. ONE
+        # place decides whether Send is live — _refresh_send — because a second
+        # setEnabled here was redundant, invisible to every test, and free to
+        # disagree with it.
+        self._sent = bool(ok)
+        if ok:
+            self.close_btn.setText("Done")
+            self.fallback_btn.hide()
+        else:
+            self.fallback_btn.show()
+        # On failure everything the person typed is still in the form. A report
+        # that vanishes because the wifi dropped is worse than the handoff this
         # replaces.
         self._refresh_send()
 
 
 def _session_age() -> float:
-    """Seconds since this session's log was opened."""
-    import os
-    try:
-        return max(0.0, time.time() - os.path.getmtime(sessionlog.session_path()))
-    except OSError:
+    """Seconds since this session STARTED — not since it was last written to.
+
+    The difference is the whole feature. The first version stat'ed the log's
+    mtime, which every step and every tool run updates, so a session hours old
+    read as seconds old the moment anything happened in it — and the previous
+    session was attached to almost every report.
+
+    Unknown is infinity, never zero: "I do not know when this began" must not
+    read as "it began just now".
+    """
+    started = getattr(sessionlog, "_started_at", None)
+    if started is None:
         return float("inf")
+    return max(0.0, time.monotonic() - started)
+
+
+def _open_web_form(problem: str) -> None:
+    """The browser handoff, as the fallback it now is.
+
+    It cannot carry the diagnostic log — a URL is a hard ceiling, which is the
+    whole reason the dialog exists — and the tooltip says so rather than
+    letting somebody believe the log went with it.
+    """
+    from urllib.parse import urlencode
+
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+
+    from ..core.update_check import SUPPORT_URL
+    frag = urlencode({"problem": problem}) if problem else ""
+    QDesktopServices.openUrl(QUrl(f"{SUPPORT_URL}#{frag}" if frag else SUPPORT_URL))
+
+
+def _first_line(text: str) -> str:
+    """The stderr line, for the summary block's "Failed at:".
+
+    The whole diagnostic is several lines of command and traceback; the summary
+    exists to be read in five seconds. `failure` and `steps` were dead
+    parameters until this call site passed them — tested as if live, which a
+    review caught.
+    """
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("Command:", "Elapsed:", "stderr:")):
+            return stripped
+    return ""
+
+
+def _last_steps(session: str, limit: int = 6) -> list[str]:
+    """The last few steps, for the summary block's "Last steps:"."""
+    steps = [ln.split("step  ", 1)[1] for ln in str(session or "").splitlines()
+             if "step  " in ln]
+    return steps[-limit:]
