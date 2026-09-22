@@ -532,3 +532,49 @@ def test_the_SITE_says_gallery_not_wall():
     for name in ("privacy.html", "gallery.html", "share.html", "faq.html"):
         t = (SITE / "_src" / name).read_text(encoding="utf-8")
         assert "the wall" not in t.lower(), f"{name} still says 'the wall'"
+
+
+# --- the privacy claims must survive the feature (2026-09-22) ---------------
+
+def test_no_page_still_claims_TWO_network_requests():
+    """Andreas, after v0.39.0 shipped: "we are now actively lying in several
+    places on the website in regards to the new share to gallery function."
+
+    He was right. Sending a picture is a THIRD request, and both the privacy
+    page and the FAQ still said two. A false claim on a privacy page is the
+    worst kind of stale copy, and the feature shipping is exactly when it goes
+    stale — which is why this is a test and not a note.
+    """
+    for name in ("privacy.html", "faq.html"):
+        t = (SITE / "_src" / name).read_text(encoding="utf-8")
+        assert "two network requests" not in t, f"{name} still says two"
+        assert "three network requests" in t, f"{name} does not say three"
+
+
+def test_no_page_claims_images_NEVER_leave():
+    """They leave when you send one, which is now three different ways."""
+    for name in ("privacy.html", "faq.html", "index.html"):
+        t = (SITE / "_src" / name).read_text(encoding="utf-8").lower()
+        for lie in ("images never leave", "never leave your computer",
+                    "never leave your device"):
+            assert lie not in t, f"{name}: {lie!r}"
+
+
+def test_the_network_summary_lists_ALL_THREE():
+    """The table is the page's own checklist; two rows under a heading saying
+    three is the same defect one paragraph later."""
+    t = (SITE / "privacy.html").read_text(encoding="utf-8")
+    rows = re.findall(r'data-label="Request">([^<]+)', t)
+    assert len(rows) == 3, f"expected three requests, found {rows}"
+    assert any("allery" in r for r in rows), f"the gallery is missing: {rows}"
+
+
+def test_the_FAQ_names_where_the_third_one_goes():
+    """A list item saying "you can send a picture" without saying where or what
+    happens to it is not an answer to "does Nocturne phone home?"."""
+    t = (SITE / "_src" / "faq.html").read_text(encoding="utf-8")
+    item = t.split("Sending a picture to the gallery", 1)[1][:700]
+    assert "Export" in item, "say where it is done from"
+    assert "location is never sent" in item
+    assert "looked at" in item, "say it is not published immediately"
+    assert "taken down" in item
