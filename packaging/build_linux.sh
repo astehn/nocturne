@@ -25,6 +25,19 @@ cd "$REPO"
 REF="${1:-}"
 if [ -n "$REF" ]; then
     # Fetch first: the tag being built was very likely pushed seconds ago.
+    #
+    # NOT THE ONLY CHECKOUT ANY MORE, and deliberately so. `deploy.py --linux`
+    # checks the tag out in a SEPARATE ssh command before invoking this file,
+    # because a checkout here replaces this very script by rename — the path
+    # gets a new inode while bash's open descriptor still points at the old,
+    # unlinked one, so bash runs the PREVIOUS release's script against the new
+    # source tree. Every edit to this file took effect one release late, and the
+    # v0.39.1 release shipped without the --check-codecs gate below for exactly
+    # that reason. Reproduced on the build host 2026-09-22.
+    #
+    # Kept so the file still works standalone, as its header promises — a
+    # GitHub Actions runner could invoke it with no caller. Under deploy.py it
+    # is now a no-op that cannot rewrite the running script.
     git fetch --quiet --tags origin
     git checkout --quiet "$REF"
 fi

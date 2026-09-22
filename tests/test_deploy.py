@@ -682,7 +682,12 @@ def test_the_linux_build_checks_out_the_tag_it_is_building(tmp_path):
     lying around. That is why the build cannot run before the tag is pushed, and
     it is the whole reason the step sits where it does in the sequence."""
     cmds = deploy.build_linux_cmds(_linux_config(tmp_path), "0.35.0")
-    build, fetch = cmds
+    # Three since 2026-09-22: the checkout was split out of build_linux.sh,
+    # which was rewriting the file bash was reading — see
+    # test_the_tag_is_checked_out_before_the_script_is_read.
+    checkout, build, fetch = cmds
+    assert checkout[:2] == ["ssh", "builder@10.0.0.9"]
+    assert "checkout --quiet v0.35.0" in checkout[2]
     assert build[:2] == ["ssh", "builder@10.0.0.9"]
     assert "build_linux.sh v0.35.0" in build[2]
     assert fetch[0] == "scp"
@@ -750,7 +755,9 @@ def test_a_mac_only_release_is_completely_unchanged(tmp_path):
     # ssh build, scp fetch, and TWO rsyncs of the one tarball: its versioned
     # name (what the downloads page links) and Nocturne-linux.tar.gz (the stable
     # name the homepage button links, mirroring Nocturne.zip for macOS).
-    assert len(with_flag) == len(plain) + 4
+    # +5: the checkout, the build, the scp, and the two extra publish steps
+    # (the versioned tarball and the stable Nocturne-linux.tar.gz link).
+    assert len(with_flag) == len(plain) + 5
 
 
 def test_the_downloads_page_is_rebuilt_after_the_release_and_before_the_upload(tmp_path):
@@ -794,3 +801,42 @@ def test_the_linux_tarball_also_lands_under_a_stable_name(tmp_path):
         "the versioned name is what the downloads page links"
     assert any(d.endswith("/download/Nocturne-linux.tar.gz") for d in dests), \
         "and the stable name is what the homepage button links"
+
+
+# --- the build host must read the TAG's script (2026-09-22) -----------------
+
+def test_the_tag_is_checked_out_before_the_script_is_read(tmp_path):
+    """Caught on the v0.39.1 release, by looking for output that never came.
+
+    `bash <repo>/packaging/build_linux.sh v0.39.1` used to be the first and only
+    remote command, and that script's own first act was `git checkout "$REF"` —
+    replacing the very file bash was reading. `git checkout` replaces a file by
+    RENAME, so the path gets a new inode while bash's open descriptor still
+    points at the old, now-unlinked one; bash therefore read the PREVIOUS
+    release's script to the end, against the new source tree. The build was
+    correct (the spec came from the checked-out tag, and the tarball grew
+    184 -> 202 MB) while the script's own new lines were skipped.
+
+    One of those lines was the blocking --check-codecs gate added that morning,
+    so the guard protecting the Linux half of a star-separation fix did not run
+    on the release that shipped the fix. Every future edit to build_linux.sh had
+    the same one-release delay.
+    """
+    cfg = _linux_config(tmp_path)
+    cmds = deploy.build_linux_cmds(cfg, "0.40.0")
+    joined = [" ".join(c) for c in cmds]
+    checkout = next((i for i, c in enumerate(joined) if "checkout" in c), None)
+    run = next((i for i, c in enumerate(joined) if "build_linux.sh" in c), None)
+    assert checkout is not None, "nothing checks the tag out before the script is read"
+    assert run is not None
+    assert checkout < run, "the checkout must finish before bash opens the script"
+    assert "v0.40.0" in joined[checkout], "it must check out the TAG, not a branch"
+    assert "fetch" in joined[checkout], "the tag was pushed seconds ago"
+
+
+def test_the_checkout_and_the_build_are_separate_commands(tmp_path):
+    """Separate, so a failed checkout names itself in the numbered step list
+    instead of surfacing as a confusing build error 20 minutes later."""
+    cmds = deploy.build_linux_cmds(_linux_config(tmp_path), "0.40.0")
+    assert len(cmds) == 3, [" ".join(c) for c in cmds]
+    assert all(c[0] in ("ssh", "scp") for c in cmds)
