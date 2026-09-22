@@ -881,3 +881,37 @@ def test_copy_to_clipboard_is_full_size_too(qtbot):
     assert got, "nothing was copied"
     assert max(got[0]) > PREVIEW_CAP, got
     assert got[0] == d._full_pixel_size()
+
+
+def test_the_share_dialog_has_NO_submission_path(qtbot):
+    """Moved to the Export step on 2026-09-22.
+
+    REMOVED, not hidden: two routes into one moderation queue is two things to
+    keep true, and this was the one that broke WYSIWYG — it composed with an
+    empty plate, so what was sent differed from what was shown.
+    """
+    d = _dlg(qtbot)
+    for gone in ("_submit_btn", "_consent", "_submit_note", "_submit_sent",
+                 "_compose_for_submission", "_on_submit_clicked",
+                 "_on_submit_finished", "_refresh_submit_state",
+                 "_submission_metadata"):
+        assert not hasattr(d, gone), f"{gone} survived the move"
+
+
+def test_the_share_dialog_composes_ONE_way():
+    """compose_share's docstring: 'the WYSIWYG guarantee is structural, and a
+    second compose path is how it would stop being one.'
+
+    ONE call, fed by _plate(), which is what is on screen — including an empty
+    plate when Title plate is unticked, which is a choice rather than a second
+    path. (Two earlier versions of this test were wrong: one banned the empty
+    PlateText outright and caught that legitimate case; the next used a regex
+    that stopped at the first bracket, inside self._source().)
+    """
+    import inspect
+    from nocturne.ui import share_dialog
+    src = inspect.getsource(share_dialog.ShareDialog)
+    assert src.count("compose_share(") == 1, \
+        f"{src.count('compose_share(')} compose paths; there must be one"
+    assert "plate = self._plate()" in src, \
+        "the single compose must be fed by the on-screen plate"
