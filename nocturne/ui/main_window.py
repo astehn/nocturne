@@ -63,6 +63,7 @@ from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
 from ..steps.green_fringe import FRINGE_MASK_SCALE
 from ..core.stretch import apply_stretch
+from ..core import sessionlog
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
@@ -266,6 +267,30 @@ class _SaveSignals(QObject):
 # 33 Mpx drizzled frame — so this is a real memory decision, not a free win. Two
 # is still fewer copies than the three per-surface caches it replaced.
 _SPLIT_CACHE_MAX = 2
+
+
+def write_environment(settings, window_size: str) -> None:
+    """What this install IS, written once when the app starts.
+
+    Cheap on purpose: version, platform, geometry and the tool PATHS. NO
+    subprocesses — versions are probed when a report is actually being written,
+    because ASTAP's probe took 60 seconds on the machine this was measured on
+    (2026-09-22) and a launch must not pay for that.
+
+    Written at startup rather than collected when the report is composed,
+    because a hard crash leaves nothing to collect from: the Share segfault of
+    2026-09-21 took the whole process with it, and this file survives that.
+    """
+    import platform
+
+    from .. import __version__
+    sessionlog.write(f"--- Nocturne {__version__} · "
+                     f"{platform.system()} {platform.release()} "
+                     f"({platform.machine()}) · window {window_size}")
+    for field, name in (("graxpert_path", "GraXpert"), ("rcastro_path", "RC-Astro"),
+                        ("starnet_path", "StarNet2"), ("astap_path", "ASTAP")):
+        path = getattr(settings, field, "") or ""
+        sessionlog.write(f"    {name:9} {path or '(not set)'}")
 
 
 def render_engine(tag: str) -> str:
@@ -1016,6 +1041,7 @@ class MainWindow(QMainWindow):
             f"Elapsed: {exc.elapsed:.1f}s\n"
             f"stderr:\n{exc.stderr}"
         )
+        sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
         self._show_warning(prefix)
         self._show_details_btn.show()
         self._copy_log_btn.show()
@@ -3588,6 +3614,10 @@ class MainWindow(QMainWindow):
         if engine and f"({engine})" not in label:
             label = f"{label} ({engine})" if label else f"({engine})"
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
+        # And to the file. The panel is wiped when a project closes and gone
+        # when the app exits — which is exactly when somebody sits down to
+        # write a support ticket.
+        sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
 
     def _run_busy(self, work, on_result, label: str, err_prefix: str,
                   *, over_image: bool = True) -> None:

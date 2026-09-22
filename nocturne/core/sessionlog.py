@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import threading
+from datetime import datetime
 
 # ~1 MB. A step line is about 80 bytes and a busy session is a few hundred
 # lines (Andreas's 16-step session was 694 bytes of history), so this is three
@@ -75,8 +76,9 @@ def write(line: str) -> None:
         return
     with _lock:
         try:
+            stamp = datetime.now().strftime("%H:%M:%S")
             with open(_active, "a", encoding="utf-8") as fh:
-                fh.write(line.rstrip("\n") + "\n")
+                fh.write(f"{stamp}  {line.rstrip()}\n")
             if os.path.getsize(_active) > MAX_BYTES:
                 _trim(_active)
         except _CANNOT:

@@ -76,3 +76,19 @@ def test_it_imports_without_qt():
          "import nocturne.core.sessionlog"],
         capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_every_line_is_stamped(tmp_path):
+    """Found by rendering a real session rather than reading the code: the
+    lines had no time on them at all. "When did it fail, and how long was it
+    between steps" is half of what a log is read for — and the GUI history
+    panel it mirrors has stamped every line since it was written.
+
+    Seconds, not milliseconds: this measures a person's session, where the
+    interesting gaps are tens of seconds.
+    """
+    import re
+    sessionlog.start_session(str(tmp_path))
+    sessionlog.write("step  Crop")
+    line = sessionlog.read_session(str(tmp_path)).splitlines()[0]
+    assert re.match(r"^\d{2}:\d{2}:\d{2}  step  Crop$", line), line
