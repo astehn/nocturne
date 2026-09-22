@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 
 def test_only_one_definition_of_sigma_exists_outside_the_archive():
@@ -101,3 +102,92 @@ def test_a_project_naming_the_withdrawn_step_gets_an_explanation(monkeypatch):
     msg = str(pytest.raises(RuntimeError,
                             denoise_model._session, "/nonexistent/model.onnx").value)
     assert "v0.18.0" in msg and "onnxruntime" not in msg.lower(), msg
+
+
+# --- a model on disk is not enough: the RUNTIME has to be there too ---------
+#
+# 2026-09-22. The packaged app excludes onnxruntime (64 MB; it took cold start
+# from 9.2 s to 1.0 s), while the step was offered on the strength of the model
+# file ALONE. Andreas has ~/.nocturne/models on the machine he tests releases
+# on, so every build showed him Linear Denoise and then raised the moment he
+# pressed Apply. Users are unaffected — they have no such folder — but a step
+# that is offered and cannot run is the imagecodecs shape: one of two
+# requirements present, the other only discovered at the button.
+
+def test_the_runtime_is_absent_when_onnxruntime_cannot_be_imported(monkeypatch):
+    import builtins
+    from nocturne.core import denoise_model as dm
+    real = builtins.__import__
+
+    def no_ort(name, *a, **k):
+        if name == "onnxruntime":
+            raise ImportError("excluded from the bundle")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_ort)
+    assert dm.runtime_available() is False
+
+
+def test_the_runtime_is_present_from_source():
+    """The suite runs where onnxruntime IS installed. If this ever fails, the
+    two tests around it are asserting nothing."""
+    from nocturne.core import denoise_model as dm
+    assert dm.runtime_available() is True
+
+
+def test_models_on_disk_are_not_offered_without_the_runtime(monkeypatch, tmp_path):
+    from nocturne.core import denoise_model as dm
+    (tmp_path / "v10.onnx").write_bytes(b"not really a model")
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))
+    monkeypatch.setattr(dm, "runtime_available", lambda: False)
+    assert dm.external_models(), "the fixture must actually put a model on disk"
+    assert dm.usable_external_models() == [], \
+        "a model the app cannot load must not be offered"
+
+
+def test_models_on_disk_ARE_offered_with_the_runtime(monkeypatch, tmp_path):
+    """Breaks the symmetry: the test above must fail for the runtime, not
+    because the fixture never had a model."""
+    from nocturne.core import denoise_model as dm
+    (tmp_path / "v10.onnx").write_bytes(b"not really a model")
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))
+    monkeypatch.setattr(dm, "runtime_available", lambda: True)
+    assert [lbl for lbl, _ in dm.usable_external_models()] == ["v10"]
+
+
+def test_the_import_error_says_which_situation_this_is(monkeypatch, tmp_path):
+    """Two ways to reach a missing onnxruntime, and they need different words.
+
+    The message was written when a pre-v0.18.0 saved project was the only route:
+    "This project uses Linear Denoise … remove this one to open it." Andreas hit
+    it by opening a FITS and pressing Apply on a step the app had just offered
+    him, and was told to edit a project he did not have.
+    """
+    import builtins
+    from nocturne.core import denoise_model as dm
+    real = builtins.__import__
+
+    def no_ort(name, *a, **k):
+        if name == "onnxruntime":
+            raise ImportError("excluded from the bundle")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_ort)
+    monkeypatch.setattr(dm, "EXTERNAL_DIR", str(tmp_path))
+    dm._session.cache_clear()
+
+    # (a) an external model the user chose in the dropdown
+    external = tmp_path / "v10.onnx"
+    external.write_bytes(b"x")
+    with pytest.raises(RuntimeError) as exc:
+        dm._session(str(external))
+    assert "project" not in str(exc.value).lower(), \
+        "do not tell someone to edit a project they never opened"
+    assert "run from source" in str(exc.value).lower()
+
+    dm._session.cache_clear()
+    # (b) a saved project made before v0.18.0, pointing at a bundled model
+    with pytest.raises(RuntimeError) as exc:
+        dm._session("/somewhere/else/denoise_s30_v1.onnx")
+    assert "v0.18.0" in str(exc.value)
+    dm._session.cache_clear()

@@ -4108,12 +4108,16 @@ class MainWindow(QMainWindow):
         """Stages that are not part of the shipped pipeline and must be asked for.
 
         Linear Denoise appears only when a model from the separate Nocturne NR
-        project is sitting in ~/.nocturne/models — internal testing, and a
-        release build cannot contain one (that folder is outside the bundle, and
-        the spec excludes onnxruntime besides).
+        project is sitting in ~/.nocturne/models AND this build can load it.
+
+        BOTH, since 2026-09-22. The folder is outside the bundle so a user never
+        has one — but Andreas does, on the machine he tests releases on, and the
+        packaged app excludes onnxruntime. Checking the model alone offered him
+        the step in every build and then raised at Apply. `usable_external_models`
+        is the one answer to "what can this build actually run".
         """
-        from ..core.denoise_model import external_models
-        return frozenset({"ai_denoise"}) if external_models() else frozenset()
+        from ..core.denoise_model import usable_external_models
+        return frozenset({"ai_denoise"}) if usable_external_models() else frozenset()
 
     def _rebuild_stages(self) -> None:
         """Re-derive the visible pipeline, keeping the user where they are.
@@ -5306,8 +5310,8 @@ class MainWindow(QMainWindow):
         # so this list is empty and the dropdown is exactly what it was. The
         # engine list appears even without both external tools, because trying
         # the model is the point and GraXpert's presence is beside it.
-        from ..core.denoise_model import external_models
-        nr = [f"Nocturne NR ({label})" for label, _ in external_models()]
+        from ..core.denoise_model import usable_external_models
+        nr = [f"Nocturne NR ({label})" for label, _ in usable_external_models()]
         if stage.id == "ai_denoise":
             # This stage exists only because a model is installed, so the model
             # list IS its engine list — there is no "Default" to fall back to.
