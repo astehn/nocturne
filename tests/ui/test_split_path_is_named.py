@@ -74,7 +74,13 @@ def test_saturation_names_the_path_only_when_it_actually_split(
     win._sat_layers = (win._sr_sig(base), starless, stars, "free")
 
     text = win._sat_log_option(0.5, nebula)
-    assert ("(free)" in text) is expect_path, text
+    # "built-in", not "free": the tag stays "free" internally, but every line a
+    # person reads goes through render_engine, because "free" names a price
+    # rather than a method. Changed 2026-09-22, when the new Deconvolution
+    # line said "(built-in)" while this one still said "(free)" — one user, one
+    # history, two words for the same path.
+    assert ("(built-in)" in text) is expect_path, text
+    assert "(free)" not in text, text
     assert "0.50" in text
 
 
@@ -92,7 +98,8 @@ def test_star_reduction_log_line_carries_the_path(qtbot, tmp_path):
     win._apply_star_reduction(0.5)
     entries = win.log_panel.entries() if hasattr(win.log_panel, "entries") else None
     text = "\n".join(entries) if entries else win.log_panel.toPlainText()
-    assert "Star Reduction" in text and "(free)" in text, text
+    assert "Star Reduction" in text and "(built-in)" in text, text
+    assert "(free)" not in text, text
 
 
 def test_starless_levels_log_line_carries_the_path(qtbot, tmp_path):

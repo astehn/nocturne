@@ -268,6 +268,20 @@ class _SaveSignals(QObject):
 _SPLIT_CACHE_MAX = 2
 
 
+def render_engine(tag: str) -> str:
+    """How an engine tag is WRITTEN for a person.
+
+    "free" is the internal tag — `_split_tagged` has used it since 2026-09-18
+    and every surface stores it — but it names a price rather than a method,
+    and the path it means is Nocturne's own code. One renderer rather than a
+    mapping repeated at each call site, because the first version of this
+    shipped `(built-in)` on the new lines while three older ones still said
+    `(free)`, which is the exact fault `splitter_name`'s docstring says it
+    exists to prevent.
+    """
+    return "built-in" if tag == "free" else tag
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
 
@@ -1464,7 +1478,7 @@ class MainWindow(QMainWindow):
         """
         hit = self._cached_layers(img)
         tag = hit[2] if hit and len(hit) > 2 else ""
-        return f" ({'built-in' if tag == 'free' else tag})" if tag else ""
+        return f" ({render_engine(tag)})" if tag else ""
 
     def _remember_split(self, img, starless, stars, tag: str = "") -> None:
         """Publish a split so every other surface can use it.
@@ -1963,7 +1977,7 @@ class MainWindow(QMainWindow):
         """
         text = f"{amount:.2f} / neb {nebula:.2f}"
         if nebula > 0.0 and self._sat_layers:
-            text += f" ({self._sat_layers[3]})"
+            text += f" ({render_engine(self._sat_layers[3])})"
         return text
 
     @staticmethod
@@ -3566,12 +3580,7 @@ class MainWindow(QMainWindow):
             label = ""
         else:
             label = option
-        # "free" is the internal tag `_split_tagged` has used since 2026-09-18
-        # and it stays that, so one vocabulary describes one thing. The LOG is
-        # read by a person, though, and "free" names a price rather than a
-        # method — the path it means is Nocturne's own code.
-        engine = {"free": "built-in"}.get(
-            getattr(step, "last_engine", None), getattr(step, "last_engine", None))
+        engine = render_engine(getattr(step, "last_engine", None) or "")
         # Not appended when the label already carries it: Saturation's
         # _sat_log_option prints the tag itself, and only when the nebula boost
         # actually split — at neb 0.00 nothing separated and naming an engine
@@ -4870,7 +4879,8 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Star Reduction",
-                             f"{float(amount):.2f} ({self._sr_layers[3]})", None))
+                             f"{float(amount):.2f} ({render_engine(self._sr_layers[3])})",
+                             None))
         self._clear_warning()
         self._clear_pending("star_reduction")
         self._refresh()

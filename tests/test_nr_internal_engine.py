@@ -166,19 +166,35 @@ def test_the_step_is_not_offered_when_the_build_cannot_load_a_model(tmp_path, mo
         "a build that cannot load a model must not offer the step"
 
 
-def test_no_ui_surface_asks_the_filesystem_question_directly(tmp_path):
+def test_no_ui_surface_asks_the_filesystem_question_directly():
     """`external_models()` is the pure filesystem answer and stays that way for
     the guarantee tests above. Every SURFACE must ask `usable_external_models()`
-    — one place that knows both requirements. A new dropdown reaching for the
-    raw list reintroduces the bug with no test failing."""
+    — the one place that knows both requirements. A new dropdown reaching for
+    the raw list reintroduces the bug with no test failing.
+
+    Parsed, not grepped. The first version scanned source TEXT and matched its
+    own explanatory prose: adding a docstring line saying "the raw filesystem
+    answer external_models() is deliberately not used here" — evidence the rule
+    is being followed — failed the test. Two other tests on this branch had the
+    same fault. An AST sees calls and nothing else.
+    """
+    import ast
     import pathlib
-    ui = pathlib.Path(dm.__file__).parent.parent / "ui"
+    root = pathlib.Path(dm.__file__).parent.parent
     offenders = []
-    for f in ui.rglob("*.py"):
-        for n, line in enumerate(f.read_text().splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            if "external_models" in line and "usable_external_models" not in line:
-                offenders.append(f"{f.name}:{n}")
-    assert not offenders, f"UI calling the filesystem answer directly: {offenders}"
+    # ui/ AND steps/ AND the entry points: a future call from a CLI or a batch
+    # surface was uncovered while this looked thorough.
+    for sub in ("ui", "steps", "stacking"):
+        for f in (root / sub).rglob("*.py"):
+            tree = ast.parse(f.read_text())
+            for node in ast.walk(tree):
+                name = None
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    name = node.func.id
+                elif isinstance(node, ast.ImportFrom) and node.module and \
+                        node.module.endswith("denoise_model"):
+                    name = next((a.name for a in node.names
+                                 if a.name == "external_models"), None)
+                if name == "external_models":
+                    offenders.append(f"{f.relative_to(root)}:{node.lineno}")
+    assert not offenders, f"surfaces calling the filesystem answer directly: {offenders}"

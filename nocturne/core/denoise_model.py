@@ -124,10 +124,18 @@ def runtime_available() -> bool:
     Not cached: `_session` is, and a false negative here would outlive the
     import it was wrong about. The import is a dict lookup once onnxruntime is
     loaded, and a no-op ImportError otherwise.
+
+    `except Exception`, not `except ImportError`. The bug this whole gate is
+    modelled on — imagecodecs, 2026-09-22 — was a package that IMPORTED and
+    then failed loading an extension module, which is not an ImportError. That
+    exception would escape here into `_included_stages` and `_rebuild_stages`,
+    so MainWindow could not be constructed at all: a half-present runtime would
+    stop the app rather than hide one step. "Cannot load a model" is the honest
+    answer to every way this can fail.
     """
     try:
         import onnxruntime  # noqa: F401
-    except ImportError:
+    except Exception:                             # noqa: BLE001 - see above
         return False
     return True
 

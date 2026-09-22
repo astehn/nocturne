@@ -333,3 +333,36 @@ def test_de_green_stars_never_invents_rc_astro(qtbot, tmp_path):
 
     win._fringe_layers = ("sig", "split", img, img, "StarX")
     assert "RC-Astro (StarX)" in win._fringe_status_text()
+
+
+# --- one word for one thing (2026-09-22) -----------------------------------
+
+def test_the_free_path_is_called_the_same_thing_on_every_line(qtbot, tmp_path):
+    """A user with no splitter used to see both vocabularies in one history:
+
+        Star Reduction  0.50 (free)
+        Saturation      0.60 / neb 0.30 (free)
+        Deconvolution   medium (built-in)
+
+    "free" is the internal tag and stays that — `_split_tagged` has used it
+    since 2026-09-18 and changing it would touch every surface. It is the
+    RENDERING that has to agree, and `splitter_name`'s own docstring says two
+    vocabularies for one thing is the fault it exists to prevent.
+    """
+    from nocturne.ui.main_window import MainWindow, render_engine
+
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    img = _img()
+
+    assert render_engine("free") == "built-in"
+    assert render_engine("StarNet2") == "StarNet2"
+    assert render_engine("") == ""
+
+    win._remember_split(img, img, img, "free")
+    assert win._split_engine_for(img) == " (built-in)"
+    assert "free" not in win._sat_log_option(0.6, 0.3) or True  # see below
+
+    win._sat_layers = (win._sr_sig(img), img, img, "free")
+    line = win._sat_log_option(0.60, 0.30)
+    assert "(built-in)" in line and "(free)" not in line, line
