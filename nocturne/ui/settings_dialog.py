@@ -213,8 +213,14 @@ class SettingsDialog(QDialog):
         Cheap check only (executable, not run): Test is what actually runs the
         program, and this fires on every keystroke.
         """
+        # EVERY tool with a path field belongs here. StarNet2 was added to the
+        # dialog on 2026-09-18 and not to this tuple, so its row stayed blank
+        # while the others said "✓ … found" — and Andreas reasonably read the
+        # silence as "not configured" while it had been splitting stars all
+        # along. Pinned by test_every_tool_path_field_has_a_status_on_open.
         for edit, label, name in ((self._gx, self._gx_result, "GraXpert"),
                                   (self._rc, self._rc_result, "RC-Astro"),
+                                  (self._starnet, self._starnet_result, "StarNet2"),
                                   (self._astap, self._astap_result, "ASTAP")):
             path = edit.text().strip()
             if not path:

@@ -235,3 +235,42 @@ def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
     qtbot.addWidget(dlg)
     assert not dlg.telemetry.isChecked()
     assert dlg.result_settings().telemetry == "off"
+
+
+# --- every tool with a path field needs a status on OPEN (2026-09-22) -------
+#
+# StarNet2 arrived 2026-09-18 and was never added to _refresh_status's tuple, so
+# its row was BLANK while GraXpert and ASTAP said "✓ … found". Andreas hit
+# exactly that and doubted StarNet2 was configured at all — then proved from the
+# history log that it had been running the whole time.
+
+def test_a_configured_starnet2_says_so_without_pressing_test(qtbot, tmp_path):
+    exe = tmp_path / "starnet2"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    dlg = SettingsDialog(Settings(starnet_path=str(exe)))
+    qtbot.addWidget(dlg)
+    assert "✓" in dlg._starnet_result.text()
+    assert "StarNet2" in dlg._starnet_result.text()
+
+
+def test_an_unset_starnet2_says_optional_rather_than_nothing(qtbot):
+    dlg = SettingsDialog(Settings(starnet_path=""))
+    qtbot.addWidget(dlg)
+    assert "optional" in dlg._starnet_result.text()
+
+
+def test_every_tool_path_field_has_a_status_on_open(qtbot, tmp_path):
+    """The structural guard. A sixth tool added to the dialog without a status
+    row repeats this silently — the field looks configured and says nothing."""
+    exe = tmp_path / "t"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    dlg = SettingsDialog(Settings(graxpert_path=str(exe), rcastro_path=str(exe),
+                                  starnet_path=str(exe), astap_path=str(exe)))
+    qtbot.addWidget(dlg)
+    blank = [name for name, label in
+             (("GraXpert", dlg._gx_result), ("RC-Astro", dlg._rc_result),
+              ("StarNet2", dlg._starnet_result), ("ASTAP", dlg._astap_result))
+             if not label.text().strip()]
+    assert not blank, f"configured but silent on open: {blank}"
