@@ -180,3 +180,56 @@ def test_progress_reaches_the_cancel_token_sink_as_the_tool_prints_it():
 
     assert got == [(11, 100), (56, 100), (100, 100)], \
         "every tile update should reach the sink, and nothing else should"
+
+
+# --- the codec that was never in the bundle (2026-09-22) --------------------
+#
+# Reported by a user four releases after StarNet2 shipped: every split died on
+# "could not import name 'lzw_decode' from 'imagecodecs'". Nothing here could
+# have caught it — the fake runners above write UNCOMPRESSED TIFF, so the LZW
+# decode this tool depends on was never exercised by any test, in any build.
+
+def test_it_reads_back_the_lzw_tiff_the_real_tool_writes(tmp_path):
+    """StarNet2 writes LZW-compressed 16-bit TIFF. A fixture that writes
+    uncompressed TIFF proves the round trip works with the one compression the
+    real tool never uses — which is exactly how four releases shipped a split
+    that could not read its own output."""
+    import tifffile
+
+    src = _img(32, 32)
+
+    def lzw_runner(args, on_line=None, **kw):
+        data = tifffile.imread(args[args.index("--input") + 1])
+        tifffile.imwrite(args[args.index("--output") + 1], data, compression="lzw")
+        tifffile.imwrite(args[args.index("--unscreen") + 1],
+                         np.zeros_like(data), compression="lzw")
+
+    starless, stars = StarNet("/fake").remove_stars(src, runner=lzw_runner)
+    assert np.allclose(starless.data, src.data, atol=2e-5), \
+        "the LZW round trip should return the pixels StarNet2 was given"
+    assert not stars.data.any()
+
+
+def test_the_bundle_collects_the_codec_that_decodes_it():
+    """imagecodecs loads each codec with importlib.import_module, so
+    PyInstaller's static analysis sees NONE of them: the shipped app carried
+    the package with one of its sixty extension modules and `import
+    imagecodecs` succeeded anyway. Only collecting it explicitly brings
+    `_imcd`, where lzw_decode lives."""
+    from pathlib import Path
+    spec = (Path(__file__).parent.parent / "packaging" / "nocturne.spec").read_text()
+    collected = spec.split("for pkg in (")[1].split(")")[0]
+    assert "imagecodecs" in collected, \
+        "the spec does not collect imagecodecs — star separation cannot work in the bundle"
+
+
+def test_collecting_imagecodecs_actually_brings_the_lzw_module():
+    """The guard above checks the spec says a word. This checks the word still
+    does the job: `lzw_decode` is not in a module called `_lzw`, it is in
+    `_imcd`, and a restructured imagecodecs could leave the spec line looking
+    correct while the codec goes missing again."""
+    from PyInstaller.utils.hooks import collect_all
+    _datas, binaries, hidden = collect_all("imagecodecs")
+    assert "imagecodecs._imcd" in hidden, \
+        "collect_all no longer names the module that provides lzw_decode"
+    assert binaries, "collect_all brought no shared libraries for imagecodecs"

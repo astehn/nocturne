@@ -610,6 +610,56 @@ def test_a_self_test_that_cannot_run_does_not_break_the_release(tmp_path, capsys
     assert "could not run" in capsys.readouterr().out
 
 
+# --- the bundle must be able to decode a compressed TIFF (added 2026-09-22) --
+
+def test_a_bundle_that_cannot_decode_a_compressed_tiff_is_refused(tmp_path):
+    """Non-zero from --check-codecs blocks the release, where the network check
+    only warns. imagecodecs imports its codecs dynamically, PyInstaller
+    collected none of them, and four releases shipped a star separation that
+    could not work on any machine without RC-Astro — so there is nothing local
+    or flaky to forgive here."""
+    run = _FakeRun(2, "tiff lzw      : FAILED DelayedImportError")
+    with pytest.raises(SystemExit, match="cannot decode a compressed TIFF"):
+        deploy._verify_bundle_codecs(tmp_path / "Nocturne", run=run)
+
+
+def test_the_codec_failure_carries_the_bundles_own_output(tmp_path):
+    """Which codec, and why. 'the build is broken' sends the next person back
+    to run the check by hand."""
+    run = _FakeRun(2, "tiff lzw      : FAILED could not import name 'lzw_decode'")
+    with pytest.raises(SystemExit) as exc:
+        deploy._verify_bundle_codecs(tmp_path / "Nocturne", run=run)
+    assert "lzw_decode" in str(exc.value)
+
+
+def test_a_bundle_with_working_codecs_passes_silently(tmp_path, capsys):
+    deploy._verify_bundle_codecs(tmp_path / "Nocturne", run=_FakeRun(0, "codecs: OK"))
+    assert capsys.readouterr().out == ""
+
+
+def test_a_codec_self_test_that_cannot_run_does_not_break_the_release(tmp_path, capsys):
+    def boom(*a, **k):
+        raise OSError("no such file")
+
+    deploy._verify_bundle_codecs(tmp_path / "Nocturne", run=boom)
+    assert "could not run" in capsys.readouterr().out
+
+
+def test_verify_build_runs_the_codec_check_too(tmp_path, monkeypatch):
+    """The check only protects a release if verify_build actually calls it —
+    a function nobody invokes is the same as no check at all."""
+    exe = tmp_path / "Nocturne.app" / "Contents" / "MacOS" / "Nocturne"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"x" * 2_000_000)
+    monkeypatch.setattr(deploy, "DIST", tmp_path)
+    monkeypatch.setattr(deploy, "_verify_bundle_https", lambda *a, **k: None)
+    called = []
+    monkeypatch.setattr(deploy, "_verify_bundle_codecs",
+                        lambda p, **k: called.append(p))
+    deploy.verify_build()
+    assert called == [exe]
+
+
 # --- the Linux build host (added with the port, 2026-09-18) ------------------
 
 def _linux_config(tmp_path):

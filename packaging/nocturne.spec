@@ -81,7 +81,17 @@ hiddenimports = ["PySide6.QtSvg"]                # SVG icon rendering
 # (/opt/homebrew/etc/openssl@3/cert.pem), which is absent on a Mac with no
 # Homebrew — every HTTPS call then fails CERTIFICATE_VERIFY_FAILED, silently,
 # because the update check and the Gaia lookup both catch and return None.
-for pkg in ("certifi", "drizzle", "skimage", "colour", "colour_demosaicing"):
+#
+# imagecodecs loads every codec through importlib.import_module (imagecodecs.py
+# :861), so static analysis sees NONE of them: `import imagecodecs` succeeded in
+# the bundle while carrying exactly one of its 60 extension modules. StarNet2
+# writes LZW-compressed TIFF and tools/starnet.py reads it back through
+# tifffile, which needs `lzw_decode` out of imagecodecs._imcd — so every star
+# separation in every shipped build since v0.35.0 died with
+# "could not import name 'lzw_decode' from 'imagecodecs'", AFTER the minutes of
+# work were already spent. Reported from the field 2026-09-22.
+for pkg in ("certifi", "drizzle", "skimage", "colour", "colour_demosaicing",
+            "imagecodecs"):
     d, b, h = collect_all(pkg)
     datas += _prune(d)
     binaries += b

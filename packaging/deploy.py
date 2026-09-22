@@ -497,6 +497,35 @@ def verify_build() -> None:
     if not exe.exists() or exe.stat().st_size < 1_000_000:
         raise SystemExit("build verify: Nocturne.app executable missing or too small")
     _verify_bundle_https(exe)
+    _verify_bundle_codecs(exe)
+
+
+def _verify_bundle_codecs(exe: Path, run=subprocess.run) -> None:
+    """Ask the BUILT app whether it can decode a compressed TIFF.
+
+    imagecodecs imports its codecs dynamically, so PyInstaller saw none of them
+    and every bundle from v0.35.0 to v0.39.0 shipped the package with one of its
+    sixty extension modules. Star separation — nine surfaces and twelve call
+    sites — therefore failed for every user without RC-Astro, on both platforms,
+    for four releases, and it failed AFTER the minutes of work were spent. A
+    user reported it on 2026-09-22; nothing here could have.
+
+    Blocking, not a warning. Unlike the network there is nothing local or flaky
+    about it: either the codecs are in the bundle or the feature does not work
+    anywhere.
+    """
+    try:
+        r = run([str(exe), "--check-codecs"], capture_output=True, text=True,
+                timeout=180)
+    except Exception as exc:                      # noqa: BLE001
+        print(f"warning: could not run the bundle's codec self-test ({exc})")
+        return
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        raise SystemExit(
+            "build verify: the bundle cannot decode a compressed TIFF — star "
+            "separation and opening a user's own TIFF would fail for every "
+            "user, on every machine.\n" + out)
 
 
 def _verify_bundle_https(exe: Path, run=subprocess.run) -> None:

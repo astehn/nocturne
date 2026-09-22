@@ -58,6 +58,69 @@ def _check_network() -> int:
         return 1 if usable else 2
 
 
+# The compressions the app can actually meet: LZW is what StarNet2 writes and
+# tools/starnet.py reads back; deflate and packbits are what a user's own TIFF
+# arrives in (core/fits_io.py, core/image_io.py). Not an inventory of what
+# imagecodecs can do — an inventory of what this app breaks without.
+#
+# The flag is the PREDICTOR, and it is not decoration. A real StarNet2 output
+# read on 2026-09-22 is compression=5 WITH predictor=2, horizontal
+# differencing, which tifffile undoes through a SEPARATE imagecodecs entry
+# point (delta_decode). Checking plain LZW would have passed on a build that
+# still could not open the file the tool actually writes — the same
+# synthetic-fixture blind spot that let this ship in the first place.
+_TIFF_CODECS = (("lzw", True), ("deflate", False), ("packbits", False))
+
+
+def _check_codecs() -> int:
+    """Round-trip a compressed TIFF inside this build, as a user's Mac would.
+
+    Exit codes, so a release can be gated on the difference:
+
+        0  every compression the app depends on decoded.
+        2  one did not. This build cannot separate stars or open a compressed
+           TIFF on any machine and must not ship.
+
+    imagecodecs loads each of its sixty codecs through importlib.import_module,
+    which PyInstaller's static analysis cannot see — so a bundle shipped
+    `imagecodecs` with exactly ONE extension module in it. `import imagecodecs`
+    succeeded and only the first decode failed, which is how every star
+    separation in every build from v0.35.0 to v0.39.0 died on "could not import
+    name 'lzw_decode' from 'imagecodecs'" — AFTER the minutes of work were
+    already spent. Reported from the field 2026-09-22, four releases later.
+
+    Same shape as --check-network above: correct from source, broken only in
+    the bundle, and invisible on the machine that built it. Hence a check the
+    BUILT app runs on itself.
+    """
+    import tempfile
+
+    import numpy as np
+    import tifffile
+
+    # Non-uniform on purpose. A constant array survives a codec that drops to
+    # raw bytes, so it cannot tell a working decoder from an absent one.
+    src = (np.arange(64 * 64 * 3, dtype=np.uint16).reshape(64, 64, 3) * 7) % 65535
+    print(f"frozen        : {getattr(sys, 'frozen', False)}")
+    bad = []
+    with tempfile.TemporaryDirectory(prefix="nocturne_codecs_") as tmp:
+        for codec, predictor in _TIFF_CODECS:
+            label = f"{codec}+pred" if predictor else codec
+            path = os.path.join(tmp, f"{codec}.tif")
+            try:
+                tifffile.imwrite(path, src, compression=codec,
+                                 predictor=predictor)
+                ok = np.array_equal(np.asarray(tifffile.imread(path)), src)
+                print(f"tiff {label:9}: {'OK' if ok else 'ROUND TRIP DIFFERS'}")
+                if not ok:
+                    bad.append(label)
+            except Exception as exc:              # noqa: BLE001 - reporting tool
+                print(f"tiff {label:9}: FAILED {type(exc).__name__}: {exc}")
+                bad.append(label)
+    print(f"codecs        : {'OK' if not bad else 'BROKEN ' + ', '.join(bad)}")
+    return 2 if bad else 0
+
+
 # Height only. The WIDTH is asked of the window itself at startup — see
 # preferred_size. Two hardcoded guesses at it were wrong in a row (1280 shipped
 # for months; 1600 and 1760 were measured on the offscreen platform, which
@@ -141,6 +204,12 @@ def main() -> None:
     #     dist/Nocturne.app/Contents/MacOS/Nocturne --check-network
     if "--check-network" in sys.argv:
         raise SystemExit(_check_network())
+
+    # The same idea for the OTHER dependency that is only ever missing in a
+    # bundle — see _check_codecs. Dispatched here, above the QApplication, so a
+    # release can run it headless on the artifact it is about to publish.
+    if "--check-codecs" in sys.argv:
+        raise SystemExit(_check_codecs())
 
     # A backgrounded stack runs as a child of this same executable, and is
     # dispatched HERE for the same reason --check-network is: the child has no

@@ -55,6 +55,16 @@ rm -rf build dist
 # still exercises the bundle's Python, its imports and its certificate path.
 echo "  smoke    $(dist/Nocturne/Nocturne --check-network 2>&1 | tail -1)"
 
+# BLOCKING, unlike the network one. imagecodecs imports its codecs dynamically
+# so PyInstaller collected none of them, and every Linux tarball from v0.35.0 to
+# v0.39.0 shipped one of its sixty extension modules — star separation failed
+# for every user without RC-Astro, after the whole run had already happened.
+# Nothing local or flaky here: the codecs are in the tarball or they are not.
+if ! dist/Nocturne/Nocturne --check-codecs; then
+  echo "the build cannot decode a compressed TIFF — star separation and opening a user's TIFF would fail for every user" >&2
+  exit 1
+fi
+
 tar -czf "dist/${NAME}.tar.gz" -C dist Nocturne
 echo "  artifact dist/${NAME}.tar.gz  ($(du -h "dist/${NAME}.tar.gz" | cut -f1))"
 echo "  sha256   $(sha256sum "dist/${NAME}.tar.gz" | cut -d' ' -f1)"
