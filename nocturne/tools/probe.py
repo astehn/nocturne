@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 
 
@@ -67,7 +68,45 @@ def tool_version(path: str, argv: list[str], *,
         return ""
     if code != 0:
         return ""
-    return _first_line(out, err)
+    return _version_line(out, err)
+
+
+def _version_line(*texts: str) -> str:
+    """The line that looks like a version, else the first non-empty one.
+
+    MEASURED 2026-09-22. GraXpert and StarNet2 answer on their first line, so
+    `_first_line` was enough for them — but RC-Astro 2.6.9 prints
+
+        Astronomical image processing tools
+        Version 2.6.9 (build 727, ga2033f5b, 2026-09-08)
+
+    and the first line is a DESCRIPTION. Reporting it would have put
+    "Astronomical image processing tools" in every ticket from every RC-Astro
+    user: plausible-looking and useless, which is the worst kind of wrong in a
+    diagnostic.
+
+    The fallback matters as much as the match. An unrecognised banner still
+    identifies the build, and WHICH TOOLS ARE INSTALLED is itself the answer to
+    most tickets — Alvaro's turned on his not having RC-Astro at all.
+    """
+    lines = [_strip_preamble(ln.strip())
+             for text in texts for ln in text.splitlines() if ln.strip()]
+    for line in lines:
+        if "version" in line.lower():
+            return line
+    return lines[0] if lines else ""
+
+
+# A python-logging preamble: "2026-09-22 18:21:11,063 MainProcess root INFO   ".
+# GraXpert 3.0.2 answers `-v` with one, putting fifty characters of its own log
+# framing in front of the four that matter (measured 2026-09-22). Anchored on a
+# full date AND a clock so a version that merely starts with a year is safe.
+_PREAMBLE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}[.,]?\d*\s+\S+\s+\S+\s+\w+\s+")
+
+
+def _strip_preamble(line: str) -> str:
+    return _PREAMBLE.sub("", line).strip()
 
 
 def _default_runner_t(argv: list[str], timeout: float):
