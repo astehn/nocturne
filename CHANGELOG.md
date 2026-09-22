@@ -2,6 +2,18 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.39.0] — 2026-09-22
+
+Sharing to the gallery moves to Export — and no longer crashes.
+
+### Changed
+- Share to the gallery is now part of the Export step rather than the Share window. What is sent is the finished picture exactly as you see it: nothing is reframed and no title plate is removed on the way out, which is what happened before. The panel lists the facts that will appear beside it — object, frame count, exposure, total integration, camera and date — and your location is never among them.
+- If the file carries no object name, because it was finished from a TIFF stacked elsewhere, you can type one. You are only asked when there is nothing to show.
+- The gallery is called the gallery everywhere now, and the app says where it is: nocturneastro.com.
+
+### Fixed
+- Sending a picture to the gallery could crash Nocturne. If you are on 0.38.0, this is the reason to update.
+
 ## [0.38.0] — 2026-09-21
 
 Send a finished picture to the wall, from inside Nocturne.
