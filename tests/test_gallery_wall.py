@@ -536,19 +536,33 @@ def test_the_SITE_says_gallery_not_wall():
 
 # --- the privacy claims must survive the feature (2026-09-22) ---------------
 
-def test_no_page_still_claims_TWO_network_requests():
+def test_the_pages_count_the_network_requests_correctly():
     """Andreas, after v0.39.0 shipped: "we are now actively lying in several
     places on the website in regards to the new share to gallery function."
 
-    He was right. Sending a picture is a THIRD request, and both the privacy
-    page and the FAQ still said two. A false claim on a privacy page is the
-    worst kind of stale copy, and the feature shipping is exactly when it goes
-    stale — which is why this is a test and not a note.
+    He was right. Sending a picture was a THIRD request and both pages still
+    said two. A false claim on a privacy page is the worst kind of stale copy,
+    and the feature shipping is exactly when it goes stale — which is why this
+    is a test and not a note.
+
+    COUNTED, not hardcoded. The first version asserted the literal word
+    "three", so it needed editing every time a request was added — the same
+    shape as the bug it exists to catch, and it was already named after a
+    number two versions out of date. The number in the prose must match the
+    page's OWN table, whatever that number becomes.
     """
+    words = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+    table = (SITE / "privacy.html").read_text(encoding="utf-8")
+    actual = len(re.findall(r'data-label="Request">([^<]+)', table))
+    assert actual in words, f"{actual} requests — extend the word list"
     for name in ("privacy.html", "faq.html"):
         t = (SITE / "_src" / name).read_text(encoding="utf-8")
-        assert "two network requests" not in t, f"{name} still says two"
-        assert "three network requests" in t, f"{name} does not say three"
+        assert f"{words[actual]} network requests" in t, (
+            f"{name} does not say {words[actual]}, but the table lists {actual}")
+        for n, word in words.items():
+            if n != actual:
+                assert f"{word} network requests" not in t, (
+                    f"{name} still says {word}; the table lists {actual}")
 
 
 def test_no_page_claims_images_NEVER_leave():
@@ -560,13 +574,22 @@ def test_no_page_claims_images_NEVER_leave():
             assert lie not in t, f"{name}: {lie!r}"
 
 
-def test_the_network_summary_lists_ALL_THREE():
+def test_the_network_summary_lists_THEM_ALL():
     """The table is the page's own checklist; two rows under a heading saying
-    three is the same defect one paragraph later."""
+    three is the same defect one paragraph later.
+
+    FOUR since 2026-09-22, when reporting a problem moved from a browser
+    handoff — which sent nothing — to the app posting the report itself. This
+    test caught the table and left the two prose sentences saying "three" to be
+    found by hand, so it now checks the WORD as well."""
     t = (SITE / "privacy.html").read_text(encoding="utf-8")
     rows = re.findall(r'data-label="Request">([^<]+)', t)
-    assert len(rows) == 3, f"expected three requests, found {rows}"
+    assert len(rows) == 4, f"expected four requests, found {rows}"
     assert any("allery" in r for r in rows), f"the gallery is missing: {rows}"
+    assert any("report" in r.lower() for r in rows), f"the report is missing: {rows}"
+    # The prose number is checked against this table by
+    # test_the_pages_count_the_network_requests_correctly, which counts rather
+    # than hardcoding, so there is nothing to repeat here.
 
 
 def test_the_FAQ_names_where_the_third_one_goes():
