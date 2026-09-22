@@ -326,9 +326,9 @@ scripts: main.js, lightbox.js
         <p>Every picture here came off a ZWO Seestar and was stacked and finished in
           Nocturne. Each one carries its own capture data, so you can
           see what a given number of ten-second frames actually buys you.</p>
-        <p class="fine">Made something with Nocturne? Send it from the Share window and it will
-          appear here once I have looked at it. To have a picture taken down, ask through
-          <a href="support.html">the support form</a>.</p>
+        <p class="fine">Made something with Nocturne? Send it from the <strong>Export</strong>
+          step and it will appear here once I have looked at it. To have a picture taken down,
+          ask through <a href="support.html">the support form</a>.</p>
       </div>
     </section>
 

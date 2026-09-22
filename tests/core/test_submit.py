@@ -177,3 +177,60 @@ def test_submit_asks_for_JSON_and_sends_consent():
     assert b'name="ajax"' in seen["body"] and b"1" in seen["body"]
     assert b'name="consent"' in seen["body"]
     assert seen["url"].endswith("/submit.php")
+
+
+# --- the picture that is sent (2026-09-22) ---------------------------------
+
+def _astro(h, w):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    rng = np.random.default_rng(5)
+    return AstroImage(rng.random((h, w, 3)).astype("float32"))
+
+
+def test_jpeg_bytes_is_the_EXPORTS_own_pixels():
+    """It goes through display_data + _to_uint exactly as save_png does, so a
+    submission cannot differ from the file the same step would write. That is
+    the whole reason submitting moved out of the Share dialog."""
+    import inspect
+    from nocturne.core import export
+    src = inspect.getsource(export.jpeg_bytes)
+    assert "display_data(" in src and "_to_uint(" in src
+
+
+def test_jpeg_bytes_caps_the_longest_edge():
+    from PIL import Image
+    import io
+    from nocturne.core.export import jpeg_bytes
+    data = jpeg_bytes(_astro(1200, 2400), 900)
+    im = Image.open(io.BytesIO(data))
+    assert max(im.size) == 900
+    assert abs(im.size[0] / im.size[1] - 2.0) < 0.02, "aspect must survive"
+
+
+def test_jpeg_bytes_NEVER_upscales():
+    """Upscaling adds pixels without detail, and a bigger upload with them.
+
+    This pins PIL's guarantee rather than our own code: thumbnail() never
+    enlarges, which is why jpeg_bytes has no size check. A mutation of the
+    check could not fail this test, because there is no check — the honest
+    response was to delete the redundant guard rather than keep a test that
+    appeared to cover it.
+    """
+    from PIL import Image
+    import io
+    from nocturne.core.export import jpeg_bytes
+    im = Image.open(io.BytesIO(jpeg_bytes(_astro(300, 400), 2400)))
+    assert im.size == (400, 300)
+
+
+def test_jpeg_bytes_survives_a_MONO_image():
+    """A single-channel master must not raise on the way to the wall."""
+    import io
+    import numpy as np
+    from PIL import Image
+    from nocturne.core.image import AstroImage
+    from nocturne.core.export import jpeg_bytes
+    mono = AstroImage(np.random.default_rng(1).random((200, 300)).astype("float32"))
+    im = Image.open(io.BytesIO(jpeg_bytes(mono, 900)))
+    assert im.mode == "RGB", "JPEG needs three channels"

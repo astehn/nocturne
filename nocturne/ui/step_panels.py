@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..core.autostretch import _TARGET_BG
@@ -75,6 +75,31 @@ def _desc_label(text: str) -> QLabel:
     return label
 
 
+def _wall_summary(fields: dict, handle: str) -> str:
+    """One line naming what the wall will show beside the picture.
+
+    Built from the SAME dict that gets posted, so the panel cannot describe one
+    submission and send another — which is the fault this whole move exists to
+    correct, one step to the left.
+
+    Parts are collected and joined, so a file with almost no header renders a
+    short line rather than a row of separators.
+    """
+    bits = []
+    if (fields.get("target") or "").strip():
+        bits.append(str(fields["target"]).strip())
+    if fields.get("frames") and fields.get("sub_s"):
+        sub = str(fields["sub_s"]).rstrip("0").rstrip(".")
+        bits.append(f"{fields['frames']} \u00d7 {sub}s")
+    if fields.get("instrument"):
+        bits.append(str(fields["instrument"]))
+    if fields.get("captured_on"):
+        bits.append(str(fields["captured_on"]))
+    if (handle or "").strip():
+        bits.append(handle.strip())
+    return "The wall will show: " + " \u00b7 ".join(bits) if bits else ""
+
+
 def build_panel(
     stage,
     *,
@@ -87,6 +112,7 @@ def build_panel(
     on_flip_h=None,
     on_flip_v=None,
     on_export=None,
+    wall_fields=None, wall_handle="", on_wall_submit=None,
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
@@ -947,6 +973,99 @@ def build_panel(
                 "Starless + stars split needs RC-Astro (set its path in Settings)."))
         w.fmt_box = box
         w.export_btn = export_btn
+
+        # --- and, optionally, the wall ---------------------------------
+        #
+        # HERE rather than in the Share dialog (spec 2.4). Share reframes for a
+        # destination and composes without the plate, so what it sent differed
+        # from what it showed — in the one dialog built around those being the
+        # same thing. At the end of the pipeline nothing is transformed on the
+        # way out, and this is also the moment someone has just finished
+        # something they are pleased with.
+        #
+        # The panel RECEIVES the facts and a callback. It never touches the
+        # image: composing here would be the second compose path all over again,
+        # one step to the left.
+        w.wall_consent = None
+        w.wall_btn = None
+        w.wall_note = None
+        w.wall_target = None
+        if wall_fields is not None:
+            # The Colour step's divider, so "optional" reads the same way
+            # twice in the app rather than twice differently.
+            lay.addSpacing(14)
+            wall_rule = QFrame()
+            wall_rule.setFrameShape(QFrame.Shape.HLine)
+            wall_rule.setObjectName("panelRule")
+            lay.addWidget(wall_rule)
+            lay.addSpacing(10)
+            heading = QLabel("Send to the wall")
+            heading.setObjectName("panelSectionLabel")
+            lay.addWidget(heading)
+            lay.addWidget(_desc_label(
+                "Optional. Your picture goes to the gallery for review — it is "
+                "not published straight away, and it can be taken down later."))
+
+            # WHAT IT WILL SAY ABOUT YOU, from the same dict that gets posted,
+            # so the panel cannot claim one thing and send another.
+            summary = _wall_summary(wall_fields, wall_handle)
+            if summary:
+                lay.addWidget(_desc_label(summary))
+
+            # ONE field, and only when the file supplied no object. A TIFF has
+            # no FITS headers and finishing one is a first-class use; without
+            # this such a picture reaches the wall as a byline and nothing else.
+            if not (wall_fields.get("target") or "").strip():
+                lay.addWidget(QLabel("Object"))
+                w.wall_target = QLineEdit()
+                w.wall_target.setPlaceholderText("M 31 — this file does not name one")
+                lay.addWidget(w.wall_target)
+
+            w.wall_consent = QCheckBox("Publish this on the Nocturne wall")
+            w.wall_btn = QPushButton("Send to the wall")
+            w.wall_btn.setEnabled(False)
+            w.wall_note = QLabel("")
+            w.wall_note.setWordWrap(True)
+            w.wall_note.setObjectName("stepDesc")
+
+            def _wall_state() -> None:
+                if getattr(w, "_wall_sent", False):
+                    return
+                if not (wall_handle or "").strip():
+                    w.wall_btn.setEnabled(False)
+                    w.wall_note.setText(
+                        "Set a handle in Settings first — it is the only credit "
+                        "shown beside your picture.")
+                    return
+                w.wall_btn.setEnabled(w.wall_consent.isChecked())
+                w.wall_note.setText("")
+
+            def _wall_click() -> None:
+                # Dead for the whole flight: two presses would queue the same
+                # picture twice.
+                w.wall_btn.setEnabled(False)
+                w.wall_note.setText("Sending…")
+                target = w.wall_target.text().strip() if w.wall_target else ""
+                if on_wall_submit is not None:
+                    on_wall_submit(target)
+
+            def _wall_finished(ok: bool, message: str) -> None:
+                w.wall_note.setText(message)
+                if ok:
+                    w._wall_sent = True          # spent; the same picture goes once
+                    w.wall_btn.setEnabled(False)
+                    w.wall_consent.setEnabled(False)
+                else:
+                    # A network blip must not cost someone their submission.
+                    w.wall_btn.setEnabled(w.wall_consent.isChecked())
+
+            w.wall_consent.toggled.connect(_wall_state)
+            w.wall_btn.clicked.connect(_wall_click)
+            w.wall_finished = _wall_finished
+            lay.addWidget(w.wall_consent)
+            lay.addWidget(w.wall_btn)
+            lay.addWidget(w.wall_note)
+            _wall_state()
 
     else:  # placeholder / unknown
         lay.addWidget(QLabel("Coming soon."))

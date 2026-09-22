@@ -360,13 +360,30 @@ def test_every_row_can_be_deleted_outright():
         "remove must be offered for every status, not only approved"
 
 
-def test_the_share_page_explains_submitting():
-    """The wall's only route in is a button in Share, so the page that
-    documents Share has to mention it."""
+def test_the_SHARE_page_no_longer_claims_to_submit():
+    """Moved to the Export step on 2026-09-22 (spec §2.4). A page still
+    describing a button that is not there is worse than one that is silent."""
     t = (SITE / "_src" / "share.html").read_text(encoding="utf-8")
-    assert "gallery.html" in t
-    assert "wall" in t.lower()
-    assert "location" in t.lower(), "the privacy promise travels with the feature"
+    assert "Send to the wall" not in t
+
+
+def test_the_pages_point_at_EXPORT():
+    """The wall's only route in is the Export step, so the pages that describe
+    submitting have to name it."""
+    priv = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8")
+    assert "Export</strong> step can send" in priv
+    assert "location is never sent" in priv.lower() or "never sent" in priv.lower()
+    gal = (SITE / "_src" / "gallery.html").read_text(encoding="utf-8")
+    assert "Export" in gal and "support.html" in gal
+    assert "Share window" not in gal
+
+
+def test_the_gallery_copy_lives_in_its_GENERATOR():
+    """_src/gallery.html is written whole by build_showcase.py every run, so an
+    edit there is undone by the next build — which happened on 2026-09-21 and
+    silently reverted a prose review."""
+    gen = (ROOT / "packaging" / "build_showcase.py").read_text(encoding="utf-8")
+    assert "Export</strong>\n          step" in gen or "<strong>Export</strong>" in gen
 
 
 def test_the_admin_can_inspect_a_submission_full_size():

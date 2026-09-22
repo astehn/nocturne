@@ -75,6 +75,31 @@ def save_png(img: AstroImage, path: str, icc: bytes | None = None, *,
     Image.fromarray(arr, mode=mode).save(path, format="PNG", **extra)
 
 
+def jpeg_bytes(img: AstroImage, longest_edge: int, *, linked: bool = True,
+               quality: int = 92) -> bytes:
+    """The finished picture as JPEG bytes, for the wall.
+
+    THE EXPORT'S OWN PIXELS. It goes through `display_data` + `_to_uint` exactly
+    as save_png does, so a submission cannot differ from the file the same step
+    would write — which is the whole reason submitting moved out of the Share
+    dialog, where it composed separately and silently dropped the title plate.
+
+    DOWNSCALE ONLY, and that comes from `thumbnail()` itself rather than from a
+    guard here — it never enlarges, which is why there is no size check to get
+    wrong. The wall builds 2000 and 900px derivatives on arrival, so a larger
+    upload is bandwidth spent on pixels that get discarded, and enlarging a
+    small picture would add none of its own.
+    """
+    import io
+
+    arr = _to_uint(display_data(img, linked=linked), 8)
+    im = Image.fromarray(arr, mode="L" if arr.ndim == 2 else "RGB").convert("RGB")
+    im.thumbnail((longest_edge, longest_edge), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
 def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     # 32-bit float FITS; color stored channels-first (3, H, W).
     data = img.data.astype(np.float32)

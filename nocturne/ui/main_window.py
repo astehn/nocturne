@@ -5,7 +5,7 @@ import hashlib
 import os
 
 import numpy as np
-from PySide6.QtCore import (QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer, QUrl,
+from PySide6.QtCore import (QEvent, QEventLoop, QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl,
                             Signal)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -5091,6 +5091,75 @@ class MainWindow(QMainWindow):
                            metadata=dict(img.metadata)),
                 icc_bytes(space))
 
+    # --- the wall ------------------------------------------------------
+    #
+    # Moved here from the Share dialog on 2026-09-22 (spec 2.4). Share reframes
+    # FOR A DESTINATION and composed without the plate, so what it sent differed
+    # from what it showed. At Export the finished picture is the picture.
+
+    def _wall_fields(self, stage) -> dict | None:
+        """The facts a submission would carry, or None to hide the offer.
+
+        None rather than an empty dict on any other stage: the panel shows the
+        block only when it gets something, so the offer cannot appear halfway
+        through the pipeline where there is nothing finished to send.
+        """
+        if getattr(stage, "kind", "") != "export" or self.project is None:
+            return None
+        from ..core.submit import submission_fields
+        handle = (getattr(self.settings, "handle", "") or "").strip()
+        # METADATA LIVES ON THE IMAGE, not the window — the same place
+        # _share() reads it from. There is no MainWindow.metadata, and guessing
+        # there was broke the panel for every stage.
+        meta = dict(self.project.current().metadata or {})
+        meta["source_label"] = self._source_label
+        return submission_fields(meta, handle)
+
+    def _submit_to_wall(self, target: str) -> None:
+        """Compose the finished picture and post it, off the interface thread.
+
+        The image is the EXPORT's own image at SUBMIT_EDGE — not a second
+        compose. Nothing is reframed and there is no plate to strip, which is
+        the whole reason this lives here now.
+        """
+        if self.project is None:
+            return
+        from ..core.submit import SUBMIT_EDGE, submit as _submit
+
+        panel = self._panel
+        meta = dict(self.project.current().metadata or {})
+        # The typed object is a FALLBACK, never an override: a header is the
+        # capture's own record, and the field is only shown when there is none.
+        if target and not (meta.get("target") or meta.get("target_solved")):
+            meta["target"] = target
+        handle = (getattr(self.settings, "handle", "") or "").strip()
+
+        img = self.project.current()
+        from ..core.export import jpeg_bytes
+        data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
+
+        class _Signals(QObject):
+            done = Signal(bool, str)
+
+        class _Job(QRunnable):
+            """Holds bytes and a dict, never the window. Qt widgets are not
+            thread-safe, and a worker with a window reference is one setText()
+            from repainting off-thread."""
+
+            def __init__(self):
+                super().__init__()
+                self.signals = _Signals()
+
+            def run(self) -> None:
+                ok, message = _submit(data, meta, handle)
+                self.signals.done.emit(ok, message)
+
+        job = _Job()
+        job.signals.done.connect(
+            lambda ok, msg: panel.wall_finished(ok, msg)
+            if hasattr(panel, "wall_finished") else None)
+        QThreadPool.globalInstance().start(job)
+
     def export_final(self, fmt: str, space: str = "sRGB") -> None:
         if self.project is None or self._busy:
             return
@@ -5252,6 +5321,9 @@ class MainWindow(QMainWindow):
             on_flip_h=self._flip_h,
             on_flip_v=self._flip_v,
             on_export=self.export_final,
+            wall_fields=self._wall_fields(stage),
+            wall_handle=(getattr(self.settings, "handle", "") or "").strip(),
+            on_wall_submit=self._submit_to_wall,
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,
