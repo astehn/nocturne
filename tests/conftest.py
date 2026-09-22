@@ -84,3 +84,46 @@ _denoise_model.EXTERNAL_DIR = _NO_MODELS
 def _no_external_models():
     _denoise_model.EXTERNAL_DIR = _NO_MODELS
     yield
+
+
+# A MODAL DIALOG IN A TEST HANGS THE WHOLE SUITE, FOREVER.
+#
+# 2026-09-22: `Help ▸ Report a problem…` changed from opening a browser to
+# opening an in-app dialog, and three existing tests called it. `exec()` blocks
+# on a user who is never coming. The run did not fail — it sat there, silent,
+# for 1 hour 43 minutes against a normal 3.5, having written zero bytes,
+# before anyone noticed it was not simply slow.
+#
+# A hang costs hours where a failure costs seconds, so `exec()` on a dialog now
+# RAISES by default. A test that genuinely wants a modal session opts in with
+# the `modal_dialogs` fixture, which makes the intent visible at the call site
+# rather than making every other test wait on it.
+@pytest.fixture(autouse=True)
+def _no_modal_dialogs(request):
+    if "modal_dialogs" in request.fixturenames:
+        yield
+        return
+    try:
+        from PySide6.QtWidgets import QDialog
+    except ImportError:                       # pragma: no cover - no Qt, no dialogs
+        yield
+        return
+
+    def _refuse(self, *a, **k):
+        raise AssertionError(
+            f"{type(self).__name__}.exec() would block the suite on a user who "
+            "is never coming. Patch it, call the code under it directly, or "
+            "request the `modal_dialogs` fixture if you really mean it.")
+
+    original = QDialog.exec
+    QDialog.exec = _refuse
+    try:
+        yield
+    finally:
+        QDialog.exec = original
+
+
+@pytest.fixture
+def modal_dialogs():
+    """Opt out of _no_modal_dialogs for a test that drives a real modal."""
+    return True

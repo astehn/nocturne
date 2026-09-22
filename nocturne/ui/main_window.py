@@ -1102,15 +1102,37 @@ class MainWindow(QMainWindow):
         }
 
     def _report_problem(self) -> None:
-        """Open the support page with the diagnostics already filled in.
+        """Report a problem, in a dialog, with the diagnostics already filled in.
 
-        NOTHING IS SENT FROM HERE. The browser opens a form the person reads
-        and submits themselves, so they see every value before it leaves the
-        machine and can delete any of it — the log in particular, which
-        contains file paths and therefore folder names and therefore possibly
-        their own name. Same principle as the telemetry prompt: they see it,
-        they choose. An app that quietly posted a diagnostic bundle would be a
-        different product from the one described on the privacy page.
+        NOTHING IS SENT UNTIL SEND IS PRESSED. That property is the same one
+        the browser handoff had, and it is stronger here: the person sees every
+        value in a form they can edit, INCLUDING the whole diagnostic log in a
+        scrollable pane, which a URL-capped textarea could never show them.
+        They can untick it. An app that quietly posted a diagnostic bundle
+        would be a different product from the one the privacy page describes,
+        and this is not that.
+
+        The handoff moved to _report_problem_in_a_browser and is now the
+        fallback for a send that cannot get out. It was replaced because a URL
+        is a hard ceiling and Andreas needs the log: *"i dont want to have to
+        mail a user back and ask for information ... there is simply not enough
+        time for that"* (2026-09-22).
+
+        site/support.html is untouched and still serves web-initiated reports,
+        which carry no log — a visitor cannot be asked to find a file on their
+        own disk.
+        """
+        from .report_dialog import ReportDialog
+        ReportDialog(self.settings, self._report_context(), parent=self).exec()
+
+    def _report_problem_in_a_browser(self) -> None:
+        """The old handoff, kept as the FALLBACK when a send cannot get out.
+
+        No longer the default: it carries the diagnostics in a URL, and a URL
+        is a hard ceiling — the whole point of the in-app dialog is to send a
+        log that does not fit in one. But a machine that cannot reach the
+        server can still reach a browser later, and losing what somebody typed
+        is worse than either.
         """
         from urllib.parse import urlencode
 
