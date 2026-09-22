@@ -3535,8 +3535,26 @@ class MainWindow(QMainWindow):
             # said "rcastro" while GraXpert ran. The engine appended below is
             # what the step recorded actually running.
             label = str(option.get("level", "medium"))
+        elif stage_id == "stretch" and isinstance(option, dict):
+            # The visual picker hands over {"amount": .., "linked": ..}, and
+            # with no branch here the dict's REPR went into the history —
+            # "Stretch ({'amount': 0.12, 'linked': False})" — in every shipped
+            # build. Whether the channels were linked is the interesting half:
+            # an unlinked stretch is the one that can move colour.
+            amount = float(option.get("amount", 0.0))
+            label = f"{amount:.2f} {'linked' if option.get('linked', True) else 'unlinked'}"
+        elif stage_id == "ai_denoise" and isinstance(option, dict):
+            engine = str(option.get("engine") or "")
+            model = engine[3:] if engine.startswith("nr:") else engine
+            label = str(option.get("level", "medium")) + (f" ({model})" if model else "")
         elif isinstance(option, float):
             label = f"{option:.2f}"
+        elif isinstance(option, (dict, list, tuple)):
+            # A repr is never a log line. Reaching here means a step grew a
+            # structured option without a branch above; say so instead of
+            # printing Python at the user. Pinned by
+            # test_no_option_shape_in_the_pipeline_falls_through_to_a_repr.
+            label = ""
         else:
             label = option
         # "free" is the internal tag `_split_tagged` has used since 2026-09-18

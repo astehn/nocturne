@@ -222,3 +222,67 @@ def test_a_tool_handed_a_cached_split_reports_no_engine_of_its_own(qtbot, tmp_pa
     img = _img()
     win._remember_split(img, img, img)          # no tag
     assert win._split_engine_for(img) == ""
+
+
+# --- an option dict must never reach the log as a repr (2026-09-22) ---------
+
+def test_no_step_prints_a_raw_python_dict_in_the_history(qtbot, tmp_path):
+    """Seen in Andreas's own 16-line session log:
+
+        Stretch ({'amount': 0.12, 'linked': False})
+        Linear Denoise ({'engine': 'nr:v10', 'level': 'medium'})
+
+    `_log_step` has a branch per option shape and falls through to `label =
+    option`, so any step whose option is a dict prints its repr. Linear Denoise
+    is gated out of releases; STRETCH SHIPS, so every user has been reading
+    that line. The log is the first thing a support report carries — it has to
+    be readable by the person who did not write it.
+    """
+    from nocturne.ui.main_window import MainWindow
+
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    img = _img()
+    none_step = type("S", (), {"last_engine": None})()
+
+    win._log_step("stretch", {"amount": 0.12, "linked": False}, img, img, none_step)
+    line = win.log_panel.toPlainText().splitlines()[-1]
+    assert "{" not in line and "'" not in line, line
+    assert "0.12" in line and "unlinked" in line, line
+
+    win._log_step("stretch", {"amount": 0.30, "linked": True}, img, img, none_step)
+    line = win.log_panel.toPlainText().splitlines()[-1]
+    assert "0.30" in line and "linked" in line and "unlinked" not in line, line
+
+    win._log_step("ai_denoise", {"engine": "nr:v10", "level": "medium"},
+                  img, img, none_step)
+    line = win.log_panel.toPlainText().splitlines()[-1]
+    assert "{" not in line and "'" not in line, line
+    assert "medium" in line and "v10" in line, line
+
+
+def test_no_option_shape_in_the_pipeline_falls_through_to_a_repr(qtbot, tmp_path):
+    """Structural: every stage whose option is a dict or an object must have a
+    branch. A new step with a dict option repeats this silently, because the
+    fallthrough produces a plausible-looking line rather than an error."""
+    from nocturne.ui.main_window import MainWindow
+    from nocturne.ui.pipeline import path_stages
+
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    img = _img()
+    none_step = type("S", (), {"last_engine": None})()
+    offenders = []
+    for stage in path_stages(include=frozenset({"ai_denoise"})):
+        try:
+            step = win._step_for(stage.id)
+        except (ValueError, KeyError):
+            continue
+        opt = step.default_option()
+        if not isinstance(opt, (dict, tuple, list)):
+            continue
+        win._log_step(stage.id, opt, img, img, none_step)
+        line = win.log_panel.toPlainText().splitlines()[-1]
+        if "{" in line or "'" in line:
+            offenders.append(f"{stage.id}: {line.strip()}")
+    assert not offenders, f"raw option reprs in the history log: {offenders}"
