@@ -63,6 +63,7 @@ from ..core.star_reduction import reduce_stars
 from ..core.starless import split_stars, star_mask
 from ..steps.green_fringe import FRINGE_MASK_SCALE
 from ..core.stretch import apply_stretch
+from ..core import sessionlog
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
 import time as _time
@@ -266,6 +267,30 @@ class _SaveSignals(QObject):
 # 33 Mpx drizzled frame — so this is a real memory decision, not a free win. Two
 # is still fewer copies than the three per-surface caches it replaced.
 _SPLIT_CACHE_MAX = 2
+
+
+def write_environment(settings, window_size: str) -> None:
+    """What this install IS, written once when the app starts.
+
+    Cheap on purpose: version, platform, geometry and the tool PATHS. NO
+    subprocesses — versions are probed when a report is actually being written,
+    because ASTAP's probe took 60 seconds on the machine this was measured on
+    (2026-09-22) and a launch must not pay for that.
+
+    Written at startup rather than collected when the report is composed,
+    because a hard crash leaves nothing to collect from: the Share segfault of
+    2026-09-21 took the whole process with it, and this file survives that.
+    """
+    import platform
+
+    from .. import __version__
+    sessionlog.write(f"--- Nocturne {__version__} · "
+                     f"{platform.system()} {platform.release()} "
+                     f"({platform.machine()}) · window {window_size}")
+    for field, name in (("graxpert_path", "GraXpert"), ("rcastro_path", "RC-Astro"),
+                        ("starnet_path", "StarNet2"), ("astap_path", "ASTAP")):
+        path = getattr(settings, field, "") or ""
+        sessionlog.write(f"    {name:9} {path or '(not set)'}")
 
 
 def render_engine(tag: str) -> str:
@@ -1016,6 +1041,7 @@ class MainWindow(QMainWindow):
             f"Elapsed: {exc.elapsed:.1f}s\n"
             f"stderr:\n{exc.stderr}"
         )
+        sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
         self._show_warning(prefix)
         self._show_details_btn.show()
         self._copy_log_btn.show()
@@ -1076,15 +1102,42 @@ class MainWindow(QMainWindow):
         }
 
     def _report_problem(self) -> None:
-        """Open the support page with the diagnostics already filled in.
+        """Report a problem, in a dialog, with the diagnostics already filled in.
 
-        NOTHING IS SENT FROM HERE. The browser opens a form the person reads
-        and submits themselves, so they see every value before it leaves the
-        machine and can delete any of it — the log in particular, which
-        contains file paths and therefore folder names and therefore possibly
-        their own name. Same principle as the telemetry prompt: they see it,
-        they choose. An app that quietly posted a diagnostic bundle would be a
-        different product from the one described on the privacy page.
+        NOTHING IS SENT UNTIL SEND IS PRESSED. That property is the same one
+        the browser handoff had, and it is stronger here: the person sees every
+        value in a form they can edit, INCLUDING the whole diagnostic log in a
+        scrollable pane, which a URL-capped textarea could never show them.
+        They can untick it. An app that quietly posted a diagnostic bundle
+        would be a different product from the one the privacy page describes,
+        and this is not that.
+
+        The handoff moved to _report_problem_in_a_browser and is now the
+        fallback for a send that cannot get out. It was replaced because a URL
+        is a hard ceiling and Andreas needs the log: *"i dont want to have to
+        mail a user back and ask for information ... there is simply not enough
+        time for that"* (2026-09-22).
+
+        site/support.html is untouched and still serves web-initiated reports,
+        which carry no log — a visitor cannot be asked to find a file on their
+        own disk.
+        """
+        from .report_dialog import ReportDialog
+        dlg = ReportDialog(self.settings, self._report_context(), parent=self)
+        # Parented dialogs live as long as the window unless told otherwise,
+        # and this one holds the whole log — up to both sessions' worth of text
+        # in a QPlainTextEdit. Two open/close cycles left two of them alive.
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.exec()
+
+    def _report_problem_in_a_browser(self) -> None:
+        """The old handoff, kept as the FALLBACK when a send cannot get out.
+
+        No longer the default: it carries the diagnostics in a URL, and a URL
+        is a hard ceiling — the whole point of the in-app dialog is to send a
+        log that does not fit in one. But a machine that cannot reach the
+        server can still reach a browser later, and losing what somebody typed
+        is worse than either.
         """
         from urllib.parse import urlencode
 
@@ -3588,6 +3641,10 @@ class MainWindow(QMainWindow):
         if engine and f"({engine})" not in label:
             label = f"{label} ({engine})" if label else f"({engine})"
         self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
+        # And to the file. The panel is wiped when a project closes and gone
+        # when the app exits — which is exactly when somebody sits down to
+        # write a support ticket.
+        sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
 
     def _run_busy(self, work, on_result, label: str, err_prefix: str,
                   *, over_image: bool = True) -> None:

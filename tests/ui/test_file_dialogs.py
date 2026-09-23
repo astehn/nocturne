@@ -93,15 +93,24 @@ def test_no_static_file_dialogs_remain_in_the_ui():
     """The static QFileDialog.getXxx helpers are ALWAYS application-modal, which
     is the bug. A new call site added later would reintroduce it silently, so
     this fails the build instead."""
+    import ast
     import pathlib
     ui = pathlib.Path(__file__).resolve().parents[2] / "nocturne" / "ui"
     offenders = []
-    for path in sorted(ui.glob("*.py")):
+    for path in sorted(ui.rglob("*.py")):
         if path.name == "file_dialogs.py":
             continue
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            if "QFileDialog.get" in line:
-                offenders.append(f"{path.name}:{n}")
+        for node in ast.walk(ast.parse(path.read_text())):
+            # Parsed, not grepped. Scanning source TEXT also matches the
+            # COMMENT explaining this rule, so writing "use file_dialogs, not
+            # QFileDialog.getOpenFileName" at a call site failed the test —
+            # prose that is evidence the rule is followed, flagged as a
+            # violation. An AST sees attribute access and nothing else.
+            if (isinstance(node, ast.Attribute)
+                    and node.attr.startswith("get")
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "QFileDialog"):
+                offenders.append(f"{path.name}:{node.lineno}")
     assert offenders == [], (
         "use nocturne.ui.file_dialogs instead — the static helpers are "
         f"application-modal and strand on the wrong screen: {offenders}")

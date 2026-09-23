@@ -8,6 +8,7 @@ from astropy.io import fits
 
 from ..core.image import AstroImage
 from ..core.tasks import Cancelled, current
+from ..core import sessionlog
 
 
 class ToolError(Exception):
@@ -73,6 +74,15 @@ def run_cli(args: list[str], cancel=None, on_line=None) -> None:
         proc.wait()
         out, err = "\n".join(lines), ""
     elapsed = time.monotonic() - start
+    # HERE, not in either branch above and not after the raise: this is the one
+    # point both the streaming and the non-streaming paths converge on, and it
+    # is before the ToolError — a tool that FAILED is precisely what a support
+    # ticket is usually about, and an exception must not take the record with
+    # it. The elapsed time is kept because it is the signal people actually
+    # read: a step that finishes suspiciously fast is how a silently
+    # downgraded pipeline looks (2026-09-22).
+    sessionlog.write(f"tool  {' '.join(str(a) for a in args)} "
+                     f"-> exit {proc.returncode} in {elapsed:.1f}s")
     if token is not None and token.cancelled:
         raise Cancelled()
     if proc.returncode != 0:

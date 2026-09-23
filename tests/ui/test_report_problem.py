@@ -1,9 +1,15 @@
-"""Help ▸ Report a problem — the route that actually matters.
+"""The browser handoff — now the FALLBACK, not the default.
 
-The website form is where a report lands; this is what makes it worth reading.
-A report saying "it doesn't fit my MacBook" costs several round trips with
-someone who may never reply. One carrying version, OS, LOGICAL screen size and
-window size is fixable without a reply at all.
+Until 2026-09-22 `Help ▸ Report a problem…` opened the website with the
+diagnostics in the URL fragment. It now opens an in-app dialog that posts the
+report itself, because a URL is a hard ceiling and could never carry a
+diagnostic log — see ui/report_dialog.py and tests/ui/test_report_dialog.py.
+
+The handoff survives as `_report_problem_in_a_browser`, offered when a send
+cannot get out, and everything below still holds for it. These tests moved to
+that method rather than being deleted: the fragment-not-query rule in
+particular is a promise the privacy page makes, and it must not lapse just
+because the path became the second choice.
 """
 import os
 from urllib.parse import parse_qs, urlparse
@@ -80,7 +86,7 @@ def test_it_OPENS_a_page_and_sends_nothing(main_window, monkeypatch):
                         lambda *a, **k: posted.append(a) or (_ for _ in ()).throw(
                             AssertionError("the app must not send the report itself")))
 
-    main_window._report_problem()
+    main_window._report_problem_in_a_browser()
     assert len(opened) == 1
     assert not posted, "no network request may be made from the app"
 
@@ -111,7 +117,7 @@ def test_an_empty_field_is_omitted_rather_than_sent_blank(main_window, monkeypat
     from PySide6.QtGui import QDesktopServices
     monkeypatch.setattr(QDesktopServices, "openUrl", lambda u: opened.append(u.toString()))
     main_window._last_diagnostic = ""
-    main_window._report_problem()
+    main_window._report_problem_in_a_browser()
     assert "log=" not in opened[0]
 
 
@@ -128,7 +134,7 @@ def test_a_huge_log_cannot_make_the_page_unopenable(main_window, monkeypatch):
     from PySide6.QtGui import QDesktopServices
     monkeypatch.setattr(QDesktopServices, "openUrl", lambda u: opened.append(u.toString()))
     main_window._last_diagnostic = "x" * 50_000 + "THE ACTUAL ERROR"
-    main_window._report_problem()
+    main_window._report_problem_in_a_browser()
     assert len(opened[0]) < 8000, f"URL is {len(opened[0])} bytes"
     assert "THE+ACTUAL+ERROR" in opened[0] or "THE%20ACTUAL%20ERROR" in opened[0], \
         "the end of the log is the part worth keeping"

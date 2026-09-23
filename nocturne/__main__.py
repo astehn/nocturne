@@ -10,9 +10,10 @@ from PySide6.QtWidgets import QApplication
 from . import APP_NAME, __version__
 from .core.applog import configure_logging
 from .core.certs import configure_ssl
+from .core import sessionlog
 from .settings import autoconfigure_tools, resolve_settings_path
 from .ui.fonts import load_bundled_fonts
-from .ui.main_window import MainWindow
+from .ui.main_window import MainWindow, write_environment
 from .ui.splash import MIN_SPLASH_SECONDS, make_splash
 from .ui.theme import apply_dark_theme
 
@@ -197,6 +198,13 @@ def main() -> None:
     # which phase was slow. ~/.nocturne/nocturne.log now holds it.
     configure_logging()
 
+    # A DIFFERENT file and a different job. nocturne.log is drizzle's phase
+    # timings; this one is what a support ticket carries — every step, every
+    # tool run, every caught error. Opened here, above everything, because a
+    # write with no session open is silently dropped and MainWindow's own
+    # construction already autoconfigures tools and probes paths.
+    sessionlog.start_session()
+
     # The check the packaged app could not do for itself. From source the build
     # machine's Homebrew cert store is present, so a bundle that works only here
     # looks perfectly healthy; the failure appears on a user's Mac as silence.
@@ -298,6 +306,12 @@ def main() -> None:
     win.resize(*(fit_to_screen(requested, app) if requested
                  else preferred_size(win, app)))
     win.show()
+
+    # AFTER the resize, so the size recorded is the one the user actually has.
+    # Screen geometry and window size are what a GUI report turns on — users on
+    # Reddit reported sizing problems saying only "a MacBook Pro", which is four
+    # panel sizes across several scaling settings.
+    write_environment(win.settings, f"{win.width()} x {win.height()}")
 
     if "--size" in sys.argv:
         # AFTER show, from a timer, so it reports the window that EXISTS. The

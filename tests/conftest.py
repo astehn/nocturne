@@ -84,3 +84,20 @@ _denoise_model.EXTERNAL_DIR = _NO_MODELS
 def _no_external_models():
     _denoise_model.EXTERNAL_DIR = _NO_MODELS
     yield
+
+
+# `sessionlog._active` and `_started_at` are MODULE GLOBALS. A test that calls
+# start_session() sets them for every test that runs after it — and since
+# run_cli and _log_step write on every tool invocation and every step, the rest
+# of the suite then appends to one leftover temp file and stats it on each
+# write. Isolation here rather than in each test, because the writers are deep
+# in the app and no individual test knows it is logging.
+@pytest.fixture(autouse=True)
+def _isolated_session_log():
+    import nocturne.core.sessionlog as _sl
+    active, started = _sl._active, _sl._started_at
+    _sl._active, _sl._started_at = None, None
+    try:
+        yield
+    finally:
+        _sl._active, _sl._started_at = active, started
