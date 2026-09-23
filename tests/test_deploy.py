@@ -1,4 +1,5 @@
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -182,8 +183,94 @@ def test_build_chown_cmd(tmp_path):
     remote = cmd[2]
     assert "sudo chown -R www-data:www-data /var/www/nocturne" in remote
     assert "-type d -exec chmod 755" in remote
-    assert "-type f -exec chmod 644" in remote
-    assert "/var/www/nocturne" in remote and remote.count("/var/www/nocturne") == 3
+    # qualified, since 2026-09-23: the unqualified sweep took config.php with it
+    assert "-type f ! -name 'config*.php' -exec chmod 644" in remote
+    assert "/var/www/nocturne" in remote and remote.count("/var/www/nocturne") == 4
+
+
+# --- the database password must not be world-readable (2026-09-23) ----------
+
+def test_the_file_chmod_SKIPS_config_php():
+    """The blanket `find -type f -exec chmod 644` swept config.php, which holds
+    the database password, on every site publish. It had been set to 640 by
+    hand once and a later --site-only silently undid it.
+
+    Asserted on the ORDER of the two finds, not just their presence: a command
+    that exempts config.php and then chmods it 644 anyway would satisfy a
+    weaker test while doing exactly what this exists to prevent."""
+    remote = deploy.build_chown_cmd(_cfg(Path(tempfile.mkdtemp())))[2]
+    exempt = remote.index("! -name 'config*.php'")
+    tighten = remote.index("-name 'config*.php' -exec chmod 640")
+    assert exempt < tighten, "config.php is chmodded after being exempted"
+    # and the ordinary file mode is never applied to it afterwards
+    assert "chmod 644" not in remote[tighten:]
+
+
+def test_the_deploy_ENFORCES_the_tight_mode_rather_than_leaving_it_alone():
+    """Merely skipping config.php would leave a box that has already drifted
+    world-readable for ever, with nothing to repair it. One publish must fix
+    it."""
+    remote = deploy.build_chown_cmd(_cfg(Path(tempfile.mkdtemp())))[2]
+    assert "-name 'config*.php' -exec chmod 640" in remote
+
+
+def test_the_tight_mode_still_lets_APACHE_read_it():
+    """640 not 600: the owner is www-data:www-data and Apache must read the
+    file. A mode that locks the web server out takes the whole site down, which
+    is a worse outcome than the one being fixed."""
+    assert deploy.SECRET_MODE == "640"
+    owner_r, group_r, other = (int(c) for c in deploy.SECRET_MODE)
+    assert other == 0, "world must not be able to read it"
+    assert owner_r & 4, "the owner must still be able to read it"
+
+
+# --- nothing in the web root may be served as plain text --------------------
+
+def _fake_run(found: str):
+    calls = []
+    def run(cmd, capture=False, **kw):
+        calls.append(cmd)
+        return found
+    run.calls = calls
+    return run
+
+
+def test_a_config_backup_in_the_web_root_REFUSES_the_publish():
+    """Two config.php.bak-* files sat in the web root from 2026-09-20 to
+    2026-09-23 returning HTTP 200 with the database credentials in them —
+    Apache executes .php but SERVES .php.bak as text. The access log shows bots
+    probing /config.php.bak and /wp-config.php.old on 19 and 21 September; they
+    missed only because the real names carried a date suffix."""
+    run = _fake_run("/var/www/nocturne/config.php.bak-20260920-174507\n")
+    with pytest.raises(SystemExit) as e:
+        deploy.check_no_stray_secrets(_cfg(Path(tempfile.mkdtemp())), run)
+    assert "config.php.bak-20260920-174507" in str(e.value)
+
+
+def test_a_clean_web_root_passes():
+    deploy.check_no_stray_secrets(_cfg(Path(tempfile.mkdtemp())), _fake_run(""))
+    deploy.check_no_stray_secrets(_cfg(Path(tempfile.mkdtemp())), _fake_run("  \n "))
+
+
+def test_the_check_looks_for_every_shape_this_mistake_takes():
+    """Not just the one that happened. An editor backup, a hand-copy backup and
+    a stray SQL dump are the same defect wearing different suffixes."""
+    run = _fake_run("")
+    deploy.check_no_stray_secrets(_cfg(Path(tempfile.mkdtemp())), run)
+    sent = " ".join(run.calls[0])
+    for shape in ("config*.bak*", "*.php.bak*", "*.php~", "*.sql"):
+        assert shape in sent, f"{shape} is not looked for"
+
+
+def test_the_check_is_READ_ONLY():
+    """It reports and refuses; it never deletes. What to do with a file that may
+    be somebody's only backup is not a deploy script's decision."""
+    run = _fake_run("/var/www/nocturne/config.php.bak-1\n")
+    with pytest.raises(SystemExit):
+        deploy.check_no_stray_secrets(_cfg(Path(tempfile.mkdtemp())), run)
+    sent = " ".join(run.calls[0])
+    for destructive in ("rm ", "-delete", "unlink", "mv "):
+        assert destructive not in sent, f"the check runs {destructive!r}"
 
 
 def test_rsync_excludes_survive_colliding_include(tmp_path):

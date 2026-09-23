@@ -279,6 +279,51 @@ def build_rsync_cmd(config: DeployConfig, site_dir: Path) -> list[str]:
     return cmd
 
 
+# Files under the web root that must never take the ordinary file mode. The
+# glob is matched by `find -name`, so it is a basename pattern.
+SECRET_GLOB = "config*.php"
+SECRET_MODE = "640"
+
+# Names that must not EXIST under the web root at all, because the server would
+# hand them to anyone who asked. Apache executes .php; it SERVES .php.bak as
+# plain text, so an editor backup or a hand-copy backup of config.php publishes
+# the database password at a guessable URL.
+#
+# This is not hypothetical. Two config.php.bak-* files sat in the web root from
+# 2026-09-20 to 2026-09-23 returning HTTP 200 with db_user, db_dsn and db_pass
+# in them. The access log shows bots probing for exactly this class of file --
+# /config.php.bak, /config.php~, /wp-config.php.old -- on 19 and 21 September.
+# They missed only because the real names carried a date suffix their wordlist
+# did not have. Nothing in the deploy would ever have mentioned it.
+STRAY_GLOBS = ("config*.bak*", "*.php.bak*", "*.php~", "*.php.orig",
+               "*.php.save", "*.php.old", "*.sql")
+
+
+def build_stray_check_cmd(config: DeployConfig) -> list[str]:
+    """The read-only find behind check_no_stray_secrets, as its own function so
+    --dry-run can print the exact command without running it."""
+    p = config.remote_path
+    expr = " -o ".join(f"-name '{g}'" for g in STRAY_GLOBS)
+    return ["ssh", config.ssh_host, f"sudo find {p} -type f \\( {expr} \\) -print"]
+
+
+def check_no_stray_secrets(config: DeployConfig, run) -> None:
+    """Fail if the web root holds a file the server would serve as plain text.
+
+    Read-only: it reports, and deliberately does not delete. Deciding what to do
+    with a file that may be someone's only backup is not a deploy script's call.
+    """
+    found = (run(build_stray_check_cmd(config), capture=True) or "").strip()
+    if found:
+        raise SystemExit(
+            "refusing to publish: these are inside the web root and would be\n"
+            "served as plain text to anyone who requests them:\n  "
+            + "\n  ".join(found.splitlines())
+            + f"\n\nMove them somewhere outside {config.remote_path} (they are excluded\n"
+              "from the rsync, so they are server-side only and nothing here\n"
+              "created them).")
+
+
 def build_chown_cmd(config: DeployConfig) -> list[str]:
     import re as _re
     if not _re.match(r"^[\w.-]+:[\w.-]+$", config.owner):
@@ -287,9 +332,23 @@ def build_chown_cmd(config: DeployConfig) -> list[str]:
         if not _re.match(r"^[0-7]{3,4}$", mode):
             raise ValueError(f"invalid mode: {mode!r}")
     p = config.remote_path
+    # config*.php IS EXEMPT FROM THE FILE MODE, and then tightened.
+    #
+    # The blanket `find -type f -exec chmod 644` swept config.php, which holds
+    # the database password, and set it world-readable on every single site
+    # publish. It had been tightened to 640 by hand once; a later --site-only
+    # silently undid that, and nothing said so. A mode fixed by hand that the
+    # deploy resets is not fixed, so the deploy is the place to fix it — and it
+    # now ENFORCES 640 rather than merely leaving it alone, which means one
+    # publish repairs a box that has drifted.
+    #
+    # 640 and not 600: the owner is www-data:www-data and Apache reads it.
     remote = (f"sudo chown -R {config.owner} {p} && "
               f"sudo find {p} -type d -exec chmod {config.dir_mode} {{}} + && "
-              f"sudo find {p} -type f -exec chmod {config.file_mode} {{}} +")
+              f"sudo find {p} -type f ! -name '{SECRET_GLOB}' "
+              f"-exec chmod {config.file_mode} {{}} + && "
+              f"sudo find {p} -type f -name '{SECRET_GLOB}' "
+              f"-exec chmod {SECRET_MODE} {{}} +")
     return ["ssh", config.ssh_host, remote]
 
 
@@ -410,6 +469,7 @@ def preflight(config: DeployConfig, run=real_run) -> None:
             run(cmd)
         except subprocess.CalledProcessError:
             raise SystemExit(msg)
+    check_no_stray_secrets(config, run)
 
 
 def _load_notes(path: Path) -> Notes:
@@ -439,9 +499,15 @@ def main(argv: list[str]) -> int:
     if args.site_only:
         generate_site(real_run)
         if args.dry_run:
+            # PRINTED, NOT RUN. The check only reads, but --dry-run's contract
+            # is that it executes nothing at all -- it has to work offline, with
+            # no ssh, on any machine. test_site_only_dry_run_uploads_nothing
+            # holds that line and caught this.
+            print("[dry-run] " + " ".join(build_stray_check_cmd(config)))
             print("[dry-run] " + " ".join(build_rsync_cmd(config, SITE)))
             print("[dry-run] " + " ".join(build_chown_cmd(config)))
             return 0
+        check_no_stray_secrets(config, real_run)
         real_run(build_rsync_cmd(config, SITE))
         real_run(build_chown_cmd(config))
         print("site published")
