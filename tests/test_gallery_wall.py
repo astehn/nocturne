@@ -437,7 +437,8 @@ WALL_PHP = ADMIN_DIR / "wall.php"
 def test_every_admin_file_parses():
     """Four files now, hand-copied to the server. A parse error is a page that
     is simply gone, behind auth where nobody would see it fail."""
-    for f in ("admin.php", "_common.php", "wall.php", "_wall_meta.php", "download.php"):
+    for f in ("admin.php", "_common.php", "wall.php", "_wall_meta.php", "download.php",
+              "_diag_preview.php"):
         r = subprocess.run(["php", "-l", str(ADMIN_DIR / f)], capture_output=True, text=True)
         assert r.returncode == 0, f"{f}: {r.stdout}{r.stderr}"
 
@@ -445,7 +446,7 @@ def test_every_admin_file_parses():
 def test_the_include_only_files_refuse_to_run_alone():
     """Reached directly they either open a database connection nobody asked for
     or die on an undefined variable, printing a server path in the error."""
-    for f in ("_common.php", "wall.php", "_wall_meta.php"):
+    for f in ("_common.php", "wall.php", "_wall_meta.php", "_diag_preview.php"):
         src = (ADMIN_DIR / f).read_text(encoding="utf-8")
         assert "defined('NOCTURNE_ADMIN')" in src, f"{f} is not guarded"
     assert "define('NOCTURNE_ADMIN'" in (ADMIN_DIR / "admin.php").read_text(encoding="utf-8")
@@ -578,15 +579,17 @@ def test_the_network_summary_lists_THEM_ALL():
     """The table is the page's own checklist; two rows under a heading saying
     three is the same defect one paragraph later.
 
-    FOUR since 2026-09-22, when reporting a problem moved from a browser
-    handoff — which sent nothing — to the app posting the report itself. This
-    test caught the table and left the two prose sentences saying "three" to be
-    found by hand, so it now checks the WORD as well."""
+    NAMED, NOT COUNTED. This asserted `len(rows) == 4` and had to be edited on
+    2026-09-23 when a fifth row was added — the same hardcoded-number shape that
+    test_the_pages_count_the_network_requests_correctly was rewritten to escape,
+    sitting ten lines below it. A count cannot tell which request is missing,
+    which is the only thing this test is for: the rows are named instead, and
+    NETWORK_MODULES below is what says the list is complete."""
     t = (SITE / "privacy.html").read_text(encoding="utf-8")
     rows = re.findall(r'data-label="Request">([^<]+)', t)
-    assert len(rows) == 4, f"expected four requests, found {rows}"
     assert any("allery" in r for r in rows), f"the gallery is missing: {rows}"
     assert any("report" in r.lower() for r in rows), f"the report is missing: {rows}"
+    assert any("olour" in r for r in rows), f"colour calibration is missing: {rows}"
     # The prose number is checked against this table by
     # test_the_pages_count_the_network_requests_correctly, which counts rather
     # than hardcoding, so there is nothing to repeat here.
@@ -601,3 +604,63 @@ def test_the_FAQ_names_where_the_third_one_goes():
     assert "location is never sent" in item
     assert "looked at" in item, "say it is not published immediately"
     assert "taken down" in item
+
+
+# --- the privacy table must match the CODE, not just itself (2026-09-23) -----
+
+# Every module in the shipped app that opens an outbound connection, and the
+# privacy table row that discloses it. None means "deliberately not disclosed",
+# and the reason must be written beside it.
+NETWORK_MODULES = {
+    "core/update_check.py": "Update check",
+    "core/telemetry.py": "Usage count",
+    "core/report.py": "Problem report",
+    "core/submit.py": "Gallery submission",
+    "tools/gaia.py": "Colour calibration",
+    # `--check-certs` only: a CLI self-test the user runs deliberately to
+    # diagnose TLS, never reached by the app in normal use.
+    "__main__.py": None,
+}
+
+
+def test_every_module_that_reaches_the_network_has_a_row_on_the_privacy_page():
+    """The counting test above proves the prose agrees with the TABLE. Nothing
+    proved the table agrees with the APP — and it did not.
+
+    SPCC's photometric mode has queried VizieR in Strasbourg since it merged in
+    July 2026 (steps/factory.py wires tools.gaia.query_field into ColorStep).
+    It is the only request that goes to a third party rather than to this
+    project, and the privacy page listed neither it nor the count that included
+    it: the page said three, then four, while the app made four, then five.
+    Found 2026-09-23 by enumerating the callers instead of reading the page.
+
+    A new module that opens a connection fails this test until someone either
+    discloses it or writes down why it needs no disclosure. That decision is
+    the point; the failure just makes it happen.
+    """
+    root = Path(__file__).parent.parent / "nocturne"
+    # "urlopen" without the paren: four of the five take it as a DEFAULT
+    # ARGUMENT (`opener=urllib.request.urlopen`) so tests can pass a fake, and
+    # call it through that name. Matching "urlopen(" found only two of six and
+    # would have let this guard pass while missing the modules it exists for.
+    found = sorted(str(p.relative_to(root)) for p in root.rglob("*.py")
+                   if "urlopen" in p.read_text(encoding="utf-8"))
+    assert found == sorted(NETWORK_MODULES), (
+        "the set of modules opening connections changed:\n"
+        f"  in the code : {found}\n"
+        f"  accounted for: {sorted(NETWORK_MODULES)}\n"
+        "Add it to NETWORK_MODULES with its privacy-table row, or None plus the reason.")
+
+    table = (SITE / "privacy.html").read_text(encoding="utf-8")
+    rows = re.findall(r'data-label="Request">([^<]+)', table)
+    for module, row in NETWORK_MODULES.items():
+        if row is not None:
+            assert row in rows, f"{module} reaches the network but the table has no {row!r} row"
+
+
+def test_the_third_party_recipient_is_NAMED():
+    """Four of the five go to GitHub or to this project's own server. The fifth
+    goes to someone else entirely, which is the one a reader would most want to
+    know about — so it is named, not described as "a catalogue"."""
+    table = (SITE / "privacy.html").read_text(encoding="utf-8")
+    assert "VizieR" in table and "Strasbourg" in table
