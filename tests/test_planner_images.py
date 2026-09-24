@@ -28,6 +28,62 @@ def test_the_showcase_writes_a_320_derivative():
     assert "320" in py, "build_showcase.py does not produce a 320px size"
 
 
+# --- Task 6: the gallery manifest -------------------------------------------
+#
+# nocturne_planner_meta() reads $row['full'] for the gallery source. A
+# manifest row with no `full` key makes $full = '', the existence check
+# fails, and the association is silently dropped from the artifact with no
+# error at all — the exact failure the wall source had on 2026-09-24. These
+# read the REAL manifest rather than a fixture, so they catch a regression in
+# what build_showcase.py actually wrote, not just what it meant to.
+_MANIFEST = SITE / "img" / "showcase" / "showcase.json"
+_manifest_reason = "run .venv/bin/python packaging/build_showcase.py first"
+
+
+def _load_manifest():
+    if not _MANIFEST.is_file():
+        pytest.skip(_manifest_reason)
+    entries = json.loads(_MANIFEST.read_text(encoding="utf-8"))
+    if not entries:
+        pytest.skip(_manifest_reason)
+    return entries
+
+
+def test_the_showcase_manifest_carries_a_full_key_for_every_entry():
+    for e in _load_manifest():
+        assert e.get("full"), f"{e.get('stem')!r} has no full path — see nocturne_gallery_facts()"
+
+
+def test_the_showcase_manifest_names_the_1100_not_the_2400():
+    """Andreas: images in the planner should not be presented fullsize as
+    they are in the gallery. images["full"] inside build_showcase.py is the
+    2400 the lightbox opens; the manifest's `full` field must be the 1100
+    (images["grid"]) instead — see manifest_row()'s docstring for the name
+    collision this guards against."""
+    for e in _load_manifest():
+        assert e["full"].endswith("-1100.jpg"), \
+            f"{e['stem']}: full references {e['full']!r}, not the 1100"
+        assert "-2400" not in e["full"], \
+            f"{e['stem']}: the 2400 must never reach the planner"
+
+
+def test_the_showcase_manifest_full_path_exists_on_disk():
+    for e in _load_manifest():
+        assert (SITE / e["full"]).is_file(), \
+            f"{e['stem']}: full path {e['full']} does not exist on disk"
+
+
+def test_the_showcase_manifest_excludes_non_photographs():
+    """img/gallery (the OTHER generator's output) also holds before/after
+    assets for tool pages. img/showcase holds none today, but the manifest is
+    still built from a directory of Share exports one filename at a time — if
+    a comparison-style stem ever lands there, it must not silently become a
+    plannerable photograph."""
+    stems = [e["stem"] for e in _load_manifest()]
+    assert not [s for s in stems if "compare" in s.lower()], \
+        "a comparison asset is listed as a gallery photograph"
+
+
 def test_deleting_a_submission_also_clears_its_planner_images():
     """The failure being guarded against is specific: a planner card still
     showing a photograph whose owner asked for it to be taken down. The app's

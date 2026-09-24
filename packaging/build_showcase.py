@@ -31,6 +31,7 @@ depend on that.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import sys
@@ -52,6 +53,11 @@ FULL_EDGE = 2400       # what the lightbox opens
 PLANNER_EDGE = 320     # the planner's collapsed card (64px, 48 on mobile);
                        # matches the size wall.php derives on approval
 QUALITY = 82
+
+# The admin's gallery picker reads this (nocturne_gallery_facts() in
+# _planner_store.php). Sibling of planner-images.json's own convention: a
+# machine-readable manifest next to the pictures it describes.
+MANIFEST = OUT_IMG / "showcase.json"
 
 
 def _slug(stem: str) -> str:
@@ -288,6 +294,40 @@ def caption_html(stem: str) -> str:
     return out
 
 
+def manifest_row(e: dict) -> dict:
+    """One gallery-page picture, in the shape nocturne_gallery_facts() reads.
+
+    Reuses caption_html()'s own facts -- target_from_name() and
+    facts_from_filename() on the same cleaned stem -- rather than a second
+    parser. Key names match what nocturne_planner_caption() already expects
+    (`sub_s`, `integration_s`), not facts_from_filename()'s own `per_sub_s` /
+    `total_s`, so the admin needs no translation layer.
+
+    `full` MUST be the GRID_EDGE (1100) image, never `e["images"]["full"]` --
+    that key holds FULL_EDGE (2400), the lightbox size. Andreas: "images in
+    the planner should not be presented fullsize as they are in the gallery."
+    nocturne_planner_meta() reads this field as-is and puts it straight on a
+    planner card, so the name collision above is the one guard this function
+    exists to hold.
+    """
+    clean = re.sub(r"_(drizzle|mosaic|Original|2x|fix)\b", " ", e["stem"], flags=re.I)
+    facts = facts_from_filename(e["stem"])
+    return {
+        "stem": e["stem"],
+        "target": target_from_name(clean).strip(),
+        "frames": facts.get("frames"),
+        "sub_s": facts.get("per_sub_s"),
+        "integration_s": facts.get("total_s"),
+        "captured_on": "",              # not in the filename; never invented
+        "instrument": SEED_INSTRUMENT,  # every gallery picture is his S30 Pro
+        "full": e["images"]["grid"]["src"],   # the 1100 -- see docstring
+    }
+
+
+def write_manifest(entries: list[dict]) -> None:
+    MANIFEST.write_text(json.dumps([manifest_row(e) for e in entries], indent=2))
+
+
 def figure(e: dict) -> str:
     """`.frame` inside `.gallery` — the landing strip's own classes.
 
@@ -396,10 +436,12 @@ def main() -> int:
         print("  no images found")
         return 1
     PAGE.write_text(page_html(entries))
+    write_manifest(entries)
     pruned = prune(entries)
     total = sum(e["images"]["grid"]["bytes"] for e in entries)
     print(f"wrote {PAGE.relative_to(ROOT)} — {len(entries)} pictures, "
           f"{total / 1e6:.1f} MB above the fold (grid sizes)")
+    print(f"wrote {MANIFEST.relative_to(ROOT)} — the admin's gallery picker")
     for name in pruned:
         print(f"  pruned {name} (no longer on the page)")
     if pruned:
