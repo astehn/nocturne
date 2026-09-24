@@ -679,3 +679,107 @@ def test_the_third_party_recipient_is_NAMED():
     know about — so it is named, not described as "a catalogue"."""
     table = (SITE / "privacy.html").read_text(encoding="utf-8")
     assert "VizieR" in table and "Strasbourg" in table
+
+
+def _flat(html):
+    """Whitespace-collapsed, so a guard reads the SENTENCE and not the line
+    wrapping. The first version of the test below searched for a phrase the
+    generator had broken across two lines, and failed for the formatting rather
+    than for the claim."""
+    import re as _re
+    return _re.sub(r"\s+", " ", html)
+
+
+def test_the_planner_disclosure_is_on_both_pages():
+    """A submitted picture can illustrate a planner target, and the site has to
+    say so somewhere a reader will meet it.
+
+    Andreas ruled it belongs here rather than in the app's Export step: "its far
+    from certain that an image that ends up in the gallery will also end up in
+    the planner, that is something we instead should mention in the FAQ". So the
+    claim must be hedged — `might`, not `will` — and it must appear on both the
+    FAQ and the privacy page, because those are the only two places on the
+    website that describe what happens to a submission.
+    """
+    faq = (SITE / "faq.html").read_text(encoding="utf-8")
+    privacy = _flat((SITE / "privacy.html").read_text(encoding="utf-8"))
+    assert "planner" in faq.lower() and "gallery" in faq.lower()
+    assert "<em>might</em>" in faq, \
+        "the FAQ states the planner use without hedging it — it is not certain"
+    assert "may also appear on the planner" in privacy, \
+        "the privacy page does not mention the planner at all"
+
+
+def test_the_takedown_promise_covers_the_planner_because_the_code_does():
+    """The privacy page now promises a takedown removes a picture "from the
+    gallery and from the planner".
+
+    That is only true because both takedown paths clear planner_images and
+    rewrite the artifact — which they did NOT until 2026-09-24, when the cascade
+    ran under `if ($act === 'remove')` alone. A promise on a page and a guard in
+    the code have to move together, so this test reads both: if the cascade is
+    ever narrowed again, the page is making a claim the code does not keep.
+    """
+    privacy = _flat((SITE / "privacy.html").read_text(encoding="utf-8"))
+    claims_both = "from the gallery and from the planner" in privacy
+    src = ADMIN.read_text(encoding="utf-8")
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
+    branch = block.index("if ($act === 'remove')")
+    cascade_covers_both = block.index("DELETE FROM planner_images") < branch
+
+    assert claims_both, "the privacy page stopped promising the planner takedown"
+    assert cascade_covers_both, (
+        "privacy.html promises a takedown reaches the planner, but the cascade "
+        "runs only for Delete — unpublishing would leave the association behind")
+
+
+def test_the_website_offers_no_way_to_submit_a_picture_to_the_gallery():
+    """A gallery picture can only arrive through Nocturne's Export step.
+
+    Andreas, 2026-09-24: "no submissions to the gallery from the website, i want
+    to know that all images that are submitted at least have been opened in
+    Nocturne so that i then know that all images in the Gallery are 'Nocturne
+    created' images."
+
+    That is what the gallery MEANS — every picture on it was processed by the
+    app — and it holds only because there is no web form. A helpfully-added
+    upload page would quietly end it, and nothing else would notice: the
+    submissions table, the admin and the wall would all keep working.
+
+    This does not claim submit.php is unreachable; anyone can POST to it. It
+    pins that the SITE never invites them to.
+    """
+    pages = list(SITE.glob("*.html")) + list((SITE / "_src").glob("*.html"))
+    assert pages, "no pages found — the guard would pass vacuously"
+
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        assert "submit.php" not in html, \
+            f"{page.name} posts to the gallery endpoint — submissions must come from the app"
+
+    # UPLOADS ARE AN ALLOWLIST. The site has exactly two, and neither can carry
+    # a finished picture to the gallery: the FITS stack donation ("Lend your
+    # light", used only to test Nocturne and never republished) and a screenshot
+    # attached to a problem report. A THIRD one has to be added here
+    # deliberately, which is the point — the question "can this reach the
+    # gallery?" then gets asked out loud.
+    ALLOWED = {"upload.php", "support.php"}
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        if 'type="file"' not in html:
+            continue
+        actions = set(re.findall(r'<form[^>]*action="([^"]+)"', html))
+        stray = actions - ALLOWED
+        assert not stray, (
+            f"{page.name} has a file input and posts to {sorted(stray)} — a new upload "
+            f"endpoint must be checked against the gallery invariant before it is allowed")
+
+    # And the stack donation takes FITS only, so it cannot be a finished picture
+    # even by accident.
+    index = (SITE / "index.html").read_text(encoding="utf-8")
+    accept = re.search(r'<input[^>]*type="file"[^>]*accept="([^"]*)"', index)
+    assert accept, "the stack donation lost its accept list — it would take anything"
+    allowed = {a.strip().lower() for a in accept.group(1).split(",")}
+    assert allowed <= {".fit", ".fits", ".fts"}, (
+        f"the stack donation accepts {sorted(allowed - {'.fit', '.fits', '.fts'})} — it is for "
+        f"raw stacks, not finished pictures")
