@@ -291,3 +291,60 @@ def test_an_empty_handle_in_settings_does_not_produce_a_blank_byline():
         assert build_showcase._seed_handle().strip() != ""
     finally:
         monkey.undo()
+
+
+# --- the manifest's contract with the planner -------------------------------
+#
+# planner_images.ref stores a gallery picture's `stem`, and nocturne_planner_meta()
+# reads `full` as the image to put on a planner card. Both come from here, so a
+# change to manifest_row() silently breaks associations already in the database.
+
+def test_manifest_row_always_carries_the_two_keys_the_planner_needs():
+    """`stem` is the identity the database stores; `full` is the image.
+
+    Drop either and the failure is silent in the worst way: the row survives,
+    the picture stops appearing, and nothing anywhere says so. That is exactly
+    how one gallery promotion sat dead on the live site (NGC7635, 2026-09-24).
+    """
+    import build_showcase
+
+    entries = build_showcase.collect_showcase()
+    if not entries:
+        pytest.skip("no showcase images on this machine")
+    for e in entries:
+        e = dict(e, stem=e.get("stem") or e["slug"])
+        row = build_showcase.manifest_row(e)
+        assert row.get("stem"), f"manifest row for {e['slug']} has no stem"
+        assert row.get("full"), f"manifest row for {e['slug']} has no full path"
+
+
+def test_manifest_row_refuses_an_entry_it_cannot_key():
+    """It must RAISE, not emit a row missing its identity.
+
+    A row with no `stem` reaches nocturne_gallery_facts() as unfindable, and the
+    picker silently skips it — so a partial write here would take gallery
+    pictures out of the planner with no error at all. Failing loudly during the
+    build is the whole difference.
+    """
+    import build_showcase
+
+    with pytest.raises(KeyError):
+        build_showcase.manifest_row({"slug": "x", "images": {"grid": {"src": "a.jpg"}}})
+
+
+def test_the_manifest_full_is_the_grid_size_not_the_lightbox_size():
+    """`e["images"]["full"]` is the 2400. The planner must get the 1100.
+
+    The key names collide, the wrong one is a valid path, and the only symptom
+    would be a planner card quietly serving a 2400px file — which is the thing
+    Andreas asked not to happen. Asserted against the real constants so a change
+    to either edge is caught here.
+    """
+    import build_showcase
+
+    e = {"stem": "NGC7000_163x20s_54min_Original",
+         "images": {"grid": {"src": f"img/showcase/x-{build_showcase.GRID_EDGE}.jpg"},
+                    "full": {"src": f"img/showcase/x-{build_showcase.FULL_EDGE}.jpg"}}}
+    row = build_showcase.manifest_row(e)
+    assert row["full"].endswith(f"-{build_showcase.GRID_EDGE}.jpg")
+    assert str(build_showcase.FULL_EDGE) not in row["full"]
