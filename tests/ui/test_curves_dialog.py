@@ -402,4 +402,10 @@ def test_the_centre_clamp_keeps_the_view_anchor_on_the_image(qtbot):
     view = dlg.preview_label
     view._centre = [-3.0, 7.5]
     view._clamp()
-    assert view._centre == [0.0, 1.0], view._centre
+    # Tightened 2026-09-24 from [0,1] to what can be SHOWN: at fit (zoom 1)
+    # the whole image is on screen, so the only honest centre is the middle.
+    assert view._centre == [0.5, 0.5], view._centre
+    view._zoom = 4.0
+    view._centre = [-3.0, 7.5]
+    view._clamp()
+    assert view._centre == [0.125, 0.875], view._centre

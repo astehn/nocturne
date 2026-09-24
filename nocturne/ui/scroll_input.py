@@ -25,16 +25,44 @@ from PySide6.QtCore import QPointF, Qt
 # --- TRACKPAD TEST BUILD ONLY — remove before merge --------------------------
 # Nothing here can drive a real trackpad (macOS denies this terminal synthetic
 # input), so the only evidence of what a MacBook actually sends is what the
-# app writes down while Andreas uses it. One line per event, to
-# ~/.nocturne/nocturne.log.
+# app writes down while Andreas uses it. One line per event, to its OWN file,
+# ~/.nocturne/input-trace.log: a momentum swipe is ~100 events a second, which
+# would roll the 2 MB main log over in minutes and push out the first swipes.
+# Attached only once the app has configured its log (never under pytest, where
+# it would write into the real home directory).
 _TRACE = True
+_TRACE_BYTES = 20_000_000
 _trace_log = logging.getLogger("nocturne.input")
+_trace_ready = False
+
+
+def _attach_trace_file() -> bool:
+    global _trace_ready
+    if _trace_ready:
+        return True
+    from ..core import applog
+    if not applog._configured:
+        return False
+    import logging.handlers
+    import os
+    path = os.path.join(os.path.dirname(applog.log_path()), "input-trace.log")
+    h = logging.handlers.RotatingFileHandler(path, maxBytes=_TRACE_BYTES,
+                                             backupCount=1, encoding="utf-8")
+    h.setFormatter(logging.Formatter("%(asctime)s.%(msecs)03d %(message)s",
+                                     "%Y-%m-%d %H:%M:%S"))
+    _trace_log.addHandler(h)
+    _trace_log.setLevel(logging.INFO)
+    _trace_log.propagate = False
+    _trace_ready = True
+    return True
 
 
 def trace(where: str, event, action: str) -> None:
     if not _TRACE:
         return
     try:
+        if not _attach_trace_file():
+            return
         dev = event.pointingDevice()
         dev_type = dev.type().name if dev is not None else "none"
         if hasattr(event, "angleDelta"):

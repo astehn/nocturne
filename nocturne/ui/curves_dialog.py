@@ -145,7 +145,13 @@ class _ZoomPreview(QLabel):
         return int(x0), int(y0), int(round(x0 + vw)), int(round(y0 + vh))
 
     def _clamp(self) -> None:
-        self._centre = [min(1.0, max(0.0, c)) for c in self._centre]
+        # To what can be SHOWN: at zoom z at least 1/z of each axis is on
+        # screen, so the centre lives in [0.5/z, 1 - 0.5/z]. Clamping to [0,1]
+        # let a pan at the edge walk it on invisibly — harmless for a drag,
+        # routine for a trackpad fling, which then left a dead zone the way
+        # back and made the next zoom open on the border.
+        lo = 0.5 / max(1.0, self._zoom)
+        self._centre = [min(1.0 - lo, max(lo, c)) for c in self._centre]
 
     def wheelEvent(self, event) -> None:
         """A trackpad swipe pans, as a drag does; a mouse wheel zooms."""

@@ -573,6 +573,9 @@ class ImageView(QGraphicsView):
             d = pan_delta(event)
             trace("ImageView", event, f"pan ({d.x():.1f},{d.y():.1f})")
             self._pan_by(d)
+            # The picture moved under a still pointer: the readout follows
+            # the pixel now under it rather than waiting for a mouse move.
+            self._emit_hover_at_scene_pos(self.mapToScene(pos))
         elif event.angleDelta().y() > 0:
             trace("ImageView", event, "zoom in")
             self.zoom_in()
@@ -582,20 +585,34 @@ class ImageView(QGraphicsView):
         event.accept()
 
     def viewportEvent(self, event) -> bool:
-        # Pinch reaches the viewport, the widget under the fingers; the
-        # scroll area does not forward it to any handler of ours.
+        # Pinch goes to the widget under the fingers — usually the viewport,
+        # which the scroll area does not forward to any handler of ours...
         if event.type() == QEvent.Type.NativeGesture:
             return self._native_gesture(event)
         return super().viewportEvent(event)
 
+    def event(self, event) -> bool:
+        # ...but over a pill (children of the VIEW) it lands here instead. A
+        # handled gesture is accepted, so one over the viewport does not also
+        # travel up to this and zoom twice.
+        if event.type() == QEvent.Type.NativeGesture:
+            return self._native_gesture(event)
+        return super().event(event)
+
     def _native_gesture(self, event) -> bool:
         kind = event.gestureType()
         if self._item.pixmap().isNull():
+            event.accept()
             return True
-        pos = event.position().toPoint()
+        # From the GLOBAL position. Delivered through the window, position()
+        # is in window coordinates, not the viewport's; anchoring on it crept
+        # the picture toward the toolbar with every pinch.
+        pos = self.viewport().mapFromGlobal(event.globalPosition()).toPoint()
         if kind == Qt.NativeGestureType.ZoomNativeGesture:
             trace("ImageView", event, f"zoom x{1.0 + event.value():.4f}")
             self._zoom_about(1.0 + event.value(), pos)
+            self._emit_hover_at_scene_pos(self.mapToScene(pos))
+            event.accept()
             return True
         if kind == Qt.NativeGestureType.SmartZoomNativeGesture:
             # The two-finger double tap: Preview's toggle between the whole
@@ -608,6 +625,7 @@ class ImageView(QGraphicsView):
             else:
                 trace("ImageView", event, "smart zoom -> fit")
                 self.fit()
+            event.accept()
             return True
         trace("ImageView", event, "ignored")
         return False
@@ -625,12 +643,19 @@ class ImageView(QGraphicsView):
         Explicit rather than AnchorUnderMouse, which uses the last MOUSE MOVE
         position and only while Qt believes the pointer is over the widget —
         neither is a pinch's own position. Clamped between half the fit scale
-        (further out is only empty background) and `_MAX_ZOOM`."""
+        (further out is only empty background) and `_MAX_ZOOM` — in the
+        direction of travel only: the wheel can leave the zoom outside that
+        range, and a pinch out must never snap IN to the floor."""
         if self._item.pixmap().isNull() or factor <= 0:
             return
         z = self.zoom()
-        target = min(_MAX_ZOOM, max(self._fit_zoom() * 0.5, z * factor))
-        if z <= 0 or abs(target - z) < 1e-9:
+        if z <= 0:
+            return
+        if factor > 1.0:
+            target = min(_MAX_ZOOM, z * factor)
+        else:
+            target = max(self._fit_zoom() * 0.5, z * factor)
+        if (target - z) * (factor - 1.0) <= 1e-12:
             return
         anchor = self.mapToScene(view_pos)
         old = self.transformationAnchor()

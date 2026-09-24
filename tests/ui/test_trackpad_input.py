@@ -47,9 +47,13 @@ def _wheel_event(pos, angle_y):
                        Qt.ScrollPhase.NoScrollPhase, False)
 
 
-def _pinch_event(pos, value, kind=Qt.NativeGestureType.ZoomNativeGesture):
+def _pinch_event(pos, value, kind=Qt.NativeGestureType.ZoomNativeGesture,
+                 on=None):
+    """A pinch at `pos` in `on`'s coordinates, with the matching GLOBAL
+    position, as a real event carries: the view anchors on the global one."""
+    glob = QPointF(on.mapToGlobal(pos)) if on is not None else QPointF(pos)
     return QNativeGestureEvent(kind, _TOUCHPAD, 2, QPointF(pos), QPointF(pos),
-                               QPointF(pos), value, QPointF(), 0)
+                               glob, value, QPointF(), 0)
 
 
 def _send(widget, event) -> None:
@@ -197,9 +201,9 @@ def test_a_classic_detent_wheel_zooms_exactly_as_before(qtbot):
 
 def test_pinch_zooms_by_the_gesture_value(qtbot):
     view = _view(qtbot, zoom=1.0)
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.1))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.1, on=view.viewport()))
     assert view.zoom() == pytest.approx(1.1)
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), -0.1))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), -0.1, on=view.viewport()))
     assert view.zoom() == pytest.approx(1.1 * 0.9)
 
 
@@ -210,7 +214,7 @@ def test_pinch_keeps_the_point_under_the_fingers_still(qtbot):
     at = QPoint(60, 40)
     anchor = view.mapToScene(at)
     for _ in range(5):
-        _send(view.viewport(), _pinch_event(at, 0.2))
+        _send(view.viewport(), _pinch_event(at, 0.2, on=view.viewport()))
     assert view.zoom() > 2.0
     after = view.mapToScene(at)
     assert after.x() == pytest.approx(anchor.x(), abs=1.0)
@@ -220,12 +224,12 @@ def test_pinch_keeps_the_point_under_the_fingers_still(qtbot):
 def test_pinch_stops_at_the_ceiling_and_the_floor(qtbot):
     view = _view(qtbot, zoom=1.0)
     for _ in range(200):
-        _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.5))
+        _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.5, on=view.viewport()))
     assert view.zoom() == pytest.approx(_MAX_ZOOM)
     view.fit()
     fitted = view.zoom()
     for _ in range(200):
-        _send(view.viewport(), _pinch_event(QPoint(150, 100), -0.5))
+        _send(view.viewport(), _pinch_event(QPoint(150, 100), -0.5, on=view.viewport()))
     # fitInView leaves Qt's small margin, so 'half the fit' is approximate
     assert view.zoom() == pytest.approx(fitted * 0.5, rel=0.05)
     assert view.zoom() > 0
@@ -234,7 +238,7 @@ def test_pinch_stops_at_the_ceiling_and_the_floor(qtbot):
 def test_pinch_is_a_deliberate_zoom_that_survives_a_resize(qtbot):
     view = _view(qtbot, zoom=1.0)
     view.fit()
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.3))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.3, on=view.viewport()))
     assert view._fitted is False
 
 
@@ -243,9 +247,9 @@ def test_smart_zoom_toggles_fit_and_actual_size(qtbot):
     view.fit()
     assert view.zoom() != pytest.approx(1.0)       # the fixture is not 1:1 at fit
     smart = Qt.NativeGestureType.SmartZoomNativeGesture
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.0, smart))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.0, smart, on=view.viewport()))
     assert view.zoom() == pytest.approx(1.0)
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.0, smart))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.0, smart, on=view.viewport()))
     assert view._fitted is True
 
 
@@ -254,7 +258,7 @@ def test_gestures_without_an_image_do_nothing(qtbot):
     qtbot.addWidget(view)
     view.resize(300, 200)
     before = view.transform()
-    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.3))
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.3, on=view.viewport()))
     _send(view.viewport(), _wheel_event(QPoint(150, 100), 120))
     _swipe(view.viewport(), QPoint(150, 100), 0, -3)
     assert view.transform() == before
@@ -317,3 +321,119 @@ def test_pinch_on_one_side_by_side_pane_moves_the_other(qtbot):
     assert w._after_pane.zoom_level() == pytest.approx(1.5)
     _swipe(w._before_pane, QPoint(50, 50), 0, -3, n=10)
     assert w._after_pane._centre == pytest.approx(w._before_pane._centre)
+
+
+# --- review findings, 2026-09-24 ----------------------------------------------
+
+def _windowed_view(qtbot):
+    """The view as it sits in MainWindow: NOT the top-level widget, and offset
+    by chrome above and beside it. A pinch arrives through the WINDOW, as
+    macOS delivers it, not straight into the viewport."""
+    from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
+    top = QWidget()
+    qtbot.addWidget(top)
+    grid = QGridLayout(top)
+    grid.setContentsMargins(0, 0, 0, 0)
+    header = QLabel("toolbar")
+    header.setFixedHeight(150)
+    side = QLabel("panel")
+    side.setFixedWidth(120)
+    view = ImageView()
+    grid.addWidget(header, 0, 0, 1, 2)
+    grid.addWidget(side, 1, 0)
+    grid.addWidget(view, 1, 1)
+    top.resize(420, 350)
+    top.show()
+    view.set_image(_qimage())
+    view.actual_size()
+    view.centerOn(200, 150)
+    return top, view
+
+
+def _pinch_through_window(top, widget, at, value,
+                          kind=Qt.NativeGestureType.ZoomNativeGesture):
+    in_window = widget.mapTo(top, at)
+    glob = widget.mapToGlobal(at)
+    ev = QNativeGestureEvent(kind, _TOUCHPAD, 2, QPointF(in_window),
+                             QPointF(in_window), QPointF(glob), value, QPointF(), 0)
+    QApplication.sendEvent(top.windowHandle(), ev)
+
+
+def test_pinch_in_a_real_window_keeps_the_point_under_the_fingers(qtbot):
+    """Review finding 1: through the window the event's position() is in
+    WINDOW coordinates, so anchoring on it crept the picture toward the
+    toolbar with every pinch. 14.6 image px per x1.1 step in the reviewer's
+    probe; the old test sent to a top-level view, where the two coincide."""
+    top, view = _windowed_view(qtbot)
+    at = QPoint(50, 60)
+    anchor = view.mapToScene(at)
+    for _ in range(3):
+        _pinch_through_window(top, view.viewport(), at, 0.1)
+    assert view.zoom() == pytest.approx(1.1 ** 3)       # once per event, not twice
+    after = view.mapToScene(at)
+    assert after.x() == pytest.approx(anchor.x(), abs=1.0)
+    assert after.y() == pytest.approx(anchor.y(), abs=1.0)
+
+
+def test_pinch_over_the_zoom_pill_still_zooms_once(qtbot):
+    """Review finding 4: the pills are children of the VIEW, not the viewport,
+    so a pinch over one never reached viewportEvent."""
+    top, view = _windowed_view(qtbot)
+    pill = view._zoom_pill
+    assert pill.isVisible()
+    _pinch_through_window(top, pill, pill.rect().center(), 0.1)
+    assert view.zoom() == pytest.approx(1.1)
+
+
+def test_pinch_does_not_jump_against_its_own_direction(qtbot):
+    """Review finding 3: the wheel can leave the zoom outside the pinch range
+    (zoom_out has no floor, zoom_in overshoots 32x). A pinch OUT from there
+    must not zoom IN to the floor, and vice versa."""
+    view = _view(qtbot, zoom=1.0)
+    view.fit()
+    for _ in range(8):
+        view.zoom_out()
+    low = view.zoom()
+    assert low < view._fit_zoom() * 0.5
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), -0.1, on=view.viewport()))
+    assert view.zoom() == pytest.approx(low)
+
+    view.actual_size()
+    while view.zoom() < _MAX_ZOOM:
+        view.zoom_in()
+    high = view.zoom()
+    assert high > _MAX_ZOOM
+    _send(view.viewport(), _pinch_event(QPoint(150, 100), 0.1, on=view.viewport()))
+    assert view.zoom() == pytest.approx(high)
+
+
+def test_a_swipe_updates_the_hover_readout(qtbot):
+    """Review finding 5: the picture moves under a still pointer, so the
+    readout must follow the pixel now under it, not wait for a mouse move."""
+    view = _view(qtbot)
+    got = []
+    view.hovered.connect(lambda x, y, side: got.append((x, y)))
+    at = QPoint(150, 100)
+    _swipe(view.viewport(), at, 0, -2, n=10)
+    assert got, "a swipe emitted no hover update"
+    p = view.mapToScene(at)
+    assert got[-1] == (int(p.x()), int(p.y()))
+
+
+def test_preview_fling_leaves_no_hidden_overshoot(qtbot):
+    """Review finding 2: the centre was clamped to [0,1], not to what can be
+    shown. A fling at fit moved nothing on screen but walked the centre to the
+    edge, so the next zoom opened on the border; and zoomed in, a fling into an
+    edge left a dead zone the way back."""
+    p = _ZoomPreview()
+    qtbot.addWidget(p)
+    p.resize(300, 200)
+    _swipe(p, QPoint(150, 100), 0, -30, n=20)          # fling at fit
+    assert p._centre == pytest.approx([0.5, 0.5])
+
+    p.set_zoom(4.0)
+    _swipe(p, QPoint(150, 100), 0, -50, n=40)          # far past the bottom
+    edge = p._centre[1]
+    assert edge == pytest.approx(1 - 0.5 / 4.0)
+    _swipe(p, QPoint(150, 100), 0, 10, n=1)            # a little way back
+    assert p._centre[1] < edge, "dead zone: swiping back did nothing"
