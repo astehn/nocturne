@@ -107,7 +107,8 @@ _TOPIC_LIST = (
        "</ol>"
        "<h4>Tips</h4>"
        "<p>The histogram (top-right) and the log (bottom) show what each step changed. "
-       "Mouse wheel zooms, drag pans, and <b>Before/After</b> in the toolbar compares any step.</p>"),
+       "Mouse wheel zooms, drag pans, and <b>Before/After</b> in the toolbar compares any step. "
+       "On a trackpad, pinch to zoom and swipe with two fingers to pan.</p>"),
 
     # ---- Concepts ----
     _t("linear-vs-stretched", "Linear vs. stretched",
@@ -1422,7 +1423,8 @@ _t("upscale", "Upscale Crop",
        "the first specks appear, then back off. At the default fit zoom the mask is computed "
        "over the whole frame at native resolution, so a speck anywhere is caught; zoomed in, "
        "it covers only the visible region — <b>Fit</b> beside the preview puts it back. "
-       "Scroll to zoom, drag to pan, or use <b>+</b> / <b>−</b> / <b>Fit</b>; in <b>Wipe</b> "
+       "The wheel or a pinch zooms, dragging or a two-finger swipe pans, or use <b>+</b> / "
+       "<b>−</b> / <b>Fit</b>; in <b>Wipe</b> "
        "those three drive the wipe view itself, which magnifies the picture it was given "
        "rather than re-computing the mask.</p>"
        "<p>The marks show <b>what these two points add</b>, not the total. A starless layer "
@@ -1451,7 +1453,8 @@ _t("upscale", "Upscale Crop",
        "shapes or faint detail without the interface competing for attention.</p>"
        "<h4>How to use it</h4>"
        "<p><b>F</b> to enter, <b>Escape</b> to come back. Zoom and pan work as usual: the wheel "
-       "zooms, dragging pans, and the small zoom pill stays in the corner. <b>Fit</b> and "
+       "or a pinch zooms, dragging or a two-finger swipe pans, and the small zoom pill stays "
+       "in the corner. <b>Fit</b> and "
        "<b>100%</b> in the toolbar are the quickest way to switch between the whole frame and "
        "true pixel scale.</p>"
        "<h4>Tips</h4>"
