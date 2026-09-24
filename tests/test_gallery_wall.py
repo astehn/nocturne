@@ -266,17 +266,12 @@ def test_pending_images_are_streamed_not_linked():
     assert "download.php?submission=" in meta
 
 
-def test_only_an_approved_catalogue_match_can_be_the_planner_picture():
-    src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_wall_actions", 1)[1].split("\n}", 1)[0]
-    assert "'approved'" in fn and "catalogue_id" in fn
-
-
-def test_planner_thumbs_is_written_whole_not_patched():
-    src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_wall_write_planner_thumbs", 1)[1].split("\n}", 1)[0]
-    assert "file_put_contents" in fn and "json_encode" in fn
-    assert "representative = 1" in fn and "status = 'approved'" in fn
+# The two tests that stood here guarded submissions.representative and the
+# planner-thumbs.json it generated. Both are deleted (2026-09-24): planner.js
+# stopped reading that file when PLANNER_IMAGES landed, so the admin carried a
+# button that wrote something nothing read. What replaces them is
+# tests/test_planner_images.py::test_the_dead_representative_path_is_gone,
+# which asserts the path stays deleted rather than asserting it works.
 
 
 def test_cleanup_expires_the_ip_but_never_the_picture():
@@ -337,19 +332,39 @@ def test_taking_a_picture_down_DELETES_the_files():
     """'I took it down' has to mean the file is gone, not hidden. Spec 5.1: a
     picture that is not published is not kept."""
     src = ADMIN.read_text(encoding="utf-8")
-    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
     assert "unlink" in block
     assert "stored_2000" in block and "stored_900" in block
     assert "stored_2000=NULL" in block, "the columns must be cleared, not left dangling"
 
 
 def test_taking_a_picture_down_clears_the_planner_slot():
-    """It may have been the planner's picture for an object. Leaving it
-    representative would keep a deleted file in planner-thumbs.json."""
+    """A takedown must reach the planner, on BOTH paths.
+
+    The mechanism changed (planner_images replaced representative) but the
+    requirement did not: "Take off the wall" and "Delete" each unlink the
+    files, so either one leaves a planner association pointing at nothing.
+
+    This test failing is what found the hole. The cascade ran only under
+    `if ($act === 'remove')`, so unpublishing deleted the pictures and left
+    planner-images.json still naming them — the public card kept a broken
+    image until some unrelated promotion happened to regenerate it.
+
+    So the assertion is about REACH: both statements must sit outside the
+    branch that distinguishes the two actions.
+    """
     src = ADMIN.read_text(encoding="utf-8")
-    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
-    assert "representative=0" in block
-    assert "nocturne_wall_write_planner_thumbs" in block
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
+    assert "DELETE FROM planner_images" in block, \
+        "a takedown does not clear the planner association at all"
+    assert "nocturne_planner_regenerate" in block, \
+        "a takedown does not rewrite the artifact, so it outlives the files"
+    # Outside the remove-only branch — the whole point.
+    branch = block.index("if ($act === 'remove')")
+    assert block.index("DELETE FROM planner_images") < branch, \
+        "the cascade runs only for Delete; Take off the wall leaves the row"
+    assert block.index("nocturne_planner_regenerate") > block.rindex("} else {"), \
+        "regenerate runs inside one branch only, so the other path skips it"
 
 
 def test_every_row_can_be_deleted_outright():

@@ -195,3 +195,141 @@ def test_the_guesser_is_gone():
         for php in (SITE / "admin").glob("*.php"):
             assert f"function {name}" not in php.read_text(encoding="utf-8"), \
                 f"{name} still defined in {php.name}"
+
+
+def test_the_datalist_is_built_before_it_is_rendered():
+    """The autocomplete silently did not exist for a day.
+
+    wall.php read $PLANNER_TARGETS to emit the <datalist> at line 272 and
+    ASSIGNED it at line 333 — so `if (!empty($PLANNER_TARGETS))` tested an
+    undefined variable, the list was never written, and every
+    `list="planner-targets"` pointed at nothing. !empty() suppresses the
+    warning that would have said so, so nothing failed anywhere.
+
+    Andreas found it by using the form: "the input field does now have any form
+    of auto completion so as a user i dont know what i should fill in our how".
+
+    The guard is on ORDER, because order was the bug. A guard that merely found
+    both strings present passed throughout.
+    """
+    php = _code_only((SITE / "admin" / "wall.php").read_text(encoding="utf-8"))
+    # SCOPED TO THE FUNCTION BODY. File order is not enough: PHP variables are
+    # function-scoped, so hoisting the assignment to the top of the file puts it
+    # textually before every read while leaving it invisible inside
+    # nocturne_wall_render() — the identical symptom, with a file-order guard
+    # still green. Proved by mutation during review, 2026-09-24.
+    body = php[php.index("function nocturne_wall_render"):]
+    # Checked before .index(), which would otherwise raise a bare ValueError and
+    # hand the next reader a traceback instead of the reason.
+    assert "$PLANNER_TARGETS =" in body, (
+        "$PLANNER_TARGETS is never assigned inside nocturne_wall_render() — PHP "
+        "variables are function-scoped, so the <datalist> sees nothing")
+    assign = body.index("$PLANNER_TARGETS =")
+    reads = [m.start() for m in re.finditer(r"\$PLANNER_TARGETS", body)
+             if m.start() != assign]
+    assert reads, "nothing reads $PLANNER_TARGETS — the datalist is gone entirely"
+    assert assign < min(reads), (
+        "$PLANNER_TARGETS is read before it is assigned, so the <datalist> is "
+        "never emitted and the promote box has no autocomplete")
+
+
+def test_the_promote_input_points_at_a_datalist_that_exists():
+    """The other half: the input's list= must name a <datalist> this page
+    actually defines. A renamed id breaks the autocomplete just as silently."""
+    php = (SITE / "admin" / "wall.php").read_text(encoding="utf-8")
+    ref = re.search(r'list="([^"]+)"', php)
+    assert ref, "the promote box no longer references a datalist at all"
+    assert f'<datalist id="{ref.group(1)}"' in php, \
+        f'the input lists "{ref.group(1)}" but no <datalist> with that id is emitted'
+
+
+def test_the_dead_representative_path_is_gone():
+    """`representative` + planner-thumbs.json was the ORIGINAL planner picture
+    mechanism. planner.js stopped reading that file when PLANNER_IMAGES landed
+    ("SUPERSEDES window.PLANNER_THUMBS"), so for a day the admin carried a
+    button — "Use as the planner's picture" — that wrote a file nothing read,
+    sitting beside the one that does the real thing.
+
+    Andreas: "its very confusing to know what 'Use in planner....' and 'Use as
+    planners target image' means". Deleted rather than relabelled: one action,
+    one meaning.
+    """
+    for name in ("wall.php", "_wall_meta.php"):
+        php = _code_only((SITE / "admin" / name).read_text(encoding="utf-8"))
+        assert "planner-thumbs" not in php, f"{name} still writes the dead thumbs file"
+        assert "representative" not in php, \
+            f"{name} still reads or writes the dead representative column"
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "fetch('planner-thumbs.json')" not in js, \
+        "planner.js reads planner-thumbs.json again — then it is not dead after all"
+
+
+def test_the_planner_grid_shows_every_target():
+    """Andreas: "Not just the populated ones but even the unpopulated ones. That
+    way it would be very easity to see what objects/targets actually has
+    images." A grid of only the covered targets answers the opposite question.
+
+    The filter narrows it on request; the default must not.
+    """
+    php = _code_only((SITE / "admin" / "planner.php").read_text(encoding="utf-8"))
+    grid = php[php.index("tgt-grid"):]
+    assert "$shown as $t" in grid, "the grid no longer loops over the filtered target list"
+    # The FILTER's behaviour is covered by executing it, in
+    # site/tests/planner_images_test.php ("the without filter shows only..."),
+    # which counts rendered tiles. Asserting here that the source contains the
+    # strings 'yes', 'no' and true would bless `$have === 'yes' ? true : ...`,
+    # so it is not asserted twice in a weaker form.
+
+
+def test_every_panel_control_returns_to_its_target():
+    """The panel is a URL, so a redirect that drops ?target= closes it after
+    every single click — and filling a target means add, look, add again.
+
+    Counted, not merely present: one control without it is the one that throws
+    you back to the grid.
+    """
+    php = _code_only((SITE / "admin" / "planner.php").read_text(encoding="utf-8"))
+    panel = php[php.index("tgt-panel"):]
+    actions = panel.count('name="planner_action"')
+    returns = panel.count('name="return_target"')
+    assert actions > 0, "the panel has no controls at all"
+    assert returns == actions, \
+        f"{actions} controls in the panel but {returns} carry return_target"
+
+    admin = _code_only((SITE / "admin" / "admin.php").read_text(encoding="utf-8"))
+    assert "return_target" in admin, \
+        "admin.php ignores return_target, so the panel closes after every action"
+    # It lands in a Location header, so it is validated rather than echoed.
+    tail = admin[admin.index("return_target"):]
+    assert "in_array" in tail[:tail.index("header(")], \
+        "return_target reaches the Location header without being validated"
+
+
+def test_every_css_token_the_admin_uses_is_defined():
+    """`background: var(--bg)` is not an error — it is transparent.
+
+    .tgt-box was written with var(--bg), which no stylesheet defines, so the
+    panel had no background at all. On a wide screen it still LOOKED solid,
+    because the 93%-opaque backdrop sits behind it; at 390px the tab strip
+    showed straight through the panel. Nothing failed, and nothing would have.
+
+    So the guard is structural: every token the admin's CSS references must be
+    defined somewhere the browser will actually see — styles.css, which the
+    admin links, or the admin's own block.
+    """
+    common = (SITE / "admin" / "_common.php").read_text(encoding="utf-8")
+    css = common[common.index("<<<'CSS'"):common.rindex("\nCSS;")]
+    site_css = (SITE / "styles.css").read_text(encoding="utf-8")
+
+    # ONLY :root COUNTS. A token declared inside some other rule (styles.css
+    # defines --pos on the before/after slider) is not in scope for the admin's
+    # own selectors, so counting it as "defined" would bless exactly the failure
+    # this test exists to catch.
+    root = site_css[site_css.index(":root {"):]
+    root = root[:root.index("\n}")]
+    defined = set(re.findall(r"(--[\w-]+)\s*:", root + css))
+    used = set(re.findall(r"var\((--[\w-]+)", css))
+    missing = sorted(used - defined)
+    assert not missing, (
+        f"the admin CSS uses undefined custom properties {missing} — these "
+        f"resolve to nothing, which for a background means transparent")
