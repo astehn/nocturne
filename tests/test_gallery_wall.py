@@ -266,17 +266,12 @@ def test_pending_images_are_streamed_not_linked():
     assert "download.php?submission=" in meta
 
 
-def test_only_an_approved_catalogue_match_can_be_the_planner_picture():
-    src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_wall_actions", 1)[1].split("\n}", 1)[0]
-    assert "'approved'" in fn and "catalogue_id" in fn
-
-
-def test_planner_thumbs_is_written_whole_not_patched():
-    src = ADMIN.read_text(encoding="utf-8")
-    fn = src.split("function nocturne_wall_write_planner_thumbs", 1)[1].split("\n}", 1)[0]
-    assert "file_put_contents" in fn and "json_encode" in fn
-    assert "representative = 1" in fn and "status = 'approved'" in fn
+# The two tests that stood here guarded submissions.representative and the
+# planner-thumbs.json it generated. Both are deleted (2026-09-24): planner.js
+# stopped reading that file when PLANNER_IMAGES landed, so the admin carried a
+# button that wrote something nothing read. What replaces them is
+# tests/test_planner_images.py::test_the_dead_representative_path_is_gone,
+# which asserts the path stays deleted rather than asserting it works.
 
 
 def test_cleanup_expires_the_ip_but_never_the_picture():
@@ -333,23 +328,69 @@ def test_an_approved_picture_can_be_taken_off_the_wall():
     assert "unpublish" in fn, "the action must be reachable from an approved row"
 
 
+def _php_code_only(text):
+    """PHP with its // comment lines removed.
+
+    A guard that matches the comment EXPLAINING it passes while the behaviour is
+    gone. That has now happened five times in this repo — most recently here, on
+    2026-09-24: the comment above the 320 unlink names the file it deletes, so
+    deleting the code left the assertion green.
+    """
+    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("//"))
+
+
 def test_taking_a_picture_down_DELETES_the_files():
     """'I took it down' has to mean the file is gone, not hidden. Spec 5.1: a
     picture that is not published is not kept."""
-    src = ADMIN.read_text(encoding="utf-8")
-    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
+    src = _php_code_only(ADMIN.read_text(encoding="utf-8"))
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
     assert "unlink" in block
     assert "stored_2000" in block and "stored_900" in block
     assert "stored_2000=NULL" in block, "the columns must be cleared, not left dangling"
+    # AND THE 320, which has no column and so was missed by every check here
+    # for as long as it existed. Approval writes three derivatives and stores
+    # two; the third survived every takedown, leaving img/wall/sub-<id>-320.jpg
+    # serving the picture to anyone with the URL — and that is the one the
+    # planner card used, so it is the likeliest to be in a cache or a history.
+    # privacy.html says the file "is deleted rather than hidden"; that sentence
+    # was false until 2026-09-24. Asserted on the literal name, because the
+    # size has no column to name it by.
+    assert "-320.jpg" in block, \
+        "the 320 derivative is not unlinked, so a takedown leaves the picture served"
 
 
 def test_taking_a_picture_down_clears_the_planner_slot():
-    """It may have been the planner's picture for an object. Leaving it
-    representative would keep a deleted file in planner-thumbs.json."""
+    """A takedown must reach the planner, on BOTH paths.
+
+    The mechanism changed (planner_images replaced representative) but the
+    requirement did not: "Take off the wall" and "Delete" each unlink the
+    files, so either one leaves a planner association pointing at nothing.
+
+    This test failing is what found the hole. The cascade ran only under
+    `if ($act === 'remove')`, so unpublishing deleted the pictures and left
+    planner-images.json still naming them — the public card kept a broken
+    image until some unrelated promotion happened to regenerate it.
+
+    So the assertion is about REACH: both statements must sit outside the
+    branch that distinguishes the two actions.
+    """
     src = ADMIN.read_text(encoding="utf-8")
-    block = src.split("$act === 'unpublish'", 1)[1].split("elseif ($act === 'represent')", 1)[0]
-    assert "representative=0" in block
-    assert "nocturne_wall_write_planner_thumbs" in block
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
+    assert "DELETE FROM planner_images" in block, \
+        "a takedown does not clear the planner association at all"
+    assert "nocturne_planner_regenerate" in block, \
+        "a takedown does not rewrite the artifact, so it outlives the files"
+    # Outside the remove-only branch — the whole point.
+    branch = block.index("if ($act === 'remove')")
+    assert block.index("DELETE FROM planner_images") < branch, \
+        "the cascade runs only for Delete; Take off the wall leaves the row"
+    # ON INDENTATION, because "outside both branches" is what is being asserted
+    # and position alone cannot say it. `> block.rindex("} else {")` is equally
+    # true of "outside the if/else" and "inside the else" — proved by mutation
+    # in the whole-branch review: moving the call into the else left all 59
+    # tests green while the Delete path silently stopped rewriting the artifact.
+    assert re.search(r"\n        nocturne_planner_regenerate", block), \
+        "regenerate is nested inside a branch, so one takedown path skips it"
 
 
 def test_every_row_can_be_deleted_outright():
@@ -664,3 +705,107 @@ def test_the_third_party_recipient_is_NAMED():
     know about — so it is named, not described as "a catalogue"."""
     table = (SITE / "privacy.html").read_text(encoding="utf-8")
     assert "VizieR" in table and "Strasbourg" in table
+
+
+def _flat(html):
+    """Whitespace-collapsed, so a guard reads the SENTENCE and not the line
+    wrapping. The first version of the test below searched for a phrase the
+    generator had broken across two lines, and failed for the formatting rather
+    than for the claim."""
+    import re as _re
+    return _re.sub(r"\s+", " ", html)
+
+
+def test_the_planner_disclosure_is_on_both_pages():
+    """A submitted picture can illustrate a planner target, and the site has to
+    say so somewhere a reader will meet it.
+
+    Andreas ruled it belongs here rather than in the app's Export step: "its far
+    from certain that an image that ends up in the gallery will also end up in
+    the planner, that is something we instead should mention in the FAQ". So the
+    claim must be hedged — `might`, not `will` — and it must appear on both the
+    FAQ and the privacy page, because those are the only two places on the
+    website that describe what happens to a submission.
+    """
+    faq = (SITE / "faq.html").read_text(encoding="utf-8")
+    privacy = _flat((SITE / "privacy.html").read_text(encoding="utf-8"))
+    assert "planner" in faq.lower() and "gallery" in faq.lower()
+    assert "<em>might</em>" in faq, \
+        "the FAQ states the planner use without hedging it — it is not certain"
+    assert "may also appear on the planner" in privacy, \
+        "the privacy page does not mention the planner at all"
+
+
+def test_the_takedown_promise_covers_the_planner_because_the_code_does():
+    """The privacy page now promises a takedown removes a picture "from the
+    gallery and from the planner".
+
+    That is only true because both takedown paths clear planner_images and
+    rewrite the artifact — which they did NOT until 2026-09-24, when the cascade
+    ran under `if ($act === 'remove')` alone. A promise on a page and a guard in
+    the code have to move together, so this test reads both: if the cascade is
+    ever narrowed again, the page is making a claim the code does not keep.
+    """
+    privacy = _flat((SITE / "privacy.html").read_text(encoding="utf-8"))
+    claims_both = "from the gallery and from the planner" in privacy
+    src = ADMIN.read_text(encoding="utf-8")
+    block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
+    branch = block.index("if ($act === 'remove')")
+    cascade_covers_both = block.index("DELETE FROM planner_images") < branch
+
+    assert claims_both, "the privacy page stopped promising the planner takedown"
+    assert cascade_covers_both, (
+        "privacy.html promises a takedown reaches the planner, but the cascade "
+        "runs only for Delete — unpublishing would leave the association behind")
+
+
+def test_the_website_offers_no_way_to_submit_a_picture_to_the_gallery():
+    """A gallery picture can only arrive through Nocturne's Export step.
+
+    Andreas, 2026-09-24: "no submissions to the gallery from the website, i want
+    to know that all images that are submitted at least have been opened in
+    Nocturne so that i then know that all images in the Gallery are 'Nocturne
+    created' images."
+
+    That is what the gallery MEANS — every picture on it was processed by the
+    app — and it holds only because there is no web form. A helpfully-added
+    upload page would quietly end it, and nothing else would notice: the
+    submissions table, the admin and the wall would all keep working.
+
+    This does not claim submit.php is unreachable; anyone can POST to it. It
+    pins that the SITE never invites them to.
+    """
+    pages = list(SITE.glob("*.html")) + list((SITE / "_src").glob("*.html"))
+    assert pages, "no pages found — the guard would pass vacuously"
+
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        assert "submit.php" not in html, \
+            f"{page.name} posts to the gallery endpoint — submissions must come from the app"
+
+    # UPLOADS ARE AN ALLOWLIST. The site has exactly two, and neither can carry
+    # a finished picture to the gallery: the FITS stack donation ("Lend your
+    # light", used only to test Nocturne and never republished) and a screenshot
+    # attached to a problem report. A THIRD one has to be added here
+    # deliberately, which is the point — the question "can this reach the
+    # gallery?" then gets asked out loud.
+    ALLOWED = {"upload.php", "support.php"}
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        if 'type="file"' not in html:
+            continue
+        actions = set(re.findall(r'<form[^>]*action="([^"]+)"', html))
+        stray = actions - ALLOWED
+        assert not stray, (
+            f"{page.name} has a file input and posts to {sorted(stray)} — a new upload "
+            f"endpoint must be checked against the gallery invariant before it is allowed")
+
+    # And the stack donation takes FITS only, so it cannot be a finished picture
+    # even by accident.
+    index = (SITE / "index.html").read_text(encoding="utf-8")
+    accept = re.search(r'<input[^>]*type="file"[^>]*accept="([^"]*)"', index)
+    assert accept, "the stack donation lost its accept list — it would take anything"
+    allowed = {a.strip().lower() for a in accept.group(1).split(",")}
+    assert allowed <= {".fit", ".fits", ".fts"}, (
+        f"the stack donation accepts {sorted(allowed - {'.fit', '.fits', '.fts'})} — it is for "
+        f"raw stacks, not finished pictures")

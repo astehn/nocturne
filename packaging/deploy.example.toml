@@ -27,6 +27,14 @@ exclude = [
   "img/_originals/", "PRODUCT.md", "DESIGN.md", "README.md",
   "_research_external_tools.md", "tests/",
   "config*.php", "db/", "uploads/", "*.fits", "*.fit", "admin/",
+  # SERVER-GENERATED, and caught by the "*.json" include above. The admin
+  # rewrites it on every promotion, so the local copy is whatever a test or a
+  # debugging session last left there -- usually nothing. rsync has no --delete,
+  # so an UNLISTED server file survives; a LISTED one is overwritten in silence
+  # and every planner photograph disappears until an unrelated promotion
+  # regenerates it. Added after the whole-branch review found the include glob
+  # already covered it, 2026-09-24.
+  "planner-images.json",
 ]
 
 # The Linux build host, used only by `deploy.py --linux`. Omit the section and

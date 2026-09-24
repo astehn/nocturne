@@ -1,0 +1,36 @@
+# Objects the planner needs that OpenNGC does not carry.
+#
+# BESIDE THE GENERATOR, not in nocturne/data/. Only build_planner_targets.py
+# reads it, and the planner is a website feature -- putting it in the app's data
+# directory would ship it inside every release for nothing.
+#
+# WHY THIS FILE EXISTS. openngc.csv is NGC and IC only. A few objects people
+# actually point a telescope at have no NGC or IC number at all, so they cannot
+# be filtered out of the planner -- they were never in it. M 45 is the one that
+# started this: Andreas, 2026-09-24, "M45 which is a very common target and its
+# not in the catalog". It is Melotte 22, and common_names.csv already explains
+# the same gap for the same object.
+#
+# This is NOT a second catalogue. It is the shortest possible list of holes,
+# and every row is hand-entered, which means every row can be wrong in a way no
+# catalogue would be. Two things keep that honest:
+#
+#   1. `anchor` names an object that IS in openngc.csv and lies close by. The
+#      test asserts each row sits within `anchor_deg` of it, so a transposed
+#      digit or a swapped sign fails rather than silently moving an object to
+#      the wrong part of the sky -- which, in a planner, means telling someone
+#      to look the wrong way on a clear night.
+#   2. Nothing here is annotated or plate-solved. These coordinates decide
+#      "is it up, how high, which direction", where a few arcminutes do not
+#      matter; they never label a pixel.
+#
+# Adding a row: it must be an object with no NGC/IC designation, one people
+# actually image, and it must carry an anchor already in openngc.csv.
+# `name` is what the page shows and `common` is the subtitle, the same split
+# _display_name() applies to an OpenNGC row. Without it M 45 was the only
+# Messier object in the catalogue not called "M 45" -- the one added BECAUSE
+# Andreas said "M45 is a very common target and its not in the catalog" was the
+# one you could not find under that name, on the page or in the admin's search.
+designation,name,common,ra_deg,dec_deg,major_arcmin,type,anchor,anchor_deg
+M45,M 45,Pleiades,56.75,24.1167,110,OCl,NGC1435,1.5
+IC1396A,IC 1396A,Elephant's Trunk Nebula,324.23,57.50,20,Neb,IC1396,1.5
