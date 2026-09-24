@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from .annotation_pill import AnnotationPill
 from .object_list_panel import ObjectListPanel
 from .readout_pill import ReadoutPill
-from .scroll_input import is_trackpad_scroll, pan_delta, trace, wheel_steps
+from .scroll_input import is_trackpad_scroll, pan_delta, trace
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
 
@@ -557,11 +557,14 @@ class ImageView(QGraphicsView):
             self._note_zoom()
 
     def wheelEvent(self, event) -> None:
-        """A trackpad swipe pans; a mouse wheel zooms by how far it turned.
+        """A trackpad swipe pans; a mouse wheel zooms exactly as it always has.
 
-        This read only the sign until 2026-09-24, so a two-finger swipe — a
-        stream of dozens of events — fired a x1.25 step per event. See
-        `scroll_input` for how the two are told apart."""
+        The wheel branch reads only the sign, which is why a swipe — a stream
+        of dozens of events — used to fire a x1.25 step per event; the swipe
+        now goes to a pan instead. The wheel branch itself is the old code,
+        unchanged, on purpose: Andreas' mouse sends several events of varying
+        size per notch, so scaling by the delta would change how his wheel
+        feels. See `scroll_input` for how the two are told apart."""
         if self._item.pixmap().isNull():
             event.accept()
             return
@@ -570,10 +573,12 @@ class ImageView(QGraphicsView):
             d = pan_delta(event)
             trace("ImageView", event, f"pan ({d.x():.1f},{d.y():.1f})")
             self._pan_by(d)
+        elif event.angleDelta().y() > 0:
+            trace("ImageView", event, "zoom in")
+            self.zoom_in()
         else:
-            steps = wheel_steps(event)
-            trace("ImageView", event, f"zoom x{1.25 ** steps:.4f}")
-            self._zoom_about(1.25 ** steps, pos)
+            trace("ImageView", event, "zoom out")
+            self.zoom_out()
         event.accept()
 
     def viewportEvent(self, event) -> bool:

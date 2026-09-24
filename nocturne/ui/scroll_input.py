@@ -7,22 +7,20 @@ convention it pans, as in Preview and Photos; pinch is what zooms. Treating the
 stream as detents fired dozens of x1.25 steps per swipe, which is what made the
 app unusable on a MacBook (TODO: "Trackpad zoom & pan").
 
-`pixelDelta()` and `source()` do not separate the two on macOS: smooth-scrolling
-mice report pixel deltas too, and the source is "not synthesized" for both. The
-scroll PHASE does — a trackpad gesture is bracketed by begin/update/end (and
-momentum), a detent wheel has none. The device type is checked as well because
-it costs nothing, and some platforms set it where they omit the phase. A Magic
-Mouse also reports phases, so it pans; Preview does the same with one.
+The scroll PHASE is the only signal: a trackpad gesture is bracketed by
+begin/update/end (and momentum), a wheel has none. Nothing else separates them
+on macOS. Measured on Andreas' desktop mouse, 2026-09-24, from this module's own
+trace: every wheel event arrived with `device=TouchPad`,
+`source=MouseEventSynthesizedBySystem` and pixel deltas of 12-205 — and
+`phase=NoScrollPhase`. The first version also trusted the device type, and it
+turned his scroll wheel into a pan. Do not add the device type back.
+A Magic Mouse reports phases, so it pans; Preview does the same with one.
 """
 from __future__ import annotations
 
 import logging
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QInputDevice
-
-# One wheel detent, in Qt's eighths of a degree.
-WHEEL_DETENT = 120.0
 
 # --- TRACKPAD TEST BUILD ONLY — remove before merge --------------------------
 # Nothing here can drive a real trackpad (macOS denies this terminal synthetic
@@ -57,10 +55,7 @@ def trace(where: str, event, action: str) -> None:
 
 
 def is_trackpad_scroll(event) -> bool:
-    if event.phase() != Qt.ScrollPhase.NoScrollPhase:
-        return True
-    dev = event.pointingDevice()
-    return dev is not None and dev.type() == QInputDevice.DeviceType.TouchPad
+    return event.phase() != Qt.ScrollPhase.NoScrollPhase
 
 
 def pan_delta(event) -> QPointF:
@@ -75,8 +70,3 @@ def pan_delta(event) -> QPointF:
         return QPointF(px)
     ang = event.angleDelta()
     return QPointF(ang.x() / 8.0, ang.y() / 8.0)
-
-
-def wheel_steps(event) -> float:
-    """Detents turned, signed; fractional for a high-resolution wheel."""
-    return event.angleDelta().y() / WHEEL_DETENT

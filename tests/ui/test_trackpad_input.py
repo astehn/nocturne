@@ -90,11 +90,20 @@ def test_a_phased_scroll_is_a_trackpad_and_a_detent_wheel_is_not():
     assert not is_trackpad_scroll(_wheel_event(pos, 120))
 
 
-def test_a_touchpad_device_counts_even_without_a_phase():
-    e = QWheelEvent(QPointF(1, 1), QPointF(1, 1), QPoint(0, 5), QPoint(0, 15),
-                    _NO_BTN, _NO_MOD, Qt.ScrollPhase.NoScrollPhase, False,
-                    Qt.MouseEventSource.MouseEventNotSynthesized, _TOUCHPAD)
-    assert is_trackpad_scroll(e)
+def _desktop_mouse_event(pos, pixel_y):
+    """Andreas' desktop mouse wheel exactly as Qt delivered it on 2026-09-24,
+    copied from the input trace: tagged TouchPad, synthesized by the system,
+    pixel deltas, angle = 2 x pixel — and NO phase. The first version trusted
+    the device type and turned this wheel into a pan."""
+    return QWheelEvent(QPointF(pos), QPointF(pos), QPoint(0, pixel_y),
+                       QPoint(0, 2 * pixel_y), _NO_BTN, _NO_MOD,
+                       Qt.ScrollPhase.NoScrollPhase, False,
+                       Qt.MouseEventSource.MouseEventSynthesizedBySystem, _TOUCHPAD)
+
+
+def test_the_desktop_mouse_is_not_a_trackpad_whatever_its_device_says():
+    for py in (12, 13, 56, 103, 205, -12, -103):
+        assert not is_trackpad_scroll(_desktop_mouse_event(QPointF(1, 1), py))
 
 
 # --- ImageView: two-finger swipe pans ----------------------------------------
@@ -149,30 +158,39 @@ def test_a_swipe_in_crop_mode_pans_and_leaves_the_box_alone(qtbot):
     assert _centre_scene(view).y() > start.y()
 
 
-# --- ImageView: the mouse wheel still zooms, by how far it turned -------------
+# --- ImageView: the mouse wheel is exactly what it was -----------------------
 
-def test_one_wheel_detent_is_still_one_x1_25_step(qtbot):
-    """Desktop behaviour must not change: one click, x1.25, as before."""
-    view = _view(qtbot, zoom=1.0)
-    _send(view.viewport(), _wheel_event(QPoint(150, 100), 120))
-    assert view.zoom() == pytest.approx(1.25)
-    _send(view.viewport(), _wheel_event(QPoint(150, 100), -120))
-    assert view.zoom() == pytest.approx(1.0)
-
-
-def test_a_fine_wheel_turns_a_fraction_of_a_step(qtbot):
-    """The old handler read only the sign, so a high-resolution wheel's 1/4
-    detent zoomed a full step. Now it zooms a quarter of one."""
-    view = _view(qtbot, zoom=1.0)
-    _send(view.viewport(), _wheel_event(QPoint(150, 100), 30))
-    assert view.zoom() == pytest.approx(1.25 ** 0.25)
+def _old_wheel(view, angle_y) -> None:
+    """The pre-2026-09-24 wheelEvent, verbatim, as the reference."""
+    if angle_y > 0:
+        view.zoom_in()
+    else:
+        view.zoom_out()
 
 
-def test_the_wheel_stops_at_the_ceiling(qtbot):
-    view = _view(qtbot, zoom=1.0)
-    for _ in range(40):
-        _send(view.viewport(), _wheel_event(QPoint(150, 100), 120))
-    assert view.zoom() == pytest.approx(_MAX_ZOOM)
+@pytest.mark.parametrize("pixels", [
+    [103, 103, 102, 12, 13],          # a real burst from the trace, zooming in
+    [-103, -103, -12, -13, -70],      # and out
+    [12, -13, 205, -19, 56, 103],     # direction changes mid-stream
+])
+def test_the_desktop_mouse_zooms_exactly_as_before(qtbot, pixels):
+    """Replay his real wheel events into one view and the OLD handler into an
+    identical one: every transform must match, event by event. Anything that
+    changes his wheel — a pan, a different step, a delta-scaled step — fails."""
+    new, ref = _view(qtbot, zoom=1.0), _view(qtbot, zoom=1.0)
+    for py in pixels:
+        _send(new.viewport(), _desktop_mouse_event(QPoint(150, 100), py))
+        _old_wheel(ref, 2 * py)
+        assert new.transform() == ref.transform()
+        assert _centre_scene(new) == _centre_scene(ref)
+
+
+def test_a_classic_detent_wheel_zooms_exactly_as_before(qtbot):
+    new, ref = _view(qtbot, zoom=1.0), _view(qtbot, zoom=1.0)
+    for a in (120, 120, -120, 120, -120, -120, -120):
+        _send(new.viewport(), _wheel_event(QPoint(150, 100), a))
+        _old_wheel(ref, a)
+        assert new.transform() == ref.transform()
 
 
 # --- ImageView: pinch zooms about the fingers --------------------------------
