@@ -49,6 +49,8 @@ from build_gallery import (  # noqa: E402
 GRID_EDGE = 1100       # what the page shows; larger than the strip's 900, the
                        # pictures being the entire point of this page
 FULL_EDGE = 2400       # what the lightbox opens
+PLANNER_EDGE = 320     # the planner's collapsed card (64px, 48 on mobile);
+                       # matches the size wall.php derives on approval
 QUALITY = 82
 
 
@@ -85,7 +87,7 @@ def write_sizes(src: pathlib.Path, slug: str) -> dict:
     out = {}
     with Image.open(src) as im:
         im = im.convert("RGB")
-        for edge, key in ((GRID_EDGE, "grid"), (FULL_EDGE, "full")):
+        for edge, key in ((GRID_EDGE, "grid"), (FULL_EDGE, "full"), (PLANNER_EDGE, "planner")):
             c = im.copy()
             c.thumbnail((edge, edge), Image.Resampling.LANCZOS)
             dest = OUT_IMG / f"{slug}-{edge}.jpg"
