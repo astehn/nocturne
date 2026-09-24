@@ -333,3 +333,16 @@ def test_every_css_token_the_admin_uses_is_defined():
     assert not missing, (
         f"the admin CSS uses undefined custom properties {missing} — these "
         f"resolve to nothing, which for a background means transparent")
+
+
+def test_the_datalist_does_not_print_a_target_name_twice():
+    """planner-targets.json writes `common` even when it equals `name`, which is
+    most of the 158. Concatenating them unconditionally gave
+    "IC0348 — omi Per Cloud omi Per Cloud" in the dropdown whose whole job is
+    making a target easy to pick. Found by rendering the live page, not by
+    reading the code."""
+    php = _code_only((SITE / "admin" / "wall.php").read_text(encoding="utf-8"))
+    block = php[php.index('<datalist id="planner-targets">'):]
+    block = block[:block.index("</datalist>")]
+    assert "$common !== $label" in block, \
+        "the datalist label appends `common` without checking it differs from `name`"

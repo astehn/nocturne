@@ -104,7 +104,13 @@ def test_https_works_on_a_machine_without_the_build_machines_certs():
     # SSL error would pass on an ImportError, a typo in the path, or any other
     # crash before the request — the test would then be green for the wrong
     # reason, which is how a guard rots without anyone noticing.
-    assert out == "OK" or "URLError" in out, (
+    # HTTPError counts as reaching it, and counts as PROOF. An HTTP status code
+    # can only come back through a completed TLS handshake, so "403 rate limit
+    # exceeded" is stronger evidence that HTTPS worked than a URLError is.
+    # Without this the suite goes red on a day with many GitHub calls, for a
+    # reason that has nothing to do with certificates — which trains you to
+    # ignore a failure in a test about certificates (2026-09-24).
+    assert out == "OK" or "URLError" in out or "HTTPError" in out, (
         f"never reached the request: {out}")
 
 
