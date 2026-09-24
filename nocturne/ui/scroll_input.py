@@ -7,22 +7,38 @@ convention it pans, as in Preview and Photos; pinch is what zooms. Treating the
 stream as detents fired dozens of x1.25 steps per swipe, which is what made the
 app unusable on a MacBook (TODO: "Trackpad zoom & pan").
 
-The scroll PHASE is the only signal: a trackpad gesture is bracketed by
-begin/update/end (and momentum), a wheel has none. Nothing else separates them
-on macOS. Measured on Andreas' desktop mouse, 2026-09-24, with an input trace
+On macOS the scroll PHASE is the only signal: a trackpad gesture is bracketed
+by begin/update/end (and momentum), a wheel has none. Nothing else separates
+them there. Measured on Andreas' desktop mouse, 2026-09-24, with an input trace
 in a test build: every wheel event arrived with `device=TouchPad`,
 `source=MouseEventSynthesizedBySystem` and pixel deltas of 12-205 — and
 `phase=NoScrollPhase`. The first version also trusted the device type, and it
-turned his scroll wheel into a pan. Do not add the device type back.
+turned his scroll wheel into a pan. Do not trust the device type on macOS.
 A Magic Mouse reports phases, so it pans; Preview does the same with one.
+
+Linux (X11) is the other way round, measured on the build laptop the same
+evening: a two-finger scroll carries NO phase — 211 events went down the wheel
+path and zoomed 0.69 -> 0.145 in a second — but the devices are labelled
+honestly, the Alps touchpad as TouchPad and a Logitech receiver as Mouse with
+exactly +-120 per click. So off macOS, the label counts too.
 """
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QInputDevice
+
+_MACOS = sys.platform == "darwin"
 
 
 def is_trackpad_scroll(event) -> bool:
-    return event.phase() != Qt.ScrollPhase.NoScrollPhase
+    if event.phase() != Qt.ScrollPhase.NoScrollPhase:
+        return True
+    if _MACOS:
+        return False
+    dev = event.pointingDevice()
+    return dev is not None and dev.type() == QInputDevice.DeviceType.TouchPad
 
 
 def pan_delta(event) -> QPointF:

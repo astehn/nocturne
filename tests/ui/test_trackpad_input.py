@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from nocturne.ui.curves_dialog import _ZoomPreview  # noqa: E402
 from nocturne.ui.image_view import _MAX_ZOOM, ImageView  # noqa: E402
+from nocturne.ui import scroll_input  # noqa: E402
 from nocturne.ui.scroll_input import is_trackpad_scroll  # noqa: E402
 
 _TOUCHPAD = QPointingDevice(
@@ -105,7 +106,8 @@ def _desktop_mouse_event(pos, pixel_y):
                        Qt.MouseEventSource.MouseEventSynthesizedBySystem, _TOUCHPAD)
 
 
-def test_the_desktop_mouse_is_not_a_trackpad_whatever_its_device_says():
+def test_the_desktop_mouse_is_not_a_trackpad_whatever_its_device_says(monkeypatch):
+    monkeypatch.setattr(scroll_input, "_MACOS", True)
     for py in (12, 13, 56, 103, 205, -12, -103):
         assert not is_trackpad_scroll(_desktop_mouse_event(QPointF(1, 1), py))
 
@@ -177,10 +179,11 @@ def _old_wheel(view, angle_y) -> None:
     [-103, -103, -12, -13, -70],      # and out
     [12, -13, 205, -19, 56, 103],     # direction changes mid-stream
 ])
-def test_the_desktop_mouse_zooms_exactly_as_before(qtbot, pixels):
+def test_the_desktop_mouse_zooms_exactly_as_before(qtbot, monkeypatch, pixels):
     """Replay his real wheel events into one view and the OLD handler into an
     identical one: every transform must match, event by event. Anything that
     changes his wheel — a pan, a different step, a delta-scaled step — fails."""
+    monkeypatch.setattr(scroll_input, "_MACOS", True)
     new, ref = _view(qtbot, zoom=1.0), _view(qtbot, zoom=1.0)
     for py in pixels:
         _send(new.viewport(), _desktop_mouse_event(QPoint(150, 100), py))
@@ -437,3 +440,71 @@ def test_preview_fling_leaves_no_hidden_overshoot(qtbot):
     assert edge == pytest.approx(1 - 0.5 / 4.0)
     _swipe(p, QPoint(150, 100), 0, 10, n=1)            # a little way back
     assert p._centre[1] < edge, "dead zone: swiping back did nothing"
+
+
+# --- Linux (X11), measured on the build laptop 2026-09-24 ---------------------
+# There the two-finger scroll arrives with NO phase, so the macOS rule alone
+# sent it down the wheel path: 211 events, zoom 0.69 -> 0.145 in one second.
+# But Linux labels the devices honestly, unlike macOS: the Alps touchpad as
+# TouchPad, the Logitech receiver as Mouse, exactly +-120 per click.
+
+_LINUX_MOUSE = QPointingDevice(
+    "Logitech USB Receiver", 9002, QInputDevice.DeviceType.Mouse,
+    QPointingDevice.PointerType.Generic, QInputDevice.Capability.Position, 5, 0)
+
+
+def _linux_touchpad_event(pos, py):
+    """As traced: pixel == angle, uneven sizes, no phase, not synthesized."""
+    return QWheelEvent(QPointF(pos), QPointF(pos), QPoint(0, py), QPoint(0, py),
+                       _NO_BTN, _NO_MOD, Qt.ScrollPhase.NoScrollPhase, False,
+                       Qt.MouseEventSource.MouseEventNotSynthesized, _TOUCHPAD)
+
+
+def _linux_mouse_event(pos, py):
+    return QWheelEvent(QPointF(pos), QPointF(pos), QPoint(0, py), QPoint(0, py),
+                       _NO_BTN, _NO_MOD, Qt.ScrollPhase.NoScrollPhase, False,
+                       Qt.MouseEventSource.MouseEventNotSynthesized, _LINUX_MOUSE)
+
+
+def test_on_linux_the_touchpad_is_a_trackpad_and_the_mouse_is_not(monkeypatch):
+    monkeypatch.setattr(scroll_input, "_MACOS", False)
+    for py in (-28, -52, -98, -77, 45):
+        assert is_trackpad_scroll(_linux_touchpad_event(QPointF(1, 1), py))
+    for py in (120, -120):
+        assert not is_trackpad_scroll(_linux_mouse_event(QPointF(1, 1), py))
+
+
+def test_on_macos_the_device_label_is_still_ignored(monkeypatch):
+    """The same touchpad-labelled event on macOS is his desktop MOUSE."""
+    monkeypatch.setattr(scroll_input, "_MACOS", True)
+    assert not is_trackpad_scroll(_linux_touchpad_event(QPointF(1, 1), -28))
+
+
+def test_a_linux_touchpad_swipe_pans_and_does_not_zoom(qtbot, monkeypatch):
+    monkeypatch.setattr(scroll_input, "_MACOS", False)
+    view = _view(qtbot)
+    before = view.zoom()
+    start = _centre_scene(view)
+    for py in (-28, -52, -98, -77, -77, -45, -80, -42):
+        _send(view.viewport(), _linux_touchpad_event(QPoint(150, 100), py))
+    assert view.zoom() == before
+    assert _centre_scene(view).y() > start.y()
+
+
+def test_the_linux_mouse_zooms_exactly_as_before(qtbot, monkeypatch):
+    monkeypatch.setattr(scroll_input, "_MACOS", False)
+    new, ref = _view(qtbot, zoom=1.0), _view(qtbot, zoom=1.0)
+    for a in (120, 120, 120, -120, -120, 120, -120):
+        _send(new.viewport(), _linux_mouse_event(QPoint(150, 100), a))
+        _old_wheel(ref, a)
+        assert new.transform() == ref.transform()
+
+
+def test_the_preview_follows_the_same_rule_on_linux(qtbot, monkeypatch):
+    monkeypatch.setattr(scroll_input, "_MACOS", False)
+    p = _preview(qtbot)
+    start = list(p._centre)
+    for py in (-28, -52, -98):
+        _send(p, _linux_touchpad_event(QPoint(150, 100), py))
+    assert p.zoom_level() == 4.0
+    assert p._centre[1] > start[1]
