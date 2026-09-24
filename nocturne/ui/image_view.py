@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from .annotation_pill import AnnotationPill
 from .object_list_panel import ObjectListPanel
 from .readout_pill import ReadoutPill
-from .scroll_input import is_trackpad_scroll, pan_delta, trace
+from .scroll_input import is_trackpad_scroll, pan_delta
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
 
@@ -571,16 +571,13 @@ class ImageView(QGraphicsView):
         pos = event.position().toPoint()
         if is_trackpad_scroll(event):
             d = pan_delta(event)
-            trace("ImageView", event, f"pan ({d.x():.1f},{d.y():.1f})")
             self._pan_by(d)
             # The picture moved under a still pointer: the readout follows
             # the pixel now under it rather than waiting for a mouse move.
             self._emit_hover_at_scene_pos(self.mapToScene(pos))
         elif event.angleDelta().y() > 0:
-            trace("ImageView", event, "zoom in")
             self.zoom_in()
         else:
-            trace("ImageView", event, "zoom out")
             self.zoom_out()
         event.accept()
 
@@ -609,7 +606,6 @@ class ImageView(QGraphicsView):
         # the picture toward the toolbar with every pinch.
         pos = self.viewport().mapFromGlobal(event.globalPosition()).toPoint()
         if kind == Qt.NativeGestureType.ZoomNativeGesture:
-            trace("ImageView", event, f"zoom x{1.0 + event.value():.4f}")
             self._zoom_about(1.0 + event.value(), pos)
             self._emit_hover_at_scene_pos(self.mapToScene(pos))
             event.accept()
@@ -618,16 +614,13 @@ class ImageView(QGraphicsView):
             # The two-finger double tap: Preview's toggle between the whole
             # picture and its real pixels, at the spot tapped.
             if self._fitted:
-                trace("ImageView", event, "smart zoom -> 100%")
                 scene = self.mapToScene(pos)
                 self.actual_size()
                 self.centerOn(scene)
             else:
-                trace("ImageView", event, "smart zoom -> fit")
                 self.fit()
             event.accept()
             return True
-        trace("ImageView", event, "ignored")
         return False
 
     def _fit_zoom(self) -> float:

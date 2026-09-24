@@ -31,7 +31,7 @@ from ..core.curves import (CURVE_CHANNELS, CURVE_RANGES, active_curves,
 from ..core.image import AstroImage
 from .curve_editor import CurveEditor
 from .preview import to_qimage
-from .scroll_input import is_trackpad_scroll, pan_delta, trace
+from .scroll_input import is_trackpad_scroll, pan_delta
 from .zoom_row import ZoomRow
 
 _PREVIEW_MAX = 640
@@ -157,18 +157,15 @@ class _ZoomPreview(QLabel):
         """A trackpad swipe pans, as a drag does; a mouse wheel zooms."""
         if is_trackpad_scroll(event):
             d = pan_delta(event)
-            trace("ZoomPreview", event, f"pan ({d.x():.1f},{d.y():.1f})")
             self._pan_by(d.x(), d.y())
         else:
             step = 1.0015 ** event.angleDelta().y()
-            trace("ZoomPreview", event, f"zoom x{step:.4f}")
             self.set_zoom(self._zoom * step)
         event.accept()
 
     def event(self, event) -> bool:
         if (event.type() == QEvent.Type.NativeGesture
                 and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
-            trace("ZoomPreview", event, f"zoom x{1.0 + event.value():.4f}")
             self.set_zoom(self._zoom * (1.0 + event.value()))
             return True
         return super().event(event)
