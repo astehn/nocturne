@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
 )
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from .annotation_pill import AnnotationPill
 from .object_list_panel import ObjectListPanel
 from .readout_pill import ReadoutPill
+from .scroll_input import is_trackpad_scroll, pan_delta
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
 
@@ -556,10 +557,115 @@ class ImageView(QGraphicsView):
             self._note_zoom()
 
     def wheelEvent(self, event) -> None:
-        if event.angleDelta().y() > 0:
+        """A trackpad swipe pans; a mouse wheel zooms exactly as it always has.
+
+        The wheel branch reads only the sign, which is why a swipe — a stream
+        of dozens of events — used to fire a x1.25 step per event; the swipe
+        now goes to a pan instead. The wheel branch itself is the old code,
+        unchanged, on purpose: Andreas' mouse sends several events of varying
+        size per notch, so scaling by the delta would change how his wheel
+        feels. See `scroll_input` for how the two are told apart."""
+        if self._item.pixmap().isNull():
+            event.accept()
+            return
+        pos = event.position().toPoint()
+        if is_trackpad_scroll(event):
+            d = pan_delta(event)
+            self._pan_by(d)
+            # The picture moved under a still pointer: the readout follows
+            # the pixel now under it rather than waiting for a mouse move.
+            self._emit_hover_at_scene_pos(self.mapToScene(pos))
+        elif event.angleDelta().y() > 0:
             self.zoom_in()
         else:
             self.zoom_out()
+        event.accept()
+
+    def viewportEvent(self, event) -> bool:
+        # Pinch goes to the widget under the fingers — usually the viewport,
+        # which the scroll area does not forward to any handler of ours...
+        if event.type() == QEvent.Type.NativeGesture:
+            return self._native_gesture(event)
+        return super().viewportEvent(event)
+
+    def event(self, event) -> bool:
+        # ...but over a pill (children of the VIEW) it lands here instead. A
+        # handled gesture is accepted, so one over the viewport does not also
+        # travel up to this and zoom twice.
+        if event.type() == QEvent.Type.NativeGesture:
+            return self._native_gesture(event)
+        return super().event(event)
+
+    def _native_gesture(self, event) -> bool:
+        kind = event.gestureType()
+        if self._item.pixmap().isNull():
+            event.accept()
+            return True
+        # From the GLOBAL position. Delivered through the window, position()
+        # is in window coordinates, not the viewport's; anchoring on it crept
+        # the picture toward the toolbar with every pinch.
+        pos = self.viewport().mapFromGlobal(event.globalPosition()).toPoint()
+        if kind == Qt.NativeGestureType.ZoomNativeGesture:
+            self._zoom_about(1.0 + event.value(), pos)
+            self._emit_hover_at_scene_pos(self.mapToScene(pos))
+            event.accept()
+            return True
+        if kind == Qt.NativeGestureType.SmartZoomNativeGesture:
+            # The two-finger double tap: Preview's toggle between the whole
+            # picture and its real pixels, at the spot tapped.
+            if self._fitted:
+                scene = self.mapToScene(pos)
+                self.actual_size()
+                self.centerOn(scene)
+            else:
+                self.fit()
+            event.accept()
+            return True
+        return False
+
+    def _fit_zoom(self) -> float:
+        vw, vh = self.viewport().width(), self.viewport().height()
+        pm = self._item.pixmap()
+        if pm.isNull() or pm.width() <= 0 or pm.height() <= 0:
+            return 1.0
+        return min(vw / pm.width(), vh / pm.height())
+
+    def _zoom_about(self, factor: float, view_pos) -> None:
+        """Scale by `factor` keeping the image point under `view_pos` still.
+
+        Explicit rather than AnchorUnderMouse, which uses the last MOUSE MOVE
+        position and only while Qt believes the pointer is over the widget —
+        neither is a pinch's own position. Clamped between half the fit scale
+        (further out is only empty background) and `_MAX_ZOOM` — in the
+        direction of travel only: the wheel can leave the zoom outside that
+        range, and a pinch out must never snap IN to the floor."""
+        if self._item.pixmap().isNull() or factor <= 0:
+            return
+        z = self.zoom()
+        if z <= 0:
+            return
+        if factor > 1.0:
+            target = min(_MAX_ZOOM, z * factor)
+        else:
+            target = max(self._fit_zoom() * 0.5, z * factor)
+        if (target - z) * (factor - 1.0) <= 1e-12:
+            return
+        anchor = self.mapToScene(view_pos)
+        old = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.scale(target / z, target / z)
+        self.setTransformationAnchor(old)
+        drift = self.mapFromScene(anchor) - view_pos
+        self._pan_by(QPointF(-drift.x(), -drift.y()))
+        self._fitted = False
+        self._note_zoom()
+
+    def _pan_by(self, delta: QPointF) -> None:
+        """Move the picture by `delta` screen pixels, as a hand-drag would.
+        The scroll bars are hidden but still hold the scroll position."""
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        h.setValue(h.value() - round(delta.x()))
+        v.setValue(v.value() - round(delta.y()))
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)
