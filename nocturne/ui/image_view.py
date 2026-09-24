@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush, QColor, QPainter, QPainterPath, QPen, QPixmap, QRadialGradient,
 )
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from .annotation_pill import AnnotationPill
 from .object_list_panel import ObjectListPanel
 from .readout_pill import ReadoutPill
+from .scroll_input import is_trackpad_scroll, pan_delta, trace, wheel_steps
 from .theme import BG_0, BG_1
 from .zoom_pill import ZoomPill
 
@@ -556,10 +557,92 @@ class ImageView(QGraphicsView):
             self._note_zoom()
 
     def wheelEvent(self, event) -> None:
-        if event.angleDelta().y() > 0:
-            self.zoom_in()
+        """A trackpad swipe pans; a mouse wheel zooms by how far it turned.
+
+        This read only the sign until 2026-09-24, so a two-finger swipe — a
+        stream of dozens of events — fired a x1.25 step per event. See
+        `scroll_input` for how the two are told apart."""
+        if self._item.pixmap().isNull():
+            event.accept()
+            return
+        pos = event.position().toPoint()
+        if is_trackpad_scroll(event):
+            d = pan_delta(event)
+            trace("ImageView", event, f"pan ({d.x():.1f},{d.y():.1f})")
+            self._pan_by(d)
         else:
-            self.zoom_out()
+            steps = wheel_steps(event)
+            trace("ImageView", event, f"zoom x{1.25 ** steps:.4f}")
+            self._zoom_about(1.25 ** steps, pos)
+        event.accept()
+
+    def viewportEvent(self, event) -> bool:
+        # Pinch reaches the viewport, the widget under the fingers; the
+        # scroll area does not forward it to any handler of ours.
+        if event.type() == QEvent.Type.NativeGesture:
+            return self._native_gesture(event)
+        return super().viewportEvent(event)
+
+    def _native_gesture(self, event) -> bool:
+        kind = event.gestureType()
+        if self._item.pixmap().isNull():
+            return True
+        pos = event.position().toPoint()
+        if kind == Qt.NativeGestureType.ZoomNativeGesture:
+            trace("ImageView", event, f"zoom x{1.0 + event.value():.4f}")
+            self._zoom_about(1.0 + event.value(), pos)
+            return True
+        if kind == Qt.NativeGestureType.SmartZoomNativeGesture:
+            # The two-finger double tap: Preview's toggle between the whole
+            # picture and its real pixels, at the spot tapped.
+            if self._fitted:
+                trace("ImageView", event, "smart zoom -> 100%")
+                scene = self.mapToScene(pos)
+                self.actual_size()
+                self.centerOn(scene)
+            else:
+                trace("ImageView", event, "smart zoom -> fit")
+                self.fit()
+            return True
+        trace("ImageView", event, "ignored")
+        return False
+
+    def _fit_zoom(self) -> float:
+        vw, vh = self.viewport().width(), self.viewport().height()
+        pm = self._item.pixmap()
+        if pm.isNull() or pm.width() <= 0 or pm.height() <= 0:
+            return 1.0
+        return min(vw / pm.width(), vh / pm.height())
+
+    def _zoom_about(self, factor: float, view_pos) -> None:
+        """Scale by `factor` keeping the image point under `view_pos` still.
+
+        Explicit rather than AnchorUnderMouse, which uses the last MOUSE MOVE
+        position and only while Qt believes the pointer is over the widget —
+        neither is a pinch's own position. Clamped between half the fit scale
+        (further out is only empty background) and `_MAX_ZOOM`."""
+        if self._item.pixmap().isNull() or factor <= 0:
+            return
+        z = self.zoom()
+        target = min(_MAX_ZOOM, max(self._fit_zoom() * 0.5, z * factor))
+        if z <= 0 or abs(target - z) < 1e-9:
+            return
+        anchor = self.mapToScene(view_pos)
+        old = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.scale(target / z, target / z)
+        self.setTransformationAnchor(old)
+        drift = self.mapFromScene(anchor) - view_pos
+        self._pan_by(QPointF(-drift.x(), -drift.y()))
+        self._fitted = False
+        self._note_zoom()
+
+    def _pan_by(self, delta: QPointF) -> None:
+        """Move the picture by `delta` screen pixels, as a hand-drag would.
+        The scroll bars are hidden but still hold the scroll position."""
+        h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+        h.setValue(h.value() - round(delta.x()))
+        v.setValue(v.value() - round(delta.y()))
 
     def mouseMoveEvent(self, event) -> None:
         super().mouseMoveEvent(event)

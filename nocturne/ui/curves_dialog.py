@@ -18,7 +18,7 @@ a window.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
                                QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
@@ -31,6 +31,7 @@ from ..core.curves import (CURVE_CHANNELS, CURVE_RANGES, active_curves,
 from ..core.image import AstroImage
 from .curve_editor import CurveEditor
 from .preview import to_qimage
+from .scroll_input import is_trackpad_scroll, pan_delta, trace
 from .zoom_row import ZoomRow
 
 _PREVIEW_MAX = 640
@@ -147,8 +148,33 @@ class _ZoomPreview(QLabel):
         self._centre = [min(1.0, max(0.0, c)) for c in self._centre]
 
     def wheelEvent(self, event) -> None:
-        step = 1.0015 ** event.angleDelta().y()
-        self.set_zoom(self._zoom * step)
+        """A trackpad swipe pans, as a drag does; a mouse wheel zooms."""
+        if is_trackpad_scroll(event):
+            d = pan_delta(event)
+            trace("ZoomPreview", event, f"pan ({d.x():.1f},{d.y():.1f})")
+            self._pan_by(d.x(), d.y())
+        else:
+            step = 1.0015 ** event.angleDelta().y()
+            trace("ZoomPreview", event, f"zoom x{step:.4f}")
+            self.set_zoom(self._zoom * step)
+        event.accept()
+
+    def event(self, event) -> bool:
+        if (event.type() == QEvent.Type.NativeGesture
+                and event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):
+            trace("ZoomPreview", event, f"zoom x{1.0 + event.value():.4f}")
+            self.set_zoom(self._zoom * (1.0 + event.value()))
+            return True
+        return super().event(event)
+
+    def _pan_by(self, dx: float, dy: float) -> None:
+        # The picture moves with the pointer or fingers, so the view centre
+        # moves the other way. Scaled by the visible fraction, so a gesture
+        # covers the same screen distance whatever the zoom.
+        self._centre[0] -= dx / max(1, self.width()) / self._zoom
+        self._centre[1] -= dy / max(1, self.height()) / self._zoom
+        self._clamp()
+        self.viewChanged.emit()
 
     def mousePressEvent(self, event) -> None:
         self._drag = event.position()
@@ -164,13 +190,7 @@ class _ZoomPreview(QLabel):
         pos = event.position()
         dx, dy = pos.x() - self._drag.x(), pos.y() - self._drag.y()
         self._drag = pos
-        # A drag moves the PICTURE with the pointer, so the view centre moves
-        # the other way. Scaled by the visible fraction, so a drag covers the
-        # same screen distance whatever the zoom.
-        self._centre[0] -= dx / max(1, self.width()) / self._zoom
-        self._centre[1] -= dy / max(1, self.height()) / self._zoom
-        self._clamp()
-        self.viewChanged.emit()
+        self._pan_by(dx, dy)
 
 
 def _downscale(img: AstroImage, max_edge: int = _PREVIEW_MAX) -> AstroImage:
