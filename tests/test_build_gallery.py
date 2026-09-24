@@ -220,8 +220,17 @@ def test_the_seed_CLI_actually_RUNS():
     Every unit test still passed, because they call seed_rows() directly. Only
     invoking the CLI catches that."""
     import subprocess
+    # SKIPPED WHERE THERE IS NO VENV. CLAUDE.md prescribes
+    # `git worktree add --detach /tmp/wt` as the way to verify a clean checkout,
+    # and a worktree has no .venv — so this was the one test that always failed
+    # there, which is how you learn to ignore the result of that check. Same
+    # reasoning as the `php` and `rsync` skips elsewhere: a missing interpreter
+    # is not a broken build.
+    venv = ROOT / ".venv/bin/python"
+    if not venv.exists():
+        pytest.skip("no .venv here (a git worktree, for instance)")
     r = subprocess.run(
-        [str(ROOT / ".venv/bin/python"), "packaging/build_showcase.py", "--seed"],
+        [str(venv), "packaging/build_showcase.py", "--seed"],
         capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 0, r.stderr
     # NOT a hardcoded count: the wall's contents change as Andreas re-exports
