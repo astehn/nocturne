@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.40.0] — 2026-09-24
+
+Nocturne works on a trackpad, and a problem report can carry the log that explains it.
+
+### Added
+- Trackpad gestures, on a Mac and on Linux. Pinch to zoom, and the spot under your fingers stays put. Swipe with two fingers to pan, as in Preview and Photos. On a Mac, double-tap with two fingers to switch between the whole frame and 100% (with Smart zoom turned on in System Settings ▸ Trackpad). This works in the main view, Crop, Trim, Upscale, Share, Curves and the side-by-side compare. The mouse wheel works exactly as before.
+- Help ▸ Report a problem… now sends the report from inside Nocturne, with this session's log attached: what you did, which tools ran and what failed. You can read the whole log before sending and untick it to leave it out. Nothing leaves until you press Send. If the report cannot get out, the browser form opens instead.
+
+### Changed
+- The log names the tool each step used — StarNet2, StarXTerminator, GraXpert or the built-in one — so it is clear which path actually ran.
+- Stretch appears in the log as "0.12 unlinked" rather than as raw settings.
+
+### Fixed
+- On a trackpad, a two-finger scroll zoomed wildly: one swipe fired dozens of zoom steps and hit the maximum, and on a Mac pinch did nothing. On a laptop this made the image all but impossible to move around.
+- Settings showed no status for StarNet2 until you pressed Test, did not update it when you typed a path, and "Rescan for installed apps" crashed for anyone with StarNet2 installed in a usual place.
+- De-green Stars said RC-Astro had separated the stars when it had not; it now names a tool only when it knows which one ran.
+
 ## [0.39.1] — 2026-09-22
 
 Star separation with StarNet2 works. In a packaged build, it never had.
