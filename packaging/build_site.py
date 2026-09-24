@@ -35,8 +35,15 @@ SITE = ROOT / "site"
 SRC = SITE / "_src"
 
 # label -> (href from another page, href from the homepage itself)
+#
+# "/" AND NOT "index.html". Both serve the same page, but /index.html 301s to /,
+# so linking to it sent every visitor -- and Googlebot -- through a redirect for
+# no reason. Search Console reported it as "Page with redirect" on 2026-09-22.
+# It is deliberately absolute where every other entry here is relative: the site
+# is only ever served over HTTP, never opened from a file path, and "/" is the
+# canonical homepage URL that head_html() already emits below.
 NAV = [
-    ("Home",      "index.html",          "#top"),
+    ("Home",      "/",                   "#top"),
     ("Gallery",   "gallery.html",        "gallery.html"),
     ("Tools",     "tools.html",          "tools.html"),
     # The session planner. Its own entry at Andreas's request 2026-09-20 — it is
@@ -143,7 +150,7 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
 
 
 def nav_html(is_home: bool) -> str:
-    brand = "#top" if is_home else "index.html"
+    brand = "#top" if is_home else "/"     # "/" not index.html -- see NAV above
     links = "\n".join(
         f'      <a href="{home if is_home else other}">{label}</a>'
         for label, other, home in NAV)
