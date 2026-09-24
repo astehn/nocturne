@@ -34,6 +34,7 @@ from __future__ import annotations
 import csv
 import json
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -132,9 +133,16 @@ def select_targets(rows: list[dict], min_arcmin: float = MIN_ARCMIN,
         if size is None or ra is None or dec is None or size < min_arcmin:
             continue
         common = (row.get("common") or "").strip()
+        # `requires_name` is part of the rule, so it is enforced HERE too and
+        # not only in the OpenNGC branch above. A supplement row with no name
+        # used to produce a nameless target that only the build-time assertion
+        # would have caught.
+        name = (row.get("name") or "").strip() or common
+        if not name:
+            continue
         out.append({
             "id": row["designation"].strip(),
-            "name": common,
+            "name": name,
             "common": common,
             "ra": round(ra, 4),
             "dec": round(dec, 4),
@@ -142,7 +150,36 @@ def select_targets(rows: list[dict], min_arcmin: float = MIN_ARCMIN,
             "type": (row.get("type") or "").strip(),
         })
     out.sort(key=lambda t: t["id"])
+    _disambiguate(out)
     return out
+
+
+def _pretty_id(designation: str) -> str:
+    """NGC6992 -> NGC 6992, IC1396A -> IC 1396A. Sh2-142 and B142 are left as
+    they are written, because that is how people write them."""
+    m = re.match(r"^(NGC|IC)0*(\d+)([A-Za-z]?)$", designation)
+    return f"{m.group(1)} {m.group(2)}{m.group(3)}" if m else designation
+
+
+def _disambiguate(targets: list[dict]) -> None:
+    """Two targets may not show the same name on a card.
+
+    The public planner renders `name` ALONE -- no id, no `common` -- so a pair
+    of objects a few arcminutes apart rank next to each other and the list reads
+    "3. Eyes / 4. Eyes" with nothing to tell them apart. Five names are shared:
+    Eastern Veil and Antennae Galaxies always were, and widening the catalogue
+    added Eyes, Butterfly Galaxies and Barnard's E Nebula.
+
+    Fixed HERE rather than in planner.js so the admin's grid, its search box and
+    the public card all say the same thing. Ids are untouched, so no promotion
+    is affected.
+    """
+    seen: dict[str, int] = {}
+    for t in targets:
+        seen[t["name"]] = seen.get(t["name"], 0) + 1
+    for t in targets:
+        if seen[t["name"]] > 1:
+            t["name"] = f"{t['name']} ({_pretty_id(t['id'])})"
 
 
 def payload(targets: list[dict], min_arcmin: float = MIN_ARCMIN) -> dict:

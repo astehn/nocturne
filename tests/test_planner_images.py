@@ -4,6 +4,7 @@ site/ is gitignored and deploys by rsync, so these read the working copy.
 """
 import json
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,26 @@ def test_the_wall_writes_a_320_derivative():
 
 
 def test_the_showcase_writes_a_320_derivative():
+    """The constant being DEFINED proves nothing; it has to be written.
+
+    `assert "320" in py` over the whole module passed with
+    `(PLANNER_EDGE, "planner")` deleted from the size loop, because
+    PLANNER_EDGE = 320 still sat at the top unused. Gallery pictures then fall
+    through nocturne_planner_thumb()'s self-healing branch and serve the 1100
+    into a 64px box — the ~20x regression the edge constant exists to prevent,
+    on the page most likely to be opened on a phone outdoors. Proved toothless
+    by mutation in the whole-branch review, 2026-09-24.
+    """
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    import build_showcase
+
+    assert build_showcase.PLANNER_EDGE == 320
     py = (ROOT / "packaging" / "build_showcase.py").read_text(encoding="utf-8")
-    assert "320" in py, "build_showcase.py does not produce a 320px size"
+    sizes = py[py.index("def write_sizes"):]
+    sizes = sizes[:sizes.index("\ndef ")]
+    assert "PLANNER_EDGE" in sizes, \
+        "write_sizes() no longer emits the planner derivative, so the 320 is never written"
 
 
 # --- Task 6: the gallery manifest -------------------------------------------
@@ -102,17 +121,56 @@ def test_deleting_a_submission_also_clears_its_planner_images():
     assert "planner_images" in php, "the delete path does not clear associations"
 
 
-def test_the_artifact_is_not_in_the_deploy_allowlist():
-    """It is SERVER-GENERATED. Listing it would let a site publish overwrite it
-    with whatever is (not) in the local tree. rsync runs without --delete, so an
-    unlisted server-side file survives untouched — the same arrangement
-    uploads/ relies on."""
-    for name in ("deploy.local.toml", "deploy.example.toml"):
-        p = ROOT / "packaging" / name
-        if not p.is_file():
-            continue
-        assert "planner-images.json" not in p.read_text(encoding="utf-8"), \
-            f"{name} lists planner-images.json; a deploy would clobber it"
+def test_a_deploy_never_carries_the_artifact():
+    """It is SERVER-GENERATED. The admin rewrites planner-images.json on every
+    promotion; the local copy is whatever a test or a debugging session last
+    left there. rsync runs without --delete, so an unlisted server file
+    survives — but a DELIVERED one is overwritten in silence, and every planner
+    photograph vanishes until an unrelated promotion regenerates it.
+
+    THIS RUNS RSYNC. The previous version asserted the string was absent from
+    the toml, which it always was — while `include` carried "*.json" and covered
+    it completely. That guard was green for the entire time the file was
+    exposed, and the file was safe only because it happened not to exist
+    locally. A string check could not see it; a dry run can.
+
+    Note the artifact IS still named as an rsync source, because "*.json" globs
+    it. What protects it is the --exclude, which rsync applies to explicitly
+    named sources too. That is the behaviour being pinned here.
+    """
+    import shutil
+    import subprocess
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    import deploy
+
+    toml = ROOT / "packaging" / "deploy.local.toml"
+    if not toml.is_file():
+        pytest.skip("no local deploy config on this machine")
+    if shutil.which("rsync") is None:
+        pytest.skip("rsync is not installed on this machine")
+    config = deploy.load_config(toml)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        site, dest = Path(tmp) / "site", Path(tmp) / "dest"
+        site.mkdir(); dest.mkdir()
+        # The artifact beside the target list and an ordinary page. The target
+        # list MUST still go: it is built here, not on the server, so this is
+        # not "exclude every json".
+        for name in ("planner-images.json", "planner-targets.json", "index.html"):
+            (site / name).write_text("{}")
+        cmd = deploy.build_rsync_cmd(config, site)
+        # Same flags and excludes, pointed somewhere harmless, and never run for
+        # real: -n.
+        local = ["rsync", "-avn"] + [a for a in cmd if a.startswith("--exclude=")] \
+                + [str(p) for p in sorted(site.iterdir())] + [str(dest) + "/"]
+        out = subprocess.run(local, capture_output=True, text=True, timeout=60).stdout
+
+    assert "planner-targets.json" in out, \
+        "the target list stopped deploying — it is built here, not on the server"
+    assert "index.html" in out, "nothing transferred at all; the probe proves nothing"
+    assert "planner-images.json" not in out, \
+        "a site deploy would overwrite the server's planner artifact"
 
 
 # --- Tasks 7-8: the planner page renders the artifact ----------------------
@@ -137,10 +195,20 @@ def test_the_planner_never_links_an_image_full_size():
 
 def test_every_rendered_image_carries_its_credit():
     """For Andreas's own images the credit is cosmetic; for a stranger's it is
-    the thing that makes the arrangement fair."""
+    the thing that makes the arrangement fair.
+
+        ON THE CLASS THE CREDIT ALONE USES. `.by` matched the alternates strip's
+    `data-by="..."` attribute, so deleting the whole credit line from
+    captionHtml() left this green — proved by mutation in the whole-branch
+    review, 2026-09-24. `t-credit` exists for nothing else.
+    """
     js = (SITE / "planner.js").read_text(encoding="utf-8")
     code = "\n".join(l for l in js.splitlines() if not l.strip().startswith("//"))
-    assert ".by" in code or "['by']" in code, "the credit is never rendered"
+    assert "t-credit" in code, "the credit is never rendered"
+    caption = code[code.index("function captionHtml"):]
+    caption = caption[:caption.index("\n  function ")] if "\n  function " in caption else caption
+    assert "t-credit" in caption, \
+        "the credit class survives somewhere, but captionHtml() no longer emits it"
 
 
 def test_the_dead_thumbs_hook_is_gone():

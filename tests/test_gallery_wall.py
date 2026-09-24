@@ -328,14 +328,35 @@ def test_an_approved_picture_can_be_taken_off_the_wall():
     assert "unpublish" in fn, "the action must be reachable from an approved row"
 
 
+def _php_code_only(text):
+    """PHP with its // comment lines removed.
+
+    A guard that matches the comment EXPLAINING it passes while the behaviour is
+    gone. That has now happened five times in this repo — most recently here, on
+    2026-09-24: the comment above the 320 unlink names the file it deletes, so
+    deleting the code left the assertion green.
+    """
+    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("//"))
+
+
 def test_taking_a_picture_down_DELETES_the_files():
     """'I took it down' has to mean the file is gone, not hidden. Spec 5.1: a
     picture that is not published is not kept."""
-    src = ADMIN.read_text(encoding="utf-8")
+    src = _php_code_only(ADMIN.read_text(encoding="utf-8"))
     block = src.split("$act === 'unpublish'", 1)[1].split("\n    }\n", 1)[0]
     assert "unlink" in block
     assert "stored_2000" in block and "stored_900" in block
     assert "stored_2000=NULL" in block, "the columns must be cleared, not left dangling"
+    # AND THE 320, which has no column and so was missed by every check here
+    # for as long as it existed. Approval writes three derivatives and stores
+    # two; the third survived every takedown, leaving img/wall/sub-<id>-320.jpg
+    # serving the picture to anyone with the URL — and that is the one the
+    # planner card used, so it is the likeliest to be in a cache or a history.
+    # privacy.html says the file "is deleted rather than hidden"; that sentence
+    # was false until 2026-09-24. Asserted on the literal name, because the
+    # size has no column to name it by.
+    assert "-320.jpg" in block, \
+        "the 320 derivative is not unlinked, so a takedown leaves the picture served"
 
 
 def test_taking_a_picture_down_clears_the_planner_slot():
@@ -363,8 +384,13 @@ def test_taking_a_picture_down_clears_the_planner_slot():
     branch = block.index("if ($act === 'remove')")
     assert block.index("DELETE FROM planner_images") < branch, \
         "the cascade runs only for Delete; Take off the wall leaves the row"
-    assert block.index("nocturne_planner_regenerate") > block.rindex("} else {"), \
-        "regenerate runs inside one branch only, so the other path skips it"
+    # ON INDENTATION, because "outside both branches" is what is being asserted
+    # and position alone cannot say it. `> block.rindex("} else {")` is equally
+    # true of "outside the if/else" and "inside the else" — proved by mutation
+    # in the whole-branch review: moving the call into the else left all 59
+    # tests green while the Delete path silently stopped rewriting the artifact.
+    assert re.search(r"\n        nocturne_planner_regenerate", block), \
+        "regenerate is nested inside a branch, so one takedown path skips it"
 
 
 def test_every_row_can_be_deleted_outright():

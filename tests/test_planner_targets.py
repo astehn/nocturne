@@ -42,6 +42,7 @@ def test_m31_is_present():
     assert "NGC0224" in ids, "M 31 must be in the catalogue"
 
 
+@pytest.mark.skipif(not (ROOT / "site").is_dir(), reason="site/ is local-only")
 def test_no_target_is_smaller_than_the_floor():
     """Against the floor the FILE records, not a literal repeated here.
 
@@ -190,6 +191,13 @@ def test_every_hand_entered_target_sits_where_its_anchor_says():
         sep = _haversine_deg(float(row["ra_deg"]), float(row["dec_deg"]),
                              float(anchor["ra_deg"]), float(anchor["dec_deg"]))
         limit = float(row["anchor_deg"])
+        # THE TOLERANCE IS BOUNDED. anchor_deg comes from the same hand-typed
+        # row this test is checking, so without a ceiling a future row could
+        # declare `anchor_deg,90` and pass unconditionally — the guard would
+        # still be here and would still mean nothing.
+        assert limit <= 2.0, (
+            f"{row['designation']} declares a {limit}° anchor; anything looser "
+            f"cannot distinguish a typo from a coordinate")
         assert sep <= limit, (
             f"{row['designation']} is {sep:.2f}° from {row['anchor']}, more than "
             f"the {limit}° it claims — check the coordinates")
@@ -238,6 +246,7 @@ def test_the_overlay_never_outranks_a_catalogue_name():
 
 
 
+@pytest.mark.skipif(not (ROOT / "site").is_dir(), reason="site/ is local-only")
 def test_running_the_suite_does_not_rewrite_the_shipped_catalogue():
     """pytest must not be a way to regenerate a deployable artifact.
 
@@ -252,7 +261,48 @@ def test_running_the_suite_does_not_rewrite_the_shipped_catalogue():
 
     shipped = ROOT / "site" / "planner-targets.json"
     before = shipped.read_bytes()
-    b.build(out=ROOT / "site" / "planner-targets.json.testprobe")
-    assert shipped.read_bytes() == before, \
-        "build() wrote the shipped catalogue even when told to write elsewhere"
-    (ROOT / "site" / "planner-targets.json.testprobe").unlink()
+    probe = ROOT / "site" / "planner-targets.json.testprobe"
+    try:
+        b.build(out=probe)
+        assert shipped.read_bytes() == before, \
+            "build() wrote the shipped catalogue even when told to write elsewhere"
+    finally:
+        # In a finally, or a failure leaves the probe in the working tree — and
+        # site/ is gitignored, so `git status` would never mention it.
+        probe.unlink(missing_ok=True)
+
+
+def test_no_two_targets_show_the_same_name():
+    """The public planner renders `name` ALONE — no id, no `common`.
+
+    A pair of objects a few arcminutes apart ranks adjacently, so the list read
+    "3. Eyes / 4. Eyes" with nothing to tell them apart. Five names were shared:
+    Eastern Veil and Antennae Galaxies always were, and widening the catalogue
+    added Eyes, Butterfly Galaxies and Barnard's E Nebula. Found in the
+    whole-branch review, 2026-09-24.
+    """
+    import collections
+
+    names = [t["name"] for t in _targets()]
+    dupes = {n: c for n, c in collections.Counter(names).items() if c > 1}
+    assert not dupes, f"these names appear on more than one card: {dupes}"
+
+
+def test_disambiguation_leaves_unique_names_alone():
+    """It appends an id only where it has to. Without this the test above is
+    satisfied by suffixing EVERY target, which would put "(NGC 7000)" beside
+    "North America Nebula" on every card for nothing."""
+    by_id = {t["id"]: t for t in _targets()}
+    assert by_id["NGC7000"]["name"] == "North America Nebula"
+    assert by_id["NGC6992"]["name"] == "Eastern Veil (NGC 6992)"
+
+
+def test_the_supplement_names_m45_the_way_every_other_messier_is_named():
+    """M 45 was the one target added because Andreas said it was missing — and
+    for a few minutes it was the only Messier object in the catalogue not called
+    "M nn", because the supplement had no `name` column and fell back to
+    `common`. It could not be found by the name he asked for, on the page or in
+    the admin's search box."""
+    by_id = {t["id"]: t for t in _targets()}
+    assert by_id["M45"]["name"] == "M 45"
+    assert by_id["M45"]["common"] == "Pleiades"
