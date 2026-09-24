@@ -121,7 +121,7 @@ python -m nocturne
 4. For dualband data, use **Colourise** on the Stretch step for one-press colour.
 5. Finish at **Export**.
 
-The histogram (top-right) and the log &amp; output areas (bottom) show what each step changed; wheel = zoom, drag = pan; Undo/Redo and Before/After are in the toolbar. With ASTAP set, **Plate Solve** in the toolbar identifies and annotates your target.
+The histogram (top-right) and the log &amp; output areas (bottom) show what each step changed; wheel = zoom, drag = pan, and on a trackpad pinch = zoom, two-finger swipe = pan; Undo/Redo and Before/After are in the toolbar. With ASTAP set, **Plate Solve** in the toolbar identifies and annotates your target.
 
 ## How it works
 
