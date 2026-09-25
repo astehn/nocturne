@@ -1,6 +1,8 @@
 import pytest
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QRectF  # noqa: E402
+from PySide6.QtGui import QPainter  # noqa: E402
 from nocturne.ui.pipeline import Stage, path_stages  # noqa: E402
 from nocturne.ui.stepper import STEP_ROW_H, Stepper, step_state  # noqa: E402
 
@@ -151,3 +153,46 @@ def test_an_unavailable_row_says_why(qtbot):
     object.__setattr__(stage, "reason", "Needs a linked stretch.")   # Stage is frozen
     s = _stepper(qtbot, [stage])
     assert s.item(0).toolTip() == "Needs a linked stretch."
+
+
+def test_paint_actually_uses_label_rect_width(qtbot):
+    """The `label_rect_width` unit test above only exercises the helper — it
+    would still pass if StepDelegate.paint never called it (wrong `locked=`
+    expression, or a hardcoded `r.width() - 80`). This watches the real paint
+    path by spying on QPainter.drawText while the widget is actually rendered,
+    which is exactly the code path that shipped "Noise Reductio"."""
+    from nocturne.ui import stepper as mod
+
+    stages = [Stage("a", "Noise Reduction", "process"),
+              Stage("b", "Locked Step", "process", enabled=False)]
+    s = _stepper(qtbot, stages)
+    s.set_current(0)
+
+    calls = []
+    original_draw_text = QPainter.drawText
+
+    def spy(self, *args, **kwargs):
+        calls.append(args)
+        return original_draw_text(self, *args, **kwargs)
+
+    QPainter.drawText = spy
+    try:
+        s.grab()   # forces a real, synchronous paint (offscreen-safe)
+    finally:
+        QPainter.drawText = original_draw_text
+
+    def rect_for(text):
+        for args in calls:
+            if args and isinstance(args[0], QRectF) and args[-1] == text:
+                return args[0]
+        return None
+
+    current_rect = rect_for("Noise Reduction")
+    locked_rect = rect_for("Locked Step")
+    assert current_rect is not None, "label draw for the current row was not observed"
+    assert locked_rect is not None, "label draw for the locked row was not observed"
+
+    unlocked_row_width = s.visualItemRect(s.item(0)).width()
+    locked_row_width = s.visualItemRect(s.item(1)).width()
+    assert current_rect.width() == mod.label_rect_width(unlocked_row_width, locked=False)
+    assert locked_rect.width() == mod.label_rect_width(locked_row_width, locked=True)
