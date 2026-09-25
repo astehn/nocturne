@@ -2121,6 +2121,10 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         self._toolbar = tb   # kept so fullscreen can hide it
+        # Locked: the tools are muscle memory, and a dragged toolbar could be
+        # dropped past or below the jobs bar that must stay at the row's end.
+        tb.setMovable(False)
+        tb.setFloatable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
         tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
@@ -2262,6 +2266,9 @@ class MainWindow(QMainWindow):
         self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
         self._jobs_bar = JobsBar(self.jobs_indicator)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._jobs_bar)
+        # Built parentless, the bar took a 32 px icon size where the main
+        # toolbar has 24; the indicator is meant to look like one of its tools.
+        self._jobs_bar.setIconSize(tb.iconSize())
 
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.

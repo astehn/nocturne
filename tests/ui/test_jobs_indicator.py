@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QPushButton
 from nocturne.stacking.stacker import StackOptions
 from nocturne.ui.job_queue import JobQueue, StackJob
 from nocturne.ui.jobs_indicator import JobsIndicator
+from nocturne.ui.theme import DANGER, SUCCESS
 
 
 class _FakeProc:
@@ -27,15 +28,20 @@ def _ind(qtbot, monkeypatch, opened=None):
 
 
 def _blank(ind) -> bool:
-    """Idle, as the toolbar sees it: present, but saying nothing and offering
-    nothing — no text, no popover rows, nothing to click."""
-    return (not ind.isHidden() and ind.text() == "" and ind.popover_rows() == []
-            and not ind.isEnabled())
+    """Idle, as the toolbar sees it: present and labelled like any other tool,
+    but dimmed and offering nothing — no popover rows, nothing to click."""
+    return (not ind.isHidden() and ind.text() == "Background tasks"
+            and ind.popover_rows() == [] and not ind.isEnabled())
 
 
-def test_blank_but_present_when_nothing_is_queued(qtbot, monkeypatch):
+def test_idle_is_a_labelled_dimmed_tool(qtbot, monkeypatch):
+    """Andreas, 2026-09-25: the blank idle slot read as "dark unused space";
+    a label under an icon, like every other toolbar tool, says what it is."""
     q, ind = _ind(qtbot, monkeypatch)
     assert _blank(ind)
+    assert not ind.icon().isNull()
+    assert ind.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+    assert ind.toolTip() == ""
 
 
 def test_idle_click_opens_nothing(qtbot, monkeypatch):
@@ -75,9 +81,9 @@ def test_a_long_label_is_elided_with_the_whole_text_in_the_tooltip(qtbot, monkey
     job = _job("Some Extremely Long Target Name Here"); q.enqueue(job)
     q.finished.emit(job, {"output": ""})
     job.state = "done"; q._running = None; q.changed.emit()
-    assert ind.full_text() == "✓ Some Extremely Long Target Name Here ready"
+    assert ind.full_text() == "Some Extremely Long Target Name Here ready"
     assert ind.text() != ind.full_text() and "…" in ind.text()
-    assert ind.text().startswith("✓ Some") and ind.text().endswith(" ready")
+    assert ind.text().startswith("Some") and ind.text().endswith(" ready")
     assert ind.toolTip() == ind.full_text()
     assert ind.fontMetrics().horizontalAdvance(ind.text()) <= ind._text_room
 
@@ -94,26 +100,26 @@ def test_an_ordinary_label_is_shown_whole(qtbot, monkeypatch, label):
     q, ind = _ind(qtbot, monkeypatch)
     job = _job(label); q.enqueue(job)
     q.progress.emit(job, 100, "")
-    assert ind.text() == f"⟳ {label} 100%" and ind.toolTip() == ""
+    assert ind.text() == f"{label} · 100%" and ind.toolTip() == ""
     q.finished.emit(job, {"output": ""})
     job.state = "done"; q._running = None; q.changed.emit()
-    assert ind.text() == f"✓ {label} ready" and ind.toolTip() == ""
+    assert ind.text() == f"{label} ready" and ind.toolTip() == ""
 
 
 def test_the_wording_has_no_filler(qtbot, monkeypatch):
-    """Andreas, 2026-09-25: "⟳ M 33 42%", "⟳ 2 jobs 42%", "✓ M 33 ready",
-    "✗ M 33 failed" — nothing a 140 px slot has to spend on "Stacking" or
-    "— open"."""
+    """Andreas, 2026-09-25: short labels — nothing a 140 px slot has to spend
+    on "Stacking" or "— open". The icon above says what the place is; the
+    label is the state (last round: "M 33 · 42%", "M 33 ready")."""
     q, ind = _ind(qtbot, monkeypatch)
     a, b = _job("M 33"), _job("B")
     q.enqueue(a)
     q.progress.emit(a, 42, "")
-    assert ind.text() == "⟳ M 33 42%"
+    assert ind.text() == "M 33 · 42%"
     q.enqueue(b)
-    assert ind.text() == "⟳ 2 jobs 42%"
+    assert ind.text() == "2 jobs · 42%"
     q.failed.emit(a, "boom")
     a.state = "failed"; b.state = "failed"; q._running = None; q.changed.emit()
-    assert ind.text() == "✗ M 33 failed"
+    assert ind.text() == "M 33 failed"
 
 
 def test_running_shows_label_and_percent(qtbot, monkeypatch):
@@ -139,7 +145,7 @@ def test_a_cancelled_job_says_stopping_until_reaped(qtbot, monkeypatch):
     job = _job(); q.enqueue(job)
     monkeypatch.setattr("nocturne.ui.job_queue.kill_process", lambda proc: None)
     q.cancel(job)
-    assert "Stopping" in ind.text()
+    assert ind.text() == "Stopping…"
 
 
 def test_done_stays_until_acted_on(qtbot, monkeypatch):
@@ -177,6 +183,15 @@ def test_failed_is_red_and_stays(qtbot, monkeypatch):
     q.failed.emit(job, "out of memory")
     job.state = "failed"; q._running = None; q.changed.emit()
     assert "failed" in ind.text().lower() and ind.isEnabled()
+    assert DANGER.lower() in ind.styleSheet().lower()
+
+
+def test_done_is_green(qtbot, monkeypatch):
+    q, ind = _ind(qtbot, monkeypatch)
+    job = _job(); q.enqueue(job)
+    q.finished.emit(job, {"output": ""})
+    job.state = "done"; q._running = None; q.changed.emit()
+    assert ind.text() == "M 33 ready" and SUCCESS.lower() in ind.styleSheet().lower()
 
 
 def test_cancel_row_cancels_the_targeted_job_and_no_other(qtbot, monkeypatch):
@@ -314,31 +329,143 @@ def test_a_closed_popover_is_deleted_not_leaked(qtbot, monkeypatch):
     assert gone == [True]
 
 
-def test_idle_draws_nothing_but_the_toolbar_behind_it(qtbot, tmp_path):
-    """Andreas saw an EMPTY DARK BOX at the head of the toolbar: idle must be
-    reserved space only. Under the real app stylesheet (the suite otherwise
-    runs without it), every pixel of the idle indicator must be the toolbar's
-    own background, and it must not take hover (disabled while idle)."""
-    from PySide6.QtCore import QPoint, QRect
-    from PySide6.QtGui import QColor
+def _styled_window(qtbot, tmp_path, monkeypatch, size=(1280, 800)):
     from PySide6.QtWidgets import QApplication
-    from nocturne.ui.theme import BG_2, build_stylesheet
+    from nocturne.ui.theme import build_stylesheet
     from tests.ui.test_main_window import _window
+    monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     app = QApplication.instance()
     before = app.styleSheet()
     app.setStyleSheet(build_stylesheet())
+    win = _window(qtbot, tmp_path)
+    win.resize(*size)
+    win.show(); qtbot.waitExposed(win); qtbot.wait(20)
+    return win, lambda: app.setStyleSheet(before)
+
+
+def test_idle_is_a_visible_tool_on_the_toolbars_own_background(qtbot, tmp_path, monkeypatch):
+    """Under the real app stylesheet: the idle indicator shows its label and
+    icon (pixels other than the background), and whatever is not label or
+    icon is the TOOLBAR's background — no dark box, which is what Andreas saw
+    when a plain tool button took the stylesheet's window background."""
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QColor
+    from nocturne.ui.theme import BG_1, BG_2
+    win, restore = _styled_window(qtbot, tmp_path, monkeypatch)
     try:
-        win = _window(qtbot, tmp_path)
-        win.resize(1280, 800)
-        win.show(); qtbot.waitExposed(win); qtbot.wait(20)
         ind = win.jobs_indicator
-        assert ind.text() == "" and not ind.isEnabled()
+        assert ind.text() == "Background tasks" and not ind.isEnabled()
         img = win.grab().toImage()
         tl = ind.mapTo(win, QPoint(0, 0))
         r = QRect(tl.x(), tl.y(), ind.width(), ind.height())
-        colours = {img.pixelColor(x, y).name()
-                   for y in range(r.top(), r.bottom() + 1)
-                   for x in range(r.left(), r.right() + 1)}
-        assert colours == {QColor(BG_2).name()}, colours
+        counts: dict[str, int] = {}
+        for y in range(r.top(), r.bottom() + 1):
+            for x in range(r.left(), r.right() + 1):
+                c = img.pixelColor(x, y).name()
+                counts[c] = counts.get(c, 0) + 1
+        bg = QColor(BG_2).name()
+        assert max(counts, key=counts.get) == bg, counts
+        assert QColor(BG_1).name() not in counts, "a dark box behind the tool"
+        assert sum(n for c, n in counts.items() if c != bg) > 50, "label and icon drawn"
     finally:
-        app.setStyleSheet(before)
+        restore()
+
+
+def test_the_indicator_is_the_same_shape_as_a_toolbar_tool(qtbot, tmp_path, monkeypatch):
+    """Icon size, top and height of the toolbar's own buttons, so it sits in
+    the row as one of them — and the row never changes height for it."""
+    from PySide6.QtCore import QPoint
+    win, restore = _styled_window(qtbot, tmp_path, monkeypatch)
+    try:
+        ind = win.jobs_indicator
+        btn = win._toolbar.widgetForAction(win._toolbar.actions()[0])
+        assert ind.iconSize() == btn.iconSize()
+        assert ind.mapTo(win, QPoint(0, 0)).y() == btn.mapTo(win, QPoint(0, 0)).y()
+        assert ind.height() == btn.height()
+    finally:
+        restore()
+
+
+def test_the_main_toolbar_is_locked(qtbot, tmp_path):
+    """Dragged, it could be dropped past or below the jobs bar."""
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    assert not win._toolbar.isMovable() and not win._toolbar.isFloatable()
+    assert not win._jobs_bar.isMovable() and not win._jobs_bar.isFloatable()
+
+
+def _popover_with_everything(win):
+    """A running job, a done and a failed notice: the widest popover."""
+    ind = win.jobs_indicator
+    q = win._job_queue
+    ind.notices.append({"kind": "done", "label": "Andromeda Galaxy mosaic",
+                        "path": "/tmp/a.fits"})
+    ind.notices.append({"kind": "failed", "label": "NGC 7000",
+                        "message": "out of memory while integrating 412 frames"})
+    q.enqueue(_job("IC 1396A"))
+    ind._show_popover()
+    pop = ind._popover
+    assert pop is not None and pop.isVisible()
+    return ind, pop
+
+
+def test_the_popover_stays_on_screen_at_the_right_edge(qtbot, tmp_path, monkeypatch):
+    """Re-review, 2026-09-25: anchored at the indicator's bottom-LEFT, with
+    the indicator at the window's right edge, the popover ran 112-437 px off
+    the screen and hid Open/Dismiss/Cancel."""
+    win, restore = _styled_window(qtbot, tmp_path, monkeypatch)
+    try:
+        avail = win.screen().availableGeometry()
+        win.move(avail.x() + avail.width() - win.frameGeometry().width(), avail.y())
+        qtbot.wait(20)
+        ind, pop = _popover_with_everything(win)
+        assert pop.width() > ind.width(), "precondition: wider than the slot"
+        assert avail.contains(pop.frameGeometry()), (pop.frameGeometry(), avail)
+    finally:
+        restore()
+
+
+def test_the_popover_opens_right_aligned_under_the_indicator(qtbot, tmp_path, monkeypatch):
+    """Where there is room, it hangs from the indicator's bottom-RIGHT, so it
+    opens towards the window, not off its edge."""
+    from PySide6.QtCore import QPoint
+    win, restore = _styled_window(qtbot, tmp_path, monkeypatch, size=(1120, 650))
+    try:
+        # Screen 800 px wide offscreen: put the indicator's right edge inside
+        # it with room to spare on both sides of a popover.
+        avail = win.screen().availableGeometry()
+        ind = win.jobs_indicator
+        right = ind.mapTo(win, QPoint(ind.width(), 0)).x()
+        win.move(avail.x() + avail.width() - 60 - right, avail.y())
+        qtbot.wait(20)
+        ind, pop = _popover_with_everything(win)
+        ind_right = ind.mapToGlobal(QPoint(ind.width(), ind.height()))
+        g = pop.frameGeometry()
+        # Within 2 px: the offscreen platform shifts every shown window by a
+        # 2 px fake frame (measured). Bottom-left anchoring is ~360 px out.
+        assert abs(g.x() + g.width() - ind_right.x()) <= 2, (g, ind_right)
+        assert abs(g.y() - ind_right.y()) <= 2, (g, ind_right)
+        assert avail.contains(g)
+    finally:
+        restore()
+
+
+def test_the_popover_opens_upwards_at_the_bottom_of_the_screen(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtCore import QPoint
+    win, restore = _styled_window(qtbot, tmp_path, monkeypatch)
+    try:
+        avail = win.screen().availableGeometry()
+        ind = win.jobs_indicator
+        bottom = ind.mapTo(win, QPoint(0, ind.height())).y()
+        win.move(avail.x() + avail.width() - win.frameGeometry().width(),
+                 avail.y() + avail.height() - bottom - 10)
+        qtbot.wait(20)
+        ind, pop = _popover_with_everything(win)
+        g = pop.frameGeometry()
+        assert avail.contains(g), (g, avail)
+        # Above the indicator, not merely pushed up over it (2 px: the
+        # offscreen platform's fake frame).
+        ind_top = ind.mapToGlobal(QPoint(0, 0)).y()
+        assert g.y() + g.height() <= ind_top + 2, (g, ind_top)
+    finally:
+        restore()
