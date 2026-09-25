@@ -1,5 +1,6 @@
-from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+import shiboken6
+from PySide6.QtCore import QEvent, QPoint
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from nocturne.ui.side_panel import CLIP_SLOT_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, SidePanel
 
@@ -93,3 +94,52 @@ def test_a_short_warning_shows_unchanged(qtbot):
     qtbot.wait(20)
     assert QLabel.text(s.warning) == "Done."
     assert s.warning.text() == "Done."
+
+
+def test_the_action_slot_is_fixed_and_outside_the_scroll(qtbot):
+    from PySide6.QtWidgets import QPushButton
+    s = _side(qtbot)
+    s.set_action_height(120)
+    apply_b, reset_b = QPushButton("Apply X"), QPushButton("Reset step")
+    s.set_actions(apply_b, reset_b)
+    qtbot.wait(20)
+    y_slot, y_next = _y(s, s.action_slot), _y(s, s.next_btn)
+    s.set_panel(_tall_panel(200)); qtbot.wait(20)
+    assert _y(s, s.action_slot) == y_slot and _y(s, s.next_btn) == y_next
+    assert s.action_slot.height() == 120
+    assert apply_b.isVisible() and s.scroll.isAncestorOf(apply_b) is False
+
+
+def test_an_empty_action_slot_keeps_its_height(qtbot):
+    s = _side(qtbot); s.set_action_height(120)
+    s.set_actions(None, None); qtbot.wait(20)
+    assert s.action_slot.height() == 120
+
+
+def test_replacing_the_actions_destroys_the_old_widgets(qtbot):
+    # R3: set_actions used to setParent(None) the outgoing widgets. Once a
+    # widget has been added to action_slot's layout, the slot is its parent —
+    # setParent(None) then leaves it owned by nobody, so it is never deleted.
+    # Every step change would leak the previous step's Apply/Reset buttons.
+    s = _side(qtbot)
+    old_apply, old_reset = QPushButton("Apply X"), QPushButton("Reset step")
+    s.set_actions(old_apply, old_reset)
+    qtbot.wait(20)
+    new_apply, new_reset = QPushButton("Apply Y"), QPushButton("Reset step")
+    s.set_actions(new_apply, new_reset)
+    qtbot.wait(20)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not shiboken6.isValid(old_apply)
+    assert not shiboken6.isValid(old_reset)
+    assert new_apply.isVisible() and new_reset.isVisible()
+
+
+def test_set_actions_twice_with_the_same_widgets_keeps_them_alive(qtbot):
+    s = _side(qtbot)
+    apply_b, reset_b = QPushButton("Apply X"), QPushButton("Reset step")
+    s.set_actions(apply_b, reset_b)
+    qtbot.wait(20)
+    s.set_actions(apply_b, reset_b)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert shiboken6.isValid(apply_b) and shiboken6.isValid(reset_b)
+    assert apply_b.isVisible() and reset_b.isVisible()

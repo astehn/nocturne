@@ -149,6 +149,16 @@ class SidePanel(QWidget):
         self.scroll.setWidget(body)
         self.layout_.addWidget(self.scroll, 1)
 
+        # The step's main action + Reset, pinned: the same place on every step
+        # (Andreas, 2026-09-25 — "about muscle memory again"). Outside the
+        # scroll area so a tall step (Curves) scrolls its controls, never Apply.
+        self.action_slot = QWidget()
+        self._action_lay = QVBoxLayout(self.action_slot)
+        self._action_lay.setContentsMargins(0, 6, 0, 0)
+        self._action_lay.setSpacing(6)
+        self.action_slot.setFixedHeight(0)   # 0 until MainWindow sets the look's height (Task 5)
+        self.layout_.addWidget(self.action_slot)
+
         # status slot — fixed height, reserved while empty
         self.status_slot = QWidget()
         self.status_slot.setFixedHeight(STATUS_SLOT_H)
@@ -203,6 +213,33 @@ class SidePanel(QWidget):
         self.panel.setParent(None)
         self.panel.deleteLater()
         self.panel = new
+
+    def set_action_height(self, h: int) -> None:
+        self.action_slot.setFixedHeight(h)
+
+    def set_actions(self, primary: QWidget | None, reset: QWidget | None) -> None:
+        """Replace the pinned action area's contents.
+
+        A widget added to the slot is parented to it, so the slot — not the
+        step that built the widget — now owns it. Detaching with
+        `setParent(None)` alone would leave a removed widget parentless and
+        never destroyed: every step change would leak the previous step's
+        Apply/Reset buttons. Anything we are not keeping (the old divider
+        always; the old primary/reset unless they are the ones being passed
+        back in) gets `deleteLater()` instead.
+        """
+        while self._action_lay.count():
+            item = self._action_lay.takeAt(0)
+            w = item.widget()
+            if w is not None and w is not primary and w is not reset:
+                w.deleteLater()
+        if primary is not None:
+            self._action_lay.addWidget(primary)
+        rule = QFrame(); rule.setFrameShape(QFrame.Shape.HLine); rule.setObjectName("panelRule")
+        self._action_lay.addWidget(rule)
+        if reset is not None:
+            self._action_lay.addWidget(reset)
+        self._action_lay.addStretch(1)
 
     def set_clipping(self, text: str | None, tooltip: str = "") -> None:
         """None = linear. The slot keeps its height either way, so the panel
