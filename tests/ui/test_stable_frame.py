@@ -45,6 +45,11 @@ def _geometry(win) -> dict:
         # so canvas/next/stepper/window never move even though the fixed
         # zone contract is broken.
         "status_slot": rect(win._side.status_slot),
+        # The pinned zones of the consistent-panels template: the step's
+        # title + description above the scroll, and the one action row below
+        # it. Muscle memory again — Apply is in the same place on every step.
+        "header_slot": rect(win._side.header_slot),
+        "action_row": rect(win._side.action_slot),
         # The jobs indicator, at the right end of the toolbar row in its own
         # bar: fixed there whatever it says, and always present (blank and
         # invisible while idle, never hidden).
@@ -203,15 +208,24 @@ def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
         f"{win.stepper.verticalScrollBar().maximum()}, "
         f"height {win.stepper.height()} of {win.stepper.ideal_height()}")
     moved = []
+    resets = {}     # Reset step's rect on every step that has one
     for index, stage in enumerate(list(win._stages)):
         if not stage.enabled:
             continue
         win._go_to(index, user_initiated=False)
         _settle(qtbot)
+        reset = win._panel.reset_step_btn
+        if reset is not None:
+            tl = reset.mapTo(win, QPoint(0, 0))
+            resets[stage.id] = (tl.x(), tl.y(), reset.width(), reset.height())
         for label, geo in _states(win, qtbot):
             for key in baseline:
                 if geo[key] != baseline[key]:
                     moved.append(f"{stage.id}/{label}: {key} {baseline[key]} -> {geo[key]}")
+    # Reset step never moves between steps — including Enhancements, which
+    # has no main action to its left.
+    assert "enhancements" in resets and "levels" in resets, "precondition"
+    assert len(set(resets.values())) == 1, resets
     # The linked toggle, pinned to one enabled stage in BOTH modes, so a row
     # moving here is the toggle's doing and not a stage change's.
     pinned = next(i for i, s in enumerate(win._stages) if s.id == "stretch")
@@ -285,7 +299,7 @@ def test_every_step_hands_its_own_apply_and_reset_to_the_pinned_slot(qtbot, tmp_
     place on every step (Andreas, 2026-09-25: "about muscle memory again").
     Each step's OWN buttons — not a previous step's left behind — and the slot
     keeps one height whether a step has an Apply, a plain Export…, or none."""
-    from PySide6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QLabel, QPushButton
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.resize(1280, 800)
@@ -313,9 +327,15 @@ def test_every_step_hands_its_own_apply_and_reset_to_the_pinned_slot(qtbot, tmp_
         assert (slot.height(), _y(win, slot)) == (base_h, base_y), stage.id
         # Controls start at the same height on every step (fixed description).
         assert _y(win, p.controls.parentWidget()) == controls_y, stage.id
+        # A FREE stepDesc label at the box's real width: the fixed-height
+        # box's own heightForWidth is clamped to its minimum (42 vs 36 under
+        # the stylesheet), so asking the box itself false-fails.
         d = p.desc_box
-        assert d.heightForWidth(d.width()) <= d.height(), (
+        free = QLabel(d.text()); free.setObjectName("stepDesc"); free.setWordWrap(True)
+        free.setParent(d.parentWidget()); free.hide(); free.ensurePolished()
+        assert free.heightForWidth(d.width()) <= d.height(), (
             f"{stage.id}: description overflows its two lines at {d.width()} px")
+        free.deleteLater()
         seen.append(stage.id)
     assert {"load", "crop", "curves", "enhancements", "export"} <= set(seen)
 
@@ -345,14 +365,134 @@ def test_a_tall_step_scrolls_its_controls_while_apply_stays_put(qtbot, tmp_path)
         assert bar.maximum() > 0, "precondition: Curves must be taller than its zone"
         apply_btn, reset = win._panel.apply_btn, win._panel.reset_step_btn
         editor = win._panel.curve_editor
-        before_geo = [(_y(win, b), b.height()) for b in (apply_btn, reset)]
+        # Spec §3: the title and description are fixed ABOVE the scroll too.
+        title_widgets = (win._panel.help_link.parentWidget(), win._panel.desc_box)
+        pinned = (apply_btn, reset) + title_widgets
+        before_geo = [(_y(win, b), b.height()) for b in pinned]
         editor_y = _y(win, editor)
         bar.setValue(bar.maximum())
         _settle(qtbot)
         assert _y(win, editor) < editor_y, "precondition: the controls really scrolled"
-        assert [(_y(win, b), b.height()) for b in (apply_btn, reset)] == before_geo
-        for b in (apply_btn, reset):
+        assert [(_y(win, b), b.height()) for b in pinned] == before_geo
+        for b in pinned:
             assert b.isVisible()
             assert 0 <= _y(win, b) and _y(win, b) + b.height() <= win.height()
+        assert not win._side.scroll.isAncestorOf(win._panel.desc_box)
     finally:
         app.setStyleSheet(before)
+
+
+# --- "one row + histogram" (Andreas, 2026-09-25) ----------------------------
+
+def _themed_window(qtbot, tmp_path, size, monkeypatch=None):
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    QApplication.instance().setStyleSheet(build_stylesheet())
+    if monkeypatch is not None:
+        _with_linear_denoise(monkeypatch)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(*size)
+    win.show()
+    qtbot.waitExposed(win)
+    _settle(qtbot)
+    return win
+
+
+@pytest.fixture
+def restore_stylesheet():
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    before = app.styleSheet()
+    yield
+    app.setStyleSheet(before)
+
+
+def test_the_step_zone_keeps_mains_room_at_1280x800(qtbot, tmp_path, restore_stylesheet):
+    """The pinned title, description and action row came out of the step zone
+    (they used to scroll inside it), so the histogram pays for them: at
+    1280x800 the step zone must still have the 208 px it had on main, with
+    the histogram no shorter than its readable floor."""
+    from nocturne.ui.histogram_view import HIST_FLOOR_H
+    from nocturne.ui.side_panel import SCROLL_COMFORT_H
+    win = _themed_window(qtbot, tmp_path, (1280, 800))
+    assert win._side.scroll.height() >= SCROLL_COMFORT_H == 208
+    assert win.histogram_view.height() >= HIST_FLOOR_H
+
+
+def test_the_histogram_yields_before_the_step_zone(qtbot, tmp_path, restore_stylesheet):
+    """Shrinking the window takes height from the histogram first, down to
+    its floor; only then from the step zone. Growing gives it back in the
+    same order: the step zone to 208 first, the histogram to its natural
+    240 next, and the step zone everything after that."""
+    from nocturne.ui.histogram_view import HIST_FLOOR_H, HIST_NATURAL_H
+    from nocturne.ui.side_panel import SCROLL_COMFORT_H
+    win = _themed_window(qtbot, tmp_path, (1280, 1080))
+    seen = []
+    for h in range(1080, 689, -10):
+        win.resize(1280, h)
+        _settle(qtbot)
+        hist, zone = win.histogram_view.height(), win._side.scroll.height()
+        seen.append((h, hist, zone))
+        assert HIST_FLOOR_H <= hist <= HIST_NATURAL_H, seen[-1]
+        if hist > HIST_FLOOR_H:
+            assert zone >= SCROLL_COMFORT_H, f"the histogram kept room the step zone needed: {seen[-1]}"
+        if zone > SCROLL_COMFORT_H:
+            assert hist == HIST_NATURAL_H, f"the step zone grew before the histogram: {seen[-1]}"
+    hists = [x[1] for x in seen]
+    assert max(hists) == HIST_NATURAL_H and min(hists) == HIST_FLOOR_H, "precondition: both ends reached"
+
+
+def test_the_window_minimum_fits_a_720_screen_under_the_stylesheet(
+        qtbot, tmp_path, monkeypatch, restore_stylesheet):
+    """test_window_geometry measures the bare style; this is his real theme,
+    with Linear Denoise installed (the longest step list)."""
+    from nocturne.ui.main_window import MIN_WINDOW
+    win = _themed_window(qtbot, tmp_path, (1280, 800), monkeypatch=monkeypatch)
+    assert win.minimumSizeHint().height() <= MIN_WINDOW[1] <= 690
+    # Also from a big window, where the histogram sits at its natural 240:
+    # the minimum must count it at its floor, or the window could never be
+    # made small again once it had been large.
+    win.resize(1920, 1080)
+    _settle(qtbot)
+    assert win.histogram_view.height() == 240, "precondition"
+    assert win.minimumSizeHint().height() <= MIN_WINDOW[1]
+
+
+def _apply_stage_ids():
+    from nocturne.ui.pipeline import path_stages
+    return [s.id for s in path_stages(include=frozenset({"ai_denoise"}))
+            if s.id not in ("load", "enhancements", "export")]
+
+
+@pytest.mark.parametrize("look", ["A", "B"])
+def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, restore_stylesheet, look):
+    """One row: Apply shares its width with Reset step. Every stage's
+    "Apply <step>" must still fit, in both trial looks and every state's
+    chip, at the real right-column width under the real stylesheet."""
+    from nocturne.ui.apply_button import ApplyButton
+    win = _themed_window(qtbot, tmp_path, (1280, 800), monkeypatch=monkeypatch)
+    checked = []
+    for sid in _apply_stage_ids():
+        win._go_to_id(sid, user_initiated=False)
+        _settle(qtbot)
+        btn = win._panel.primary_action
+        assert isinstance(btn, ApplyButton), sid
+        assert win._side.action_slot.isAncestorOf(win._panel.reset_step_btn), sid
+        btn.set_look(look)
+        for state in ("pending", "not_run", "applied", "no_change"):
+            btn.set_state(state)
+            assert btn.label_fits(), f"{btn.label_text()!r} ({look}, {state}) clips at {btn.width()} px"
+            if look == "A":
+                # label_fits() only measures look B (A has no chip), so check
+                # A's centred bold label and its status line directly, with
+                # the fonts paintEvent draws them in, inside the text inset.
+                from PySide6.QtGui import QFontMetrics
+                from nocturne.ui.apply_button import _LABEL_INSET
+                bold, small = btn._fonts()
+                room = btn.width() - 2 * _LABEL_INSET
+                assert QFontMetrics(bold).horizontalAdvance(btn.label_text()) <= room, (
+                    f"{btn.label_text()!r} (A) clips at {btn.width()} px")
+                assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room
+        checked.append(sid)
+    assert "ai_denoise" in checked and "green_fringe" in checked and "deconvolution" in checked

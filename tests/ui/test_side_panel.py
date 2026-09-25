@@ -143,3 +143,67 @@ def test_set_actions_twice_with_the_same_widgets_keeps_them_alive(qtbot):
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert shiboken6.isValid(apply_b) and shiboken6.isValid(reset_b)
     assert apply_b.isVisible() and reset_b.isVisible()
+
+
+def test_the_header_is_fixed_above_the_scroll(qtbot):
+    s = _side(qtbot)
+    head = QLabel("Curves")
+    s.set_header(head)
+    qtbot.wait(20)
+    y_head = _y(s, head)
+    s.set_panel(_tall_panel(200)); qtbot.wait(20)
+    s.scroll.verticalScrollBar().setValue(s.scroll.verticalScrollBar().maximum())
+    qtbot.wait(20)
+    assert _y(s, head) == y_head and head.isVisible()
+    assert not s.scroll.isAncestorOf(head)
+    assert s.layout_.indexOf(s.header_slot) < s.layout_.indexOf(s.scroll)
+
+
+def test_replacing_the_header_destroys_the_old_one(qtbot):
+    s = _side(qtbot)
+    old, new = QLabel("Levels"), QLabel("Curves")
+    s.set_header(old); qtbot.wait(20)
+    s.set_header(new); qtbot.wait(20)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not shiboken6.isValid(old)
+    assert new.isVisible()
+    s.set_header(new)
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert shiboken6.isValid(new) and new.isVisible()
+
+
+def test_reset_keeps_its_place_with_or_without_a_main_action(qtbot):
+    """One row: Apply stretches on the left, Reset step sits at the right at
+    its own size — and stays exactly there on a step with no main action
+    (Enhancements)."""
+    s = _side(qtbot); s.set_action_height(50)
+    apply_b, reset_b = QPushButton("Apply Levels"), QPushButton("Reset step")
+    s.set_actions(apply_b, reset_b); qtbot.wait(20)
+    with_apply = reset_b.mapTo(s, QPoint(0, 0)), reset_b.size()
+    assert apply_b.geometry().right() < reset_b.geometry().left()
+    assert reset_b.width() == reset_b.sizeHint().width()
+    reset2 = QPushButton("Reset step")
+    s.set_actions(None, reset2); qtbot.wait(20)
+    assert (reset2.mapTo(s, QPoint(0, 0)), reset2.size()) == with_apply
+
+
+def test_the_histogram_gives_up_height_first(qtbot):
+    from nocturne.ui.histogram_view import HIST_FLOOR_H, HIST_NATURAL_H, HistogramView
+    from nocturne.ui.side_panel import SCROLL_COMFORT_H
+    s = _side(qtbot, h=900)
+    hist = HistogramView()
+    s.set_histogram(hist)
+    qtbot.wait(20)
+    assert hist.height() == HIST_NATURAL_H and s.scroll.height() > SCROLL_COMFORT_H
+    for h in (700, 650, 600, 560, 500, 440):
+        s.resize(400, h); qtbot.wait(20)
+        if hist.height() > HIST_FLOOR_H:
+            assert s.scroll.height() >= SCROLL_COMFORT_H, (h, hist.height(), s.scroll.height())
+    assert hist.height() == HIST_FLOOR_H and s.scroll.height() < SCROLL_COMFORT_H
+    # The column's minimum counts the histogram at its floor, not at the
+    # height it happens to have now.
+    s.resize(400, 900); qtbot.wait(20)
+    assert hist.height() == HIST_NATURAL_H
+    lo = s.minimumSizeHint().height()
+    s.resize(400, 500); qtbot.wait(20)
+    assert s.minimumSizeHint().height() == lo

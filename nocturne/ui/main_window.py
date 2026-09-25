@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
@@ -321,6 +321,11 @@ def render_engine(tag: str) -> str:
 # offscreen 1067 x 641, macOS fonts 1116 x 622. The previous 960 x 600 sat
 # under both. Must stay within 1280 x 690 so a 1280x720 screen, less its menu
 # bar, still fits the window (test_window_geometry guards both bounds).
+# Re-measured 2026-09-25 after the pinned header/action row and the yielding
+# histogram (floor 80 px) — identical on every step, with or without Linear
+# Denoise: offscreen 1067 x 518 bare style, 1134 x 576 under the app
+# stylesheet. The height keeps its margin; the styled WIDTH (1134) was
+# already over 1120 before this change and is left for the small-screen work.
 MIN_WINDOW = (1120, 650)
 
 
@@ -586,7 +591,7 @@ class MainWindow(QMainWindow):
         self._right_panel = right
         self._right_layout = right.layout_
         self.histogram_view = HistogramView()
-        right.histogram_zone.addWidget(self.histogram_view)
+        right.set_histogram(self.histogram_view)   # yields first on short windows
         self._info_strip = QLabel("")               # resolution · integration · object, under the histogram
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
@@ -3981,7 +3986,7 @@ class MainWindow(QMainWindow):
             self.image_view.set_crop_overlay(
                 True, content_bounds=bounds, aspect_ratio=_ASPECT_RATIO.get(aspect_text)
             )
-            if hasattr(self._panel, "apply_btn"):
+            if getattr(self._panel, "apply_btn", None) is not None:
                 self._panel.apply_btn.setEnabled(False)
             if hasattr(self._panel, "crop_size_label"):
                 self._panel.crop_size_label.setText("—")
@@ -3990,7 +3995,7 @@ class MainWindow(QMainWindow):
 
     def _on_crop_box_shown(self) -> None:
         """Crop box became visible (first click) — enable Apply Crop."""
-        if self.current_stage_id() == "crop" and hasattr(self._panel, "apply_btn"):
+        if self.current_stage_id() == "crop" and getattr(self._panel, "apply_btn", None) is not None:
             self._panel.apply_btn.setEnabled(True)
         if self.current_stage_id() == "crop" and hasattr(self._panel, "crop_size_label"):
             self._update_crop_readout(*self.image_view.crop_bounds())
@@ -4016,7 +4021,7 @@ class MainWindow(QMainWindow):
             if resp != QMessageBox.StandardButton.Discard:
                 return
         self.image_view.hide_crop_box()
-        if hasattr(self._panel, "apply_btn"):
+        if getattr(self._panel, "apply_btn", None) is not None:
             self._panel.apply_btn.setEnabled(False)
         if hasattr(self._panel, "crop_size_label"):
             self._panel.crop_size_label.setText("—")
@@ -5610,10 +5615,12 @@ class MainWindow(QMainWindow):
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
         self._side.set_panel(new_panel)
-        # The step's main action and Reset step, pinned in the side panel's
-        # action slot (same place on every step). Straight after set_panel,
-        # with nothing that can return in between: set_panel deletes the old
-        # card, and the slot must never be left holding its buttons.
+        # The step's title + description (fixed above the scroll) and its main
+        # action + Reset step (pinned below it), handed to the side panel's
+        # slots. Straight after set_panel, with nothing that can return in
+        # between: set_panel deletes the old card, and no slot may be left
+        # holding the old step's widgets.
+        self._side.set_header(new_panel.header)
         self._side.set_actions(new_panel.primary_action, new_panel.reset_step_btn)
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
@@ -5630,31 +5637,26 @@ class MainWindow(QMainWindow):
         self._update_explainer()
 
     def _action_area_height(self) -> int:
-        """The pinned action slot's height: the SAME on every step, so the
-        slot (and everything below it) never moves — a step with no main
-        action (Import, Enhancements) or a plain one (Export…) gets the room
-        an Apply would take.
+        """The pinned action row's height: the SAME on every step, so the row
+        (and everything below it) never moves — a step with no main action
+        (Import, Enhancements) or a plain one (Export…) gets the room an Apply
+        would take.
 
         Measured from real widgets under whatever stylesheet is live, never a
-        constant: an Apply in look A, the slot's divider, a Reset step, and the
-        slot layout's own margins and spacing (spacing twice — Apply|rule and
-        rule|Reset; the trailing stretch takes none).
+        constant: the taller of an Apply in the look in use and a Reset step,
+        plus the row's own margins. 47 + 6 = 53 px under the app stylesheet,
+        45 + 6 = 51 unstyled (2026-09-25).
         """
         lay = self._side.action_slot.layout()
         apply_probe = ApplyButton("Apply", look="A")
         apply_probe.ensurePolished()
-        rule = QFrame()
-        rule.setFrameShape(QFrame.Shape.HLine)
-        rule.setObjectName("panelRule")
-        rule.ensurePolished()
         reset_probe = QPushButton("Reset step")
         reset_probe.setObjectName("resetStep")
         reset_probe.ensurePolished()
         m = lay.contentsMargins()
-        h = (m.top() + m.bottom() + apply_probe.minimumHeight()
-             + rule.sizeHint().height() + reset_probe.sizeHint().height()
-             + 2 * lay.spacing())
-        for probe in (apply_probe, rule, reset_probe):
+        h = (m.top() + m.bottom()
+             + max(apply_probe.minimumHeight(), reset_probe.sizeHint().height()))
+        for probe in (apply_probe, reset_probe):
             probe.deleteLater()
         return h
 

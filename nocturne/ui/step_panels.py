@@ -221,6 +221,18 @@ def build_panel(
     w.setObjectName("stepCard")
     w.panel_kind = stage.kind
     lay = QVBoxLayout(w)
+    # The header — title row and the FIXED two-line description — is its own
+    # widget, handed to SidePanel's header slot above the scroll (spec §3): a
+    # tall step scrolls its controls, never its name or what it does. Built
+    # here, not laid out in the card; inset like the card's own contents so
+    # the title lines up with the controls under it.
+    header = QWidget()
+    header.setObjectName("stepHeader")
+    header_lay = QVBoxLayout(header)
+    m = lay.contentsMargins()
+    header_lay.setContentsMargins(m.left(), m.top(), m.right(), 0)
+    header_lay.setSpacing(lay.spacing())
+    w.header = header
     title_row = QHBoxLayout()
     title = QLabel(stage.label)
     title.setObjectName("stageTitle")
@@ -232,14 +244,14 @@ def build_panel(
     w.help_link.setObjectName("helpHeader")
     w.help_link.setOpenExternalLinks(False)
     title_row.addWidget(w.help_link)
-    lay.addLayout(title_row)
-    # One template on every step (spec 2026-09-25-consistent-panels §3): title
-    # row, a FIXED two-line description, the controls (so they always start at
-    # the same height), then notes. The main action and Reset step are built
+    header_lay.addLayout(title_row)
+    # One template on every step (spec 2026-09-25-consistent-panels §3): the
+    # header above, then in the card the controls (so they always start at the
+    # same height), then notes. The main action and Reset step are built
     # below but NOT laid out here — MainWindow pins them in the side panel's
     # action slot, outside the scroll, in the same place on every step.
     w.desc_box = _DescBox(STEP_DESCRIPTIONS.get(stage.id, ""))
-    lay.addWidget(w.desc_box)
+    header_lay.addWidget(w.desc_box)
     body = QWidget()
     body.setObjectName("panelBody")
     w.controls = QVBoxLayout(body)
