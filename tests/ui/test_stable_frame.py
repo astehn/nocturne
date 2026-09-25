@@ -272,3 +272,87 @@ def test_the_activity_box_gives_up_all_its_room_before_the_step_list(qtbot, tmp_
     assert win.stepper.verticalScrollBar().maximum() == 0
     assert win.stepper.height() == win.stepper.ideal_height()
     assert 0 <= win.activity.view.height() < 44
+
+
+# --- the pinned action area (consistent panels, Task 4) --------------------
+
+def _y(win, w):
+    return w.mapTo(win, QPoint(0, 0)).y()
+
+
+def test_every_step_hands_its_own_apply_and_reset_to_the_pinned_slot(qtbot, tmp_path):
+    """Apply and Reset step live in the side panel's action slot, in the same
+    place on every step (Andreas, 2026-09-25: "about muscle memory again").
+    Each step's OWN buttons — not a previous step's left behind — and the slot
+    keeps one height whether a step has an Apply, a plain Export…, or none."""
+    from PySide6.QtWidgets import QPushButton
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800)
+    win.show()
+    qtbot.waitExposed(win)
+    _settle(qtbot)
+    slot = win._side.action_slot
+    base_h, base_y = slot.height(), _y(win, slot)
+    assert base_h > 0, "the slot was never given its height"
+    controls_y = _y(win, win._panel.controls.parentWidget())
+    seen = []
+    for index, stage in enumerate(list(win._stages)):
+        if not stage.enabled:
+            continue
+        win._go_to(index, user_initiated=False)
+        _settle(qtbot)
+        p = win._panel
+        mine = [b for b in (p.primary_action, p.reset_step_btn) if b is not None]
+        for b in mine:
+            assert slot.isAncestorOf(b), f"{stage.id}: {b.text()} is not pinned"
+            assert b.isVisible(), f"{stage.id}: {b.text()} is not shown"
+        in_slot = [b for b in slot.findChildren(QPushButton)]
+        assert sorted(map(id, in_slot)) == sorted(map(id, mine)), (
+            f"{stage.id}: slot holds {[b.text() for b in in_slot]}")
+        assert (slot.height(), _y(win, slot)) == (base_h, base_y), stage.id
+        # Controls start at the same height on every step (fixed description).
+        assert _y(win, p.controls.parentWidget()) == controls_y, stage.id
+        d = p.desc_box
+        assert d.heightForWidth(d.width()) <= d.height(), (
+            f"{stage.id}: description overflows its two lines at {d.width()} px")
+        seen.append(stage.id)
+    assert {"load", "crop", "curves", "enhancements", "export"} <= set(seen)
+
+
+def test_a_tall_step_scrolls_its_controls_while_apply_stays_put(qtbot, tmp_path):
+    """Review Focus 1: Curves at 1280x800 is taller than its zone. Its
+    controls scroll; Apply and Reset stay visible and do not move. Under the
+    real stylesheet, which is also where the slot's measured height must equal
+    what its real contents ask for."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = _window(qtbot, tmp_path)
+        win.open_fits(_make_fits(tmp_path))
+        win.resize(1280, 800)
+        win.show()
+        qtbot.waitExposed(win)
+        win._go_to_id("curves", user_initiated=False)
+        _settle(qtbot)
+        slot = win._side.action_slot
+        assert slot.height() == slot.layout().sizeHint().height(), (
+            "the measured slot height is not what Apply + rule + Reset need")
+        bar = win._side.scroll.verticalScrollBar()
+        assert bar.maximum() > 0, "precondition: Curves must be taller than its zone"
+        apply_btn, reset = win._panel.apply_btn, win._panel.reset_step_btn
+        editor = win._panel.curve_editor
+        before_geo = [(_y(win, b), b.height()) for b in (apply_btn, reset)]
+        editor_y = _y(win, editor)
+        bar.setValue(bar.maximum())
+        _settle(qtbot)
+        assert _y(win, editor) < editor_y, "precondition: the controls really scrolled"
+        assert [(_y(win, b), b.height()) for b in (apply_btn, reset)] == before_geo
+        for b in (apply_btn, reset):
+            assert b.isVisible()
+            assert 0 <= _y(win, b) and _y(win, b) + b.height() <= win.height()
+    finally:
+        app.setStyleSheet(before)

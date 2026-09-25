@@ -681,31 +681,35 @@ def test_zero_tint_is_bit_identical(qtbot):
     assert np.array_equal(out.data, data)
 
 
-def test_reset_step_sits_below_the_compare_hint_behind_a_rule(qtbot):
+def test_reset_step_sits_below_the_main_action_behind_a_rule(qtbot):
     """Moved 2026-09-13. It sat directly under Apply, where Andreas read it as
     part of the tool: "now they risk reading like they are part of the tool".
     It is recovery, not a parameter.
 
-    Asserted by ORDER in the layout rather than by pixel position, which is the
-    part that carries the meaning: whatever the step's controls are, Reset comes
-    after the step's own affordances and after a divider.
+    Since 2026-09-25 both are pinned in the side panel's action slot (same
+    place on every step), and the "Press Space" hint it used to sit under is
+    gone. The meaning is unchanged and asserted the same way, by ORDER: the
+    main action, then a divider, then Reset — using this panel's real widgets.
     """
     from PySide6.QtWidgets import QFrame
+    from nocturne.ui.side_panel import SidePanel
     w = build_panel(_stage("stretch"), on_apply=lambda v: None,
                     on_reset_step=lambda: None)
     qtbot.addWidget(w)
-    lay = w.layout()
+    side = SidePanel(400)
+    qtbot.addWidget(side)
+    side.set_actions(w.primary_action, w.reset_step_btn)
+    lay = side.action_slot.layout()
     order = [lay.itemAt(i).widget() for i in range(lay.count())]
 
     i_apply = order.index(w.apply_btn)
-    i_hint = order.index(w.compare_hint)
     i_reset = order.index(w.reset_step_btn)
     rules = [x for x in order if isinstance(x, QFrame) and x.objectName() == "panelRule"]
     assert rules, "no divider separates Reset from the tool"
     i_rule = order.index(rules[-1])
 
-    assert i_apply < i_hint < i_rule < i_reset, (
-        "Reset must come after Apply, after the compare hint, and after a rule")
+    assert i_apply < i_rule < i_reset, (
+        "Reset must come after the main action, and after a rule")
 
 
 def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot):
@@ -716,39 +720,11 @@ def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot):
         w = build_panel(_stage(sid))
         qtbot.addWidget(w)
         assert w.reset_step_btn is None, sid
-        lay = w.layout()
-        rules = [lay.itemAt(i).widget() for i in range(lay.count())]
-        assert not [r for r in rules
-                    if isinstance(r, QFrame) and r.objectName() == "panelRule"], (
+        # Anywhere in the card, not just its top level: the template nests
+        # the controls and notes one level down.
+        rules = w.findChildren(QFrame)
+        assert not [r for r in rules if r.objectName() == "panelRule"], (
             f"{sid}: a divider with nothing under it")
-
-
-def _controls_after(panel, widget):
-    """Interactive controls laid out below `widget`, in layout order.
-
-    Layout index, not screen geometry: the panels are built unshown, so
-    geometry is meaningless until a window lays them out.
-    """
-    from PySide6.QtWidgets import (
-        QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider,
-    )
-    kinds = (QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider)
-    lay = panel.layout()
-    anchor = lay.indexOf(widget)
-    assert anchor >= 0, "the commit button is in the panel's own layout"
-    after = []
-    for i in range(anchor + 1, lay.count()):
-        item = lay.itemAt(i)
-        child = item.widget()
-        if child is None:                     # a nested row: scan it too
-            sub = item.layout()
-            if sub is not None:
-                after += [sub.itemAt(j).widget() for j in range(sub.count())
-                          if isinstance(sub.itemAt(j).widget(), kinds)]
-            continue
-        if isinstance(child, kinds):
-            after.append(child)
-    return after
 
 
 @pytest.mark.parametrize("stage_id", [s.id for s in path_stages()])
@@ -757,26 +733,126 @@ def test_nothing_sits_below_the_commit_button(qtbot, stage_id):
 
     Andreas, 2026-09-17, on Visual stretch sitting below Apply Stretch: a
     control under the commit button reads as something you do AFTER applying,
-    and Stretch was the only step that broke the rule. Reset step is exempt —
-    it is deliberately below a rule as recovery, not a parameter.
+    and Stretch was the only step that broke the rule.
+
+    Since 2026-09-25 this holds by construction rather than by each panel's
+    care: the main action is not in the panel at all but pinned in the side
+    panel's action slot, BELOW the scroll area that holds every control. So
+    the check is that nothing the step shows lives with it: the main action
+    is outside the card, and Colour's second commit button (Apply Tint) is
+    neither shown nor laid out. Reset step is pinned too, behind a divider,
+    as recovery rather than a parameter.
     """
+    from nocturne.ui.side_panel import SidePanel
     panel = build_panel(_stage(stage_id), on_apply=lambda o: None,
                         on_visual_stretch=lambda: None,
                         on_apply_tint=lambda *a: None,
                         on_remove_green=lambda v: None)
     qtbot.addWidget(panel)
-    commit = getattr(panel, "apply_tint_btn", None) or getattr(panel, "apply_btn", None)
+    commit = panel.primary_action
     if commit is None:
         pytest.skip(f"{stage_id} commits nothing")
-    # Two deliberate exceptions, both of which are ABOUT having applied:
-    # Reset step is recovery, below a rule (see step_panels.py); and
-    # "Show what was removed" is disabled until background extraction has run,
-    # so it is a post-apply view toggle, not a parameter. That they read
-    # correctly below Apply is the same reason Visual stretch read wrongly.
-    exempt = {panel.reset_step_btn, getattr(panel, "show_model_check", None)}
-    stray = [c for c in _controls_after(panel, commit) if c not in exempt]
-    # Not `c.text()`: half these controls are sliders and combo boxes, which
-    # have no text(), and building the message crashed the assertion into an
-    # AttributeError that hid what it had actually found.
-    assert not stray, [f"{type(c).__name__} {getattr(c, 'text', lambda: '')()}"
-                       for c in stray]
+    assert not panel.isAncestorOf(commit), "the commit button is inside the card"
+    tint = getattr(panel, "apply_tint_btn", None)
+    if tint is not None:
+        assert tint.isHidden() and not tint.isVisibleTo(panel)
+        assert all(lay.indexOf(tint) < 0 for lay in panel.findChildren(type(panel.layout()))
+                   + [panel.layout()]), "Apply Tint is laid out"
+    side = SidePanel(400)
+    qtbot.addWidget(side)
+    assert side.layout_.indexOf(side.scroll) < side.layout_.indexOf(side.action_slot), (
+        "the pinned action must sit below the scrolling controls")
+
+
+# --- the panel template (consistent-panels, Task 4) -------------------------
+#
+# Every step is title row, a FIXED two-line description box, controls, notes;
+# the main action and Reset step are built here but handed out to the side
+# panel's pinned action slot, so Apply sits in one place on every step.
+
+from nocturne.ui.apply_button import ApplyButton  # noqa: E402
+
+_EXPECTED_ACTION = {"load": None, "enhancements": None, "export": "Export"}
+_ALL_STAGES = path_stages(include=frozenset({"ai_denoise"}))
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_every_panel_follows_the_template(qtbot, stage):
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    assert w.desc_box.text().strip(), f"{stage.id} has no description"
+    assert w.desc_box.objectName() == "stepDesc"
+    lines = w.desc_box.fontMetrics().lineSpacing()
+    assert w.desc_box.height() == w.desc_box.maximumHeight() == w.desc_box.minimumHeight()
+    # Two lines tall — not one, not three — whatever the text is.
+    assert 2 * lines <= w.desc_box.height() < 3 * lines
+    assert not hasattr(w, "pending_label") and not hasattr(w, "compare_hint")
+    exp = _EXPECTED_ACTION.get(stage.id, "apply")
+    if exp is None:
+        assert w.primary_action is None
+    elif exp == "apply":
+        assert isinstance(w.primary_action, ApplyButton) and w.apply_btn is w.primary_action
+    else:
+        assert exp in w.primary_action.text()
+    # not in the panel's own layout — MainWindow pins it
+    if w.primary_action is not None:
+        assert w.isAncestorOf(w.primary_action) is False
+    if w.reset_step_btn is not None:
+        assert w.isAncestorOf(w.reset_step_btn) is False
+
+
+def test_colour_has_one_visible_apply(qtbot):
+    stage = next(s for s in path_stages() if s.id == "color")
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    assert isinstance(w.primary_action, ApplyButton)
+    # the tint button still exists for _apply_sequence, but is never shown
+    assert w.apply_tint_btn is not None and not w.apply_tint_btn.isVisibleTo(w)
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_description_is_at_most_two_lines_at_the_real_width(qtbot, stage):
+    from nocturne.ui.main_window import RIGHT_PANE_W
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    w.resize(RIGHT_PANE_W - 24, 600); w.show(); qtbot.waitExposed(w)
+    d = w.desc_box
+    needed = d.heightForWidth(d.width()) if d.hasHeightForWidth() else d.sizeHint().height()
+    assert needed <= d.height() + 1, f"{stage.id}: description needs {needed}px of a {d.height()}px box"
+
+
+def test_the_description_box_is_two_lines_under_the_real_stylesheet(qtbot):
+    """The suite runs without the app stylesheet, which gives stepDesc its own
+    font size and padding — a height fixed from the construction-time font
+    would be the wrong height in his real window (the ApplyButton's 45 vs
+    47 px lesson). Two lines fit; a third does not."""
+    from nocturne.ui.theme import build_stylesheet
+    w = build_panel(_stage("stretch"), apply_enabled=True)
+    qtbot.addWidget(w)
+    w.setStyleSheet(build_stylesheet())
+    w.resize(376, 600); w.show(); qtbot.waitExposed(w)
+    d = w.desc_box
+    probe = QLabel(); probe.setObjectName("stepDesc"); probe.setWordWrap(True)
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+    host = QWidget(w); host.setObjectName("panelBody")
+    QVBoxLayout(host).addWidget(probe)
+    probe.ensurePolished()
+    assert probe.font().pixelSize() == d.font().pixelSize() == 12, "precondition: stylesheet font"
+    probe.setText("one\ntwo")
+    assert probe.heightForWidth(d.width()) <= d.height()
+    probe.setText("one\ntwo\nthree")
+    assert probe.heightForWidth(d.width()) > d.height()
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_controls_and_notes_follow_the_description(qtbot, stage):
+    """Controls start directly under the fixed description box, so they start
+    at the same height on every step; notes come after the controls."""
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    lay = w.layout()
+    body = w.controls.parentWidget()
+    notes = w.notes.parentWidget()
+    assert body.objectName() == notes.objectName() == "panelBody"
+    i_desc, i_body, i_notes = (lay.indexOf(x) for x in (w.desc_box, body, notes))
+    assert i_desc == 1 and i_body == 2 and i_notes == 3, (i_desc, i_body, i_notes)

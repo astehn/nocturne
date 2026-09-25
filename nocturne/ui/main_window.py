@@ -8,7 +8,7 @@ import numpy as np
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
@@ -75,6 +75,7 @@ from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
+from .apply_button import ApplyButton
 from .side_panel import SidePanel
 from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
@@ -3182,10 +3183,6 @@ class MainWindow(QMainWindow):
                      and getattr(self._panel, "option_box", None) is not None
                      and self._panel.option_box.currentText() == "off"))
         show_green = pending or never_applied
-        label = getattr(self._panel, "pending_label", None)
-        if label is not None:
-            label.setVisible(pending)
-            self._position_pending_label(label, pending)
         # The hero green means "there is an edit to commit" (theme.py). Spend it
         # only when that is true: a colour worn on every step at all times says
         # nothing when the step genuinely wants pressing. The buttons that would
@@ -3229,33 +3226,6 @@ class MainWindow(QMainWindow):
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
             reset_btn.setEnabled(pending or self._step_has_commit(sid))
-
-    def _position_pending_label(self, label, pending: bool) -> None:
-        """Keep the note directly above whichever button would actually
-        commit the pending thing.
-
-        build_panel's static anchor (above w.apply_btn) is correct for every
-        stage but Color: Color carries two independent live previews on two
-        OTHER buttons, and Apply Color commits neither — pressing it would
-        commit a method nobody asked for and still discard whichever of
-        tint/remove-green is pending (see _pending_apply_targets). Every
-        other stage has exactly one commit button, so this is a no-op there.
-        """
-        if self.current_stage_id() != "color":
-            return
-        # `_apply_sequence`, not `_pending_apply_targets`: the note has to sit
-        # above whichever button a press (or Next) fires FIRST, and with the
-        # method and a tint both pending that is Apply Color, not Apply Tint —
-        # see the `wanted` computation above for the same swap and why.
-        targets = self._apply_sequence() if pending else []
-        anchor = targets[0] if targets else getattr(self._panel, "apply_tint_btn", None)
-        if anchor is None:
-            return
-        lay = self._panel.layout()
-        if lay.indexOf(label) == lay.indexOf(anchor) - 1:
-            return   # already in place; skip the pointless remove/insert
-        lay.removeWidget(label)
-        lay.insertWidget(lay.indexOf(anchor), label)
 
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
@@ -3914,8 +3884,12 @@ class MainWindow(QMainWindow):
         """
         if busy:
             panel = self._panel
-            self._busy_gated = (panel, [b for b in panel.findChildren(QPushButton)
-                                        if b.isEnabled()])
+            # The step's main action and Reset step live in the side panel's
+            # pinned action slot, not in the card (consistent panels,
+            # 2026-09-25) — sweep both, or Apply/Reset stay live while busy.
+            swept = (panel.findChildren(QPushButton)
+                     + self._side.action_slot.findChildren(QPushButton))
+            self._busy_gated = (panel, [b for b in swept if b.isEnabled()])
             for btn in self._busy_gated[1]:
                 btn.setDisabled(True)
             return
@@ -5636,6 +5610,12 @@ class MainWindow(QMainWindow):
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
         self._side.set_panel(new_panel)
+        # The step's main action and Reset step, pinned in the side panel's
+        # action slot (same place on every step). Straight after set_panel,
+        # with nothing that can return in between: set_panel deletes the old
+        # card, and the slot must never be left holding its buttons.
+        self._side.set_actions(new_panel.primary_action, new_panel.reset_step_btn)
+        self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link
         self._help_header.linkActivated.connect(lambda _: self._toggle_help())
@@ -5648,6 +5628,35 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+
+    def _action_area_height(self) -> int:
+        """The pinned action slot's height: the SAME on every step, so the
+        slot (and everything below it) never moves — a step with no main
+        action (Import, Enhancements) or a plain one (Export…) gets the room
+        an Apply would take.
+
+        Measured from real widgets under whatever stylesheet is live, never a
+        constant: an Apply in look A, the slot's divider, a Reset step, and the
+        slot layout's own margins and spacing (spacing twice — Apply|rule and
+        rule|Reset; the trailing stretch takes none).
+        """
+        lay = self._side.action_slot.layout()
+        apply_probe = ApplyButton("Apply", look="A")
+        apply_probe.ensurePolished()
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setObjectName("panelRule")
+        rule.ensurePolished()
+        reset_probe = QPushButton("Reset step")
+        reset_probe.setObjectName("resetStep")
+        reset_probe.ensurePolished()
+        m = lay.contentsMargins()
+        h = (m.top() + m.bottom() + apply_probe.minimumHeight()
+             + rule.sizeHint().height() + reset_probe.sizeHint().height()
+             + 2 * lay.spacing())
+        for probe in (apply_probe, rule, reset_probe):
+            probe.deleteLater()
+        return h
 
     def _sync_background_model_toggle(self) -> None:
         """Make the "Show what was removed" control agree with the canvas.

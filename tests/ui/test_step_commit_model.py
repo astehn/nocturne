@@ -21,9 +21,9 @@ def _win(qtbot, tmp_path):
     base = AstroImage(np.full((32, 32, 3), 0.25, np.float32),
                       is_linear=False, metadata={})
     win.open_image(base, "test")
-    # Visibility checks (test_the_pending_label_tracks_the_state) are hollow
-    # unless the window is actually shown: Qt's isVisible() is false for every
-    # child of an unshown top-level regardless of its own setVisible() call.
+    # Shown, as a real window is: visibility checks are hollow otherwise —
+    # Qt's isVisible() is false for every child of an unshown top-level
+    # regardless of its own setVisible() call.
     win.show()
     qtbot.waitExposed(win)
     return win
@@ -54,20 +54,23 @@ def test_applying_clears_pending(qtbot, tmp_path):
 
 def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     """Read the widget, not the flag: the flag being right while the label is
-    never shown is exactly the bug this whole task exists to fix."""
+    never shown is exactly the bug this whole task exists to fix.
+
+    Since 2026-09-25 (consistent panels) there is no separate "Not applied
+    yet" label: the Apply button carries the pending state itself, as its
+    `pending` property (what theme.py colours it by). Read that property off
+    the real button. Its "changes not applied" TEXT arrives with the button's
+    state logic (consistent-panels Task 5), which then tightens this to
+    `apply_btn.state() == "pending"`."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
-    # A freshly built panel needs one event-loop tick before Qt's isVisible()
-    # reflects its parent's already-shown state (it lags a beat right after
-    # replaceWidget, confirmed by probing the widget tree directly).
     qtbot.wait(1)
-    assert not win._panel.pending_label.isVisible()
+    assert win._panel.apply_btn.property("pending") != "true"
     win._on_levels_change(0.1, 1.0, 0.9)
     win._sync_step_controls()
-    assert win._panel.pending_label.isVisible()
-    assert "not applied" in win._panel.pending_label.text().lower()
+    assert win._panel.apply_btn.property("pending") == "true"
     # Third leg, and the one with teeth: the two above are both satisfied by a
-    # show-only _sync_step_controls, because the label is CONSTRUCTED hidden.
+    # mark-only _sync_step_controls that never clears it again.
     # Saturation is deliberate — it commits through its own handler rather than
     # apply_current, which is where the clear was missing entirely.
     # user_initiated=False: this jump is test plumbing to reach Saturation, not
@@ -80,10 +83,10 @@ def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     # its default would assert the opposite of what this line means. Nebula
     # stays 0 so no star split runs and this is instant.
     win._on_sat_change(0.70, 0.0)
-    assert win._panel.pending_label.isVisible()
+    assert win._panel.apply_btn.property("pending") == "true"
     win._apply_saturation(0.70, 0.0)
     qtbot.wait(1)
-    assert not win._panel.pending_label.isVisible()
+    assert win._panel.apply_btn.property("pending") != "true"
 
 
 def test_a_compute_step_is_pending_once_its_option_differs(qtbot, tmp_path):
@@ -182,25 +185,38 @@ def test_the_remove_green_stage_covers_its_own_preview(qtbot, tmp_path):
     assert win._has_pending() is True
 
 
-def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path):
+def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path, monkeypatch):
     """The label reads the dropdown, so it must hear the dropdown.
 
     `_has_pending()` was already right here; only the label lagged, catching up
     on the next `_refresh` — i.e. when the user did something else entirely. A
     signal that is correct but displayed late is still a step that looks applied
     when it is not.
-    """
-    win = _win(qtbot, tmp_path)
-    win._go_to_id("deconvolution")
-    win.show()
-    qtbot.waitExposed(win)
-    assert not win._panel.pending_label.isVisible()
 
-    win._panel.option_box.setCurrentText("strong")
+    The pending mark now lives on the Apply button (its `pending` property;
+    consistent panels, 2026-09-25). On a compute step never applied that mark
+    is ALREADY on at arrival ("arriving is the invitation"), so it cannot show
+    the dropdown being heard there. Background is used instead, after
+    committing "off" — bookkeeping only, no tool runs — which leaves the mark
+    off; moving the dropdown must then put it on at once. GraXpert is
+    reported present only so Apply is enabled for "light" (a disabled Apply is
+    never marked); nothing here presses it.
+    """
+    from nocturne.ui import main_window as mw
+    monkeypatch.setattr(mw, "graxpert_valid", lambda settings: True)
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("background")
+    win._panel.option_box.setCurrentText("off")
+    win.apply_current("off")
+    qtbot.wait(1)
+    assert win._panel.option_box.currentText() == "off", "precondition"
+    assert win._panel.apply_btn.property("pending") != "true", "precondition"
+
+    win._panel.option_box.setCurrentText("light")
     qtbot.wait(1)
 
-    assert win._panel.pending_label.isVisible(), (
-        "the dropdown moved and the label did not notice until the next refresh")
+    assert win._panel.apply_btn.property("pending") == "true", (
+        "the dropdown moved and the button did not notice until the next refresh")
 
 
 def _answer(monkeypatch, which):
@@ -739,14 +755,21 @@ def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
     Reported from a screenshot: the line answering "did that apply?" was muted
     grey help-text styling, underneath the big green button, and effectively
     invisible. Position carries more here than colour does.
+
+    Since 2026-09-25 the answer is IN the button (consistent panels): no line
+    can sit past where the eye stops because there is no separate line — the
+    pinned Apply itself carries the mark, and nothing else in the window
+    claims to.
     """
+    from PySide6.QtWidgets import QLabel
     win = _win(qtbot, tmp_path)
     win._go_to_id("saturation")
-    lay = win._panel.layout()
-    order = [lay.itemAt(i).widget() for i in range(lay.count())]
-    assert win._panel.pending_label in order
-    assert order.index(win._panel.pending_label) < order.index(win._panel.apply_btn)
-    assert win._panel.pending_label.objectName() == "pendingNote"
+    win._on_sat_change(0.70, 0.0)
+    win._sync_step_controls()
+    assert win._side.action_slot.isAncestorOf(win._panel.apply_btn)
+    assert win._panel.apply_btn.property("pending") == "true"
+    assert not [lab for lab in win.findChildren(QLabel)
+                if lab.objectName() == "pendingNote"], "a second pending line"
 
 
 # --- Whole-branch review Critical #3: on Colour, the note sat above the
@@ -756,17 +779,18 @@ def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
 
 def test_the_pending_note_sits_above_apply_tint_when_a_tint_is_pending(
         qtbot, tmp_path):
+    # The pending mark is the buttons' `pending` property now (consistent
+    # panels, 2026-09-25). Same meaning: it must be on the button that commits
+    # the tint, never on Apply Color alone. (Task 5 makes the ONE visible
+    # Apply commit both in _apply_sequence order; this then changes with it.)
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._on_tint_change(0.2, 0.0)
     win._sync_step_controls()
 
-    lay = win._panel.layout()
-    order = [lay.itemAt(i).widget() for i in range(lay.count())]
-    assert order.index(win._panel.pending_label) == \
-        order.index(win._panel.apply_tint_btn) - 1
-    assert order.index(win._panel.pending_label) != order.index(win._panel.apply_btn) - 1, (
-        "the note still sits above Apply Color, which would discard the "
+    assert win._panel.apply_tint_btn.property("pending") == "true"
+    assert win._panel.apply_btn.property("pending") != "true", (
+        "the mark sits on Apply Color, which would discard the "
         "pending tint rather than commit it")
 
 
@@ -778,13 +802,11 @@ def test_the_pending_note_sits_above_remove_green_apply_when_it_is_pending(
     Colour, with its own button name and its own coverage gap."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("remove_green")
+    assert win._panel.apply_btn.property("pending") != "true", "precondition"
     win._on_removegreen_change(0.4)
     win._sync_step_controls()
 
-    lay = win._panel.layout()
-    order = [lay.itemAt(i).widget() for i in range(lay.count())]
-    assert order.index(win._panel.pending_label) == \
-        order.index(win._panel.apply_btn) - 1
+    assert win._panel.apply_btn.property("pending") == "true"
 
 
 def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
@@ -947,15 +969,16 @@ def test_the_color_method_choice_is_covered_by_pending(qtbot, tmp_path):
 
 
 def test_changing_the_color_method_shows_the_pending_note(qtbot, tmp_path):
+    # The note is the Apply button's `pending` mark now (consistent panels).
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     qtbot.wait(1)
-    assert not win._panel.pending_label.isVisible()
+    assert win._panel.apply_btn.property("pending") != "true"
 
     win._panel.method_box.setCurrentText("Photometric (SPCC)")
     qtbot.wait(1)
 
-    assert win._panel.pending_label.isVisible()
+    assert win._panel.apply_btn.property("pending") == "true"
 
 
 def test_changing_the_color_method_makes_next_prompt(qtbot, tmp_path, monkeypatch):
@@ -1868,27 +1891,6 @@ def test_color_a_successful_method_apply_still_lets_tint_proceed(
     assert not win._has_pending()
 
 
-def test_every_committing_stage_names_the_before_after_affordance(qtbot, tmp_path):
-    """Reset (Tasks 1-5) answers what he asked BY; this answers what he asked
-    FOR — he wanted to "validate the before and after easily", and Space
-    already does that, but he never found it. Driven by win._stages (not a
-    hand-written list) so a stage added later is covered without editing
-    this test."""
-    win = _win(qtbot, tmp_path)
-    for stage in win._stages:
-        win._go_to_id(stage.id)
-        hint = getattr(win._panel, "compare_hint", None)
-        if stage.id in ("load", "export"):
-            assert hint is None, f"{stage.id} should not offer a step-compare hint"
-            continue
-        assert hint is not None, f"{stage.id} has no before/after hint"
-        # Space TOGGLES the peek (main_window._toggle_peek: `not self._peek_active`),
-        # it does not require holding it down — the wording must match or a user
-        # who tries the wrong gesture will conclude the feature is broken.
-        assert "space" in hint.text().lower()
-        assert "hold" not in hint.text().lower()
-
-
 def test_the_truncation_dialog_defaults_to_cancel_and_names_the_step(
         qtbot, tmp_path, monkeypatch):
     """Drives the REAL _ask_truncation body, which nothing else does.
@@ -2019,12 +2021,8 @@ def test_with_method_and_tint_pending_the_green_and_note_are_on_apply_color(
         "fixture: Apply Color must be the first press in this situation")
     assert win._panel.apply_btn.property("pending") == "true", (
         "the green does not follow _apply_sequence's first press")
-
-    lay = win._panel.layout()
-    order = [lay.itemAt(i).widget() for i in range(lay.count())]
-    assert order.index(win._panel.pending_label) == \
-        order.index(win._panel.apply_btn) - 1, (
-            "the note still anchors on Apply Tint, not the button Next presses first")
+    # The separate note that also had to anchor there is gone (consistent
+    # panels, 2026-09-25): the mark above IS the note now.
 
 
 # --- Second whole-branch review -------------------------------------------
@@ -2407,7 +2405,8 @@ def test_an_adjusted_crop_box_is_pending(qtbot, tmp_path):
     win.image_view._geometry_changed()   # what a real drag ends in
 
     assert win._has_pending(), "an adjusted crop box is uncommitted work"
-    assert win._panel.pending_label.isVisible() or True  # visibility synced on refresh
+    win._sync_step_controls()
+    assert win._panel.apply_btn.property("pending") == "true"
 
 
 def test_next_does_not_discard_an_adjusted_crop_without_asking(
