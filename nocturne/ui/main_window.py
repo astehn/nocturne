@@ -2631,8 +2631,9 @@ class MainWindow(QMainWindow):
 
         With something pending it is exactly Next's "Apply and continue":
         `_apply_current_step`, method before tint. With nothing pending the
-        button is only live on a never-applied Colour (`not_run`, green; an
-        applied one is off), and that press must still commit — the method, at
+        button is live on a never-applied Colour (`not_run`, green) or on an
+        applied one whose controls cannot be proven to match the commit (R13),
+        and that press must still commit — the method, at
         what the dropdown shows — or the green would be a promise the button
         does not keep (`_apply_current_step` presses only what is pending).
         """
@@ -4921,8 +4922,8 @@ class MainWindow(QMainWindow):
         rgb = curves.pop(curve_key("rgb", "all"), [(0.0, 0.0), (1.0, 1.0)])
         self._curve_matrix = curves
         self._panel.curve_editor.set_points(rgb)   # emits -> preview
-        # The matrix is part of what Apply commits; an unchanged RGB curve
-        # emits nothing, so re-read Apply's state here.
+        # The matrix is part of what Apply commits. set_points' emit already
+        # re-syncs; this makes the dependency explicit rather than incidental.
         self._sync_step_controls()
 
     def _on_curve_change(self, points) -> None:
