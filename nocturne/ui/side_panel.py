@@ -143,14 +143,26 @@ class SidePanel(QWidget):
         clip_lay.addWidget(self.clip_check)
         self.layout_.addWidget(self.clip_slot)
 
+        # ONE card (Ruling R6, the approved mockup): a rounded BG_2 frame
+        # holding the step's fixed header on top and its scrolling controls
+        # below, so the title reads as part of the card it names and the
+        # scrollbar sits inside the card at its right edge. theme.py makes
+        # everything plain inside it transparent: one visible surface.
+        self.step_frame = QFrame()
+        self.step_frame.setObjectName("stepFrame")
+        frame_lay = QVBoxLayout(self.step_frame)
+        frame_lay.setContentsMargins(0, 0, 0, 0)
+        frame_lay.setSpacing(0)
+
         # The step's title row and two-line description, FIXED above the
         # scrolling controls (spec §3): a tall step scrolls its controls, never
         # its name. Handed in by MainWindow with set_header, like the actions.
         self.header_slot = QWidget()
+        self.header_slot.setObjectName("stepHeaderSlot")
         self._header_lay = QVBoxLayout(self.header_slot)
         self._header_lay.setContentsMargins(0, 0, 0, 0)
         self._header_lay.setSpacing(0)
-        self.layout_.addWidget(self.header_slot)
+        frame_lay.addWidget(self.header_slot)
 
         # the one flexible zone
         self.scroll = QScrollArea()
@@ -169,7 +181,8 @@ class SidePanel(QWidget):
         self.body_layout.addWidget(self.panel)
         self.body_layout.addStretch(1)
         self.scroll.setWidget(body)
-        self.layout_.addWidget(self.scroll, 1)
+        frame_lay.addWidget(self.scroll, 1)
+        self.layout_.addWidget(self.step_frame, 1)
 
         # The step's main action + Reset, pinned: the same place on every step
         # (Andreas, 2026-09-25 — "about muscle memory again"). Outside the
@@ -252,6 +265,10 @@ class SidePanel(QWidget):
             item = lay.takeAt(0)
             w = item.widget()
             if w is not None and all(w is not k for k in keep):
+                # Hidden at once: until the deferred delete lands it would
+                # still paint, and inside the transparent step frame the old
+                # step's title showed through the new one's.
+                w.hide()
                 w.deleteLater()
 
     def set_header(self, header: QWidget | None) -> None:

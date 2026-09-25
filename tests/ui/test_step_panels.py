@@ -772,7 +772,8 @@ def test_nothing_sits_below_the_commit_button(qtbot, stage_id):
                    + [panel.layout()]), "Apply Tint is laid out"
     side = SidePanel(400)
     qtbot.addWidget(side)
-    assert side.layout_.indexOf(side.scroll) < side.layout_.indexOf(side.action_slot), (
+    assert side.step_frame.isAncestorOf(side.scroll)
+    assert 0 <= side.layout_.indexOf(side.step_frame) < side.layout_.indexOf(side.action_slot), (
         "the pinned action must sit below the scrolling controls")
 
 

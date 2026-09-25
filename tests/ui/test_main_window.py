@@ -2172,21 +2172,24 @@ def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeyp
 
 
 def test_solve_panel_present_in_right_column(qtbot, tmp_path):
-    """The SolvePanel lives in the right column, below the clipping controls
-    and above the per-stage step panel — the positional contract Task 8 was
-    given (clipping line/checkbox as the reference point)."""
+    """The SolvePanel lives in the right column, below the clipping controls.
+    Since 2026-09-25 (Ruling R7, consistent panels) it sits BELOW the
+    per-stage step panel inside the scrolling body, so opening it never moves
+    where the step's controls start; its own collapsible heading makes it a
+    separate section underneath."""
     win = _window(qtbot, tmp_path)
     side = win._side
     assert win._right_panel is side
     assert side.isAncestorOf(win.solve_panel)
-    # The clipping slot is a fixed zone above the scrolling body; inside the
-    # body the SolvePanel sits above the step panel.
+    # The clipping slot is a fixed zone above the step card (which holds the
+    # scrolling body); inside the body the SolvePanel follows the step panel.
     assert side.clip_slot.isAncestorOf(win._clip_check)
-    assert win._right_layout.indexOf(side.clip_slot) < win._right_layout.indexOf(side.scroll)
+    assert side.step_frame.isAncestorOf(side.scroll)
+    assert 0 <= win._right_layout.indexOf(side.clip_slot) < win._right_layout.indexOf(side.step_frame)
     idx_solve_panel = side.body_layout.indexOf(win.solve_panel)
     idx_step_panel = side.body_layout.indexOf(win._panel)
     assert idx_solve_panel != -1 and idx_step_panel != -1
-    assert idx_solve_panel < idx_step_panel
+    assert idx_solve_panel > idx_step_panel
 
 
 def _solved_win(qtbot, tmp_path, monkeypatch):

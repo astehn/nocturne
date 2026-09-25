@@ -78,3 +78,57 @@ def test_panel_rule_dividers_show_the_card_colour_not_a_bg1_band(qtbot, tmp_path
                 bad.append(f"{st.id}: row above panelRule {px} vs card {card_px}")
     assert checked, "no visible panelRule dividers were found to check"
     assert not bad, "\n".join(bad[:30])
+
+
+def _first_ink_x(img, rect, threshold=90):
+    """First column (image coords) in `rect` holding a pixel brighter than
+    `threshold` — where a label's text actually starts on screen."""
+    for x in range(rect.left(), rect.right() + 1):
+        for y in range(rect.top(), rect.bottom() + 1):
+            c = img.pixelColor(x, y)
+            if (c.red() + c.green() + c.blue()) / 3 > threshold:
+                return x
+    return None
+
+
+def test_the_step_frame_is_one_surface_header_included(qtbot, tmp_path, styled):
+    """Ruling R6: the fixed header and the scrolling controls are ONE rounded
+    BG_2 card. Grab the whole frame; every label's empty corner — the title
+    and the description included — must show the frame colour, and the
+    header's text must start in the same column as the controls'."""
+    from PySide6.QtCore import QPoint, QRect
+    from nocturne.ui.theme import BG_2
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    frame = win._side.step_frame
+    bad, checked = [], 0
+    for i, st in enumerate(list(win._stages)):
+        if not st.enabled:
+            continue
+        win._go_to(i, user_initiated=False); qtbot.wait(20)
+        img = frame.grab().toImage()
+        p = win._panel
+        header_labels = [lab for lab in p.header.findChildren(QLabel) if lab.isVisible()]
+        assert p.desc_box in header_labels, "precondition: the header is in the frame"
+        for lab in header_labels + frame.findChildren(QLabel):
+            if not lab.isVisible() or lab.width() < 8 or not frame.isAncestorOf(lab):
+                continue
+            tr = lab.mapTo(frame, lab.rect().topRight())
+            if not (0 <= tr.y() + 1 < img.height()):
+                continue            # scrolled out of the frame
+            px = img.pixelColor(max(0, tr.x() - 2), tr.y() + 1).name()
+            checked += 1
+            if px != BG_2:
+                bad.append(f"{st.id}: {lab.objectName() or lab.text()[:20]!r} {px} vs frame {BG_2}")
+        # Same column: the title's and the description's ink start where the
+        # controls do (their container's left edge + a glyph's side bearing).
+        controls_x = p.controls.parentWidget().mapTo(frame, QPoint(0, 0)).x()
+        title = p.help_link.parentWidget().findChildren(QLabel)[0]
+        for lab in (title, p.desc_box):
+            tl = lab.mapTo(frame, QPoint(0, 0))
+            ink = _first_ink_x(img, QRect(tl.x(), tl.y(), lab.width(), lab.height()))
+            if ink is None or abs(ink - controls_x) > 2:
+                bad.append(f"{st.id}: {lab.objectName()} text starts at x={ink}, controls at {controls_x}")
+    assert checked > 40
+    assert not bad, "\n".join(bad[:30])

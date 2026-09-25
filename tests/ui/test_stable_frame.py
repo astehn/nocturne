@@ -496,3 +496,24 @@ def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, resto
                 assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room
         checked.append(sid)
     assert "ai_denoise" in checked and "green_fringe" in checked and "deconvolution" in checked
+
+
+def test_plate_solve_opens_below_the_controls(qtbot, tmp_path):
+    """Ruling R7: the Plate Solve panel sits BELOW the step's controls in the
+    scroll, so opening it never moves where the controls start."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800)
+    win.show()
+    qtbot.waitExposed(win)
+    win._go_to_id("levels", user_initiated=False)
+    _settle(qtbot)
+    first = win._panel.controls.itemAt(0).widget()
+    assert first is win._panel.auto_btn, "precondition: Levels starts with Auto"
+    closed_y = _y(win, first)
+    win.solve_panel.setVisible(True)
+    _settle(qtbot)
+    assert win.solve_panel.isVisibleTo(win), "precondition: the solve panel is open"
+    assert _y(win, first) == closed_y
+    body = win._side.body_layout
+    assert body.indexOf(win.solve_panel) > body.indexOf(win._side.panel)

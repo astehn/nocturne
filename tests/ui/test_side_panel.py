@@ -156,7 +156,8 @@ def test_the_header_is_fixed_above_the_scroll(qtbot):
     qtbot.wait(20)
     assert _y(s, head) == y_head and head.isVisible()
     assert not s.scroll.isAncestorOf(head)
-    assert s.layout_.indexOf(s.header_slot) < s.layout_.indexOf(s.scroll)
+    frame = s.step_frame.layout()
+    assert 0 <= frame.indexOf(s.header_slot) < frame.indexOf(s.scroll)
 
 
 def test_replacing_the_header_destroys_the_old_one(qtbot):
@@ -207,3 +208,18 @@ def test_the_histogram_gives_up_height_first(qtbot):
     lo = s.minimumSizeHint().height()
     s.resize(400, 500); qtbot.wait(20)
     assert s.minimumSizeHint().height() == lo
+
+
+def test_a_replaced_header_stops_painting_at_once(qtbot):
+    """Inside the transparent step frame, an outgoing header still visible
+    until its deferred delete lands painted the old step's title through the
+    new one's (seen in a render, 2026-09-25). Hidden at once, before any
+    event is processed."""
+    s = _side(qtbot)
+    old, new = QLabel("Import"), QLabel("Levels")
+    s.set_header(old); qtbot.wait(20)
+    old_apply = QPushButton("Apply Crop")
+    s.set_actions(old_apply, None); qtbot.wait(20)
+    s.set_header(new)
+    s.set_actions(QPushButton("Apply Levels"), None)
+    assert old.isHidden() and old_apply.isHidden()

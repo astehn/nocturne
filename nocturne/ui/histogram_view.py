@@ -12,22 +12,26 @@ _COLORS = {"r": "#ff5555", "g": "#55ff55", "b": "#5599ff", "l": "#cccccc"}
 # The height the histogram had on every window before 2026-09-25, and still
 # gets whenever the window has the room (SidePanel._rebalance).
 HIST_NATURAL_H = 240
-# The smallest height at which the plot still reads — the floor it yields to
-# on a short window, before the step's controls give up anything.
+# The floor it yields to on a short window, before the step's controls give
+# up anything.
 #
 # MEASURED on a real master (M8, 460 x 10 s, stretched at the default 0.30,
 # 382 px wide), rendering heights 48-240 and reading off, per channel, the
 # rightmost bin still drawn at >= 1 px — how far the faint tail (the
-# nebulosity's shoulder, the part a stretch decision turns on) stays visible:
+# nebulosity's shoulder, what a stretch decision reads) stays visible:
 #
 #     height   48    64    72    80    88    96    112   128   240
+#     R tail  174   184   184   184   192   196   204   214   228
 #     G tail  106   129   132   138   138   139   157   157   205
 #     B tail  112   123   131   135   135   135   145   152   174
 #
-# 80 is the knee: below it the tail disappears quickly (-9 to -12 bins at 64,
-# -26 to -32 at 48), while 80 -> 96 gains at most one bin. At 80 the channel
-# peaks still stand 3-4 px apart, so a colour cast still shows, and the grid
-# quarters are 20 px apart. Not lowered to fit any window budget.
+# There is no clean knee: the tail keeps shrinking all the way down (R gains
+# 12 bins from 80 to 96, G 18 from 96 to 112). 80 is a judgement — the
+# smallest height at which the tail is still clearly visible in the renders,
+# the channel peaks still stand 3-4 px apart so a cast still shows, and the
+# grid quarters are 20 px apart — and it is what the 720-screen budget allows
+# (window minimum 576 px styled with it). It gets 96 px at 1280x800 and its
+# natural 240 from ~1512x982 up.
 HIST_FLOOR_H = 80
 
 

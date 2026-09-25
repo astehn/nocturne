@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
     QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
@@ -119,6 +119,7 @@ class _DescBox(QLabel):
         super().__init__(text)
         self.setObjectName("stepDesc")
         self.setWordWrap(True)
+        self.setIndent(0)   # the title's reason: the ink lines up with the controls
         self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._fit()
 
@@ -229,13 +230,22 @@ def build_panel(
     header = QWidget()
     header.setObjectName("stepHeader")
     header_lay = QVBoxLayout(header)
-    m = lay.contentsMargins()
-    header_lay.setContentsMargins(m.left(), m.top(), m.right(), 0)
+    # ONE inset for the header and the card's controls, set explicitly on
+    # both. Copying the card layout's margins here read them before the
+    # widget was polished (11 px) while the card later resolved its own
+    # (9 px), so the title sat 2 px right of the controls under it.
+    inset = w.style().pixelMetric(QStyle.PixelMetric.PM_LayoutLeftMargin)
+    lay.setContentsMargins(inset, 0, inset, inset)
+    header_lay.setContentsMargins(inset, inset, inset, 0)
     header_lay.setSpacing(lay.spacing())
     w.header = header
     title_row = QHBoxLayout()
     title = QLabel(stage.label)
     title.setObjectName("stageTitle")
+    # indent 0: with a stylesheet padding Qt gives a label a frame and then
+    # indents its text by half an "x" (6 px at 20 px bold), so the title's ink
+    # sat right of the controls' even at the same x.
+    title.setIndent(0)
     title_row.addWidget(title)
     title_row.addStretch(1)
     # "How this works" sits on the title line so it never floats with the

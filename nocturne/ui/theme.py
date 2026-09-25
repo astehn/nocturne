@@ -114,6 +114,20 @@ QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
+/* The side panel's ONE step card (Ruling R6): the rounded frame holds the
+   fixed header and the scrolling controls, and every plain container inside
+   it lets the frame colour through — the inner step card included, so there
+   is one visible surface, not a card inside a card. */
+QFrame#stepFrame {{ background: {BG_2}; border-radius: 10px; }}
+QFrame#stepFrame QWidget#stepHeaderSlot, QFrame#stepFrame QWidget#stepHeader,
+QFrame#stepFrame QWidget#stepHeader QLabel, QFrame#stepFrame QScrollArea,
+QFrame#stepFrame QScrollArea > QWidget, QFrame#stepFrame QScrollArea > QWidget > QWidget,
+QFrame#stepFrame QWidget#stepCard, QFrame#stepFrame QWidget#solvePanel,
+QFrame#stepFrame QLabel#stepExplainer, QFrame#stepFrame QLabel#fullHelpLink
+{{ background: transparent; }}
+/* "How this works" on the title line: the link is drawn in ACCENT with no
+   underline by MainWindow's rich text; this sizes it to sit on the title. */
+QLabel#helpHeader {{ font-size: 12px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
 /* The answer to "did that apply?" — so NOT stepDesc's muted help-text grey, which
    is the styling people skim past. Full-strength text, above the button. */

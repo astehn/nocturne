@@ -607,7 +607,6 @@ class MainWindow(QMainWindow):
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
-        right.body_layout.insertWidget(0, self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
         self._panel = right.panel
         # The explainer lives inside the scrolling zone, below the panel.
@@ -632,6 +631,10 @@ class MainWindow(QMainWindow):
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
         right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
+        # BELOW the step's controls and its help (Ruling R7): the controls
+        # start at the same height on every step whether or not Plate Solve is
+        # open, and its own collapsible heading makes it a separate section.
+        right.body_layout.insertWidget(right.body_layout.count() - 1, self.solve_panel)
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
@@ -1031,9 +1034,13 @@ class MainWindow(QMainWindow):
         step description (in the panel) is always visible regardless."""
         expanded = self.settings.help_expanded
         has_topic = self._current_topic_id is not None
+        # The app's interactive ACCENT, no underline — a raw rich-text link
+        # draws in the palette's default blue, underlined, which is what this
+        # showed until 2026-09-25.
+        style = f'style="color:{ACCENT}; text-decoration:none"'
         self._help_header.setText(
-            '<a href="#">How this works ▾</a>' if expanded
-            else '<a href="#">How this works ▸</a>')
+            f'<a href="#" {style}>How this works ▾</a>' if expanded
+            else f'<a href="#" {style}>How this works ▸</a>')
         self._help_header.setVisible(has_topic)
         self._explainer_scroll.setVisible(has_topic and expanded)
         self._full_help_link.setVisible(has_topic and expanded)
