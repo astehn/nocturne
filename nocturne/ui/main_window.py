@@ -48,7 +48,7 @@ from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .job_queue import JobQueue, StackJob
-from .jobs_indicator import JobsIndicator
+from .jobs_indicator import JobsBar, JobsIndicator
 from .activity_panel import ActivityChannel, ActivityPanel
 from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
@@ -717,7 +717,7 @@ class MainWindow(QMainWindow):
         means each route hides and restores the chrome the same way, and F
         or Escape afterwards always finds a snapshot to restore from."""
         super().changeEvent(event)
-        if event.type() != QEvent.Type.WindowStateChange or not hasattr(self, "_toolbar"):
+        if event.type() != QEvent.Type.WindowStateChange or not hasattr(self, "_jobs_bar"):
             return
         was_full = bool(event.oldState() & Qt.WindowState.WindowFullScreen)
         now_full = self.isFullScreen()
@@ -733,19 +733,22 @@ class MainWindow(QMainWindow):
         # is already hidden, and exiting must not conjure it into existence.
         self._pre_fullscreen = {
             "toolbar": self._toolbar.isVisible(),
+            "jobs_bar": self._jobs_bar.isVisible(),
             "left": self._left_column.isVisible(),
             "right": self._right_panel.isVisible(),
         }
-        for w in (self._toolbar, self._left_column, self._right_panel):
+        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel):
             w.setVisible(False)
 
     def _restore_chrome_after_fullscreen(self) -> None:
         # No snapshot should be impossible now; if it happens, fall back to
         # what the chrome state says rather than showing everything.
         prev = getattr(self, "_pre_fullscreen", None) or {
-            "toolbar": True, "left": self._chrome_visible, "right": self._chrome_visible}
+            "toolbar": True, "jobs_bar": True,
+            "left": self._chrome_visible, "right": self._chrome_visible}
         self._pre_fullscreen = None
         self._toolbar.setVisible(prev["toolbar"])
+        self._jobs_bar.setVisible(prev["jobs_bar"])
         self._left_column.setVisible(prev["left"])
         self._right_panel.setVisible(prev["right"])
         self._sync_left_column()    # restates from chrome state, not the captured snapshot
@@ -769,11 +772,9 @@ class MainWindow(QMainWindow):
             self._left_column.setVisible(self._chrome_visible)
 
     def _size_stepper(self) -> None:
-        """Every step visible without scrolling when there is room; the activity
-        box takes the rest. Below ~1280x720 the list may scroll — "works but
-        tight", never refused."""
-        self.stepper.setMaximumHeight(self.stepper.ideal_height())
-        self.stepper.setMinimumHeight(min(self.stepper.ideal_height(), 240))
+        """The step list fixes its own height to its content (Stepper) and
+        never scrolls; the activity box below takes the rest and scrolls."""
+        self.stepper._fit_height()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         """Offer to save before discarding an edited (un-saved) project on
@@ -2121,12 +2122,6 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Main")
         self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        # FIRST in the toolbar: items overflow from the right, so the one item
-        # that must never hide behind the chevron goes at the left. Always
-        # present at a fixed width, blank while idle: appearing, or growing
-        # with its text, would push every button after it sideways.
-        self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
-        tb.addWidget(self.jobs_indicator)
         # File
         tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
         # Projects (a saved bundle: image + full edit history + solve state) — a
@@ -2260,6 +2255,13 @@ class MainWindow(QMainWindow):
         self._tools_act.setObjectName("toolsWarning")
         self._tools_act.setVisible(False)   # only when something is actually wrong
         self._update_tool_warning()
+
+        # Background jobs: at the FAR RIGHT of the toolbar row (Andreas,
+        # 2026-09-25), in a toolbar of its own after the main one — see
+        # JobsBar for why it is not in the main toolbar.
+        self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
+        self._jobs_bar = JobsBar(self.jobs_indicator)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._jobs_bar)
 
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.

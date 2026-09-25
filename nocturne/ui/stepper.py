@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
 
@@ -147,6 +147,8 @@ class Stepper(QListWidget):
         self._high_water: int | None = None
         self.setItemDelegate(StepDelegate(self))
         self.itemClicked.connect(self._on_click)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._fit_height()
 
     def set_stages(self, stages) -> None:
         self._stages = list(stages)
@@ -157,21 +159,46 @@ class Stepper(QListWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 item.setToolTip(getattr(stage, "reason", ""))
             self.addItem(item)
+        self._fit_height()
 
     def stage_at(self, index: int):
         return self._stages[index]
 
     def ideal_height(self) -> int:
-        """Every row visible with no scrolling. Task 7 sizes the list to this
-        so the activity box below it gets the rest of the column."""
-        return self.count() * STEP_ROW_H + 2 * self.frameWidth()
+        """Every row visible with no scrolling, from the REAL metrics: each
+        row's own size hint, the list's spacing, and the frame — which under
+        the app stylesheet includes its 8 px padding. Assuming 32 px rows and
+        a 1 px frame was right offscreen and 14 px short in the real window,
+        where the list scrolled and cut "Export" off."""
+        rows = sum(self.sizeHintForRow(i) + 2 * self.spacing()
+                   for i in range(self.count()))
+        vm = self.viewportMargins()
+        return rows + 2 * self.frameWidth() + vm.top() + vm.bottom()
+
+    def _fit_height(self) -> None:
+        """Up to every row; down to 240 px only when the window is too short
+        for the whole list (the activity box yields first — it is the one
+        with the stretch). Re-run whenever the metrics can change."""
+        ideal = self.ideal_height()
+        self.setMaximumHeight(ideal)
+        self.setMinimumHeight(min(ideal, 240))
+        self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """The stylesheet arrives after construction (at polish) and changes
+        the frame; re-fit whenever style or font changes."""
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._fit_height()
+
+    def event(self, event) -> bool:  # noqa: A003 (Qt override)
+        result = super().event(event)
+        if event.type() == QEvent.Type.Polish:
+            self._fit_height()
+        return result
 
     def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
-        """Ask for every row. QListWidget's own hint is a flat 192 px, so in
-        the left column (activity box has the stretch) the list sat at its
-        240 px floor at every window size, scrolled, and its rows moved as
-        the current step changed. The minimum stays at 240 so the window can
-        still shrink to a 720 px screen."""
+        """Ask for every row. QListWidget's own hint is a flat 192 px."""
         return QSize(super().sizeHint().width(), self.ideal_height())
 
     def _on_click(self, item) -> None:

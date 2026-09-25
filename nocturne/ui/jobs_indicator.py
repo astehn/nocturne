@@ -16,9 +16,10 @@ that checks the file exists before opening anything.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
-                               QToolButton, QVBoxLayout)
+                               QSizePolicy, QToolBar, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from .theme import DANGER, SUCCESS, WARNING
 
@@ -37,6 +38,7 @@ from .theme import DANGER, SUCCESS, WARNING
 # "⟳ 2 jobs 42%", "✓ M 33 ready", "✗ M 33 failed", "◌ Stopping…" — no filler
 # words, so ordinary Seestar names fit whole and only long ones elide.
 SLOT_W = 140
+_IDLE_STYLE = "background: transparent; border: none;"
 
 
 class JobsIndicator(QToolButton):
@@ -64,12 +66,16 @@ class JobsIndicator(QToolButton):
         self._refresh()
 
     def _fix_width(self) -> None:
-        """The slot is SLOT_W whatever the font; only the room for text inside
-        it is re-measured (the button's own padding, in the current style)."""
+        """The slot is SLOT_W whatever the font; the room for text inside it,
+        and the height, are measured in the current font and style."""
         self.setFixedWidth(SLOT_W)
         shown = self.text()
         self.setText("")
         padding = self.sizeHint().width()
+        # Height fixed too, from every glyph the states use: blank it was
+        # 18 px and with "⟳" 22, which moved it 2 px on every job start.
+        self.setText("⟳ ✓ ✗ ◌ M 33 100%")
+        self.setFixedHeight(self.sizeHint().height())
         self.setText(shown)
         self._text_room = max(0, SLOT_W - padding)
 
@@ -158,9 +164,12 @@ class JobsIndicator(QToolButton):
                 text, colour = f"✗ {label} failed", DANGER
         else:
             text, colour = "", None
-        # Idle: blank and inert, but still occupying its place.
+        # Idle: blank, inert and INVISIBLE — reserved space only. Under the
+        # app stylesheet an idle, disabled tool button still painted a dark
+        # box (Andreas saw it in the real window), so idle draws nothing.
         self.setEnabled(bool(text))
-        self.setStyleSheet(f"color: {colour};" if colour else "")
+        self.setStyleSheet(_IDLE_STYLE if not text
+                           else (f"color: {colour};" if colour else ""))
         self._show_text(text, label)
 
     # --- actions ---
@@ -235,3 +244,48 @@ class JobsIndicator(QToolButton):
         pop.move(self.mapToGlobal(self.rect().bottomLeft()))
         pop.show()
         self._popover = pop
+
+
+class JobsBar(QToolBar):
+    """The indicator's own toolbar, placed after the main one on the same row
+    so it sits at the window's right edge.
+
+    Not in the main toolbar: its items overflow from the right, so an
+    indicator appended there would be the first thing the chevron hides, and
+    at its head it pushed every tool along. Immovable and never offered for
+    hiding. QMainWindow gives a row's spare width to its LAST toolbar, so this
+    one stretches — an expanding spacer, then the fixed-width indicator, pins
+    the indicator to the right edge (a fixed-width bar left it mid-row, x 1773
+    on a 2560 window)."""
+
+    def __init__(self, indicator: JobsIndicator, parent=None) -> None:
+        super().__init__("Background jobs", parent)
+        self.setObjectName("jobsBar")
+        self.setMovable(False)
+        self.setFloatable(False)
+        self.toggleViewAction().setVisible(False)
+        spacer = QWidget(self)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.addWidget(spacer)
+        self.addWidget(indicator)
+        self._indicator = indicator
+        # No padding, margins or spacing: every pixel here comes out of the
+        # main toolbar's row. With Qt's defaults the bar cost 148 px and hid
+        # "Starless Levels…" at 1280; under the app stylesheet (padding 6,
+        # spacing 4) the indicator itself fell into this bar's own overflow.
+        self.setStyleSheet("QToolBar#jobsBar { padding: 0px; spacing: 0px; }")
+        self.layout().setContentsMargins(0, 0, 0, 0)
+        self.layout().setSpacing(0)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        """Never narrower than the indicator. QMainWindow squeezes the LAST
+        toolbar in a row first, down to its own chevron (measured: 32 px under
+        the app stylesheet, the indicator pushed into the overflow); the main
+        toolbar must give way instead. A plain setMinimumWidth did not hold —
+        it read back 0 once the window was laid out under the stylesheet."""
+        hint = super().minimumSizeHint()
+        m = self.contentsMargins()
+        lay = self.layout().contentsMargins()
+        need = (self._indicator.width() + m.left() + m.right()
+                + lay.left() + lay.right())
+        return QSize(max(hint.width(), need), hint.height())

@@ -4241,7 +4241,7 @@ def test_fullscreen_hides_every_piece_of_chrome(qtbot, tmp_path):
     assert win._toolbar.isVisible() and win._left_column.isVisible()
 
     win._toggle_fullscreen()
-    for name in ("_toolbar", "_left_column", "stepper", "activity", "_right_panel"):
+    for name in ("_toolbar", "_jobs_bar", "_left_column", "stepper", "activity", "_right_panel"):
         assert not getattr(win, name).isVisible(), f"{name} still showing"
     assert not win.image_view._zoom_pill.isHidden(), "the zoom pill should remain"
 
@@ -6357,7 +6357,8 @@ def test_a_notice_is_logged_as_a_notice_not_a_warning(qtbot, tmp_path):
 
 def _chrome(win) -> dict:
     return {name: getattr(win, name).isVisible()
-            for name in ("_toolbar", "_left_column", "stepper", "activity", "_right_panel")}
+            for name in ("_toolbar", "_jobs_bar", "_left_column", "stepper",
+                         "activity", "_right_panel")}
 
 
 @pytest.mark.parametrize("loaded", [True, False], ids=["image", "welcome"])

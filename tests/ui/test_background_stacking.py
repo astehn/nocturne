@@ -121,16 +121,28 @@ def test_quitting_with_jobs_running_warns_and_cancels(qtbot, tmp_path, monkeypat
     assert all(j.state == "cancelled" for j in win._job_queue.jobs())
 
 
-def test_the_jobs_indicator_is_first_in_the_toolbar(qtbot, tmp_path, monkeypatch):
+@pytest.mark.parametrize("width", [1120, 1280, 1920, 2560])
+def test_the_jobs_indicator_sits_at_the_right_end_of_the_toolbar_row(
+        qtbot, tmp_path, monkeypatch, width):
+    """Andreas, 2026-09-25: far right of the toolbar row. In its own bar, NOT
+    in the main toolbar — items there overflow from the right, so it would be
+    the first thing the chevron hides."""
+    from PySide6.QtCore import QPoint
     from tests.ui.test_main_window import _window
 
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
+    win.resize(width, 800)
     win.show(); qtbot.waitExposed(win)
-    assert win._toolbar.widgetForAction(win._toolbar.actions()[0]) is win.jobs_indicator
-    assert not win.jobs_indicator.isHidden() and win.jobs_indicator.text() == ""
+    ind = win.jobs_indicator
+    assert all(win._toolbar.widgetForAction(a) is not ind for a in win._toolbar.actions())
+    assert win.toolBarArea(win._jobs_bar) == win.toolBarArea(win._toolbar)
+    assert not win.toolBarBreak(win._jobs_bar), "must share the main toolbar's row"
+    assert win._jobs_bar.y() == win._toolbar.y()
+    assert ind.isVisible()
+    assert ind.mapTo(win, QPoint(0, 0)).x() + ind.width() == win.width()
     win._job_queue.enqueue(_job("A"))
-    assert "A" in win.jobs_indicator.text() and win.jobs_indicator.isEnabled()
+    assert "A" in ind.text() and ind.isVisible()
 
 
 def test_open_on_a_missing_master_warns_instead_of_crashing(qtbot, tmp_path, monkeypatch):

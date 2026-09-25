@@ -45,6 +45,10 @@ def _geometry(win) -> dict:
         # so canvas/next/stepper/window never move even though the fixed
         # zone contract is broken.
         "status_slot": rect(win._side.status_slot),
+        # The jobs indicator, at the right end of the toolbar row in its own
+        # bar: fixed there whatever it says, and always present (blank and
+        # invisible while idle, never hidden).
+        "jobs_indicator": (rect(win.jobs_indicator), win.jobs_indicator.isVisible()),
         # `_disabled_stages`' own contract (main_window.py): a stage the
         # current mode can't use stays LISTED and disabled so "the rows below
         # it never move" — the user's actual complaint was ROWS shifting
@@ -73,6 +77,14 @@ def _geometry(win) -> dict:
             for i in range(win.stepper.count())
         ),
     }
+
+
+def _assert_every_row_shows(win, size):
+    st = win.stepper
+    last = st.visualItemRect(st.item(st.count() - 1))
+    assert last.bottom() < st.viewport().height(), (
+        f"{size}: last row ends at {last.bottom()}, viewport {st.viewport().height()}")
+    assert st.verticalScrollBar().maximum() == 0
 
 
 def _settle(qtbot):
@@ -166,6 +178,7 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, siz
     # At every size here the whole list fits (Stepper.sizeHint asks for all
     # 17 rows; the activity box yields down to 72 px at 1280x720), so it must
     # have nothing to scroll either.
+    _assert_every_row_shows(win, size)
     assert win.stepper.verticalScrollBar().maximum() == 0, (
         f"step list scrolls at {size}: range "
         f"{win.stepper.verticalScrollBar().maximum()}, "
@@ -194,3 +207,27 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, siz
             if geo[key] != baseline[key]:
                 moved.append(f"linked={linked}: {key} {baseline[key]} -> {geo[key]}")
     assert not moved, "\n".join(moved[:40])
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (1512, 982), (1920, 1080)],
+                         ids=lambda s: f"{s[0]}x{s[1]}")
+def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, size):
+    """The suite runs WITHOUT the app stylesheet, whose 8 px list padding is
+    exactly what a 32-px-rows-plus-1-px-frame height missed: offscreen it
+    fitted, in Andreas' real window "Export" was cut off behind a scrollbar.
+    So this one applies the stylesheet (restored afterwards)."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = _window(qtbot, tmp_path)
+        win.open_fits(_make_fits(tmp_path))
+        win.resize(*size)
+        win.show()
+        qtbot.waitExposed(win)
+        _settle(qtbot)
+        _assert_every_row_shows(win, size)
+    finally:
+        app.setStyleSheet(before)

@@ -312,3 +312,33 @@ def test_a_closed_popover_is_deleted_not_leaked(qtbot, monkeypatch):
     QApplication.sendPostedEvents(None, 0)      # 0 = QEvent.DeferredDelete
     QApplication.processEvents()
     assert gone == [True]
+
+
+def test_idle_draws_nothing_but_the_toolbar_behind_it(qtbot, tmp_path):
+    """Andreas saw an EMPTY DARK BOX at the head of the toolbar: idle must be
+    reserved space only. Under the real app stylesheet (the suite otherwise
+    runs without it), every pixel of the idle indicator must be the toolbar's
+    own background, and it must not take hover (disabled while idle)."""
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import BG_2, build_stylesheet
+    from tests.ui.test_main_window import _window
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = _window(qtbot, tmp_path)
+        win.resize(1280, 800)
+        win.show(); qtbot.waitExposed(win); qtbot.wait(20)
+        ind = win.jobs_indicator
+        assert ind.text() == "" and not ind.isEnabled()
+        img = win.grab().toImage()
+        tl = ind.mapTo(win, QPoint(0, 0))
+        r = QRect(tl.x(), tl.y(), ind.width(), ind.height())
+        colours = {img.pixelColor(x, y).name()
+                   for y in range(r.top(), r.bottom() + 1)
+                   for x in range(r.left(), r.right() + 1)}
+        assert colours == {QColor(BG_2).name()}, colours
+    finally:
+        app.setStyleSheet(before)
