@@ -605,11 +605,10 @@ def test_log_records_open(qtbot, tmp_path):
     assert "Opened" in win.log_panel.text()
 
 
-def test_log_toggle_hides_panel(qtbot, tmp_path):
+def test_activity_toggle_hides_panel(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    win._log_act.setChecked(False)
-    win._toggle_log()
-    assert win._bottom_bar.isHidden() is True
+    win._activity_act.setChecked(False)
+    assert win.activity.isHidden() is True
 
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
@@ -634,10 +633,10 @@ def test_toolbar_actions_have_icons(qtbot, tmp_path):
 
 def test_chrome_hidden_until_image_loaded(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    assert win.stepper.isHidden() is True          # full-bleed welcome
+    assert win._left_column.isHidden() is True          # full-bleed welcome
     assert win._right_panel.isHidden() is True
     win.open_fits(_make_fits(tmp_path))
-    assert win.stepper.isHidden() is False         # chrome revealed on load
+    assert win._left_column.isHidden() is False         # chrome revealed on load
     assert win._right_panel.isHidden() is False
 
 
@@ -2416,10 +2415,8 @@ def test_star_marker_painting_specifically_reaches_the_burned_export(qtbot, tmp_
 
 
 def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
-    from PySide6.QtWidgets import QPlainTextEdit
     from PySide6.QtCore import Qt
     win = _window(qtbot, tmp_path)
-    assert isinstance(win.output_panel, QPlainTextEdit)
     assert win.output_panel.isReadOnly()                     # not editable
     assert win.output_panel.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse  # copyable
     win._show_output("142 stars matched")
@@ -4242,10 +4239,10 @@ def test_fullscreen_hides_every_piece_of_chrome(qtbot, tmp_path):
     from PySide6.QtCore import Qt
     win = _stretched_window(qtbot, tmp_path)
     win.show(); qtbot.waitExposed(win)
-    assert win._toolbar.isVisible() and win._bottom_bar.isVisible()
+    assert win._toolbar.isVisible() and win._left_column.isVisible()
 
     win._toggle_fullscreen()
-    for name in ("_toolbar", "stepper", "_right_panel", "_bottom_bar"):
+    for name in ("_toolbar", "_left_column", "stepper", "activity", "_right_panel"):
         assert not getattr(win, name).isVisible(), f"{name} still showing"
     assert not win.image_view._zoom_pill.isHidden(), "the zoom pill should remain"
 
@@ -6230,3 +6227,94 @@ def test_the_clip_line_shows_its_qualifier_and_the_tooltip_keeps_it(qtbot, tmp_p
         assert line in tip and "Measured per CHANNEL" in tip
     finally:
         QApplication.instance().setStyleSheet("")
+
+
+# --- the left column: step list + activity box; no bottom bar (Task 7) -------
+
+def test_there_is_no_bottom_bar_and_the_columns_reach_the_bottom(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert not hasattr(win, "_bottom_bar")
+    bottom = win.centralWidget().height()
+    for w in (win._left_column, win._right_panel, win.image_view):
+        y = w.mapTo(win.centralWidget(), w.rect().bottomLeft()).y()
+        assert bottom - y <= 12, f"{w.objectName() or w} stops {bottom - y}px short"
+
+
+def test_the_left_column_is_fixed_240_and_holds_steps_then_activity(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert win._left_column.width() == 240
+    assert win.stepper.y() < win.activity.y()
+
+
+def test_warnings_are_copied_into_the_activity_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._show_warning("RC-Astro failed — used the built-in engine.")
+    win._clear_warning()
+    assert any("RC-Astro failed" in e for e in win.activity.entries("warn"))
+
+
+def test_view_menu_hides_only_the_activity_box(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    canvas = win.image_view.geometry()
+    win._activity_act.setChecked(False)
+    qtbot.wait(20)
+    assert not win.activity.isVisible()
+    assert win.image_view.geometry() == canvas
+
+
+def test_the_toolbar_has_no_log_button(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert "Log" not in [a.text() for a in win._toolbar.actions()]
+
+
+def test_diagnostic_details_open_in_the_large_activity_view(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    seen = {}
+    monkeypatch.setattr(win.activity, "open_large", lambda extra="": seen.setdefault("x", extra))
+    win._last_diagnostic = "Command: graxpert\nstderr: boom"
+    win._toggle_diagnostic_details()
+    assert "stderr: boom" in seen["x"]
+
+
+def test_opening_a_second_image_clears_every_kind_of_activity(qtbot, tmp_path):
+    """Info lines and warning copies belong to the image they were about, just
+    as step lines and results do."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.log_panel.append_entry("stale step line")
+    win._show_output("stale result line")
+    win.log_panel.append_info("stale info line")
+    win._show_warning("stale warning")
+    assert win.activity.entries("info") and win.activity.entries("warn") \
+        and win.activity.entries("result")                    # precondition
+    d2 = tmp_path / "second"
+    d2.mkdir()
+    win.open_fits(_make_fits(d2))
+    assert win.activity.entries("info") == []
+    assert win.activity.entries("warn") == []
+    assert win.activity.entries("result") == []
+    everything = win.activity.entries()
+    assert len(everything) == 1 and "Opened" in everything[0]
+
+
+def test_a_later_warning_drops_the_previous_errors_details_row(qtbot, tmp_path):
+    """Show details / Copy log belong to the ToolError that raised them; an
+    unrelated warning or notice afterwards must not offer that old log."""
+    from types import SimpleNamespace
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    exc = SimpleNamespace(command=["graxpert"], elapsed=1.0, stderr="boom")
+    for later in (win._show_warning, win._show_notice):
+        win._report_tool_error("GraXpert failed.", exc)
+        assert win._show_details_btn.isVisible() and win._copy_log_btn.isVisible()
+        later("something else")
+        assert not win._show_details_btn.isVisible()
+        assert not win._copy_log_btn.isVisible()

@@ -49,7 +49,8 @@ from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .job_queue import JobQueue, StackJob
 from .jobs_panel import JobsPanel
-from .log_panel import LogPanel, OutputPanel, format_log_entry
+from .activity_panel import ActivityChannel, ActivityPanel
+from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
@@ -207,6 +208,11 @@ RIGHT_PANE_MAX_W = 360
 # sideways. Revisit when the small-screen work lands: at the 1280 floor a fixed
 # 400 is a large share of the window, and that spec already plans a drawer.
 RIGHT_PANE_W = 400
+
+# The left column: the step list above the activity box (spec §4.1). 240 fits
+# the longest step name at STEP_ROW_H and a format_log_entry line on one row;
+# fixed, so the canvas never changes width when either one's content does.
+LEFT_COLUMN_W = 240
 
 
 class _PrecomputedStep(Step):
@@ -529,10 +535,17 @@ class MainWindow(QMainWindow):
         outer.addLayout(root, 1)
 
         self.stepper = Stepper()
-        self.stepper.setMaximumWidth(200)
         self.stepper.set_stages(self._stages)
         self.stepper.stageSelected.connect(self._go_to)
-        root.addWidget(self.stepper)
+        self._left_column = QWidget()
+        self._left_column.setFixedWidth(LEFT_COLUMN_W)
+        left = QVBoxLayout(self._left_column)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.addWidget(self.stepper)
+        self.activity = ActivityPanel()
+        left.addWidget(self.activity, 1)
+        root.addWidget(self._left_column)
+        self._size_stepper()
 
         self.image_view = ImageView()
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
@@ -615,8 +628,6 @@ class MainWindow(QMainWindow):
         self._show_details_btn.clicked.connect(self._toggle_diagnostic_details)
         self._copy_log_btn = right.copy_log_btn
         self._copy_log_btn.clicked.connect(self._copy_diagnostic_to_clipboard)
-        self._diagnostic_label = QLabel("")        # kept for callers; never shown in the column now
-        self._diagnostic_label.hide()
         self._last_diagnostic = ""
         self._diag_pending = False                  # a tool error's details are on offer
         self._back_btn = right.back_btn
@@ -626,24 +637,16 @@ class MainWindow(QMainWindow):
         self._sync_status_slot()
         root.addWidget(right)
 
-        self.log_panel = LogPanel()
-        self.output_panel = OutputPanel()
-        self._bottom_bar = QWidget()
-        bottom = QHBoxLayout(self._bottom_bar)
-        bottom.setContentsMargins(0, 0, 0, 0)
-        log_col = QVBoxLayout()
-        log_col.setContentsMargins(0, 0, 0, 0)
+        # The old step-log and output-box APIs, over the one activity stream.
+        self.log_panel = ActivityChannel(self.activity, "step")
+        self.output_panel = ActivityChannel(self.activity, "result")
         self.jobs_panel = JobsPanel(self._job_queue, self)
         # Hidden until there is something to show: an always-present empty strip
         # would cost height on the 1280x800 floor for nothing.
         self.jobs_panel.setVisible(False)
-        self._job_queue.changed.connect(
-            lambda: self.jobs_panel.setVisible(not self.jobs_panel.is_empty()))
-        log_col.addWidget(self.jobs_panel)
-        log_col.addWidget(self.log_panel)
-        bottom.addLayout(log_col, 3)             # history gets the wider share
-        bottom.addWidget(self.output_panel, 2)   # results/progress, copyable
-        outer.addWidget(self._bottom_bar)
+        self._chrome_visible = False
+        self._job_queue.changed.connect(self._sync_left_column)
+        left.insertWidget(1, self.jobs_panel)    # above the activity box
 
         self.setCentralWidget(central)
         self._build_toolbar()
@@ -679,9 +682,10 @@ class MainWindow(QMainWindow):
     def _toggle_fullscreen(self) -> None:
         """Distraction-free inspection: the image, and nothing else.
 
-        Everything except the canvas goes — toolbar, stepper, right panel, log
-        and output. The zoom pill stays: it is the one control you want while
-        inspecting, and it is already dark-on-dark rather than an accent colour.
+        Everything except the canvas goes — toolbar, the left column (steps and
+        activity) and the right panel. The zoom pill stays: it is the one
+        control you want while inspecting, and it is already dark-on-dark
+        rather than an accent colour.
 
         Zoom and pan are deliberately NOT reset. You enter this to look closely
         at something, so throwing away the view you came in with would defeat it.
@@ -698,11 +702,10 @@ class MainWindow(QMainWindow):
         # is already hidden, and exiting must not conjure it into existence.
         self._pre_fullscreen = {
             "toolbar": self._toolbar.isVisible(),
-            "stepper": self.stepper.isVisible(),
+            "left": self._left_column.isVisible(),
             "right": self._right_panel.isVisible(),
-            "bottom": self._bottom_bar.isVisible(),
         }
-        for w in (self._toolbar, self.stepper, self._right_panel, self._bottom_bar):
+        for w in (self._toolbar, self._left_column, self._right_panel):
             w.setVisible(False)
         self.showFullScreen()
 
@@ -711,18 +714,39 @@ class MainWindow(QMainWindow):
             return
         prev = getattr(self, "_pre_fullscreen", None) or {}
         self._toolbar.setVisible(prev.get("toolbar", True))
-        self.stepper.setVisible(prev.get("stepper", True))
+        self._left_column.setVisible(prev.get("left", True))
         self._right_panel.setVisible(prev.get("right", True))
-        self._bottom_bar.setVisible(prev.get("bottom", True))
         self.showNormal()
+        self._sync_left_column()    # a job may have started while fullscreen
 
     def _show_chrome(self, visible: bool) -> None:
-        """Show/hide the stepper + right panel so the welcome screen is a clean
+        """Show/hide the left column + right panel so the welcome screen is a clean
         full-bleed empty state (no redundant Import panel/stepper before load)."""
-        self.stepper.setVisible(visible)
+        self._chrome_visible = visible
+        self._sync_left_column()
         self._right_panel.setVisible(visible)
         self._rebuild_panel()
         self._refresh()
+
+    def _sync_left_column(self) -> None:
+        """The step list shows with the chrome; the jobs panel whenever a job
+        exists. A stack can be started from the welcome screen, and the bottom
+        bar that used to show it there is gone — so on the welcome screen the
+        column appears for jobs alone (jobs + activity, no steps). Interim until
+        the toolbar jobs indicator (spec §6) takes the jobs out of the column.
+        Fullscreen hid the column deliberately; a job tick must not undo that."""
+        jobs = not self.jobs_panel.is_empty()
+        self.jobs_panel.setVisible(jobs)
+        self.stepper.setVisible(self._chrome_visible)
+        if not self.isFullScreen():
+            self._left_column.setVisible(self._chrome_visible or jobs)
+
+    def _size_stepper(self) -> None:
+        """Every step visible without scrolling when there is room; the activity
+        box takes the rest. Below ~1280x720 the list may scroll — "works but
+        tight", never refused."""
+        self.stepper.setMaximumHeight(self.stepper.ideal_height())
+        self.stepper.setMinimumHeight(min(self.stepper.ideal_height(), 240))
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         """Offer to save before discarding an edited (un-saved) project on
@@ -887,6 +911,12 @@ class MainWindow(QMainWindow):
         self._provenance_act = project_menu.addAction(
             "Provenance report…", self._show_provenance)   # readable record of the edit pipeline
 
+        view_menu = self.menuBar().addMenu("View")
+        self._activity_act = view_menu.addAction("Activity")
+        self._activity_act.setCheckable(True)
+        self._activity_act.setChecked(True)
+        self._activity_act.toggled.connect(self.activity.setVisible)
+
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
@@ -964,9 +994,14 @@ class MainWindow(QMainWindow):
             f"Crop first, then come back to this step.")
 
     def _show_warning(self, text: str) -> None:
-        """Blocking guidance / errors → prominent right-pane label near the buttons."""
+        """Blocking guidance / errors → prominent right-pane label near the buttons.
+        Also copied into the activity history, so it survives the status slot
+        clearing (Andreas, 2026-09-25). Drops any earlier tool error's details
+        row: that log belongs to the error, not to this message."""
         self._warning.setStyleSheet("color: #ff6b6b;")
         self._warning.setText(text)
+        self.activity.add("warn", text)
+        self._diag_pending = False
         self._sync_status_slot()
 
     def _show_notice(self, text: str) -> None:
@@ -981,13 +1016,13 @@ class MainWindow(QMainWindow):
         and the output area is easy to miss at the moment the thing happens."""
         self._warning.setStyleSheet(f"color: {WARNING};")
         self._warning.setText(text)
+        self.activity.add("warn", text)
+        self._diag_pending = False
         self._sync_status_slot()
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
         self._diag_pending = False
-        self._diagnostic_label.hide()
-        self._diagnostic_label.setText("")
         self._sync_status_slot()
 
     def _sync_status_slot(self) -> None:
@@ -1014,11 +1049,10 @@ class MainWindow(QMainWindow):
             f"stderr:\n{exc.stderr}"
         )
         sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
+        self._show_warning(prefix)          # clears any older error's pending row
         self._diag_pending = True
-        self._show_warning(prefix)          # syncs the slot: details row shown
-        self._diagnostic_label.hide()
-        self._diagnostic_label.setText("")
         self._show_details_btn.setText("Show details")
+        self._sync_status_slot()            # now with this error's details row
 
     def _last_diagnostic_text(self) -> str:
         return self._last_diagnostic
@@ -1026,19 +1060,7 @@ class MainWindow(QMainWindow):
     def _toggle_diagnostic_details(self) -> None:
         """Details open in the activity box's large view: expanding them in the
         right column would take back the space the fixed zones exist to keep."""
-        activity = getattr(self, "activity", None)
-        if activity is not None:
-            activity.open_large(extra=self._last_diagnostic)
-            return
-        # Until the activity box exists (Task 7 removes this fallback).
-        showing = self._diagnostic_label.isVisible()
-        if showing:
-            self._diagnostic_label.hide()
-            self._show_details_btn.setText("Show details")
-        else:
-            self._diagnostic_label.setText(self._last_diagnostic)
-            self._diagnostic_label.show()
-            self._show_details_btn.setText("Hide details")
+        self.activity.open_large(extra=self._last_diagnostic)
 
     def _copy_diagnostic_to_clipboard(self) -> None:
         QApplication.clipboard().setText(self._last_diagnostic)
@@ -1150,7 +1172,7 @@ class MainWindow(QMainWindow):
             answered = dlg.exec()
             self.settings.telemetry = telemetry_mod.ON if answered else telemetry_mod.OFF
             save_settings(self.settings, self._settings_path)
-            self.log_panel.append_entry(
+            self.log_panel.append_info(
                 "Usage counting is on — thank you. Turn it off any time in Settings."
                 if answered else
                 "Usage counting stays off. Nothing is sent.")
@@ -1265,7 +1287,7 @@ class MainWindow(QMainWindow):
 
     def _start_background_stack(self, options, label: str) -> None:
         self._job_queue.enqueue(StackJob(label, options))
-        self.log_panel.append_entry(f"Stacking {label} — sent to the background")
+        self.log_panel.append_info(f"Stacking {label} — sent to the background")
 
     # --- background jobs: progress into the log, never onto the canvas ---
     def _on_job_progress(self, job, pct: int, phase: str) -> None:
@@ -1281,8 +1303,8 @@ class MainWindow(QMainWindow):
         if last is not None and pct < last + self._JOB_LOG_EVERY:
             return
         self._job_logged_at[key] = pct - (pct % self._JOB_LOG_EVERY)
-        self.log_panel.append_entry(f"Stacking {job.label} — {phase} ({pct}%)"
-                                    if phase else f"Stacking {job.label} — {pct}%")
+        self.log_panel.append_info(f"Stacking {job.label} — {phase} ({pct}%)"
+                                   if phase else f"Stacking {job.label} — {pct}%")
 
     def _on_job_finished(self, job, event: dict) -> None:
         """Logged, never opened. A background stack landing on the canvas would
@@ -1294,12 +1316,12 @@ class MainWindow(QMainWindow):
         # of light" (_stack_report) — matching that wording here stops the
         # same number reading as two different things depending on which
         # mode produced it.
-        self.log_panel.append_entry(
+        self.log_panel.append_result(
             f"Stacked {job.label} — {event.get('frames', 0)} frames, "
             f"{mins} min of light → {event.get('output', '')}")
 
     def _on_job_failed(self, job, message: str) -> None:
-        self.log_panel.append_entry(f"Stacking {job.label} failed — {message}")
+        self.activity.add("warn", f"Stacking {job.label} failed — {message}")
 
     def _on_foreground_master(self, img, label: str, path: str) -> None:
         """A finished stack never replaces work you have open — but this is
@@ -1329,7 +1351,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             self.open_image(img, label)
             return
-        self.log_panel.append_entry(
+        self.log_panel.append_info(
             f"Stacked {label} — not opened, you have an image open → {path}")
 
     def _open_star_spikes(self) -> None:
@@ -2146,9 +2168,6 @@ class MainWindow(QMainWindow):
         self._reset_act.setEnabled(False)  # enabled by _refresh once an image is loaded
         self._ba_act = tb.addAction(load_icon("before-after"), "Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
-        self._log_act = tb.addAction(load_icon("log"), "Log", self._toggle_log)
-        self._log_act.setCheckable(True)
-        self._log_act.setChecked(True)
         tb.addSeparator()
         # View
         tb.addAction(load_icon("fit"), "Fit", self.image_view.fit)
@@ -2600,8 +2619,7 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.log_panel.clear_log()   # fresh image → fresh message channels
-        self.output_panel.clear()
+        self.activity.clear()   # fresh image → every kind of activity starts fresh
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
@@ -2736,8 +2754,7 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.log_panel.clear_log()   # fresh project → fresh message channels
-        self.output_panel.clear()
+        self.activity.clear()   # fresh image → every kind of activity starts fresh
         h, w = self.project.current().data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
@@ -4261,6 +4278,7 @@ class MainWindow(QMainWindow):
                 nxt = prev_enabled(self._stages, self._stage)
             self._stage = nxt
         self.stepper.set_stages(self._stages)
+        self._size_stepper()
         self.stepper.set_current(self._stage)
         self._refresh()
 
@@ -4381,7 +4399,7 @@ class MainWindow(QMainWindow):
             here = self.current_stage_id()
             self._rebuild_stages()
             self._go_to_id(here, user_initiated=False)
-            self.log_panel.append_entry(
+            self.log_panel.append_info(
                 "Colour is available again — go back to it if you want "
                 "photometric calibration, which only a linked stretch keeps.")
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
@@ -5198,9 +5216,6 @@ class MainWindow(QMainWindow):
         else:
             self._compare_img = None
             self.image_view.set_compare(None)
-
-    def _toggle_log(self) -> None:
-        self._bottom_bar.setVisible(self._log_act.isChecked())
 
     # --- exports ---
     def _export_space(self) -> str:

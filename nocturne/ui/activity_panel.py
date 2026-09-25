@@ -110,7 +110,7 @@ class ActivityPanel(QWidget):
 
 
 class ActivityChannel:
-    """The old LogPanel / OutputPanel APIs over one kind of the stream."""
+    """The old step-log and output-box APIs over one kind of the stream."""
 
     def __init__(self, panel: ActivityPanel, kind: str) -> None:
         self._panel = panel

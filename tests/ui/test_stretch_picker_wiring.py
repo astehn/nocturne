@@ -10,8 +10,7 @@ from tests.ui.test_main_window import _make_fits, _window
 
 
 def _log_text(win):
-    entries = win.log_panel.entries() if hasattr(win.log_panel, "entries") else None
-    return "\n".join(entries) if entries else win.log_panel.toPlainText()
+    return win.activity.text()      # every kind: the Colour line is an info line
 
 
 def _at_stretch(qtbot, tmp_path):
