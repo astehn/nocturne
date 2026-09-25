@@ -54,3 +54,6 @@ nocturne/assets/models/*
 # Noise-reduction experiment output (scripts/nr_experiment.py) — hundreds of MB
 # of PNGs. Local evidence, never committed.
 runs/
+
+# Brainstorming mockups and subagent ledgers (local working files)
+.superpowers/
