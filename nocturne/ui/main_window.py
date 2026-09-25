@@ -74,6 +74,7 @@ from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
+from .side_panel import SidePanel
 from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
 from .step_panels import BLACK_STEPS, build_panel
@@ -555,25 +556,21 @@ class MainWindow(QMainWindow):
         self._center_stack.addWidget(self.image_view)  # page 1
         root.addWidget(self._center_stack, 1)
 
-        right = QWidget()
+        # The right column is fixed zones around one scrolling middle (spec
+        # §4.2): no step's panel can push the window taller or move Next.
+        self._side = SidePanel(width=RIGHT_PANE_W)
+        right = self._side
         self._right_panel = right
-        right.setFixedWidth(RIGHT_PANE_W)
-        self._right_layout = QVBoxLayout(right)
+        self._right_layout = right.layout_
         self.histogram_view = HistogramView()
-        self._right_layout.addWidget(self.histogram_view)
+        right.histogram_zone.addWidget(self.histogram_view)
         self._info_strip = QLabel("")               # resolution · integration · object, under the histogram
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
-        self._right_layout.addWidget(self._info_strip)
-        self._clip_line = QLabel("")            # clipped-pixel summary, hidden while linear
-        self._clip_line.setObjectName("importMeta")
-        self._clip_line.setWordWrap(True)
-        self._clip_line.hide()
-        self._right_layout.addWidget(self._clip_line)
-        self._clip_check = QCheckBox("Show clipping")
+        right.histogram_zone.addWidget(self._info_strip)
+        self._clip_line = right.clip_line
+        self._clip_check = right.clip_check
         self._clip_check.toggled.connect(self._on_show_clipping)
-        self._clip_check.hide()
-        self._right_layout.addWidget(self._clip_check)
         self.solve_panel = SolvePanel()
         self.solve_panel.set_layers(dict(self.settings.annotation_layers))
         self.solve_panel.set_density(self.settings.annotation_density)
@@ -582,13 +579,14 @@ class MainWindow(QMainWindow):
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
-        self._right_layout.addWidget(self.solve_panel)
+        right.body_layout.insertWidget(0, self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
-        self._panel = QWidget()
-        self._right_layout.addWidget(self._panel)
-        self._right_layout.addStretch(1)
-        # Bottom-anchored explainer: describes the current step. Owned by the
-        # column (not the panel builders) so it stays put as panels gain toggles.
+        self._panel = right.panel
+        # The explainer lives inside the scrolling zone, below the panel.
+        # "How this works" is on each panel's title line (its help_link);
+        # this placeholder only stands in until the first panel is built.
+        self._help_header = QLabel("")
+        self._help_header.hide()
         self._current_topic_id = None
         self._explainer = QLabel("")
         self._explainer.setObjectName("stepExplainer")
@@ -598,76 +596,32 @@ class MainWindow(QMainWindow):
         self._explainer_scroll = QScrollArea()
         self._explainer_scroll.setWidgetResizable(True)
         self._explainer_scroll.setWidget(self._explainer)
-        self._explainer_scroll.setMaximumHeight(240)   # never crowd the nav row
-        self._help_header = QLabel("")
-        self._help_header.setObjectName("helpHeader")
-        self._help_header.setOpenExternalLinks(False)
-        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
-        self._right_layout.addWidget(self._help_header)
-        self._right_layout.addWidget(self._explainer_scroll)
+        self._explainer_scroll.setMaximumHeight(240)
+        right.body_layout.insertWidget(right.body_layout.count() - 1, self._explainer_scroll)
         self._full_help_link = QLabel('<a href="#">Full help →</a>')
         self._full_help_link.setObjectName("fullHelpLink")
         self._full_help_link.setOpenExternalLinks(False)
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
-        self._right_layout.addWidget(self._full_help_link)
-        # peek + busy + warning sit above the nav, inside the stretch's grow-upward
-        # zone, so the nav row stays pinned flush to the pane bottom and never moves.
-        self._peek_label = QLabel("")                         # transient before/after cue
-        self._peek_label.setStyleSheet("color: #9aa0a6;")
-        self._peek_label.setWordWrap(True)                    # don't let changing text drive panel width
-        self._right_layout.addWidget(self._peek_label)
-        self._busy_label = QLabel("")
-        self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
-        self._busy_label.setWordWrap(True)                    # rapid status updates must not resize the pane
-        self._right_layout.addWidget(self._busy_label)
-        self._progress = QProgressBar()
-        self._progress.hide()
-        self._right_layout.addWidget(self._progress)
-        busy_row = QHBoxLayout()
-        self._elapsed_label = QLabel("")
-        self._elapsed_label.setStyleSheet("color: #9aa0a6;")
-        self._elapsed_label.hide()
-        busy_row.addWidget(self._elapsed_label)
-        busy_row.addStretch(1)
-        self._cancel_btn = QPushButton("Cancel")
+        right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
+        self._peek_label = right.peek_label
+        self._busy_label = right.busy_label
+        self._progress = right.progress
+        self._elapsed_label = right.elapsed_label
+        self._cancel_btn = right.cancel_btn
         self._cancel_btn.clicked.connect(self._cancel_active)
-        self._cancel_btn.hide()
-        busy_row.addWidget(self._cancel_btn)
-        self._right_layout.addLayout(busy_row)
-        self._warning = QLabel("")
-        self._warning.setObjectName("warning")
-        self._warning.setWordWrap(True)
-        self._warning.setStyleSheet("color: #ff6b6b;")        # blocking guidance / errors
-        self._right_layout.addWidget(self._warning)
-        diag_row = QHBoxLayout()
-        self._show_details_btn = QPushButton("Show details")
-        self._show_details_btn.setFlat(True)
+        self._warning = right.warning
+        self._show_details_btn = right.details_btn
         self._show_details_btn.clicked.connect(self._toggle_diagnostic_details)
-        self._show_details_btn.hide()
-        self._copy_log_btn = QPushButton("Copy log")
-        self._copy_log_btn.setFlat(True)
+        self._copy_log_btn = right.copy_log_btn
         self._copy_log_btn.clicked.connect(self._copy_diagnostic_to_clipboard)
-        self._copy_log_btn.hide()
-        diag_row.addWidget(self._show_details_btn)
-        diag_row.addWidget(self._copy_log_btn)
-        diag_row.addStretch(1)
-        self._right_layout.addLayout(diag_row)
-        self._diagnostic_label = QLabel("")
-        self._diagnostic_label.setWordWrap(True)
-        self._diagnostic_label.setStyleSheet("color: #9aa0a6; font-family: monospace;")
+        self._diagnostic_label = QLabel("")        # kept for callers; never shown in the column now
         self._diagnostic_label.hide()
-        self._right_layout.addWidget(self._diagnostic_label)
         self._last_diagnostic = ""
-        nav = QHBoxLayout()
-        self._back_btn = QPushButton("← Back")
-        self._next_btn = QPushButton("Next →")
-        self._next_btn.setObjectName("nav")   # blue "advance" — distinct from green Apply
+        self._back_btn = right.back_btn
+        self._next_btn = right.next_btn
         self._back_btn.clicked.connect(self.go_back)
         self._next_btn.clicked.connect(self.go_next)
-        nav.addWidget(self._back_btn)
-        nav.addWidget(self._next_btn)
-        self._right_layout.addLayout(nav)                     # LAST widget — flush bottom
         root.addWidget(right)
 
         self.log_panel = LogPanel()
@@ -1053,6 +1007,13 @@ class MainWindow(QMainWindow):
         return self._last_diagnostic
 
     def _toggle_diagnostic_details(self) -> None:
+        """Details open in the activity box's large view: expanding them in the
+        right column would take back the space the fixed zones exist to keep."""
+        activity = getattr(self, "activity", None)
+        if activity is not None:
+            activity.open_large(extra=self._last_diagnostic)
+            return
+        # Until the activity box exists (Task 7 removes this fallback).
         showing = self._diagnostic_label.isVisible()
         if showing:
             self._diagnostic_label.hide()
@@ -3851,6 +3812,8 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
             self._cursor_active = True
         self._busy_shown = True
+        self._warning.hide()            # status priority: busy > warning > peek
+        self._peek_label.hide()
         self._cancel_btn.show()
         self._elapsed_label.show()
         self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
@@ -3868,6 +3831,8 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
         self._busy_shown = False
+        self._warning.show()
+        self._peek_label.show()
         self._cancel_btn.hide()
         self._elapsed_label.hide()
         self._elapsed_label.setText("")
@@ -5546,9 +5511,11 @@ class MainWindow(QMainWindow):
             new_panel.burn_annotations.setEnabled(solved)
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
-        self._right_layout.replaceWidget(self._panel, new_panel)
-        self._panel.deleteLater()
+        self._side.set_panel(new_panel)
         self._panel = new_panel
+        self._help_header = new_panel.help_link
+        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
+        self._apply_help_expanded()   # gives the new link its text
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         if stage.id == "star_reduction":
             self._setup_star_reduction()  # kick off the cached StarX split on entry
@@ -5708,16 +5675,14 @@ class MainWindow(QMainWindow):
         train the user to ignore the warning that matters."""
         img = self._canvas_img
         if img is None or img.is_linear:
-            self._clip_line.hide()
-            self._clip_check.hide()
+            self._clip_line.setStyleSheet("")   # drop a stale amber alarm colour
+            self._side.set_clipping(None)
             return
-        self._clip_line.show()
-        self._clip_check.show()
         c = clipping_from_histogram(self.histogram_view.hist())
         hi = _clip_phrase(c.hi_frac, c.hi_channel, "blown to white")
         lo = _clip_phrase(c.lo_frac, c.lo_channel, "crushed to zero")
         text = f"{hi}  ·  {lo}"
-        self._clip_line.setToolTip(
+        clip_tooltip = (
             "Measured per CHANNEL, not per pixel. A pixel whose red alone sits "
             "at zero still shows colour from green and blue — but the red "
             "signal there is gone, and no later adjustment brings it back. In "
@@ -5774,7 +5739,7 @@ class MainWindow(QMainWindow):
 
         colour = WARNING if alarm else TEXT_DIM
         self._clip_line.setStyleSheet(f"color: {colour};")
-        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{text}")
+        self._side.set_clipping(f"{'⚠ ' if alarm else ''}{text}", clip_tooltip)
 
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total

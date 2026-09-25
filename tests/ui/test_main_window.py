@@ -1169,8 +1169,12 @@ def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win._canvas_img.is_linear is True
-    assert win._clip_line.isHidden()
-    assert win._clip_check.isHidden()
+    # The slot stays (fixed height, so the panel below never jumps at
+    # Stretch) but says why there is no figure yet, and can't be ticked.
+    from nocturne.ui.side_panel import LINEAR_CLIP_TEXT
+    assert win._clip_line.text() == LINEAR_CLIP_TEXT
+    assert not win._clip_line.isEnabled()
+    assert not win._clip_check.isEnabled()
 
 
 def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
@@ -1180,6 +1184,7 @@ def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win.apply_current(0.5)
     assert win._canvas_img.is_linear is False
     assert not win._clip_line.isHidden()
+    assert win._clip_line.isEnabled() and win._clip_check.isEnabled()
     assert "blown to white" in win._clip_line.text()
     assert "crushed to zero" in win._clip_line.text()
 
@@ -2173,12 +2178,17 @@ def test_solve_panel_present_in_right_column(qtbot, tmp_path):
     and above the per-stage step panel — the positional contract Task 8 was
     given (clipping line/checkbox as the reference point)."""
     win = _window(qtbot, tmp_path)
-    assert win.solve_panel.parent() is win._right_panel
-    idx_clip_check = win._right_layout.indexOf(win._clip_check)
-    idx_solve_panel = win._right_layout.indexOf(win.solve_panel)
-    idx_step_panel = win._right_layout.indexOf(win._panel)
-    assert idx_clip_check != -1 and idx_solve_panel != -1 and idx_step_panel != -1
-    assert idx_clip_check < idx_solve_panel < idx_step_panel
+    side = win._side
+    assert win._right_panel is side
+    assert side.isAncestorOf(win.solve_panel)
+    # The clipping slot is a fixed zone above the scrolling body; inside the
+    # body the SolvePanel sits above the step panel.
+    assert side.clip_slot.isAncestorOf(win._clip_check)
+    assert win._right_layout.indexOf(side.clip_slot) < win._right_layout.indexOf(side.scroll)
+    idx_solve_panel = side.body_layout.indexOf(win.solve_panel)
+    idx_step_panel = side.body_layout.indexOf(win._panel)
+    assert idx_solve_panel != -1 and idx_step_panel != -1
+    assert idx_solve_panel < idx_step_panel
 
 
 def _solved_win(qtbot, tmp_path, monkeypatch):
@@ -2426,7 +2436,7 @@ def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
     assert "Saved recipe" in win.output_panel.toPlainText()
 
 
-def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
+def test_nav_is_last_and_the_status_slot_is_fixed(qtbot, tmp_path):
     from PySide6.QtWidgets import QLabel
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -2441,12 +2451,7 @@ def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
     win._show_warning("Stretch the image first — a long wrapping message " * 3)
     qtbot.wait(10)
     y1 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
-    # The warning grows upward into the stretch's slack, so the nav must not be
-    # shoved down by a text line's height (~15-20px). Allow ±1px: absorbing the
-    # warning's multi-line growth into a single QSpacerItem is integer division,
-    # so the redistributed spacer rounds by up to a pixel depending on how much
-    # fixed content sits above it in the column.
-    assert abs(y1 - y0) <= 1                                   # buttons never visibly move
+    assert y1 == y0                                            # the slot is fixed now — not ±1
 
 
 def test_warning_channel_and_clear(qtbot, tmp_path):
@@ -6104,3 +6109,36 @@ def test_degreen_stars_previews_what_apply_would_commit_on_entry(qtbot, tmp_path
     win._render_fringe_preview()
     assert not np.allclose(win._displayed.data, shown), \
         "moving the slider must change the preview"
+
+
+def test_the_help_link_lives_in_the_panel_title(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    link = win._panel.help_link
+    assert "How this works" in link.text()
+    before = win.settings.help_expanded
+    link.linkActivated.emit("#")
+    assert win.settings.help_expanded is (not before)
+
+
+def test_the_panel_scrolls_and_the_window_does_not_grow(qtbot, tmp_path):
+    """Curves grew the window ~115 px and it never shrank (screenshot 13)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    size = (win.width(), win.height())
+    win._go_to_id("curves", user_initiated=False)
+    qtbot.wait(30)
+    assert (win.width(), win.height()) == size
+
+
+def test_a_long_warning_never_grows_the_status_slot(qtbot, tmp_path):
+    from nocturne.ui.side_panel import STATUS_SLOT_H
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)   # layouts must run
+    scroll_h0 = win._side.scroll.height()
+    win._show_warning("GraXpert failed:\n" + "stderr line\n" * 80)
+    qtbot.wait(10)
+    assert win._side.status_slot.height() == STATUS_SLOT_H
+    assert win._side.scroll.height() == scroll_h0              # the panel keeps its room

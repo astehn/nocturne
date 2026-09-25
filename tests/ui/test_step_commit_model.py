@@ -884,7 +884,9 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
 
         btn = win._panel.apply_tint_btn
         pm = btn.grab()
-        rendered = pm.toImage().pixelColor(pm.width() // 2, pm.height() // 2)
+        # Sample the fill beside the centred label, not the centre: the
+        # centre lands on a glyph once the button gets its natural height.
+        rendered = pm.toImage().pixelColor(pm.width() // 8, pm.height() // 2)
         expected = QColor(SUCCESS)
         assert (rendered.red(), rendered.green(), rendered.blue()) == \
             (expected.red(), expected.green(), expected.blue()), (
@@ -916,7 +918,9 @@ def test_on_remove_green_its_own_apply_renders_green_while_pending(
 
         btn = win._panel.apply_btn
         pm = btn.grab()
-        rendered = pm.toImage().pixelColor(pm.width() // 2, pm.height() // 2)
+        # Sample the fill beside the centred label, not the centre: the
+        # centre lands on a glyph once the button gets its natural height.
+        rendered = pm.toImage().pixelColor(pm.width() // 8, pm.height() // 2)
         expected = QColor(SUCCESS)
         assert (rendered.red(), rendered.green(), rendered.blue()) == \
             (expected.red(), expected.green(), expected.blue()), (
