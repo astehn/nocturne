@@ -1182,7 +1182,6 @@ def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     assert win._canvas_img.is_linear is False
-    assert not win._clip_line.isHidden()
     assert win._clip_line.isEnabled() and win._clip_check.isEnabled()
     assert "blown to white" in win._clip_line.text()
     assert "crushed to zero" in win._clip_line.text()

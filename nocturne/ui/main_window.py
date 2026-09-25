@@ -8,8 +8,8 @@ import numpy as np
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
 
@@ -5784,10 +5784,12 @@ class MainWindow(QMainWindow):
         self._structural_baseline = (sc.hi_frac, sc.lo_frac)
 
     def _update_clipping_line(self) -> None:
-        """Clipped-pixel summary under the info strip. Hidden while the image is
-        linear: before Stretch, 'clipped' can only mean sensor-saturated at
-        capture, which no edit caused and none can fix — showing it there would
-        train the user to ignore the warning that matters."""
+        """Clipped-pixel summary under the info strip. No figures while the
+        image is linear — the slot stays, disabled, saying clipping is shown
+        once the image is stretched: before Stretch, 'clipped' can only mean
+        sensor-saturated at capture, which no edit caused and none can fix,
+        and reporting it there would train the user to ignore the warning that
+        matters."""
         img = self._canvas_img
         if img is None or img.is_linear:
             self._clip_line.setStyleSheet("")   # drop a stale amber alarm colour

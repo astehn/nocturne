@@ -45,7 +45,8 @@ def _ids(win):
     return [s.id for s in win._stages]
 
 
-def test_unlinked_removes_colour_from_the_path(qtbot, tmp_path):
+def test_unlinked_disables_colour_but_keeps_it_listed(qtbot, tmp_path):
+    """Disabled, not removed: removing it moved every row below it."""
     win = _window(qtbot, tmp_path)
     assert "color" in _ids(win)
     win._set_view_linked(False)
@@ -124,4 +125,7 @@ def test_leaving_linked_while_on_colour_moves_you_to_an_enabled_step(qtbot, tmp_
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("color", user_initiated=False)
     win._set_view_linked(False)
+    # The NEXT enabled step, exactly: Colour sits between Background and
+    # Deconvolution, and forward is the direction the user was heading.
+    assert win.current_stage_id() == "deconvolution"
     assert win._stages[win._stage].enabled
