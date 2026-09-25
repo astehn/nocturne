@@ -697,6 +697,33 @@ class MainWindow(QMainWindow):
         if self.isFullScreen():
             self._exit_fullscreen()
             return
+        self.showFullScreen()        # changeEvent hides the chrome
+
+    def _exit_fullscreen(self) -> None:
+        if not self.isFullScreen():
+            return
+        self.showNormal()            # changeEvent restores the chrome
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """EVERY way into or out of fullscreen lands here, not only F: on
+        macOS the green title-bar button, and the "Enter Full Screen" item
+        AppKit adds to a menu titled "View", both change the window state
+        without calling `_toggle_fullscreen`. Handling the transition here
+        means each route hides and restores the chrome the same way, and F
+        or Escape afterwards always finds a snapshot to restore from."""
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange or not hasattr(self, "_toolbar"):
+            return
+        was_full = bool(event.oldState() & Qt.WindowState.WindowFullScreen)
+        now_full = self.isFullScreen()
+        if now_full and not was_full:
+            self._hide_chrome_for_fullscreen()
+        elif was_full and not now_full:
+            self._restore_chrome_after_fullscreen()
+
+    def _hide_chrome_for_fullscreen(self) -> None:
+        if getattr(self, "_pre_fullscreen", None) is not None:
+            return                   # already entered — never overwrite the snapshot
         # Remember what was actually visible — on the welcome screen the chrome
         # is already hidden, and exiting must not conjure it into existence.
         self._pre_fullscreen = {
@@ -706,16 +733,16 @@ class MainWindow(QMainWindow):
         }
         for w in (self._toolbar, self._left_column, self._right_panel):
             w.setVisible(False)
-        self.showFullScreen()
 
-    def _exit_fullscreen(self) -> None:
-        if not self.isFullScreen():
-            return
-        prev = getattr(self, "_pre_fullscreen", None) or {}
-        self._toolbar.setVisible(prev.get("toolbar", True))
-        self._left_column.setVisible(prev.get("left", True))
-        self._right_panel.setVisible(prev.get("right", True))
-        self.showNormal()
+    def _restore_chrome_after_fullscreen(self) -> None:
+        # No snapshot should be impossible now; if it happens, fall back to
+        # what the chrome state says rather than showing everything.
+        prev = getattr(self, "_pre_fullscreen", None) or {
+            "toolbar": True, "left": self._chrome_visible, "right": self._chrome_visible}
+        self._pre_fullscreen = None
+        self._toolbar.setVisible(prev["toolbar"])
+        self._left_column.setVisible(prev["left"])
+        self._right_panel.setVisible(prev["right"])
         self._sync_left_column()    # restates from chrome state, not the captured snapshot
 
     def _show_chrome(self, visible: bool) -> None:

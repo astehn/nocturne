@@ -6354,3 +6354,58 @@ def test_a_notice_is_logged_as_a_notice_not_a_warning(qtbot, tmp_path):
     assert [e.split(" ", 1)[1] for e in win.activity.entries("notice")] == [
         "Linked view switched Colour off"]
     assert win.activity.entries("warn") == warns_before
+
+
+def _chrome(win) -> dict:
+    return {name: getattr(win, name).isVisible()
+            for name in ("_toolbar", "_left_column", "stepper", "activity", "_right_panel")}
+
+
+@pytest.mark.parametrize("loaded", [True, False], ids=["image", "welcome"])
+def test_native_fullscreen_hides_and_restores_the_chrome_like_f(qtbot, tmp_path, loaded):
+    """macOS enters fullscreen WITHOUT `_toggle_fullscreen` — the green
+    title-bar button, or the "Enter Full Screen" item AppKit adds to a menu
+    titled "View". `showFullScreen()`/`showNormal()` called directly stand in
+    for those routes: the chrome must hide and come back exactly as with F,
+    and on the welcome screen stay hidden after exit."""
+    from PySide6.QtCore import Qt
+    win = _stretched_window(qtbot, tmp_path) if loaded else _window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    before = _chrome(win)
+    assert before["stepper"] is loaded, "precondition: chrome matches the screen"
+
+    win.showFullScreen()                            # not through F
+    qtbot.waitUntil(win.isFullScreen)
+    assert not any(_chrome(win).values()), f"chrome showing: {_chrome(win)}"
+
+    win.showNormal()                                # not through F or Escape
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+
+    # ...and F / Escape still work after a native round trip.
+    win.showFullScreen()
+    qtbot.waitUntil(win.isFullScreen)
+    assert _keypress(win, Qt.Key.Key_Escape) is True
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+    win._toggle_fullscreen()
+    qtbot.waitUntil(win.isFullScreen)
+    assert not any(_chrome(win).values())
+    win._toggle_fullscreen()
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+
+
+@pytest.mark.parametrize("loaded", [True, False], ids=["image", "welcome"])
+def test_native_entry_then_f_exit_restores_the_chrome(qtbot, tmp_path, loaded):
+    """The reviewer's route: green button in, F out. F used to take the exit
+    path with no snapshot, and defaulted every piece to shown — on the welcome
+    screen that conjured the step list and panel into existence."""
+    win = _stretched_window(qtbot, tmp_path) if loaded else _window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    before = _chrome(win)
+    win.showFullScreen()
+    qtbot.waitUntil(win.isFullScreen)
+    win._toggle_fullscreen()
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
