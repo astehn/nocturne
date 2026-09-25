@@ -2602,6 +2602,7 @@ class MainWindow(QMainWindow):
         # Retire the outgoing workspace FIRST: _clear_cache below deletes the
         # snapshots an in-flight step may be about to write into, and the new
         # Project must not receive a callback belonging to the old one.
+        had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
         self._source_label = label
         self._saved_app_version = None      # not the loaded bundle's any more
@@ -2619,7 +2620,11 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.activity.clear()   # fresh image → every kind of activity starts fresh
+        if had_image:
+            # Switching images: every kind starts fresh. The FIRST open keeps
+            # what the welcome screen logged, where the column was hidden —
+            # the usage-counting answer was otherwise never seen at all.
+            self.activity.clear()
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
@@ -2739,6 +2744,7 @@ class MainWindow(QMainWindow):
         """Commit a loaded bundle. Reached only on success, so every failure —
         cancelled dialog, newer version, unreadable file — still leaves the
         current workspace and any in-flight op untouched."""
+        had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
         self.project = loaded.project
         self._source_label = loaded.source_label
@@ -2754,7 +2760,8 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.activity.clear()   # fresh image → every kind of activity starts fresh
+        if had_image:           # as in open_image: the first open keeps the welcome log
+            self.activity.clear()
         h, w = self.project.current().data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
@@ -5803,6 +5810,8 @@ class MainWindow(QMainWindow):
         self._reset_high_water()
         self._swap_workspace()
         self.project = None
+        self.activity.clear()      # the old image's history goes with it; the
+                                   # next open then keeps the welcome log
         self._clip_baseline = None
         self._canvas_img = None
         self._compare_img = None

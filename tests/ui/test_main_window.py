@@ -6318,3 +6318,30 @@ def test_a_later_warning_drops_the_previous_errors_details_row(qtbot, tmp_path):
         later("something else")
         assert not win._show_details_btn.isVisible()
         assert not win._copy_log_btn.isVisible()
+
+
+def test_the_welcome_screen_log_survives_the_first_open(qtbot, tmp_path, monkeypatch):
+    """The usage-counting answer is logged on the welcome screen, where the
+    left column is hidden. It is the only confirmation of a privacy answer and
+    of where to change it — the first open must not wipe it unseen."""
+    from nocturne.settings import Settings
+    from nocturne.ui import telemetry_consent
+    monkeypatch.setattr(telemetry_consent.TelemetryConsentDialog, "exec", lambda self: 0)
+    win = _window(qtbot, tmp_path)
+    win.settings = Settings()                       # unanswered
+    win._telemetry_first_run()
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert any("Usage counting stays off" in e for e in win.activity.entries())
+    assert win._left_column.isVisible()
+
+
+def test_close_project_then_open_starts_a_fresh_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.log_panel.append_info("about the first image")
+    win._close_project()
+    d2 = tmp_path / "second"
+    d2.mkdir()
+    win.open_fits(_make_fits(d2))
+    assert not any("about the first image" in e for e in win.activity.entries())
