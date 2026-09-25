@@ -605,11 +605,10 @@ def test_log_records_open(qtbot, tmp_path):
     assert "Opened" in win.log_panel.text()
 
 
-def test_log_toggle_hides_panel(qtbot, tmp_path):
+def test_activity_toggle_hides_panel(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    win._log_act.setChecked(False)
-    win._toggle_log()
-    assert win._bottom_bar.isHidden() is True
+    win._activity_act.setChecked(False)
+    assert win.activity.isHidden() is True
 
 
 def test_open_image_loads_astroimage(qtbot, tmp_path):
@@ -634,10 +633,10 @@ def test_toolbar_actions_have_icons(qtbot, tmp_path):
 
 def test_chrome_hidden_until_image_loaded(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    assert win.stepper.isHidden() is True          # full-bleed welcome
+    assert win._left_column.isHidden() is True          # full-bleed welcome
     assert win._right_panel.isHidden() is True
     win.open_fits(_make_fits(tmp_path))
-    assert win.stepper.isHidden() is False         # chrome revealed on load
+    assert win._left_column.isHidden() is False         # chrome revealed on load
     assert win._right_panel.isHidden() is False
 
 
@@ -1169,8 +1168,12 @@ def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win._canvas_img.is_linear is True
-    assert win._clip_line.isHidden()
-    assert win._clip_check.isHidden()
+    # The slot stays (fixed height, so the panel below never jumps at
+    # Stretch) but says why there is no figure yet, and can't be ticked.
+    from nocturne.ui.side_panel import LINEAR_CLIP_TEXT
+    assert win._clip_line.text() == LINEAR_CLIP_TEXT
+    assert not win._clip_line.isEnabled()
+    assert not win._clip_check.isEnabled()
 
 
 def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
@@ -1179,7 +1182,7 @@ def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     assert win._canvas_img.is_linear is False
-    assert not win._clip_line.isHidden()
+    assert win._clip_line.isEnabled() and win._clip_check.isEnabled()
     assert "blown to white" in win._clip_line.text()
     assert "crushed to zero" in win._clip_line.text()
 
@@ -2173,12 +2176,17 @@ def test_solve_panel_present_in_right_column(qtbot, tmp_path):
     and above the per-stage step panel — the positional contract Task 8 was
     given (clipping line/checkbox as the reference point)."""
     win = _window(qtbot, tmp_path)
-    assert win.solve_panel.parent() is win._right_panel
-    idx_clip_check = win._right_layout.indexOf(win._clip_check)
-    idx_solve_panel = win._right_layout.indexOf(win.solve_panel)
-    idx_step_panel = win._right_layout.indexOf(win._panel)
-    assert idx_clip_check != -1 and idx_solve_panel != -1 and idx_step_panel != -1
-    assert idx_clip_check < idx_solve_panel < idx_step_panel
+    side = win._side
+    assert win._right_panel is side
+    assert side.isAncestorOf(win.solve_panel)
+    # The clipping slot is a fixed zone above the scrolling body; inside the
+    # body the SolvePanel sits above the step panel.
+    assert side.clip_slot.isAncestorOf(win._clip_check)
+    assert win._right_layout.indexOf(side.clip_slot) < win._right_layout.indexOf(side.scroll)
+    idx_solve_panel = side.body_layout.indexOf(win.solve_panel)
+    idx_step_panel = side.body_layout.indexOf(win._panel)
+    assert idx_solve_panel != -1 and idx_step_panel != -1
+    assert idx_solve_panel < idx_step_panel
 
 
 def _solved_win(qtbot, tmp_path, monkeypatch):
@@ -2406,10 +2414,8 @@ def test_star_marker_painting_specifically_reaches_the_burned_export(qtbot, tmp_
 
 
 def test_output_panel_is_copyable_and_receives_output(qtbot, tmp_path):
-    from PySide6.QtWidgets import QPlainTextEdit
     from PySide6.QtCore import Qt
     win = _window(qtbot, tmp_path)
-    assert isinstance(win.output_panel, QPlainTextEdit)
     assert win.output_panel.isReadOnly()                     # not editable
     assert win.output_panel.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse  # copyable
     win._show_output("142 stars matched")
@@ -2426,7 +2432,7 @@ def test_saved_recipe_message_goes_to_output(qtbot, tmp_path, monkeypatch):
     assert "Saved recipe" in win.output_panel.toPlainText()
 
 
-def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
+def test_nav_is_last_and_the_status_slot_is_fixed(qtbot, tmp_path):
     from PySide6.QtWidgets import QLabel
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -2441,12 +2447,7 @@ def test_nav_is_last_widget_and_warning_grows_upward(qtbot, tmp_path):
     win._show_warning("Stretch the image first — a long wrapping message " * 3)
     qtbot.wait(10)
     y1 = win._next_btn.mapTo(win, win._next_btn.rect().topLeft()).y()
-    # The warning grows upward into the stretch's slack, so the nav must not be
-    # shoved down by a text line's height (~15-20px). Allow ±1px: absorbing the
-    # warning's multi-line growth into a single QSpacerItem is integer division,
-    # so the redistributed spacer rounds by up to a pixel depending on how much
-    # fixed content sits above it in the column.
-    assert abs(y1 - y0) <= 1                                   # buttons never visibly move
+    assert y1 == y0                                            # the slot is fixed now — not ±1
 
 
 def test_warning_channel_and_clear(qtbot, tmp_path):
@@ -4237,10 +4238,10 @@ def test_fullscreen_hides_every_piece_of_chrome(qtbot, tmp_path):
     from PySide6.QtCore import Qt
     win = _stretched_window(qtbot, tmp_path)
     win.show(); qtbot.waitExposed(win)
-    assert win._toolbar.isVisible() and win._bottom_bar.isVisible()
+    assert win._toolbar.isVisible() and win._left_column.isVisible()
 
     win._toggle_fullscreen()
-    for name in ("_toolbar", "stepper", "_right_panel", "_bottom_bar"):
+    for name in ("_toolbar", "_jobs_bar", "_left_column", "stepper", "activity", "_right_panel"):
         assert not getattr(win, name).isVisible(), f"{name} still showing"
     assert not win.image_view._zoom_pill.isHidden(), "the zoom pill should remain"
 
@@ -6104,3 +6105,307 @@ def test_degreen_stars_previews_what_apply_would_commit_on_entry(qtbot, tmp_path
     win._render_fringe_preview()
     assert not np.allclose(win._displayed.data, shown), \
         "moving the slider must change the preview"
+
+
+def test_the_help_link_lives_in_the_panel_title(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    link = win._panel.help_link
+    assert "How this works" in link.text()
+    before = win.settings.help_expanded
+    link.linkActivated.emit("#")
+    assert win.settings.help_expanded is (not before)
+
+
+def test_the_panel_scrolls_and_the_window_does_not_grow(qtbot, tmp_path):
+    """Curves grew the window ~115 px and it never shrank (screenshot 13)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    size = (win.width(), win.height())
+    win._go_to_id("curves", user_initiated=False)
+    qtbot.wait(30)
+    assert (win.width(), win.height()) == size
+
+
+def test_a_long_warning_never_grows_the_status_slot(qtbot, tmp_path):
+    from nocturne.ui.side_panel import STATUS_SLOT_H
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)   # layouts must run
+    scroll_h0 = win._side.scroll.height()
+    win._show_warning("GraXpert failed:\n" + "stderr line\n" * 80)
+    qtbot.wait(10)
+    assert win._side.status_slot.height() == STATUS_SLOT_H
+    assert win._side.scroll.height() == scroll_h0              # the panel keeps its room
+
+
+def _themed(qtbot, tmp_path):
+    """A real window at 1280x800 under the app theme — the slot constants are
+    measured against the theme's button and line heights, not the bare style's."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    QApplication.instance().setStyleSheet(build_stylesheet())
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    return win
+
+
+def _squeezed_in_status_slot(win) -> list:
+    """Visible status-slot widgets drawn shorter than they ask for."""
+    from PySide6.QtWidgets import QWidget
+    slot = win._side.status_slot
+    bad = []
+    for w in slot.findChildren(QWidget):
+        if not w.isVisible():
+            continue
+        need = max(w.sizeHint().height(), w.minimumSizeHint().height())
+        if w.height() < need - 1:
+            bad.append((type(w).__name__, w.objectName(), w.height(), need))
+    return bad
+
+
+def test_the_status_slot_fits_its_fullest_states(qtbot, tmp_path):
+    """Busy, a tool error, and a tool error left up under a running op: in
+    each, every visible line and button gets the height it asks for, and the
+    slot itself never changes. At 64 px Cancel was drawn 14 px tall."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication, QLabel
+    try:
+        win = _themed(qtbot, tmp_path)
+        h0 = win._side.status_slot.height()
+        exc = SimpleNamespace(command=["graxpert", "-cli", "stack.fits"],
+                              elapsed=12.3, stderr="Traceback …\nValueError: bad frame")
+        msg = "GraXpert failed — the background model could not be fitted to this frame."
+
+        win._set_busy(True, "Separating stars")
+        win._show_busy_visuals()
+        win._set_progress("", 3, 10)
+        qtbot.wait(20)
+        assert win._cancel_btn.isVisible() and win._progress.isVisible()
+        assert _squeezed_in_status_slot(win) == [], "busy"
+        assert win._side.status_slot.height() == h0
+        win._set_busy(False)
+
+        win._report_tool_error(msg, exc)
+        qtbot.wait(20)
+        assert win._warning.isVisible() and win._show_details_btn.isVisible()
+        assert QLabel.text(win._warning) == msg              # both lines drawn, no "…"
+        assert _squeezed_in_status_slot(win) == [], "error"
+        assert win._side.status_slot.height() == h0
+
+        win._set_busy(True, "Separating stars")
+        win._show_busy_visuals()
+        win._set_progress("", 3, 10)
+        qtbot.wait(20)
+        assert not win._warning.isVisible() and not win._show_details_btn.isVisible()
+        assert _squeezed_in_status_slot(win) == [], "error then busy"
+        assert win._side.status_slot.height() == h0
+        win._set_busy(False)
+        qtbot.wait(20)
+        assert win._warning.isVisible() and win._show_details_btn.isVisible()  # still pending
+
+        win._clear_warning()
+        assert not win._show_details_btn.isVisible()
+    finally:
+        QApplication.instance().setStyleSheet("")
+
+
+def test_the_clip_line_shows_its_qualifier_and_the_tooltip_keeps_it(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication, QLabel
+    line = ("1.0% of red blown to white  ·  1.0% of green crushed to zero"
+            "  — scattered noise, not lost detail")
+    try:
+        win = _themed(qtbot, tmp_path)
+        win._side.set_clipping(line, "Measured per CHANNEL, not per pixel.")
+        qtbot.wait(20)
+        assert win._clip_line.text() == line
+        assert QLabel.text(win._clip_line) == line          # rendered in full, no "…"
+        tip = win._clip_line.toolTip()
+        assert line in tip and "Measured per CHANNEL" in tip
+    finally:
+        QApplication.instance().setStyleSheet("")
+
+
+# --- the left column: step list + activity box; no bottom bar (Task 7) -------
+
+def test_there_is_no_bottom_bar_and_the_columns_reach_the_bottom(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert not hasattr(win, "_bottom_bar")
+    bottom = win.centralWidget().height()
+    for w in (win._left_column, win._right_panel, win.image_view):
+        y = w.mapTo(win.centralWidget(), w.rect().bottomLeft()).y()
+        assert bottom - y <= 12, f"{w.objectName() or w} stops {bottom - y}px short"
+
+
+def test_the_left_column_is_fixed_240_and_holds_steps_then_activity(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert win._left_column.width() == 240
+    assert win.stepper.y() < win.activity.y()
+
+
+def test_warnings_are_copied_into_the_activity_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._show_warning("RC-Astro failed — used the built-in engine.")
+    win._clear_warning()
+    assert any("RC-Astro failed" in e for e in win.activity.entries("warn"))
+
+
+def test_view_menu_hides_only_the_activity_box(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    canvas = win.image_view.geometry()
+    win._activity_act.setChecked(False)
+    qtbot.wait(20)
+    assert not win.activity.isVisible()
+    assert win.image_view.geometry() == canvas
+
+
+def test_the_toolbar_has_no_log_button(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert "Log" not in [a.text() for a in win._toolbar.actions()]
+
+
+def test_diagnostic_details_open_in_the_large_activity_view(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    seen = {}
+    monkeypatch.setattr(win.activity, "open_large", lambda extra="": seen.setdefault("x", extra))
+    win._last_diagnostic = "Command: graxpert\nstderr: boom"
+    win._toggle_diagnostic_details()
+    assert "stderr: boom" in seen["x"]
+
+
+def test_opening_a_second_image_clears_every_kind_of_activity(qtbot, tmp_path):
+    """Info lines and warning copies belong to the image they were about, just
+    as step lines and results do."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.log_panel.append_entry("stale step line")
+    win._show_output("stale result line")
+    win.log_panel.append_info("stale info line")
+    win._show_warning("stale warning")
+    assert win.activity.entries("info") and win.activity.entries("warn") \
+        and win.activity.entries("result")                    # precondition
+    d2 = tmp_path / "second"
+    d2.mkdir()
+    win.open_fits(_make_fits(d2))
+    assert win.activity.entries("info") == []
+    assert win.activity.entries("warn") == []
+    assert win.activity.entries("result") == []
+    everything = win.activity.entries()
+    assert len(everything) == 1 and "Opened" in everything[0]
+
+
+def test_a_later_warning_drops_the_previous_errors_details_row(qtbot, tmp_path):
+    """Show details / Copy log belong to the ToolError that raised them; an
+    unrelated warning or notice afterwards must not offer that old log."""
+    from types import SimpleNamespace
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    exc = SimpleNamespace(command=["graxpert"], elapsed=1.0, stderr="boom")
+    for later in (win._show_warning, win._show_notice):
+        win._report_tool_error("GraXpert failed.", exc)
+        assert win._show_details_btn.isVisible() and win._copy_log_btn.isVisible()
+        later("something else")
+        assert not win._show_details_btn.isVisible()
+        assert not win._copy_log_btn.isVisible()
+
+
+def test_the_welcome_screen_log_survives_the_first_open(qtbot, tmp_path, monkeypatch):
+    """The usage-counting answer is logged on the welcome screen, where the
+    left column is hidden. It is the only confirmation of a privacy answer and
+    of where to change it — the first open must not wipe it unseen."""
+    from nocturne.settings import Settings
+    from nocturne.ui import telemetry_consent
+    monkeypatch.setattr(telemetry_consent.TelemetryConsentDialog, "exec", lambda self: 0)
+    win = _window(qtbot, tmp_path)
+    win.settings = Settings()                       # unanswered
+    win._telemetry_first_run()
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    assert any("Usage counting stays off" in e for e in win.activity.entries())
+    assert win._left_column.isVisible()
+
+
+def test_close_project_then_open_starts_a_fresh_history(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.log_panel.append_info("about the first image")
+    win._close_project()
+    d2 = tmp_path / "second"
+    d2.mkdir()
+    win.open_fits(_make_fits(d2))
+    assert not any("about the first image" in e for e in win.activity.entries())
+
+
+def test_a_notice_is_logged_as_a_notice_not_a_warning(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    warns_before = win.activity.entries("warn")
+    win._show_notice("Linked view switched Colour off")
+    assert [e.split(" ", 1)[1] for e in win.activity.entries("notice")] == [
+        "Linked view switched Colour off"]
+    assert win.activity.entries("warn") == warns_before
+
+
+def _chrome(win) -> dict:
+    return {name: getattr(win, name).isVisible()
+            for name in ("_toolbar", "_jobs_bar", "_left_column", "stepper",
+                         "activity", "_right_panel")}
+
+
+@pytest.mark.parametrize("loaded", [True, False], ids=["image", "welcome"])
+def test_native_fullscreen_hides_and_restores_the_chrome_like_f(qtbot, tmp_path, loaded):
+    """macOS enters fullscreen WITHOUT `_toggle_fullscreen` — the green
+    title-bar button, or the "Enter Full Screen" item AppKit adds to a menu
+    titled "View". `showFullScreen()`/`showNormal()` called directly stand in
+    for those routes: the chrome must hide and come back exactly as with F,
+    and on the welcome screen stay hidden after exit."""
+    from PySide6.QtCore import Qt
+    win = _stretched_window(qtbot, tmp_path) if loaded else _window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    before = _chrome(win)
+    assert before["stepper"] is loaded, "precondition: chrome matches the screen"
+
+    win.showFullScreen()                            # not through F
+    qtbot.waitUntil(win.isFullScreen)
+    assert not any(_chrome(win).values()), f"chrome showing: {_chrome(win)}"
+
+    win.showNormal()                                # not through F or Escape
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+
+    # ...and F / Escape still work after a native round trip.
+    win.showFullScreen()
+    qtbot.waitUntil(win.isFullScreen)
+    assert _keypress(win, Qt.Key.Key_Escape) is True
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+    win._toggle_fullscreen()
+    qtbot.waitUntil(win.isFullScreen)
+    assert not any(_chrome(win).values())
+    win._toggle_fullscreen()
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before
+
+
+@pytest.mark.parametrize("loaded", [True, False], ids=["image", "welcome"])
+def test_native_entry_then_f_exit_restores_the_chrome(qtbot, tmp_path, loaded):
+    """The reviewer's route: green button in, F out. F used to take the exit
+    path with no snapshot, and defaulted every piece to shown — on the welcome
+    screen that conjured the step list and panel into existence."""
+    win = _stretched_window(qtbot, tmp_path) if loaded else _window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
+    before = _chrome(win)
+    win.showFullScreen()
+    qtbot.waitUntil(win.isFullScreen)
+    win._toggle_fullscreen()
+    qtbot.waitUntil(lambda: not win.isFullScreen())
+    assert _chrome(win) == before

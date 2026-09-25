@@ -164,6 +164,17 @@ def preferred_size(win, app) -> tuple[int, int]:
     return fit_to_screen((win.sizeHint().width() + _MARGIN, DEFAULT_HEIGHT), app)
 
 
+def place_window(win, app, requested: tuple[int, int] | None) -> None:
+    """Where and how big the window opens. `--size` always wins; otherwise
+    last session's place, unless that place is gone — and then the fallback
+    MOVES as well as sizes, because a refused restore may already have put the
+    window on a monitor that is no longer there."""
+    if requested:
+        win.resize(*fit_to_screen(requested, app))
+    elif not win.restore_geometry_from_settings():
+        win.place_on_primary_screen(preferred_size(win, app))
+
+
 def window_size(argv: list[str]) -> tuple[int, int] | None:
     """`--size 1600x1000`, for captures that have to match each other.
 
@@ -302,9 +313,7 @@ def main() -> None:
     # every window since has opened at 640x480 regardless. It is why three
     # successive --size values made no visible difference at all, and why the
     # toolbar looked so cramped: nothing was ever setting a size.
-    requested = window_size(sys.argv)
-    win.resize(*(fit_to_screen(requested, app) if requested
-                 else preferred_size(win, app)))
+    place_window(win, app, window_size(sys.argv))
     win.show()
 
     # AFTER the resize, so the size recorded is the one the user actually has.

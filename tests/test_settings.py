@@ -100,6 +100,22 @@ def test_help_expanded_absent_in_old_file_defaults_true(tmp_path):
     assert load_settings(str(p)).help_expanded is True
 
 
+def test_window_geometry_defaults_blank_and_round_trips(tmp_path):
+    from nocturne.settings import Settings, save_settings, load_settings
+    assert Settings().window_geometry == ""                    # no saved place yet
+    p = tmp_path / "s.json"
+    save_settings(Settings(window_geometry="deadbeef"), str(p))
+    assert load_settings(str(p)).window_geometry == "deadbeef"  # survives round-trip
+
+
+def test_window_geometry_absent_in_old_file_defaults_blank(tmp_path):
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"base_dir": "/x"}))              # pre-feature settings.json
+    assert load_settings(str(p)).window_geometry == ""
+
+
 def test_handle_field_roundtrips(tmp_path):
     from nocturne.settings import Settings, load_settings, save_settings
     p = tmp_path / "s.json"

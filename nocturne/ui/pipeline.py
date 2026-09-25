@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -9,6 +9,7 @@ class Stage:
     label: str
     kind: str
     enabled: bool = True
+    reason: str = ""      # why a listed stage is disabled — the step list's tooltip
 
 
 # Shared core (linear).
@@ -133,7 +134,8 @@ _OPTIONAL = {
 
 
 def path_stages(omit: frozenset[str] = frozenset(),
-                include: frozenset[str] = frozenset()) -> list[Stage]:
+                include: frozenset[str] = frozenset(),
+                disable: dict[str, str] | None = None) -> list[Stage]:
     """The visible pipeline, minus any ids in `omit`, plus any in `include`.
 
     Filtered rather than flag-mutated because `Stage` is frozen and `_CORE` is
@@ -145,6 +147,9 @@ def path_stages(omit: frozenset[str] = frozenset(),
     A stretch derives its curve from the image's own statistics, so afterwards
     the noise has been shaped by a transfer function the model never saw, and
     the single sigma value it is conditioned on no longer describes the frame.
+
+    `disable` keeps a stage LISTED but not enterable, with a reason. Omitting a
+    stage the user can make available mid-session moved every row below it.
     """
     stages = [s for s in list(_CORE) + list(_IN_APP_TAIL) if s.id not in omit]
     for sid in include:
@@ -153,6 +158,9 @@ def path_stages(omit: frozenset[str] = frozenset(),
             continue
         at = next((i for i, s in enumerate(stages) if s.id == before), len(stages))
         stages.insert(at, stage)
+    if disable:
+        stages = [replace(s, enabled=False, reason=disable[s.id]) if s.id in disable else s
+                  for s in stages]
     return stages
 
 

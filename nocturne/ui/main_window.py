@@ -5,11 +5,11 @@ import hashlib
 import os
 
 import numpy as np
-from PySide6.QtCore import (QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer, QUrl,
-                            Signal)
+from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
+                            QUrl, Signal)
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
     QWidget,
 )
 
@@ -48,8 +48,9 @@ from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .job_queue import JobQueue, StackJob
-from .jobs_panel import JobsPanel
-from .log_panel import LogPanel, OutputPanel, format_log_entry
+from .jobs_indicator import JobsBar, JobsIndicator
+from .activity_panel import ActivityChannel, ActivityPanel
+from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
@@ -74,6 +75,7 @@ from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
+from .side_panel import SidePanel
 from .solve_panel import SolvePanel
 from .upscale_dialog import UpscaleDialog
 from .step_panels import BLACK_STEPS, build_panel
@@ -207,6 +209,11 @@ RIGHT_PANE_MAX_W = 360
 # 400 is a large share of the window, and that spec already plans a drawer.
 RIGHT_PANE_W = 400
 
+# The left column: the step list above the activity box (spec §4.1). 240 fits
+# the longest step name at STEP_ROW_H and a format_log_entry line on one row;
+# fixed, so the canvas never changes width when either one's content does.
+LEFT_COLUMN_W = 240
+
 
 class _PrecomputedStep(Step):
     """Records an already-computed image (from async processing) into history."""
@@ -307,6 +314,15 @@ def render_engine(tag: str) -> str:
     return "built-in" if tag == "free" else tag
 
 
+# The layout's own minimum, rounded up — below it Qt squeezes widgets past
+# their minimum hints. Measured 2026-09-25, window.minimumSizeHint() with an
+# image loaded, identical on every step and with busy + a long warning:
+# offscreen 1067 x 641, macOS fonts 1116 x 622. The previous 960 x 600 sat
+# under both. Must stay within 1280 x 690 so a 1280x720 screen, less its menu
+# bar, still fits the window (test_window_geometry guards both bounds).
+MIN_WINDOW = (1120, 650)
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
 
@@ -341,7 +357,7 @@ class MainWindow(QMainWindow):
         # Reset on a new image and on Close Project, or the previous image's
         # walk would mark steps as skipped in a session that never touched them.
         self._high_water = 0
-        self._stages = path_stages(self._omitted_stages(), self._included_stages())
+        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -528,10 +544,17 @@ class MainWindow(QMainWindow):
         outer.addLayout(root, 1)
 
         self.stepper = Stepper()
-        self.stepper.setMaximumWidth(200)
         self.stepper.set_stages(self._stages)
         self.stepper.stageSelected.connect(self._go_to)
-        root.addWidget(self.stepper)
+        self._left_column = QWidget()
+        self._left_column.setFixedWidth(LEFT_COLUMN_W)
+        left = QVBoxLayout(self._left_column)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.addWidget(self.stepper)
+        self.activity = ActivityPanel()
+        left.addWidget(self.activity, 1)
+        root.addWidget(self._left_column)
+        self._size_stepper()
 
         self.image_view = ImageView()
         self.image_view.cropBoxShown.connect(self._on_crop_box_shown)
@@ -555,25 +578,21 @@ class MainWindow(QMainWindow):
         self._center_stack.addWidget(self.image_view)  # page 1
         root.addWidget(self._center_stack, 1)
 
-        right = QWidget()
+        # The right column is fixed zones around one scrolling middle (spec
+        # §4.2): no step's panel can push the window taller or move Next.
+        self._side = SidePanel(width=RIGHT_PANE_W)
+        right = self._side
         self._right_panel = right
-        right.setFixedWidth(RIGHT_PANE_W)
-        self._right_layout = QVBoxLayout(right)
+        self._right_layout = right.layout_
         self.histogram_view = HistogramView()
-        self._right_layout.addWidget(self.histogram_view)
+        right.histogram_zone.addWidget(self.histogram_view)
         self._info_strip = QLabel("")               # resolution · integration · object, under the histogram
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
-        self._right_layout.addWidget(self._info_strip)
-        self._clip_line = QLabel("")            # clipped-pixel summary, hidden while linear
-        self._clip_line.setObjectName("importMeta")
-        self._clip_line.setWordWrap(True)
-        self._clip_line.hide()
-        self._right_layout.addWidget(self._clip_line)
-        self._clip_check = QCheckBox("Show clipping")
+        right.histogram_zone.addWidget(self._info_strip)
+        self._clip_line = right.clip_line
+        self._clip_check = right.clip_check
         self._clip_check.toggled.connect(self._on_show_clipping)
-        self._clip_check.hide()
-        self._right_layout.addWidget(self._clip_check)
         self.solve_panel = SolvePanel()
         self.solve_panel.set_layers(dict(self.settings.annotation_layers))
         self.solve_panel.set_density(self.settings.annotation_density)
@@ -582,13 +601,14 @@ class MainWindow(QMainWindow):
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
-        self._right_layout.addWidget(self.solve_panel)
+        right.body_layout.insertWidget(0, self.solve_panel)
         self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
-        self._panel = QWidget()
-        self._right_layout.addWidget(self._panel)
-        self._right_layout.addStretch(1)
-        # Bottom-anchored explainer: describes the current step. Owned by the
-        # column (not the panel builders) so it stays put as panels gain toggles.
+        self._panel = right.panel
+        # The explainer lives inside the scrolling zone, below the panel.
+        # "How this works" is on each panel's title line (its help_link);
+        # this placeholder only stands in until the first panel is built.
+        self._help_header = QLabel("")
+        self._help_header.hide()
         self._current_topic_id = None
         self._explainer = QLabel("")
         self._explainer.setObjectName("stepExplainer")
@@ -598,98 +618,41 @@ class MainWindow(QMainWindow):
         self._explainer_scroll = QScrollArea()
         self._explainer_scroll.setWidgetResizable(True)
         self._explainer_scroll.setWidget(self._explainer)
-        self._explainer_scroll.setMaximumHeight(240)   # never crowd the nav row
-        self._help_header = QLabel("")
-        self._help_header.setObjectName("helpHeader")
-        self._help_header.setOpenExternalLinks(False)
-        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
-        self._right_layout.addWidget(self._help_header)
-        self._right_layout.addWidget(self._explainer_scroll)
+        self._explainer_scroll.setMaximumHeight(240)
+        right.body_layout.insertWidget(right.body_layout.count() - 1, self._explainer_scroll)
         self._full_help_link = QLabel('<a href="#">Full help →</a>')
         self._full_help_link.setObjectName("fullHelpLink")
         self._full_help_link.setOpenExternalLinks(False)
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
-        self._right_layout.addWidget(self._full_help_link)
-        # peek + busy + warning sit above the nav, inside the stretch's grow-upward
-        # zone, so the nav row stays pinned flush to the pane bottom and never moves.
-        self._peek_label = QLabel("")                         # transient before/after cue
-        self._peek_label.setStyleSheet("color: #9aa0a6;")
-        self._peek_label.setWordWrap(True)                    # don't let changing text drive panel width
-        self._right_layout.addWidget(self._peek_label)
-        self._busy_label = QLabel("")
-        self._busy_label.setStyleSheet("color: #9aa0a6;")     # neutral grey progress
-        self._busy_label.setWordWrap(True)                    # rapid status updates must not resize the pane
-        self._right_layout.addWidget(self._busy_label)
-        self._progress = QProgressBar()
-        self._progress.hide()
-        self._right_layout.addWidget(self._progress)
-        busy_row = QHBoxLayout()
-        self._elapsed_label = QLabel("")
-        self._elapsed_label.setStyleSheet("color: #9aa0a6;")
-        self._elapsed_label.hide()
-        busy_row.addWidget(self._elapsed_label)
-        busy_row.addStretch(1)
-        self._cancel_btn = QPushButton("Cancel")
+        right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
+        self._peek_label = right.peek_label
+        self._busy_label = right.busy_label
+        self._progress = right.progress
+        self._elapsed_label = right.elapsed_label
+        self._cancel_btn = right.cancel_btn
         self._cancel_btn.clicked.connect(self._cancel_active)
-        self._cancel_btn.hide()
-        busy_row.addWidget(self._cancel_btn)
-        self._right_layout.addLayout(busy_row)
-        self._warning = QLabel("")
-        self._warning.setObjectName("warning")
-        self._warning.setWordWrap(True)
-        self._warning.setStyleSheet("color: #ff6b6b;")        # blocking guidance / errors
-        self._right_layout.addWidget(self._warning)
-        diag_row = QHBoxLayout()
-        self._show_details_btn = QPushButton("Show details")
-        self._show_details_btn.setFlat(True)
+        self._warning = right.warning
+        self._show_details_btn = right.details_btn
         self._show_details_btn.clicked.connect(self._toggle_diagnostic_details)
-        self._show_details_btn.hide()
-        self._copy_log_btn = QPushButton("Copy log")
-        self._copy_log_btn.setFlat(True)
+        self._copy_log_btn = right.copy_log_btn
         self._copy_log_btn.clicked.connect(self._copy_diagnostic_to_clipboard)
-        self._copy_log_btn.hide()
-        diag_row.addWidget(self._show_details_btn)
-        diag_row.addWidget(self._copy_log_btn)
-        diag_row.addStretch(1)
-        self._right_layout.addLayout(diag_row)
-        self._diagnostic_label = QLabel("")
-        self._diagnostic_label.setWordWrap(True)
-        self._diagnostic_label.setStyleSheet("color: #9aa0a6; font-family: monospace;")
-        self._diagnostic_label.hide()
-        self._right_layout.addWidget(self._diagnostic_label)
         self._last_diagnostic = ""
-        nav = QHBoxLayout()
-        self._back_btn = QPushButton("← Back")
-        self._next_btn = QPushButton("Next →")
-        self._next_btn.setObjectName("nav")   # blue "advance" — distinct from green Apply
+        self._diag_pending = False                  # a tool error's details are on offer
+        self._back_btn = right.back_btn
+        self._next_btn = right.next_btn
         self._back_btn.clicked.connect(self.go_back)
         self._next_btn.clicked.connect(self.go_next)
-        nav.addWidget(self._back_btn)
-        nav.addWidget(self._next_btn)
-        self._right_layout.addLayout(nav)                     # LAST widget — flush bottom
+        self._sync_status_slot()
         root.addWidget(right)
 
-        self.log_panel = LogPanel()
-        self.output_panel = OutputPanel()
-        self._bottom_bar = QWidget()
-        bottom = QHBoxLayout(self._bottom_bar)
-        bottom.setContentsMargins(0, 0, 0, 0)
-        log_col = QVBoxLayout()
-        log_col.setContentsMargins(0, 0, 0, 0)
-        self.jobs_panel = JobsPanel(self._job_queue, self)
-        # Hidden until there is something to show: an always-present empty strip
-        # would cost height on the 1280x800 floor for nothing.
-        self.jobs_panel.setVisible(False)
-        self._job_queue.changed.connect(
-            lambda: self.jobs_panel.setVisible(not self.jobs_panel.is_empty()))
-        log_col.addWidget(self.jobs_panel)
-        log_col.addWidget(self.log_panel)
-        bottom.addLayout(log_col, 3)             # history gets the wider share
-        bottom.addWidget(self.output_panel, 2)   # results/progress, copyable
-        outer.addWidget(self._bottom_bar)
+        # The old step-log and output-box APIs, over the one activity stream.
+        self.log_panel = ActivityChannel(self.activity, "step")
+        self.output_panel = ActivityChannel(self.activity, "result")
+        self._chrome_visible = False
 
         self.setCentralWidget(central)
+        self.setMinimumSize(*MIN_WINDOW)
         self._build_toolbar()
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
@@ -723,9 +686,10 @@ class MainWindow(QMainWindow):
     def _toggle_fullscreen(self) -> None:
         """Distraction-free inspection: the image, and nothing else.
 
-        Everything except the canvas goes — toolbar, stepper, right panel, log
-        and output. The zoom pill stays: it is the one control you want while
-        inspecting, and it is already dark-on-dark rather than an accent colour.
+        Everything except the canvas goes — toolbar, the left column (steps and
+        activity) and the right panel. The zoom pill stays: it is the one
+        control you want while inspecting, and it is already dark-on-dark
+        rather than an accent colour.
 
         Zoom and pan are deliberately NOT reset. You enter this to look closely
         at something, so throwing away the view you came in with would defeat it.
@@ -738,35 +702,79 @@ class MainWindow(QMainWindow):
         if self.isFullScreen():
             self._exit_fullscreen()
             return
-        # Remember what was actually visible — on the welcome screen the chrome
-        # is already hidden, and exiting must not conjure it into existence.
-        self._pre_fullscreen = {
-            "toolbar": self._toolbar.isVisible(),
-            "stepper": self.stepper.isVisible(),
-            "right": self._right_panel.isVisible(),
-            "bottom": self._bottom_bar.isVisible(),
-        }
-        for w in (self._toolbar, self.stepper, self._right_panel, self._bottom_bar):
-            w.setVisible(False)
-        self.showFullScreen()
+        self.showFullScreen()        # changeEvent hides the chrome
 
     def _exit_fullscreen(self) -> None:
         if not self.isFullScreen():
             return
-        prev = getattr(self, "_pre_fullscreen", None) or {}
-        self._toolbar.setVisible(prev.get("toolbar", True))
-        self.stepper.setVisible(prev.get("stepper", True))
-        self._right_panel.setVisible(prev.get("right", True))
-        self._bottom_bar.setVisible(prev.get("bottom", True))
-        self.showNormal()
+        self.showNormal()            # changeEvent restores the chrome
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """EVERY way into or out of fullscreen lands here, not only F: on
+        macOS the green title-bar button, and the "Enter Full Screen" item
+        AppKit adds to a menu titled "View", both change the window state
+        without calling `_toggle_fullscreen`. Handling the transition here
+        means each route hides and restores the chrome the same way, and F
+        or Escape afterwards always finds a snapshot to restore from."""
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange or not hasattr(self, "_jobs_bar"):
+            return
+        was_full = bool(event.oldState() & Qt.WindowState.WindowFullScreen)
+        now_full = self.isFullScreen()
+        if now_full and not was_full:
+            self._hide_chrome_for_fullscreen()
+        elif was_full and not now_full:
+            self._restore_chrome_after_fullscreen()
+
+    def _hide_chrome_for_fullscreen(self) -> None:
+        if getattr(self, "_pre_fullscreen", None) is not None:
+            return                   # already entered — never overwrite the snapshot
+        # Remember what was actually visible — on the welcome screen the chrome
+        # is already hidden, and exiting must not conjure it into existence.
+        self._pre_fullscreen = {
+            "toolbar": self._toolbar.isVisible(),
+            "jobs_bar": self._jobs_bar.isVisible(),
+            "left": self._left_column.isVisible(),
+            "right": self._right_panel.isVisible(),
+        }
+        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel):
+            w.setVisible(False)
+
+    def _restore_chrome_after_fullscreen(self) -> None:
+        # No snapshot should be impossible now; if it happens, fall back to
+        # what the chrome state says rather than showing everything.
+        prev = getattr(self, "_pre_fullscreen", None) or {
+            "toolbar": True, "jobs_bar": True,
+            "left": self._chrome_visible, "right": self._chrome_visible}
+        self._pre_fullscreen = None
+        self._toolbar.setVisible(prev["toolbar"])
+        self._jobs_bar.setVisible(prev["jobs_bar"])
+        self._left_column.setVisible(prev["left"])
+        self._right_panel.setVisible(prev["right"])
+        self._sync_left_column()    # restates from chrome state, not the captured snapshot
 
     def _show_chrome(self, visible: bool) -> None:
-        """Show/hide the stepper + right panel so the welcome screen is a clean
+        """Show/hide the left column + right panel so the welcome screen is a clean
         full-bleed empty state (no redundant Import panel/stepper before load)."""
-        self.stepper.setVisible(visible)
+        self._chrome_visible = visible
+        self._sync_left_column()
         self._right_panel.setVisible(visible)
         self._rebuild_panel()
         self._refresh()
+
+    def _sync_left_column(self) -> None:
+        """The step list shows with the chrome; the welcome screen stays
+        full-bleed. Background jobs live in the toolbar's JobsIndicator now
+        (spec §6), not in this column, so a job starting or finishing has no
+        say here. Fullscreen hides the column regardless of chrome state."""
+        self.stepper.setVisible(self._chrome_visible)
+        if not self.isFullScreen():
+            self._left_column.setVisible(self._chrome_visible)
+
+    def _size_stepper(self) -> None:
+        """The step list fixes its own height to its content (Stepper) and
+        never scrolls; the activity box below takes the rest and scrolls."""
+        self.stepper._fit_height()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         """Offer to save before discarding an edited (un-saved) project on
@@ -783,7 +791,43 @@ class MainWindow(QMainWindow):
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
+        if not self.isFullScreen():
+            self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
+            save_settings(self.settings, self._settings_path)
         event.accept()
+
+    def restore_geometry_from_settings(self) -> bool:
+        """Where the window was last time — unless that place no longer exists.
+        A geometry saved on an external monitor that is now unplugged would
+        otherwise open the window somewhere nobody can see it."""
+        raw = self.settings.window_geometry
+        if not raw:
+            return False
+        try:
+            ok = self.restoreGeometry(QByteArray.fromHex(raw.encode()))
+        except Exception:        # noqa: BLE001 — a settings value is never a reason not to open
+            return False
+        if not ok:
+            return False
+        frame = self.frameGeometry()
+        visible = any(s.availableGeometry().intersected(frame).width() >= 200
+                      and s.availableGeometry().intersected(frame).height() >= 200
+                      for s in QApplication.screens())
+        return visible
+
+    def place_on_primary_screen(self, size) -> None:
+        """The fallback when there is no usable saved place. Moves as well as
+        resizes: by the time `restore_geometry_from_settings` says no,
+        `restoreGeometry` may already have put the window on a monitor that is
+        gone, and a resize alone leaves it there. Centred on the primary
+        screen's available area; a window larger than that area is pinned to
+        its top-left so the title bar stays reachable."""
+        self.resize(*size)
+        area = QApplication.primaryScreen().availableGeometry()
+        frame = self.frameGeometry()
+        x = max(area.left(), area.center().x() - frame.width() // 2)
+        y = max(area.top(), area.center().y() - frame.height() // 2)
+        self.move(x, y)
 
     def _confirm_quit_with_jobs(self, count: int) -> bool:
         """True to quit and cancel. Separate so a test can answer it."""
@@ -801,12 +845,12 @@ class MainWindow(QMainWindow):
         The wait must run whenever `running()` names a job — NOT only when
         something is still "queued"/"running". `JobQueue.cancel` marks a job
         "cancelled" and sends SIGTERM immediately, but its reader thread stays
-        alive until the child's stdout actually closes; `JobsPanel` shows
+        alive until the child's stdout actually closes; `JobsIndicator` shows
         exactly this window as "stopping…", and `running()` keeps naming the
         job throughout it. Gating the wait on the queued/running predicate
         skipped it on the single likeliest route to the hazard it exists for:
-        Cancel in the panel, then Quit — nothing left queued or running, but
-        the reader thread is still alive and about to emit.
+        Cancel from the indicator, then Quit — nothing left queued or running,
+        but the reader thread is still alive and about to emit.
 
         The wait itself is not cosmetic: `JobQueue.wait_for_shutdown` joins
         the live reader thread(s) before this method returns, so `closeEvent`
@@ -931,6 +975,12 @@ class MainWindow(QMainWindow):
         self._provenance_act = project_menu.addAction(
             "Provenance report…", self._show_provenance)   # readable record of the edit pipeline
 
+        view_menu = self.menuBar().addMenu("View")
+        self._activity_act = view_menu.addAction("Activity")
+        self._activity_act.setCheckable(True)
+        self._activity_act.setChecked(True)
+        self._activity_act.toggled.connect(self.activity.setVisible)
+
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
         self._about_act = help_menu.addAction(f"About {APP_NAME}…", self._show_about)
@@ -1008,9 +1058,15 @@ class MainWindow(QMainWindow):
             f"Crop first, then come back to this step.")
 
     def _show_warning(self, text: str) -> None:
-        """Blocking guidance / errors → prominent right-pane label near the buttons."""
+        """Blocking guidance / errors → prominent right-pane label near the buttons.
+        Also copied into the activity history, so it survives the status slot
+        clearing (Andreas, 2026-09-25). Drops any earlier tool error's details
+        row: that log belongs to the error, not to this message."""
         self._warning.setStyleSheet("color: #ff6b6b;")
         self._warning.setText(text)
+        self.activity.add("warn", text)
+        self._diag_pending = False
+        self._sync_status_slot()
 
     def _show_notice(self, text: str) -> None:
         """Same prominent slot as a warning, amber rather than red: something the
@@ -1024,13 +1080,28 @@ class MainWindow(QMainWindow):
         and the output area is easy to miss at the moment the thing happens."""
         self._warning.setStyleSheet(f"color: {WARNING};")
         self._warning.setText(text)
+        self.activity.add("notice", text)
+        self._diag_pending = False
+        self._sync_status_slot()
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
-        self._show_details_btn.hide()
-        self._copy_log_btn.hide()
-        self._diagnostic_label.hide()
-        self._diagnostic_label.setText("")
+        self._diag_pending = False
+        self._sync_status_slot()
+
+    def _sync_status_slot(self) -> None:
+        """One occupant at a time in the fixed status slot, busy > warning >
+        peek (spec §4.2), and an empty line takes no row. STATUS_SLOT_H is
+        measured for the fullest of these; letting two share the slot (the
+        details row left up under a running op) overflowed it — Cancel was
+        drawn 14 px tall against a 32 px hint."""
+        busy = getattr(self, "_busy_shown", False)
+        warn = not busy and bool(self._warning.text())
+        self._busy_label.setVisible(busy)
+        self._warning.setVisible(warn)
+        self._show_details_btn.setVisible(not busy and self._diag_pending)
+        self._copy_log_btn.setVisible(not busy and self._diag_pending)
+        self._peek_label.setVisible(not busy and not warn and bool(self._peek_label.text()))
 
     def _report_tool_error(self, prefix: str, exc) -> None:
         """Surface a `ToolError` as a concise warning plus an expandable
@@ -1042,25 +1113,18 @@ class MainWindow(QMainWindow):
             f"stderr:\n{exc.stderr}"
         )
         sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
-        self._show_warning(prefix)
-        self._show_details_btn.show()
-        self._copy_log_btn.show()
-        self._diagnostic_label.hide()
-        self._diagnostic_label.setText("")
+        self._show_warning(prefix)          # clears any older error's pending row
+        self._diag_pending = True
         self._show_details_btn.setText("Show details")
+        self._sync_status_slot()            # now with this error's details row
 
     def _last_diagnostic_text(self) -> str:
         return self._last_diagnostic
 
     def _toggle_diagnostic_details(self) -> None:
-        showing = self._diagnostic_label.isVisible()
-        if showing:
-            self._diagnostic_label.hide()
-            self._show_details_btn.setText("Show details")
-        else:
-            self._diagnostic_label.setText(self._last_diagnostic)
-            self._diagnostic_label.show()
-            self._show_details_btn.setText("Hide details")
+        """Details open in the activity box's large view: expanding them in the
+        right column would take back the space the fixed zones exist to keep."""
+        self.activity.open_large(extra=self._last_diagnostic)
 
     def _copy_diagnostic_to_clipboard(self) -> None:
         QApplication.clipboard().setText(self._last_diagnostic)
@@ -1172,7 +1236,7 @@ class MainWindow(QMainWindow):
             answered = dlg.exec()
             self.settings.telemetry = telemetry_mod.ON if answered else telemetry_mod.OFF
             save_settings(self.settings, self._settings_path)
-            self.log_panel.append_entry(
+            self.log_panel.append_info(
                 "Usage counting is on — thank you. Turn it off any time in Settings."
                 if answered else
                 "Usage counting stays off. Nothing is sent.")
@@ -1287,7 +1351,7 @@ class MainWindow(QMainWindow):
 
     def _start_background_stack(self, options, label: str) -> None:
         self._job_queue.enqueue(StackJob(label, options))
-        self.log_panel.append_entry(f"Stacking {label} — sent to the background")
+        self.log_panel.append_info(f"Stacking {label} — sent to the background")
 
     # --- background jobs: progress into the log, never onto the canvas ---
     def _on_job_progress(self, job, pct: int, phase: str) -> None:
@@ -1303,8 +1367,8 @@ class MainWindow(QMainWindow):
         if last is not None and pct < last + self._JOB_LOG_EVERY:
             return
         self._job_logged_at[key] = pct - (pct % self._JOB_LOG_EVERY)
-        self.log_panel.append_entry(f"Stacking {job.label} — {phase} ({pct}%)"
-                                    if phase else f"Stacking {job.label} — {pct}%")
+        self.log_panel.append_info(f"Stacking {job.label} — {phase} ({pct}%)"
+                                   if phase else f"Stacking {job.label} — {pct}%")
 
     def _on_job_finished(self, job, event: dict) -> None:
         """Logged, never opened. A background stack landing on the canvas would
@@ -1316,12 +1380,20 @@ class MainWindow(QMainWindow):
         # of light" (_stack_report) — matching that wording here stops the
         # same number reading as two different things depending on which
         # mode produced it.
-        self.log_panel.append_entry(
+        self.log_panel.append_result(
             f"Stacked {job.label} — {event.get('frames', 0)} frames, "
             f"{mins} min of light → {event.get('output', '')}")
 
     def _on_job_failed(self, job, message: str) -> None:
-        self.log_panel.append_entry(f"Stacking {job.label} failed — {message}")
+        self.activity.add("warn", f"Stacking {job.label} failed — {message}")
+
+    def _open_finished_master(self, path: str) -> None:
+        """Only ever from a click on the indicator — a finished stack never
+        opens itself. `path` came from a child process: check it exists."""
+        if not path or not os.path.isfile(path):
+            self._show_warning(f"That stack is no longer at {path or 'its saved location'}.")
+            return
+        self.open_any(path)          # runs _confirm_save_if_dirty
 
     def _on_foreground_master(self, img, label: str, path: str) -> None:
         """A finished stack never replaces work you have open — but this is
@@ -1351,7 +1423,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             self.open_image(img, label)
             return
-        self.log_panel.append_entry(
+        self.log_panel.append_info(
             f"Stacked {label} — not opened, you have an image open → {path}")
 
     def _open_star_spikes(self) -> None:
@@ -2049,6 +2121,10 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         tb = self.addToolBar("Main")
         self._toolbar = tb   # kept so fullscreen can hide it
+        # Locked: the tools are muscle memory, and a dragged toolbar could be
+        # dropped past or below the jobs bar that must stay at the row's end.
+        tb.setMovable(False)
+        tb.setFloatable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
         tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
@@ -2168,9 +2244,6 @@ class MainWindow(QMainWindow):
         self._reset_act.setEnabled(False)  # enabled by _refresh once an image is loaded
         self._ba_act = tb.addAction(load_icon("before-after"), "Before/After", self._toggle_before_after)
         self._ba_act.setCheckable(True)
-        self._log_act = tb.addAction(load_icon("log"), "Log", self._toggle_log)
-        self._log_act.setCheckable(True)
-        self._log_act.setChecked(True)
         tb.addSeparator()
         # View
         tb.addAction(load_icon("fit"), "Fit", self.image_view.fit)
@@ -2186,6 +2259,16 @@ class MainWindow(QMainWindow):
         self._tools_act.setObjectName("toolsWarning")
         self._tools_act.setVisible(False)   # only when something is actually wrong
         self._update_tool_warning()
+
+        # Background jobs: at the FAR RIGHT of the toolbar row (Andreas,
+        # 2026-09-25), in a toolbar of its own after the main one — see
+        # JobsBar for why it is not in the main toolbar.
+        self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
+        self._jobs_bar = JobsBar(self.jobs_indicator)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self._jobs_bar)
+        # Built parentless, the bar took a 32 px icon size where the main
+        # toolbar has 24; the indicator is meant to look like one of its tools.
+        self._jobs_bar.setIconSize(tb.iconSize())
 
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.
@@ -2605,6 +2688,7 @@ class MainWindow(QMainWindow):
         # Retire the outgoing workspace FIRST: _clear_cache below deletes the
         # snapshots an in-flight step may be about to write into, and the new
         # Project must not receive a callback belonging to the old one.
+        had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
         self._source_label = label
         self._saved_app_version = None      # not the loaded bundle's any more
@@ -2622,8 +2706,11 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.log_panel.clear_log()   # fresh image → fresh message channels
-        self.output_panel.clear()
+        if had_image:
+            # Switching images: every kind starts fresh. The FIRST open keeps
+            # what the welcome screen logged, where the column was hidden —
+            # the usage-counting answer was otherwise never seen at all.
+            self.activity.clear()
         h, w = base.data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened {label}", "", None, dims=(w, h))
@@ -2743,6 +2830,7 @@ class MainWindow(QMainWindow):
         """Commit a loaded bundle. Reached only on success, so every failure —
         cancelled dialog, newer version, unreadable file — still leaves the
         current workspace and any in-flight op untouched."""
+        had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
         self.project = loaded.project
         self._source_label = loaded.source_label
@@ -2758,8 +2846,8 @@ class MainWindow(QMainWindow):
         self._center_stack.setCurrentWidget(self.image_view)
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
-        self.log_panel.clear_log()   # fresh project → fresh message channels
-        self.output_panel.clear()
+        if had_image:           # as in open_image: the first open keeps the welcome log
+            self.activity.clear()
         h, w = self.project.current().data.shape[:2]
         self.log_panel.append_entry(
             format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
@@ -3851,6 +3939,7 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
             self._cursor_active = True
         self._busy_shown = True
+        self._sync_status_slot()        # busy > warning > peek
         self._cancel_btn.show()
         self._elapsed_label.show()
         self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
@@ -3868,6 +3957,7 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
         self._busy_shown = False
+        self._sync_status_slot()
         self._cancel_btn.hide()
         self._elapsed_label.hide()
         self._elapsed_label.setText("")
@@ -4236,8 +4326,9 @@ class MainWindow(QMainWindow):
         self._high_water = 0
         self.stepper.set_high_water(0)
 
-    def _omitted_stages(self) -> frozenset[str]:
-        """Colour does NOTHING under an unlinked stretch, so it is not offered.
+    def _disabled_stages(self) -> dict[str, str]:
+        """Colour does NOTHING under an unlinked stretch, so it is not offered —
+        but it stays LISTED, disabled, so the rows below it never move.
 
         Both of its jobs are per-channel and multiplicative — a background
         balance and photometric gains — and a per-channel normalisation is
@@ -4245,7 +4336,9 @@ class MainWindow(QMainWindow):
         an 8-bit level. De-green is not in this step; it moved to its own
         post-stretch stage on 2026-09-13, so nothing is lost by hiding it.
         """
-        return frozenset() if self._view_linked else frozenset({"color"})
+        return {} if self._view_linked else {
+            "color": "Needs a linked stretch — Colour's corrections are per-channel, "
+                     "and an unlinked stretch removes them."}
 
     def _included_stages(self) -> frozenset[str]:
         """Stages that are not part of the shipped pipeline and must be asked for.
@@ -4269,10 +4362,16 @@ class MainWindow(QMainWindow):
         preserved index would silently teleport the user to a different step.
         """
         here = self._stages[self._stage].id if self._stages else None
-        self._stages = path_stages(self._omitted_stages(), self._included_stages())
+        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
         ids = [s.id for s in self._stages]
         self._stage = ids.index(here) if here in ids else 0
+        if self._stages and not self._stages[self._stage].enabled:
+            nxt = next_enabled(self._stages, self._stage)
+            if nxt == self._stage:
+                nxt = prev_enabled(self._stages, self._stage)
+            self._stage = nxt
         self.stepper.set_stages(self._stages)
+        self._size_stepper()
         self.stepper.set_current(self._stage)
         self._refresh()
 
@@ -4393,7 +4492,7 @@ class MainWindow(QMainWindow):
             here = self.current_stage_id()
             self._rebuild_stages()
             self._go_to_id(here, user_initiated=False)
-            self.log_panel.append_entry(
+            self.log_panel.append_info(
                 "Colour is available again — go back to it if you want "
                 "photometric calibration, which only a linked stretch keeps.")
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
@@ -5169,6 +5268,7 @@ class MainWindow(QMainWindow):
         exits peek (nav, apply, preview repaint) clears the 'Before' cue too."""
         self._peek_active = active
         self._peek_label.setText("Before — press Space to compare" if active else "")
+        self._sync_status_slot()
 
     def _toggle_peek(self) -> None:
         """Flip the main image between the *current step's* entry state (its before)
@@ -5209,9 +5309,6 @@ class MainWindow(QMainWindow):
         else:
             self._compare_img = None
             self.image_view.set_compare(None)
-
-    def _toggle_log(self) -> None:
-        self._bottom_bar.setVisible(self._log_act.isChecked())
 
     # --- exports ---
     def _export_space(self) -> str:
@@ -5538,9 +5635,11 @@ class MainWindow(QMainWindow):
             new_panel.burn_annotations.setEnabled(solved)
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
-        self._right_layout.replaceWidget(self._panel, new_panel)
-        self._panel.deleteLater()
+        self._side.set_panel(new_panel)
         self._panel = new_panel
+        self._help_header = new_panel.help_link
+        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
+        self._apply_help_expanded()   # gives the new link its text
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         if stage.id == "star_reduction":
             self._setup_star_reduction()  # kick off the cached StarX split on entry
@@ -5694,22 +5793,22 @@ class MainWindow(QMainWindow):
         self._structural_baseline = (sc.hi_frac, sc.lo_frac)
 
     def _update_clipping_line(self) -> None:
-        """Clipped-pixel summary under the info strip. Hidden while the image is
-        linear: before Stretch, 'clipped' can only mean sensor-saturated at
-        capture, which no edit caused and none can fix — showing it there would
-        train the user to ignore the warning that matters."""
+        """Clipped-pixel summary under the info strip. No figures while the
+        image is linear — the slot stays, disabled, saying clipping is shown
+        once the image is stretched: before Stretch, 'clipped' can only mean
+        sensor-saturated at capture, which no edit caused and none can fix,
+        and reporting it there would train the user to ignore the warning that
+        matters."""
         img = self._canvas_img
         if img is None or img.is_linear:
-            self._clip_line.hide()
-            self._clip_check.hide()
+            self._clip_line.setStyleSheet("")   # drop a stale amber alarm colour
+            self._side.set_clipping(None)
             return
-        self._clip_line.show()
-        self._clip_check.show()
         c = clipping_from_histogram(self.histogram_view.hist())
         hi = _clip_phrase(c.hi_frac, c.hi_channel, "blown to white")
         lo = _clip_phrase(c.lo_frac, c.lo_channel, "crushed to zero")
         text = f"{hi}  ·  {lo}"
-        self._clip_line.setToolTip(
+        clip_tooltip = (
             "Measured per CHANNEL, not per pixel. A pixel whose red alone sits "
             "at zero still shows colour from green and blue — but the red "
             "signal there is gone, and no later adjustment brings it back. In "
@@ -5766,7 +5865,7 @@ class MainWindow(QMainWindow):
 
         colour = WARNING if alarm else TEXT_DIM
         self._clip_line.setStyleSheet(f"color: {colour};")
-        self._clip_line.setText(f"{'⚠ ' if alarm else ''}{text}")
+        self._side.set_clipping(f"{'⚠ ' if alarm else ''}{text}", clip_tooltip)
 
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total
@@ -5799,6 +5898,8 @@ class MainWindow(QMainWindow):
         self._reset_high_water()
         self._swap_workspace()
         self.project = None
+        self.activity.clear()      # the old image's history goes with it; the
+                                   # next open then keeps the welcome log
         self._clip_baseline = None
         self._canvas_img = None
         self._compare_img = None

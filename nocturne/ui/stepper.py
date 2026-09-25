@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
 
 from .theme import ACCENT, BG_3, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT
+
+# 32, not 40: 17 steps at 40 px filled the whole left column at 1280x800,
+# leaving no room for the activity box (spec §4.1).
+STEP_ROW_H = 32
+_BADGE_W = 36           # badge column
+_PILL_W = 44            # the "soon" pill + gap, drawn only on locked rows
+
+
+def label_rect_width(row_width: int, *, locked: bool) -> int:
+    """Room for the label. Reserving the pill's width on EVERY row cut the
+    selected, bold "Noise Reduction" to "Noise Reductio"."""
+    return row_width - _BADGE_W - (_PILL_W if locked else 8)
 
 
 def step_state(index: int, current_index: int, done_indexes, enabled: bool,
@@ -41,7 +53,7 @@ class StepDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         s = super().sizeHint(option, index)
-        s.setHeight(max(s.height(), 40))
+        s.setHeight(STEP_ROW_H)
         return s
 
     def paint(self, painter, option, index):
@@ -49,6 +61,7 @@ class StepDelegate(QStyledItemDelegate):
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
         stepper = self.parent()
         state = stepper.state_at(index.row())
+        reason = getattr(stepper.stage_at(index.row()), "reason", "")
         r = option.rect
         cx, cy = r.left() + 18, r.center().y()
 
@@ -79,6 +92,10 @@ class StepDelegate(QStyledItemDelegate):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(QRectF(cx - 3, cy - 3, 6, 6))
         else:
+            if state == "locked" and reason:
+                pen = QPen(QColor(TEXT_FAINT), 1.5)
+                pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QRectF(cx - 6, cy - 6, 12, 12))
             if state == "skipped":
@@ -101,12 +118,14 @@ class StepDelegate(QStyledItemDelegate):
         font.setBold(state == "current")
         painter.setFont(font)
         painter.setPen(QColor(color))
-        painter.drawText(QRectF(r.left() + 36, r.top(), r.width() - 80, r.height()),
+        painter.drawText(QRectF(r.left() + _BADGE_W, r.top(),
+                                label_rect_width(r.width(), locked=state == "locked"),
+                                r.height()),
                          int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                          str(label))
 
-        # "soon" pill for locked rows
-        if state == "locked":
+        # "soon" pill for locked rows with no reason given
+        if state == "locked" and not reason:
             pill = QRectF(r.right() - 48, cy - 9, 40, 18)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(BG_3))
@@ -128,6 +147,8 @@ class Stepper(QListWidget):
         self._high_water: int | None = None
         self.setItemDelegate(StepDelegate(self))
         self.itemClicked.connect(self._on_click)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._fit_height()
 
     def set_stages(self, stages) -> None:
         self._stages = list(stages)
@@ -136,7 +157,49 @@ class Stepper(QListWidget):
             item = QListWidgetItem(stage.label)
             if not stage.enabled:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setToolTip(getattr(stage, "reason", ""))
             self.addItem(item)
+        self._fit_height()
+
+    def stage_at(self, index: int):
+        return self._stages[index]
+
+    def ideal_height(self) -> int:
+        """Every row visible with no scrolling, from the REAL metrics: each
+        row's own size hint, the list's spacing, and the frame — which under
+        the app stylesheet includes its 8 px padding. Assuming 32 px rows and
+        a 1 px frame was right offscreen and 14 px short in the real window,
+        where the list scrolled and cut "Export" off."""
+        rows = sum(self.sizeHintForRow(i) + 2 * self.spacing()
+                   for i in range(self.count()))
+        vm = self.viewportMargins()
+        return rows + 2 * self.frameWidth() + vm.top() + vm.bottom()
+
+    def _fit_height(self) -> None:
+        """Up to every row; down to 240 px only when the window is too short
+        for the whole list (the activity box yields first — it is the one
+        with the stretch). Re-run whenever the metrics can change."""
+        ideal = self.ideal_height()
+        self.setMaximumHeight(ideal)
+        self.setMinimumHeight(min(ideal, 240))
+        self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """The stylesheet arrives after construction (at polish) and changes
+        the frame; re-fit whenever style or font changes."""
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._fit_height()
+
+    def event(self, event) -> bool:  # noqa: A003 (Qt override)
+        result = super().event(event)
+        if event.type() == QEvent.Type.Polish:
+            self._fit_height()
+        return result
+
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        """Ask for every row. QListWidget's own hint is a flat 192 px."""
+        return QSize(super().sizeHint().width(), self.ideal_height())
 
     def _on_click(self, item) -> None:
         index = self.row(item)

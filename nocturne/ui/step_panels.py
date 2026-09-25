@@ -148,9 +148,18 @@ def build_panel(
     w.setObjectName("stepCard")
     w.panel_kind = stage.kind
     lay = QVBoxLayout(w)
+    title_row = QHBoxLayout()
     title = QLabel(stage.label)
     title.setObjectName("stageTitle")
-    lay.addWidget(title)
+    title_row.addWidget(title)
+    title_row.addStretch(1)
+    # "How this works" sits on the title line so it never floats with the
+    # panel's length (spec §4.2). MainWindow sets its text and wires it.
+    w.help_link = QLabel("")
+    w.help_link.setObjectName("helpHeader")
+    w.help_link.setOpenExternalLinks(False)
+    title_row.addWidget(w.help_link)
+    lay.addLayout(title_row)
 
     if stage.kind == "import":
         # No "Open FITS…" button: the toolbar has one and the cold-start screen

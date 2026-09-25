@@ -45,11 +45,12 @@ def _ids(win):
     return [s.id for s in win._stages]
 
 
-def test_unlinked_removes_colour_from_the_path(qtbot, tmp_path):
+def test_unlinked_disables_colour_but_keeps_it_listed(qtbot, tmp_path):
+    """Disabled, not removed: removing it moved every row below it."""
     win = _window(qtbot, tmp_path)
     assert "color" in _ids(win)
     win._set_view_linked(False)
-    assert "color" not in _ids(win)
+    assert not next(s for s in win._stages if s.id == "color").enabled
 
 
 def test_the_other_linear_steps_all_survive(qtbot, tmp_path):
@@ -102,3 +103,29 @@ def test_the_skip_does_not_leak_into_the_module_lists(qtbot, tmp_path):
 
     second = _window(qtbot, tmp_path, name="second.fits")
     assert "color" in _ids(second)
+
+
+def test_colour_stays_listed_but_disabled_when_unlinked(qtbot, tmp_path):
+    """Inserting and removing Color moved every step below it (screenshot 07)."""
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    ids_linked = [s.id for s in win._stages]
+    win._set_view_linked(False)
+    ids_unlinked = [s.id for s in win._stages]
+    assert ids_unlinked == ids_linked                      # same rows, same order
+    color = next(s for s in win._stages if s.id == "color")
+    assert color.enabled is False
+    assert "linked" in color.reason.lower()
+
+
+def test_leaving_linked_while_on_colour_moves_you_to_an_enabled_step(qtbot, tmp_path):
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color", user_initiated=False)
+    win._set_view_linked(False)
+    # The NEXT enabled step, exactly: Colour sits between Background and
+    # Deconvolution, and forward is the direction the user was heading.
+    assert win.current_stage_id() == "deconvolution"
+    assert win._stages[win._stage].enabled
