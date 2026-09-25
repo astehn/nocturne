@@ -71,3 +71,25 @@ def test_set_panel_replaces_in_place(qtbot):
     s.set_panel(b)
     assert s.panel is b
     assert a.parent() is None
+
+
+def test_a_long_warning_elides_instead_of_overflowing(qtbot):
+    s = _side(qtbot)
+    h_before = s.status_slot.height()
+    full = "RC-Astro failed — " + "a very long message " * 40
+    s.warning.setText(full)
+    qtbot.wait(20)
+    displayed = QLabel.text(s.warning)          # the raw QLabel text underneath
+    assert displayed.endswith("…")
+    assert displayed != full and len(displayed) < len(full)
+    assert s.warning.text() == full             # our override: the FULL value survives
+    assert s.warning.toolTip() == full
+    assert s.status_slot.height() == h_before   # elision, not growth, absorbs the length
+
+
+def test_a_short_warning_shows_unchanged(qtbot):
+    s = _side(qtbot)
+    s.warning.setText("Done.")
+    qtbot.wait(20)
+    assert QLabel.text(s.warning) == "Done."
+    assert s.warning.text() == "Done."

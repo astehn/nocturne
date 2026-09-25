@@ -23,14 +23,82 @@ CLIP_SLOT_H = 40
 LINEAR_CLIP_TEXT = "Clipping is shown once the image is stretched."
 
 
-def _elided_label(object_name: str = "") -> QLabel:
-    lab = QLabel("")
-    if object_name:
-        lab.setObjectName(object_name)
-    lab.setWordWrap(True)
-    # Ignored vertically: the text may be any length, the slot may not grow.
-    lab.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-    return lab
+def _wrap_words(text: str, metrics, width: int) -> list[str]:
+    """Greedy word-wrap of `text` to `width` px, using `metrics` to measure."""
+    words = text.split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    cur = words[0]
+    for w in words[1:]:
+        trial = f"{cur} {w}"
+        if metrics.horizontalAdvance(trial) <= width:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = w
+    lines.append(cur)
+    return lines
+
+
+class _ElidingLabel(QLabel):
+    """A label whose real value can be any length but whose ON-SCREEN space
+    cannot grow: both size-policy axes are Ignored, so it never pushes the
+    fixed-height slot it lives in.
+
+    Plain word-wrap into a cropped box hides the overflow with no cue — the
+    text is just cut off mid-word, silently. This wraps to the label's own
+    width and, if the wrapped text needs more lines than currently fit,
+    truncates the visible lines and ends the last one with "…". `text()`
+    still returns the FULL value (callers compare against the real string;
+    the activity log gets the untruncated text too) — only the rendered
+    glyphs are shortened. The tooltip carries the full text as well, so it's
+    always one hover away.
+    """
+
+    def __init__(self, object_name: str = "") -> None:
+        super().__init__("")
+        if object_name:
+            self.setObjectName(object_name)
+        self._full_text = ""
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+
+    def text(self) -> str:
+        return self._full_text
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt override
+        self._full_text = text
+        self.setToolTip(text)
+        self._re_elide()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._re_elide()
+
+    def _re_elide(self) -> None:
+        full = self._full_text
+        width = self.contentsRect().width()
+        if not full or width <= 0:
+            super().setText(full)
+            return
+
+        metrics = self.fontMetrics()
+        lines = _wrap_words(full, metrics, width)
+        line_height = metrics.lineSpacing() or metrics.height()
+        available_h = self.height()
+        max_lines = max(1, available_h // line_height) if available_h > 0 else len(lines)
+
+        if len(lines) <= max_lines:
+            super().setText(full)
+            return
+
+        words = full.split()
+        consumed = sum(len(l.split()) for l in lines[: max_lines - 1])
+        remainder = " ".join(words[consumed:])
+        last = metrics.elidedText(remainder, Qt.TextElideMode.ElideRight, width)
+        visible = lines[: max_lines - 1] + [last]
+        super().setText("\n".join(visible))
 
 
 class SidePanel(QWidget):
@@ -49,7 +117,7 @@ class SidePanel(QWidget):
         clip_lay = QVBoxLayout(self.clip_slot)
         clip_lay.setContentsMargins(0, 0, 0, 0)
         clip_lay.setSpacing(2)
-        self.clip_line = _elided_label("importMeta")
+        self.clip_line = _ElidingLabel("importMeta")
         self.clip_check = QCheckBox("Show clipping")
         clip_lay.addWidget(self.clip_line, 1)
         clip_lay.addWidget(self.clip_check)
@@ -76,9 +144,9 @@ class SidePanel(QWidget):
         st = QVBoxLayout(self.status_slot)
         st.setContentsMargins(0, 0, 0, 0)
         st.setSpacing(2)
-        self.peek_label = _elided_label()
+        self.peek_label = _ElidingLabel()
         self.peek_label.setStyleSheet("color: #9aa0a6;")
-        self.busy_label = _elided_label()
+        self.busy_label = _ElidingLabel()
         self.busy_label.setStyleSheet("color: #9aa0a6;")
         self.progress = QProgressBar()
         self.progress.hide()
@@ -91,7 +159,7 @@ class SidePanel(QWidget):
         busy_row.addWidget(self.elapsed_label)
         busy_row.addStretch(1)
         busy_row.addWidget(self.cancel_btn)
-        self.warning = _elided_label("warning")
+        self.warning = _ElidingLabel("warning")
         self.warning.setStyleSheet("color: #ff6b6b;")
         diag_row = QHBoxLayout()
         self.details_btn = QPushButton("Show details")
