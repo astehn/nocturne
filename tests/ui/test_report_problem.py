@@ -59,10 +59,15 @@ def test_the_report_carries_what_the_reddit_reports_lacked(main_window):
 
 def test_the_window_size_is_separate_from_the_screen(main_window):
     """A maximised window on a big display and a small window on the same
-    display are different reports, and only one of them is our problem."""
-    main_window.resize(900, 700)
+    display are different reports, and only one of them is our problem.
+
+    1000x700 rather than the once-typical 900x700: MIN_WINDOW is now 960x600
+    (task 9, "the window never grows"), and a resize below it is silently
+    clamped — a value under the floor would make this assert the minimum
+    size, not the resize."""
+    main_window.resize(1000, 700)
     ctx = main_window._report_context()
-    assert ctx["window_size"] == "900 x 700"
+    assert ctx["window_size"] == "1000 x 700"
     assert ctx["window_size"] != ctx["screen"]
 
 

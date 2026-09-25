@@ -303,8 +303,10 @@ def main() -> None:
     # successive --size values made no visible difference at all, and why the
     # toolbar looked so cramped: nothing was ever setting a size.
     requested = window_size(sys.argv)
-    win.resize(*(fit_to_screen(requested, app) if requested
-                 else preferred_size(win, app)))
+    if requested:
+        win.resize(*fit_to_screen(requested, app))       # --size always wins
+    elif not win.restore_geometry_from_settings():
+        win.resize(*preferred_size(win, app))
     win.show()
 
     # AFTER the resize, so the size recorded is the one the user actually has.

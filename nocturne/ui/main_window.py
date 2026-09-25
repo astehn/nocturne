@@ -5,8 +5,8 @@ import hashlib
 import os
 
 import numpy as np
-from PySide6.QtCore import (QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer, QUrl,
-                            Signal)
+from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
+                            QUrl, Signal)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
@@ -312,6 +312,10 @@ def render_engine(tag: str) -> str:
     exists to prevent.
     """
     return "built-in" if tag == "free" else tag
+
+
+# Below the 1280x720 "works but tight" floor, with room for the menu bar.
+MIN_WINDOW = (960, 600)
 
 
 class MainWindow(QMainWindow):
@@ -643,6 +647,7 @@ class MainWindow(QMainWindow):
         self._chrome_visible = False
 
         self.setCentralWidget(central)
+        self.setMinimumSize(*MIN_WINDOW)
         self._build_toolbar()
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
@@ -753,7 +758,29 @@ class MainWindow(QMainWindow):
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
+        if not self.isFullScreen():
+            self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
+            save_settings(self.settings, self._settings_path)
         event.accept()
+
+    def restore_geometry_from_settings(self) -> bool:
+        """Where the window was last time — unless that place no longer exists.
+        A geometry saved on an external monitor that is now unplugged would
+        otherwise open the window somewhere nobody can see it."""
+        raw = self.settings.window_geometry
+        if not raw:
+            return False
+        try:
+            ok = self.restoreGeometry(QByteArray.fromHex(raw.encode()))
+        except Exception:        # noqa: BLE001 — a settings value is never a reason not to open
+            return False
+        if not ok:
+            return False
+        frame = self.frameGeometry()
+        visible = any(s.availableGeometry().intersected(frame).width() >= 200
+                      and s.availableGeometry().intersected(frame).height() >= 200
+                      for s in QApplication.screens())
+        return visible
 
     def _confirm_quit_with_jobs(self, count: int) -> bool:
         """True to quit and cancel. Separate so a test can answer it."""
