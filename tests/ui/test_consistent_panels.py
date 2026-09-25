@@ -505,3 +505,86 @@ def test_nested_busy_restores_the_first_sweeps_buttons(qtbot, tmp_path):
     win._set_busy(False)
     assert btn.isEnabled() and btn.state() == "pending"
     assert reset.isEnabled()
+
+
+# --- Task 7: one activity line per applied step ------------------------------
+# "Color · Δ0.0%" and "Noise Reduction (strong (NoiseX)) · Δ5.7%" each appeared
+# twice in his 16:24 screenshot. `_log_step` has one caller, apply_current's
+# on_result, straight after project.run_step — so a line is a commit. These pin
+# that for every route to a commit, in BOTH threading modes: the fixture's
+# `_async_enabled = False` is a different program, and a double that needs a
+# worker's landing AND the synchronous path would not show up without the pool.
+
+def _no_external_tool(*a, **k):
+    raise AssertionError("a real external tool was reached from a UI test")
+
+
+def _stub_denoise():
+    from dataclasses import replace
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+
+    class _StubNR(NoiseSharpenStep):
+        """Reports NoiseX like the real RC-Astro path, never runs it."""
+        def __init__(self):
+            super().__init__(None, None)
+            self._runner = _no_external_tool
+
+        def apply(self, img, option):
+            self.last_engine = "NoiseX"
+            return replace(img, data=(img.data * 0.95).astype(img.data.dtype))
+    return _StubNR()
+
+
+def _commit_counting(win):
+    commits = []
+    real = win.project.run_step
+
+    def run_step(step, option):
+        commits.append(step.name)
+        return real(step, option)
+    win.project.run_step = run_step
+    return commits
+
+
+def _land(qtbot, win):
+    qtbot.waitUntil(lambda: not win._busy, timeout=10000)
+    qtbot.wait(30)                       # a deferred "Apply and continue" lands after busy
+    qtbot.waitUntil(lambda: not win._busy, timeout=10000)
+
+
+@pytest.mark.parametrize("async_", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("route", ["apply", "apply_then_next", "next_answers_apply"])
+@pytest.mark.parametrize("sid", ["color", "noise_sharpen"])
+def test_each_commit_writes_exactly_one_activity_step_line(
+        qtbot, tmp_path, monkeypatch, sid, route, async_):
+    import nocturne.steps.noise_sharpen as ns
+    win = _open(qtbot, tmp_path)
+    monkeypatch.setattr(ns, "run_cli", _no_external_tool)
+    win._rc_runner = win._bg_runner = _no_external_tool
+    real_step_for = win._step_for
+    monkeypatch.setattr(win, "_step_for", lambda s: _stub_denoise()
+                        if s == "noise_sharpen" else real_step_for(s))
+    win._async_enabled = async_
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    if sid == "color":
+        p.tint_slider.setValue(20); qtbot.wait(120)
+        expected = ["Color", "Colour Tint"]     # R11: a fresh Colour calibrates too
+    else:
+        p.option_box.setCurrentIndex((p.option_box.currentIndex() + 1) % p.option_box.count())
+        expected = ["Noise Reduction"]
+    assert win._has_pending(), "fixture: nothing pending"
+    commits = _commit_counting(win)
+    lines_before = win.activity.entries("step")
+    win._ask_pending = lambda label: "apply"
+    if route in ("apply", "apply_then_next"):
+        p.primary_action.click(); _land(qtbot, win)
+    if route in ("apply_then_next", "next_answers_apply"):
+        win.go_next(); _land(qtbot, win)
+    assert commits == expected, commits
+    new = win.activity.entries("step")[len(lines_before):]
+    assert win.activity.entries("step")[:len(lines_before)] == lines_before
+    # One line per commit, in commit order, and nothing else.
+    assert len(new) == len(commits), new
+    for line, name in zip(new, commits):
+        assert line.split(" ", 1)[1].startswith(name + " "), (line, name)
