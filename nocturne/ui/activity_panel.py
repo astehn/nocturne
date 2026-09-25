@@ -72,6 +72,13 @@ class ActivityPanel(QWidget):
         self.view.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 44, not QTextEdit's own 90: the step list above takes its full 546 px
+        # first, and with a 90 px floor here a 1280x720 window left it 501 px,
+        # so it scrolled and its rows moved as the step changed. Measured
+        # 2026-09-25: left column 624 px at 1280x720 = 546 steps + 6 spacing +
+        # 72 for this box (header 26 + 2 + 44) — about two lines, with the
+        # full history one click away (⤢). At 1280x800 the box is 152 px.
+        self.view.setMinimumHeight(44)
         lay.addWidget(self.view, 1)
 
     def add(self, kind: str, text: str) -> None:

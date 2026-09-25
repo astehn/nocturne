@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
 
@@ -165,6 +165,14 @@ class Stepper(QListWidget):
         """Every row visible with no scrolling. Task 7 sizes the list to this
         so the activity box below it gets the rest of the column."""
         return self.count() * STEP_ROW_H + 2 * self.frameWidth()
+
+    def sizeHint(self) -> QSize:  # noqa: N802 (Qt override)
+        """Ask for every row. QListWidget's own hint is a flat 192 px, so in
+        the left column (activity box has the stretch) the list sat at its
+        240 px floor at every window size, scrolled, and its rows moved as
+        the current step changed. The minimum stays at 240 so the window can
+        still shrink to a 720 px screen."""
+        return QSize(super().sizeHint().width(), self.ideal_height())
 
     def _on_click(self, item) -> None:
         index = self.row(item)

@@ -111,9 +111,11 @@ def _states(win, qtbot):
         if slider is not None:
             v = slider.value()
             slider.setValue(v + 1 if v < slider.maximum() else v - 1)
+            qtbot.wait(120)      # past the 90 ms preview debounce
             _settle(qtbot)
             yield "pending", _geometry(win)
             slider.setValue(v)
+            qtbot.wait(120)
             _settle(qtbot)
             break
 
@@ -127,39 +129,39 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, size):
     qtbot.waitExposed(win)
     _settle(qtbot)
     baseline = _geometry(win)
-    # "rows" is compared separately, against a baseline that is refreshed
-    # every time the CURRENT stage (or the linked/unlinked view) changes,
-    # rather than once against the window-open baseline above: the stepper
-    # is a QListWidget taller than its 240px box, so moving to a different
-    # current stage legitimately scrolls a different set of rows into view —
-    # that is not a regression. What must never happen is the row list
-    # changing WITHOUT the current stage or view-link state changing (a
-    # state like "busy" or "job notice" reordering or reflowing the list
-    # under the user), or a row's own label/position shifting when only the
-    # view-link state changes and the current stage does not.
-    fixed_keys = [k for k in baseline if k != "rows"]
+    # Every key — "rows" included — is compared against this ONE baseline,
+    # taken on the first stage. A per-stage baseline for the rows once hid a
+    # step list stuck at its 240 px floor that scrolled a different window of
+    # rows into view on every step: the user's muscle memory is exactly what
+    # moving rows break, so there is no stage change for which that is fine.
+    # At every size here the whole list fits (Stepper.sizeHint asks for all
+    # 17 rows; the activity box yields down to 72 px at 1280x720), so it must
+    # have nothing to scroll either.
+    assert win.stepper.verticalScrollBar().maximum() == 0, (
+        f"step list scrolls at {size}: range "
+        f"{win.stepper.verticalScrollBar().maximum()}, "
+        f"height {win.stepper.height()} of {win.stepper.ideal_height()}")
     moved = []
     for index, stage in enumerate(list(win._stages)):
         if not stage.enabled:
             continue
         win._go_to(index, user_initiated=False)
         _settle(qtbot)
-        stage_rows = _geometry(win)["rows"]
         for label, geo in _states(win, qtbot):
-            for key in fixed_keys:
+            for key in baseline:
                 if geo[key] != baseline[key]:
                     moved.append(f"{stage.id}/{label}: {key} {baseline[key]} -> {geo[key]}")
-            if geo["rows"] != stage_rows:
-                moved.append(f"{stage.id}/{label}: rows {stage_rows} -> {geo['rows']}")
-    rows_before_toggle = _geometry(win)["rows"]
+    # The linked toggle, pinned to one enabled stage in BOTH modes, so a row
+    # moving here is the toggle's doing and not a stage change's.
+    pinned = next(i for i, s in enumerate(win._stages) if s.id == "stretch")
+    win._go_to(pinned, user_initiated=False)
+    _settle(qtbot)
     for linked in (False, True):
         win._set_view_linked(linked)
         _settle(qtbot)
+        assert win._stage == pinned, f"linked={linked} moved the current stage"
         geo = _geometry(win)
-        for key in fixed_keys:
+        for key in baseline:
             if geo[key] != baseline[key]:
                 moved.append(f"linked={linked}: {key} {baseline[key]} -> {geo[key]}")
-        if geo["rows"] != rows_before_toggle:
-            moved.append(f"linked={linked}: rows {rows_before_toggle} -> {geo['rows']}")
-        rows_before_toggle = geo["rows"]
     assert not moved, "\n".join(moved[:40])
