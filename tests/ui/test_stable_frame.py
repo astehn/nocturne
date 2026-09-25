@@ -35,7 +35,9 @@ def _geometry(win) -> dict:
     return {
         "window": (win.width(), win.height()),
         "canvas": rect(win.image_view),
-        "next": rect(win._next_btn),
+        # Visible too: a hidden widget keeps its last rect, so a rect alone
+        # cannot see Next vanishing on Export (spec §2.8: it stays, disabled).
+        "next": (rect(win._next_btn), win._next_btn.isVisible()),
         "stepper": rect(win.stepper),
         # side_panel.py's own contract: "every zone except the step panel has
         # a FIXED height on every step" — the status slot's size (not just
