@@ -54,7 +54,6 @@ def _states(win, qtbot):
     _settle(qtbot)
 
 
-@pytest.mark.xfail(strict=True, reason="stable frame not built yet — flipped in Task 10")
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
 def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, size):
     win = _window(qtbot, tmp_path)
