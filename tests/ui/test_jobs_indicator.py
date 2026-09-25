@@ -63,22 +63,57 @@ def test_the_width_never_follows_the_text(qtbot, monkeypatch):
     assert widths == [idle_width] * len(widths)
 
 
+def test_the_slot_is_the_fixed_width(qtbot, monkeypatch):
+    from nocturne.ui.jobs_indicator import SLOT_W
+    q, ind = _ind(qtbot, monkeypatch)
+    assert ind.width() == SLOT_W
+
+
 def test_a_long_label_is_elided_with_the_whole_text_in_the_tooltip(qtbot, monkeypatch):
+    """The NAME is shortened, never the state word after it."""
     q, ind = _ind(qtbot, monkeypatch)
     job = _job("Some Extremely Long Target Name Here"); q.enqueue(job)
     q.finished.emit(job, {"output": ""})
     job.state = "done"; q._running = None; q.changed.emit()
-    assert ind.full_text() == "✓ Some Extremely Long Target Name Here ready — open"
+    assert ind.full_text() == "✓ Some Extremely Long Target Name Here ready"
     assert ind.text() != ind.full_text() and "…" in ind.text()
+    assert ind.text().startswith("✓ Some") and ind.text().endswith(" ready")
     assert ind.toolTip() == ind.full_text()
+    assert ind.fontMetrics().horizontalAdvance(ind.text()) <= ind._text_room
 
 
-def test_a_realistic_label_is_shown_whole(qtbot, monkeypatch):
+def test_a_long_running_label_keeps_its_percent(qtbot, monkeypatch):
     q, ind = _ind(qtbot, monkeypatch)
-    job = _job("Andromeda Galaxy"); q.enqueue(job)
+    job = _job("Some Extremely Long Target Name Here"); q.enqueue(job)
+    q.progress.emit(job, 42, "")
+    assert "…" in ind.text() and ind.text().endswith(" 42%")
+
+
+@pytest.mark.parametrize("label", ["M 33", "NGC 7000", "IC 1396A"])
+def test_an_ordinary_label_is_shown_whole(qtbot, monkeypatch, label):
+    q, ind = _ind(qtbot, monkeypatch)
+    job = _job(label); q.enqueue(job)
+    q.progress.emit(job, 100, "")
+    assert ind.text() == f"⟳ {label} 100%" and ind.toolTip() == ""
     q.finished.emit(job, {"output": ""})
     job.state = "done"; q._running = None; q.changed.emit()
-    assert ind.text() == "✓ Andromeda Galaxy ready — open"
+    assert ind.text() == f"✓ {label} ready" and ind.toolTip() == ""
+
+
+def test_the_wording_has_no_filler(qtbot, monkeypatch):
+    """Andreas, 2026-09-25: "⟳ M 33 42%", "⟳ 2 jobs 42%", "✓ M 33 ready",
+    "✗ M 33 failed" — nothing a 140 px slot has to spend on "Stacking" or
+    "— open"."""
+    q, ind = _ind(qtbot, monkeypatch)
+    a, b = _job("M 33"), _job("B")
+    q.enqueue(a)
+    q.progress.emit(a, 42, "")
+    assert ind.text() == "⟳ M 33 42%"
+    q.enqueue(b)
+    assert ind.text() == "⟳ 2 jobs 42%"
+    q.failed.emit(a, "boom")
+    a.state = "failed"; b.state = "failed"; q._running = None; q.changed.emit()
+    assert ind.text() == "✗ M 33 failed"
 
 
 def test_running_shows_label_and_percent(qtbot, monkeypatch):

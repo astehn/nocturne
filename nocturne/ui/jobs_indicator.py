@@ -23,21 +23,20 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
 from .theme import DANGER, SUCCESS, WARNING
 
 
-# The longest texts this button is expected to show whole. It sits at the
-# HEAD of the toolbar, so any change in its width shifts every button after it
-# sideways — measured before this was fixed: Open Image at x 16 idle, 137 with
-# "✓ A ready — open", 219 with a longer label, and a jitter on every percent
-# tick. So the width is set ONCE from these and never follows the text; a
-# longer target name is elided, with the whole text in the tooltip.
-# "Andromeda Galaxy" stands for a long Seestar OBJECT name (16 characters; the
-# fallback "stacked master" is 14).
-_SIZING_TEXTS = (
-    "✓ Andromeda Galaxy ready — open",
-    "⟳ Stacking Andromeda Galaxy 100%",
-    "✗ Andromeda Galaxy failed",
-    "⟳ 2 jobs · 100%",
-    "◌ Stopping…",
-)
+# A FIXED slot. It sits at the HEAD of the toolbar, so any change in its
+# width shifts every button after it sideways — measured before this was
+# fixed: Open Image at x 16 idle, 137 with "✓ A ready — open", 219 with a
+# longer label, and a jitter on every percent tick. So the width never
+# follows the text, and a long target name is elided, whole in the tooltip.
+#
+# 140 px, measured 2026-09-25 at 1280x800 (offscreen, the suite's platform):
+# "Starless Levels…", the newest toolbar tool, stays visible up to a 140 px
+# slot and drops behind the overflow chevron at 150 — and it must stay
+# reachable at the floor (test_toolbar_overflow_at_the_small_screen_floor).
+# Sized for the wording rather than the other way round: "⟳ M 33 42%",
+# "⟳ 2 jobs 42%", "✓ M 33 ready", "✗ M 33 failed", "◌ Stopping…" — no filler
+# words, so ordinary Seestar names fit whole and only long ones elide.
+SLOT_W = 140
 
 
 class JobsIndicator(QToolButton):
@@ -53,6 +52,7 @@ class JobsIndicator(QToolButton):
         self.notices: list[dict] = []
         self._popover: QFrame | None = None
         self._full_text = ""
+        self._label = ""
         self._text_room = 0
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self._fix_width()
@@ -64,29 +64,38 @@ class JobsIndicator(QToolButton):
         self._refresh()
 
     def _fix_width(self) -> None:
-        """Width from the sizing texts in the CURRENT font. Re-measured only
-        when the font changes (an app stylesheet applied after construction),
-        never on the per-state colour change — that must not move anything."""
-        fm = self.fontMetrics()
-        self._text_room = max(fm.horizontalAdvance(t) for t in _SIZING_TEXTS)
+        """The slot is SLOT_W whatever the font; only the room for text inside
+        it is re-measured (the button's own padding, in the current style)."""
+        self.setFixedWidth(SLOT_W)
         shown = self.text()
-        self.setText(max(_SIZING_TEXTS, key=fm.horizontalAdvance))
-        width = self.sizeHint().width()
+        self.setText("")
+        padding = self.sizeHint().width()
         self.setText(shown)
-        self.setFixedWidth(width)
+        self._text_room = max(0, SLOT_W - padding)
 
     def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().changeEvent(event)
         if event.type() == QEvent.Type.FontChange:
             self._fix_width()
-            self._show_text(self._full_text)
+            self._show_text(self._full_text, self._label)
 
-    def _show_text(self, text: str) -> None:
-        self._full_text = text
-        elided = self.fontMetrics().elidedText(
-            text, Qt.TextElideMode.ElideMiddle, self._text_room)
-        self.setText(elided)
-        self.setToolTip(text if elided != text else "")
+    def _show_text(self, text: str, label: str = "") -> None:
+        """Elide the TARGET NAME, never the state: "✓ Andromeda Ga… ready"
+        still says it is ready, where eliding the end would drop exactly the
+        word that matters."""
+        self._full_text, self._label = text, label
+        fm = self.fontMetrics()
+        shown = text
+        if fm.horizontalAdvance(text) > self._text_room:
+            if label and label in text:
+                rest = fm.horizontalAdvance(text.replace(label, "", 1))
+                short = fm.elidedText(label, Qt.TextElideMode.ElideRight,
+                                      max(0, self._text_room - rest))
+                shown = text.replace(label, short, 1)
+            else:
+                shown = fm.elidedText(text, Qt.TextElideMode.ElideRight, self._text_room)
+        self.setText(shown)
+        self.setToolTip(text if shown != text else "")
 
     def full_text(self) -> str:
         """What the button says before elision."""
@@ -126,30 +135,33 @@ class JobsIndicator(QToolButton):
 
     def _refresh(self) -> None:
         out = self._outstanding()
+        label = ""
         if out:
             stopping = [j for j in out if j.state == "cancelled"]
             if stopping and len(out) == 1:
                 text, colour = "◌ Stopping…", WARNING
             elif len(out) == 1:
                 j = out[0]
-                text = f"⟳ Stacking {j.label} {self._pct.get(id(j), 0)}%"
+                label = j.label
+                text = f"⟳ {label} {self._pct.get(id(j), 0)}%"
                 colour = None
             else:
                 running = self._queue.running()
                 pct = self._pct.get(id(running), 0) if running is not None else 0
-                text, colour = f"⟳ {len(out)} jobs · {pct}%", None
+                text, colour = f"⟳ {len(out)} jobs {pct}%", None
         elif self.notices:
             last = self.notices[-1]
+            label = last["label"]
             if last["kind"] == "done":
-                text, colour = f"✓ {last['label']} ready — open", SUCCESS
+                text, colour = f"✓ {label} ready", SUCCESS
             else:
-                text, colour = f"✗ {last['label']} failed", DANGER
+                text, colour = f"✗ {label} failed", DANGER
         else:
             text, colour = "", None
         # Idle: blank and inert, but still occupying its place.
         self.setEnabled(bool(text))
         self.setStyleSheet(f"color: {colour};" if colour else "")
-        self._show_text(text)
+        self._show_text(text, label)
 
     # --- actions ---
     def acknowledge(self, index: int) -> None:
