@@ -231,3 +231,20 @@ def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, size):
         _assert_every_row_shows(win, size)
     finally:
         app.setStyleSheet(before)
+
+
+def test_the_activity_box_gives_up_all_its_room_before_the_step_list(qtbot, tmp_path):
+    """Andreas, 2026-09-25: "if something should scroll in the left column it
+    should be the activity log." At 1280x680 the left column is 584 px: the
+    whole list (546) plus the activity header fits, the old 71 px activity
+    floor did not — the list scrolled while the activity box kept two lines."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 680)
+    win.show()
+    qtbot.waitExposed(win)
+    _settle(qtbot)
+    assert win.height() == 680, "precondition: the window really is this short"
+    assert win.stepper.verticalScrollBar().maximum() == 0
+    assert win.stepper.height() == win.stepper.ideal_height()
+    assert 0 <= win.activity.view.height() < 44

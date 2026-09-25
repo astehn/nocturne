@@ -14,7 +14,8 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
-                               QPushButton, QTextEdit, QVBoxLayout, QWidget)
+                               QPushButton, QSizePolicy, QTextEdit, QVBoxLayout,
+                               QWidget)
 
 from .theme import DANGER, TEXT, TEXT_DIM, WARNING
 
@@ -79,13 +80,14 @@ class ActivityPanel(QWidget):
         # bottom, older ones scroll off the top, the whole history is one
         # click away (⤢). Wheel and trackpad scrolling still work.
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # 44, not QTextEdit's own 90: the step list above takes its full 546 px
-        # first, and with a 90 px floor here a 1280x720 window left it 501 px,
-        # so it scrolled and its rows moved as the step changed. Measured
-        # 2026-09-25: left column 624 px at 1280x720 = 546 steps + 6 spacing +
-        # 72 for this box (header 26 + 2 + 44) — about two lines, with the
-        # full history one click away (⤢). At 1280x800 the box is 152 px.
-        self.view.setMinimumHeight(44)
+        # Nothing: the text view gives up ALL its space before the step list
+        # above loses any (Andreas, 2026-09-25: "if something should scroll
+        # in the left column it should be the activity log"). The panel's
+        # floor is its header row alone; the list keeps its full content
+        # height until the column is shorter than list + header.
+        # setMinimumHeight(0) means "unset" in Qt and falls back to QTextEdit's
+        # own 90 px hint; a vertical Ignored policy drops that hint instead.
+        self.view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         lay.addWidget(self.view, 1)
 
     def add(self, kind: str, text: str) -> None:
