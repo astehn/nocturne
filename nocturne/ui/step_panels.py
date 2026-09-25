@@ -217,6 +217,7 @@ def build_panel(
     option_default: str | None = None,
     denoise_engine_choices: list | None = None,
     denoise_default_engine: str = "rcastro",
+    denoise_engine_current: str | None = None,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -274,6 +275,11 @@ def build_panel(
     lay.addWidget(notes_host)
     w.primary_action = None
     w.apply_btn = None
+    # What this panel's Apply hands its callback, read live — the SAME callable
+    # the Apply connects to, so MainWindow's "do the controls still equal the
+    # commit?" (_controls_match_commit) reads exactly what a press would send
+    # and cannot drift from it. None where a panel commits nothing of its own.
+    w.commit_option = None
     controls, notes = w.controls, w.notes
 
     if stage.kind == "import":
@@ -431,6 +437,15 @@ def build_panel(
         if stage.id in ("noise_sharpen", "ai_denoise") and denoise_engine_choices:
             engine_box = QComboBox()
             engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
+            if denoise_engine_current in denoise_engine_choices:
+                # A revisited step shows the engine it committed with, as the
+                # strength box shows its level (MainWindow._denoise_engine_label).
+                engine_box.setCurrentText(denoise_engine_current)
+            if on_option_change is not None:
+                # The engine is half of what Apply commits: Apply's state has
+                # to hear it move, or an applied step stayed "✓ applied" and
+                # off over a different engine (final review C1).
+                engine_box.currentTextChanged.connect(lambda _t: on_option_change())
             controls.addWidget(QLabel("Engine"))
             controls.addWidget(engine_box)
             w.engine_box = engine_box
@@ -452,6 +467,7 @@ def build_panel(
                 engine = denoise_default_engine
             return {"engine": engine, "level": level}
 
+        w.commit_option = _noise_apply_option
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(_noise_apply_option()))
         controls.addWidget(QLabel("Strength"))
@@ -523,13 +539,13 @@ def build_panel(
             photometric = method_box.currentText().startswith("Photometric")
             return ColorSettings(method="photometric" if photometric else "sky")
 
-        # The ONE visible action on Colour (spec §2.4). It keeps committing the
-        # method only until MainWindow wires it to _apply_current_step, which
-        # commits method and tint in _apply_sequence's order.
+        # The ONE visible action on Colour (spec §2.4). Built unconnected:
+        # MainWindow connects it to _apply_colour_step, which commits method
+        # and tint in _apply_sequence's order. The method's own commit is the
+        # hidden apply_method_btn below.
         apply_btn = ApplyButton("Apply Color")
         apply_btn.setEnabled(apply_enabled)
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(_color_option()))
+        w.commit_option = _color_option
         # Colour cast, two bipolar sliders centred on 0 (double-click resets).
         #
         # Why these exist: Seestar data arrives with a magenta cast that is the
@@ -598,10 +614,6 @@ def build_panel(
         # presses it to commit the tint, but the step shows ONE Apply. Parented
         # to the card so it dies with it.
         apply_tint_btn = QPushButton("Apply Tint", w)
-        # Without this, theme.py's `QPushButton#primary[pending=...]` selector
-        # never matches it at all — _sync_step_controls sets the Qt property
-        # every time regardless, so the button silently never changes colour.
-        apply_tint_btn.setObjectName("primary")
         apply_tint_btn.setEnabled(apply_enabled)
         if on_apply_tint is not None:
             apply_tint_btn.clicked.connect(
@@ -634,14 +646,12 @@ def build_panel(
         slider.valueChanged.connect(_emit_stretch)
         apply_btn = ApplyButton("Apply Stretch")
         apply_btn.setEnabled(apply_enabled)
+        # A DICT, not a bare float: the stretch now carries its MECHANISM
+        # as well as its amount, and both have to reach the commit.
+        w.commit_option = lambda: {"amount": slider.value() / 100.0,
+                                   "linked": bool(w.stretch_linked)}
         if on_apply is not None:
-            # A DICT, not a bare float: the stretch now carries its MECHANISM
-            # as well as its amount, and both have to reach the commit. Anchored
-            # on the Visual-stretch comment below, because this exact Apply line
-            # appears in three panels and a bare replace patched all three.
-            apply_btn.clicked.connect(
-                lambda: on_apply({"amount": slider.value() / 100.0,
-                                  "linked": bool(w.stretch_linked)}))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         # Optional, and BELOW the slider: the slider keeps working untouched
         # for anyone who already knows the number they want. The picker is for
         # the case a number cannot answer — four of Andreas's own targets wanted
@@ -702,8 +712,9 @@ def build_panel(
             "On data with no cast this makes the sky greener, not less green."))
         apply_btn = ApplyButton("Apply De-green Sky")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: rg_slider.value() / 100.0
         if on_remove_green is not None:
-            apply_btn.clicked.connect(lambda: on_remove_green(rg_slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_remove_green(w.commit_option()))
         w.rg_slider = rg_slider
         w.apply_btn = w.primary_action = apply_btn
 
@@ -751,11 +762,10 @@ def build_panel(
 
         apply_btn = ApplyButton("Apply Levels")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: (black.value() / BLACK_STEPS, gamma.value() / 100.0,
+                                   white.value() / 100.0)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(
-                (black.value() / BLACK_STEPS, gamma.value() / 100.0,
-                 white.value() / 100.0)
-            ))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
 
         black_row = QHBoxLayout()
         black_row.addWidget(QLabel("Black point"))
@@ -819,8 +829,9 @@ def build_panel(
 
         apply_btn = ApplyButton("Apply Curves")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = editor.points
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(editor.points()))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
 
         w.curve_editor = editor
         w.reset_btn = reset_btn
@@ -847,9 +858,9 @@ def build_panel(
         neb.valueChanged.connect(_emit_sat)
         apply_btn = ApplyButton("Apply Saturation")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: (slider.value() / 100.0, neb.value() / 100.0)
         if on_sat_apply is not None:
-            apply_btn.clicked.connect(
-                lambda: on_sat_apply(slider.value() / 100.0, neb.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_sat_apply(*w.commit_option()))
         sat_row = QHBoxLayout()
         sat_row.addWidget(QLabel("Saturation (mute ← native → boost)"))
         sat_row.addWidget(sat_val)
@@ -918,8 +929,9 @@ def build_panel(
 
         slider.valueChanged.connect(_emit_fringe)
         apply_btn = ApplyButton("Apply De-green Stars")
+        w.commit_option = lambda: slider.value() / 100.0
         if on_fringe_apply is not None:
-            apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_fringe_apply(w.commit_option()))
         # Start disabled — main_window enables once the (slow) split is ready.
         slider.setEnabled(False)
         apply_btn.setEnabled(False)
@@ -946,8 +958,9 @@ def build_panel(
         slider.valueChanged.connect(_emit_recover)
         apply_btn = ApplyButton("Apply Recover Core")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: slider.value() / 100.0
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         rec_row = QHBoxLayout()
         rec_row.addWidget(QLabel("Strength (off → full)"))
         rec_row.addWidget(recover_val)
@@ -970,8 +983,9 @@ def build_panel(
         slider.valueChanged.connect(_emit_lc)
         apply_btn = ApplyButton("Apply Local Contrast")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: slider.value() / 100.0
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         lc_row = QHBoxLayout()
         lc_row.addWidget(QLabel("Strength (off → full)"))
         lc_row.addWidget(lc_val)
@@ -995,8 +1009,9 @@ def build_panel(
         w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_sr)
         apply_btn = ApplyButton("Apply Star Reduction")
+        w.commit_option = lambda: slider.value() / 100.0
         if on_sr_apply is not None:
-            apply_btn.clicked.connect(lambda: on_sr_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_sr_apply(w.commit_option()))
         # Start disabled — main_window enables once the (slow) StarX split is ready.
         slider.setEnabled(False)
         apply_btn.setEnabled(False)
@@ -1172,12 +1187,11 @@ def build_panel(
     # and the shared tail runs last, so reusing the name would silently clobber
     # it and the curve reset would start resetting the whole step.
     #
-    # Built here but NOT laid out: MainWindow pins it under the main action in
-    # the side panel's action slot, behind the slot's divider (SidePanel.
-    # set_actions) — Andreas, 2026-09-25, reversing the 2026-09-13 call to keep
-    # it beside the controls: Apply and Reset in the same place on every step
-    # is "about muscle memory again". The divider still says "below this line
-    # is recovery, not the main action", which is what he asked for then.
+    # Built here but NOT laid out: MainWindow pins it at the right of the main
+    # action, on the one row of the side panel's action slot (SidePanel.
+    # set_actions; Andreas, 2026-09-25 19:30, "one row", no divider) —
+    # reversing the 2026-09-13 call to keep it beside the controls: Apply and
+    # Reset in the same place on every step is "about muscle memory again".
     #
     # The "Press Space to toggle before and after" line that sat above it is
     # gone from every panel (spec §2.6: Space, F and Escape move to a Keyboard

@@ -18,19 +18,22 @@ from .theme import BG_1, BG_2, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT, WARNING
 STATES = ("pending", "not_run", "applied", "no_change", "busy")
 _GREEN = {"pending", "not_run"}
 # States in which pressing would do nothing (or nothing yet): the button is off.
-# `applied` joined on 2026-09-25 (Andreas): pressing an applied, unchanged step
-# re-ran the tool on the same image and logged an identical second line —
-# minutes of RC-Astro for Noise Reduction. Change a control, or Reset step.
-_OFF = {"applied", "no_change", "busy"}
+# `applied` is off too, but only when the caller has VERIFIED that the controls
+# are exactly what was committed (`set_state(..., unchanged=True)`; Andreas,
+# 2026-09-25 23:27): pressing then re-ran the tool on the same image and logged
+# an identical second line — minutes of RC-Astro for Noise Reduction. An
+# unverified `applied` stays live (ruling R13): failing closed blocked real edits
+# the comparison could not see, failing open costs at most an identical re-run.
+_OFF = {"no_change", "busy"}
+# No "busy" entries: busy keeps the previous state's words (`_shown`, R9).
 _STATUS = {
     "pending": "● changes not applied",
     "not_run": "not run yet",
     "applied": "✓ applied",
     "no_change": "no changes",
-    "busy": "",
 }
 _CHIP = {"pending": "not applied", "not_run": "not run", "applied": "✓ applied",
-         "no_change": "no changes", "busy": ""}
+         "no_change": "no changes"}
 
 # Review Focus 1: every chip in look B needs its OWN opaque fill — a chip with
 # no fill just puts its text directly on the button body, and `not_run` sits
@@ -48,7 +51,6 @@ _CHIP = {"pending": "not applied", "not_run": "not run", "applied": "✓ applied
 #                                          with pending's amber.
 #   BG_2/SUCCESS      (applied) 5.81:1
 #   BG_1/TEXT_DIM     (no_change) 5.12:1
-# (busy's chip text is "" — nothing is painted, so no pair is needed.)
 _ON_GREEN_INK = "#052611"
 _DARK_INK = "#1a1d23"
 _CHIP_STYLE = {
@@ -128,9 +130,13 @@ class ApplyButton(QPushButton):
         self.setFixedHeight(height)
         self.update()
 
-    def set_state(self, state: str) -> None:
+    def set_state(self, state: str, *, unchanged: bool = False) -> None:
+        """`unchanged` is only for "applied": True when the caller has verified
+        the controls equal the commit, which is what switches the button off."""
         if state not in STATES:
             raise ValueError(state)
+        if unchanged and state != "applied":
+            raise ValueError(f"unchanged only qualifies 'applied', not {state!r}")
         self._state = state
         if state != "busy":
             self._shown = state
@@ -138,7 +144,7 @@ class ApplyButton(QPushButton):
         if self.property("pending") != ("true" if green else "false"):
             self.setProperty("pending", "true" if green else "false")
             self.style().unpolish(self); self.style().polish(self)
-        super().setEnabled(self._available and state not in _OFF)
+        super().setEnabled(self._available and state not in _OFF and not unchanged)
         self.setToolTip(f"{self._label} — {self.status_text()}" if self.status_text() else self._label)
         self.update()
 
@@ -169,16 +175,12 @@ class ApplyButton(QPushButton):
         small = self.font(); small.setPointSizeF(max(8.0, small.pointSizeF() - 2))
         return bold, small
 
-    def _chip_rect(self, r: QRect, small_fm: QFontMetrics) -> QRect | None:
-        """Look B's chip pill, in `r`'s coordinates — None when the current
-        state paints no chip (busy)."""
-        chip = _CHIP[self._shown]
-        if not chip:
-            return None
-        cw = small_fm.horizontalAdvance(chip) + 2 * _CHIP_HPAD
+    def _chip_rect(self, r: QRect, small_fm: QFontMetrics) -> QRect:
+        """Look B's chip pill, in `r`'s coordinates."""
+        cw = small_fm.horizontalAdvance(_CHIP[self._shown]) + 2 * _CHIP_HPAD
         return QRect(r.right() - cw - _CHIP_RIGHT_MARGIN, r.center().y() - 10, cw, 20)
 
-    def chip_geometry(self) -> QRect | None:
+    def chip_geometry(self) -> QRect:
         """The chip's rect at the button's current size/state/font — public
         so a test can sample the ACTUAL painted pixels at the exact rect
         paintEvent draws into, rather than trust this class's own numbers."""
@@ -192,8 +194,7 @@ class ApplyButton(QPushButton):
         bold_font, small_font = self._fonts()
         bold_fm = QFontMetrics(bold_font)
         small_fm = QFontMetrics(small_font)
-        chip = _CHIP[self._shown]
-        chip_w = (small_fm.horizontalAdvance(chip) + 2 * _CHIP_HPAD) if chip else 0
+        chip_w = small_fm.horizontalAdvance(_CHIP[self._shown]) + 2 * _CHIP_HPAD
         needed = _LABEL_INSET + bold_fm.horizontalAdvance(self._label) + _CHIP_GAP + chip_w + _CHIP_RIGHT_MARGIN
         return needed <= self.width()
 
@@ -224,8 +225,9 @@ class ApplyButton(QPushButton):
         # palette().buttonText() tracks theme.py's #052611 (green states) or
         # TEXT (plain states) once the "pending" property has been polished —
         # legible against both the green and the plain body. Disabled states
-        # (no_change/busy) fall back to TEXT_FAINT explicitly rather than
-        # trusting a stylesheet re-polish that setEnabled() may not trigger.
+        # (no_change, busy, an unchanged applied) fall back to TEXT_FAINT
+        # explicitly rather than trusting a stylesheet re-polish that
+        # setEnabled() may not trigger.
         fg = self.palette().buttonText().color() if self.isEnabled() else QColor(TEXT_FAINT)
         if self._look == "A":
             top = QRect(r.x(), r.y() + 5, r.width(), fm.height())
@@ -233,7 +235,9 @@ class ApplyButton(QPushButton):
             p.setFont(bold_font)
             p.drawText(top, Qt.AlignmentFlag.AlignCenter, self._label)
             p.setFont(small_font)
-            p.setPen(QColor(SUCCESS) if self._state == "applied" else fg)
+            # SUCCESS only while pressable: a disabled "✓ applied" is plain and
+            # dim (spec §4), or its green reads as "press me".
+            p.setPen(QColor(SUCCESS) if self._state == "applied" and self.isEnabled() else fg)
             bottom = QRect(r.x(), top.bottom() + 1, r.width(), r.height() - top.height() - 6)
             p.drawText(bottom, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                        self.status_text())
@@ -242,13 +246,11 @@ class ApplyButton(QPushButton):
             p.drawText(r.adjusted(_LABEL_INSET, 0, 0, 0),
                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
             cr = self._chip_rect(r, small_fm)
-            if cr is not None:
-                chip = _CHIP[self._shown]
-                fill, text_colour = _CHIP_STYLE[self._shown]
-                p.setRenderHint(QPainter.RenderHint.Antialiasing)
-                p.setBrush(QColor(fill)); p.setPen(Qt.PenStyle.NoPen)
-                p.drawRoundedRect(cr, 10, 10)
-                p.setPen(QColor(text_colour))
-                p.setFont(small_font)
-                p.drawText(cr, Qt.AlignmentFlag.AlignCenter, chip)
+            fill, text_colour = _CHIP_STYLE[self._shown]
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setBrush(QColor(fill)); p.setPen(Qt.PenStyle.NoPen)
+            p.drawRoundedRect(cr, 10, 10)
+            p.setPen(QColor(text_colour))
+            p.setFont(small_font)
+            p.drawText(cr, Qt.AlignmentFlag.AlignCenter, _CHIP[self._shown])
         p.end()

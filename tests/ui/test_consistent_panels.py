@@ -726,21 +726,32 @@ def test_reset_step_still_works_on_an_applied_step(qtbot, tmp_path, monkeypatch)
     assert win._panel.apply_btn.state() == "no_change"
 
 
-def test_revisited_applied_step_back_where_found_is_applied_and_off(qtbot, tmp_path):
-    """R10 (b) under the new rule. The INTENDED consequence: from a revisited
-    applied step (rebuilt at its defaults), re-applying the default is reached
-    by Reset step or via a different value — not by pressing Apply at the
-    value the panel opened on."""
+def test_revisited_recover_core_at_its_default_over_a_commit_is_live_and_applies_it(
+        qtbot, tmp_path):
+    """Ruling R13, replacing the 23:27 reading of R10 (b). Applied at 0.30, the
+    step is revisited and rebuilt at 0: that is NOT the commit, so Apply is
+    live (plain — nothing is pending, and Next must not nag), and pressing it
+    commits 0. Only a verified match switches Apply off."""
     win = _applied_recover_core(qtbot, tmp_path)
     win._go_to_id("levels", user_initiated=False); qtbot.wait(20)
     win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
     s = win._panel.recover_slider
+    assert s.value() == 0, "precondition: a revisited panel shows its defaults"
     s.setValue(10); qtbot.wait(20)
     s.setValue(0); qtbot.wait(20)
+    btn = win._panel.apply_btn
+    assert btn.state() == "applied" and btn.property("pending") == "false"
+    assert btn.isEnabled(), "0 over a 0.30 commit is a real edit; Apply was off"
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    win.go_next()
+    assert not asked, "R10: Next asked about a slider put back where it was found"
+    assert win.current_stage_id() != "recover_core"
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    assert win.project.entries()[-1] == ("Recover Core", pytest.approx(0.0))
     assert win._panel.apply_btn.state() == "applied"
-    assert not win._panel.apply_btn.isEnabled()
-    s.setValue(20); qtbot.wait(20)
-    assert win._panel.apply_btn.state() == "pending" and win._panel.apply_btn.isEnabled()
+    assert not win._panel.apply_btn.isEnabled(), "now verified: 0 is the commit"
 
 
 def test_enhancements_and_export_have_no_state_driven_apply(qtbot, tmp_path):
@@ -774,3 +785,277 @@ def test_a_second_press_on_an_applied_step_commits_nothing(
     _apply_and_land(qtbot, win)
     assert commits == (["Color"] if sid == "color" else ["Noise Reduction"]), commits
     assert len(win.activity.entries("step")) == len(lines_before) + 1
+
+
+# --- final review C1/I1/I2, ruling R13 --------------------------------------
+# Apply is off in "applied" ONLY when the step's whole current option verifiably
+# equals the committed one (`_controls_match_commit`). The pending check behind
+# the colour never saw the engine box, a fresh crop box or the stretch linkage,
+# and using it to disable Apply blocked those edits outright.
+
+_PROCESS = ("background", "deconvolution", "noise_sharpen", "ai_denoise")
+_MODELS = [("v6", "/nonexistent/v6.onnx"), ("v7", "/nonexistent/v7.onnx")]
+
+
+def _no_tools(win, monkeypatch, *, engines=False, models=False):
+    """Every external tool fails loudly if reached; the process steps compute
+    a stub instead. `engines` configures GraXpert AND RC-Astro (the engine box
+    exists); `models` installs two Nocturne NR models (Linear Denoise exists)."""
+    from dataclasses import replace
+    import nocturne.steps.noise_sharpen as ns
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(ns, "run_cli", _no_external_tool)
+    win._rc_runner = win._bg_runner = _no_external_tool
+    if engines:
+        monkeypatch.setattr(mw, "graxpert_valid", lambda s: True)
+        monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
+    if models:
+        import nocturne.core.denoise_model as dm
+        monkeypatch.setattr(dm, "usable_external_models", lambda: list(_MODELS))
+        win._rebuild_stages()
+    real_step_for = win._step_for
+
+    def step_for(sid):
+        step = real_step_for(sid)
+        if sid in _PROCESS:
+            def apply(img, option, _step=step):
+                _step.last_engine = "stub"
+                return replace(img, data=(img.data * 0.97).astype(img.data.dtype))
+            step.apply = apply
+            step._runner = _no_external_tool
+        return step
+    monkeypatch.setattr(win, "_step_for", step_for)
+
+
+def _other_engine(win):
+    """An engine entry that really runs something else. Not simply the next
+    entry: "Default" and "RC-Astro" are the same engine under the default
+    setting, and the button is right to stay off between them."""
+    box = win._panel.engine_box
+    items = [box.itemText(i) for i in range(box.count())]
+    box.setCurrentText("GraXpert" if "GraXpert" in items else items[1])
+
+
+def _off(btn):
+    return btn.state() == "applied" and not btn.isEnabled()
+
+
+@pytest.mark.parametrize("async_", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
+def test_switching_the_engine_after_an_apply_leaves_apply_live(
+        qtbot, tmp_path, monkeypatch, sid, async_):
+    """C1.1: apply, choose the other engine — Apply read "✓ applied" and was
+    off, and nothing even re-read it. Pressing must commit the new engine."""
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=True, models=True)
+    win._async_enabled = async_
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    assert getattr(p, "engine_box", None) is not None and p.engine_box.count() >= 2, \
+        "fixture: no engine box"
+    commits = _commit_counting(win)
+    _apply_and_land(qtbot, win)
+    first = win.project.entries()[-1][1]
+    assert _off(p.apply_btn), "fixture: an unchanged applied step must be off"
+    _other_engine(win); qtbot.wait(20)
+    assert p.apply_btn.isEnabled(), "a different engine is a real edit; Apply was off"
+    assert p.apply_btn.state() == "applied"         # colour: nothing pending
+    _apply_and_land(qtbot, win)
+    name = "Noise Reduction" if sid == "noise_sharpen" else "Linear Denoise"
+    assert commits == [name, name], commits
+    second = win.project.entries()[-1][1]
+    assert second["level"] == first["level"] and second["engine"] != first["engine"]
+    assert _off(win._panel.apply_btn), "the new engine is now the commit"
+
+
+def _crop_box(win, inset):
+    h, w = win.project.current().data.shape[:2]
+    win.image_view.set_crop_overlay(
+        True, content_bounds=(inset, h - inset, inset, w - inset), aspect_ratio=None)
+    _reveal_crop_box(win)
+
+
+@pytest.mark.parametrize("first", ["Rotate", "Flip H", "Crop"])
+def test_a_fresh_crop_box_after_a_crop_stage_commit_is_live_and_pending(
+        qtbot, tmp_path, first):
+    """C1.2: after Rotate, Flip or a first crop, the fresh (detected) box read
+    "applied" and was off — the auto-detected crop could not be applied."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    if first == "Rotate":
+        win._rotate()
+    elif first == "Flip H":
+        win._flip_h()
+    else:
+        _crop_box(win, 1)
+        win._panel.apply_btn.click(); qtbot.wait(20)
+    assert [n for n, _ in win.project.entries()] == [first], "fixture"
+    _crop_box(win, 2)
+    assert not win.image_view.crop_box_modified(), "fixture: an untouched fresh box"
+    btn = win._panel.apply_btn
+    assert btn.isEnabled(), f"a fresh inset box after {first} is a real crop; Apply was off"
+    assert btn.state() == "pending"
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    win.go_next()
+    assert not asked, "an untouched fresh box still has no work to lose"
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    _crop_box(win, 2)
+    h, w = win.project.current().data.shape[:2]
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    assert [n for n, _ in win.project.entries()] == [first, "Crop"]
+    assert win.project.current().data.shape[:2] == (h - 4, w - 4)
+
+
+def test_a_full_frame_box_after_a_crop_is_off(qtbot, tmp_path):
+    """The verified side for Crop: a whole-frame box over the committed image
+    makes `_apply_crop` return, so there is nothing to press."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    win._rotate()
+    _crop_box(win, 0)
+    assert _off(win._panel.apply_btn)
+
+
+@pytest.mark.parametrize("engines", [False, True], ids=["one_engine", "both_engines"])
+def test_a_revisited_noise_reduction_shows_its_committed_level_and_engine(
+        qtbot, tmp_path, monkeypatch, engines):
+    """I1: the committed option is a dict, so the box fell back to the default
+    ("medium") over an image holding "strong", under a disabled "✓ applied"."""
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=engines)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    default = p.option_box.currentText()
+    other = next(t for t in (p.option_box.itemText(i) for i in range(p.option_box.count()))
+                 if t != default)
+    p.option_box.setCurrentText(other)
+    if engines:
+        p.engine_box.setCurrentText("GraXpert")
+    _apply_and_land(qtbot, win)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    assert p.option_box.currentText() == other, "the box misreports the committed level"
+    if engines:
+        assert p.engine_box.currentText() == "GraXpert"
+    assert _off(p.apply_btn), "the controls ARE the commit"
+    assert not win._has_pending()
+    p.option_box.setCurrentText(default); qtbot.wait(20)
+    assert p.apply_btn.isEnabled() and p.apply_btn.state() == "pending"
+
+
+def test_stretch_linked_then_unlinked_leaves_apply_live(qtbot, tmp_path):
+    """I2: the committed stretch carries `linked`; choosing Unlinked at Import
+    and coming back read "applied" and off."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert win.project.entries()[-1][1]["linked"] is True, "fixture"
+    assert _off(win._panel.apply_btn)
+    win._go_to_id("load", user_initiated=False); qtbot.wait(20)
+    win._set_view_linked(False)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    btn = win._panel.apply_btn
+    assert btn.isEnabled(), "an unlinked stretch over a linked commit is a real edit"
+    btn.click(); qtbot.wait(50)
+    assert win.project.entries()[-1][0] == "Stretch"
+    assert win.project.entries()[-1][1]["linked"] is False
+    assert _off(win._panel.apply_btn)
+
+
+# The audit: every step, every control that feeds its commit. After an apply the
+# controls ARE the commit (off); moving any one of them must leave Apply live.
+
+def _stretch_first(win, qtbot):
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(50)
+
+
+def _pick(box):
+    box.setCurrentIndex((box.currentIndex() + 1) % box.count())
+
+
+def _curve_matrix_change(win):
+    from nocturne.core.curves import curve_key
+    pts = win._panel.curve_editor.points()
+    win._on_curves_dialog_apply({curve_key("rgb", "all"): list(pts),
+                                 curve_key("r", "all"): [(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)]})
+
+
+# sid -> (needs a stretch first, set a committed value, {control: change it})
+_AUDIT = {
+    "crop": (False, lambda w: (_crop_box(w, 1),
+                               w.image_view._geometry_changed()),
+             {"box": lambda w: _crop_box(w, 2)}),
+    "background": (False, lambda w: None,
+                   {"strength": lambda w: _pick(w._panel.option_box)}),
+    "deconvolution": (False, lambda w: None,
+                      {"strength": lambda w: _pick(w._panel.option_box)}),
+    "noise_sharpen": (False, lambda w: None,
+                      {"strength": lambda w: _pick(w._panel.option_box),
+                       "engine": _other_engine}),
+    "ai_denoise": (False, lambda w: None,
+                   {"strength": lambda w: _pick(w._panel.option_box),
+                    "engine": _other_engine}),
+    "color": (False, lambda w: None,
+              {"method": lambda w: _pick(w._panel.method_box),
+               "tint": lambda w: w._panel.tint_slider.setValue(20),
+               "temperature": lambda w: w._panel.temp_slider.setValue(20)}),
+    "stretch": (False, lambda w: None,
+                {"amount": lambda w: w._panel.stretch_slider.setValue(
+                    w._panel.stretch_slider.value() + 5),
+                 "linked": lambda w: w._apply_picked_stretch(
+                     {"amount": w._panel.stretch_slider.value() / 100.0,
+                      "linked": False})}),
+    "remove_green": (True, lambda w: w._panel.rg_slider.setValue(40),
+                     {"strength": lambda w: w._panel.rg_slider.setValue(60)}),
+    "recover_core": (True, lambda w: w._panel.recover_slider.setValue(30),
+                     {"strength": lambda w: w._panel.recover_slider.setValue(50)}),
+    "levels": (True, lambda w: w._panel.black_slider.setValue(3),
+               {"black": lambda w: w._panel.black_slider.setValue(6),
+                "midtones": lambda w: w._panel.gamma_slider.setValue(120),
+                "white": lambda w: w._panel.white_slider.setValue(90),
+                "auto": lambda w: w._panel.auto_btn.click()}),
+    "curves": (True, lambda w: w._panel.curve_editor.set_points(
+                   [(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)]),
+               {"rgb_curve": lambda w: w._panel.curve_editor.set_points(
+                    [(0.0, 0.0), (0.3, 0.5), (1.0, 1.0)]),
+                "channel_curves": _curve_matrix_change}),
+    "saturation": (True, lambda w: w._panel.sat_slider.setValue(70),
+                   {"saturation": lambda w: w._panel.sat_slider.setValue(80),
+                    "nebula": lambda w: w._panel.neb_slider.setValue(30)}),
+    "green_fringe": (True, lambda w: w._panel.fringe_slider.setValue(60),
+                     {"amount": lambda w: w._panel.fringe_slider.setValue(80)}),
+    "local_contrast": (True, lambda w: w._panel.lc_slider.setValue(30),
+                       {"strength": lambda w: w._panel.lc_slider.setValue(50)}),
+    "star_reduction": (True, lambda w: w._panel.sr_slider.setValue(30),
+                       {"amount": lambda w: w._panel.sr_slider.setValue(50)}),
+}
+
+
+def test_the_audit_covers_every_stage_with_an_apply():
+    from nocturne.ui.pipeline import path_stages
+    import nocturne.ui.pipeline as pl
+    ids = {s.id for s in path_stages(include=frozenset(pl._OPTIONAL))}
+    assert ids - {"load", "enhancements", "export"} == set(_AUDIT)
+
+
+@pytest.mark.parametrize("sid,control", [(sid, c) for sid, (_, _, cs) in _AUDIT.items()
+                                         for c in cs])
+def test_every_control_that_feeds_a_commit_leaves_an_applied_apply_live(
+        qtbot, tmp_path, monkeypatch, sid, control):
+    needs_stretch, set_value, controls = _AUDIT[sid]
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=sid in _PROCESS, models=sid == "ai_denoise")
+    if needs_stretch:
+        _stretch_first(win, qtbot)
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    set_value(win); qtbot.wait(20)
+    n = len(win.project.entries())
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert len(win.project.entries()) == n + 1, f"fixture: {sid} did not commit"
+    assert _off(win._panel.apply_btn), f"{sid}: the controls ARE the commit, Apply must be off"
+    controls[control](win); qtbot.wait(30)
+    btn = win._panel.apply_btn
+    assert btn.isEnabled(), f"{sid}/{control}: a changed control left Apply off"

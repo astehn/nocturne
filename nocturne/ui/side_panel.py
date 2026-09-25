@@ -1,8 +1,10 @@
 """The right column as fixed zones around one scrolling middle.
 
-Every zone except the step panel has a FIXED height on every step, and the
-step panel scrolls inside itself — so the panel's top edge and Next never
-move, and no step can push the window taller. Before this, the column grew
+Every zone has the same height on every step, and the step panel scrolls
+inside itself — so the panel's top edge and Next never move, and no step can
+push the window taller. Only the histogram and the step zone share their room,
+split by the window's height alone (the histogram yields first on a short
+window, `_rebalance`); every other zone is fixed. Before this, the column grew
 with its tallest content: Curves grew the whole window ~115 px and it never
 shrank back, and the busy/warning lines grew upward and moved everything
 above them (Andreas' screenshots, 2026-09-25; spec §4.2).

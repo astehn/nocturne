@@ -148,6 +148,11 @@ def _same_option(a, b) -> bool:
     # testing removed it with no test noticing, because `==` already answers.)
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         return len(a) == len(b) and all(_same_option(x, y) for x, y in zip(a, b))
+    # Stretch ({"amount","linked"}), Noise Reduction ({"engine","level"}) and
+    # Curves (a matrix of point lists) commit dicts: same keys, and each value
+    # by the rules above, so a float inside a dict gets the same tolerance.
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same_option(a[k], b[k]) for k in a)
     try:
         return bool(a == b)
     except Exception:                       # pragma: no cover - defensive
@@ -2532,18 +2537,15 @@ class MainWindow(QMainWindow):
         the tint the user set, so Color's targets are whichever of its hidden
         buttons match what is actually pending.
 
-        Empty whenever `self._busy`: `_set_busy` disables only
-        `self._panel.apply_btn`, not Color's `apply_tint_btn`, so that
-        stayed clickable during any unrelated busy op (a plate solve, Auto
-        Enhance, Save Project). Offered as the prompt's DEFAULT button
-        there, pressing it clicked a button whose own handler
-        (`_apply_tint_step`) early-returns on `self._busy` — nothing
-        commits, `_go_to` still defers the nav on the non-empty list, and
-        when busy clears `_has_pending()` is still True so
-        `_land_deferred_nav` drops it: no commit, no navigation, no
-        warning. Checked here rather than in every panel's own button state,
-        so the prompt's offer can't be honest in one place and wrong in
-        another.
+        Empty whenever `self._busy`. Color's hidden `apply_tint_btn` once
+        stayed clickable during an unrelated busy op (a plate solve, Auto
+        Enhance, Save Project) — the busy gate then disabled only the one
+        Apply — and, offered as the prompt's DEFAULT button, pressing it
+        clicked a handler (`_apply_tint_step`) that early-returns on
+        `self._busy`: no commit, no navigation, no warning. The gate now
+        sweeps the whole card and the action slot, but the answer is still
+        checked here rather than in every panel's own button state, so the
+        prompt's offer can't be honest in one place and wrong in another.
         """
         if self._busy:
             return []
@@ -3126,15 +3128,39 @@ class MainWindow(QMainWindow):
         land on the step's default of "strong". Reading the history the other
         way — no entry therefore "off" — is worse: it is right for the user who
         chose "off" and wrong for every freshly-opened image, and it would also
-        switch off the `never_applied` green that exists to say "this step
-        needs pressing". One stage after one choice keeps a stale reading;
-        three stages after every commit no longer do.
+        make a never-applied Background read `applied` instead of the green
+        `not_run` that says "this step needs pressing". One stage after one
+        choice keeps a stale reading; the other process stages, after every
+        commit, no longer do.
+
+        Noise Reduction and Linear Denoise commit `{"engine", "level"}`; the
+        box shows the level (the engine box is seeded by
+        `_denoise_engine_label`). Reading only a bare string left a revisited
+        "strong" showing "medium" (final review I1).
         """
         step = self._step_for(stage_id)
         committed = self._committed_option(stage_id)
+        if isinstance(committed, dict):
+            committed = committed.get("level")
         if isinstance(committed, str) and committed in step.options():
             return committed
         return step.default_option()
+
+    def _denoise_engine_label(self, stage_id: str, choices) -> str | None:
+        """The engine box entry that re-commits this step's committed engine,
+        so a revisited Noise Reduction / Linear Denoise shows what it ran with.
+        None when there is no such entry (the box then keeps its first entry,
+        and Apply stays live because the two no longer match)."""
+        committed = self._committed_option(stage_id)
+        if not choices or not isinstance(committed, dict):
+            return None
+        engine = committed.get("engine")
+        if engine == self.settings.denoise_engine and "Default" in choices:
+            return "Default"
+        label = {"graxpert": "GraXpert", "rcastro": "RC-Astro"}.get(engine)
+        if label is None and isinstance(engine, str) and engine.startswith("nr:"):
+            label = f"Nocturne NR ({engine[3:]})"
+        return label if label in choices else None
 
     def _committed_option(self, stage_id: str) -> object | None:
         """The option recorded by this stage's last commit, or None if it has
@@ -3282,7 +3308,14 @@ class MainWindow(QMainWindow):
         untouched panel is a proven no-op (NOOP_AT_DEFAULT) with nothing
         committed — disabled, so no Δ0.0% step is ever recorded. A step with a
         commit is never `no_change`: dragged back to the no-op value it is
-        `pending` (see `_slot_is_the_commit`), untouched it is `applied`.
+        `pending` (see `_slot_is_the_commit`), otherwise it is `applied`.
+
+        `applied` says what the image holds, not that pressing is pointless:
+        the button is off only when `_controls_match_commit` also verifies the
+        controls ARE that commit (`_sync_step_controls`; ruling R13). The
+        pending check behind the colour cannot see every control (the engine
+        box, a revisited panel at its defaults), and letting it disable Apply
+        blocked real edits (final review C1).
 
         `pending` is asked of the current step only: its controls are the only
         ones that exist.
@@ -3290,6 +3323,16 @@ class MainWindow(QMainWindow):
         if self._busy:
             return "busy"
         if sid == self.current_stage_id() and self._has_pending():
+            return "pending"
+        if (sid == "crop" and sid == self.current_stage_id()
+                and self.image_view.crop_box_visible()
+                and not self._crop_box_is_full_frame()
+                and self._step_has_commit(sid)):
+            # A shown box that is not the whole frame proposes a crop the
+            # image does not hold: every crop-stage commit (Crop, Rotate,
+            # Flip) leaves the CURRENT image's frame as what was committed.
+            # Not a Next prompt — an untouched fresh box still has no work to
+            # lose (`_pending_sources`) — but Apply is live and green.
             return "pending"
         # load/export have no Apply and no place in the truncation order.
         if sid not in ("load", "export") and self._step_has_commit(sid):
@@ -3304,6 +3347,75 @@ class MainWindow(QMainWindow):
         if sid in NOOP_AT_DEFAULT or (sid == "crop" and self._crop_box_is_full_frame()):
             return "no_change"
         return "not_run"
+
+    def _controls_match_commit(self, sid: str) -> bool:
+        """Do step `sid`'s controls VERIFIABLY describe exactly what it last
+        committed? The one reason an `applied` Apply may be switched off
+        (Andreas, 2026-09-25 23:27: no silent identical re-run).
+
+        True only on a positive, complete match (ruling R13): the value
+        compared is what a press would commit — `panel.commit_option`, the
+        very callable the Apply sends, so it covers every control that feeds
+        the commit (engine, linked/unlinked, both Saturation sliders…) — plus
+        the two inputs MainWindow adds at commit time (Levels' Auto flag, the
+        Curves matrix). Anything it cannot read or compare answers False, and
+        the button stays live: failing open costs at most an identical re-run,
+        failing closed blocks an edit.
+        """
+        if self.project is None or sid != self.current_stage_id():
+            return False
+        panel = self._panel
+        if sid == "crop":
+            # Crop records no bounds, but none are needed: in the CURRENT
+            # image's coordinates every crop-stage commit is the whole frame.
+            # With no box shown there is no proposal at all, and a full-frame
+            # box makes `_apply_crop` return without committing.
+            return (not self.image_view.crop_box_visible()
+                    or self._crop_box_is_full_frame())
+        if sid == "color":
+            return self._colour_matches_commit()
+        box = getattr(panel, "option_box", None)
+        if (sid == "background" and box is not None
+                and getattr(panel, "option_baseline", None) == "off"
+                and box.currentText() == "off"):
+            return True     # "off" commits nothing; applying it again is a no-op
+        read = getattr(panel, "commit_option", None)
+        committed = self._committed_option(sid)
+        if read is None or committed is None:
+            return False
+        try:
+            current = read()
+            if sid == "levels" and self._levels_auto:
+                current = LEVELS_AUTO           # what apply_current commits
+            elif sid == "curves":
+                current = self._curve_option(current)
+        except Exception:                       # pragma: no cover - defensive
+            return False
+        return _same_option(current, committed)
+
+    def _colour_matches_commit(self) -> bool:
+        """Colour commits two entries: the calibration ("Color") and, after
+        it, an optional "Colour Tint". Verified only when the method box
+        equals the last calibration AND the tint sliders equal the tint
+        committed after it — or read zero, the untinted image, when none was.
+        A tint with no calibration under it is not a match: the one Apply
+        would run the calibration."""
+        panel = self._panel
+        read = getattr(panel, "commit_option", None)
+        if read is None or not hasattr(panel, "tint_slider"):
+            return False
+        tail = self.project.entries()[self._truncation_target("color"):]
+        calibrations = [i for i, (n, _) in enumerate(tail) if n == STEP_NAME["color"]]
+        if not calibrations:
+            return False
+        at = calibrations[-1]
+        if not _same_option(read(), tail[at][1]):
+            return False
+        tints = [opt for n, opt in tail[at + 1:] if n == STEP_NAME["tint"]]
+        committed_tint = tints[-1] if tints else (0.0, 0.0)
+        current_tint = (panel.tint_slider.value() / 100.0,
+                        panel.temp_slider.value() / 100.0)
+        return _same_option(current_tint, committed_tint)
 
     def _crop_box_is_full_frame(self) -> bool:
         """A shown, untouched crop box covering the whole frame: Apply Crop
@@ -3338,7 +3450,9 @@ class MainWindow(QMainWindow):
                 self.project is not None and self.project.current().is_linear)
         apply_btn = getattr(self._panel, "apply_btn", None)
         if isinstance(apply_btn, ApplyButton):
-            apply_btn.set_state(self._step_state(sid))
+            state = self._step_state(sid)
+            apply_btn.set_state(state, unchanged=(
+                state == "applied" and self._controls_match_commit(sid)))
         reset_btn = getattr(self._panel, "reset_step_btn", None)
         if reset_btn is not None:
             # NOT `_committed_option(sid) is not None`: that reads STEP_NAME,
@@ -4408,6 +4522,9 @@ class MainWindow(QMainWindow):
         # the button still reads Auto.
         self._set_levels_auto(True)
         self._render_levels_preview()
+        # The flag changes what Apply commits ("auto", not the numbers); the
+        # sliders' own syncs above all ran with it still False.
+        self._sync_step_controls()
 
     def _preview_base(self, stage_id: str):
         """The pre-<stage> image the commit also operates on, so a live preview
@@ -4634,6 +4751,9 @@ class MainWindow(QMainWindow):
                 "Colour is available again — go back to it if you want "
                 "photometric calibration, which only a linked stretch keeps.")
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
+        # The linkage is half of what Apply commits, and an unchanged amount
+        # fires no slider signal: re-read Apply's state here.
+        self._sync_step_controls()
 
     def _sync_stretch_preview(self) -> None:
         """On the Stretch step, show what Apply will actually commit.
@@ -4801,6 +4921,9 @@ class MainWindow(QMainWindow):
         rgb = curves.pop(curve_key("rgb", "all"), [(0.0, 0.0), (1.0, 1.0)])
         self._curve_matrix = curves
         self._panel.curve_editor.set_points(rgb)   # emits -> preview
+        # The matrix is part of what Apply commits; an unchanged RGB curve
+        # emits nothing, so re-read Apply's state here.
+        self._sync_step_controls()
 
     def _on_curve_change(self, points) -> None:
         """The curve was edited: stash the points and (re)start debounce."""
@@ -5762,6 +5885,7 @@ class MainWindow(QMainWindow):
                             if stage.kind == "process" else None),
             denoise_engine_choices=denoise_choices,
             denoise_default_engine=self.settings.denoise_engine,
+            denoise_engine_current=self._denoise_engine_label(stage.id, denoise_choices),
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
@@ -5801,10 +5925,7 @@ class MainWindow(QMainWindow):
             # One Apply for the whole step (spec §2.4): it commits whatever is
             # pending in _apply_sequence's order, method before tint, which
             # discards nothing — the same path Next's "Apply and continue" takes.
-            try:
-                pa.clicked.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+            # build_panel leaves it unconnected for exactly this.
             pa.clicked.connect(self._apply_colour_step)
         self._side.set_actions(pa, new_panel.reset_step_btn)
         self._side.set_action_height(self._action_area_height())

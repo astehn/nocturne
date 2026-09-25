@@ -40,7 +40,7 @@ def test_look_a_is_taller_than_look_b(qtbot):
 @pytest.mark.parametrize("state,green,enabled,words", [
     ("pending", True, True, "not applied"),
     ("not_run", True, True, "not run"),
-    ("applied", False, False, "applied"),   # off: pressing would re-run it
+    ("applied", False, True, "applied"),    # live unless verified unchanged (R13)
     ("no_change", False, False, "no changes"),
     ("busy", False, False, ""),
 ])
@@ -61,6 +61,66 @@ def test_long_names_fit_with_the_chip(qtbot, label):
     b = _btn(qtbot, label=label, look="B", width=380)
     b.set_state("pending")
     assert b.label_fits(), f"{label!r} is clipped next to the chip at 380 px"
+
+
+@pytest.mark.parametrize("look", ["A", "B"])
+def test_applied_and_verified_unchanged_is_off_plain_and_says_applied(qtbot, look):
+    """Andreas, 2026-09-25 23:27: an applied step whose controls ARE the commit
+    cannot be pressed again. Only the caller's verification switches it off."""
+    b = _btn(qtbot, look=look)
+    b.set_state("applied", unchanged=True)
+    assert b.state() == "applied" and not b.isEnabled()
+    assert b.property("pending") == "false"
+    assert "applied" in b.status_text()
+    b.set_state("applied")
+    assert b.isEnabled(), "an unverified applied must stay live"
+
+
+def test_unchanged_qualifies_only_applied(qtbot):
+    with pytest.raises(ValueError):
+        _btn(qtbot).set_state("pending", unchanged=True)
+
+
+def test_unchanged_never_overrides_tool_availability(qtbot):
+    b = _btn(qtbot)
+    b.setEnabled(False)                     # the tool is missing
+    b.set_state("applied")
+    assert not b.isEnabled()
+
+
+def _status_ink(b):
+    """The darkest-vs-body pixel of look A's status line, i.e. its text colour."""
+    from PySide6.QtGui import QColor
+    img = b.grab().toImage()
+    fm_h = b.fontMetrics().height()
+    top = 5 + fm_h + 2
+    body = img.pixelColor(3, top + 2)
+    best, dist = body, -1
+    for x in range(0, img.width()):
+        for y in range(top, img.height() - 2):
+            px = img.pixelColor(x, y)
+            d = sum((a - c) ** 2 for a, c in zip(px.getRgb()[:3], body.getRgb()[:3]))
+            if d > dist:
+                best, dist = px, d
+    return QColor(best)
+
+
+def test_look_a_paints_a_disabled_applied_dim_not_green(qtbot):
+    """Spec §4: applied-and-off is "plain, dim". SUCCESS green on a button you
+    cannot press reads as "press me"."""
+    from PySide6.QtGui import QColor
+    from nocturne.ui.theme import SUCCESS
+    b = _btn(qtbot, look="A")
+    b.set_state("applied")
+    live = _status_ink(b)
+    b.set_state("applied", unchanged=True)
+    off = _status_ink(b)
+    green = QColor(SUCCESS)
+
+    def dist(c):
+        return sum((a - x) ** 2 for a, x in zip(c.getRgb()[:3], green.getRgb()[:3]))
+    assert dist(live) < dist(off), (live.name(), off.name())
+    assert off.green() <= off.red() + 40, f"disabled status still green: {off.name()}"
 
 
 def test_unknown_state_is_refused(qtbot):
@@ -119,9 +179,7 @@ def test_every_chip_state_is_legible_on_its_body(qtbot):
         for state in STATES:
             b = _btn(qtbot, look="B")
             b.set_state(state)
-            rect = b.chip_geometry()
-            if rect is None:
-                continue  # busy: no chip text is painted, nothing to sample
+            rect = b.chip_geometry()   # busy keeps the previous state's chip
             img = b.grab().toImage()
             fill = img.pixelColor(rect.left() + 3, rect.center().y())
             text = _text_pixel(img, rect, fill)

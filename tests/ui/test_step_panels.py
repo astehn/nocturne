@@ -75,7 +75,9 @@ def test_auto_panel_apply_color_has_no_green(qtbot):
     # De-green Sky moved to its own stage — Color must carry none of it.
     assert not hasattr(w, "rg_slider")
     assert not hasattr(w, "remove_green_btn")
-    w.apply_btn.click()
+    # The method's commit: the visible Apply is built unconnected and wired by
+    # MainWindow to _apply_colour_step (spec §2.4).
+    w.apply_method_btn.click()
     assert len(got) == 1 and isinstance(got[0], ColorSettings)
     assert got[0].remove_green is False
 
@@ -87,13 +89,13 @@ def test_color_panel_apply_passes_method(qtbot):
     qtbot.addWidget(w)
     assert hasattr(w, "method_box")
     w.method_box.setCurrentText("Photometric (SPCC)")
-    w.apply_btn.click()
+    w.apply_method_btn.click()
     assert isinstance(captured["opt"], ColorSettings)
     assert captured["opt"].method == "photometric"
     # default selection -> sky
     w2 = build_panel(_stage("color"), on_apply=lambda opt: captured.__setitem__("opt2", opt))
     qtbot.addWidget(w2)
-    w2.apply_btn.click()
+    w2.apply_method_btn.click()
     assert captured["opt2"].method == "sky"
 
 
@@ -664,7 +666,7 @@ def test_apply_color_no_longer_carries_the_tint(qtbot):
                         on_apply=lambda opt: captured.append(opt))
     qtbot.addWidget(panel)
     panel.tint_slider.setValue(-80)
-    panel.apply_btn.click()
+    panel.apply_method_btn.click()
     assert captured and not hasattr(captured[-1], "tint")
 
 
