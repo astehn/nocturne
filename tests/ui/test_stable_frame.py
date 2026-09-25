@@ -17,6 +17,10 @@ from tests.ui.test_main_window import _make_fits, _window
 SIZES = [(1280, 720), (1280, 800), (1512, 982), (1920, 1080), (2560, 1440)]
 
 
+def _row_rect(r) -> tuple:
+    return (r.x(), r.y(), r.width(), r.height())
+
+
 def _geometry(win) -> dict:
     def rect(w):
         tl = w.mapTo(win, QPoint(0, 0))
@@ -36,12 +40,20 @@ def _geometry(win) -> dict:
         "status_slot": rect(win._side.status_slot),
         # `_disabled_stages`' own contract (main_window.py): a stage the
         # current mode can't use stays LISTED and disabled so "the rows below
-        # it never move" — an OMITTED stage changes the row count instead.
-        # `ideal_height()` clamps to a floor of 240px once there are more
-        # than a handful of rows (`min(ideal_height(), 240)`), so losing one
-        # row is invisible to the rect check above at every SIZES entry here;
-        # only the row count itself catches it.
-        "stage_count": win.stepper.count(),
+        # it never move" — the user's actual complaint was ROWS shifting
+        # (Colour inserted -> everything below it moves down), not a row
+        # count. A count, or the stepper's own rect (clamped to a 240px
+        # floor by `ideal_height()` for any list longer than a handful of
+        # rows, so it can't tell 17 rows from 18 apart either), both pass
+        # silently under a reorder or a reflow that keeps the same number of
+        # rows. Reading every row's own label and on-screen rect back is the
+        # only check that catches a row moving, being replaced, or two rows
+        # swapping.
+        "rows": tuple(
+            (win.stepper.item(i).text(),
+             _row_rect(win.stepper.visualItemRect(win.stepper.item(i))))
+            for i in range(win.stepper.count())
+        ),
     }
 
 
@@ -115,21 +127,39 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, size):
     qtbot.waitExposed(win)
     _settle(qtbot)
     baseline = _geometry(win)
+    # "rows" is compared separately, against a baseline that is refreshed
+    # every time the CURRENT stage (or the linked/unlinked view) changes,
+    # rather than once against the window-open baseline above: the stepper
+    # is a QListWidget taller than its 240px box, so moving to a different
+    # current stage legitimately scrolls a different set of rows into view —
+    # that is not a regression. What must never happen is the row list
+    # changing WITHOUT the current stage or view-link state changing (a
+    # state like "busy" or "job notice" reordering or reflowing the list
+    # under the user), or a row's own label/position shifting when only the
+    # view-link state changes and the current stage does not.
+    fixed_keys = [k for k in baseline if k != "rows"]
     moved = []
     for index, stage in enumerate(list(win._stages)):
         if not stage.enabled:
             continue
         win._go_to(index, user_initiated=False)
         _settle(qtbot)
+        stage_rows = _geometry(win)["rows"]
         for label, geo in _states(win, qtbot):
-            for key in baseline:
+            for key in fixed_keys:
                 if geo[key] != baseline[key]:
                     moved.append(f"{stage.id}/{label}: {key} {baseline[key]} -> {geo[key]}")
+            if geo["rows"] != stage_rows:
+                moved.append(f"{stage.id}/{label}: rows {stage_rows} -> {geo['rows']}")
+    rows_before_toggle = _geometry(win)["rows"]
     for linked in (False, True):
         win._set_view_linked(linked)
         _settle(qtbot)
         geo = _geometry(win)
-        for key in baseline:
+        for key in fixed_keys:
             if geo[key] != baseline[key]:
                 moved.append(f"linked={linked}: {key} {baseline[key]} -> {geo[key]}")
+        if geo["rows"] != rows_before_toggle:
+            moved.append(f"linked={linked}: rows {rows_before_toggle} -> {geo['rows']}")
+        rows_before_toggle = geo["rows"]
     assert not moved, "\n".join(moved[:40])
