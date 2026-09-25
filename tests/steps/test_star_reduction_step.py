@@ -56,3 +56,27 @@ def test_options_empty_and_default_blank():
     step = StarReductionStep(RCAstro("/fake"))
     assert step.options() == []
     assert step.default_option() == ""
+
+
+def test_zero_amount_returns_the_input_without_splitting():
+    """0 is "no change" (the slider's default). Recombining a split is not an
+    identity (2.98e-8 off on a real frame), and splitting at all may launch
+    StarXTerminator — so 0 must return the input before any separator runs."""
+    rng = np.random.default_rng(5)
+    data = rng.random((16, 16, 3), dtype=np.float32)
+    img = AstroImage(data.copy(), is_linear=False)
+
+    def boom(args):
+        raise AssertionError("a star separator ran for a no-op Star Reduction")
+
+    step = StarReductionStep(RCAstro("/fake"))
+    step._runner = boom
+    for option in (0.0, "", None):
+        assert np.array_equal(step.apply(img, option).data, data), option
+
+
+def test_nonzero_amount_still_reduces():
+    img = AstroImage(np.full((16, 16, 3), 0.2, np.float32), is_linear=False)
+    step = StarReductionStep(RCAstro("/fake"))
+    step._runner = _fake_split(img)
+    assert not np.array_equal(step.apply(img, 0.5).data, img.data)

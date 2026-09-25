@@ -191,3 +191,16 @@ def test_saturate_can_reach_highlights_when_asked():
     reached = _chroma(saturate(img, 1.0, protect_highlights=False).data, bright)
     assert reached > tapered * 1.5, (
         f"opting out must actually reach the highlights: {reached:.2f} vs {tapered:.2f}")
+
+
+def test_native_saturation_is_an_exact_identity():
+    """0.50 is the slider's centre, "no change" (spec §4 Saturation 0.50). It
+    used to go through lum + (data - lum) * 1.0, which rounds: 6.0e-8 off on a
+    real frame, so an untouched Saturation could not be a proven no-op and
+    committed a Δ0.0% step. Bit for bit, not allclose."""
+    rng = np.random.default_rng(3)
+    data = rng.random((32, 32, 3), dtype=np.float32)
+    img = AstroImage(data.copy(), is_linear=False)
+    assert np.array_equal(saturate(img, 0.5).data, data)
+    assert not np.array_equal(saturate(img, 0.49).data, data)
+    assert not np.array_equal(saturate(img, 0.51).data, data)

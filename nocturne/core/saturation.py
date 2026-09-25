@@ -23,6 +23,11 @@ def saturate(img: AstroImage, amount: float, *,
         return img.copy()
     S_MAX = 2.5
     t = float(amount)
+    if t == 0.5:
+        # Native is "no change", and must be exactly that: through the formula
+        # below it rounds (6.0e-8 on a real frame), so an untouched Saturation
+        # was not a provable no-op and committed a Δ0.0% step.
+        return img.copy()
     data = img.data
     lum = data.mean(axis=2, keepdims=True)
     if t <= 0.5:

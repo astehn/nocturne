@@ -57,13 +57,17 @@ def test_colour_single_apply_commits_method_and_tint_in_order(qtbot, tmp_path):
     win._go_to_id("color", user_initiated=False); qtbot.wait(20)
     p = win._panel
     p.tint_slider.setValue(20); qtbot.wait(120)
-    p.method_box.setCurrentIndex(0)
+    # A DIFFERENT method, so the method is really pending and the order is
+    # really exercised (index 0 is the default and changed nothing).
+    p.method_box.setCurrentIndex(1)
+    assert p.method_box.currentText() != p.method_baseline, "fixture: method not moved"
     before = [n for n, _ in win.project.entries()]
     p.apply_btn.click(); qtbot.wait(50)
     after = [n for n, _ in win.project.entries()][len(before):]
     # "Colour Tint" is the history name _apply_tint_step commits under
     # (_PrecomputedStep("Colour Tint", …); STEP_NAME["tint"]).
     assert "Colour Tint" in after, after
+    assert after == ["Color", "Colour Tint"], after
     assert not win._has_pending()
 
 
@@ -96,11 +100,28 @@ def test_no_change_really_is_a_no_op(qtbot, tmp_path, sid):
     """Review Focus 3: a disabled Apply must never block a real edit. Commit
     the untouched panel through the real path and measure the change."""
     win = _open(qtbot, tmp_path)
+    # Star Reduction's split may launch StarXTerminator. At 0 it must never be
+    # asked for one: once armed, any separator call fails the test loudly.
+    armed, calls = [False], []
+    real_split = win._split_tagged
+
+    def guarded_split(img):
+        calls.append(armed[0])
+        if armed[0]:
+            raise AssertionError(f"{sid}: a star separator ran for a no-op Apply")
+        return real_split(img)
+
+    win._split_tagged = guarded_split
     win._go_to_id("stretch", user_initiated=False); win._panel.apply_btn.click(); qtbot.wait(50)
     win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
     assert win._panel.apply_btn.state() == "no_change"
     base = win.project.current().data.copy()
+    n = len(win.project.entries())
+    armed[0] = True
     win._panel.apply_btn.setEnabled(True); win._panel.apply_btn.click(); qtbot.wait(50)
+    assert True not in calls, f"{sid}: a star separator ran for a no-op Apply"
+    # The click must really have committed, or the comparison below is vacuous.
+    assert len(win.project.entries()) == n + 1, f"{sid}: the Apply did not commit"
     import numpy as np
     assert np.array_equal(win.project.current().data, base), f"{sid}: its default is NOT a no-op"
 
@@ -313,3 +334,174 @@ def test_apply_look_persists_through_settings(tmp_path):
     p = str(tmp_path / "s.json")
     save_settings(s, p)
     assert load_settings(p).apply_look == "B"
+
+
+# --- fix round 1 ----------------------------------------------------------------
+
+def test_revisited_applied_step_nudged_and_back_is_applied_not_pending(qtbot, tmp_path):
+    """R10 (b), Andreas's 2026-09-13 rule: put a slider back where you found it
+    and there is nothing to apply. A revisited step is rebuilt at its defaults,
+    so "where you found it" is 0 even though 0.30 is committed."""
+    win = _stretched(qtbot, tmp_path)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    win._panel.recover_slider.setValue(30); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    win._go_to_id("levels", user_initiated=False); qtbot.wait(20)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    s = win._panel.recover_slider
+    assert s.value() == 0, "precondition: a revisited panel shows its defaults"
+    s.setValue(10); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "pending"
+    s.setValue(0); qtbot.wait(20)
+    assert not win._has_pending()
+    assert win._panel.apply_btn.state() == "applied"
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    win.go_next()
+    assert not asked, "Next asked about a slider put back where it was found"
+
+
+def test_applied_then_dragged_back_makes_next_ask(qtbot, tmp_path):
+    """R10 (a): in the same visit, "where you found it" is the value just
+    applied — so dragging from 0.30 to 0 is an edit, and Next must ask."""
+    win = _stretched(qtbot, tmp_path)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    s = win._panel.recover_slider
+    s.setValue(30); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    s.setValue(0); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "pending"
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    win.go_next()
+    assert asked, "Next dropped the undo of an applied edit without asking"
+
+
+def test_never_applied_nudged_and_back_is_no_change(qtbot, tmp_path):
+    """R10 (c)."""
+    win = _stretched(qtbot, tmp_path)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    s = win._panel.recover_slider
+    s.setValue(10); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "pending"
+    s.setValue(0); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "no_change"
+    assert not win._panel.apply_btn.isEnabled()
+
+
+def test_fresh_colour_tint_only_apply_runs_the_calibration_first(qtbot, tmp_path):
+    """R11: a calibration that has never run is a real change, and the one
+    Apply commits everything on the step — calibration, then tint."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("color", user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    assert p.method_box.currentText() == p.method_baseline, "fixture: method untouched"
+    p.tint_slider.setValue(20); qtbot.wait(20)
+    n = len(win.project.entries())
+    p.apply_btn.click(); qtbot.wait(50)
+    assert [e for e, _ in win.project.entries()][n:] == ["Color", "Colour Tint"]
+    assert not win._has_pending()
+
+
+def test_fresh_colour_next_apply_and_continue_runs_the_calibration_too(
+        qtbot, tmp_path):
+    """R11: Next's "Apply and continue" takes the same path as the Apply."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("color", user_initiated=False); qtbot.wait(20)
+    win._panel.tint_slider.setValue(20); qtbot.wait(20)
+    n = len(win.project.entries())
+    win._ask_pending = lambda label: "apply"
+    win.go_next()
+    qtbot.wait(50)
+    assert [e for e, _ in win.project.entries()][n:] == ["Color", "Colour Tint"]
+
+
+def test_a_tint_only_colour_does_not_re_run_the_calibration(qtbot, tmp_path):
+    """The other side of R11: once the step holds its own tint commit it has
+    run, and re-committing the method under it would truncate that tint."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("color", user_initiated=False); qtbot.wait(20)
+    win._apply_tint_step(0.1, 0.0)
+    win._panel.tint_slider.setValue(20); qtbot.wait(20)
+    before = [e for e, _ in win.project.entries()]
+    assert before[-1] == "Colour Tint" and "Color" not in before, "precondition"
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    # The tint REPLACES its own commit; no calibration is slipped in under it.
+    assert [e for e, _ in win.project.entries()] == before
+    assert win.project.entries()[-1][1] == (pytest.approx(0.2), pytest.approx(0.0))
+
+
+def test_next_stays_disabled_on_export_after_a_busy_cycle(qtbot, tmp_path):
+    """Export itself runs busy; ending it must not switch Next on."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("export", user_initiated=False); qtbot.wait(20)
+    assert not win._next_btn.isEnabled(), "precondition"
+    win._set_busy(True, "Exporting…")
+    win._set_busy(False)
+    assert win._next_btn.isVisible() and not win._next_btn.isEnabled()
+
+
+def test_next_comes_back_after_a_busy_cycle_elsewhere(qtbot, tmp_path):
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._set_busy(True, "probe")
+    assert not win._next_btn.isEnabled()
+    win._set_busy(False)
+    assert win._next_btn.isEnabled()
+
+
+def _reveal_crop_box(win):
+    """What the first click on the image does: show the box (cropBoxShown)."""
+    win.image_view.show_crop_box()
+
+
+def test_a_full_frame_crop_box_is_no_change(qtbot, tmp_path):
+    """An untouched box covering the whole frame: Apply Crop commits nothing."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    h, w = win.project.current().data.shape[:2]
+    win.image_view.set_crop_overlay(True, content_bounds=(0, h, 0, w), aspect_ratio=None)
+    _reveal_crop_box(win)
+    assert win.image_view.crop_bounds() == (0, h, 0, w), "precondition: full frame"
+    assert win._panel.apply_btn.state() == "no_change"
+    assert not win._panel.apply_btn.isEnabled()
+
+
+def test_an_inset_crop_box_is_not_run(qtbot, tmp_path):
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    h, w = win.project.current().data.shape[:2]
+    win.image_view.set_crop_overlay(True, content_bounds=(2, h - 2, 2, w - 2), aspect_ratio=None)
+    _reveal_crop_box(win)
+    assert win._panel.apply_btn.state() == "not_run"
+    assert win._panel.apply_btn.isEnabled()
+
+
+def test_after_a_crop_apply_reads_applied_not_pending(qtbot, tmp_path):
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+    h, w = win.project.current().data.shape[:2]
+    win.image_view.set_crop_overlay(True, content_bounds=(0, h, 0, w), aspect_ratio=None)
+    _reveal_crop_box(win)
+    win.image_view._set_bounds((2, h - 2, 2, w - 2))
+    win.image_view._geometry_changed()
+    assert win._panel.apply_btn.state() == "pending", "precondition"
+    n = len(win.project.entries())
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    assert [e for e, _ in win.project.entries()][n:] == ["Crop"], "fixture: crop did not commit"
+    assert win._panel.apply_btn.state() == "applied"
+
+
+def test_nested_busy_restores_the_first_sweeps_buttons(qtbot, tmp_path):
+    """A run started while one is in flight: the second sweep must not throw
+    away the first one's record, or its buttons stay off for good."""
+    win = _stretched(qtbot, tmp_path)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    win._panel.recover_slider.setValue(30); qtbot.wait(20)
+    btn, reset = win._panel.apply_btn, win._panel.reset_step_btn
+    assert btn.isEnabled() and reset.isEnabled(), "precondition"
+    win._set_busy(True, "first")
+    win._set_busy(True, "second")
+    win._set_busy(False)
+    assert btn.isEnabled() and btn.state() == "pending"
+    assert reset.isEnabled()

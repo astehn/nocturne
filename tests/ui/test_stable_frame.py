@@ -184,10 +184,19 @@ def test_nothing_moves_with_linear_denoise_installed(qtbot, tmp_path, monkeypatc
     _prove_nothing_moves(qtbot, tmp_path, monkeypatch, (1280, 800), expect_rows=18)
 
 
-def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
+@pytest.mark.parametrize("size", [(1280, 800), (1920, 1080)], ids=lambda s: f"{s[0]}x{s[1]}")
+def test_nothing_moves_in_the_chip_look(qtbot, tmp_path, monkeypatch, size):
+    """TRIAL (2026-09-25): look B's Apply is shorter, so its action row is
+    too. The row may differ from look A's, but within look B nothing may move
+    from step to step or state to state."""
+    _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows=17, look="B")
+
+
+def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows, look="A"):
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
+    win._set_apply_look(look)
     win.resize(*size)
     win.show()
     qtbot.waitExposed(win)
@@ -214,6 +223,8 @@ def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
             continue
         win._go_to(index, user_initiated=False)
         _settle(qtbot)
+        pa = win._panel.primary_action
+        assert not hasattr(pa, "look") or pa.look() == look, stage.id
         reset = win._panel.reset_step_btn
         if reset is not None:
             tl = reset.mapTo(win, QPoint(0, 0))

@@ -167,3 +167,20 @@ def test_height_matches_a_live_recompute_after_show(qtbot):
                 f"look {look}: shown height {shown_height} != live recompute {b.height()}")
     finally:
         app.setStyleSheet("")
+
+
+@pytest.mark.parametrize("look", ["A", "B"])
+@pytest.mark.parametrize("before", ["pending", "not_run", "applied", "no_change"])
+def test_busy_keeps_the_previous_words(qtbot, look, before):
+    """Spec §4: busy is 'disabled, unchanged text'. A pending edit must still
+    say 'not applied' while an unrelated operation runs, and come back as it
+    was."""
+    b = _btn(qtbot, look=look)
+    b.set_state(before)
+    words, chip = b.status_text(), b.chip_geometry()
+    b.set_state("busy")
+    assert b.state() == "busy" and not b.isEnabled()
+    assert b.status_text() == words
+    assert b.chip_geometry() == chip
+    b.set_state(before)
+    assert b.status_text() == words

@@ -1447,7 +1447,18 @@ def test_setup_star_reduction_caches_split(qtbot, tmp_path, monkeypatch):
     assert win._sr_ready is True
     assert win._sr_layers is not None
     assert win._panel.sr_slider.isEnabled() is True
-    assert win._panel.apply_btn.isEnabled() is True
+    _assert_sr_apply_ungated(win)
+
+
+def _assert_sr_apply_ungated(win):
+    """The split landing ungates Apply. At 0 an untouched Star Reduction is a
+    proven no-op, so Apply reads `no_change` and is off for THAT reason (spec
+    §4) — move the slider and it must come on."""
+    btn = win._panel.apply_btn
+    assert btn.state() == "no_change"
+    win._panel.sr_slider.setValue(30)
+    assert btn.state() == "pending"
+    assert btn.isEnabled() is True
 
 
 def test_setup_star_reduction_ungated_without_rcastro(qtbot, tmp_path):
@@ -1459,7 +1470,7 @@ def test_setup_star_reduction_ungated_without_rcastro(qtbot, tmp_path):
     assert win._sr_ready is True
     assert win._sr_layers is not None
     assert win._panel.sr_slider.isEnabled() is True
-    assert win._panel.apply_btn.isEnabled() is True
+    _assert_sr_apply_ungated(win)
     assert "RC-Astro" in win._panel.sr_status.text()            # free-detection note
     assert "Needs RC-Astro" not in win._panel.sr_status.text()  # not the old gate text
 

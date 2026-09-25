@@ -24,10 +24,15 @@ class StarReductionStep(Step):
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         from .star_split import resolve_star_split, splitter_name
-        self.last_engine = splitter_name(self._rc)
-        starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
         if isinstance(option, str) and option in _AMOUNT:
             amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
         else:
             amount = float(option) if option not in (None, "") else 0.0
+        if amount == 0.0:
+            # "No change", exactly, and BEFORE any separator runs: recombining
+            # a split is not an identity (2.98e-8 off), and the split may launch
+            # StarXTerminator for nothing.
+            return img.copy()
+        self.last_engine = splitter_name(self._rc)
+        starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
         return reduce_stars(starless, stars, amount)

@@ -78,6 +78,9 @@ class ApplyButton(QPushButton):
         self.setObjectName("primary")
         self._label = label
         self._state = "not_run"
+        # What the words say. Busy (spec §4: "unchanged text") keeps the last
+        # real state's status and chip — only the enablement changes.
+        self._shown = "not_run"
         self._available = True
         self._look = "A"
         self.set_look(look)
@@ -93,7 +96,7 @@ class ApplyButton(QPushButton):
         return self._label
 
     def status_text(self) -> str:
-        return _STATUS[self._state]
+        return _STATUS[self._shown]
 
     def state(self) -> str:
         return self._state
@@ -124,6 +127,8 @@ class ApplyButton(QPushButton):
         if state not in STATES:
             raise ValueError(state)
         self._state = state
+        if state != "busy":
+            self._shown = state
         green = state in _GREEN
         if self.property("pending") != ("true" if green else "false"):
             self.setProperty("pending", "true" if green else "false")
@@ -162,7 +167,7 @@ class ApplyButton(QPushButton):
     def _chip_rect(self, r: QRect, small_fm: QFontMetrics) -> QRect | None:
         """Look B's chip pill, in `r`'s coordinates — None when the current
         state paints no chip (busy)."""
-        chip = _CHIP[self._state]
+        chip = _CHIP[self._shown]
         if not chip:
             return None
         cw = small_fm.horizontalAdvance(chip) + 2 * _CHIP_HPAD
@@ -182,7 +187,7 @@ class ApplyButton(QPushButton):
         bold_font, small_font = self._fonts()
         bold_fm = QFontMetrics(bold_font)
         small_fm = QFontMetrics(small_font)
-        chip = _CHIP[self._state]
+        chip = _CHIP[self._shown]
         chip_w = (small_fm.horizontalAdvance(chip) + 2 * _CHIP_HPAD) if chip else 0
         needed = _LABEL_INSET + bold_fm.horizontalAdvance(self._label) + _CHIP_GAP + chip_w + _CHIP_RIGHT_MARGIN
         return needed <= self.width()
@@ -233,8 +238,8 @@ class ApplyButton(QPushButton):
                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
             cr = self._chip_rect(r, small_fm)
             if cr is not None:
-                chip = _CHIP[self._state]
-                fill, text_colour = _CHIP_STYLE[self._state]
+                chip = _CHIP[self._shown]
+                fill, text_colour = _CHIP_STYLE[self._shown]
                 p.setRenderHint(QPainter.RenderHint.Antialiasing)
                 p.setBrush(QColor(fill)); p.setPen(Qt.PenStyle.NoPen)
                 p.drawRoundedRect(cr, 10, 10)

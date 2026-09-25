@@ -362,9 +362,15 @@ def test_color_apply_and_continue_commits_the_tint_not_apply_color(
     pending slot. Calling `_on_tint_change` alone left the slider at 0, so the
     app committed `(0.0, 0.0)` while this test — asserting only the step
     NAME — passed regardless.
+
+    Colour is calibrated first: on a Colour that has NEVER run, the sequence
+    rightly includes the calibration too (ruling R11, covered in
+    test_consistent_panels) — this test is about a tint over an applied one.
     """
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
+    win._panel.apply_btn.click()            # calibrate: Colour has now run
+    assert [n for n, _ in win.project.entries()][-1] == "Color", "precondition"
     win._panel.tint_slider.setValue(20)     # -> 0.20; fires _on_tint_change
     before = list(win.project.entries())
     _answer(monkeypatch, "apply")
@@ -781,8 +787,11 @@ def test_the_pending_note_sits_above_apply_tint_when_a_tint_is_pending(
     # Colour has ONE visible Apply since 2026-09-25 (consistent panels), and
     # it commits the tint (via _apply_sequence) — so a pending tint marks that
     # one button, and pressing it commits the tint rather than only the method.
+    # Calibrated first, so the method is not part of the sequence (on a
+    # never-run Colour it is — ruling R11).
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
+    win._panel.apply_btn.click()
     win._panel.tint_slider.setValue(20)
     win._sync_step_controls()
 
