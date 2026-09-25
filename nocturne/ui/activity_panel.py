@@ -27,6 +27,11 @@ KIND_STYLE = {
 }
 
 
+def _row_html(kind: str, stamp: str, text: str) -> str:
+    return (f'<span style="color:{TEXT_DIM}">{stamp}</span> '
+            f'<span style="{KIND_STYLE.get(kind, KIND_STYLE["step"])}">{html.escape(text)}</span>')
+
+
 class _LargeView(QDialog):
     def __init__(self, text: str, parent=None) -> None:
         super().__init__(parent)
@@ -74,9 +79,7 @@ class ActivityPanel(QWidget):
             return
         stamp = datetime.now().strftime("%H:%M")
         self._entries.append((kind, stamp, text))
-        self.view.append(
-            f'<span style="color:{TEXT_DIM}">{stamp}</span> '
-            f'<span style="{KIND_STYLE.get(kind, KIND_STYLE["step"])}">{html.escape(text)}</span>')
+        self.view.append(_row_html(kind, stamp, text))
         bar = self.view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
@@ -94,9 +97,7 @@ class ActivityPanel(QWidget):
             self._entries = [e for e in self._entries if e[0] != kind]
         self.view.clear()
         for k, stamp, text in self._entries:
-            self.view.append(
-                f'<span style="color:{TEXT_DIM}">{stamp}</span> '
-                f'<span style="{KIND_STYLE.get(k, KIND_STYLE["step"])}">{html.escape(text)}</span>')
+            self.view.append(_row_html(k, stamp, text))
 
     def copy_all(self) -> None:
         QApplication.clipboard().setText(self.text())
