@@ -314,8 +314,13 @@ def render_engine(tag: str) -> str:
     return "built-in" if tag == "free" else tag
 
 
-# Below the 1280x720 "works but tight" floor, with room for the menu bar.
-MIN_WINDOW = (960, 600)
+# The layout's own minimum, rounded up — below it Qt squeezes widgets past
+# their minimum hints. Measured 2026-09-25, window.minimumSizeHint() with an
+# image loaded, identical on every step and with busy + a long warning:
+# offscreen 1067 x 641, macOS fonts 1116 x 622. The previous 960 x 600 sat
+# under both. Must stay within 1280 x 690 so a 1280x720 screen, less its menu
+# bar, still fits the window (test_window_geometry guards both bounds).
+MIN_WINDOW = (1120, 650)
 
 
 class MainWindow(QMainWindow):
