@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("PySide6")
 from nocturne.ui.pipeline import Stage, path_stages  # noqa: E402
-from nocturne.ui.stepper import Stepper, step_state  # noqa: E402
+from nocturne.ui.stepper import STEP_ROW_H, Stepper, step_state  # noqa: E402
 
 
 def test_set_stages_populates_rows(qtbot):
@@ -114,3 +114,40 @@ def test_jumping_back_does_not_un_skip_what_you_passed():
     """
     assert step_state(6, current_index=3, done_indexes=set(), enabled=True,
                       high_water=8) == "skipped"
+
+
+# --- 32 px rows, no phantom pill, unavailable rows say why -----------------
+
+def _stepper(qtbot, stages):
+    s = Stepper()
+    qtbot.addWidget(s)
+    s.resize(240, 800)
+    s.set_stages(stages)
+    return s
+
+
+def test_rows_are_32px(qtbot):
+    s = _stepper(qtbot, [Stage("a", "Import", "import"), Stage("b", "Crop", "crop")])
+    assert s.sizeHintForRow(0) == STEP_ROW_H == 32
+
+
+def test_ideal_height_fits_every_row_without_scrolling(qtbot):
+    stages = [Stage(str(i), f"Step {i}", "process") for i in range(17)]
+    s = _stepper(qtbot, stages)
+    assert s.ideal_height() >= 17 * 32
+    assert s.ideal_height() <= 17 * 32 + 8
+
+
+def test_the_label_is_not_cut_short_by_a_pill_that_is_not_drawn(qtbot):
+    """'Noise Reductio' (screenshot 17): the label rect always reserved room
+    for the 'soon' pill, which only a locked row draws."""
+    from nocturne.ui import stepper as mod
+    assert mod.label_rect_width(200, locked=False) > mod.label_rect_width(200, locked=True)
+    assert mod.label_rect_width(200, locked=False) == 200 - 36 - 8
+
+
+def test_an_unavailable_row_says_why(qtbot):
+    stage = Stage("color", "Color", "auto", enabled=False)
+    object.__setattr__(stage, "reason", "Needs a linked stretch.")   # Stage is frozen
+    s = _stepper(qtbot, [stage])
+    assert s.item(0).toolTip() == "Needs a linked stretch."
