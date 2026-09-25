@@ -7,6 +7,7 @@ import os
 import numpy as np
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
@@ -192,6 +193,18 @@ _FREE_STAR_NOTE = (
 # instead. 360 clears the widest non-description panel (saturation, 301 px) with
 # room, and no unwrappable control comes near it (guarded by a test).
 RIGHT_PANE_MAX_W = 360
+
+# Stages whose UNTOUCHED panel commits nothing: Apply there reads "no changes"
+# and is disabled, so no Δ0.0% step is ever recorded (spec §4). Each one is
+# proven by test_no_change_really_is_a_no_op, which commits the untouched panel
+# through the real path and demands bit-identical pixels (2026-09-25).
+# Measured OUT: saturation at 0.50 (max |Δ| 6.0e-8) and star_reduction at 0
+# (2.98e-8, the screen-recombined split) — invisible, but not identity, so
+# their Apply stays live. Never here: stretch, green_fringe (100), colour and
+# the compute steps, whose defaults do real work.
+NOOP_AT_DEFAULT = frozenset({
+    "recover_core", "local_contrast", "curves", "remove_green", "levels",
+})
 
 # The right pane is a FIXED width, so the canvas never changes size — Andreas's
 # stated optimum is that the image stays in exactly the same place. Capping only
@@ -989,6 +1002,19 @@ class MainWindow(QMainWindow):
         self._activity_act.setCheckable(True)
         self._activity_act.setChecked(True)
         self._activity_act.toggled.connect(self.activity.setVisible)
+        # TRIAL (2026-09-25): Andreas chooses between the two Apply looks in
+        # his real window; the losing look and this submenu go before merge.
+        look_menu = view_menu.addMenu("Apply button style")
+        look_group = QActionGroup(self)
+        look_group.setExclusive(True)
+        self._apply_look_acts = {}
+        for key, title in (("A", "Two lines"), ("B", "Chip")):
+            act = look_menu.addAction(title)
+            act.setCheckable(True)
+            act.setChecked(self.settings.apply_look == key)
+            look_group.addAction(act)
+            act.triggered.connect(lambda _=False, k=key: self._set_apply_look(k))
+            self._apply_look_acts[key] = act
 
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
@@ -2509,15 +2535,14 @@ class MainWindow(QMainWindow):
         Apply actually does cannot drift apart.
 
         Every stage that can commit sets `w.apply_btn` in build_panel, already
-        connected to the handler `_has_pending` tracks — except Color, whose
-        `apply_btn` ("Apply Color") commits the colour-calibration method, a
-        decision `_has_pending` does not track at all there. What IS tracked
-        on Color is its live tint preview, with its own button
-        (`apply_tint_btn`). Pressing "Apply Color" would commit a method
-        nobody asked for and STILL discard the tint the user set — worse
-        than the silent discard this guard exists to prevent — so Color's
-        targets are whichever of its own buttons match what is actually
-        pending.
+        connected to the handler `_has_pending` tracks — except Color, which
+        commits two independent things through two HIDDEN buttons: the
+        calibration method (`apply_method_btn`) and the live tint
+        (`apply_tint_btn`). Its one visible Apply runs this sequence
+        (`_apply_colour_step`), so it is never a target itself. Pressing the
+        method alone would commit a method nobody changed and STILL discard
+        the tint the user set, so Color's targets are whichever of its hidden
+        buttons match what is actually pending.
 
         Empty whenever `self._busy`: `_set_busy` disables only
         `self._panel.apply_btn`, not Color's `apply_tint_btn`, so that
@@ -2546,7 +2571,7 @@ class MainWindow(QMainWindow):
                 # The refusal above exists to protect a waiting tint; with none
                 # waiting, refusing left the prompt claiming "this step can't be
                 # applied right now" about a step one button press would apply.
-                btn = getattr(self._panel, "apply_btn", None)
+                btn = getattr(self._panel, "apply_method_btn", None)
                 if btn is not None and btn.isEnabled():
                     targets.append(btn)
             return targets
@@ -2581,18 +2606,38 @@ class MainWindow(QMainWindow):
         Tint first and method second therefore commits the user's tint and then
         immediately asks to discard it; method first commits both and discards
         nothing. `_pending_apply_targets` keeps answering the single-press
-        question (which button is green, which one the note sits above, whether
-        "Apply and continue" is honest), where Apply Color must still not be
-        offered while a tint waits.
+        question (whether "Apply and continue" is honest), where the method
+        alone must still not be offered while a tint waits.
         """
         targets = self._pending_apply_targets()
         if (self.current_stage_id() != "color" or self._busy
                 or not self._color_method_pending()):
             return targets
-        btn = getattr(self._panel, "apply_btn", None)
+        # The HIDDEN method button, never the visible Apply: on Colour that one
+        # runs this very sequence, and pressing it here would re-enter.
+        btn = getattr(self._panel, "apply_method_btn", None)
         if btn is not None and btn.isEnabled() and btn not in targets:
             targets.insert(0, btn)
         return targets
+
+    def _apply_colour_step(self) -> None:
+        """Colour's one visible Apply.
+
+        With something pending it is exactly Next's "Apply and continue":
+        `_apply_current_step`, method before tint. With nothing pending the
+        button still reads green on a never-applied Colour (`not_run`) or plain
+        on an applied one, and a press must still commit — the method, at what
+        the dropdown shows — or the green would be a promise the button does not
+        keep (`_apply_current_step` loops only while something is pending).
+        """
+        if self.project is None or self._busy:
+            return
+        if self._has_pending():
+            self._apply_current_step()
+            return
+        btn = getattr(self._panel, "apply_method_btn", None)
+        if btn is not None and btn.isEnabled():
+            btn.click()
 
     def _apply_current_step(self) -> None:
         """Press this step's own Apply button(s) — see `_apply_sequence` for
@@ -3119,13 +3164,18 @@ class MainWindow(QMainWindow):
         "auto" for values it derived, Curves a list of points, Colour's tint a
         pair. Anything `_same_option` cannot call equal stays pending, because
         a needless prompt is a nuisance and a missed one is lost work.
+
+        The neutral counts ONLY while nothing is committed (consistent panels,
+        spec §4). Once the step has a commit, the controls describe a change
+        exactly when they differ from it: Recover Core applied at 0.30 and
+        dragged back to 0.00 is an edit — pressing Apply would undo the 0.30 —
+        and reading it as "back where you found it" hid that from both the
+        button and Next's prompt.
         """
-        neutral = getattr(self._panel, "neutral_option", None)
-        if neutral is not None and _same_option(neutral, value):
-            return True
         committed = self._committed_option(step_id)
         if committed is None:
-            return False        # never applied here: nothing to match
+            neutral = getattr(self._panel, "neutral_option", None)
+            return neutral is not None and _same_option(neutral, value)
         return _same_option(committed, value)
 
     def _color_method_pending(self) -> bool:
@@ -3159,13 +3209,43 @@ class MainWindow(QMainWindow):
             return False
         return box.currentText() != baseline
 
-    def _sync_step_controls(self) -> None:
-        """One place that makes the step's own controls agree with its state.
+    def _step_state(self, sid: str) -> str:
+        """The ONE decision of what Apply says on step `sid` (spec §4) — one of
+        apply_button.STATES. Panels only render it.
 
-        Named for the job rather than the widget: Task 4 adds the Reset button's
-        enablement here, and a method called _sync_pending_label that also
-        enabled a button would be a lie by its name.
+        Green means "pressing this will change your image": `pending` (the
+        controls differ from what this step has applied) and `not_run` (never
+        applied, and pressing would do something). `no_change` is a step whose
+        untouched panel is a proven no-op (NOOP_AT_DEFAULT) with nothing
+        committed — disabled, so no Δ0.0% step is ever recorded. A step with a
+        commit is never `no_change`: dragged back to the no-op value it is
+        `pending` (see `_slot_is_the_commit`), untouched it is `applied`.
+
+        `pending` is asked of the current step only: its controls are the only
+        ones that exist.
         """
+        if self._busy:
+            return "busy"
+        if sid == self.current_stage_id() and self._has_pending():
+            return "pending"
+        # load/export have no Apply and no place in the truncation order.
+        if sid not in ("load", "export") and self._step_has_commit(sid):
+            return "applied"
+        if (sid == "background" and sid == self.current_stage_id()
+                and getattr(self._panel, "option_baseline", None) == "off"
+                and getattr(self._panel, "option_box", None) is not None
+                and self._panel.option_box.currentText() == "off"):
+            # "off" records no history entry (see apply_current) but is a
+            # committed decision: `_clear_pending` re-baselines the box to it.
+            return "applied"
+        if sid in NOOP_AT_DEFAULT:
+            return "no_change"
+        return "not_run"
+
+    def _sync_step_controls(self) -> None:
+        """One place that makes the step's own controls agree with its state:
+        Apply renders `_step_state`, Reset step is live when there is something
+        of this step's to take back."""
         pending = self._has_pending()
         sid = self.current_stage_id()
         # The visual stretch picker is only meaningful on data that has not been
@@ -3178,48 +3258,9 @@ class MainWindow(QMainWindow):
         if visual is not None:
             visual.setEnabled(
                 self.project is not None and self.project.current().is_linear)
-        # The three compute stages (background, deconvolution, noise_sharpen)
-        # render no live preview, so Apply is the ONLY action ever available
-        # there — arriving with nothing yet committed on this image IS the
-        # invitation to press it (the reported bug: "for deconv, noise
-        # reduction, etc. you need to click the green button"). Background's
-        # "off" records no history entry at all (see apply_current), so
-        # `_committed_option` alone would read "never applied" forever after
-        # the user explicitly chose it — recognise that decision too, via the
-        # baseline `_clear_pending` writes when "off" commits.
-        never_applied = (
-            self._stages[self._stage].kind == "process"
-            and self._committed_option(sid) is None
-            and not (sid == "background"
-                     and getattr(self._panel, "option_baseline", None) == "off"
-                     and getattr(self._panel, "option_box", None) is not None
-                     and self._panel.option_box.currentText() == "off"))
-        show_green = pending or never_applied
-        # The hero green means "there is an edit to commit" (theme.py). Spend it
-        # only when that is true: a colour worn on every step at all times says
-        # nothing when the step genuinely wants pressing. The buttons that would
-        # commit the pending thing are the ones _apply_sequence names, in the
-        # order a press (or Next) actually fires them — NOT _pending_apply_targets,
-        # which orders Apply Tint before Apply Color and so lit the button that
-        # Next does NOT press first. With both the method and a tint pending
-        # that put the green on the destructive order (Apply Color after a
-        # committed tint asks to discard it) while Next quietly took the safe
-        # one — the highlight was steering users at the order the fix in
-        # `_apply_sequence` exists to avoid. `_apply_sequence` is consulted
-        # only after the guard has established that something is pending (or,
-        # for a compute stage, that arriving IS the invitation) — it is not
-        # itself a pending check, and returns candidates on an untouched step.
-        # Gate it, or the green never goes out.
-        wanted = set(map(id, self._apply_sequence())) if show_green else set()
-        for name in ("apply_btn", "apply_tint_btn"):
-            btn = getattr(self._panel, name, None)
-            if btn is None:
-                continue
-            state = "true" if id(btn) in wanted else "false"
-            if btn.property("pending") != state:
-                btn.setProperty("pending", state)
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+        apply_btn = getattr(self._panel, "apply_btn", None)
+        if isinstance(apply_btn, ApplyButton):
+            apply_btn.set_state(self._step_state(sid))
         reset_btn = getattr(self._panel, "reset_step_btn", None)
         if reset_btn is not None:
             # NOT `_committed_option(sid) is not None`: that reads STEP_NAME,
@@ -5628,7 +5669,19 @@ class MainWindow(QMainWindow):
         # between: set_panel deletes the old card, and no slot may be left
         # holding the old step's widgets.
         self._side.set_header(new_panel.header)
-        self._side.set_actions(new_panel.primary_action, new_panel.reset_step_btn)
+        pa = new_panel.primary_action
+        if isinstance(pa, ApplyButton):
+            pa.set_look(self.settings.apply_look)
+        if stage.id == "color" and pa is not None:
+            # One Apply for the whole step (spec §2.4): it commits whatever is
+            # pending in _apply_sequence's order, method before tint, which
+            # discards nothing — the same path Next's "Apply and continue" takes.
+            try:
+                pa.clicked.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            pa.clicked.connect(self._apply_colour_step)
+        self._side.set_actions(pa, new_panel.reset_step_btn)
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link
@@ -5642,6 +5695,10 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+        # The new Apply starts at the component's own default state; decide
+        # its real one now rather than wait for a caller's _refresh (a
+        # star-split setup above may also have switched it on directly).
+        self._sync_step_controls()
 
     def _action_area_height(self) -> int:
         """The pinned action row's height: the SAME on every step, so the row
@@ -5651,11 +5708,12 @@ class MainWindow(QMainWindow):
 
         Measured from real widgets under whatever stylesheet is live, never a
         constant: the taller of an Apply in the look in use and a Reset step,
-        plus the row's own margins. 47 + 6 = 53 px under the app stylesheet,
-        45 + 6 = 51 unstyled (2026-09-25).
+        plus the row's own margins. Look A: 47 + 6 = 53 px under the app
+        stylesheet, 45 + 6 = 51 unstyled (2026-09-25). Switching looks may
+        change it; on any one look it is the same on every step.
         """
         lay = self._side.action_slot.layout()
-        apply_probe = ApplyButton("Apply", look="A")
+        apply_probe = ApplyButton("Apply", look=self.settings.apply_look)
         apply_probe.ensurePolished()
         reset_probe = QPushButton("Reset step")
         reset_probe.setObjectName("resetStep")
@@ -5666,6 +5724,21 @@ class MainWindow(QMainWindow):
         for probe in (apply_probe, reset_probe):
             probe.deleteLater()
         return h
+
+    def _set_apply_look(self, look: str) -> None:
+        """TRIAL (2026-09-25): switch every Apply between look A (two lines) and
+        B (chip) — View ▸ Apply button style. Removed with the losing look."""
+        if look not in ("A", "B"):
+            raise ValueError(look)
+        self.settings.apply_look = look
+        self._save_settings()
+        for key, act in getattr(self, "_apply_look_acts", {}).items():
+            if act.isChecked() != (key == look):
+                act.setChecked(key == look)
+        pa = getattr(self._panel, "primary_action", None)
+        if isinstance(pa, ApplyButton):
+            pa.set_look(look)
+        self._side.set_action_height(self._action_area_height())
 
     def _sync_background_model_toggle(self) -> None:
         """Make the "Show what was removed" control agree with the canvas.
@@ -5970,12 +6043,13 @@ class MainWindow(QMainWindow):
         self._sync_stretch_preview()
         self._sync_step_controls()
         self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
-        # Hidden, not merely disabled, on the last step. A greyed-out "Next →"
-        # sitting under Export reads as something you have failed to satisfy
-        # rather than the end of the pipeline.
+        # In place and disabled on the last step (spec §1.8). It used to be
+        # hidden there, which let Back stretch across the whole row — the one
+        # step where the navigation moved. Busy gating is _set_busy's, which
+        # this must not undo mid-operation.
         has_next = next_enabled(self._stages, self._stage) != self._stage
-        self._next_btn.setEnabled(has_next)
-        self._next_btn.setVisible(has_next)
+        self._next_btn.setVisible(True)
+        self._next_btn.setEnabled(has_next and not self._busy)
         self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
         self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(self.project is not None)

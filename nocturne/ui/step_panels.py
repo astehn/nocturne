@@ -609,6 +609,16 @@ def build_panel(
                                       temp_slider.value() / 100.0))
         apply_tint_btn.setVisible(False)
         w.apply_tint_btn = apply_tint_btn
+        # The method's own commit, hidden like apply_tint_btn. MainWindow
+        # rewires the visible Apply to press these two in _apply_sequence's
+        # order; had the sequence pressed the visible Apply for the method, it
+        # would re-enter itself.
+        apply_method_btn = QPushButton("Apply Color", w)
+        apply_method_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_method_btn.clicked.connect(lambda: on_apply(_color_option()))
+        apply_method_btn.setVisible(False)
+        w.apply_method_btn = apply_method_btn
         w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "stretch":

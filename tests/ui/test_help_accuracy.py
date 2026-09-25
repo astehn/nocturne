@@ -320,9 +320,14 @@ def test_colour_help_names_the_tint_controls_that_exist():
     """
     b = _body("color")
     sp = _src("nocturne/ui/step_panels.py")
-    for label in ("Green ←→ Magenta", "Cool ←→ Warm", "Apply Tint"):
+    # "Apply Color", not "Apply Tint": since 2026-09-25 (consistent panels) the
+    # step shows ONE Apply that commits the method and the tint together; the
+    # tint's own button still exists but is hidden, so naming it sends the
+    # user looking for a button they cannot see.
+    for label in ("Green ←→ Magenta", "Cool ←→ Warm", "Apply Color"):
         assert label in b, f"the help never mentions {label!r}"
         assert label in sp, f"{label!r} is no longer in the Color panel"
+    assert "Apply Tint" not in b, "the help names the hidden Apply Tint button"
 
 
 def test_colour_help_gets_the_order_of_operations_right():

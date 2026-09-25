@@ -129,10 +129,6 @@ QFrame#stepFrame QLabel#stepExplainer, QFrame#stepFrame QLabel#fullHelpLink
    underline by MainWindow's rich text; this sizes it to sit on the title. */
 QLabel#helpHeader {{ font-size: 12px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
-/* The answer to "did that apply?" — so NOT stepDesc's muted help-text grey, which
-   is the styling people skim past. Full-strength text, above the button. */
-QLabel#pendingNote {{ color: {TEXT}; font-size: 13px; font-weight: 600;
-                      padding: 2px 0 6px 0; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}

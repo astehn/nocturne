@@ -57,18 +57,17 @@ def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     never shown is exactly the bug this whole task exists to fix.
 
     Since 2026-09-25 (consistent panels) there is no separate "Not applied
-    yet" label: the Apply button carries the pending state itself, as its
-    `pending` property (what theme.py colours it by). Read that property off
-    the real button. Its "changes not applied" TEXT arrives with the button's
-    state logic (consistent-panels Task 5), which then tightens this to
-    `apply_btn.state() == "pending"`."""
+    yet" label: the Apply button carries the state itself, decided once in
+    MainWindow._step_state. Read it off the real button, and read the words
+    the user actually sees ("● changes not applied"), not just the colour."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("levels")
     qtbot.wait(1)
-    assert win._panel.apply_btn.property("pending") != "true"
+    assert win._panel.apply_btn.state() != "pending"
     win._on_levels_change(0.1, 1.0, 0.9)
     win._sync_step_controls()
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
+    assert "not applied" in win._panel.apply_btn.status_text()
     # Third leg, and the one with teeth: the two above are both satisfied by a
     # mark-only _sync_step_controls that never clears it again.
     # Saturation is deliberate — it commits through its own handler rather than
@@ -83,10 +82,10 @@ def test_the_pending_label_tracks_the_state(qtbot, tmp_path):
     # its default would assert the opposite of what this line means. Nebula
     # stays 0 so no star split runs and this is instant.
     win._on_sat_change(0.70, 0.0)
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
     win._apply_saturation(0.70, 0.0)
     qtbot.wait(1)
-    assert win._panel.apply_btn.property("pending") != "true"
+    assert win._panel.apply_btn.state() == "applied"
 
 
 def test_a_compute_step_is_pending_once_its_option_differs(qtbot, tmp_path):
@@ -193,12 +192,12 @@ def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path, 
     signal that is correct but displayed late is still a step that looks applied
     when it is not.
 
-    The pending mark now lives on the Apply button (its `pending` property;
-    consistent panels, 2026-09-25). On a compute step never applied that mark
-    is ALREADY on at arrival ("arriving is the invitation"), so it cannot show
-    the dropdown being heard there. Background is used instead, after
-    committing "off" — bookkeeping only, no tool runs — which leaves the mark
-    off; moving the dropdown must then put it on at once. GraXpert is
+    The pending mark now lives on the Apply button (its state; consistent
+    panels, 2026-09-25). On a compute step never applied the button is
+    already green at arrival (`not_run`), so the colour alone cannot show the
+    dropdown being heard there. Background is used instead, after committing
+    "off" — bookkeeping only, no tool runs — which reads `applied`; moving
+    the dropdown must then make it `pending` at once. GraXpert is
     reported present only so Apply is enabled for "light" (a disabled Apply is
     never marked); nothing here presses it.
     """
@@ -210,12 +209,12 @@ def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path, 
     win.apply_current("off")
     qtbot.wait(1)
     assert win._panel.option_box.currentText() == "off", "precondition"
-    assert win._panel.apply_btn.property("pending") != "true", "precondition"
+    assert win._panel.apply_btn.state() == "applied", "precondition"
 
     win._panel.option_box.setCurrentText("light")
     qtbot.wait(1)
 
-    assert win._panel.apply_btn.property("pending") == "true", (
+    assert win._panel.apply_btn.state() == "pending", (
         "the dropdown moved and the button did not notice until the next refresh")
 
 
@@ -767,7 +766,7 @@ def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
     win._on_sat_change(0.70, 0.0)
     win._sync_step_controls()
     assert win._side.action_slot.isAncestorOf(win._panel.apply_btn)
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
     assert not [lab for lab in win.findChildren(QLabel)
                 if lab.objectName() == "pendingNote"], "a second pending line"
 
@@ -779,19 +778,20 @@ def test_the_pending_note_sits_above_the_apply_button(qtbot, tmp_path):
 
 def test_the_pending_note_sits_above_apply_tint_when_a_tint_is_pending(
         qtbot, tmp_path):
-    # The pending mark is the buttons' `pending` property now (consistent
-    # panels, 2026-09-25). Same meaning: it must be on the button that commits
-    # the tint, never on Apply Color alone. (Task 5 makes the ONE visible
-    # Apply commit both in _apply_sequence order; this then changes with it.)
+    # Colour has ONE visible Apply since 2026-09-25 (consistent panels), and
+    # it commits the tint (via _apply_sequence) — so a pending tint marks that
+    # one button, and pressing it commits the tint rather than only the method.
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
-    win._on_tint_change(0.2, 0.0)
+    win._panel.tint_slider.setValue(20)
     win._sync_step_controls()
 
-    assert win._panel.apply_tint_btn.property("pending") == "true"
-    assert win._panel.apply_btn.property("pending") != "true", (
-        "the mark sits on Apply Color, which would discard the "
-        "pending tint rather than commit it")
+    assert win._panel.apply_btn.state() == "pending"
+    assert win._apply_sequence() == [win._panel.apply_tint_btn], (
+        "the pending tint is not what the one Apply would commit")
+    n = len(win.project.entries())
+    win._panel.apply_btn.click()
+    assert [e for e, _ in win.project.entries()][n:] == ["Colour Tint"]
 
 
 def test_the_pending_note_sits_above_remove_green_apply_when_it_is_pending(
@@ -802,24 +802,33 @@ def test_the_pending_note_sits_above_remove_green_apply_when_it_is_pending(
     Colour, with its own button name and its own coverage gap."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("remove_green")
-    assert win._panel.apply_btn.property("pending") != "true", "precondition"
+    assert win._panel.apply_btn.state() == "no_change", "precondition"
     win._on_removegreen_change(0.4)
     win._sync_step_controls()
 
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
 
 
 def test_the_apply_button_is_only_green_when_there_is_an_edit_to_commit(
         qtbot, tmp_path):
     """`SUCCESS` is documented in theme.py as "there is an edit to commit". A
     button wearing it on every step at all times cannot say anything when the
-    step genuinely wants pressing."""
+    step genuinely wants pressing.
+
+    Since 2026-09-25 green means "pressing this will change your image" (spec
+    §4), so a never-applied step whose default DOES something is green too
+    (`not_run`). Local Contrast at 0 is a proven no-op (NOOP_AT_DEFAULT): it
+    arrives plain, and turns green once the slider says something. (This used
+    Saturation, whose 0.50 turned out not to be bit-exact — see
+    NOOP_AT_DEFAULT.)"""
     win = _win(qtbot, tmp_path)
-    win._go_to_id("saturation")
+    win._go_to_id("local_contrast")
+    assert win._panel.apply_btn.state() == "no_change"
     assert win._panel.apply_btn.property("pending") == "false"
 
-    win._on_sat_change(0.7, 0.0)
+    win._on_lc_change(0.4)
     win._sync_step_controls()
+    assert win._panel.apply_btn.state() == "pending"
     assert win._panel.apply_btn.property("pending") == "true"
 
 
@@ -835,7 +844,7 @@ def test_arriving_at_a_never_applied_compute_stage_is_green(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
     win._go_to_id("deconvolution")
     assert win._has_pending() is False, "fixture: nothing touched yet"
-    assert win._panel.apply_btn.property("pending") == "true", (
+    assert win._panel.apply_btn.state() == "not_run", (
         "a never-applied compute stage must invite its own Apply")
 
 
@@ -848,16 +857,24 @@ def test_a_compute_stage_stops_being_green_once_it_has_actually_run(
     qtbot.waitUntil(lambda: win._has_pending() is False, timeout=10000)
     win._sync_step_controls()
 
-    assert win._panel.apply_btn.property("pending") == "false"
+    assert win._panel.apply_btn.state() == "applied"
 
 
 def test_a_live_preview_stage_is_not_green_just_for_arriving(qtbot, tmp_path):
     """The compute-stage exception must not leak onto stages that render a
     live preview — those already have `_has_pending` to say when pressing is
-    warranted, and a permanently green button there would say nothing."""
+    warranted, and a permanently green button there would say nothing.
+
+    Sharpened by spec §4 (2026-09-25): "not green for arriving" holds exactly
+    where the untouched panel is a no-op. Every NOOP_AT_DEFAULT stage must
+    arrive `no_change`, plain and disabled."""
+    from nocturne.ui.main_window import NOOP_AT_DEFAULT
     win = _win(qtbot, tmp_path)
-    win._go_to_id("saturation")
-    assert win._panel.apply_btn.property("pending") == "false"
+    for sid in sorted(NOOP_AT_DEFAULT):
+        win._go_to_id(sid, user_initiated=False)
+        assert win._panel.apply_btn.state() == "no_change", sid
+        assert win._panel.apply_btn.property("pending") == "false", sid
+        assert not win._panel.apply_btn.isEnabled(), sid
 
 
 def test_background_off_does_not_stay_green_after_being_applied(qtbot, tmp_path):
@@ -871,21 +888,20 @@ def test_background_off_does_not_stay_green_after_being_applied(qtbot, tmp_path)
     win.apply_current("off")
     win._sync_step_controls()
 
-    assert win._panel.apply_btn.property("pending") == "false"
+    assert win._panel.apply_btn.state() == "applied"
 
 
 def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         qtbot, tmp_path):
-    """Color carries two commit buttons (Apply Color, Apply Tint — De-green
-    Sky moved to its own stage). Lighting Apply Color when a TINT is pending
-    would point the user at the one button that does not commit it.
+    """Color shows ONE Apply since 2026-09-25 (consistent panels) and it
+    commits the tint, so a pending tint must light THAT button — there is no
+    other one on screen to point at.
 
     Reads the RENDERED background, not just the Qt property (whole-branch
     review Critical #4): theme.py styles `QPushButton#primary[pending=...]`,
-    and apply_tint_btn had no objectName "primary" at all — the property was
-    set faithfully forever with zero visual effect. A test on the property
-    alone cannot see that; this fails against exactly the no-op the review
-    flagged.
+    and a button without objectName "primary" had the property set faithfully
+    forever with zero visual effect. A test on the property alone cannot see
+    that.
     """
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QColor
@@ -898,13 +914,11 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         win._on_tint_change(0.2, 0.0)
         win._sync_step_controls()
 
-        assert win._panel.apply_tint_btn.property("pending") == "true"
-        assert win._panel.apply_btn.property("pending") == "false", (
-            "Apply Color is lit for a pending tint it does not commit")
-        assert win._panel.apply_tint_btn.objectName() == "primary", (
-            "apply_tint_btn is not wired into the #primary[pending=...] selector")
+        assert win._panel.apply_btn.state() == "pending"
+        assert win._panel.apply_btn.objectName() == "primary", (
+            "apply_btn is not wired into the #primary[pending=...] selector")
 
-        btn = win._panel.apply_tint_btn
+        btn = win._panel.apply_btn
         pm = btn.grab()
         # Sample the fill beside the centred label, not the centre: the
         # centre lands on a glyph once the button gets its natural height.
@@ -912,7 +926,8 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         expected = QColor(SUCCESS)
         assert (rendered.red(), rendered.green(), rendered.blue()) == \
             (expected.red(), expected.green(), expected.blue()), (
-                f"Apply Tint does not actually render green while pending: {rendered.name()}")
+                f"Colour's Apply does not actually render green while a tint is "
+                f"pending: {rendered.name()}")
     finally:
         app.setStyleSheet("")
 
@@ -934,7 +949,7 @@ def test_on_remove_green_its_own_apply_renders_green_while_pending(
         win._on_removegreen_change(0.4)
         win._sync_step_controls()
 
-        assert win._panel.apply_btn.property("pending") == "true"
+        assert win._panel.apply_btn.state() == "pending"
         assert win._panel.apply_btn.objectName() == "primary", (
             "apply_btn is not wired into the #primary[pending=...] selector")
 
@@ -969,16 +984,20 @@ def test_the_color_method_choice_is_covered_by_pending(qtbot, tmp_path):
 
 
 def test_changing_the_color_method_shows_the_pending_note(qtbot, tmp_path):
-    # The note is the Apply button's `pending` mark now (consistent panels).
+    # The note is the Apply button's state now (consistent panels). A
+    # never-applied Colour is already green (`not_run`: pressing would
+    # calibrate), so commit the method first to get a plain `applied` button,
+    # then show that moving the dropdown makes it `pending`.
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
+    win._panel.apply_btn.click()
     qtbot.wait(1)
-    assert win._panel.apply_btn.property("pending") != "true"
+    assert win._panel.apply_btn.state() == "applied", "precondition"
 
     win._panel.method_box.setCurrentText("Photometric (SPCC)")
     qtbot.wait(1)
 
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
 
 
 def test_changing_the_color_method_makes_next_prompt(qtbot, tmp_path, monkeypatch):
@@ -1848,7 +1867,7 @@ def test_color_cancelling_the_first_confirm_never_clicks_the_second_button(
     # a tint waits) — the sequence _apply_current_step actually presses is
     # _apply_sequence, which puts the method first.
     assert win._apply_sequence() == [
-        win._panel.apply_btn, win._panel.apply_tint_btn]
+        win._panel.apply_method_btn, win._panel.apply_tint_btn]
     monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
                         lambda self, names, label, verb, **kw: False)
     _answer(monkeypatch, "apply")
@@ -1974,7 +1993,7 @@ def test_color_offers_apply_when_only_the_method_is_pending(qtbot, tmp_path):
 
     assert win._has_pending()
     targets = win._pending_apply_targets()
-    assert targets == [win._panel.apply_btn], (
+    assert targets == [win._panel.apply_method_btn], (
         "the prompt would claim the step cannot be applied")
 
 
@@ -1990,8 +2009,10 @@ def test_color_still_refuses_apply_color_when_a_tint_is_waiting(qtbot, tmp_path)
     win._on_tint_change(0.2, 0.0)
 
     targets = win._pending_apply_targets()
+    assert win._panel.apply_method_btn not in targets, (
+        "the method alone offered while a tint is waiting — it would discard it")
     assert win._panel.apply_btn not in targets, (
-        "Apply Color offered while a tint is waiting — it would discard it")
+        "the visible Apply runs the sequence itself; as a target it would re-enter")
     assert win._panel.apply_tint_btn in targets
 
 
@@ -2017,12 +2038,16 @@ def test_with_method_and_tint_pending_the_green_and_note_are_on_apply_color(
     win._on_tint_change(0.2, 0.0)
     win._sync_step_controls()
 
-    assert win._apply_sequence()[0] is win._panel.apply_btn, (
-        "fixture: Apply Color must be the first press in this situation")
-    assert win._panel.apply_btn.property("pending") == "true", (
-        "the green does not follow _apply_sequence's first press")
-    # The separate note that also had to anchor there is gone (consistent
-    # panels, 2026-09-25): the mark above IS the note now.
+    assert win._apply_sequence()[0] is win._panel.apply_method_btn, (
+        "fixture: the method must be the first press in this situation")
+    # Since 2026-09-25 (consistent panels) there is ONE visible Apply and it
+    # presses exactly _apply_sequence, so the green and the press can no
+    # longer point at different buttons: the one Apply is green, and pressing
+    # it commits in the safe order.
+    assert win._panel.apply_btn.state() == "pending"
+    n = len(win.project.entries())
+    win._panel.apply_btn.click()
+    assert [e for e, _ in win.project.entries()][n:] == ["Color", "Colour Tint"]
 
 
 # --- Second whole-branch review -------------------------------------------
@@ -2406,7 +2431,7 @@ def test_an_adjusted_crop_box_is_pending(qtbot, tmp_path):
 
     assert win._has_pending(), "an adjusted crop box is uncommitted work"
     win._sync_step_controls()
-    assert win._panel.apply_btn.property("pending") == "true"
+    assert win._panel.apply_btn.state() == "pending"
 
 
 def test_next_does_not_discard_an_adjusted_crop_without_asking(

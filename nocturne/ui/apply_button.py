@@ -78,6 +78,7 @@ class ApplyButton(QPushButton):
         self.setObjectName("primary")
         self._label = label
         self._state = "not_run"
+        self._available = True
         self._look = "A"
         self.set_look(look)
         self.set_state("not_run")
@@ -127,9 +128,24 @@ class ApplyButton(QPushButton):
         if self.property("pending") != ("true" if green else "false"):
             self.setProperty("pending", "true" if green else "false")
             self.style().unpolish(self); self.style().polish(self)
-        self.setEnabled(state not in ("no_change", "busy"))
+        super().setEnabled(self._available and state not in ("no_change", "busy"))
         self.setToolTip(f"{self._label} — {self.status_text()}" if self.status_text() else self._label)
         self.update()
+
+    # --- enablement: two independent reasons to be off. The STATE says whether
+    # pressing would do anything (no_change, busy); the caller's own
+    # setEnabled says whether the tool can run at all (GraXpert unconfigured,
+    # a star split still running, no crop box yet). Let set_state write
+    # enablement outright and a refreshed "not_run" switched on an Apply whose
+    # tool is missing; so the caller's flag is remembered and set_state only
+    # ever narrows it. An explicit setEnabled still takes effect at once, as Qt
+    # callers expect, until the next set_state.
+    def setEnabled(self, enabled: bool) -> None:  # noqa: N802 (Qt API)
+        self._available = bool(enabled)
+        super().setEnabled(bool(enabled))
+
+    def setDisabled(self, disabled: bool) -> None:  # noqa: N802 (Qt API)
+        self.setEnabled(not disabled)
 
     # --- shared geometry/fonts: paintEvent and label_fits() must never
     # measure with different fonts than they draw with (Review Focus 2: they
