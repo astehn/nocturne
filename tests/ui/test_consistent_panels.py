@@ -649,7 +649,7 @@ def _move_slider(win, qtbot):
 
 
 @pytest.mark.parametrize("control", ["slider", "levels_auto", "combo", "colour_tint",
-                                     "colour_method", "crop_box"])
+                                     "colour_method", "crop_box", "curves"])
 def test_any_control_change_on_an_applied_step_re_enables_apply(
         qtbot, tmp_path, monkeypatch, control):
     if control == "slider":
@@ -680,6 +680,16 @@ def test_any_control_change_on_an_applied_step_re_enables_apply(
             win._panel.tint_slider.setValue(20); qtbot.wait(20)
         else:
             win._panel.method_box.setCurrentIndex(1); qtbot.wait(20)
+    elif control == "curves":
+        win = _open(qtbot, tmp_path)
+        win._go_to_id("curves", user_initiated=False); qtbot.wait(20)
+        editor = win._panel.curve_editor
+        editor.set_points([(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)]); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "pending", "fixture: curve edit not pending"
+        win._panel.apply_btn.click(); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "applied", "fixture"
+        assert not win._panel.apply_btn.isEnabled(), "applied curve edit is off"
+        editor.set_points([(0.0, 0.0), (0.3, 0.5), (1.0, 1.0)]); qtbot.wait(20)
     else:
         win = _open(qtbot, tmp_path)
         win._go_to_id("crop", user_initiated=False); qtbot.wait(20)

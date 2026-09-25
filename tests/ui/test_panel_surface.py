@@ -76,6 +76,13 @@ def test_panel_rule_dividers_show_the_card_colour_not_a_bg1_band(qtbot, tmp_path
             px = img.pixelColor(x, line_y - 1).name()
             if px != card_px:
                 bad.append(f"{st.id}: row above panelRule {px} vs card {card_px}")
+            # The band can sit on either side of the line the style actually
+            # draws (found by colour, not assumed geometry) — a BG_1 band
+            # below the line would be just as visible as one above it.
+            if line_y + 1 < img.height():
+                px_below = img.pixelColor(x, line_y + 1).name()
+                if px_below != card_px:
+                    bad.append(f"{st.id}: row below panelRule {px_below} vs card {card_px}")
     assert checked, "no visible panelRule dividers were found to check"
     assert not bad, "\n".join(bad[:30])
 

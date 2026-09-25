@@ -50,6 +50,17 @@ def _geometry(win) -> dict:
         # it. Muscle memory again — Apply is in the same place on every step.
         "header_slot": rect(win._side.header_slot),
         "action_row": rect(win._side.action_slot),
+        # Where the step's own controls actually begin on screen: the top of
+        # the scroll VIEWPORT, not the description box's bottom edge or the
+        # current panel's first control. The viewport boundary is the one
+        # thing every stage shares — some panels' first control is a special
+        # case (Import has no controls at all when nothing is open elsewhere,
+        # Enhancements builds a grid, not a plain widget) — and it is what
+        # visibly changes if the fixed header above it grows or shrinks, which
+        # is exactly what a `desc_box` that follows its text would do: the
+        # viewport is laid out immediately below header_slot in the same
+        # QVBoxLayout (side_panel.py), so a taller header pushes it down.
+        "controls_top": win._side.scroll.viewport().mapTo(win, QPoint(0, 0)).y(),
         # The jobs indicator, at the right end of the toolbar row in its own
         # bar: fixed there whatever it says, and always present (blank and
         # invisible while idle, never hidden).
@@ -158,6 +169,13 @@ def _states(win, qtbot):
             slider.setValue(v + 1 if v < slider.maximum() else v - 1)
             qtbot.wait(120)      # past the 90 ms preview debounce
             _settle(qtbot)
+            # The state must really BE pending, through the same ApplyButton
+            # the user presses — not just a label this generator happens to
+            # attach to whatever geometry it read.
+            btn = win._panel.apply_btn
+            assert btn is not None and btn.state() == "pending", (
+                f"{win.current_stage_id()}: moving {name} did not drive "
+                f"Apply to pending (state={btn.state() if btn else None!r})")
             yield "pending", _geometry(win)
             slider.setValue(v)
             qtbot.wait(120)
