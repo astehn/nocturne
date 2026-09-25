@@ -393,6 +393,7 @@ class MainWindow(QMainWindow):
         # _ensure_stretched against a project the worker hasn't finished
         # mutating yet.
         self._deferred_nav = None
+        self._apply_run = None      # the rest of an Apply plan, parked on an async press
         # Bumped by _go_to on every navigation that actually completes.
         # _deferred_nav captures this at defer time; _land_deferred_nav bails
         # if it has moved on. A bare stage-index comparison looked equivalent
@@ -2441,8 +2442,7 @@ class MainWindow(QMainWindow):
                     # coincidence and land the stale target anyway.
                     # _land_deferred_nav bails if any navigation has
                     # completed since, landing back here or not.
-                    self._deferred_nav = (self._nav_seq, index,
-                                          self._pending_sources())
+                    self._deferred_nav = (self._nav_seq, index)
                     return
                 if self._has_pending():
                     # An Apply can now decline mid-flight (Task 5's truncation
@@ -2471,22 +2471,20 @@ class MainWindow(QMainWindow):
         self._rebuild_panel()
         self._refresh()
 
-    def _land_deferred_nav(self) -> None:
+    def _land_deferred_nav(self, run: str | None = None) -> None:
         """Finish a navigation "Apply and continue" deferred while its apply
-        was in flight (see _go_to). Called from _set_busy once busy clears.
+        was in flight (see _go_to). Called from _set_busy once busy clears,
+        with what `_resume_apply_run` made of the landing: "running" means the
+        plan has pressed its next button and is async again, so the deferral
+        waits for that one.
 
-        Checked against _has_pending(), not just "the worker finished": a
-        refused or failed apply (Levels on a still-linear image, a cancelled
-        tool, an exception) leaves the pending slot set, and landing anyway
-        would sweep the user forward as if it had worked while the warning
-        they need to see sits under the stage they just left.
-
-        Still pending is not always a failure, though: Colour can hold three
-        independent edits, and the sequence presses the method first (see
-        `_apply_sequence`), so a perfectly good apply can land with the tint
-        still waiting. Those two are told apart by strict progress in
-        `_pending_sources` — if something actually committed, carry on with the
-        rest rather than dropping a navigation the user already authorised.
+        Otherwise the move lands only if nothing is left pending. A refused,
+        failed or cancelled apply (Levels on a still-linear image, a cancelled
+        tool, an exception) leaves its source unapplied, and landing anyway
+        would sweep the user forward as if it had worked while the warning they
+        need to see sits under the stage they just left. So does a source that
+        appeared mid-flight: it was never authorised, so it is neither pressed
+        nor dropped by a move.
 
         Also checked against _nav_seq, not self._stage: the stepper isn't
         busy-gated, so the user can click a different row while this apply
@@ -2502,28 +2500,14 @@ class MainWindow(QMainWindow):
         pending, self._deferred_nav = self._deferred_nav, None
         if pending is None or self.project is None:
             return
-        seq, target, *rest = pending
+        seq, target = pending[0], pending[1]
         if self._nav_seq != seq:
             return
+        if run == "running":
+            self._deferred_nav = pending        # the plan's next press is in flight
+            return
         if self._has_pending():
-            # Still pending for one of two very different reasons. Either the
-            # apply failed or was refused — the same source is still unapplied,
-            # and landing would sweep the user past the warning they need to
-            # see — or it succeeded and Colour simply has another button to
-            # press (method, then tint, then remove-green). Tell them apart by
-            # requiring STRICT progress since the deferral was armed: a
-            # shrinking set can only shrink so far, so this cannot spin on an
-            # apply that keeps failing.
-            was = rest[0] if rest else frozenset()
-            left = self._pending_sources()
-            if not (left < was) or not self._pending_apply_targets():
-                return
-            self._apply_current_step()
-            if self._busy:
-                self._deferred_nav = (seq, target, left)   # another one in flight
-                return
-            if self._has_pending():
-                return
+            return
         self._go_to(target, user_initiated=False)
 
     def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
@@ -2663,30 +2647,79 @@ class MainWindow(QMainWindow):
         """Press this step's own Apply button(s) — see `_apply_sequence` for
         which ones, in which order, and why Color is special.
 
-        Re-reads the sequence after every press rather than iterating one
-        snapshot: Colour is the one stage that can hold two independent pending
-        edits, so a single pass committed the first and left `_go_to` looking
-        at a step that was still pending. The user pressed Next, watched
-        nothing move, and had to answer the identical prompt a second time.
+        The sequence is taken ONCE, up front, as a plan, and pressed in order.
+        Colour is the one stage that can need two presses (method, then tint),
+        and a single press used to leave `_go_to` looking at a step still
+        pending. The plan is fixed so that a source which appears mid-flight (a
+        tint dragged while the calibration runs) is never committed on the
+        user's behalf — they authorised what was pending when they pressed.
 
-        Stops after a button whose truncation confirm was declined instead of
-        pressing whatever else was pending — continuing would re-ask the same
-        destructive question seconds after the user said no — and stops the
-        moment a press goes async, where `_land_deferred_nav` carries on.
-        Each press either clears its own source or returns, so this terminates.
+        Stops after a press whose truncation confirm was declined, instead of
+        pressing the rest — continuing would re-ask the same destructive
+        question seconds after the user said no. A press that goes async parks
+        the rest of the plan in `_apply_run`; `_resume_apply_run` carries on
+        from the worker's landing (ruling R12).
         """
-        while self._has_pending():
-            # `_has_pending`, not "are there targets left": _pending_apply_targets
-            # answers "which button WOULD commit it" and hands back a candidate
-            # on an untouched step too (see _sync_step_controls), so looping on
-            # a non-empty list re-presses Apply forever.
-            targets = self._apply_sequence()
-            if not targets:
-                return
-            btn = targets[0]
+        self._apply_run = None
+        plan = list(self._apply_sequence()) if self._has_pending() else []
+        self._press_apply_plan(plan)
+
+    def _press_apply_plan(self, plan: list) -> str:
+        """Press `plan`'s buttons in order: "done", "stopped" (a press was
+        declined or refused), or "running" (one went async; the rest wait in
+        `_apply_run`)."""
+        while plan:
+            btn = plan.pop(0)
+            if not self._button_step_pending(btn):
+                continue            # already committed by an earlier press
+            before = self._last_entry()
             btn.click()
-            if self._busy or self._button_step_pending(btn):
-                return
+            if self._busy:
+                self._apply_run = (self.project, self._panel,
+                                   self._expected_entry(btn), before, plan)
+                return "running"
+            if self._button_step_pending(btn):
+                return "stopped"
+        return "done"
+
+    def _resume_apply_run(self) -> str | None:
+        """An async press just landed (called from `_set_busy(False)`): if it
+        actually committed, press the rest of its plan. None when no plan was
+        waiting.
+
+        Progress is "the expected history entry landed" — a new last entry
+        with the right name — not a shrinking `_pending_sources`. A calibration
+        that never ran is not a pending source, so after it lands the set does
+        not shrink; that read as a failed apply and dropped the rest (R12).
+        A failure or cancel lands nothing: the plan is abandoned, nothing more
+        is pressed, and the caller re-reads the state and does not navigate.
+        """
+        run, self._apply_run = self._apply_run, None
+        if run is None:
+            return None
+        project, panel, name, before, plan = run
+        if project is not self.project or panel is not self._panel:
+            return "stopped"        # another image, or the user moved on
+        last = self._last_entry()
+        if last is None or last is before or (name is not None and last[0] != name):
+            return "stopped"
+        return self._press_apply_plan(plan)
+
+    def _last_entry(self):
+        """The newest history record, compared by IDENTITY: a re-commit of the
+        same step with the same option is a new tuple, so it still counts."""
+        if self.project is None:
+            return None
+        entries = self.project.entries()
+        return entries[-1] if entries else None
+
+    def _expected_entry(self, btn) -> str | None:
+        """The history name a press of `btn` commits under (None: any)."""
+        if btn is getattr(self._panel, "apply_tint_btn", None):
+            return STEP_NAME["tint"]
+        if btn is getattr(self._panel, "apply_method_btn", None):
+            return STEP_NAME["color"]
+        return STEP_NAME.get(self.current_stage_id())
 
     def _ask_pending(self, step_label: str) -> str:
         """'apply', 'discard' or 'cancel'. Split out so tests can answer it
@@ -3134,11 +3167,11 @@ class MainWindow(QMainWindow):
     def _pending_sources(self) -> frozenset:
         """Which independent unapplied things this step is holding, by name.
 
-        `_has_pending` asks "any?"; a deferred "Apply and continue" needs
-        "which?", because Colour has up to three (the method, the tint, the
-        remove-green) and a step that still reads pending after one of them
-        committed is not the same situation as one whose apply failed. See
-        `_land_deferred_nav`.
+        `_has_pending` asks "any?"; this answers "which?" (Colour holds two:
+        the method and the tint). No longer the progress measure for a
+        deferred "Apply and continue" — a never-run calibration is not a
+        source here, so the set cannot show it landing; `_resume_apply_run`
+        checks the history instead (R12).
         """
         if self.project is None:
             return frozenset()
@@ -3276,11 +3309,15 @@ class MainWindow(QMainWindow):
         """A shown, untouched crop box covering the whole frame: Apply Crop
         returns without committing (`_apply_crop`), so there is nothing to do.
         The fresh box is the detected content bounds, which on a clean frame
-        IS the full frame."""
+        IS the full frame.
+
+        Measured against the canvas's own size, not `project.current()`: that
+        reads the whole frame back from disk (~100 MB at 3840×2160), and this
+        runs on every state sync while a box is shown or dragged."""
         if (self.project is None or self.current_stage_id() != "crop"
                 or not self.image_view.crop_box_visible()):
             return False
-        h, w = self.project.current().data.shape[:2]
+        w, h = self.image_view.image_size()
         return self.image_view.crop_bounds() == (0, h, 0, w)
 
     def _sync_step_controls(self) -> None:
@@ -3928,6 +3965,7 @@ class MainWindow(QMainWindow):
         # never call back into it meaningfully. Landing it against the new
         # workspace would navigate somewhere the user never asked to go.
         self._deferred_nav = None
+        self._apply_run = None      # the rest of an Apply plan, parked on an async press
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -3963,7 +4001,7 @@ class MainWindow(QMainWindow):
         self._gate_panel_buttons(busy)
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"
-            self._land_deferred_nav()
+            self._land_deferred_nav(self._resume_apply_run())
 
     def _gate_panel_buttons(self, busy: bool) -> None:
         """Disable every button on the step panel while an operation runs.

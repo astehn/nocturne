@@ -101,7 +101,6 @@ def test_async_colour_sequence_commits_both_and_lands(qtbot, tmp_path, monkeypat
     assert win.current_stage_id() == stage
     assert win._deferred_nav is not None
     assert win._deferred_nav[0] == seq_before
-    assert win._deferred_nav[2] == frozenset({"method", "tint"})
 
     w.land()
 
@@ -268,7 +267,6 @@ def test_async_a_new_pending_source_arriving_mid_flight_bails_safely(
     stage = win.current_stage_id()
 
     win.go_next()
-    assert win._deferred_nav[2] == frozenset({"method"})
     win._on_tint_change(0.2, 0.0)          # user drags the tint while busy
 
     w.land()
@@ -278,3 +276,153 @@ def test_async_a_new_pending_source_arriving_mid_flight_bails_safely(
     assert win.current_stage_id() == stage
     assert win._deferred_nav is None
     assert w.pending() == 0
+
+
+# --- R12: the Colour plan survives a REAL async landing ----------------------
+#
+# The Worker above keeps the call order but lands on the test's word. These go
+# one step further: `_async_enabled = True`, so the calibration really runs on
+# the thread pool and `_run_busy` really lands it, and the test only waits.
+# Found by a probe after round 1: with async on, a fresh Colour + tint
+# committed only "Color" — the rest of the plan was never resumed, and Next
+# stayed on Colour in silence.
+
+def _async_win(qtbot, tmp_path):
+    win = _win(qtbot, tmp_path)
+    win._async_enabled = True
+    win._go_to_id("color")
+    return win
+
+
+def _idle(qtbot, win):
+    qtbot.waitUntil(lambda: not win._busy, timeout=10000)
+    qtbot.wait(20)
+
+
+def _names(win):
+    return [n for n, _ in win.project.entries()]
+
+
+def test_real_async_fresh_colour_apply_commits_calibration_then_tint(qtbot, tmp_path):
+    """R12 (a)."""
+    win = _async_win(qtbot, tmp_path)
+    win._panel.tint_slider.setValue(20)
+    win._panel.apply_btn.click()
+    assert win._busy, "fixture: the calibration did not go async"
+    _idle(qtbot, win)
+    assert _names(win) == ["Color", "Colour Tint"]
+    assert win.project.entries()[-1][1] == (pytest.approx(0.2), pytest.approx(0.0))
+    assert win._panel.apply_btn.state() == "applied"
+    assert not win._has_pending()
+
+
+def test_real_async_fresh_colour_next_commits_both_and_moves_on(
+        qtbot, tmp_path, monkeypatch):
+    """R12 (b)."""
+    win = _async_win(qtbot, tmp_path)
+    win._panel.tint_slider.setValue(20)
+    _answer(monkeypatch, "apply")
+    win.go_next()
+    _idle(qtbot, win)
+    assert _names(win) == ["Color", "Colour Tint"]
+    assert win.current_stage_id() != "color", "stayed on Colour after both landed"
+    assert win._deferred_nav is None
+
+
+@pytest.mark.parametrize("via", ["apply", "next"])
+def test_real_async_changed_method_and_tint_commit_in_order(
+        qtbot, tmp_path, monkeypatch, via):
+    """R12 (c)."""
+    win = _async_win(qtbot, tmp_path)
+    win._panel.method_box.setCurrentText(_other_method(win))
+    win._panel.tint_slider.setValue(20)
+    if via == "apply":
+        win._panel.apply_btn.click()
+    else:
+        _answer(monkeypatch, "apply")
+        win.go_next()
+    _idle(qtbot, win)
+    assert _names(win) == ["Color", "Colour Tint"]
+    assert not win._has_pending()
+    if via == "next":
+        assert win.current_stage_id() != "color"
+
+
+@pytest.mark.parametrize("how", ["fail", "cancel"])
+@pytest.mark.parametrize("via", ["apply", "next"])
+def test_real_async_calibration_that_does_not_land_abandons_the_plan(
+        qtbot, tmp_path, monkeypatch, how, via):
+    """R12 (d): nothing further pressed, no navigation, state re-read."""
+    from nocturne.core.tasks import Cancelled
+    from nocturne.steps.color import ColorStep
+
+    def broken(self, img, option):
+        if how == "cancel":
+            raise Cancelled()
+        raise RuntimeError("calibration exploded")
+
+    monkeypatch.setattr(ColorStep, "apply", broken)
+    win = _async_win(qtbot, tmp_path)
+    win._panel.tint_slider.setValue(20)
+    if via == "apply":
+        win._panel.apply_btn.click()
+    else:
+        _answer(monkeypatch, "apply")
+        win.go_next()
+    _idle(qtbot, win)
+    assert _names(win) == [], "committed something after the calibration failed"
+    assert win._tint_pending is not None, "lost the tint"
+    assert win.current_stage_id() == "color", "navigated past a failed apply"
+    assert win._deferred_nav is None and win._apply_run is None
+    assert win._panel.apply_btn.state() == "pending", "state not re-read"
+    assert win._panel.apply_btn.isEnabled()
+
+
+def test_real_async_tint_over_a_calibrated_colour_does_not_recalibrate(
+        qtbot, tmp_path):
+    """The other half of R11 still holds with async on."""
+    win = _async_win(qtbot, tmp_path)
+    win._panel.apply_btn.click()
+    _idle(qtbot, win)
+    assert _names(win) == ["Color"], "fixture"
+    win._panel.tint_slider.setValue(20)
+    win._panel.apply_btn.click()
+    _idle(qtbot, win)
+    assert _names(win) == ["Color", "Colour Tint"]
+
+
+def test_a_plan_with_two_async_presses_keeps_the_deferral_until_the_last(
+        qtbot, tmp_path, monkeypatch):
+    """R12: when the resumed press ALSO goes async, the navigation must wait
+    for that one too. No stage has two async presses today (the tint commits
+    synchronously), so the tint is made async here to reach the branch."""
+    from nocturne.ui import main_window as mw
+    win = _win(qtbot, tmp_path)
+    win._go_to_id("color")
+    w = Worker(win, monkeypatch)
+    real_tint = mw.MainWindow._apply_tint_step
+
+    def async_tint(self, tint, temperature):
+        def land(_):
+            busy, self._busy = self._busy, False     # real_tint refuses while busy
+            try:
+                real_tint(self, tint, temperature)
+            finally:
+                self._busy = busy
+        self._run_busy(lambda: None, land, "Tint…", "Tint failed")
+
+    monkeypatch.setattr(mw.MainWindow, "_apply_tint_step", async_tint)
+    win._go_to_id("levels", user_initiated=False)
+    win._go_to_id("color", user_initiated=False)    # rebuild: wire the async tint
+    win._panel.tint_slider.setValue(20)
+    _answer(monkeypatch, "apply")
+
+    win.go_next()
+    w.land()                                        # the calibration
+    assert _names(win) == ["Color"]
+    assert w.pending() == 1, "the tint was not pressed after the calibration landed"
+    assert win.current_stage_id() == "color", "moved on before the tint landed"
+    assert win._deferred_nav is not None
+    w.land()                                        # the tint
+    assert _names(win) == ["Color", "Colour Tint"]
+    assert win.current_stage_id() != "color"
