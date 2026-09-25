@@ -153,22 +153,33 @@ class JobsIndicator(QToolButton):
         self._on_open(path)
 
     def cancel_row(self, index: int) -> None:
+        """Resolves `index` against `_outstanding()` right now. Safe for a
+        caller that reads and acts in the same tick (a direct test call); NOT
+        used by the popover's own buttons, which hold the queue open across
+        clicks and so capture the job itself instead — see `_show_popover`."""
         self._queue.cancel(self._outstanding()[index])
 
     def _show_popover(self) -> None:
         pop = QFrame(self, Qt.WindowType.Popup)
         lay = QVBoxLayout(pop)
-        for i, job in enumerate(self._outstanding()):
+        # Captures the JOB itself, not its row index: the queue can advance
+        # while this popover is open (a job finishes, the next is promoted to
+        # running), which reshuffles what `_outstanding()` returns. An index
+        # resolved at click time would then hit whatever job now sits at that
+        # position — not the one this row was built for. `cancel_row(index)`
+        # below is kept only for callers that resolve it immediately, in the
+        # same tick they read it, before anything can reorder the queue.
+        for job in self._outstanding():
             row = QHBoxLayout()
             row.addWidget(QLabel(self._row_text(job)))
             row.addStretch(1)
             if job.state == "running":
                 b = QPushButton("Cancel")
-                b.clicked.connect(lambda _=False, i=i: (self.cancel_row(i), pop.close()))
+                b.clicked.connect(lambda _=False, j=job: (self._queue.cancel(j), pop.close()))
                 row.addWidget(b)
             elif job.state == "queued":
                 b = QPushButton("Remove")
-                b.clicked.connect(lambda _=False, i=i: (self.cancel_row(i), pop.close()))
+                b.clicked.connect(lambda _=False, j=job: (self._queue.cancel(j), pop.close()))
                 row.addWidget(b)
             lay.addLayout(row)
         for i, n in enumerate(list(self.notices)):

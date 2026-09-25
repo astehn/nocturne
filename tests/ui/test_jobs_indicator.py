@@ -1,3 +1,7 @@
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton
+
 from nocturne.stacking.stacker import StackOptions
 from nocturne.ui.job_queue import JobQueue, StackJob
 from nocturne.ui.jobs_indicator import JobsIndicator
@@ -88,3 +92,123 @@ def test_failed_is_red_and_stays(qtbot, monkeypatch):
     q.failed.emit(job, "out of memory")
     job.state = "failed"; q._running = None; q.changed.emit()
     assert "failed" in ind.text().lower() and not ind.isHidden()
+
+
+def test_cancel_row_cancels_the_targeted_job_and_no_other(qtbot, monkeypatch):
+    """Ported from the deleted panel's suite. Teeth: with two jobs outstanding,
+    cancelling index 1 must hit the queued job at that slot, not the running
+    one at slot 0. Asserting only that *a* job ended up cancelled would pass
+    even if the wrong one were hit — so capture the untouched job's state and
+    require it is still exactly what it was, not merely "not cancelled".
+    `cancel_row` resolves its index immediately here, in the same tick it is
+    read, so the index-vs-identity hazard the popover has (see the stale-row
+    test below) does not apply to this direct call."""
+    q, ind = _ind(qtbot, monkeypatch)
+    running_job, queued_job = _job("IC 1396A"), _job("NGC 7000")
+    q.enqueue(running_job)
+    q.enqueue(queued_job)
+    running_state_before = running_job.state
+    assert running_state_before == "running"
+
+    ind.cancel_row(1)
+
+    assert queued_job.state == "cancelled"
+    assert running_job.state == running_state_before
+
+
+def _popover_buttons(ind):
+    """The buttons a user can actually reach, in displayed (construction)
+    order — reading the live popover, not `popover_rows()`, which recomputes
+    its text from the queue on every call and so agrees with the model no
+    matter what was actually wired to which button."""
+    return ind._popover.findChildren(QPushButton)
+
+
+def test_clicking_the_first_rows_cancel_button_stops_that_job_and_no_other(qtbot, monkeypatch):
+    """Ported from the deleted panel's suite, through the popover this time.
+
+    Through the button, not through `cancel_row`: the connection between a
+    row's button and its job is the part only a real click exercises, and it
+    is the only way a user can stop a job from the toolbar.
+
+    Clicks the FIRST row deliberately. A lambda connected without capturing
+    its loop variable as a default argument calls back with the LAST job for
+    every row — a click on the last row cannot tell that apart from correct
+    behaviour; row 0 can.
+    """
+    q, ind = _ind(qtbot, monkeypatch)
+    monkeypatch.setattr("nocturne.ui.job_queue.kill_process", lambda proc: None)
+    running, queued = _job("IC 1396A"), _job("NGC 7000")
+    q.enqueue(running)
+    q.enqueue(queued)
+
+    ind._show_popover()
+    buttons = _popover_buttons(ind)
+    assert len(buttons) == 2, "one button per outstanding job"
+    before = queued.state
+    qtbot.mouseClick(buttons[0], Qt.MouseButton.LeftButton)
+
+    assert running.state == "cancelled"
+    assert queued.state == before, (
+        "clicking row 1's button hit row 2's job — the buttons are wired to "
+        "the wrong rows")
+
+
+def test_a_stale_popover_row_still_targets_its_own_job_after_the_queue_advances(
+        qtbot, monkeypatch):
+    """Regression for a real bug found in review: the popover's Cancel/Remove
+    buttons used to capture a ROW INDEX and re-resolve `_outstanding()[index]`
+    at click time. The queue can advance while the popover is still open — a
+    running job finishes, the next one is promoted — which reshuffles what
+    that index means. Reproduced: A running, B and C queued; popover built
+    (B is row 1); A finishes; clicking "B's" button cancelled C instead,
+    because C had slid into slot 1 once A dropped out of `_outstanding()`.
+
+    The fix captures the JOB itself in each button's closure, so the row
+    keeps meaning what it meant when it was drawn, no matter what the queue
+    does to the list around it.
+    """
+    q, ind = _ind(qtbot, monkeypatch)
+    monkeypatch.setattr("nocturne.ui.job_queue.kill_process", lambda proc: None)
+    a, b, c = _job("A"), _job("B"), _job("C")
+    q.enqueue(a); q.enqueue(b); q.enqueue(c)
+    assert a.state == "running" and b.state == "queued" and c.state == "queued"
+
+    ind._show_popover()
+    buttons = _popover_buttons(ind)
+    assert len(buttons) == 3
+    b_button = buttons[1]          # the row that said "B" when it was drawn
+
+    # A finishes while the popover is still open — the real ordering: the
+    # queue clears `_running` and the job's state moves to "done" together.
+    q._running = None
+    a.state = "done"
+    q.finished.emit(a, {"output": "/tmp/A.fits"})
+    q.changed.emit()
+
+    qtbot.mouseClick(b_button, Qt.MouseButton.LeftButton)
+
+    assert b.state == "cancelled", "the button built for B did not cancel B"
+    assert c.state == "queued", "B's row cancelled C instead of B"
+
+
+@pytest.mark.parametrize("event", [None, {}, {"output": 123}])
+def test_a_malformed_finished_event_does_not_crash_and_stores_no_path(
+        qtbot, monkeypatch, event):
+    """Ported from the deleted panel's suite (adapted: unlike JobsPanel,
+    JobsIndicator DOES read the `finished` event, so its guard is what is
+    under test here, not mere non-crashing). A child process is an external,
+    unvalidated source: `None` (nothing came through), `{}` (a `done` event
+    missing every key the schema normally guarantees), and a present but
+    wrong-typed "output" must all leave the stored notice path exactly `""`,
+    never raise, and never be mistaken for a real path."""
+    q, ind = _ind(qtbot, monkeypatch)
+    job = _job(); q.enqueue(job)
+
+    ind._on_finished(job, event)   # the queue's own `finished` signal is typed
+                                    # `dict` and would reject `None` outright;
+                                    # calling the handler directly is what
+                                    # actually exercises its guard against
+                                    # each malformed shape.
+
+    assert ind.notices[-1]["path"] == ""
