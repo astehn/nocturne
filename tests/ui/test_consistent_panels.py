@@ -146,7 +146,9 @@ def test_a_slider_move_is_pending_and_apply_makes_it_applied(qtbot, tmp_path):
     btn.click(); qtbot.wait(20)
     assert len(win.project.entries()) == n + 1, "fixture: Apply did not commit"
     assert btn.state() == "applied"
-    assert btn.isEnabled(), "an applied step can still be re-applied"
+    # Off since 2026-09-25 (Andreas): pressing it again only re-ran the tool
+    # on the same image. Change a control, or Reset step.
+    assert not btn.isEnabled(), "an applied, unchanged step must not re-run"
 
 
 def test_applied_then_dragged_back_to_the_no_op_value_is_pending(qtbot, tmp_path):
@@ -588,3 +590,177 @@ def test_each_commit_writes_exactly_one_activity_step_line(
     assert len(new) == len(commits), new
     for line, name in zip(new, commits):
         assert line.split(" ", 1)[1].startswith(name + " "), (line, name)
+
+
+# --- fix round 3: applied = disabled (Andreas, 2026-09-25 23:27) -------------
+# Pressing an applied, unchanged Apply re-ran the tool on the same image and
+# logged an identical line (Task 7) — minutes of RC-Astro for Noise Reduction.
+
+def _with_stub_nr(win, monkeypatch):
+    import nocturne.steps.noise_sharpen as ns
+    monkeypatch.setattr(ns, "run_cli", _no_external_tool)
+    win._rc_runner = win._bg_runner = _no_external_tool
+    real_step_for = win._step_for
+    monkeypatch.setattr(win, "_step_for", lambda s: _stub_denoise()
+                        if s == "noise_sharpen" else real_step_for(s))
+
+
+def _apply_and_land(qtbot, win):
+    win._panel.apply_btn.click()
+    _land(qtbot, win)
+
+
+def _applied_recover_core(qtbot, tmp_path):
+    win = _stretched(qtbot, tmp_path)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    win._panel.recover_slider.setValue(30); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "applied", "fixture"
+    return win
+
+
+def test_an_applied_unchanged_step_is_disabled(qtbot, tmp_path):
+    win = _applied_recover_core(qtbot, tmp_path)
+    btn = win._panel.apply_btn
+    assert not btn.isEnabled()
+    assert "applied" in btn.status_text()        # same words, only dimmed
+    assert btn.property("pending") == "false"
+
+
+def test_an_applied_apply_stays_disabled_after_a_busy_cycle(qtbot, tmp_path):
+    win = _applied_recover_core(qtbot, tmp_path)
+    win._set_busy(True, "probe")
+    win._set_busy(False)
+    assert win._panel.apply_btn.state() == "applied"
+    assert not win._panel.apply_btn.isEnabled()
+
+
+def test_an_applied_unchanged_step_never_prompts_on_next(qtbot, tmp_path):
+    win = _applied_recover_core(qtbot, tmp_path)
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    win.go_next()
+    assert not asked
+    assert win.current_stage_id() != "recover_core"
+
+
+def _move_slider(win, qtbot):
+    win._panel.recover_slider.setValue(50); qtbot.wait(20)
+
+
+@pytest.mark.parametrize("control", ["slider", "levels_auto", "combo", "colour_tint",
+                                     "colour_method", "crop_box"])
+def test_any_control_change_on_an_applied_step_re_enables_apply(
+        qtbot, tmp_path, monkeypatch, control):
+    if control == "slider":
+        win = _applied_recover_core(qtbot, tmp_path)
+        _move_slider(win, qtbot)
+    elif control == "levels_auto":
+        win = _stretched(qtbot, tmp_path)
+        win._go_to_id("levels", user_initiated=False); qtbot.wait(20)
+        win._panel.black_slider.setValue(3); qtbot.wait(20)
+        win._panel.apply_btn.click(); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "applied", "fixture"
+        win._panel.auto_btn.click(); qtbot.wait(20)      # the checkable Auto
+    elif control == "combo":
+        win = _open(qtbot, tmp_path)
+        _with_stub_nr(win, monkeypatch)
+        win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
+        win._panel.apply_btn.click(); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "applied", "fixture"
+        box = win._panel.option_box
+        box.setCurrentIndex((box.currentIndex() + 1) % box.count()); qtbot.wait(20)
+    elif control in ("colour_tint", "colour_method"):
+        win = _open(qtbot, tmp_path)
+        win._go_to_id("color", user_initiated=False); qtbot.wait(20)
+        win._panel.apply_btn.click(); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "applied", "fixture"
+        assert not win._panel.apply_btn.isEnabled(), "applied + untouched Colour is off"
+        if control == "colour_tint":
+            win._panel.tint_slider.setValue(20); qtbot.wait(20)
+        else:
+            win._panel.method_box.setCurrentIndex(1); qtbot.wait(20)
+    else:
+        win = _open(qtbot, tmp_path)
+        win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+        h, w = win.project.current().data.shape[:2]
+        win.image_view.set_crop_overlay(True, content_bounds=(0, h, 0, w), aspect_ratio=None)
+        _reveal_crop_box(win)
+        win.image_view._set_bounds((2, h - 2, 2, w - 2)); win.image_view._geometry_changed()
+        win._panel.apply_btn.click(); qtbot.wait(20)
+        assert win._panel.apply_btn.state() == "applied", "fixture"
+        assert not win._panel.apply_btn.isEnabled(), "applied crop, box gone: off"
+        h2, w2 = win.project.current().data.shape[:2]
+        win.image_view.set_crop_overlay(True, content_bounds=(0, h2, 0, w2), aspect_ratio=None)
+        _reveal_crop_box(win)
+        # A full-frame box over an already-cropped image: pressing does nothing.
+        # The step HAS a commit, so it reads "✓ applied" (the decision checks the
+        # commit before the full-frame no-op) — off either way.
+        assert win._panel.apply_btn.state() == "applied", "full-frame box after a crop"
+        assert not win._panel.apply_btn.isEnabled()
+        win.image_view._set_bounds((1, h2 - 1, 1, w2 - 1)); win.image_view._geometry_changed()
+    btn = win._panel.apply_btn
+    assert btn.state() == "pending", control
+    assert btn.isEnabled(), control
+
+
+def test_reset_step_still_works_on_an_applied_step(qtbot, tmp_path, monkeypatch):
+    from nocturne.ui import main_window as mw
+    win = _applied_recover_core(qtbot, tmp_path)
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb, **kw: True)
+    reset = win._panel.reset_step_btn
+    assert reset.isEnabled()
+    reset.click(); qtbot.wait(20)
+    assert "Recover Core" not in [n for n, _ in win.project.entries()]
+    assert win._panel.apply_btn.state() == "no_change"
+
+
+def test_revisited_applied_step_back_where_found_is_applied_and_off(qtbot, tmp_path):
+    """R10 (b) under the new rule. The INTENDED consequence: from a revisited
+    applied step (rebuilt at its defaults), re-applying the default is reached
+    by Reset step or via a different value — not by pressing Apply at the
+    value the panel opened on."""
+    win = _applied_recover_core(qtbot, tmp_path)
+    win._go_to_id("levels", user_initiated=False); qtbot.wait(20)
+    win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
+    s = win._panel.recover_slider
+    s.setValue(10); qtbot.wait(20)
+    s.setValue(0); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "applied"
+    assert not win._panel.apply_btn.isEnabled()
+    s.setValue(20); qtbot.wait(20)
+    assert win._panel.apply_btn.state() == "pending" and win._panel.apply_btn.isEnabled()
+
+
+def test_enhancements_and_export_have_no_state_driven_apply(qtbot, tmp_path):
+    from nocturne.ui.apply_button import ApplyButton
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("enhancements", user_initiated=False); qtbot.wait(20)
+    assert win._panel.primary_action is None
+    win._go_to_id("export", user_initiated=False); qtbot.wait(20)
+    pa = win._panel.primary_action
+    assert pa is not None and not isinstance(pa, ApplyButton)
+    was = pa.isEnabled()
+    win._sync_step_controls()
+    assert pa.isEnabled() == was
+
+
+@pytest.mark.parametrize("async_", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("sid", ["color", "noise_sharpen"])
+def test_a_second_press_on_an_applied_step_commits_nothing(
+        qtbot, tmp_path, monkeypatch, sid, async_):
+    """The Task 7 reviewer's ask: apply once, the button is off, a second
+    click() does nothing — exactly one commit and one activity step line."""
+    win = _open(qtbot, tmp_path)
+    _with_stub_nr(win, monkeypatch)
+    win._async_enabled = async_
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    commits = _commit_counting(win)
+    lines_before = win.activity.entries("step")
+    _apply_and_land(qtbot, win)
+    assert win._panel.apply_btn.state() == "applied"
+    assert not win._panel.apply_btn.isEnabled()
+    _apply_and_land(qtbot, win)
+    assert commits == (["Color"] if sid == "color" else ["Noise Reduction"]), commits
+    assert len(win.activity.entries("step")) == len(lines_before) + 1

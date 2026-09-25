@@ -17,6 +17,11 @@ from .theme import BG_1, BG_2, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT, WARNING
 
 STATES = ("pending", "not_run", "applied", "no_change", "busy")
 _GREEN = {"pending", "not_run"}
+# States in which pressing would do nothing (or nothing yet): the button is off.
+# `applied` joined on 2026-09-25 (Andreas): pressing an applied, unchanged step
+# re-ran the tool on the same image and logged an identical second line —
+# minutes of RC-Astro for Noise Reduction. Change a control, or Reset step.
+_OFF = {"applied", "no_change", "busy"}
 _STATUS = {
     "pending": "● changes not applied",
     "not_run": "not run yet",
@@ -133,7 +138,7 @@ class ApplyButton(QPushButton):
         if self.property("pending") != ("true" if green else "false"):
             self.setProperty("pending", "true" if green else "false")
             self.style().unpolish(self); self.style().polish(self)
-        super().setEnabled(self._available and state not in ("no_change", "busy"))
+        super().setEnabled(self._available and state not in _OFF)
         self.setToolTip(f"{self._label} — {self.status_text()}" if self.status_text() else self._label)
         self.update()
 

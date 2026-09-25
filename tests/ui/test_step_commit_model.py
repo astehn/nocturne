@@ -2091,6 +2091,12 @@ def test_apply_color_asks_before_discarding_a_committed_tint(
                         lambda self, names, label, verb, **kw:
                         seen.append(list(names)) or False)
 
+    # An applied, unchanged Colour's Apply is OFF (2026-09-25), so the route
+    # back into the calibration is a changed method — the only way a user
+    # can now re-commit it over the tint.
+    box = win._panel.method_box
+    box.setCurrentText(next(box.itemText(i) for i in range(box.count())
+                            if box.itemText(i) != box.currentText()))
     win._panel.apply_btn.click()
 
     assert seen == [["Colour Tint", "De-green Sky"]], (
@@ -2106,9 +2112,16 @@ def test_apply_color_at_its_own_frontier_is_still_silent(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     win._panel.apply_btn.click()
+    # Applied and unchanged, Apply is off (2026-09-25); a changed method is
+    # how Color's own commit gets replaced now.
+    box = win._panel.method_box
+    box.setCurrentText(next(box.itemText(i) for i in range(box.count())
+                            if box.itemText(i) != box.currentText()))
     win._panel.apply_btn.click()
 
     assert [n for n, _ in win.project.entries()] == ["Color"]
+    assert win.project.entries()[-1][1].method == "photometric", (
+        "the second commit did not replace the first")
 
 
 def test_next_on_colour_never_destroys_a_committed_tint_in_silence(

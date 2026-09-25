@@ -40,7 +40,7 @@ def test_look_a_is_taller_than_look_b(qtbot):
 @pytest.mark.parametrize("state,green,enabled,words", [
     ("pending", True, True, "not applied"),
     ("not_run", True, True, "not run"),
-    ("applied", False, True, "applied"),
+    ("applied", False, False, "applied"),   # off: pressing would re-run it
     ("no_change", False, False, "no changes"),
     ("busy", False, False, ""),
 ])

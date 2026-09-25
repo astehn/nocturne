@@ -2629,10 +2629,10 @@ class MainWindow(QMainWindow):
 
         With something pending it is exactly Next's "Apply and continue":
         `_apply_current_step`, method before tint. With nothing pending the
-        button still reads green on a never-applied Colour (`not_run`) or plain
-        on an applied one, and a press must still commit — the method, at what
-        the dropdown shows — or the green would be a promise the button does not
-        keep (`_apply_current_step` loops only while something is pending).
+        button is only live on a never-applied Colour (`not_run`, green; an
+        applied one is off), and that press must still commit — the method, at
+        what the dropdown shows — or the green would be a promise the button
+        does not keep (`_apply_current_step` presses only what is pending).
         """
         if self.project is None or self._busy:
             return
