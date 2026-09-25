@@ -341,7 +341,7 @@ class MainWindow(QMainWindow):
         # Reset on a new image and on Close Project, or the previous image's
         # walk would mark steps as skipped in a session that never touched them.
         self._high_water = 0
-        self._stages = path_stages(self._omitted_stages(), self._included_stages())
+        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -4236,8 +4236,9 @@ class MainWindow(QMainWindow):
         self._high_water = 0
         self.stepper.set_high_water(0)
 
-    def _omitted_stages(self) -> frozenset[str]:
-        """Colour does NOTHING under an unlinked stretch, so it is not offered.
+    def _disabled_stages(self) -> dict[str, str]:
+        """Colour does NOTHING under an unlinked stretch, so it is not offered —
+        but it stays LISTED, disabled, so the rows below it never move.
 
         Both of its jobs are per-channel and multiplicative — a background
         balance and photometric gains — and a per-channel normalisation is
@@ -4245,7 +4246,9 @@ class MainWindow(QMainWindow):
         an 8-bit level. De-green is not in this step; it moved to its own
         post-stretch stage on 2026-09-13, so nothing is lost by hiding it.
         """
-        return frozenset() if self._view_linked else frozenset({"color"})
+        return {} if self._view_linked else {
+            "color": "Needs a linked stretch — Colour's corrections are per-channel, "
+                     "and an unlinked stretch removes them."}
 
     def _included_stages(self) -> frozenset[str]:
         """Stages that are not part of the shipped pipeline and must be asked for.
@@ -4269,9 +4272,14 @@ class MainWindow(QMainWindow):
         preserved index would silently teleport the user to a different step.
         """
         here = self._stages[self._stage].id if self._stages else None
-        self._stages = path_stages(self._omitted_stages(), self._included_stages())
+        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
         ids = [s.id for s in self._stages]
         self._stage = ids.index(here) if here in ids else 0
+        if self._stages and not self._stages[self._stage].enabled:
+            nxt = next_enabled(self._stages, self._stage)
+            if nxt == self._stage:
+                nxt = prev_enabled(self._stages, self._stage)
+            self._stage = nxt
         self.stepper.set_stages(self._stages)
         self.stepper.set_current(self._stage)
         self._refresh()

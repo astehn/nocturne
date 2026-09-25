@@ -49,7 +49,7 @@ def test_unlinked_removes_colour_from_the_path(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     assert "color" in _ids(win)
     win._set_view_linked(False)
-    assert "color" not in _ids(win)
+    assert not next(s for s in win._stages if s.id == "color").enabled
 
 
 def test_the_other_linear_steps_all_survive(qtbot, tmp_path):
@@ -102,3 +102,37 @@ def test_the_skip_does_not_leak_into_the_module_lists(qtbot, tmp_path):
 
     second = _window(qtbot, tmp_path, name="second.fits")
     assert "color" in _ids(second)
+
+
+def test_colour_stays_listed_but_disabled_when_unlinked(qtbot, tmp_path):
+    """Inserting and removing Color moved every step below it (screenshot 07)."""
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    ids_linked = [s.id for s in win._stages]
+    win._set_view_linked(False)
+    ids_unlinked = [s.id for s in win._stages]
+    assert ids_unlinked == ids_linked                      # same rows, same order
+    color = next(s for s in win._stages if s.id == "color")
+    assert color.enabled is False
+    assert "linked" in color.reason.lower()
+
+
+def test_leaving_linked_while_on_colour_moves_you_to_an_enabled_step(qtbot, tmp_path):
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color", user_initiated=False)
+    win._set_view_linked(False)
+    assert win._stages[win._stage].enabled
+
+
+def test_a_disabled_colour_is_not_recorded_or_replayed(qtbot, tmp_path):
+    """Listing Color disabled must not make it a step: history and recipes
+    record only what was applied."""
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_view_linked(False)
+    applied = [name for name, _ in win.project.entries()]
+    assert "color" not in [str(a).lower() for a in applied]

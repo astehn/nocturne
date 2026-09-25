@@ -88,12 +88,12 @@ def test_picking_linked_brings_the_colour_step_back(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._set_view_linked(False)
-    assert "color" not in [s.id for s in win._stages]
+    assert not next(s for s in win._stages if s.id == "color").enabled
     win._go_to_id("stretch")
 
     win._apply_picked_stretch({"amount": 0.24, "linked": True})
 
-    assert "color" in [s.id for s in win._stages]
+    assert next(s for s in win._stages if s.id == "color").enabled
     assert "colour" in _log_text(win).lower() or "color" in _log_text(win).lower()
     assert win.current_stage_id() == "stretch"      # and we did NOT get moved
 
