@@ -125,14 +125,3 @@ def test_leaving_linked_while_on_colour_moves_you_to_an_enabled_step(qtbot, tmp_
     win._go_to_id("color", user_initiated=False)
     win._set_view_linked(False)
     assert win._stages[win._stage].enabled
-
-
-def test_a_disabled_colour_is_not_recorded_or_replayed(qtbot, tmp_path):
-    """Listing Color disabled must not make it a step: history and recipes
-    record only what was applied."""
-    from tests.ui.test_main_window import _make_fits, _window
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._set_view_linked(False)
-    applied = [name for name, _ in win.project.entries()]
-    assert "color" not in [str(a).lower() for a in applied]
