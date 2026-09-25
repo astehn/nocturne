@@ -1653,3 +1653,40 @@ def test_no_step_topic_offers_options_its_step_does_not_have():
                 f"{stage.id} ({STEP_NAME.get(stage.id, '?')}) instructs "
                 f"{instruction.group(0).strip()!r} but the control is a slider")
     assert not offenders, "help offers presets that do not exist:\n  " + "\n  ".join(offenders)
+
+
+def test_keyboard_shortcuts_is_in_getting_started():
+    """The panels lost "Press Space to toggle before and after" (spec §2.6);
+    this topic is its new home, plus F and Escape, which had no topic at all."""
+    t = h.topic("keyboard-shortcuts")
+    assert t is not None
+    body = (t.summary + t.body).lower()
+    for key in ("space", "before", "f ", "full", "escape"):
+        assert key in body, key
+    gs = next(s for s in h.SECTIONS if s.title == "Getting Started")
+    assert "keyboard-shortcuts" in gs.topic_ids
+
+
+# Every sentence moved out of a description (spec §6, "→ How this works") must
+# exist in its step's topic, so trimming the panel lost nothing. A tuple of
+# phrases per topic id, because De-green Stars alone dropped three separate
+# sentences from its old description.
+MOVED = {
+    "curves": ("pin the sky",),
+    "green_fringe": ("Hue/Saturation",
+                      "lose their colour and keep their lightness",
+                      "always an artefact"),
+    "remove_green": ("right = stronger",),
+    "saturation": ("left to mute colour, right to boost", "&amp; sky untouched"),
+    "recover_core": ("instead of a white blob",),
+    "star_reduction": ("drag right for more reduction",),
+}
+
+
+def test_moved_sentences_have_a_home():
+    for tid, phrases in MOVED.items():
+        t = h.topic(tid)
+        assert t is not None, f"no help topic {tid!r}"
+        body = (t.summary + t.body).lower()
+        for phrase in phrases:
+            assert phrase.lower() in body, f"{tid} lost {phrase!r}"

@@ -110,6 +110,29 @@ _TOPIC_LIST = (
        "Mouse wheel zooms, drag pans, and <b>Before/After</b> in the toolbar compares any step. "
        "On a trackpad, pinch to zoom and swipe with two fingers to pan.</p>"),
 
+    _t("keyboard-shortcuts", "Keyboard shortcuts",
+       "The few keys that work anywhere in the main window.",
+       "<h4>What it does</h4>"
+       "<p>A short list of keys that work from anywhere in the main window — not "
+       "inside a dialog — so you never have to reach for the mouse for the moves "
+       "you make most often.</p>"
+       "<h4>The shortcuts</h4>"
+       "<ul>"
+       "<li><b>Space</b> — compare this step's before and after. The status line "
+       "above <b>Back</b> / <b>Next</b> reads “Before — press Space to "
+       "compare” while you are looking at the before; press Space again to "
+       "return to the after.</li>"
+       "<li><b>F</b> — fullscreen: the toolbar, step list, right-hand panel and "
+       "log all step aside and only the image remains. Nothing about the image "
+       "itself changes.</li>"
+       "<li><b>Escape</b> — leaves fullscreen. While you are framing a crop box "
+       "on <b>Crop</b>, Escape dismisses the box instead, since fullscreen is not "
+       "open then.</li>"
+       "</ul>"
+       "<h4>Tips</h4>"
+       "<p>Space is ignored while a text field has focus or a dialog is open, so "
+       "it never fights with typing a value or answering a prompt.</p>"),
+
     # ---- Concepts ----
     _t("linear-vs-stretched", "Linear vs. stretched",
        "Raw data is 'linear' and looks black; stretching reveals the faint detail.",
@@ -349,7 +372,7 @@ _TOPIC_LIST = (
        "<h4>How to use it</h4>"
        "<p>The panel runs top to bottom in the order you'd actually work: <b>calibrate</b>, then "
        "<b>nudge to taste</b>.</p>"
-       "<p><b>1 — Calibrate.</b> Pick a <b>Method</b> and apply. <b>Sky balance</b> (the default) "
+       "<p><b>1 — Calibrate.</b> Pick a <b>Method</b>. <b>Sky balance</b> (the default) "
        "neutralises the sky cast automatically. <b>Photometric (SPCC)</b> instead calibrates "
        "colour against real star measurements — it identifies stars in the field and balances the "
        "channels to their catalogue colours, for a more scientifically-accurate white balance "
@@ -470,10 +493,10 @@ _TOPIC_LIST = (
        "<h4>How to use it</h4>"
        "<p>Optional, and usually unnecessary: <b>Color</b> already neutralises the sky before the "
        "stretch runs, so by the time you reach this step there is normally nothing left to do. "
-       "Reach for it only if a green cast survives the stretch — most often on data stacked "
-       "elsewhere, which tends to arrive green. Drag the <b>strength</b> dial for how hard to "
-       "clamp, with a live preview; start gentle, since full strength can flatten real nebula "
-       "colour along with the cast.</p>"
+       "Look at the sky you just stretched: reach for it only if it carries a green cast — most "
+       "often on data stacked elsewhere, which tends to arrive green. Drag the <b>strength</b> "
+       "dial for how hard to clamp (right = stronger), with a live preview; start gentle, since "
+       "full strength can flatten real nebula colour along with the cast.</p>"
        "<h4>Why it sits here</h4>"
        "<p>Right after <b>Stretch</b>, not on the Color panel where it used to live. The cast "
        "this fixes is <i>created</i> by the stretch — a Bayer sensor gives green twice the "
@@ -522,7 +545,7 @@ _TOPIC_LIST = (
        "<h4>How to use it</h4>"
        "<p>Click the curve to add a point, drag to move it, double-click to remove it. "
        "The faint histogram behind the grid shows where the sky and nebula sit — drop a "
-       "point on the sky peak and leave it to pin the background, then lift the midtones. "
+       "point on the background peak to pin the sky, then lift the midtones. "
        "Or pick a <b>preset</b> for a starting point. Watch the live preview. Apply.</p>"
        "<h4>Presets</h4>"
        "<p>Every preset is measured against <i>your</i> image rather than being a fixed shape: "
@@ -641,9 +664,11 @@ _TOPIC_LIST = (
        "star field want opposite things: one moves the whole picture, the other "
        "reaches only for the nebula.</p>"
        "<h4>How to use it</h4>"
-       "<p><b>Saturation</b> runs mute &rarr; native &rarr; boost, with the centre "
-       "leaving the image exactly as it is. <b>Nebula boost</b> adds colour on "
-       "top of that, but only in the nebula&rsquo;s midtones — it tapers off "
+       "<p>Drag <b>Saturation</b> left to mute colour, right to boost — it runs "
+       "mute &rarr; native &rarr; boost, with the centre leaving the image "
+       "exactly as it is. <b>Nebula boost</b> adds colour on "
+       "top of that, but only in the nebula&rsquo;s midtones (stars &amp; sky "
+       "untouched) — it tapers off "
        "towards the dark sky at one end and the burnt-out core at the other, so "
        "you can push nebula colour hard without the background going blotchy or "
        "the bright centre turning into a flat coloured disc. It needs to know "
@@ -662,11 +687,11 @@ _TOPIC_LIST = (
     _t("green_fringe", "De-green Stars",
        "Drain the green-to-cyan tint from stars.",
        "<h4>What it does</h4>"
-       "<p>Stars are never truly green — and never truly cyan either. Star colour "
-       "runs red, orange, yellow, white, blue, and passes through neither. So a "
-       "green or teal tint on a star is always an artifact (chromatic aberration, "
-       "debayering, or colour calibration), and draining it is safe in a way that "
-       "removing any other colour would not be.</p>"
+       "<p>Star colour runs red, orange, yellow, white, blue, and passes through "
+       "neither green nor cyan. No star is truly green or cyan, so the tint is "
+       "always an artefact — chromatic aberration, debayering, or colour "
+       "calibration — and draining it is safe in a way that removing any other "
+       "colour would not be.</p>"
        "<p>With a star-separation tool (<b>StarNet2</b>, free, or "
        "<b>StarXTerminator</b>), the stars are cleanly split out first, so only that "
        "layer is treated and the nebula and background cannot move. Without one, "
@@ -674,16 +699,15 @@ _TOPIC_LIST = (
        "blended by a feathered mask around the stars — background colour can shift "
        "a little too.</p>"
        "<h4>How to use it</h4>"
-       "<p>Set <b>Amount</b> and press <b>Apply De-green Stars</b>. 100 removes the "
-       "tint completely; lower values leave some of it, which is the same control as "
-       "the Saturation slider in Photoshop's Hue/Saturation adjustment — 75 here is "
-       "Saturation −75 there. The star detection runs once when you enter the step, "
-       "which is the only wait.</p>"
+       "<p>Set <b>Amount</b> and press <b>Apply De-green Stars</b>. Amount 100 "
+       "removes it entirely; lower values leave some of it, like Photoshop's "
+       "Hue/Saturation on Cyans — 75 here is Saturation −75 there. The star "
+       "detection runs once when you enter the step, which is the only wait.</p>"
        "<h4>Tips</h4>"
        "<p>Only pixels that read green through to cyan are touched. A yellow or "
        "orange star keeps its colour exactly, because red is its strongest channel, "
-       "and a blue star is left alone because the range stops short of real blue. "
-       "Treated pixels keep their lightness and lose their colour, so a star stays "
+       "and a blue star is left alone because the range stops short of real blue: "
+       "those pixels lose their colour and keep their lightness, so a star stays "
        "the size and roughly the brightness it was rather than disappearing.</p>"
        "<p>On a rich star field this can change how the whole frame reads, because "
        "so much of the picture is faint stars. That is the step working, not "
@@ -724,7 +748,7 @@ _TOPIC_LIST = (
        "<p>Short exposures blow out the bright centre of targets like M42, M8 or a "
        "galaxy nucleus — after stretching it becomes a featureless white blob. "
        "Recover Core pulls those highlights back down and re-expands the structure "
-       "hiding inside them, so the core shows swirls and detail instead of pure white.</p>"
+       "hiding inside them, so the core shows swirls and detail instead of a white blob.</p>"
        "<h4>How to use it</h4>"
        "<p>Drag <b>Strength</b> up until the core shows detail without looking flat or "
        "grey. 0 = off. Watch the live preview. Apply.</p>"
@@ -769,8 +793,8 @@ _TOPIC_LIST = (
        "detector is used. Either way you will see <i>Separating stars&hellip;</i> "
        "the first time.</p>"
        "<h4>How to use it</h4>"
-       "<p>Drag <b>Reduction</b> from none towards strong and watch the preview. "
-       "Apply.</p>"
+       "<p>Drag right for more reduction — <b>Reduction</b> runs from none towards "
+       "strong. Watch the preview. Apply.</p>"
        "<h4>Tips</h4>"
        "<p>Go further than feels comfortable and then come back. The effect is "
        "much harder to see at fit-to-window than at 100%, and a setting that "
@@ -1839,7 +1863,7 @@ TOPICS: dict[str, HelpTopic] = {t.id: t for t in _TOPIC_LIST}
 
 
 SECTIONS: tuple[HelpSection, ...] = (
-    HelpSection("Getting Started", ("getting-started",)),
+    HelpSection("Getting Started", ("getting-started", "keyboard-shortcuts")),
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history",
                              "readout", "fullscreen")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
