@@ -160,8 +160,26 @@ def _states(win, qtbot):
             break
 
 
+def _with_linear_denoise(monkeypatch):
+    """Andreas' machine has the Nocturne NR model installed, which adds the
+    Linear Denoise step: 18 rows where the suite (conftest hides the model)
+    sees 17. `_included_stages` asks `usable_external_models` at call time."""
+    import nocturne.core.denoise_model as dm
+    monkeypatch.setattr(dm, "usable_external_models",
+                        lambda: [("v10", "/nonexistent/nocturne-nr-v10.onnx")])
+
+
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
 def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, size):
+    _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows=17)
+
+
+def test_nothing_moves_with_linear_denoise_installed(qtbot, tmp_path, monkeypatch):
+    _with_linear_denoise(monkeypatch)
+    _prove_nothing_moves(qtbot, tmp_path, monkeypatch, (1280, 800), expect_rows=18)
+
+
+def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
@@ -170,6 +188,7 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, siz
     qtbot.waitExposed(win)
     _settle(qtbot)
     baseline = _geometry(win)
+    assert win.stepper.count() == expect_rows, "precondition: the rows under test"
     # Every key — "rows" included — is compared against this ONE baseline,
     # taken on the first stage. A per-stage baseline for the rows once hid a
     # step list stuck at its 240 px floor that scrolled a different window of
@@ -209,9 +228,10 @@ def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, siz
     assert not moved, "\n".join(moved[:40])
 
 
-@pytest.mark.parametrize("size", [(1280, 800), (1512, 982), (1920, 1080)],
-                         ids=lambda s: f"{s[0]}x{s[1]}")
-def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, size):
+@pytest.mark.parametrize("size,denoise", [((1280, 800), False), ((1512, 982), False),
+                                          ((1920, 1080), False), ((1280, 800), True)],
+                         ids=["1280x800", "1512x982", "1920x1080", "1280x800-linear-denoise"])
+def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, monkeypatch, size, denoise):
     """The suite runs WITHOUT the app stylesheet, whose 8 px list padding is
     exactly what a 32-px-rows-plus-1-px-frame height missed: offscreen it
     fitted, in Andreas' real window "Export" was cut off behind a scrollbar.
@@ -222,12 +242,16 @@ def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, size):
     before = app.styleSheet()
     app.setStyleSheet(build_stylesheet())
     try:
+        if denoise:
+            _with_linear_denoise(monkeypatch)
         win = _window(qtbot, tmp_path)
         win.open_fits(_make_fits(tmp_path))
         win.resize(*size)
         win.show()
         qtbot.waitExposed(win)
         _settle(qtbot)
+        assert win.stepper.count() == (18 if denoise else 17), "precondition"
+        assert any(s.id == "ai_denoise" for s in win._stages) == denoise
         _assert_every_row_shows(win, size)
     finally:
         app.setStyleSheet(before)
