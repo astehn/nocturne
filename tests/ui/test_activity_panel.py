@@ -74,3 +74,48 @@ def test_a_notice_is_amber_and_a_warning_red(qtbot):
     p.clear()
     p.add("warn", "RC-Astro failed")
     assert DANGER.lower() in p.view.toHtml().lower()
+
+
+def _newest_is_in_view(p) -> bool:
+    from PySide6.QtGui import QTextCursor
+    cur = p.view.textCursor()
+    cur.movePosition(QTextCursor.MoveOperation.End)
+    return p.view.viewport().rect().contains(p.view.cursorRect(cur).center())
+
+
+def test_no_scrollbar_and_the_newest_line_always_shows(qtbot):
+    """Andreas, 2026-09-25: no scrollbar in the activity box; newest at the
+    bottom, older lines off the top, the full history behind ⤢."""
+    p = _panel(qtbot)
+    p.resize(220, 90)
+    p.show()
+    qtbot.waitExposed(p)
+    for i in range(40):
+        p.add("step", f"line {i}")
+    bar = p.view.verticalScrollBar()
+    assert p.view.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert bar.maximum() > 0, "precondition: more lines than fit"
+    assert bar.value() == bar.maximum()
+    assert _newest_is_in_view(p)
+    assert not _newest_is_in_view_after_scrolling_to_top(p)
+
+
+def _newest_is_in_view_after_scrolling_to_top(p) -> bool:
+    p.view.verticalScrollBar().setValue(0)
+    shown = _newest_is_in_view(p)
+    p.view.verticalScrollBar().setValue(p.view.verticalScrollBar().maximum())
+    return shown
+
+
+def test_a_rebuild_after_clearing_one_kind_still_shows_the_newest(qtbot):
+    p = _panel(qtbot)
+    p.resize(220, 90)
+    p.show()
+    qtbot.waitExposed(p)
+    for i in range(40):
+        p.add("step" if i % 2 else "result", f"line {i}")
+    p.clear("result")
+    bar = p.view.verticalScrollBar()
+    assert bar.maximum() > 0
+    assert bar.value() == bar.maximum()
+    assert _newest_is_in_view(p)

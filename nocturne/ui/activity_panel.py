@@ -75,6 +75,10 @@ class ActivityPanel(QWidget):
         self.view.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # No scrollbar (Andreas, 2026-09-25): the newest line is always at the
+        # bottom, older ones scroll off the top, the whole history is one
+        # click away (⤢). Wheel and trackpad scrolling still work.
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 44, not QTextEdit's own 90: the step list above takes its full 546 px
         # first, and with a 90 px floor here a 1280x720 window left it 501 px,
         # so it scrolled and its rows moved as the step changed. Measured
@@ -90,6 +94,9 @@ class ActivityPanel(QWidget):
         stamp = datetime.now().strftime("%H:%M")
         self._entries.append((kind, stamp, text))
         self.view.append(_row_html(kind, stamp, text))
+        self._show_newest()
+
+    def _show_newest(self) -> None:
         bar = self.view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
@@ -108,6 +115,7 @@ class ActivityPanel(QWidget):
         self.view.clear()
         for k, stamp, text in self._entries:
             self.view.append(_row_html(k, stamp, text))
+        self._show_newest()
 
     def copy_all(self) -> None:
         QApplication.clipboard().setText(self.text())
