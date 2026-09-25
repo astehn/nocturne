@@ -40,7 +40,8 @@ QMainWindow, QWidget {{ background-color: {BG_1}; }}
    inputs and sliders keep their own surfaces — only plain text and containers
    go transparent. */
 QWidget#stepCard QLabel, QWidget#stepCard QWidget#panelBody,
-QWidget#stepCard QCheckBox, QWidget#stepCard QRadioButton {{ background: transparent; }}
+QWidget#stepCard QCheckBox, QWidget#stepCard QRadioButton,
+QWidget#stepCard QFrame#panelRule {{ background: transparent; }}
 QToolBar {{ background: {BG_2}; border: none; spacing: 4px; padding: 6px; }}
 QToolBar::separator {{ background: {BORDER}; width: 1px; margin: 4px 6px; }}
 QToolBar QToolButton {{ padding: 6px 10px; border-radius: 8px; color: {TEXT_DIM}; }}
