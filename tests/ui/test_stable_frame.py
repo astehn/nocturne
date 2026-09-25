@@ -26,11 +26,44 @@ def _geometry(win) -> dict:
         "canvas": rect(win.image_view),
         "next": rect(win._next_btn),
         "stepper": rect(win.stepper),
+        # side_panel.py's own contract: "every zone except the step panel has
+        # a FIXED height on every step" — the status slot's size (not just
+        # the widgets around it) must itself be invariant. Without this key,
+        # an un-fixed status_slot is invisible to this test: its scroll area
+        # sibling has stretch factor 1 and silently absorbs the size change,
+        # so canvas/next/stepper/window never move even though the fixed
+        # zone contract is broken.
+        "status_slot": rect(win._side.status_slot),
+        # `_disabled_stages`' own contract (main_window.py): a stage the
+        # current mode can't use stays LISTED and disabled so "the rows below
+        # it never move" — an OMITTED stage changes the row count instead.
+        # `ideal_height()` clamps to a floor of 240px once there are more
+        # than a handful of rows (`min(ideal_height(), 240)`), so losing one
+        # row is invisible to the rect check above at every SIZES entry here;
+        # only the row count itself catches it.
+        "stage_count": win.stepper.count(),
     }
 
 
 def _settle(qtbot):
+    """A bare `qtbot.wait(20)` lets a deferred relayout land AFTER the read:
+    Qt delivers a posted LayoutRequest on its own next pass through the event
+    loop, not synchronously with whatever triggered it, so a single wait can
+    race a resize that hasn't happened yet — the geometry read comes back
+    looking stable when a broken layout just hasn't gotten around to moving
+    it. Pump the queue on both sides of the wait so a LayoutRequest posted
+    either before or during the wait is actually delivered before the caller
+    reads geometry, and chain a second wait+pump in case delivering the first
+    one posts another (a resize event can itself trigger a further layout
+    pass). 20ms per pump keeps five sizes x many stages x many states in the
+    same ballpark as before; this is about ordering, not raw duration.
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.processEvents()
     qtbot.wait(20)
+    QApplication.processEvents()
+    qtbot.wait(20)
+    QApplication.processEvents()
 
 
 def _states(win, qtbot):
@@ -52,6 +85,25 @@ def _states(win, qtbot):
     yield "help toggled", _geometry(win)
     win._toggle_help()
     _settle(qtbot)
+
+    win.jobs_indicator.notices.append({"kind": "done", "label": "M 33", "path": ""})
+    win.jobs_indicator._refresh()
+    _settle(qtbot)
+    yield "job notice", _geometry(win)
+    win.jobs_indicator.notices.clear()
+    win.jobs_indicator._refresh()
+
+    for name in ("black_slider", "stretch_slider", "sat_slider",
+                 "recover_slider", "rg_slider", "fringe_slider"):
+        slider = getattr(win._panel, name, None)
+        if slider is not None:
+            v = slider.value()
+            slider.setValue(v + 1 if v < slider.maximum() else v - 1)
+            _settle(qtbot)
+            yield "pending", _geometry(win)
+            slider.setValue(v)
+            _settle(qtbot)
+            break
 
 
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
