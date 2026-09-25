@@ -61,3 +61,16 @@ def test_the_large_view_shows_everything_unwrapped(qtbot):
     qtbot.addWidget(dlg)
     assert "x" * 300 in dlg.text_edit.toPlainText()
     assert "stderr: boom" in dlg.text_edit.toPlainText()
+
+
+def test_a_notice_is_amber_and_a_warning_red(qtbot):
+    """A notice is a consequence of the user's own action (main window's
+    `_show_notice`); logging it in the warning's red calls it an error."""
+    from nocturne.ui.theme import DANGER, WARNING
+    p = _panel(qtbot)
+    p.add("notice", "Colour was switched off")
+    notice_html = p.view.toHtml().lower()
+    assert WARNING.lower() in notice_html and DANGER.lower() not in notice_html
+    p.clear()
+    p.add("warn", "RC-Astro failed")
+    assert DANGER.lower() in p.view.toHtml().lower()

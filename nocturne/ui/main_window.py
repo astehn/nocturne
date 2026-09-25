@@ -1033,7 +1033,7 @@ class MainWindow(QMainWindow):
         and the output area is easy to miss at the moment the thing happens."""
         self._warning.setStyleSheet(f"color: {WARNING};")
         self._warning.setText(text)
-        self.activity.add("warn", text)
+        self.activity.add("notice", text)
         self._diag_pending = False
         self._sync_status_slot()
 

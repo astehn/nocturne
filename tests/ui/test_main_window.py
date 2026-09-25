@@ -6345,3 +6345,12 @@ def test_close_project_then_open_starts_a_fresh_history(qtbot, tmp_path):
     d2.mkdir()
     win.open_fits(_make_fits(d2))
     assert not any("about the first image" in e for e in win.activity.entries())
+
+
+def test_a_notice_is_logged_as_a_notice_not_a_warning(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    warns_before = win.activity.entries("warn")
+    win._show_notice("Linked view switched Colour off")
+    assert [e.split(" ", 1)[1] for e in win.activity.entries("notice")] == [
+        "Linked view switched Colour off"]
+    assert win.activity.entries("warn") == warns_before

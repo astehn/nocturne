@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
                                QPushButton, QTextEdit, QVBoxLayout, QWidget)
 
-from .theme import DANGER, TEXT, TEXT_DIM
+from .theme import DANGER, TEXT, TEXT_DIM, WARNING
 
 RESULT_COLOUR = "#7fd4c1"          # teal: a result, what the output box used to show
 KIND_STYLE = {
@@ -24,6 +24,9 @@ KIND_STYLE = {
     "result": f"color:{RESULT_COLOUR}",
     "info": f"color:{TEXT_DIM}; font-style:italic",
     "warn": f"color:{DANGER}",
+    # Amber, like the status slot's notice: a consequence of the user's own
+    # action is not an error, and copying it here in red undid that.
+    "notice": f"color:{WARNING}",
 }
 
 
