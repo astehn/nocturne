@@ -34,6 +34,13 @@ def build_stylesheet() -> str:
     return f"""
 * {{ color: {TEXT}; font-size: 14px; }}
 QMainWindow, QWidget {{ background-color: {BG_1}; }}
+/* Inside a step card everything lets the card colour through. The global rule
+   above paints EVERY widget BG_1, which put a darker rectangle behind every
+   label on the BG_2 card (his screenshot, 2026-09-25). Buttons, dropdowns,
+   inputs and sliders keep their own surfaces — only plain text and containers
+   go transparent. */
+QWidget#stepCard QLabel, QWidget#stepCard QWidget#panelBody,
+QWidget#stepCard QCheckBox, QWidget#stepCard QRadioButton {{ background: transparent; }}
 QToolBar {{ background: {BG_2}; border: none; spacing: 4px; padding: 6px; }}
 QToolBar::separator {{ background: {BORDER}; width: 1px; margin: 4px 6px; }}
 QToolBar QToolButton {{ padding: 6px 10px; border-radius: 8px; color: {TEXT_DIM}; }}
