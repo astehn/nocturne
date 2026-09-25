@@ -48,7 +48,7 @@ from .theme import ACCENT, WARNING, TEXT_DIM
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .job_queue import JobQueue, StackJob
-from .jobs_panel import JobsPanel
+from .jobs_indicator import JobsIndicator
 from .activity_panel import ActivityChannel, ActivityPanel
 from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
@@ -640,13 +640,7 @@ class MainWindow(QMainWindow):
         # The old step-log and output-box APIs, over the one activity stream.
         self.log_panel = ActivityChannel(self.activity, "step")
         self.output_panel = ActivityChannel(self.activity, "result")
-        self.jobs_panel = JobsPanel(self._job_queue, self)
-        # Hidden until there is something to show: an always-present empty strip
-        # would cost height on the 1280x800 floor for nothing.
-        self.jobs_panel.setVisible(False)
         self._chrome_visible = False
-        self._job_queue.changed.connect(self._sync_left_column)
-        left.insertWidget(1, self.jobs_panel)    # above the activity box
 
         self.setCentralWidget(central)
         self._build_toolbar()
@@ -717,7 +711,7 @@ class MainWindow(QMainWindow):
         self._left_column.setVisible(prev.get("left", True))
         self._right_panel.setVisible(prev.get("right", True))
         self.showNormal()
-        self._sync_left_column()    # a job may have started while fullscreen
+        self._sync_left_column()    # restates from chrome state, not the captured snapshot
 
     def _show_chrome(self, visible: bool) -> None:
         """Show/hide the left column + right panel so the welcome screen is a clean
@@ -729,17 +723,13 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _sync_left_column(self) -> None:
-        """The step list shows with the chrome; the jobs panel whenever a job
-        exists. A stack can be started from the welcome screen, and the bottom
-        bar that used to show it there is gone — so on the welcome screen the
-        column appears for jobs alone (jobs + activity, no steps). Interim until
-        the toolbar jobs indicator (spec §6) takes the jobs out of the column.
-        Fullscreen hid the column deliberately; a job tick must not undo that."""
-        jobs = not self.jobs_panel.is_empty()
-        self.jobs_panel.setVisible(jobs)
+        """The step list shows with the chrome; the welcome screen stays
+        full-bleed. Background jobs live in the toolbar's JobsIndicator now
+        (spec §6), not in this column, so a job starting or finishing has no
+        say here. Fullscreen hides the column regardless of chrome state."""
         self.stepper.setVisible(self._chrome_visible)
         if not self.isFullScreen():
-            self._left_column.setVisible(self._chrome_visible or jobs)
+            self._left_column.setVisible(self._chrome_visible)
 
     def _size_stepper(self) -> None:
         """Every step visible without scrolling when there is room; the activity
@@ -781,12 +771,12 @@ class MainWindow(QMainWindow):
         The wait must run whenever `running()` names a job — NOT only when
         something is still "queued"/"running". `JobQueue.cancel` marks a job
         "cancelled" and sends SIGTERM immediately, but its reader thread stays
-        alive until the child's stdout actually closes; `JobsPanel` shows
+        alive until the child's stdout actually closes; `JobsIndicator` shows
         exactly this window as "stopping…", and `running()` keeps naming the
         job throughout it. Gating the wait on the queued/running predicate
         skipped it on the single likeliest route to the hazard it exists for:
-        Cancel in the panel, then Quit — nothing left queued or running, but
-        the reader thread is still alive and about to emit.
+        Cancel from the indicator, then Quit — nothing left queued or running,
+        but the reader thread is still alive and about to emit.
 
         The wait itself is not cosmetic: `JobQueue.wait_for_shutdown` joins
         the live reader thread(s) before this method returns, so `closeEvent`
@@ -1322,6 +1312,14 @@ class MainWindow(QMainWindow):
 
     def _on_job_failed(self, job, message: str) -> None:
         self.activity.add("warn", f"Stacking {job.label} failed — {message}")
+
+    def _open_finished_master(self, path: str) -> None:
+        """Only ever from a click on the indicator — a finished stack never
+        opens itself. `path` came from a child process: check it exists."""
+        if not path or not os.path.isfile(path):
+            self._show_warning(f"That stack is no longer at {path or 'its saved location'}.")
+            return
+        self.open_any(path)          # runs _confirm_save_if_dirty
 
     def _on_foreground_master(self, img, label: str, path: str) -> None:
         """A finished stack never replaces work you have open — but this is
@@ -2050,6 +2048,11 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Main")
         self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        # FIRST in the toolbar: items overflow from the right, so the one item
+        # that must never hide behind the chevron goes at the left. Hidden while
+        # idle, so it costs nothing until something runs.
+        self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
+        tb.addWidget(self.jobs_indicator)
         # File
         tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
         # Projects (a saved bundle: image + full edit history + solve state) — a

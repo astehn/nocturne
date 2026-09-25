@@ -121,25 +121,32 @@ def test_quitting_with_jobs_running_warns_and_cancels(qtbot, tmp_path, monkeypat
     assert all(j.state == "cancelled" for j in win._job_queue.jobs())
 
 
-def test_the_panel_is_in_the_window_and_shows_when_a_job_starts(qtbot, tmp_path, monkeypatch):
+def test_the_jobs_indicator_is_first_in_the_toolbar(qtbot, tmp_path, monkeypatch):
     from tests.ui.test_main_window import _window
 
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
-    win.show()
-    qtbot.waitExposed(win)
-    assert win.jobs_panel.parent() is not None, "the panel was never added to a layout"
-    assert not win.jobs_panel.isVisible(), "an empty panel should not take height"
+    win.show(); qtbot.waitExposed(win)
+    assert win._toolbar.widgetForAction(win._toolbar.actions()[0]) is win.jobs_indicator
+    assert win.jobs_indicator.isHidden()
     win._job_queue.enqueue(_job("A"))
-    assert win.jobs_panel.isVisible()
-    assert "A" in win.jobs_panel.rows()[0]
+    assert not win.jobs_indicator.isHidden()
+
+
+def test_open_on_a_missing_master_warns_instead_of_crashing(qtbot, tmp_path, monkeypatch):
+    from tests.ui.test_main_window import _window
+
+    win = _window(qtbot, tmp_path)
+    win._open_finished_master(str(tmp_path / "gone.fits"))
+    assert "no longer" in win._warning.text().lower()
 
 
 def test_quitting_after_a_cancel_that_has_not_reaped_still_waits(qtbot, tmp_path):
-    """Cancel in the panel, then quit: nothing is left "queued" or "running"
-    (the job is "cancelled"), but its reader thread can still be alive —
-    JobsPanel shows exactly this window as "stopping…", and `running()` keeps
-    naming the job throughout it. Gating the wait on queued/running skipped it
+    """Cancel from the indicator, then quit: nothing is left "queued" or
+    "running" (the job is "cancelled"), but its reader thread can still be
+    alive — JobsIndicator shows exactly this window as "stopping…", and
+    `running()` keeps naming the job throughout it. Gating the wait on
+    queued/running skipped it
     on precisely this route — the likeliest one — to the uncatchable
     delivery-time crash `wait_for_shutdown` exists to prevent.
     """
@@ -270,8 +277,10 @@ def test_a_result_with_no_file_behind_it_is_refused_not_dropped(qtbot, tmp_path)
 
 
 def test_a_job_starting_in_fullscreen_does_not_bring_the_column_back(qtbot, tmp_path, monkeypatch):
-    """Fullscreen hides the left column deliberately; the jobs panel lives in
-    it, and a queue change must not undo that."""
+    """Fullscreen hides the chrome deliberately — the left column AND the
+    toolbar the jobs indicator lives in — and a queue change must not undo
+    that. Leaving fullscreen must restore both: the column because the chrome
+    is back, the indicator because the job is still outstanding."""
     from tests.ui.test_main_window import _make_fits, _window
 
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
@@ -284,4 +293,4 @@ def test_a_job_starting_in_fullscreen_does_not_bring_the_column_back(qtbot, tmp_
     assert not win._left_column.isVisible()
     win._exit_fullscreen()
     qtbot.wait(50)
-    assert win._left_column.isVisible() and win.jobs_panel.isVisible()
+    assert win._left_column.isVisible() and not win.jobs_indicator.isHidden()
