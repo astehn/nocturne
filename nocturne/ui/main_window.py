@@ -2076,8 +2076,9 @@ class MainWindow(QMainWindow):
         self._toolbar = tb   # kept so fullscreen can hide it
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # FIRST in the toolbar: items overflow from the right, so the one item
-        # that must never hide behind the chevron goes at the left. Hidden while
-        # idle, so it costs nothing until something runs.
+        # that must never hide behind the chevron goes at the left. Always
+        # present at a fixed width, blank while idle: appearing, or growing
+        # with its text, would push every button after it sideways.
         self.jobs_indicator = JobsIndicator(self._job_queue, on_open=self._open_finished_master)
         tb.addWidget(self.jobs_indicator)
         # File

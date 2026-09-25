@@ -16,14 +16,35 @@ that checks the file exists before opening anything.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
-                               QToolButton, QVBoxLayout, QWidgetAction)
+                               QToolButton, QVBoxLayout)
 
 from .theme import DANGER, SUCCESS, WARNING
 
 
+# The longest texts this button is expected to show whole. It sits at the
+# HEAD of the toolbar, so any change in its width shifts every button after it
+# sideways — measured before this was fixed: Open Image at x 16 idle, 137 with
+# "✓ A ready — open", 219 with a longer label, and a jitter on every percent
+# tick. So the width is set ONCE from these and never follows the text; a
+# longer target name is elided, with the whole text in the tooltip.
+# "Andromeda Galaxy" stands for a long Seestar OBJECT name (16 characters; the
+# fallback "stacked master" is 14).
+_SIZING_TEXTS = (
+    "✓ Andromeda Galaxy ready — open",
+    "⟳ Stacking Andromeda Galaxy 100%",
+    "✗ Andromeda Galaxy failed",
+    "⟳ 2 jobs · 100%",
+    "◌ Stopping…",
+)
+
+
 class JobsIndicator(QToolButton):
+    """Always present, fixed width, blank while idle — never hidden, because
+    appearing would push the whole toolbar sideways (the same "reserve the
+    room even when empty" rule as the status slot)."""
+
     def __init__(self, queue, on_open, parent=None) -> None:
         super().__init__(parent)
         self._queue = queue
@@ -31,7 +52,10 @@ class JobsIndicator(QToolButton):
         self._pct: dict[int, int] = {}
         self.notices: list[dict] = []
         self._popover: QFrame | None = None
+        self._full_text = ""
+        self._text_room = 0
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._fix_width()
         self.clicked.connect(self._show_popover)
         queue.changed.connect(self._refresh)
         queue.progress.connect(self._on_progress)
@@ -39,47 +63,34 @@ class JobsIndicator(QToolButton):
         queue.failed.connect(self._on_failed)
         self._refresh()
 
-    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        """Whoever calls `.show()` — a test, or Qt showing the window this
-        button lives in — must not override "hidden while idle": if the queue
-        has nothing outstanding and there is no notice, re-hide right away.
+    def _fix_width(self) -> None:
+        """Width from the sizing texts in the CURRENT font. Re-measured only
+        when the font changes (an app stylesheet applied after construction),
+        never on the per-state colour change — that must not move anything."""
+        fm = self.fontMetrics()
+        self._text_room = max(fm.horizontalAdvance(t) for t in _SIZING_TEXTS)
+        shown = self.text()
+        self.setText(max(_SIZING_TEXTS, key=fm.horizontalAdvance))
+        width = self.sizeHint().width()
+        self.setText(shown)
+        self.setFixedWidth(width)
 
-        Deliberately does not call the full `_refresh()` (and so never calls
-        `.show()` from here): re-entering `.show()` while Qt is still in the
-        middle of delivering THIS show event is what caused infinite
-        recursion once this button sat in a real toolbar — the one-way
-        "hide if empty" correction below carries no such risk.
-        """
-        super().showEvent(event)
-        if not self._outstanding() and not self.notices:
-            self.hide()
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._fix_width()
+            self._show_text(self._full_text)
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 (Qt override)
-        """`QToolBar.addWidget` wraps this button in a QWidgetAction behind
-        the scenes, and the toolbar's layout re-asserts the widget's
-        visibility from that action on every relayout — setting only this
-        widget's own flag is silently overwritten the next time the toolbar
-        reflows. Keeping the wrapping action in sync is what makes a hide
-        actually stick once this button sits in a real toolbar.
+    def _show_text(self, text: str) -> None:
+        self._full_text = text
+        elided = self.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideMiddle, self._text_room)
+        self.setText(elided)
+        self.setToolTip(text if elided != text else "")
 
-        Guarded against re-entry: `QWidgetAction.setVisible` syncs back onto
-        its default widget, which is this button, which would otherwise call
-        straight back into this override forever.
-        """
-        super().setVisible(visible)
-        if getattr(self, "_syncing_toolbar_action", False):
-            return
-        parent = self.parentWidget()
-        if parent is None:
-            return
-        self._syncing_toolbar_action = True
-        try:
-            for act in parent.actions():
-                if isinstance(act, QWidgetAction) and act.defaultWidget() is self:
-                    act.setVisible(visible)
-                    break
-        finally:
-            self._syncing_toolbar_action = False
+    def full_text(self) -> str:
+        """What the button says before elision."""
+        return self._full_text
 
     # --- state ---
     def _outstanding(self) -> list:
@@ -134,12 +145,11 @@ class JobsIndicator(QToolButton):
             else:
                 text, colour = f"✗ {last['label']} failed", DANGER
         else:
-            self.setText("")
-            self.hide()
-            return
-        self.setText(text)
+            text, colour = "", None
+        # Idle: blank and inert, but still occupying its place.
+        self.setEnabled(bool(text))
         self.setStyleSheet(f"color: {colour};" if colour else "")
-        self.show()
+        self._show_text(text)
 
     # --- actions ---
     def acknowledge(self, index: int) -> None:
@@ -160,7 +170,16 @@ class JobsIndicator(QToolButton):
         self._queue.cancel(self._outstanding()[index])
 
     def _show_popover(self) -> None:
-        pop = QFrame(self, Qt.WindowType.Popup)
+        if not self._outstanding() and not self.notices:
+            return                  # idle: the blank button does nothing
+        pop = QFrame(None, Qt.WindowType.Popup)
+        # Deleted on close, so a click no longer leaks a frame. Parentless
+        # (a top-level popup, as QMenu is): as a CHILD of this button, a
+        # closed popover still waiting on its deferred delete segfaulted when
+        # the button itself was destroyed first — reproduced in the popover
+        # tests, whose indicator dies as the test returns. The app stylesheet
+        # is set on the QApplication, so it still styles this frame.
+        pop.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         lay = QVBoxLayout(pop)
         # Captures the JOB itself, not its row index: the queue can advance
         # while this popover is open (a job finishes, the next is promoted to
@@ -171,30 +190,34 @@ class JobsIndicator(QToolButton):
         # same tick they read it, before anything can reorder the queue.
         for job in self._outstanding():
             row = QHBoxLayout()
-            row.addWidget(QLabel(self._row_text(job)))
+            row.addWidget(QLabel(self._row_text(job), pop))
             row.addStretch(1)
             if job.state == "running":
-                b = QPushButton("Cancel")
-                b.clicked.connect(lambda _=False, j=job: (self._queue.cancel(j), pop.close()))
+                b = QPushButton("Cancel", pop)
+                b.clicked.connect(lambda _=False, j=job: self._queue.cancel(j))
+                b.clicked.connect(pop.close)
                 row.addWidget(b)
             elif job.state == "queued":
-                b = QPushButton("Remove")
-                b.clicked.connect(lambda _=False, j=job: (self._queue.cancel(j), pop.close()))
+                b = QPushButton("Remove", pop)
+                b.clicked.connect(lambda _=False, j=job: self._queue.cancel(j))
+                b.clicked.connect(pop.close)
                 row.addWidget(b)
             lay.addLayout(row)
         for i, n in enumerate(list(self.notices)):
             row = QHBoxLayout()
             if n["kind"] == "done":
-                row.addWidget(QLabel(f"✓ {n['label']} — ready"))
+                row.addWidget(QLabel(f"✓ {n['label']} — ready", pop))
                 row.addStretch(1)
-                ob = QPushButton("Open")
-                ob.clicked.connect(lambda _=False, i=i: (pop.close(), self.open_notice(i)))
+                ob = QPushButton("Open", pop)
+                ob.clicked.connect(pop.close)
+                ob.clicked.connect(lambda _=False, i=i: self.open_notice(i))
                 row.addWidget(ob)
             else:
-                row.addWidget(QLabel(f"✗ {n['label']} — {n['message']}"))
+                row.addWidget(QLabel(f"✗ {n['label']} — {n['message']}", pop))
                 row.addStretch(1)
-            db = QPushButton("Dismiss")
-            db.clicked.connect(lambda _=False, i=i: (self.acknowledge(i), pop.close()))
+            db = QPushButton("Dismiss", pop)
+            db.clicked.connect(lambda _=False, i=i: self.acknowledge(i))
+            db.clicked.connect(pop.close)
             row.addWidget(db)
             lay.addLayout(row)
         pop.move(self.mapToGlobal(self.rect().bottomLeft()))

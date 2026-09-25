@@ -12,9 +12,16 @@ Offscreen is fine here: this asserts INVARIANCE, not absolute text widths.
 import pytest
 from PySide6.QtCore import QPoint
 
+from nocturne.stacking.stacker import StackOptions
+from nocturne.ui.job_queue import JobQueue, StackJob
 from tests.ui.test_main_window import _make_fits, _window
 
 SIZES = [(1280, 720), (1280, 800), (1512, 982), (1920, 1080), (2560, 1440)]
+
+
+class _FakeProc:
+    returncode = None
+    pid = 0
 
 
 def _row_rect(r) -> tuple:
@@ -49,6 +56,17 @@ def _geometry(win) -> dict:
         # rows. Reading every row's own label and on-screen rect back is the
         # only check that catches a row moving, being replaced, or two rows
         # swapping.
+        # The toolbar is muscle memory too. The jobs indicator heads it, so
+        # an indicator that appears, or whose width follows its text, shifts
+        # every button after it sideways — Open Image went x 16 -> 137 -> 219
+        # by label length and jittered on every percent tick.
+        "toolbar": tuple(
+            (a.text(), win._toolbar.widgetForAction(a).mapTo(win, QPoint(0, 0)).x(),
+             win._toolbar.widgetForAction(a).width())
+            for a in win._toolbar.actions()
+            if win._toolbar.widgetForAction(a) is not None
+            and win._toolbar.widgetForAction(a).isVisible()
+        ),
         "rows": tuple(
             (win.stepper.item(i).text(),
              _row_rect(win.stepper.visualItemRect(win.stepper.item(i))))
@@ -98,8 +116,18 @@ def _states(win, qtbot):
     win._toggle_help()
     _settle(qtbot)
 
-    win.jobs_indicator.notices.append({"kind": "done", "label": "M 33", "path": ""})
-    win.jobs_indicator._refresh()
+    # A real job through the real queue (its process faked by the test):
+    # the indicator's text changes on every percent tick, then becomes the
+    # done notice, and none of it may move a toolbar button.
+    q = win._job_queue
+    job = StackJob("Andromeda Galaxy", StackOptions("average", 2.5, ["a", "b"], "/tmp/x.fits"))
+    q.enqueue(job)
+    for pct in (3, 42, 100):
+        q.progress.emit(job, pct, "")
+        _settle(qtbot)
+        yield f"job running {pct}%", _geometry(win)
+    q.finished.emit(job, {"output": ""})
+    job.state = "done"; q._running = None; q.changed.emit()
     _settle(qtbot)
     yield "job notice", _geometry(win)
     win.jobs_indicator.notices.clear()
@@ -121,7 +149,8 @@ def _states(win, qtbot):
 
 
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
-def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, size):
+def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, size):
+    monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.resize(*size)

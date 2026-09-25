@@ -26,16 +26,66 @@ def _ind(qtbot, monkeypatch, opened=None):
     return q, ind
 
 
-def test_hidden_when_nothing_is_queued(qtbot, monkeypatch):
+def _blank(ind) -> bool:
+    """Idle, as the toolbar sees it: present, but saying nothing and offering
+    nothing — no text, no popover rows, nothing to click."""
+    return (not ind.isHidden() and ind.text() == "" and ind.popover_rows() == []
+            and not ind.isEnabled())
+
+
+def test_blank_but_present_when_nothing_is_queued(qtbot, monkeypatch):
     q, ind = _ind(qtbot, monkeypatch)
-    assert ind.isHidden() and ind.text() == ""
+    assert _blank(ind)
+
+
+def test_idle_click_opens_nothing(qtbot, monkeypatch):
+    q, ind = _ind(qtbot, monkeypatch)
+    ind._show_popover()
+    assert ind._popover is None
+
+
+def test_the_width_never_follows_the_text(qtbot, monkeypatch):
+    """It heads the toolbar: a width change shifts every button after it.
+    Captured idle, then compared exactly through every state, including a
+    percent tick and a label long enough to need eliding."""
+    q, ind = _ind(qtbot, monkeypatch)
+    idle_width = ind.width()
+    job = _job("Some Extremely Long Target Name Here"); q.enqueue(job)
+    widths = []
+    for pct in (0, 7, 42, 100):
+        q.progress.emit(job, pct, "")
+        widths.append(ind.width())
+    q.enqueue(_job("B"))
+    widths.append(ind.width())
+    q.finished.emit(job, {"output": ""})
+    job.state = "done"; q._running = None; q.changed.emit()
+    widths.append(ind.width())
+    assert widths == [idle_width] * len(widths)
+
+
+def test_a_long_label_is_elided_with_the_whole_text_in_the_tooltip(qtbot, monkeypatch):
+    q, ind = _ind(qtbot, monkeypatch)
+    job = _job("Some Extremely Long Target Name Here"); q.enqueue(job)
+    q.finished.emit(job, {"output": ""})
+    job.state = "done"; q._running = None; q.changed.emit()
+    assert ind.full_text() == "✓ Some Extremely Long Target Name Here ready — open"
+    assert ind.text() != ind.full_text() and "…" in ind.text()
+    assert ind.toolTip() == ind.full_text()
+
+
+def test_a_realistic_label_is_shown_whole(qtbot, monkeypatch):
+    q, ind = _ind(qtbot, monkeypatch)
+    job = _job("Andromeda Galaxy"); q.enqueue(job)
+    q.finished.emit(job, {"output": ""})
+    job.state = "done"; q._running = None; q.changed.emit()
+    assert ind.text() == "✓ Andromeda Galaxy ready — open"
 
 
 def test_running_shows_label_and_percent(qtbot, monkeypatch):
     q, ind = _ind(qtbot, monkeypatch)
     job = _job(); q.enqueue(job)
     q.progress.emit(job, 42, "")
-    assert not ind.isHidden()
+    assert ind.isEnabled()
     assert "M 33" in ind.text() and "42%" in ind.text()
 
 
@@ -68,11 +118,11 @@ def test_done_stays_until_acted_on(qtbot, monkeypatch):
     # keys off `_running` — leaving it pointed at the job would keep the
     # indicator saying "Stacking" instead of "ready" forever.
     job.state = "done"; q._running = None; q.changed.emit()
-    assert "ready" in ind.text().lower() and not ind.isHidden()
+    assert "ready" in ind.text().lower() and ind.isEnabled()
     q.changed.emit()                                 # unrelated churn does not clear it
-    assert not ind.isHidden()
+    assert "ready" in ind.text().lower() and ind.isEnabled()
     ind.acknowledge(0)
-    assert ind.isHidden()
+    assert _blank(ind)
 
 
 def test_open_calls_back_with_the_path_and_clears(qtbot, monkeypatch, tmp_path):
@@ -83,7 +133,7 @@ def test_open_calls_back_with_the_path_and_clears(qtbot, monkeypatch, tmp_path):
     q.finished.emit(job, {"output": str(out)})
     job.state = "done"; q._running = None; q.changed.emit()
     ind.open_notice(0)
-    assert opened == [str(out)] and ind.isHidden()
+    assert opened == [str(out)] and _blank(ind)
 
 
 def test_failed_is_red_and_stays(qtbot, monkeypatch):
@@ -91,7 +141,7 @@ def test_failed_is_red_and_stays(qtbot, monkeypatch):
     job = _job(); q.enqueue(job)
     q.failed.emit(job, "out of memory")
     job.state = "failed"; q._running = None; q.changed.emit()
-    assert "failed" in ind.text().lower() and not ind.isHidden()
+    assert "failed" in ind.text().lower() and ind.isEnabled()
 
 
 def test_cancel_row_cancels_the_targeted_job_and_no_other(qtbot, monkeypatch):
@@ -212,3 +262,18 @@ def test_a_malformed_finished_event_does_not_crash_and_stores_no_path(
                                     # each malformed shape.
 
     assert ind.notices[-1]["path"] == ""
+
+
+def test_a_closed_popover_is_deleted_not_leaked(qtbot, monkeypatch):
+    """Every click on the indicator builds a fresh frame; without
+    WA_DeleteOnClose each closed one lived until the app quit."""
+    from PySide6.QtWidgets import QApplication
+    q, ind = _ind(qtbot, monkeypatch)
+    q.enqueue(_job("A"))
+    ind._show_popover()
+    gone = []
+    ind._popover.destroyed.connect(lambda *_: gone.append(True))
+    ind._popover.close()
+    QApplication.sendPostedEvents(None, 0)      # 0 = QEvent.DeferredDelete
+    QApplication.processEvents()
+    assert gone == [True]

@@ -128,9 +128,9 @@ def test_the_jobs_indicator_is_first_in_the_toolbar(qtbot, tmp_path, monkeypatch
     win = _window(qtbot, tmp_path)
     win.show(); qtbot.waitExposed(win)
     assert win._toolbar.widgetForAction(win._toolbar.actions()[0]) is win.jobs_indicator
-    assert win.jobs_indicator.isHidden()
+    assert not win.jobs_indicator.isHidden() and win.jobs_indicator.text() == ""
     win._job_queue.enqueue(_job("A"))
-    assert not win.jobs_indicator.isHidden()
+    assert "A" in win.jobs_indicator.text() and win.jobs_indicator.isEnabled()
 
 
 def test_open_on_a_missing_master_warns_instead_of_crashing(qtbot, tmp_path, monkeypatch):
@@ -293,4 +293,5 @@ def test_a_job_starting_in_fullscreen_does_not_bring_the_column_back(qtbot, tmp_
     assert not win._left_column.isVisible()
     win._exit_fullscreen()
     qtbot.wait(50)
-    assert win._left_column.isVisible() and not win.jobs_indicator.isHidden()
+    assert win._left_column.isVisible() and win.jobs_indicator.isVisible()
+    assert "A" in win.jobs_indicator.text()
