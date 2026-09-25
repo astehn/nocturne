@@ -782,6 +782,20 @@ class MainWindow(QMainWindow):
                       for s in QApplication.screens())
         return visible
 
+    def place_on_primary_screen(self, size) -> None:
+        """The fallback when there is no usable saved place. Moves as well as
+        resizes: by the time `restore_geometry_from_settings` says no,
+        `restoreGeometry` may already have put the window on a monitor that is
+        gone, and a resize alone leaves it there. Centred on the primary
+        screen's available area; a window larger than that area is pinned to
+        its top-left so the title bar stays reachable."""
+        self.resize(*size)
+        area = QApplication.primaryScreen().availableGeometry()
+        frame = self.frameGeometry()
+        x = max(area.left(), area.center().x() - frame.width() // 2)
+        y = max(area.top(), area.center().y() - frame.height() // 2)
+        self.move(x, y)
+
     def _confirm_quit_with_jobs(self, count: int) -> bool:
         """True to quit and cancel. Separate so a test can answer it."""
         plural = "job" if count == 1 else "jobs"

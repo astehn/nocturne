@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication
 
@@ -36,18 +37,51 @@ def test_a_corrupt_saved_geometry_falls_back(qtbot, tmp_path):
     assert win.restore_geometry_from_settings() is False
 
 
-def test_a_geometry_from_a_missing_monitor_falls_back(qtbot, tmp_path):
+def _on_a_screen(win) -> bool:
+    frame = win.frameGeometry()
+    return any(s.availableGeometry().intersects(frame) for s in QApplication.screens())
+
+
+@pytest.mark.parametrize("restore", ["qt", "left_off_screen"])
+def test_a_geometry_from_a_missing_monitor_falls_back(qtbot, tmp_path, monkeypatch, restore):
+    """Through the app's own `place_window`, in BOTH branches of
+    `restore_geometry_from_settings`. Offscreen, Qt's restoreGeometry pulls an
+    off-screen geometry back itself (measured: saved at x 5797, restored at
+    x -1), so the refusal branch is never reached; the second case makes
+    restoreGeometry leave the window where the saved bytes put it — what a
+    real multi-monitor Mac can do — so the fallback has to move it."""
+    from nocturne.__main__ import place_window
     win = _window(qtbot, tmp_path)
     win.show(); qtbot.waitExposed(win)
-    win.setGeometry(QRect(40, 60, 700, 560))
-    raw = bytes(win.saveGeometry().toHex()).decode()
-    win.settings.window_geometry = raw
+    far = QApplication.primaryScreen().availableGeometry().right() + 5000
+    win.setGeometry(QRect(far, 60, 1000, 700))
+    win.settings.window_geometry = bytes(win.saveGeometry().toHex()).decode()
+    if restore == "left_off_screen":
+        def stays_off(_raw):
+            win.setGeometry(QRect(far, 60, 1000, 700))
+            return True
+        monkeypatch.setattr(win, "restoreGeometry", stays_off)
+    win.move(0, 0)
+    decided = {}
+    real = win.restore_geometry_from_settings
+    monkeypatch.setattr(win, "restore_geometry_from_settings",
+                        lambda: decided.setdefault("ok", real()))
+    place_window(win, QApplication.instance(), None)
+    assert decided["ok"] is (restore == "qt"), "the case did not reach its branch"
+    assert _on_a_screen(win), (restore, win.frameGeometry())
+
+
+def test_the_fallback_moves_a_window_that_restore_left_off_screen(qtbot, tmp_path):
+    """The refused-restore branch on its own: whatever restoreGeometry did,
+    the fallback alone must bring the window back."""
+    win = _window(qtbot, tmp_path)
+    win.show(); qtbot.waitExposed(win)
     far = QApplication.primaryScreen().availableGeometry().right() + 5000
     win.move(far, 60)
-    win.settings.window_geometry = bytes(win.saveGeometry().toHex()).decode()
-    ok = win.restore_geometry_from_settings()
-    screen = QApplication.primaryScreen().availableGeometry()
-    assert ok is False or screen.intersects(win.frameGeometry())
+    assert not _on_a_screen(win)
+    win.place_on_primary_screen((1280, 800))
+    assert _on_a_screen(win)
+    assert (win.width(), win.height()) == (1280, 800)
 
 
 def test_the_minimum_size_fits_a_1280x720_screen(qtbot, tmp_path):
