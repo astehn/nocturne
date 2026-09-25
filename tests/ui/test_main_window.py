@@ -6142,3 +6142,91 @@ def test_a_long_warning_never_grows_the_status_slot(qtbot, tmp_path):
     qtbot.wait(10)
     assert win._side.status_slot.height() == STATUS_SLOT_H
     assert win._side.scroll.height() == scroll_h0              # the panel keeps its room
+
+
+def _themed(qtbot, tmp_path):
+    """A real window at 1280x800 under the app theme — the slot constants are
+    measured against the theme's button and line heights, not the bare style's."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    QApplication.instance().setStyleSheet(build_stylesheet())
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    return win
+
+
+def _squeezed_in_status_slot(win) -> list:
+    """Visible status-slot widgets drawn shorter than they ask for."""
+    from PySide6.QtWidgets import QWidget
+    slot = win._side.status_slot
+    bad = []
+    for w in slot.findChildren(QWidget):
+        if not w.isVisible():
+            continue
+        need = max(w.sizeHint().height(), w.minimumSizeHint().height())
+        if w.height() < need - 1:
+            bad.append((type(w).__name__, w.objectName(), w.height(), need))
+    return bad
+
+
+def test_the_status_slot_fits_its_fullest_states(qtbot, tmp_path):
+    """Busy, a tool error, and a tool error left up under a running op: in
+    each, every visible line and button gets the height it asks for, and the
+    slot itself never changes. At 64 px Cancel was drawn 14 px tall."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication, QLabel
+    try:
+        win = _themed(qtbot, tmp_path)
+        h0 = win._side.status_slot.height()
+        exc = SimpleNamespace(command=["graxpert", "-cli", "stack.fits"],
+                              elapsed=12.3, stderr="Traceback …\nValueError: bad frame")
+        msg = "GraXpert failed — the background model could not be fitted to this frame."
+
+        win._set_busy(True, "Separating stars")
+        win._show_busy_visuals()
+        win._set_progress("", 3, 10)
+        qtbot.wait(20)
+        assert win._cancel_btn.isVisible() and win._progress.isVisible()
+        assert _squeezed_in_status_slot(win) == [], "busy"
+        assert win._side.status_slot.height() == h0
+        win._set_busy(False)
+
+        win._report_tool_error(msg, exc)
+        qtbot.wait(20)
+        assert win._warning.isVisible() and win._show_details_btn.isVisible()
+        assert QLabel.text(win._warning) == msg              # both lines drawn, no "…"
+        assert _squeezed_in_status_slot(win) == [], "error"
+        assert win._side.status_slot.height() == h0
+
+        win._set_busy(True, "Separating stars")
+        win._show_busy_visuals()
+        win._set_progress("", 3, 10)
+        qtbot.wait(20)
+        assert not win._warning.isVisible() and not win._show_details_btn.isVisible()
+        assert _squeezed_in_status_slot(win) == [], "error then busy"
+        assert win._side.status_slot.height() == h0
+        win._set_busy(False)
+        qtbot.wait(20)
+        assert win._warning.isVisible() and win._show_details_btn.isVisible()  # still pending
+
+        win._clear_warning()
+        assert not win._show_details_btn.isVisible()
+    finally:
+        QApplication.instance().setStyleSheet("")
+
+
+def test_the_clip_line_shows_its_qualifier_and_the_tooltip_keeps_it(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication, QLabel
+    line = ("1.0% of red blown to white  ·  1.0% of green crushed to zero"
+            "  — scattered noise, not lost detail")
+    try:
+        win = _themed(qtbot, tmp_path)
+        win._side.set_clipping(line, "Measured per CHANNEL, not per pixel.")
+        qtbot.wait(20)
+        assert win._clip_line.text() == line
+        assert QLabel.text(win._clip_line) == line          # rendered in full, no "…"
+        tip = win._clip_line.toolTip()
+        assert line in tip and "Measured per CHANNEL" in tip
+    finally:
+        QApplication.instance().setStyleSheet("")

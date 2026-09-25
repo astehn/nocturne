@@ -618,10 +618,12 @@ class MainWindow(QMainWindow):
         self._diagnostic_label = QLabel("")        # kept for callers; never shown in the column now
         self._diagnostic_label.hide()
         self._last_diagnostic = ""
+        self._diag_pending = False                  # a tool error's details are on offer
         self._back_btn = right.back_btn
         self._next_btn = right.next_btn
         self._back_btn.clicked.connect(self.go_back)
         self._next_btn.clicked.connect(self.go_next)
+        self._sync_status_slot()
         root.addWidget(right)
 
         self.log_panel = LogPanel()
@@ -965,6 +967,7 @@ class MainWindow(QMainWindow):
         """Blocking guidance / errors → prominent right-pane label near the buttons."""
         self._warning.setStyleSheet("color: #ff6b6b;")
         self._warning.setText(text)
+        self._sync_status_slot()
 
     def _show_notice(self, text: str) -> None:
         """Same prominent slot as a warning, amber rather than red: something the
@@ -978,13 +981,28 @@ class MainWindow(QMainWindow):
         and the output area is easy to miss at the moment the thing happens."""
         self._warning.setStyleSheet(f"color: {WARNING};")
         self._warning.setText(text)
+        self._sync_status_slot()
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
-        self._show_details_btn.hide()
-        self._copy_log_btn.hide()
+        self._diag_pending = False
         self._diagnostic_label.hide()
         self._diagnostic_label.setText("")
+        self._sync_status_slot()
+
+    def _sync_status_slot(self) -> None:
+        """One occupant at a time in the fixed status slot, busy > warning >
+        peek (spec §4.2), and an empty line takes no row. STATUS_SLOT_H is
+        measured for the fullest of these; letting two share the slot (the
+        details row left up under a running op) overflowed it — Cancel was
+        drawn 14 px tall against a 32 px hint."""
+        busy = getattr(self, "_busy_shown", False)
+        warn = not busy and bool(self._warning.text())
+        self._busy_label.setVisible(busy)
+        self._warning.setVisible(warn)
+        self._show_details_btn.setVisible(not busy and self._diag_pending)
+        self._copy_log_btn.setVisible(not busy and self._diag_pending)
+        self._peek_label.setVisible(not busy and not warn and bool(self._peek_label.text()))
 
     def _report_tool_error(self, prefix: str, exc) -> None:
         """Surface a `ToolError` as a concise warning plus an expandable
@@ -996,9 +1014,8 @@ class MainWindow(QMainWindow):
             f"stderr:\n{exc.stderr}"
         )
         sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
-        self._show_warning(prefix)
-        self._show_details_btn.show()
-        self._copy_log_btn.show()
+        self._diag_pending = True
+        self._show_warning(prefix)          # syncs the slot: details row shown
         self._diagnostic_label.hide()
         self._diagnostic_label.setText("")
         self._show_details_btn.setText("Show details")
@@ -3812,8 +3829,7 @@ class MainWindow(QMainWindow):
             QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
             self._cursor_active = True
         self._busy_shown = True
-        self._warning.hide()            # status priority: busy > warning > peek
-        self._peek_label.hide()
+        self._sync_status_slot()        # busy > warning > peek
         self._cancel_btn.show()
         self._elapsed_label.show()
         self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
@@ -3831,8 +3847,7 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
         self._busy_shown = False
-        self._warning.show()
-        self._peek_label.show()
+        self._sync_status_slot()
         self._cancel_btn.hide()
         self._elapsed_label.hide()
         self._elapsed_label.setText("")
@@ -5142,6 +5157,7 @@ class MainWindow(QMainWindow):
         exits peek (nav, apply, preview repaint) clears the 'Before' cue too."""
         self._peek_active = active
         self._peek_label.setText("Before — press Space to compare" if active else "")
+        self._sync_status_slot()
 
     def _toggle_peek(self) -> None:
         """Flip the main image between the *current step's* entry state (its before)

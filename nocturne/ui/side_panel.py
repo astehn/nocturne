@@ -18,8 +18,19 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
                                QProgressBar, QPushButton, QScrollArea,
                                QSizePolicy, QVBoxLayout, QWidget)
 
-STATUS_SLOT_H = 64
-CLIP_SLOT_H = 40
+# Measured 2026-09-25 at RIGHT_PANE_W (label width 382 px) under the app
+# theme (Fusion + build_stylesheet), offscreen and cocoa alike: text lines
+# 17 px, buttons 35, progress bar 19 (its minimum; its hint says 10), layout
+# spacing 2, no margins. Busy = busy line 17 + bar 19 + elapsed/Cancel row 35
+# + 2x2 = 75; error = two warning lines 34 + details row 35 + 2 = 71. Unthemed
+# macOS style is smaller (busy 72, error 66). The old guess, 64, squeezed
+# Cancel to 14 px.
+STATUS_SLOT_H = 75
+# Two clip lines (16 px each themed, 15-16 unthemed) + spacing 2 + the
+# checkbox (18 themed, 20 unthemed) = 54. The longest real line, "…crushed
+# to zero — scattered noise, not lost detail", wraps to two lines at 382 px;
+# the old 40 left one line and elided the qualifier.
+CLIP_SLOT_H = 54
 LINEAR_CLIP_TEXT = "Clipping is shown once the image is stretched."
 
 
@@ -203,6 +214,7 @@ class SidePanel(QWidget):
             self.clip_check.setEnabled(False)
         else:
             self.clip_line.setText(text)
-            self.clip_line.setToolTip(tooltip)
+            # The full line first, so an elided qualifier is always one hover away.
+            self.clip_line.setToolTip(f"{text}\n\n{tooltip}" if tooltip else text)
             self.clip_line.setEnabled(True)
             self.clip_check.setEnabled(True)
