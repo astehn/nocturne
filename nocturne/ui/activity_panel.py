@@ -12,28 +12,80 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel,
                                QPushButton, QSizePolicy, QTextEdit, QVBoxLayout,
                                QWidget)
 
-from .theme import DANGER, TEXT, TEXT_DIM, WARNING
+from .theme import TEXT_DIM, TEXT_FAINT
 
-RESULT_COLOUR = "#7fd4c1"          # teal: a result, what the output box used to show
+# Quiet on purpose. The box sits right beside the image, and the eye goes to
+# contrast (Andreas, 2026-09-25: "having fairly bright text next to a dark
+# image your focus will be on the text and not the image"). So step lines
+# are TEXT_DIM, not TEXT, and the three hues keep their meaning but lose
+# their glare: each is the theme colour desaturated and set to ~5:1 against
+# BG_2 — the same weight as TEXT_DIM (4.6:1), where they were 8.5, 7.6 and
+# 4.4:1 before. Measured (WCAG contrast, BG_1 #1e1f22 behind the box / BG_2
+# #26282c as the lighter worst case):
+#   step   #8a9099  5.12 / 4.59     result #64a294  5.60 / 5.02
+#   notice #b39244  5.58 / 5.00     warn   #d87d78  5.59 / 5.01
+# The red could not simply be darkened: DANGER is already only 4.4:1 on BG_2,
+# so toning it down means less saturation at the same weight, not less light.
+RESULT_COLOUR = "#64a294"          # teal (was #7fd4c1): a result, what the output box used to show
+NOTICE_COLOUR = "#b39244"          # amber, WARNING #e3b341 toned down
+WARN_COLOUR = "#d87d78"            # red, DANGER #f85149 toned down
 KIND_STYLE = {
-    "step": f"color:{TEXT}",
+    "step": f"color:{TEXT_DIM}",
     "result": f"color:{RESULT_COLOUR}",
+    # Already TEXT_DIM, and dimmer would fall below 4.5:1 — so information
+    # is told from a step by its italic alone.
     "info": f"color:{TEXT_DIM}; font-style:italic",
-    "warn": f"color:{DANGER}",
+    "warn": f"color:{WARN_COLOUR}",
     # Amber, like the status slot's notice: a consequence of the user's own
     # action is not an error, and copying it here in red undid that.
-    "notice": f"color:{WARNING}",
+    "notice": f"color:{NOTICE_COLOUR}",
 }
+# Smaller than the rest of the window by this many points (or pixels, where
+# the stylesheet sizes in px), for the same reason as the colours.
+FONT_STEP_DOWN = 2
 
 
 def _row_html(kind: str, stamp: str, text: str) -> str:
-    return (f'<span style="color:{TEXT_DIM}">{stamp}</span> '
+    return (f'<span style="color:{TEXT_FAINT}">{stamp}</span> '
             f'<span style="{KIND_STYLE.get(kind, KIND_STYLE["step"])}">{html.escape(text)}</span>')
+
+
+class _ActivityView(QTextEdit):
+    """The small in-column view: a smaller font, and the newest line kept in
+    sight through a resize."""
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().changeEvent(event)
+        # QTextEdit copies its own font into the document on every font
+        # change — including the app stylesheet's `* { font-size: 14px }`
+        # arriving at polish — so the step-down is re-applied after it, and
+        # is always relative to whatever the window's font actually is.
+        if event.type() == QEvent.Type.FontChange:
+            self._step_font_down()
+
+    def _step_font_down(self) -> None:
+        f = self.font()
+        if f.pixelSize() > 0:
+            f.setPixelSize(max(8, f.pixelSize() - FONT_STEP_DOWN))
+        else:
+            f.setPointSizeF(max(7.0, f.pointSizeF() - FONT_STEP_DOWN))
+        self.document().setDefaultFont(f)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        # There is no scrollbar, so a newest line pushed below the fold by a
+        # window resize could not be brought back by eye. Re-anchor when the
+        # view was showing the bottom (within a line of it) beforehand;
+        # someone who wheeled up to read history stays where they are.
+        bar = self.verticalScrollBar()
+        at_bottom = bar.maximum() - bar.value() <= self.fontMetrics().lineSpacing()
+        super().resizeEvent(event)
+        if at_bottom:
+            bar.setValue(bar.maximum())
 
 
 class _LargeView(QDialog):
@@ -71,7 +123,8 @@ class ActivityPanel(QWidget):
         head.addWidget(copy_btn)
         head.addWidget(big_btn)
         lay.addLayout(head)
-        self.view = QTextEdit(self)
+        self.view = _ActivityView(self)
+        self.view._step_font_down()
         self.view.setReadOnly(True)
         self.view.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
