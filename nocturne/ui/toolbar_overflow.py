@@ -58,7 +58,10 @@ class ToolbarOverflow(QObject):
         self.hidden: list[QAction] = []
         self._pending = False
         self.prefer_text = True
-        self._w: dict = {}
+        # Measures tools that are not on the bar. A child of the toolbar so the
+        # "QToolBar QToolButton" rules reach it; never shown, never in the layout.
+        self._probe = QToolButton(toolbar)
+        self._probe.hide()
         toolbar.installEventFilter(self)
         watch.installEventFilter(self)
         toolbar.toolButtonStyleChanged.connect(self._on_style)
@@ -94,8 +97,6 @@ class ToolbarOverflow(QObject):
     def eventFilter(self, obj, event) -> bool:
         if event.type() in (QEvent.Type.Resize, QEvent.Type.StyleChange,
                             QEvent.Type.FontChange):
-            if obj is self._tb and event.type() != QEvent.Type.Resize:
-                self._w.clear()               # fonts/padding changed: re-measure
             self.schedule()
         return False
 
@@ -117,22 +118,29 @@ class ToolbarOverflow(QObject):
         return self._tb.toolButtonStyle() != Qt.ToolButtonStyle.ToolButtonIconOnly
 
     def _width(self, act, text: bool) -> int:
-        """`act`'s width in text mode or in icon mode. Measured while it is on
-        the bar and remembered, because a tool in the More menu has no button
-        to measure. Icon-only buttons are all one width, so an unmeasured one
-        takes a measured sibling's."""
-        key = (act, text)
-        w = self._more if act is self._more_act else self._tb.widgetForAction(act)
-        if w is not None and self._is_text() == text:
-            self._w[key] = max(0, w.sizeHint().width())
-        if key in self._w:
-            return self._w[key]
-        if not text:
-            icons = [v for (a, t), v in self._w.items()
-                     if not t and a in self._movable]
-            if icons:
-                return max(icons)
-        return 0
+        """`act`'s width with text or icons only. A button on the bar in that
+        style is measured directly; anything else — a tool in More, or the
+        other style — is measured on `_probe`, a never-shown button inside the
+        toolbar that the same stylesheet rules reach. Never remembered: a
+        cache wiped by a font change once priced every tool in More at 0 px,
+        and the bar put them all back for a few frames and cut Undo…100%."""
+        style = (Qt.ToolButtonStyle.ToolButtonTextUnderIcon if text
+                 else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        if act is self._more_act:
+            src_text, src_icon, w = self._more.text(), self._more.icon(), self._more
+        else:
+            src_text, src_icon = act.text(), act.icon()
+            w = self._tb.widgetForAction(act)
+            if act.isSeparator() or (w is not None and not isinstance(w, QToolButton)):
+                return 0 if w is None else max(0, w.sizeHint().width())   # separators, the spacer
+        if w is not None and w.isVisible() and self._tb.toolButtonStyle() == style:
+            return max(0, w.sizeHint().width())
+        p = self._probe
+        p.setToolButtonStyle(style)
+        p.setIconSize(self._tb.iconSize())
+        p.setText(src_text)
+        p.setIcon(src_icon)
+        return max(0, p.sizeHint().width())
 
     def _needed(self, shown: list[QAction], text: bool) -> int:
         """Width the shown items take, with separators collapsed exactly as
@@ -181,8 +189,9 @@ class ToolbarOverflow(QObject):
         if not shiboken6.isValid(self._tb):
             return
         all_items = self._candidates()
-        for a in all_items + [self._more_act]:   # measure what is on the bar now
-            self._width(a, self._is_text())
+        # The probe takes the toolbar's CURRENT stylesheet (iconsOnly etc.).
+        self._probe.style().unpolish(self._probe)
+        self._probe.style().polish(self._probe)
         m = self._tb.contentsMargins()
         lay = self._tb.layout().contentsMargins()
         # A few px of slack: an estimate a hair short would let Qt push the
@@ -225,3 +234,5 @@ class ToolbarOverflow(QObject):
         for act, proxy in self._proxy.items():
             proxy.setVisible(act in hide)
         self._more_act.setVisible(bool(hidden))
+        if not hidden and self._menu.isVisible():
+            self._menu.hide()     # the window grew under an open menu: nothing left in it
