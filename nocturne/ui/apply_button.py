@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from .theme import BG_1, BG_2, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT, WARNING
 
@@ -115,6 +115,7 @@ class ApplyButton(QPushButton):
         if look not in ("A", "B"):
             raise ValueError(look)
         self._look = look
+        self._desc_size = self._read_desc_size()
         fm = self.fontMetrics()
         if look == "B":
             # Today's button height: one line of the button font plus the
@@ -122,8 +123,8 @@ class ApplyButton(QPushButton):
             height = fm.height() + _VPAD
         else:
             # Two real lines: the bold label line at the button's own font,
-            # plus the smaller status line measured at ITS font (not guessed
-            # off the label line's metrics), with a 1px gap between them.
+            # plus the status line measured at ITS font (the description's
+            # size, not guessed off the label line's metrics), 1px apart.
             _, small_font = self._fonts()
             small_fm = QFontMetrics(small_font)
             height = fm.height() + small_fm.height() + 1 + _VPAD
@@ -169,16 +170,44 @@ class ApplyButton(QPushButton):
     # measured at full size but drawn small — and the two errors happened to
     # cancel for the three names actually tested). ---
     def _fonts(self) -> tuple[QFont, QFont]:
-        """(bold label font, small chip/status font), both derived from this
-        widget's OWN current font so a font change is honoured everywhere."""
+        """(bold label font, status/chip font). The label follows this widget's
+        own font; the status line is drawn at the step description's size
+        (`_desc_size`), refreshed with the height in `set_look`."""
         bold = self.font(); bold.setBold(True)
-        small = self.font(); small.setPointSizeF(max(8.0, small.pointSizeF() - 2))
+        small = self.font()
+        px, pt = self._desc_size
+        if px > 0:
+            small.setPixelSize(px)
+        elif pt > 0:
+            small.setPointSizeF(pt)
         return bold, small
+
+    @staticmethod
+    def _read_desc_size() -> tuple[int, float]:
+        """The size `QLabel#stepDesc` gets from whatever stylesheet is live, as
+        (pixelSize, pointSizeF) — one of them is -1, as Qt reports it.
+
+        D1 (Andreas, 2026-09-26): the status used to be the button font minus
+        2 pt, floored at 8. Under the app stylesheet the button font is set in
+        PIXELS (14px), so pointSizeF() is -1 and the floor won: 8 pt, about
+        7 px of ink in his real window — "very hard to read regardless of
+        button style or screen size". The description under the step title is
+        the text he reads anyway, so the status matches it. Read from a probe
+        label, not copied from theme.py, so it follows the stylesheet (and the
+        bare style, where it is simply the app font)."""
+        probe = QLabel()
+        probe.setObjectName("stepDesc")
+        probe.ensurePolished()
+        f = probe.font()
+        return f.pixelSize(), f.pointSizeF()
 
     def _chip_rect(self, r: QRect, small_fm: QFontMetrics) -> QRect:
         """Look B's chip pill, in `r`'s coordinates."""
         cw = small_fm.horizontalAdvance(_CHIP[self._shown]) + 2 * _CHIP_HPAD
-        return QRect(r.right() - cw - _CHIP_RIGHT_MARGIN, r.center().y() - 10, cw, 20)
+        # 20 px was sized for the old 8 pt text; never shorter than the text
+        # line it now carries plus 2 px each side.
+        ch = max(20, small_fm.height() + 4)
+        return QRect(r.right() - cw - _CHIP_RIGHT_MARGIN, r.center().y() - ch // 2, cw, ch)
 
     def chip_geometry(self) -> QRect:
         """The chip's rect at the button's current size/state/font — public
@@ -249,7 +278,7 @@ class ApplyButton(QPushButton):
             fill, text_colour = _CHIP_STYLE[self._shown]
             p.setRenderHint(QPainter.RenderHint.Antialiasing)
             p.setBrush(QColor(fill)); p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(cr, 10, 10)
+            p.drawRoundedRect(cr, cr.height() / 2, cr.height() / 2)
             p.setPen(QColor(text_colour))
             p.setFont(small_font)
             p.drawText(cr, Qt.AlignmentFlag.AlignCenter, _CHIP[self._shown])

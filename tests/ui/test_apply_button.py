@@ -242,3 +242,41 @@ def test_busy_keeps_the_previous_words(qtbot, look, before):
     assert b.chip_geometry() == chip
     b.set_state(before)
     assert b.status_text() == words
+
+
+# --- D1 (Andreas, 2026-09-26): the status was unreadable at any size --------
+
+def test_status_is_drawn_at_the_step_descriptions_size(qtbot):
+    """His real window: the status (button font -2 pt, floored at 8 pt) read
+    as ~7 px of ink in both looks. It is now the size of the description
+    under the step title, read from the live stylesheet — so a stylesheet
+    that changes that size changes the status and the fixed height with it."""
+    import nocturne.ui.theme as theme
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QApplication, QLabel
+    app = QApplication.instance()
+    sheet = theme.build_stylesheet()
+    app.setStyleSheet(sheet)
+    try:
+        desc = QLabel("x"); desc.setObjectName("stepDesc"); desc.ensurePolished()
+        assert desc.font().pixelSize() == 12, "precondition: the theme's description size"
+        for look in ("A", "B"):
+            b = _btn(qtbot, look=look)
+            _, small = b._fonts()
+            assert small.pixelSize() == desc.font().pixelSize(), look
+            assert QFontMetrics(small).height() == QFontMetrics(desc.font()).height(), look
+            if look == "B":
+                assert b.chip_geometry().height() >= QFontMetrics(small).height(), "chip holds its text"
+        a = _btn(qtbot, look="A")
+        h12 = a.height()
+        # A bigger description (not a real theme value — a probe that the size
+        # is READ, not copied) must reach the status line and the fixed height.
+        rule = next(line for line in sheet.splitlines() if line.startswith("QLabel#stepDesc "))
+        assert "font-size: 12px" in rule, "precondition"
+        app.setStyleSheet(sheet.replace(rule, rule.replace("font-size: 12px", "font-size: 18px")))
+        qtbot.wait(5)
+        _, small = a._fonts()
+        assert small.pixelSize() == 18
+        assert a.height() > h12
+    finally:
+        app.setStyleSheet("")

@@ -5955,8 +5955,9 @@ class MainWindow(QMainWindow):
 
         Measured from real widgets under whatever stylesheet is live, never a
         constant: the taller of an Apply in the look in use and a Reset step,
-        plus the row's own margins. Look A: 47 + 6 = 53 px under the app
-        stylesheet, 45 + 6 = 51 unstyled (2026-09-25). Switching looks may
+        plus the row's own margins. Look A: 49 + 6 = 55 px under the app
+        stylesheet, 47 + 6 = 53 unstyled (2026-09-26, once its status line
+        took the description's 12 px; 53/51 before). Switching looks may
         change it; on any one look it is the same on every step.
         """
         lay = self._side.action_slot.layout()
