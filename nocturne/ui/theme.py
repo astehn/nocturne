@@ -147,7 +147,7 @@ QFrame#stepFrame {{ background: {BG_2}; border-radius: 10px; }}
 QFrame#stepFrame QWidget#stepHeaderSlot, QFrame#stepFrame QWidget#stepHeader,
 QFrame#stepFrame QWidget#stepHeader QLabel, QFrame#stepFrame QScrollArea,
 QFrame#stepFrame QScrollArea > QWidget, QFrame#stepFrame QScrollArea > QWidget > QWidget,
-QFrame#stepFrame QWidget#stepCard, QFrame#stepFrame QWidget#solvePanel,
+QFrame#stepFrame QWidget#stepCard,
 QFrame#stepFrame QLabel#stepExplainer, QFrame#stepFrame QLabel#fullHelpLink
 {{ background: transparent; }}
 /* "How this works" on the title line: the link is drawn in ACCENT with no
@@ -159,6 +159,7 @@ QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
 QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
 QLabel#welcomeHint {{ font-size: 13px; color: {TEXT_FAINT}; }}
+QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
 QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 14px; }}
 QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};

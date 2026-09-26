@@ -4,7 +4,7 @@ wires it into main_window (creating it, calling set_state/set_result, and
 persisting layers()/density() into Settings on change)."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QPushButton, QVBoxLayout, QWidget,
@@ -237,3 +237,43 @@ class SolvePanel(QWidget):
         lines.append(solver_line)
 
         self.result_label.setText("\n".join(lines))
+
+
+class SolveWindow(QWidget):
+    """Plate Solve as a floating tool window (Andreas, 2026-09-26): opening it
+    in the right column pushed the step's content down. A tool window, not a
+    dialog — it does not block the main window, so layers can be toggled
+    while panning and zooming the picture; on macOS a Qt.Tool window also
+    stays above Nocturne only, never above other apps. It holds the one
+    SolvePanel, so every signal and state call is unchanged."""
+    closed = Signal()
+
+    def __init__(self, panel: "SolvePanel", parent=None) -> None:
+        super().__init__(parent, Qt.WindowType.Tool)
+        self.setObjectName("solveWindow")
+        self.setWindowTitle("Plate Solve")
+        lay = QVBoxLayout(self)
+        lay.addWidget(panel)
+        self.panel = panel
+        # Wide enough for the coordinates line on one line, and the height
+        # follows the content: a size fixed when it first opened (before any
+        # result) clipped the result card (his screenshot, 2026-09-26).
+        self.setMinimumWidth(self.fontMetrics().horizontalAdvance(
+            "21h 34m 31s  +57° 35′ 03″  ·  2.2° × 3.0°") + 48)
+        panel.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.panel and event.type() == QEvent.Type.LayoutRequest:
+            QTimer.singleShot(0, self, self.fit)
+        return False
+
+    def fit(self) -> None:
+        """Height to the content, at the current width; the position stays."""
+        self.resize(max(self.width(), self.minimumWidth()),
+                    self.layout().heightForWidth(max(self.width(), self.minimumWidth()))
+                    if self.layout().hasHeightForWidth() else self.sizeHint().height())
+
+    def closeEvent(self, event) -> None:
+        # The window's own close box closes the tool, like the toolbar button.
+        super().closeEvent(event)
+        self.closed.emit()

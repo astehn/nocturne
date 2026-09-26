@@ -2105,19 +2105,19 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     assert win._solve_act.isChecked() is False
     _solve_now(win)                                          # opens the tool and solves
     assert win._solve_act.isChecked() is True                # tool open
-    assert win.solve_panel.isHidden() is False
+    assert win._solve_window.isVisible() is True
     assert win.image_view._annotations is not None
 
     _hide_overlay(win)                                       # pill only
     assert win._solve_act.isChecked() is True, "hiding the overlay must not close the tool"
-    assert win.solve_panel.isHidden() is False
+    assert win._solve_window.isVisible() is True
 
     _show_overlay(win)                                       # pill again, from cache
     assert win.image_view._annotations is not None
 
     win._open_plate_solve()                                  # close the tool
     assert win._solve_act.isChecked() is False
-    assert win.solve_panel.isHidden() is True
+    assert win._solve_window.isVisible() is False
     assert win.image_view._annotations is not None, "closing the tool must keep the overlay"
 
 
@@ -2156,26 +2156,16 @@ def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeyp
         f"Plate solve · {STATE_LABELS['stale']}")
 
 
-def test_solve_panel_present_in_right_column(qtbot, tmp_path):
-    """The SolvePanel lives in the right column, below the clipping controls.
-    Since 2026-09-25 (Ruling R7, consistent panels) it sits BELOW the
-    per-stage step panel inside the scrolling body, so opening it never moves
-    where the step's controls start; its own collapsible heading makes it a
-    separate section underneath."""
+def test_solve_panel_lives_in_its_own_tool_window(qtbot, tmp_path):
+    """Since 2026-09-26 (Andreas) Plate Solve is a floating tool window, not a
+    section of the right column: opening it there pushed the step's content
+    down. A Qt.Tool window, so it never blocks the main window."""
+    from PySide6.QtCore import Qt
     win = _window(qtbot, tmp_path)
-    side = win._side
-    assert win._right_panel is side
-    assert side.isAncestorOf(win.solve_panel)
-    # The clipping slot is a fixed zone above the step card (which holds the
-    # scrolling body); inside the body the SolvePanel follows the step panel.
-    assert side.clip_slot.isAncestorOf(win._clip_check)
-    assert side.step_frame.isAncestorOf(side.scroll)
-    assert 0 <= win._right_layout.indexOf(side.clip_slot) < win._right_layout.indexOf(side.step_frame)
-    idx_solve_panel = side.body_layout.indexOf(win.solve_panel)
-    idx_step_panel = side.body_layout.indexOf(win._panel)
-    assert idx_solve_panel != -1 and idx_step_panel != -1
-    assert idx_solve_panel > idx_step_panel
-
+    assert not win._side.isAncestorOf(win.solve_panel)
+    assert win._solve_window.isAncestorOf(win.solve_panel)
+    assert win._solve_window.windowFlags() & Qt.WindowType.Tool
+    assert not win._solve_window.isModal()
 
 def _solved_win(qtbot, tmp_path, monkeypatch):
     """A window with a fresh, live plate-solve already showing, plus a list

@@ -796,12 +796,12 @@ def build_panel(
 
     elif stage.kind == "curves":
         editor = CurveEditor()
-        # Give it the pane's spare height. The right pane is 400 px wide and
-        # fixed (so the image never moves between steps), and the editor was
-        # sitting at its 240 px minimum inside a 424 px pane — 184 px unused,
-        # in the one widget where area is precision. It draws SQUARE now, so
-        # extra height also buys width up to the pane.
-        editor.setMinimumHeight(320)
+        # 240 px minimum, and it takes any spare height (stretch 1 below) — it
+        # draws SQUARE, so extra height also buys width up to the pane. It was
+        # 320 (2026-08-20), which made Curves scroll even in a 1920x1080 window
+        # (step room 350 px, measured 2026-09-26). Where even 240 does not fit,
+        # MainWindow hides it and the step offers the large editor instead.
+        editor.setMinimumHeight(240)
         # Curves' neutral is the identity curve the editor is built with.
         w.neutral_option = list(editor.points())
         if on_curve_change is not None:

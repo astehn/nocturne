@@ -78,7 +78,12 @@ from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
 from .apply_button import ApplyButton
 from .side_panel import SidePanel
-from .solve_panel import SolvePanel
+from .solve_panel import SolvePanel, SolveWindow
+
+# The inline curve editor: its size on main, and the least it may shrink to
+# before the step offers only the large editor (Andreas, 2026-09-26).
+_CURVE_FULL = 320
+_CURVE_MIN = 240
 from .upscale_dialog import UpscaleDialog
 from .step_panels import BLACK_STEPS, build_panel
 from .icons import load_icon
@@ -631,7 +636,10 @@ class MainWindow(QMainWindow):
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
-        self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
+        # In its own floating tool window (Andreas, 2026-09-26), not the right
+        # column: opening it there pushed the step's content down.
+        self._solve_window = SolveWindow(self.solve_panel, self)
+        self._solve_window.closed.connect(self._on_solve_window_closed)
         self._panel = right.panel
         # The explainer lives inside the scrolling zone, below the panel.
         # "How this works" is on each panel's title line (its help_link);
@@ -655,10 +663,6 @@ class MainWindow(QMainWindow):
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
         right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
-        # BELOW the step's controls and its help (Ruling R7): the controls
-        # start at the same height on every step whether or not Plate Solve is
-        # open, and its own collapsible heading makes it a separate section.
-        right.body_layout.insertWidget(right.body_layout.count() - 1, self.solve_panel)
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
@@ -773,8 +777,12 @@ class MainWindow(QMainWindow):
             "jobs_bar": self._jobs_bar.isVisible(),
             "left": self._left_column.isVisible(),
             "right": self._right_panel.isVisible(),
+            # A tool window floats above the main one; fullscreen is "the
+            # image and nothing else", so it goes too and comes back after.
+            "solve": self._solve_window.isVisible(),
         }
-        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel):
+        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel,
+                  self._solve_window):
             w.setVisible(False)
 
     def _restore_chrome_after_fullscreen(self) -> None:
@@ -788,6 +796,8 @@ class MainWindow(QMainWindow):
         self._jobs_bar.setVisible(prev["jobs_bar"])
         self._left_column.setVisible(prev["left"])
         self._right_panel.setVisible(prev["right"])
+        if prev.get("solve"):
+            self._solve_window.show()
         self._sync_left_column()    # restates from chrome state, not the captured snapshot
 
     def _show_chrome(self, visible: bool) -> None:
@@ -796,6 +806,11 @@ class MainWindow(QMainWindow):
         self._chrome_visible = visible
         self._sync_left_column()
         self._right_panel.setVisible(visible)
+        if not visible and self._solve_window.isVisible():
+            # Back to the welcome screen (Close Project): with no image the
+            # tool has nothing to solve. In the column it went with the chrome.
+            self._solve_window.hide()
+            self._on_solve_window_closed()
         self._rebuild_panel()
         self._refresh()
 
@@ -825,6 +840,8 @@ class MainWindow(QMainWindow):
         if not self._cancel_jobs_for_quit():
             event.ignore()
             return
+        if self._solve_window.isVisible():
+            self._on_solve_window_closed()   # keep its place for the next launch
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
@@ -1816,16 +1833,16 @@ class MainWindow(QMainWindow):
         and closing the tool leaves both the solution and the overlay alone.
         Nothing runs until the panel's Solve button is pressed — a solve takes
         seconds and spawns ASTAP, so it should never start by surprise."""
-        if not self.solve_panel.isHidden():                  # open -> close the tool
-            self.solve_panel.setVisible(False)
-            self._solve_act.setChecked(False)
+        if self._solve_window.isVisible():                   # open -> close the tool
+            self._solve_window.hide()
+            self._on_solve_window_closed()
             return
         if self.project is None or not astap_valid(self.settings):
             self._solve_act.setChecked(False)
             if self.project is not None:
                 self._show_warning("Set the ASTAP path in Settings to plate-solve.")
             return
-        self.solve_panel.setVisible(True)
+        self._show_solve_window()
         self._solve_act.setChecked(True)
         sig = self._solve_sig()
         if self._solve and self._solve[0] == sig:            # cached: show what we have
@@ -1835,6 +1852,30 @@ class MainWindow(QMainWindow):
             self._update_solve_result_card(*self._solve[1:], cached=True)
         else:
             self.solve_panel.set_state("not_solved")
+
+    def _show_solve_window(self) -> None:
+        """Where it was last put; the first time, over the top-right of the
+        picture — not over the right column, whose controls stay in reach."""
+        w = self._solve_window
+        if getattr(self, "_solve_window_placed", False):
+            pass                    # hidden, not destroyed: it kept its place
+        elif self.settings.solve_window_geometry:
+            w.restoreGeometry(QByteArray.fromHex(self.settings.solve_window_geometry.encode()))
+        else:
+            w.adjustSize()
+            corner = self.image_view.mapToGlobal(self.image_view.rect().topRight())
+            w.move(corner.x() - w.width() - 16, corner.y() + 16)
+        self._solve_window_placed = True
+        w.show()
+        w.raise_()
+
+    def _on_solve_window_closed(self) -> None:
+        """Closed by its own close box, or hidden by the toolbar: remember
+        where it was, and the toolbar button follows."""
+        self.settings.solve_window_geometry = bytes(
+            self._solve_window.saveGeometry().toHex()).decode()
+        save_settings(self.settings, self._settings_path)
+        self._solve_act.setChecked(False)
 
     def _on_annotations_toggled(self, shown: bool) -> None:
         """The canvas pill only changes VISIBILITY. The solution stays cached, so
@@ -1946,7 +1987,8 @@ class MainWindow(QMainWindow):
         self._show_annotations(res, objs)
         self.solve_panel.set_state("solved")
         self._update_solve_result_card(res, objs, cached=False)
-        self._solve_act.setChecked(True)
+        # The button follows the WINDOW: closed mid-solve, it stays closed.
+        self._solve_act.setChecked(self._solve_window.isVisible())
         self._rebuild_panel()                               # refresh Target line
 
     def _update_solve_result_card(self, res, objs, cached: bool) -> None:
@@ -4194,6 +4236,12 @@ class MainWindow(QMainWindow):
         self._sync_next_light()     # off while busy; restored by the sync below
         self._gate_panel_buttons(busy)
         self._sync_history_actions()
+        # Solve lives in its own window now, outside the panel sweep. Pressing
+        # it while a step ran did nothing, silently; say so by greying it.
+        if busy:
+            self.solve_panel.resolve_btn.setEnabled(False)
+        else:
+            self.solve_panel._update_resolve_button()
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"
             self._land_deferred_nav(self._resume_apply_run())
@@ -5002,6 +5050,35 @@ class MainWindow(QMainWindow):
         option[curve_key("rgb", "all")] = list(points)
         return normalize_curves(option)
 
+    def _fit_curves_panel(self) -> None:
+        """Curves on small screens (Andreas, 2026-09-26): where the step area
+        cannot hold the inline editor, hide it and offer only the large one.
+        The inline editor stays in the panel, hidden — it is the state the
+        large editor seeds from and writes back to, and what Apply commits.
+        The need is measured once with the editor showing and kept, so hiding
+        it (which shrinks the panel) cannot flip the answer back."""
+        p = self._panel
+        editor = getattr(p, "curve_editor", None)
+        if editor is None or not shiboken6.isValid(editor):
+            return
+        if getattr(p, "inline_need", None) is None:
+            if not editor.isVisibleTo(p):
+                return
+            p.inline_need = p.minimumSizeHint().height()
+        room = self._side.scroll.viewport().height()
+        inline = room >= p.inline_need
+        if editor.isVisibleTo(p) != inline:
+            editor.setVisible(inline)
+        if inline:
+            # 320 px where there is room — its size on main, which is what he
+            # sees at his own window size — and smaller only in the band
+            # between, down to 240. The editor has no size hint of its own, so
+            # a minimum IS its size (review 2026-09-26: 240 everywhere was 25%
+            # smaller at 2364x1100).
+            spare = room - p.inline_need
+            editor.setMinimumHeight(min(_CURVE_FULL, _CURVE_MIN + spare))
+        p.expand_btn.setText("Open large editor…" if inline else "Open curve editor…")
+
     def _on_curves_dialog_apply(self, curves) -> None:
         """The large editor returns the whole matrix. Split it: RGB/all goes
         back to the inline editor (which is the only slot it can show), the rest
@@ -5602,6 +5679,10 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)
         toggles the before/after peek."""
+        if (event.type() == QEvent.Type.Resize and hasattr(self, "_side")
+                and obj is self._side.scroll.viewport()):
+            self._fit_curves_panel()        # Curves on small screens
+            return False
         if (event.type() == QEvent.Type.KeyPress
                 and event.key() == Qt.Key.Key_Space
                 and not event.isAutoRepeat()
@@ -6032,6 +6113,7 @@ class MainWindow(QMainWindow):
             # build_panel leaves it unconnected for exactly this.
             pa.clicked.connect(self._apply_colour_step)
         self._side.set_actions(pa, new_panel.reset_step_btn)
+        QTimer.singleShot(0, self, self._fit_curves_panel)   # once the step area has its size
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link
