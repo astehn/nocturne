@@ -517,9 +517,12 @@ def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, resto
     assert "ai_denoise" in checked and "green_fringe" in checked and "deconvolution" in checked
 
 
-def test_plate_solve_opens_below_the_controls(qtbot, tmp_path):
-    """Ruling R7: the Plate Solve panel sits BELOW the step's controls in the
-    scroll, so opening it never moves where the controls start."""
+def test_opening_plate_solve_changes_nothing_in_the_right_column(qtbot, tmp_path, monkeypatch):
+    """Andreas, 2026-09-26: opening Plate Solve pushed the right column's
+    content down. It opens in its own tool window now; every item in the right
+    column keeps its place, and the scroll range does not grow."""
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw, "astap_valid", lambda s: True)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.resize(1280, 800)
@@ -528,11 +531,11 @@ def test_plate_solve_opens_below_the_controls(qtbot, tmp_path):
     win._go_to_id("levels", user_initiated=False)
     _settle(qtbot)
     first = win._panel.controls.itemAt(0).widget()
-    assert first is win._panel.auto_btn, "precondition: Levels starts with Auto"
-    closed_y = _y(win, first)
-    win.solve_panel.setVisible(True)
+    watched = [first, win._panel.apply_btn, win._next_btn, win._side.step_frame]
+    before = [(_y(win, w), w.height()) for w in watched]
+    bar = win._side.scroll.verticalScrollBar().maximum()
+    win._open_plate_solve()
     _settle(qtbot)
-    assert win.solve_panel.isVisibleTo(win), "precondition: the solve panel is open"
-    assert _y(win, first) == closed_y
-    body = win._side.body_layout
-    assert body.indexOf(win.solve_panel) > body.indexOf(win._side.panel)
+    assert win._solve_window.isVisible(), "precondition: the tool is open"
+    assert [(_y(win, w), w.height()) for w in watched] == before
+    assert win._side.scroll.verticalScrollBar().maximum() == bar

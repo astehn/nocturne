@@ -159,6 +159,7 @@ QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
 QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
 QLabel#welcomeHint {{ font-size: 13px; color: {TEXT_FAINT}; }}
+QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
 QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 14px; }}
 QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};

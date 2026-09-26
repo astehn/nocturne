@@ -237,3 +237,27 @@ class SolvePanel(QWidget):
         lines.append(solver_line)
 
         self.result_label.setText("\n".join(lines))
+
+
+class SolveWindow(QWidget):
+    """Plate Solve as a floating tool window (Andreas, 2026-09-26): opening it
+    in the right column pushed the step's content down. A tool window, not a
+    dialog — it does not block the main window, so layers can be toggled
+    while panning and zooming the picture; on macOS a Qt.Tool window also
+    stays above Nocturne only, never above other apps. It holds the one
+    SolvePanel, so every signal and state call is unchanged."""
+    closed = Signal()
+
+    def __init__(self, panel: "SolvePanel", parent=None) -> None:
+        super().__init__(parent, Qt.WindowType.Tool)
+        self.setObjectName("solveWindow")
+        self.setWindowTitle("Plate Solve")
+        lay = QVBoxLayout(self)
+        lay.addWidget(panel)
+        lay.addStretch(1)
+        self.panel = panel
+
+    def closeEvent(self, event) -> None:
+        # The window's own close box closes the tool, like the toolbar button.
+        super().closeEvent(event)
+        self.closed.emit()

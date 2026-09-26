@@ -78,7 +78,7 @@ from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
 from .apply_button import ApplyButton
 from .side_panel import SidePanel
-from .solve_panel import SolvePanel
+from .solve_panel import SolvePanel, SolveWindow
 from .upscale_dialog import UpscaleDialog
 from .step_panels import BLACK_STEPS, build_panel
 from .icons import load_icon
@@ -631,7 +631,10 @@ class MainWindow(QMainWindow):
         self.solve_panel.resolveRequested.connect(self._on_resolve_requested)
         self.image_view.object_panel.closeRequested.connect(self._on_object_list_dismissed)
         self.image_view.object_panel.objectActivated.connect(self._on_object_activated)
-        self.solve_panel.setVisible(False)   # shown only while Plate Solve is active
+        # In its own floating tool window (Andreas, 2026-09-26), not the right
+        # column: opening it there pushed the step's content down.
+        self._solve_window = SolveWindow(self.solve_panel, self)
+        self._solve_window.closed.connect(self._on_solve_window_closed)
         self._panel = right.panel
         # The explainer lives inside the scrolling zone, below the panel.
         # "How this works" is on each panel's title line (its help_link);
@@ -655,10 +658,6 @@ class MainWindow(QMainWindow):
         self._full_help_link.linkActivated.connect(
             lambda _: self._open_help(self._current_topic_id))
         right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
-        # BELOW the step's controls and its help (Ruling R7): the controls
-        # start at the same height on every step whether or not Plate Solve is
-        # open, and its own collapsible heading makes it a separate section.
-        right.body_layout.insertWidget(right.body_layout.count() - 1, self.solve_panel)
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
@@ -1816,16 +1815,16 @@ class MainWindow(QMainWindow):
         and closing the tool leaves both the solution and the overlay alone.
         Nothing runs until the panel's Solve button is pressed — a solve takes
         seconds and spawns ASTAP, so it should never start by surprise."""
-        if not self.solve_panel.isHidden():                  # open -> close the tool
-            self.solve_panel.setVisible(False)
-            self._solve_act.setChecked(False)
+        if self._solve_window.isVisible():                   # open -> close the tool
+            self._solve_window.hide()
+            self._on_solve_window_closed()
             return
         if self.project is None or not astap_valid(self.settings):
             self._solve_act.setChecked(False)
             if self.project is not None:
                 self._show_warning("Set the ASTAP path in Settings to plate-solve.")
             return
-        self.solve_panel.setVisible(True)
+        self._show_solve_window()
         self._solve_act.setChecked(True)
         sig = self._solve_sig()
         if self._solve and self._solve[0] == sig:            # cached: show what we have
@@ -1835,6 +1834,30 @@ class MainWindow(QMainWindow):
             self._update_solve_result_card(*self._solve[1:], cached=True)
         else:
             self.solve_panel.set_state("not_solved")
+
+    def _show_solve_window(self) -> None:
+        """Where it was last put; the first time, over the top-right of the
+        picture — not over the right column, whose controls stay in reach."""
+        w = self._solve_window
+        if getattr(self, "_solve_window_placed", False):
+            pass                    # hidden, not destroyed: it kept its place
+        elif self.settings.solve_window_geometry:
+            w.restoreGeometry(QByteArray.fromHex(self.settings.solve_window_geometry.encode()))
+        else:
+            w.adjustSize()
+            corner = self.image_view.mapToGlobal(self.image_view.rect().topRight())
+            w.move(corner.x() - w.width() - 16, corner.y() + 16)
+        self._solve_window_placed = True
+        w.show()
+        w.raise_()
+
+    def _on_solve_window_closed(self) -> None:
+        """Closed by its own close box, or hidden by the toolbar: remember
+        where it was, and the toolbar button follows."""
+        self.settings.solve_window_geometry = bytes(
+            self._solve_window.saveGeometry().toHex()).decode()
+        save_settings(self.settings, self._settings_path)
+        self._solve_act.setChecked(False)
 
     def _on_annotations_toggled(self, shown: bool) -> None:
         """The canvas pill only changes VISIBILITY. The solution stays cached, so
