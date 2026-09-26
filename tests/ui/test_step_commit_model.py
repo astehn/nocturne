@@ -914,7 +914,7 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
     """
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QColor
-    from nocturne.ui.theme import build_stylesheet, SUCCESS
+    from nocturne.ui.theme import build_stylesheet, APPLY_FILL
     win = _win(qtbot, tmp_path)
     app = QApplication.instance()
     app.setStyleSheet(build_stylesheet())
@@ -932,7 +932,7 @@ def test_on_color_the_green_follows_the_button_that_commits_the_pending_thing(
         # Sample the fill beside the centred label, not the centre: the
         # centre lands on a glyph once the button gets its natural height.
         rendered = pm.toImage().pixelColor(pm.width() // 8, pm.height() // 2)
-        expected = QColor(SUCCESS)
+        expected = QColor(APPLY_FILL)     # the button fill (2026-09-26), not the tick green
         assert (rendered.red(), rendered.green(), rendered.blue()) == \
             (expected.red(), expected.green(), expected.blue()), (
                 f"Colour's Apply does not actually render green while a tint is "
@@ -949,7 +949,7 @@ def test_on_remove_green_its_own_apply_renders_green_while_pending(
     single-commit stage."""
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QColor
-    from nocturne.ui.theme import build_stylesheet, SUCCESS
+    from nocturne.ui.theme import build_stylesheet, APPLY_FILL
     win = _win(qtbot, tmp_path)
     app = QApplication.instance()
     app.setStyleSheet(build_stylesheet())
@@ -967,7 +967,7 @@ def test_on_remove_green_its_own_apply_renders_green_while_pending(
         # Sample the fill beside the centred label, not the centre: the
         # centre lands on a glyph once the button gets its natural height.
         rendered = pm.toImage().pixelColor(pm.width() // 8, pm.height() // 2)
-        expected = QColor(SUCCESS)
+        expected = QColor(APPLY_FILL)     # the button fill (2026-09-26), not the tick green
         assert (rendered.red(), rendered.green(), rendered.blue()) == \
             (expected.red(), expected.green(), expected.blue()), (
                 f"Apply De-green Sky does not actually render green while pending: "
