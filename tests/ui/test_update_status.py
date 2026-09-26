@@ -44,3 +44,25 @@ def test_settings_opens_with_the_result_and_check_now_wired(qtbot, tmp_path, mon
     dlg = seen["dlg"]
     assert "latest version" in dlg.version_status.text()
     assert dlg.check_now_btn.isEnabled()
+
+
+def test_a_dialog_opened_while_checking_gets_the_answer(qtbot, tmp_path):
+    """Opened before the startup check landed, it said 'Checking…' for ever."""
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    win = _window(qtbot, tmp_path)
+    win._update_result = ("pending", None)
+    dlg = SettingsDialog(Settings(), win, update_result=win._update_result)
+    win._settings_dlg = dlg
+    assert "checking" in dlg.version_status.text().lower()
+    win._on_update_check("v0.0.1")
+    assert "latest version" in dlg.version_status.text()
+
+
+def test_a_late_startup_failure_does_not_overwrite_check_now(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    got = []
+    win._check_for_update_now(got.append, fetch=lambda: "v0.0.1")
+    qtbot.waitUntil(lambda: bool(got), timeout=3000)
+    win._on_update_check(None)                      # the slow startup request times out
+    assert win._update_result == ("v0.0.1", "now")

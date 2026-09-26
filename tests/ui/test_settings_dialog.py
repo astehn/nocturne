@@ -527,3 +527,23 @@ def test_check_now_landing_after_the_dialog_closed_is_harmless(qtbot):
     dlg.check_now_btn.click()
     shiboken6.delete(dlg)
     asked[0](("v0.0.1", "now"))          # must not raise
+
+
+def test_a_garbled_tag_is_not_read_as_up_to_date(qtbot):
+    dlg = SettingsDialog(Settings(), update_result=("not-a-version", "startup"))
+    qtbot.addWidget(dlg)
+    assert "latest version" not in _version_text(dlg)
+    assert "version number" in _version_text(dlg)
+
+
+def test_check_now_says_what_it_sends(qtbot):
+    dlg = SettingsDialog(Settings(), on_check_now=lambda done: None)
+    qtbot.addWidget(dlg)
+    tip = dlg.check_now_btn.toolTip().lower()
+    assert "github.com" in tip and "startup check off" in tip
+
+
+def test_no_result_given_is_not_reported_as_off(qtbot):
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert "not checked yet" in _version_text(dlg).lower()

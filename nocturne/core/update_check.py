@@ -32,6 +32,12 @@ def _parse(v: str) -> tuple[int, int, int] | None:
         return None
 
 
+def is_version(tag: str) -> bool:
+    """Whether `tag` reads as x.y.z — so a garbled answer is reported as
+    unreadable instead of passing for 'you are up to date'."""
+    return _parse(tag) is not None
+
+
 def is_newer(latest: str, current: str) -> bool:
     a, b = _parse(latest), _parse(current)
     if a is None or b is None:

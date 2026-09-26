@@ -10,7 +10,7 @@ from ..settings import (TOOL_CANDIDATES, Settings, astap_valid, is_tool,
                         detect_tool_paths, resolve_binary)
 from ..tools.probe import probe_binary
 from .. import __version__, app_title
-from ..core.update_check import DOWNLOAD_URL, is_newer
+from ..core.update_check import DOWNLOAD_URL, is_newer, is_version
 from . import file_dialogs
 from .theme import ACCENT, WARNING
 
@@ -88,7 +88,9 @@ def update_status_html(result) -> str:
     """One line for what the update check found. `result` is (outcome, when):
     outcome is a release tag, "failed", "off" or "pending"; when is "startup"
     or "now". Plain words — this is read by someone wondering 'am I current?'."""
-    outcome, when = result if result else ("off", None)
+    if not result:
+        return "Not checked yet — press Check now."
+    outcome, when = result
     at = "just now" if when == "now" else "at startup"
     if outcome == "pending":
         return "Checking for a new version…"
@@ -96,6 +98,8 @@ def update_status_html(result) -> str:
         return "Update check is off (see Privacy)."
     if outcome == "failed":
         return f"Couldn't reach GitHub {at} — maybe offline."
+    if not is_version(outcome):
+        return f"GitHub answered {at}, but not with a version number Nocturne can read."
     if is_newer(outcome, __version__):
         v = outcome.lstrip("vV")
         return (f'<span style="color:{WARNING}">Nocturne {v} is available</span> — '
@@ -183,6 +187,11 @@ class SettingsDialog(QDialog):
         # A click is the user asking, so it works with the automatic check off —
         # the Privacy tab governs what happens WITHOUT their say-so.
         self.check_now_btn = QPushButton("Check now")
+        self.check_now_btn.setToolTip(
+            "Asks github.com once, right now, whether a newer Nocturne has been "
+            "released — even with the startup check off, because you pressed it. "
+            "Your IP address reaches GitHub as part of that request; nothing about "
+            "you or your images is sent.")
         self.check_now_btn.clicked.connect(self._check_now)
         self.check_now_btn.setEnabled(on_check_now is not None)
         version_row = QWidget()
@@ -255,8 +264,15 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
         self._fit_path_boxes()
 
+    def set_update_result(self, result) -> None:
+        """The owner's check landed while this dialog was open (it opened on
+        "Checking…"): show the answer rather than leave that forever."""
+        self.version_status.setText(update_status_html(result))
+
     def _check_now(self) -> None:
         import shiboken6
+        if self._on_check_now is None:
+            return
         self.check_now_btn.setEnabled(False)
         self.version_status.setText(update_status_html(("pending", None)))
 

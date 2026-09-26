@@ -1314,7 +1314,12 @@ class MainWindow(QMainWindow):
         """Worker result (UI thread): remember it for Settings, and reveal the
         toolbar item if a newer release is out. Never raises — `latest` is None
         on any check failure."""
+        if when == "startup" and self._update_result[1] == "now":
+            return      # a slower startup answer must not overwrite a fresher Check now
         self._update_result = (latest or "failed", when)
+        dlg = getattr(self, "_settings_dlg", None)
+        if dlg is not None and shiboken6.isValid(dlg):
+            dlg.set_update_result(self._update_result)
         if latest and is_newer(latest, __version__):
             self._update_act.setToolTip(
                 f"Nocturne {latest.lstrip('vV')} is available — click to download")
@@ -5826,7 +5831,12 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, self, update_result=self._update_result,
                              on_check_now=self._check_for_update_now)
-        if dlg.exec():
+        self._settings_dlg = dlg     # so a startup check landing now reaches it
+        try:
+            accepted = dlg.exec()
+        finally:
+            self._settings_dlg = None
+        if accepted:
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
             self._sync_solve_action_enabled()   # installing ASTAP lights it up now
