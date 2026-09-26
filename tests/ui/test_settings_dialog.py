@@ -457,3 +457,16 @@ def test_download_links_use_the_accent_not_qt_blue(qtbot):
     qtbot.addWidget(dlg)
     links = [l for l in dlg.findChildren(QLabel) if "Download" in l.text()]
     assert len(links) == 4 and all(ACCENT in l.text() for l in links)
+
+
+def test_the_sizing_path_is_the_longest_place_nocturne_looks():
+    """A hand-picked literal missed ~/Applications/RC-Astro/CLI/rc-astro, and
+    the path-width test above measures against the constant — so the constant
+    itself must cover every default location."""
+    import os
+    from nocturne.settings import TOOL_CANDIDATES
+    from nocturne.ui.settings_dialog import _TYPICAL_PATH
+    for paths in TOOL_CANDIDATES.values():
+        for p in paths:
+            if not p.startswith("which:"):
+                assert len(_TYPICAL_PATH) >= len(os.path.expanduser(p)), p

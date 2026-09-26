@@ -13,9 +13,18 @@ from . import file_dialogs
 from .theme import ACCENT
 
 
-# The longest path a default install gives (RC-Astro's CLI on macOS): the
-# path boxes are sized to show it whole.
-_TYPICAL_PATH = "/Applications/RC-Astro/CLI/rc-astro"
+def _longest_default_path() -> str:
+    """The longest path Nocturne itself looks in, with ~ expanded — the path
+    boxes are sized to show it whole. From TOOL_CANDIDATES, not a hand-picked
+    literal: the per-user ~/Applications/RC-Astro/CLI/rc-astro (54 chars with a
+    real user name) clipped in a box sized for the system-wide one."""
+    import os
+    paths = [os.path.expanduser(p) for ps in TOOL_CANDIDATES.values() for p in ps
+             if not p.startswith("which:")]
+    return max(paths, key=len)
+
+
+_TYPICAL_PATH = _longest_default_path()
 
 # Where to download each external tool (shown as a link next to its path row).
 DOWNLOAD_URLS = {
