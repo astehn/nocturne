@@ -1321,13 +1321,24 @@ class MainWindow(QMainWindow):
         if dlg is not None and shiboken6.isValid(dlg):
             dlg.set_update_result(self._update_result)
         if latest and is_newer(latest, __version__):
-            self._update_act.setToolTip(
-                f"Nocturne {latest.lstrip('vV')} is available — click to download")
-            self._update_act.setVisible(True)
+            self._announce_release(latest)
 
-    def _open_download(self) -> None:
-        from PySide6.QtGui import QDesktopServices
-        QDesktopServices.openUrl(QUrl(DOWNLOAD_URL))
+    def _announce_release(self, latest: str) -> None:
+        """Once per release, quietly (Andreas, 2026-09-26): an amber activity
+        line, and a line on the welcome screen if that is where they are. No
+        pop-up — the check lands seconds after launch, mid-click, and a dialog
+        repeated every launch teaches people to dismiss it unread. Settings ▸
+        General keeps saying it until they update; this only ever says it once."""
+        if latest == self.settings.update_notified_version:
+            return
+        v = latest.lstrip("vV")
+        self.activity.add("notice", f"Nocturne {v} is available — "
+                                    f"Settings ▸ General has the download link.")
+        self._welcome.set_update_note(
+            f'Nocturne {v} is available — <a href="{DOWNLOAD_URL}" '
+            f'style="color:{ACCENT}; text-decoration:none">Download&nbsp;↗</a>')
+        self.settings.update_notified_version = latest
+        save_settings(self.settings, self._settings_path)
 
     # --- recipes / batch ---
     def _save_recipe(self) -> None:
@@ -2297,9 +2308,6 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
-        self._update_act = tb.addAction(load_icon("update", WARNING),
-                                        "Update available", self._open_download)
-        self._update_act.setVisible(False)   # revealed only when a newer release exists
         self._tools_act = tb.addAction(load_icon("update", WARNING),
                                        "External tool problem", self._open_settings)
         self._tools_act.setObjectName("toolsWarning")

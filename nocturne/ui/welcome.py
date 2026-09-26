@@ -35,9 +35,23 @@ class WelcomeScreen(QWidget):
         buttons.addWidget(self.open_btn)
         buttons.addWidget(self.stack_btn)
 
+        # A new release, announced once (Andreas, 2026-09-26: no pop-up). Its
+        # room is reserved from the start: the check lands seconds after launch,
+        # and an appearing line would lift the centred buttons under the cursor.
+        self.update_note = QLabel("")
+        self.update_note.setObjectName("welcomeUpdate")
+        self.update_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_note.setOpenExternalLinks(True)
+        self.update_note.setFixedHeight(self.update_note.fontMetrics().lineSpacing() * 2)
+
         root.addWidget(title)
         root.addWidget(tagline)
         root.addSpacing(8)
         root.addWidget(hint)
         root.addSpacing(20)
         root.addLayout(buttons)
+        root.addSpacing(16)
+        root.addWidget(self.update_note)
+
+    def set_update_note(self, html: str) -> None:
+        self.update_note.setText(html)

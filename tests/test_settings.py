@@ -563,3 +563,10 @@ def test_starnet_installer_locations_are_named_not_left_to_PATH():
     for candidates in (_MAC_CANDIDATES, _LINUX_CANDIDATES):
         explicit = [c for c in candidates["starnet_path"] if not c.startswith("which:")]
         assert explicit, "PATH alone is not a discovery strategy for a GUI app"
+
+
+def test_update_notified_version_round_trips(tmp_path):
+    """Forgetting it would announce the same release again on every launch."""
+    p = str(tmp_path / "s.json")
+    save_settings(Settings(update_notified_version="v0.41.0"), p)
+    assert load_settings(p).update_notified_version == "v0.41.0"
