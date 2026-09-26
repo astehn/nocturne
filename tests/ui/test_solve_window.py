@@ -125,3 +125,27 @@ def test_solve_is_greyed_out_while_another_step_runs(win, qtbot):
     assert not win.solve_panel.resolve_btn.isEnabled()
     win._set_busy(False)
     assert win.solve_panel.resolve_btn.isEnabled()
+
+
+def test_the_result_is_readable_whole(win, qtbot, monkeypatch):
+    """His screenshot, 2026-09-26: the window kept the size it opened at, and
+    the result card below was clipped. The window follows its content."""
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    monkeypatch.setattr(win, "_solve_current", lambda img: (
+        SolveResult(True, wc, 100.0, 0.0, 3.6),
+        [CatalogObject("vdB 142", "Elephant's Trunk Nebula", 100.0, 0.0, 120.0, 12, 12)]))
+    win._open_plate_solve(); qtbot.wait(20)
+    # As narrow and short as it may be — his window was narrow, so the wrapped
+    # result needed more lines than the window kept room for.
+    win._solve_window.resize(win._solve_window.minimumWidth(), 120); qtbot.wait(20)
+    win._on_resolve_requested(); qtbot.wait(80)
+    card = win.solve_panel.result_label
+    assert card.text()
+    need = card.heightForWidth(card.width())
+    assert card.height() >= need, f"result card clipped: {card.height()} < {need}"
+    assert win._solve_window.rect().contains(
+        card.mapTo(win._solve_window, card.rect().bottomRight())), "the card runs past the window"
