@@ -3385,21 +3385,12 @@ def test_close_event_clears_cache_on_quit(qtbot, tmp_path):
     assert not any(n.startswith("state_") for n in os.listdir(win._cache_dir))
 
 
-def test_update_indicator_shows_when_newer(qtbot, tmp_path):
+def test_there_is_no_update_toolbar_item(qtbot, tmp_path):
+    """Andreas, 2026-09-26: the toolbar item went — Settings ▸ General says
+    whether you are current, and a new version is announced once, quietly."""
     win = _window(qtbot, tmp_path)
-    assert not win._update_act.isVisible()          # hidden by default
-    win._on_update_check("0.999.0")                 # a much newer release
-    assert win._update_act.isVisible()
-    assert "0.999.0" in win._update_act.toolTip()
-
-
-def test_update_indicator_hidden_when_current_or_none(qtbot, tmp_path):
-    from nocturne import __version__
-    win = _window(qtbot, tmp_path)
-    win._on_update_check(__version__)               # same version
-    assert not win._update_act.isVisible()
-    win._on_update_check(None)                       # check failed / offline
-    assert not win._update_act.isVisible()
+    assert not hasattr(win, "_update_act")
+    assert "Update available" not in [a.text() for a in win.findChildren(type(win._undo_act))]
 
 
 def test_soft_glow_and_vibrance_taps_add_steps(qtbot, tmp_path):

@@ -55,6 +55,7 @@ class Settings:
     # page and it can be turned off here. Default on: a beta that cannot tell
     # people a fix exists is worse for them than the request is.
     check_updates: bool = True
+    update_notified_version: str = ""  # the release already announced once — never repeated
     # Usage counting, opt-in and three-valued: "unset" is "not asked yet", which
     # must never be confused with "no". See core/telemetry.py for the whole
     # protocol and why the id rotates monthly.
@@ -114,6 +115,7 @@ def load_settings(path: str) -> Settings:
         # checkbox worked, the file held `false`, and the next launch asked
         # GitHub anyway. Caught by the test that asserts the REQUEST is not made.
         check_updates=data.get("check_updates", True),
+        update_notified_version=data.get("update_notified_version", ""),
         telemetry=data.get("telemetry", "unset"),
         telemetry_id=data.get("telemetry_id", ""),
         telemetry_id_month=data.get("telemetry_id_month", ""),
