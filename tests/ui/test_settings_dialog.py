@@ -363,3 +363,110 @@ def test_one_table_drives_the_dialog(qtbot):
         assert edit is not None and label is not None and name, key
     assert {"graxpert_path", "rcastro_path", "starnet_path", "astap_path"} \
         <= set(dlg.tool_fields())
+
+
+# --- Tabs (screen-size piece 3, Andreas 2026-09-26: "go for your suggestion
+# straight up"): General / External tools / Privacy, one fixed size.
+
+_TABS = {
+    "General": ("_dir", "_handle"),
+    "External tools": ("_gx", "_rc", "_starnet", "_astap", "rescan_btn", "denoise_box"),
+    "Privacy": ("check_updates", "telemetry"),
+}
+
+
+def test_every_setting_lives_on_its_tab(qtbot):
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    tabs = dlg.tabs
+    assert [tabs.tabText(i) for i in range(tabs.count())] == list(_TABS)
+    for i, (name, attrs) in enumerate(_TABS.items()):
+        page = tabs.widget(i)
+        for attr in attrs:
+            assert page.isAncestorOf(getattr(dlg, attr)), f"{attr} is not on {name}"
+
+
+def test_switching_tabs_never_resizes_the_window(qtbot):
+    """Nothing moves (piece 1's rule): the window is sized for the tallest tab."""
+    from nocturne.ui.theme import build_stylesheet
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        dlg = SettingsDialog(Settings())
+        qtbot.addWidget(dlg)
+        dlg.show(); qtbot.waitExposed(dlg)
+        sizes = set()
+        for i in range(dlg.tabs.count()):
+            dlg.tabs.setCurrentIndex(i); qtbot.wait(20)
+            sizes.add((dlg.width(), dlg.height()))
+        assert len(sizes) == 1, sizes
+    finally:
+        app.setStyleSheet("")
+
+
+def test_privacy_says_what_is_sent_on_the_page(qtbot):
+    """The page you open to check exactly this: the explanation is visible
+    text, not only a hover tooltip."""
+    from PySide6.QtWidgets import QLabel
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    page = dlg.tabs.widget(list(_TABS).index("Privacy"))
+    text = " ".join(l.text() for l in page.findChildren(QLabel))
+    assert "github.com" in text.lower()
+    assert "random number" in text.lower() and "no ip address" in text.lower()
+
+
+def test_one_ok_covers_every_tab(qtbot):
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._handle.setText("@me")
+    dlg.telemetry.setChecked(True)
+    dlg._gx.setText("/g")
+    s = dlg.result_settings()
+    assert (s.handle, s.telemetry, s.graxpert_path) == ("@me", "on", "/g")
+    from PySide6.QtWidgets import QDialogButtonBox
+    boxes = dlg.findChildren(QDialogButtonBox)
+    assert len(boxes) == 1 and not dlg.tabs.isAncestorOf(boxes[0])
+
+
+def test_a_real_install_path_is_readable_whole(qtbot):
+    """In tabs the dialog sized to its content and GraXpert's box showed
+    'ert.app'. Every tool path box shows the longest default path whole."""
+    from nocturne.ui.settings_dialog import _TYPICAL_PATH
+    from nocturne.ui.theme import build_stylesheet
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        dlg = SettingsDialog(Settings())
+        qtbot.addWidget(dlg)
+        dlg.tabs.setCurrentIndex(1)
+        dlg.show(); qtbot.waitExposed(dlg)
+        for edit, _l, name in dlg.tool_fields().values():
+            need = edit.fontMetrics().horizontalAdvance(_TYPICAL_PATH)
+            assert edit.width() > need, f"{name}: {edit.width()} px for a {need} px path"
+    finally:
+        app.setStyleSheet("")
+
+
+def test_download_links_use_the_accent_not_qt_blue(qtbot):
+    from PySide6.QtWidgets import QLabel
+    from nocturne.ui.theme import ACCENT
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    links = [l for l in dlg.findChildren(QLabel) if "Download" in l.text()]
+    assert len(links) == 4 and all(ACCENT in l.text() for l in links)
+
+
+def test_the_sizing_path_is_the_longest_place_nocturne_looks():
+    """A hand-picked literal missed ~/Applications/RC-Astro/CLI/rc-astro, and
+    the path-width test above measures against the constant — so the constant
+    itself must cover every default location."""
+    import os
+    from nocturne.settings import TOOL_CANDIDATES
+    from nocturne.ui.settings_dialog import _TYPICAL_PATH
+    for paths in TOOL_CANDIDATES.values():
+        for p in paths:
+            if not p.startswith("which:"):
+                assert len(_TYPICAL_PATH) >= len(os.path.expanduser(p)), p

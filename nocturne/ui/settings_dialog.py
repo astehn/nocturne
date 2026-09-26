@@ -1,15 +1,30 @@
 from __future__ import annotations
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from ..settings import (TOOL_CANDIDATES, Settings, astap_valid, is_tool,
                         detect_tool_paths, resolve_binary)
 from ..tools.probe import probe_binary
 from . import file_dialogs
+from .theme import ACCENT
 
+
+def _longest_default_path() -> str:
+    """The longest path Nocturne itself looks in, with ~ expanded — the path
+    boxes are sized to show it whole. From TOOL_CANDIDATES, not a hand-picked
+    literal: the per-user ~/Applications/RC-Astro/CLI/rc-astro (54 chars with a
+    real user name) clipped in a box sized for the system-wide one."""
+    import os
+    paths = [os.path.expanduser(p) for ps in TOOL_CANDIDATES.values() for p in ps
+             if not p.startswith("which:")]
+    return max(paths, key=len)
+
+
+_TYPICAL_PATH = _longest_default_path()
 
 # Where to download each external tool (shown as a link next to its path row).
 DOWNLOAD_URLS = {
@@ -29,7 +44,7 @@ def _path_row(edit: QLineEdit, on_test, result: QLabel,
     outer = QVBoxLayout(row)
     outer.setContentsMargins(0, 0, 0, 0)
     line = QHBoxLayout()
-    line.addWidget(edit)
+    line.addWidget(edit, 1)     # its minimum width: SettingsDialog._fit_path_boxes
     browse = QPushButton("Browse…")
     # The caption is REQUIRED by open_file. Omitting it raised inside the slot,
     # where Qt prints to stderr and the button just looks dead — which is how
@@ -42,7 +57,10 @@ def _path_row(edit: QLineEdit, on_test, result: QLabel,
     line.addWidget(browse)
     line.addWidget(test)
     if download_url:
-        link = QLabel(f'<a href="{download_url}">Download&nbsp;↗</a>')
+        # The app's accent, not Qt's default #0000ff, which is near-invisible
+        # on the dark dialog.
+        link = QLabel(f'<a href="{download_url}" style="color:{ACCENT}; '
+                      f'text-decoration:none">Download&nbsp;↗</a>')
         link.setOpenExternalLinks(True)      # opens in the user's browser
         line.addWidget(link)
     outer.addLayout(line)
@@ -120,44 +138,90 @@ class SettingsDialog(QDialog):
         self.rescan_result = QLabel("")
         self.rescan_result.setWordWrap(True)
 
-        form = QFormLayout(self)
-        form.addRow("Default folder", _folder_row(self._dir))
-        form.addRow("GraXpert (required)",
-                    _path_row(self._gx, self._test_graxpert, self._gx_result,
-                              DOWNLOAD_URLS["graxpert"],
-                              "Select GraXpert.app (or its executable)"))
-        form.addRow("RC-Astro (optional)",
-                    _path_row(self._rc, self._test_rcastro, self._rc_result,
-                              DOWNLOAD_URLS["rcastro"],
-                              "Select the rc-astro command (RC-Astro/CLI/rc-astro)"))
-        form.addRow("StarNet2 (optional)",
-                    _path_row(self._starnet, self._test_starnet, self._starnet_result,
-                              DOWNLOAD_URLS["starnet"],
-                              "Select the starnet2 executable"))
-        form.addRow("ASTAP (optional)",
-                    _path_row(self._astap, self._test_astap, self._astap_result,
-                              DOWNLOAD_URLS["astap"],
-                              "Select ASTAP.app (or its executable)"))
+        # Three tabs (screen-size piece 3, Andreas 2026-09-26): the single
+        # column grew with every tool and got tall on a laptop. Things you set
+        # once live here; choices remembered where you make them (Share's
+        # caption, the title plate, annotation layers) stay in their tools.
+        self.tabs = QTabWidget()
+
+        general = QWidget()
+        g = QFormLayout(general)
+        g.addRow("Default folder", _folder_row(self._dir))
+        g.addRow("Handle (for shares)", self._handle)
+        self.tabs.addTab(general, "General")
+
+        tools = QWidget()
+        t = QFormLayout(tools)
+        t.addRow("GraXpert (required)",
+                 _path_row(self._gx, self._test_graxpert, self._gx_result,
+                           DOWNLOAD_URLS["graxpert"],
+                           "Select GraXpert.app (or its executable)"))
+        t.addRow("RC-Astro (optional)",
+                 _path_row(self._rc, self._test_rcastro, self._rc_result,
+                           DOWNLOAD_URLS["rcastro"],
+                           "Select the rc-astro command (RC-Astro/CLI/rc-astro)"))
+        t.addRow("StarNet2 (optional)",
+                 _path_row(self._starnet, self._test_starnet, self._starnet_result,
+                           DOWNLOAD_URLS["starnet"],
+                           "Select the starnet2 executable"))
+        t.addRow("ASTAP (optional)",
+                 _path_row(self._astap, self._test_astap, self._astap_result,
+                           DOWNLOAD_URLS["astap"],
+                           "Select ASTAP.app (or its executable)"))
         for edit, _label, _name in self.tool_fields().values():
             edit.textChanged.connect(self._refresh_status)
         self._refresh_status()
-        form.addRow("", self.rescan_btn)
-        form.addRow("", self.rescan_result)
-        form.addRow("Handle (for shares)", self._handle)
-        form.addRow("Preferred denoise engine", self.denoise_box)
-        form.addRow("", self.check_updates)
-        form.addRow("", self.telemetry)
+        t.addRow("", self.rescan_btn)
+        t.addRow("", self.rescan_result)
+        t.addRow("Preferred denoise engine", self.denoise_box)
         note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
                       "ASTAP adds plate-solving — install it and its D05 star database "
                       "(from the ASTAP page) for target identification and annotation.")
         note.setWordWrap(True)
-        form.addRow(note)
+        t.addRow(note)
+        self.tabs.addTab(tools, "External tools")
+
+        # The page you open to check exactly what leaves this computer, so it
+        # SAYS so on the page — the tooltips were the only place it was written.
+        privacy = QWidget()
+        pv = QVBoxLayout(privacy)
+        for box in (self.check_updates, self.telemetry):
+            pv.addWidget(box)
+            why = QLabel(box.toolTip())
+            why.setWordWrap(True)
+            why.setObjectName("stepDesc")          # the app's quiet explanatory text
+            why.setContentsMargins(24, 0, 0, 10)   # under the box's label, not its tick
+            pv.addWidget(why)
+        pv.addStretch(1)
+        self.tabs.addTab(privacy, "Privacy")
+
+        # QTabWidget sizes to its LARGEST page, so switching tabs never resizes
+        # the window — nothing moves (piece 1's rule).
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.tabs)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        layout.addWidget(buttons)
+        self._fit_path_boxes()
+
+    def _fit_path_boxes(self) -> None:
+        """Wide enough to read a real install path whole. In tabs the dialog
+        sizes to its content, and the boxes shrank to show "ert.app" of
+        GraXpert.app. Measured with the POLISHED font (the app stylesheet's
+        size and padding) — unpolished it came out 1 px short — and before the
+        dialog is shown: widening it afterwards made the window jump on the
+        first tab switch."""
+        for edit, _label, _name in self.tool_fields().values():
+            edit.ensurePolished()
+            edit.setMinimumWidth(edit.fontMetrics().horizontalAdvance(_TYPICAL_PATH) + 40)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._fit_path_boxes()
 
     def _test_starnet(self) -> None:
         """Runs it with no arguments: StarNet2 prints its usage and exits, which
