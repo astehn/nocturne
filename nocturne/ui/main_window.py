@@ -3479,11 +3479,14 @@ class MainWindow(QMainWindow):
         2026-09-26, D2.) Yes when the step is done: its Apply says `applied`
         (verified-unchanged or not — ruling R13's live Apply still has a commit
         and nothing pending) or `no_change`, or the step has no Apply at all
-        (Import, Enhancements). No while Apply is green (`pending`, `not_run`),
+        (Import, Enhancements), or its Apply cannot be pressed (GraXpert not set
+        up, Crop before a box is placed) — otherwise nothing would be both lit
+        and pressable. No while Apply is green and live (`pending`, `not_run`),
         and never while Next is off: busy, or the last step (Export)."""
         if self._busy or not self._has_next():
             return False
-        if not isinstance(getattr(self._panel, "apply_btn", None), ApplyButton):
+        btn = getattr(self._panel, "apply_btn", None)
+        if not isinstance(btn, ApplyButton) or not btn.isEnabled():
             return True
         return self._step_state(self.current_stage_id()) in ("applied", "no_change")
 

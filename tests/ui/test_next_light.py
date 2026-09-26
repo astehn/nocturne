@@ -69,6 +69,12 @@ def _case(qtbot, tmp_path, case):
         win._go_to_id("recover_core", user_initiated=False); qtbot.wait(20)
         btn = win._panel.apply_btn
         assert btn.state() == "applied" and btn.isEnabled(), "precondition"
+    elif case == "unavailable":
+        # Apply cannot be pressed (Crop before a box is placed): lighting
+        # Next is the only way anything is both lit and pressable here.
+        win = _open(qtbot, tmp_path)
+        win._go_to_id("crop", user_initiated=False); qtbot.wait(20)
+        assert not win._panel.apply_btn.isEnabled(), "precondition: no box yet"
     elif case == "export":
         win = _open(qtbot, tmp_path)
         win._go_to_id("export", user_initiated=False); qtbot.wait(20)
@@ -88,6 +94,7 @@ def _case(qtbot, tmp_path, case):
     ("no_change", True, "lit", True),
     ("import", True, "lit", True),
     ("enhancements", True, "lit", True),
+    ("unavailable", True, "lit", True),
     ("export", False, "disabled", False),
     ("busy", False, "disabled", False),
 ])
