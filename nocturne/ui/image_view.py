@@ -966,6 +966,12 @@ class ImageView(QGraphicsView):
         self._position_handles()
         self._emit_bounds()
 
+    def image_size(self) -> tuple[int, int]:
+        """(width, height) of the image on the canvas, in the pixels
+        crop_bounds() is measured in — without touching the image data."""
+        pm = self._item.pixmap()
+        return pm.width(), pm.height()
+
     def crop_bounds(self) -> tuple[int, int, int, int]:
         r = self._scene_rect()
         pm = self._item.pixmap()

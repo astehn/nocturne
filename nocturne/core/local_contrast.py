@@ -10,6 +10,10 @@ def enhance(img: AstroImage, amount: float) -> AstroImage:
     """Local-contrast (CLAHE) boost on luminance, blended by `amount` in [0, 1].
     Color is rescaled by the luminance ratio so hue is preserved."""
     amount = float(np.clip(amount, 0.0, 1.0))
+    if amount == 0.0:
+        # Exactly no change, as recover_core does. Through the blend below it
+        # is not: the ratio's 1e-6 guard darkens near-black pixels.
+        return img.copy()
     data = np.clip(img.data, 0.0, 1.0).astype(np.float32)
     if data.ndim == 2:
         clahe = equalize_adapthist(data, clip_limit=0.01).astype(np.float32)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
     QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
@@ -11,6 +11,7 @@ from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
+from .apply_button import ApplyButton
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
 
@@ -68,11 +69,84 @@ _GATE_NOTE = {
 }
 
 
+# What each step does for the picture, in at most two lines at the panel width
+# (spec 2026-09-25-consistent-panels §6, Andreas' wording). What used to follow
+# in the old, longer descriptions moved to the panel's notes (anything the user
+# decides on) or to the step's "How this works" topic.
+STEP_DESCRIPTIONS: dict[str, str] = {
+    "load": "Your stack as loaded: its facts, and how the unstretched data is shown.",
+    "crop": "Click the image to place the crop box, adjust it, then apply.",
+    "ai_denoise": "Remove noise while the data is still linear, before anything is stretched.",
+    "background": "Remove uneven sky-glow — a gradient brighter toward one edge or corner.",
+    "color": "Neutralise the sky background without touching your nebula's real colour.",
+    "deconvolution": "Sharpen stars and fine detail by undoing some of the blur.",
+    "stretch": "Brighten the faint detail so your target appears.",
+    "remove_green": "Remove a green cast from the sky. Usually unnecessary — leave at 0 "
+                    "if there is none.",
+    "recover_core": "Pull blown-out bright cores back so they show detail. 0 = off.",
+    "levels": "Fine-tune the black point, midtones and white point.",
+    "curves": "Drag the curve to shape contrast. Double-click a point to remove it.",
+    "saturation": "Mute or boost colour. Centre = no change; Nebula boost lifts only "
+                  "the nebulosity.",
+    "green_fringe": "Drain the green-to-cyan tint from stars; every other colour is "
+                    "left alone.",
+    "noise_sharpen": "Reduce noise in the stretched image while keeping fine detail.",
+    "local_contrast": "Add depth to mid-sized structure. 0 = off.",
+    "star_reduction": "Shrink and dim the stars so the nebula stands out. 0 = untouched.",
+    "enhancements": "Final targeted tweaks — tap to add, Undo to peel back.",
+    "export": "Save the finished picture.",
+}
+
+
 def _desc_label(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("stepDesc")
     label.setWordWrap(True)
     return label
+
+
+class _DescBox(QLabel):
+    """The description, ALWAYS two lines tall (Andreas, 2026-09-25), so the
+    controls under it start at the same height on every step whatever the text.
+
+    The height is recomputed whenever the style or font arrives, not fixed once
+    at construction: the app stylesheet gives stepDesc its own 12 px font and
+    6 px bottom padding, and a height taken from the construction-time font is
+    wrong in the real window (the ApplyButton measured 45 px built, 47 px styled).
+    """
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.setObjectName("stepDesc")
+        self.setWordWrap(True)
+        self.setIndent(0)   # the title's reason: the ink lines up with the controls
+        self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._fit()
+
+    def _fit(self) -> None:
+        # Two lines at the CURRENT font, plus the box model: the stylesheet's
+        # padding-bottom lands in contentsMargins() once polished. Checked
+        # against a plain stepDesc label showing "x\nx" under the app
+        # stylesheet: 2 x 15 + 6 = 36 px, the same as that label's sizeHint
+        # (30 px unstyled). Not sizeHint() of this label itself: a
+        # fixed-height label's hints are clamped to its own minimum, so a
+        # re-fit could only ever grow (measured 42 px after a restyle).
+        m = self.contentsMargins()
+        two = (self.fontMetrics().lineSpacing() * 2 + m.top() + m.bottom()
+               + 2 * self.margin())
+        if self.minimumHeight() != two or self.maximumHeight() != two:
+            self.setFixedHeight(two)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
+            self._fit()
+
+    def event(self, event) -> bool:  # noqa: A003 (Qt override)
+        result = super().event(event)
+        if event.type() == QEvent.Type.Polish:
+            self._fit()
+        return result
 
 
 def _wall_summary(fields: dict, handle: str) -> str:
@@ -143,14 +217,36 @@ def build_panel(
     option_default: str | None = None,
     denoise_engine_choices: list | None = None,
     denoise_default_engine: str = "rcastro",
+    denoise_engine_current: str | None = None,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
     w.panel_kind = stage.kind
     lay = QVBoxLayout(w)
+    # The header — title row and the FIXED two-line description — is its own
+    # widget, handed to SidePanel's header slot above the scroll (spec §3): a
+    # tall step scrolls its controls, never its name or what it does. Built
+    # here, not laid out in the card; inset like the card's own contents so
+    # the title lines up with the controls under it.
+    header = QWidget()
+    header.setObjectName("stepHeader")
+    header_lay = QVBoxLayout(header)
+    # ONE inset for the header and the card's controls, set explicitly on
+    # both. Copying the card layout's margins here read them before the
+    # widget was polished (11 px) while the card later resolved its own
+    # (9 px), so the title sat 2 px right of the controls under it.
+    inset = w.style().pixelMetric(QStyle.PixelMetric.PM_LayoutLeftMargin)
+    lay.setContentsMargins(inset, 0, inset, inset)
+    header_lay.setContentsMargins(inset, inset, inset, 0)
+    header_lay.setSpacing(lay.spacing())
+    w.header = header
     title_row = QHBoxLayout()
     title = QLabel(stage.label)
     title.setObjectName("stageTitle")
+    # indent 0: with a stylesheet padding Qt gives a label a frame and then
+    # indents its text by half an "x" (6 px at 20 px bold), so the title's ink
+    # sat right of the controls' even at the same x.
+    title.setIndent(0)
     title_row.addWidget(title)
     title_row.addStretch(1)
     # "How this works" sits on the title line so it never floats with the
@@ -159,7 +255,32 @@ def build_panel(
     w.help_link.setObjectName("helpHeader")
     w.help_link.setOpenExternalLinks(False)
     title_row.addWidget(w.help_link)
-    lay.addLayout(title_row)
+    header_lay.addLayout(title_row)
+    # One template on every step (spec 2026-09-25-consistent-panels §3): the
+    # header above, then in the card the controls (so they always start at the
+    # same height), then notes. The main action and Reset step are built
+    # below but NOT laid out here — MainWindow pins them in the side panel's
+    # action slot, outside the scroll, in the same place on every step.
+    w.desc_box = _DescBox(STEP_DESCRIPTIONS.get(stage.id, ""))
+    header_lay.addWidget(w.desc_box)
+    body = QWidget()
+    body.setObjectName("panelBody")
+    w.controls = QVBoxLayout(body)
+    w.controls.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(body)
+    notes_host = QWidget()
+    notes_host.setObjectName("panelBody")
+    w.notes = QVBoxLayout(notes_host)
+    w.notes.setContentsMargins(0, 4, 0, 0)
+    lay.addWidget(notes_host)
+    w.primary_action = None
+    w.apply_btn = None
+    # What this panel's Apply hands its callback, read live — the SAME callable
+    # the Apply connects to, so MainWindow's "do the controls still equal the
+    # commit?" (_controls_match_commit) reads exactly what a press would send
+    # and cannot drift from it. None where a panel commits nothing of its own.
+    w.commit_option = None
+    controls, notes = w.controls, w.notes
 
     if stage.kind == "import":
         # No "Open FITS…" button: the toolbar has one and the cold-start screen
@@ -168,7 +289,7 @@ def build_panel(
         meta = _desc_label("Open a stacked Seestar FITS to begin.")
         meta.setObjectName("importMeta")   # brighter/larger than stepDesc — the FITS info must be readable
         meta.setTextFormat(Qt.TextFormat.RichText)
-        lay.addWidget(meta)
+        controls.addWidget(meta)
         w.meta_label = meta
 
         # How the LINEAR data is drawn. A view, not a commitment: no pixel is
@@ -178,7 +299,7 @@ def build_panel(
         # monochrome however saturated it actually is.
         heading = QLabel("How to show the unstretched data")
         heading.setObjectName("panelSectionLabel")
-        lay.addWidget(heading)
+        controls.addWidget(heading)
         row = QHBoxLayout()
         linked_btn = QRadioButton("Linked")
         linked_btn.setToolTip("Keeps the sky's own colour")
@@ -188,7 +309,7 @@ def build_panel(
         group.addButton(linked_btn); group.addButton(unlinked_btn)
         (linked_btn if view_linked else unlinked_btn).setChecked(True)
         row.addWidget(linked_btn); row.addWidget(unlinked_btn); row.addStretch(1)
-        lay.addLayout(row)
+        controls.addLayout(row)
         if on_view_linked is not None:
             linked_btn.toggled.connect(lambda on: on_view_linked(bool(on)))
         w.view_linked = linked_btn
@@ -201,7 +322,7 @@ def build_panel(
         if opened_as_linear is not None:
             head = QLabel("How this file was read")
             head.setObjectName("panelSectionLabel")
-            lay.addWidget(head)
+            controls.addWidget(head)
             row2 = QHBoxLayout()
             lin_btn = QRadioButton("Unstretched data")
             stretched_btn = QRadioButton("Already stretched")
@@ -209,12 +330,13 @@ def build_panel(
             grp2.addButton(lin_btn); grp2.addButton(stretched_btn)
             (lin_btn if opened_as_linear else stretched_btn).setChecked(True)
             row2.addWidget(lin_btn); row2.addWidget(stretched_btn); row2.addStretch(1)
-            lay.addLayout(row2)
+            controls.addLayout(row2)
             if on_opened_as_linear is not None:
                 lin_btn.toggled.connect(lambda on: on_opened_as_linear(bool(on)))
             w.opened_as_linear = lin_btn
             w._opened_group = grp2      # or the QButtonGroup is garbage collected
-            lay.addWidget(_desc_label(
+            # Stays with its control: it is the caption of this choice.
+            controls.addWidget(_desc_label(
                 "Nocturne measured the pixels to decide this. It is nearly always "
                 "right, but a starless file or a very bright subject can fool it — "
                 "if the picture looks wrong from here, switch it."))
@@ -224,11 +346,9 @@ def build_panel(
             "which usually shows more variety in star and dust colour. This only "
             "changes what you see — you choose again, and commit, at Stretch.")
         note.setTextFormat(Qt.TextFormat.RichText)
-        lay.addWidget(note)
+        notes.addWidget(note)
 
     elif stage.kind == "crop":
-        lay.addWidget(_desc_label(
-            "Click the image to place the crop box, adjust it, then Apply Crop."))
         aspect = QComboBox()
         aspect.addItems(ASPECTS)
         if on_crop_change is not None:
@@ -242,8 +362,7 @@ def build_panel(
         flip_v = QPushButton("Flip V")
         if on_flip_v is not None:
             flip_v.clicked.connect(lambda: on_flip_v())
-        apply_btn = QPushButton("Apply Crop")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Crop")
         apply_btn.setEnabled(False)  # off until the crop box is shown (cropBoxShown)
         if on_crop_apply is not None:
             apply_btn.clicked.connect(lambda: on_crop_apply())
@@ -252,41 +371,33 @@ def build_panel(
         if on_guides_change is not None:
             guides.currentTextChanged.connect(
                 lambda t: on_guides_change(GUIDE_KINDS[t]))
-        lay.addWidget(QLabel("Aspect ratio"))
-        lay.addWidget(aspect)
-        lay.addWidget(QLabel("Guides"))
-        lay.addWidget(guides)
-        lay.addWidget(rotate_btn)
+        controls.addWidget(QLabel("Aspect ratio"))
+        controls.addWidget(aspect)
+        controls.addWidget(QLabel("Guides"))
+        controls.addWidget(guides)
+        controls.addWidget(rotate_btn)
         flips = QHBoxLayout()
         flips.addWidget(flip_h)
         flips.addWidget(flip_v)
-        lay.addLayout(flips)
-        lay.addWidget(_desc_label("Rotate / Flip apply instantly"))
-        lay.addWidget(apply_btn)
+        controls.addLayout(flips)
+        controls.addWidget(_desc_label("Rotate / Flip apply instantly"))
+        # The crop's size readout: a status line, so it goes with the notes.
         size = _desc_label("—")
-        lay.addWidget(size)
+        notes.addWidget(size)
         w.aspect_box = aspect
         w.guides_box = guides
         w.rotate_btn = rotate_btn
         w.flip_h_btn = flip_h
         w.flip_v_btn = flip_v
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
         w.crop_size_label = size
 
     elif stage.kind == "process":
-        if stage.id == "background":
-            lay.addWidget(_desc_label(
-                "A gradient is uneven sky-glow — brighter toward one edge or corner. "
-                "Light suits most images; use Strong when it's heavy. After applying, "
-                "tick Show what was removed: mid-grey is where nothing was taken, and "
-                "a smooth ramp is sky-glow. If it carries the shape of your object, "
-                "the fit took signal with it — undo and try Light."))
         box = QComboBox()
         box.addItems(_PROCESS_OPTIONS[stage.id])
         if option_default:
             box.setCurrentText(option_default)
-        apply_btn = QPushButton(f"Apply {stage.label}")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton(f"Apply {stage.label}")
         note = _desc_label(_GATE_NOTE.get(stage.id, ""))
         note.setVisible(False)
 
@@ -326,8 +437,17 @@ def build_panel(
         if stage.id in ("noise_sharpen", "ai_denoise") and denoise_engine_choices:
             engine_box = QComboBox()
             engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
-            lay.addWidget(QLabel("Engine"))
-            lay.addWidget(engine_box)
+            if denoise_engine_current in denoise_engine_choices:
+                # A revisited step shows the engine it committed with, as the
+                # strength box shows its level (MainWindow._denoise_engine_label).
+                engine_box.setCurrentText(denoise_engine_current)
+            if on_option_change is not None:
+                # The engine is half of what Apply commits: Apply's state has
+                # to hear it move, or an applied step stayed "✓ applied" and
+                # off over a different engine (final review C1).
+                engine_box.currentTextChanged.connect(lambda _t: on_option_change())
+            controls.addWidget(QLabel("Engine"))
+            controls.addWidget(engine_box)
             w.engine_box = engine_box
 
         def _noise_apply_option():
@@ -347,12 +467,25 @@ def build_panel(
                 engine = denoise_default_engine
             return {"engine": engine, "level": level}
 
+        w.commit_option = _noise_apply_option
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(_noise_apply_option()))
-        lay.addWidget(QLabel("Strength"))
-        lay.addWidget(box)
-        lay.addWidget(apply_btn)
-        lay.addWidget(note)
+        controls.addWidget(QLabel("Strength"))
+        controls.addWidget(box)
+        if show_model is not None:
+            # A control, directly under the dropdown it checks the result of
+            # (it sat below Apply while Apply was in the panel).
+            controls.addWidget(show_model)
+            w.show_model_check = show_model
+        if stage.id == "background":
+            # Decision-relevant, so a note rather than "How this works": which
+            # strength to pick, and how to read the check above.
+            notes.addWidget(_desc_label(
+                "Light suits most images; use Strong when it's heavy. After applying, "
+                "tick Show what was removed: mid-grey is where nothing was taken, and "
+                "a smooth ramp is sky-glow. If it carries the shape of your object, "
+                "the fit took signal with it — undo and try Light."))
+        notes.addWidget(note)
         _update_enabled()
         w.option_box = box
         # What the dropdown read on arrival. "Pending" means "moved since the
@@ -361,15 +494,10 @@ def build_panel(
         # Noise Reduction, nothing at all for Background "off" — and a rebuilt
         # panel starts at the step default rather than at the committed value.
         w.option_baseline = box.currentText()
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
         w.disabled_note = note
-        if show_model is not None:
-            lay.addWidget(show_model)
-            w.show_model_check = show_model
 
     elif stage.kind == "enhance":
-        lay.addWidget(_desc_label(
-            "Final targeted tweaks — tap to stack, Undo to peel back."))
         _specs = [
             ("boost_red_btn", "Boost Red (Ha)", "Boost Red"),
             ("boost_cyan_btn", "Boost Cyan (OIII)", "Boost Cyan"),
@@ -387,18 +515,14 @@ def build_panel(
             btn = QPushButton(label)
             if on_enhance is not None:
                 btn.clicked.connect(lambda _=False, o=op: on_enhance(o))
-            lay.addWidget(btn)
+            controls.addWidget(btn)
             setattr(w, attr, btn)
 
     elif stage.kind == "auto":
-        lay.addWidget(_desc_label(
-            "Neutralises the sky background so it's colour-neutral, without "
-            "touching your nebula's real colour."
-        ))
-        lay.addWidget(QLabel("Method"))
+        controls.addWidget(QLabel("Method"))
         method_box = QComboBox()
         method_box.addItems(["Sky balance", "Photometric (SPCC)"])
-        lay.addWidget(method_box)
+        controls.addWidget(method_box)
         w.method_box = method_box
         # What the dropdown read on arrival — same idea as option_baseline for
         # a compute stage's dropdown (see _has_pending): the method choice has
@@ -415,12 +539,13 @@ def build_panel(
             photometric = method_box.currentText().startswith("Photometric")
             return ColorSettings(method="photometric" if photometric else "sky")
 
-        apply_btn = QPushButton("Apply Color")
-        apply_btn.setObjectName("primary")
+        # The ONE visible action on Colour (spec §2.4). Built unconnected:
+        # MainWindow connects it to _apply_colour_step, which commits method
+        # and tint in _apply_sequence's order. The method's own commit is the
+        # hidden apply_method_btn below.
+        apply_btn = ApplyButton("Apply Color")
         apply_btn.setEnabled(apply_enabled)
-        if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(_color_option()))
-        lay.addWidget(apply_btn)
+        w.commit_option = _color_option
         # Colour cast, two bipolar sliders centred on 0 (double-click resets).
         #
         # Why these exist: Seestar data arrives with a magenta cast that is the
@@ -442,16 +567,16 @@ def build_panel(
         # nobody reads. This is the Colour half of the decided 2026-09-12
         # "separate and label the optional tools"; with De-green Sky gone, only
         # Tint remains, so it is one divider and one label rather than a layout.
-        lay.addSpacing(14)
+        controls.addSpacing(14)
         rule = QFrame()
         rule.setFrameShape(QFrame.Shape.HLine)
         rule.setObjectName("panelRule")
-        lay.addWidget(rule)
-        lay.addSpacing(10)
+        controls.addWidget(rule)
+        controls.addSpacing(10)
         optional = QLabel("Optional")
         optional.setObjectName("panelSectionLabel")
-        lay.addWidget(optional)
-        lay.addWidget(_desc_label(
+        controls.addWidget(optional)
+        controls.addWidget(_desc_label(
             "Nudge the overall colour if it looks too magenta or too green. "
             "Double-click a slider to re-centre it."))
         tint_slider = ResetSlider(0, minimum=-100, maximum=100)
@@ -466,8 +591,8 @@ def build_panel(
                 on_tint_change(tint_slider.value() / 100.0, temp_slider.value() / 100.0)
 
         tint_slider.valueChanged.connect(_emit_tint)
-        lay.addLayout(tint_row)
-        lay.addWidget(tint_slider)
+        controls.addLayout(tint_row)
+        controls.addWidget(tint_slider)
 
         temp_slider = ResetSlider(0, minimum=-100, maximum=100)
         temp_val = QLabel("0.00")
@@ -475,8 +600,8 @@ def build_panel(
         temp_row.addWidget(QLabel("Cool ←→ Warm"))
         temp_row.addWidget(temp_val)
         temp_slider.valueChanged.connect(_emit_tint)
-        lay.addLayout(temp_row)
-        lay.addWidget(temp_slider)
+        controls.addLayout(temp_row)
+        controls.addWidget(temp_slider)
         w.tint_slider = tint_slider
         w.temp_slider = temp_slider
         # What the controls describe UNTOUCHED. main_window compares the live
@@ -485,22 +610,30 @@ def build_panel(
         # test_neutral_option_matches_the_emit fires both and compares.
         w.neutral_option = (tint_slider.value() / 100.0, temp_slider.value() / 100.0)
 
-        apply_tint_btn = QPushButton("Apply Tint")
-        # Without this, theme.py's `QPushButton#primary[pending=...]` selector
-        # never matches it at all — _sync_step_controls sets the Qt property
-        # every time regardless, so the button silently never changes colour.
-        apply_tint_btn.setObjectName("primary")
+        # Kept, wired, and never shown or laid out: _apply_sequence still
+        # presses it to commit the tint, but the step shows ONE Apply. Parented
+        # to the card so it dies with it.
+        apply_tint_btn = QPushButton("Apply Tint", w)
         apply_tint_btn.setEnabled(apply_enabled)
         if on_apply_tint is not None:
             apply_tint_btn.clicked.connect(
                 lambda: on_apply_tint(tint_slider.value() / 100.0,
                                       temp_slider.value() / 100.0))
-        lay.addWidget(apply_tint_btn)
+        apply_tint_btn.setVisible(False)
         w.apply_tint_btn = apply_tint_btn
-        w.apply_btn = apply_btn
+        # The method's own commit, hidden like apply_tint_btn. MainWindow
+        # rewires the visible Apply to press these two in _apply_sequence's
+        # order; had the sequence pressed the visible Apply for the method, it
+        # would re-enter itself.
+        apply_method_btn = QPushButton("Apply Color", w)
+        apply_method_btn.setEnabled(apply_enabled)
+        if on_apply is not None:
+            apply_method_btn.clicked.connect(lambda: on_apply(_color_option()))
+        apply_method_btn.setVisible(False)
+        w.apply_method_btn = apply_method_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "stretch":
-        lay.addWidget(_desc_label("Brighten the faint detail so the target appears."))
         slider = ResetSlider(STRETCH_DEFAULT)
         stretch_val = QLabel(f"{slider.value() / 100:.2f}")
 
@@ -511,17 +644,14 @@ def build_panel(
 
         w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_stretch)
-        apply_btn = QPushButton("Apply Stretch")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Stretch")
         apply_btn.setEnabled(apply_enabled)
+        # A DICT, not a bare float: the stretch now carries its MECHANISM
+        # as well as its amount, and both have to reach the commit.
+        w.commit_option = lambda: {"amount": slider.value() / 100.0,
+                                   "linked": bool(w.stretch_linked)}
         if on_apply is not None:
-            # A DICT, not a bare float: the stretch now carries its MECHANISM
-            # as well as its amount, and both have to reach the commit. Anchored
-            # on the Visual-stretch comment below, because this exact Apply line
-            # appears in three panels and a bare replace patched all three.
-            apply_btn.clicked.connect(
-                lambda: on_apply({"amount": slider.value() / 100.0,
-                                  "linked": bool(w.stretch_linked)}))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         # Optional, and BELOW the slider: the slider keeps working untouched
         # for anyone who already knows the number they want. The picker is for
         # the case a number cannot answer — four of Andreas's own targets wanted
@@ -540,15 +670,14 @@ def build_panel(
         agg_row = QHBoxLayout()
         agg_row.addWidget(QLabel("Aggressiveness (gentle → punchy)"))
         agg_row.addWidget(stretch_val)
-        lay.addLayout(agg_row)
-        lay.addWidget(slider)
-        lay.addWidget(visual_btn)
-        lay.addWidget(apply_btn)
+        controls.addLayout(agg_row)
+        controls.addWidget(slider)
+        controls.addWidget(visual_btn)
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
         w.stretch_slider = slider
         w.stretch_val = stretch_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "remove_green":
         # De-green Sky (SCNR) with a strength dial + live preview — a knob, not a
@@ -566,11 +695,6 @@ def build_panel(
         # five steps before the stretch that actually creates the cast), so
         # "reach for this only if a cast survives the stretch" is finally
         # advice the user can act on.
-        lay.addWidget(_desc_label(
-            "Optional, and usually unnecessary. Look at the sky you just "
-            "stretched: if it carries a green cast, drag for strength (right = "
-            "stronger). If it does not, leave this at 0 — on data with no cast "
-            "this makes the sky greener, not less green."))
         rg_slider = ResetSlider(0)           # off until the user asks for it
         rg_val = QLabel("0.00")
         rg_row = QHBoxLayout()
@@ -580,19 +704,21 @@ def build_panel(
         if on_removegreen_change is not None:
             rg_slider.valueChanged.connect(
                 lambda v: (rg_val.setText(f"{v / 100:.2f}"), on_removegreen_change(v / 100.0)))
-        lay.addLayout(rg_row)
-        lay.addWidget(rg_slider)
-        apply_btn = QPushButton("Apply De-green Sky")
-        apply_btn.setObjectName("primary")
+        controls.addLayout(rg_row)
+        controls.addWidget(rg_slider)
+        # The measured harm above, said where the user decides — a note, not
+        # "How this works".
+        notes.addWidget(_desc_label(
+            "On data with no cast this makes the sky greener, not less green."))
+        apply_btn = ApplyButton("Apply De-green Sky")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: rg_slider.value() / 100.0
         if on_remove_green is not None:
-            apply_btn.clicked.connect(lambda: on_remove_green(rg_slider.value() / 100.0))
-        lay.addWidget(apply_btn)
+            apply_btn.clicked.connect(lambda: on_remove_green(w.commit_option()))
         w.rg_slider = rg_slider
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "levels":
-        lay.addWidget(_desc_label("Fine-tune black point, midtones, and white point."))
         auto_btn = QPushButton("Auto")
         # Checkable purely as an INDICATOR: it stays down while the values on the
         # sliders are still the ones Auto derived, and pops up the moment one is
@@ -605,7 +731,7 @@ def build_panel(
             "for each image instead of reusing this one's.")
         if on_levels_auto is not None:
             auto_btn.clicked.connect(lambda: on_levels_auto())
-        lay.addWidget(auto_btn)
+        controls.addWidget(auto_btn)
 
         # 1000 steps, not 100. The black point is the ONLY value Auto Levels
         # sets now, so it carries the whole step; and its useful range is about
@@ -634,34 +760,31 @@ def build_panel(
         gamma.valueChanged.connect(_emit)
         white.valueChanged.connect(_emit)
 
-        apply_btn = QPushButton("Apply Levels")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Levels")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: (black.value() / BLACK_STEPS, gamma.value() / 100.0,
+                                   white.value() / 100.0)
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(
-                (black.value() / BLACK_STEPS, gamma.value() / 100.0,
-                 white.value() / 100.0)
-            ))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
 
         black_row = QHBoxLayout()
         black_row.addWidget(QLabel("Black point"))
         black_row.addWidget(black_val)
-        lay.addLayout(black_row)
-        lay.addWidget(black)
+        controls.addLayout(black_row)
+        controls.addWidget(black)
 
         gamma_row = QHBoxLayout()
         gamma_row.addWidget(QLabel("Midtones"))
         gamma_row.addWidget(gamma_val)
-        lay.addLayout(gamma_row)
-        lay.addWidget(gamma)
+        controls.addLayout(gamma_row)
+        controls.addWidget(gamma)
 
         white_row = QHBoxLayout()
         white_row.addWidget(QLabel("White point"))
         white_row.addWidget(white_val)
-        lay.addLayout(white_row)
-        lay.addWidget(white)
+        controls.addLayout(white_row)
+        controls.addWidget(white)
 
-        lay.addWidget(apply_btn)
         w.auto_btn = auto_btn
         w.black_slider = black
         w.gamma_slider = gamma
@@ -669,12 +792,9 @@ def build_panel(
         w.black_val = black_val
         w.gamma_val = gamma_val
         w.white_val = white_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "curves":
-        lay.addWidget(_desc_label(
-            "Drag the curve to add midtone contrast. Drop a point on the "
-            "background peak to pin the sky. Double-click a point to remove it."))
         editor = CurveEditor()
         # Give it the pane's spare height. The right pane is 400 px wide and
         # fixed (so the image never moves between steps), and the editor was
@@ -686,7 +806,7 @@ def build_panel(
         w.neutral_option = list(editor.points())
         if on_curve_change is not None:
             editor.curveChanged.connect(lambda pts: on_curve_change(pts))
-        lay.addWidget(editor, 1)
+        controls.addWidget(editor, 1)
 
         preset_row = QHBoxLayout()
         reset_btn = QPushButton("Reset")
@@ -696,7 +816,7 @@ def build_panel(
             add_btn.clicked.connect(lambda: on_curve_preset("add_contrast"))
         preset_row.addWidget(reset_btn)
         preset_row.addWidget(add_btn)
-        lay.addLayout(preset_row)
+        controls.addLayout(preset_row)
 
         # The pane cannot get wider, so precision work goes to a dialog — the
         # same answer Colour Balance and Narrowband already use. The inline
@@ -704,26 +824,21 @@ def build_panel(
         expand_btn = QPushButton("Open large editor…")
         if on_curve_expand is not None:
             expand_btn.clicked.connect(lambda: on_curve_expand())
-        lay.addWidget(expand_btn)
+        controls.addWidget(expand_btn)
         w.expand_btn = expand_btn
 
-        apply_btn = QPushButton("Apply Curves")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Curves")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = editor.points
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(editor.points()))
-        lay.addWidget(apply_btn)
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
 
         w.curve_editor = editor
         w.reset_btn = reset_btn
         w.add_contrast_btn = add_btn
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "saturation":
-        lay.addWidget(_desc_label(
-            "Drag Saturation left to mute colour, right to boost. Centre = no change. "
-            "Nebula boost lifts only the nebulosity (stars & sky untouched); RC-Astro "
-            "(StarX) gives a cleaner separation but is not required."))
         slider = ResetSlider(50)
         slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         slider.setTickInterval(50)
@@ -741,30 +856,30 @@ def build_panel(
         w.neutral_option = (slider.value() / 100.0, neb.value() / 100.0)
         slider.valueChanged.connect(_emit_sat)
         neb.valueChanged.connect(_emit_sat)
-        apply_btn = QPushButton("Apply Saturation")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Saturation")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: (slider.value() / 100.0, neb.value() / 100.0)
         if on_sat_apply is not None:
-            apply_btn.clicked.connect(
-                lambda: on_sat_apply(slider.value() / 100.0, neb.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_sat_apply(*w.commit_option()))
         sat_row = QHBoxLayout()
         sat_row.addWidget(QLabel("Saturation (mute ← native → boost)"))
         sat_row.addWidget(sat_val)
-        lay.addLayout(sat_row)
-        lay.addWidget(slider)
+        controls.addLayout(sat_row)
+        controls.addWidget(slider)
         neb_row = QHBoxLayout()
         neb_row.addWidget(QLabel("Nebula boost (off → strong)"))
         neb_row.addWidget(neb_val)
-        lay.addLayout(neb_row)
-        lay.addWidget(neb)
-        lay.addWidget(neb_status)
-        lay.addWidget(apply_btn)
+        controls.addLayout(neb_row)
+        controls.addWidget(neb)
+        notes.addWidget(neb_status)
+        notes.addWidget(_desc_label(
+            "RC-Astro (StarX) gives a cleaner separation but is not required."))
         w.sat_slider = slider
         w.sat_val = sat_val
         w.neb_slider = neb
         w.neb_val = neb_val
         w.neb_status = neb_status
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "green_fringe":
         # AN AMOUNT SLIDER, added 2026-09-19 — and it reverses a decision made
@@ -796,19 +911,14 @@ def build_panel(
         # feathered star mask. Measured on a real NGC 7000 master at
         # FRINGE_MASK_SCALE 2.5: the mask touches 68.1% of the frame (13.2% at
         # >=50% weight, 2.5% at full strength) — enough that background green
-        # noise visibly shifts too. The description below has to say so.
-        lay.addWidget(_desc_label(
-            "Drain the green-to-cyan tint from stars — those pixels lose their "
-            "colour and keep their lightness, and every other colour is left "
-            "alone. No star is truly green or cyan, so the tint is always an "
-            "artefact. Amount 100 removes it entirely; lower values leave some "
-            "of it, like Photoshop's Hue/Saturation on Cyans. With a star "
-            "separator configured only the stars layer is touched and nebula "
-            "colour cannot move; without one, the free path works on the whole "
-            "image inside a feathered mask centred on stars, so background "
-            "colour can shift too."))
+        # noise visibly shifts too. The note below has to say so.
         status = _desc_label("")   # main_window sets the split/mask label or gate text
-        lay.addWidget(status)
+        notes.addWidget(status)
+        notes.addWidget(_desc_label(
+            "With a star separator configured only the stars layer is touched "
+            "and nebula colour cannot move; without one, the free path works on "
+            "the whole image inside a feathered mask centred on stars, so "
+            "background colour can shift too."))
         slider = ResetSlider(100)
         fringe_val = QLabel(f"{slider.value()}")
 
@@ -818,28 +928,24 @@ def build_panel(
                 on_fringe_change(slider.value() / 100.0)
 
         slider.valueChanged.connect(_emit_fringe)
-        apply_btn = QPushButton("Apply De-green Stars")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply De-green Stars")
+        w.commit_option = lambda: slider.value() / 100.0
         if on_fringe_apply is not None:
-            apply_btn.clicked.connect(lambda: on_fringe_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_fringe_apply(w.commit_option()))
         # Start disabled — main_window enables once the (slow) split is ready.
         slider.setEnabled(False)
         apply_btn.setEnabled(False)
         fringe_row = QHBoxLayout()
         fringe_row.addWidget(QLabel("Amount (none → fully neutral)"))
         fringe_row.addWidget(fringe_val)
-        lay.addLayout(fringe_row)
-        lay.addWidget(slider)
-        lay.addWidget(apply_btn)
+        controls.addLayout(fringe_row)
+        controls.addWidget(slider)
         w.fringe_status = status
         w.fringe_slider = slider
         w.fringe_val = fringe_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "recover_core":
-        lay.addWidget(_desc_label(
-            "Pull blown-out bright cores back so they show detail instead of a "
-            "white blob. 0 = off."))
         slider = ResetSlider(0)
         recover_val = QLabel(f"{slider.value() / 100:.2f}")
 
@@ -850,24 +956,21 @@ def build_panel(
 
         w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_recover)
-        apply_btn = QPushButton("Apply Recover Core")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Recover Core")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: slider.value() / 100.0
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         rec_row = QHBoxLayout()
         rec_row.addWidget(QLabel("Strength (off → full)"))
         rec_row.addWidget(recover_val)
-        lay.addLayout(rec_row)
-        lay.addWidget(slider)
-        lay.addWidget(apply_btn)
+        controls.addLayout(rec_row)
+        controls.addWidget(slider)
         w.recover_slider = slider
         w.recover_val = recover_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "local_contrast":
-        lay.addWidget(_desc_label(
-            "Drag up to add mid-scale depth. 0 = off."))
         slider = ResetSlider(0)
         lc_val = QLabel(f"{slider.value() / 100:.2f}")
 
@@ -878,27 +981,23 @@ def build_panel(
 
         w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_lc)
-        apply_btn = QPushButton("Apply Local Contrast")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Local Contrast")
         apply_btn.setEnabled(apply_enabled)
+        w.commit_option = lambda: slider.value() / 100.0
         if on_apply is not None:
-            apply_btn.clicked.connect(lambda: on_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         lc_row = QHBoxLayout()
         lc_row.addWidget(QLabel("Strength (off → full)"))
         lc_row.addWidget(lc_val)
-        lay.addLayout(lc_row)
-        lay.addWidget(slider)
-        lay.addWidget(apply_btn)
+        controls.addLayout(lc_row)
+        controls.addWidget(slider)
         w.lc_slider = slider
         w.lc_val = lc_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "star_reduction":
-        lay.addWidget(_desc_label(
-            "Shrink and dim the stars so the nebula stands out. Drag right for "
-            "more reduction. 0 = untouched."))
         status = _desc_label("")   # main_window sets "Separating stars…" / gate text
-        lay.addWidget(status)
+        notes.addWidget(status)
         slider = ResetSlider(0)
         sr_val = QLabel(f"{slider.value() / 100:.2f}")
 
@@ -909,23 +1008,22 @@ def build_panel(
 
         w.neutral_option = slider.value() / 100.0
         slider.valueChanged.connect(_emit_sr)
-        apply_btn = QPushButton("Apply Star Reduction")
-        apply_btn.setObjectName("primary")
+        apply_btn = ApplyButton("Apply Star Reduction")
+        w.commit_option = lambda: slider.value() / 100.0
         if on_sr_apply is not None:
-            apply_btn.clicked.connect(lambda: on_sr_apply(slider.value() / 100.0))
+            apply_btn.clicked.connect(lambda: on_sr_apply(w.commit_option()))
         # Start disabled — main_window enables once the (slow) StarX split is ready.
         slider.setEnabled(False)
         apply_btn.setEnabled(False)
         sr_row = QHBoxLayout()
         sr_row.addWidget(QLabel("Reduction (none → strong)"))
         sr_row.addWidget(sr_val)
-        lay.addLayout(sr_row)
-        lay.addWidget(slider)
-        lay.addWidget(apply_btn)
+        controls.addLayout(sr_row)
+        controls.addWidget(slider)
         w.sr_status = status
         w.sr_slider = slider
         w.sr_val = sr_val
-        w.apply_btn = apply_btn
+        w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "export":
         from ..core.colour import EIGHT_BIT_SPACES, SPACES
@@ -964,24 +1062,24 @@ def build_panel(
         if on_export is not None:
             export_btn.clicked.connect(
                 lambda: on_export(box.currentText(), space_box.currentText()))
-        lay.addWidget(QLabel("Format"))
-        lay.addWidget(box)
-        lay.addWidget(QLabel("Colour space"))
-        lay.addWidget(space_box)
-        lay.addWidget(_desc_label(
-            "Every export is tagged, so other programs show it as you see it "
-            "here. Wider spaces are for 16-bit TIFF only — in 8-bit they band."))
-        lay.addWidget(export_btn)
+        controls.addWidget(QLabel("Format"))
+        controls.addWidget(box)
+        controls.addWidget(QLabel("Colour space"))
+        controls.addWidget(space_box)
         w.format_box = box
         w.space_box = space_box
         w.burn_annotations = QCheckBox("Burn annotations (PNG)")
         w.burn_annotations.setEnabled(False)   # main_window enables when a solve exists
-        lay.addWidget(w.burn_annotations)
+        controls.addWidget(w.burn_annotations)
+        notes.addWidget(_desc_label(
+            "Every export is tagged, so other programs show it as you see it "
+            "here. Wider spaces are for 16-bit TIFF only — in 8-bit they band."))
         if not split_enabled:
-            lay.addWidget(_desc_label(
+            notes.addWidget(_desc_label(
                 "Starless + stars split needs RC-Astro (set its path in Settings)."))
         w.fmt_box = box
-        w.export_btn = export_btn
+        # The step's main action: pinned by MainWindow like every Apply.
+        w.export_btn = w.primary_action = export_btn
 
         # --- and, optionally, the gallery ---------------------------------
         #
@@ -1001,17 +1099,19 @@ def build_panel(
         w.wall_target = None
         if wall_fields is not None:
             # The Colour step's divider, so "optional" reads the same way
-            # twice in the app rather than twice differently.
-            lay.addSpacing(14)
+            # twice in the app rather than twice differently. Last in the
+            # notes area: an optional section after everything about the
+            # export itself, as on Colour.
+            notes.addSpacing(14)
             wall_rule = QFrame()
             wall_rule.setFrameShape(QFrame.Shape.HLine)
             wall_rule.setObjectName("panelRule")
-            lay.addWidget(wall_rule)
-            lay.addSpacing(10)
+            notes.addWidget(wall_rule)
+            notes.addSpacing(10)
             heading = QLabel("Share to the gallery")
             heading.setObjectName("panelSectionLabel")
-            lay.addWidget(heading)
-            lay.addWidget(_desc_label(
+            notes.addWidget(heading)
+            notes.addWidget(_desc_label(
                 "Optional. Publish this picture in the public gallery at "
                 "nocturneastro.com. It is looked at before it appears, and can "
                 "be taken down later by asking."))
@@ -1020,16 +1120,16 @@ def build_panel(
             # so the panel cannot claim one thing and send another.
             summary = _wall_summary(wall_fields, wall_handle)
             if summary:
-                lay.addWidget(_desc_label(summary))
+                notes.addWidget(_desc_label(summary))
 
             # ONE field, and only when the file supplied no object. A TIFF has
             # no FITS headers and finishing one is a first-class use; without
             # this such a picture reaches the wall as a byline and nothing else.
             if not (wall_fields.get("target") or "").strip():
-                lay.addWidget(QLabel("Object"))
+                notes.addWidget(QLabel("Object"))
                 w.wall_target = QLineEdit()
                 w.wall_target.setPlaceholderText("M 31 — this file does not name one")
-                lay.addWidget(w.wall_target)
+                notes.addWidget(w.wall_target)
 
             w.wall_consent = QCheckBox("Publish this in the Nocturne gallery")
             w.wall_btn = QPushButton("Send to the gallery")
@@ -1072,28 +1172,13 @@ def build_panel(
             w.wall_consent.toggled.connect(_wall_state)
             w.wall_btn.clicked.connect(_wall_click)
             w.wall_finished = _wall_finished
-            lay.addWidget(w.wall_consent)
-            lay.addWidget(w.wall_btn)
-            lay.addWidget(w.wall_note)
+            notes.addWidget(w.wall_consent)
+            notes.addWidget(w.wall_btn)
+            notes.addWidget(w.wall_note)
             _wall_state()
 
     else:  # placeholder / unknown
-        lay.addWidget(QLabel("Coming soon."))
-
-    # Every stage that can commit gets this, in the same place. Import has
-    # nothing to reset (the toolbar Reset owns that) and Export commits nothing.
-    # NOT `reset_btn`: the Curves panel already owns that name for its
-    # curve-preset Reset (step_panels.py, clicked by tests/ui/test_step_panels.py),
-    # and the shared tail runs last, so reusing the name would silently clobber
-    # it and the curve reset would start resetting the whole step.
-    # Names the affordance he already had (Space peek) on every stage where
-    # comparing is the point — same exclusion as Reset step below. Muted
-    # help-text level: this is ambient orientation, not a status the user
-    # must notice (that's pending_label, below).
-    w.compare_hint = None
-    if stage.id not in ("load", "export"):
-        w.compare_hint = _desc_label("Press Space to toggle before and after.")
-        lay.addWidget(w.compare_hint)
+        controls.addWidget(QLabel("Coming soon."))
 
     # Every stage that can commit gets this, in the same place. Import has
     # nothing to reset (the toolbar Reset owns that) and Export commits nothing.
@@ -1102,52 +1187,23 @@ def build_panel(
     # and the shared tail runs last, so reusing the name would silently clobber
     # it and the curve reset would start resetting the whole step.
     #
-    # BELOW the compare hint and behind a rule, moved 2026-09-13. It sat
-    # directly under Apply, where Andreas read it as part of the tool: "now they
-    # risk reading like they are part of the tool". It is not a parameter — it
-    # is recovery, used occasionally and deliberately.
+    # Built here but NOT laid out: MainWindow pins it at the right of the main
+    # action, on the one row of the side panel's action slot (SidePanel.
+    # set_actions; Andreas, 2026-09-25 19:30, "one row", no divider) —
+    # reversing the 2026-09-13 call to keep it beside the controls: Apply and
+    # Reset in the same place on every step is "about muscle memory again".
     #
-    # Deliberately NOT moved to the bottom of the sidebar, which was the other
-    # option considered. That buys a consistent screen position at the cost of
-    # distance from the thing it acts on, and "Reset step" isolated at the foot
-    # of the pane invites the reading "reset everything" — the label argues
-    # against that and placement argues louder. Consistency also earns less here
-    # than it would for Apply or Next: nobody builds muscle memory for a button
-    # they press once in a while, and when they do press it they are already
-    # looking at the panel, having just decided they dislike the result.
-    #
-    # Same divider idiom as the Colour step's "Optional" group, so the panel has
-    # one grammar for "below this line is not the main action".
+    # The "Press Space to toggle before and after" line that sat above it is
+    # gone from every panel (spec §2.6: Space, F and Escape move to a Keyboard
+    # shortcuts help topic), and so is the "Not applied yet" line: the pending
+    # state is now carried by the ApplyButton itself.
     w.reset_step_btn = None
     if stage.id not in ("load", "export"):
-        lay.addSpacing(12)
-        rule = QFrame()
-        rule.setFrameShape(QFrame.Shape.HLine)
-        rule.setObjectName("panelRule")
-        lay.addWidget(rule)
-        lay.addSpacing(8)
         w.reset_step_btn = QPushButton("Reset step")
         w.reset_step_btn.setObjectName("resetStep")   # warm tint, see theme.py
         w.reset_step_btn.setEnabled(False)   # main_window enables when there is work
         if on_reset_step is not None:
             w.reset_step_btn.clicked.connect(lambda: on_reset_step())
-        lay.addWidget(w.reset_step_btn)
-
-    # Every stage, one place. The preview is pixel-identical to the commit by
-    # design, so this line is the only thing that distinguishes them.
-    w.pending_label = QLabel("Not applied yet")
-    w.pending_label.setObjectName("pendingNote")
-    w.pending_label.setWordWrap(True)
-    w.pending_label.setVisible(False)
-    # ABOVE the apply button, not below it. Below the primary action is past
-    # where the eye stops — the line answering "did that apply?" has to sit in
-    # the path to the button, not after it.
-    anchor = getattr(w, "apply_btn", None)
-    index = lay.indexOf(anchor) if anchor is not None else -1
-    if index >= 0:
-        lay.insertWidget(index, w.pending_label)
-    else:
-        lay.addWidget(w.pending_label)
 
     lay.addStretch(1)
     return w

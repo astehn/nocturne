@@ -17,7 +17,8 @@ def test_panel_has_description_strip(qtbot):
     stage = next(s for s in path_stages() if s.id == "stretch")
     panel = build_panel(stage)
     qtbot.addWidget(panel)
-    descs = [c for c in panel.findChildren(QLabel) if c.objectName() == "stepDesc"]
+    # In the panel's header since 2026-09-25 (pinned above the scroll).
+    descs = [c for c in panel.header.findChildren(QLabel) if c.objectName() == "stepDesc"]
     assert descs, "panel has a stepDesc label"
 
 
@@ -74,7 +75,9 @@ def test_auto_panel_apply_color_has_no_green(qtbot):
     # De-green Sky moved to its own stage — Color must carry none of it.
     assert not hasattr(w, "rg_slider")
     assert not hasattr(w, "remove_green_btn")
-    w.apply_btn.click()
+    # The method's commit: the visible Apply is built unconnected and wired by
+    # MainWindow to _apply_colour_step (spec §2.4).
+    w.apply_method_btn.click()
     assert len(got) == 1 and isinstance(got[0], ColorSettings)
     assert got[0].remove_green is False
 
@@ -86,13 +89,13 @@ def test_color_panel_apply_passes_method(qtbot):
     qtbot.addWidget(w)
     assert hasattr(w, "method_box")
     w.method_box.setCurrentText("Photometric (SPCC)")
-    w.apply_btn.click()
+    w.apply_method_btn.click()
     assert isinstance(captured["opt"], ColorSettings)
     assert captured["opt"].method == "photometric"
     # default selection -> sky
     w2 = build_panel(_stage("color"), on_apply=lambda opt: captured.__setitem__("opt2", opt))
     qtbot.addWidget(w2)
-    w2.apply_btn.click()
+    w2.apply_method_btn.click()
     assert captured["opt2"].method == "sky"
 
 
@@ -482,7 +485,8 @@ def test_background_panel_explains_gradient_and_how_to_check_it(qapp):
     object) looks merely a little flat there and is obvious in the model."""
     from PySide6.QtWidgets import QLabel
     w = build_panel(_stage("background"))
-    texts = " ".join(l.text().lower() for l in w.findChildren(QLabel))
+    texts = " ".join(l.text().lower() for l in
+                     w.findChildren(QLabel) + w.header.findChildren(QLabel))
     assert "gradient" in texts
     assert "show what was removed" in texts, "the check is not named"
     assert "mid-grey" in texts, "mid-grey is the reading key; without it the view is unreadable"
@@ -662,7 +666,7 @@ def test_apply_color_no_longer_carries_the_tint(qtbot):
                         on_apply=lambda opt: captured.append(opt))
     qtbot.addWidget(panel)
     panel.tint_slider.setValue(-80)
-    panel.apply_btn.click()
+    panel.apply_method_btn.click()
     assert captured and not hasattr(captured[-1], "tint")
 
 
@@ -681,74 +685,60 @@ def test_zero_tint_is_bit_identical(qtbot):
     assert np.array_equal(out.data, data)
 
 
-def test_reset_step_sits_below_the_compare_hint_behind_a_rule(qtbot):
-    """Moved 2026-09-13. It sat directly under Apply, where Andreas read it as
-    part of the tool: "now they risk reading like they are part of the tool".
-    It is recovery, not a parameter.
+def test_reset_step_sits_beside_the_main_action_at_the_right(qtbot):
+    """Moved 2026-09-13 off the tool, where Andreas read it as part of it:
+    "now they risk reading like they are part of the tool". It is recovery,
+    not a parameter.
 
-    Asserted by ORDER in the layout rather than by pixel position, which is the
-    part that carries the meaning: whatever the step's controls are, Reset comes
-    after the step's own affordances and after a divider.
+    Since 2026-09-25 ("one row + histogram"): the main action and Reset step
+    share ONE pinned row — Apply takes the stretch, Reset is the small button
+    at the right, and nothing else sits between or around them. Asserted with
+    this panel's real widgets in a real SidePanel.
     """
     from PySide6.QtWidgets import QFrame
+    from nocturne.ui.side_panel import SidePanel
     w = build_panel(_stage("stretch"), on_apply=lambda v: None,
                     on_reset_step=lambda: None)
     qtbot.addWidget(w)
-    lay = w.layout()
+    side = SidePanel(400)
+    qtbot.addWidget(side)
+    side.set_actions(w.primary_action, w.reset_step_btn)
+    side.set_action_height(60)
+    side.resize(400, 800); side.show(); qtbot.waitExposed(side)
+    lay = side.action_slot.layout()
     order = [lay.itemAt(i).widget() for i in range(lay.count())]
-
-    i_apply = order.index(w.apply_btn)
-    i_hint = order.index(w.compare_hint)
-    i_reset = order.index(w.reset_step_btn)
-    rules = [x for x in order if isinstance(x, QFrame) and x.objectName() == "panelRule"]
-    assert rules, "no divider separates Reset from the tool"
-    i_rule = order.index(rules[-1])
-
-    assert i_apply < i_hint < i_rule < i_reset, (
-        "Reset must come after Apply, after the compare hint, and after a rule")
+    assert order == [w.apply_btn, w.reset_step_btn], order
+    assert not side.action_slot.findChildren(QFrame), "no divider in the one-row layout"
+    a, r = w.apply_btn.geometry(), w.reset_step_btn.geometry()
+    assert r.left() > a.right(), "Reset must sit to the right of the main action"
+    assert r.width() == w.reset_step_btn.sizeHint().width(), "Reset is at its own size"
+    assert a.width() > r.width(), "the main action takes the stretch"
 
 
-def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot):
+def test_import_and_export_have_no_reset_and_no_stray_rule(qtbot, tmp_path):
     """Neither can reset — Import has nothing committed and the toolbar Reset
-    owns that; Export commits nothing. The divider must not appear on its own."""
-    from PySide6.QtWidgets import QFrame
-    for sid in ("load", "export"):
-        w = build_panel(_stage(sid))
-        qtbot.addWidget(w)
-        assert w.reset_step_btn is None, sid
-        lay = w.layout()
-        rules = [lay.itemAt(i).widget() for i in range(lay.count())]
-        assert not [r for r in rules
-                    if isinstance(r, QFrame) and r.objectName() == "panelRule"], (
-            f"{sid}: a divider with nothing under it")
+    owns that; Export commits nothing. Nothing may stand in the pinned row on
+    its own: no divider, no leftover from the previous step. Read off the
+    REAL window's action slot, where the row actually lives."""
+    from PySide6.QtWidgets import QWidget
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+    slot = win._side.action_slot
 
+    def shown():
+        qtbot.wait(20)
+        return [c for c in slot.findChildren(QWidget) if c.isVisible()]
 
-def _controls_after(panel, widget):
-    """Interactive controls laid out below `widget`, in layout order.
-
-    Layout index, not screen geometry: the panels are built unshown, so
-    geometry is meaningless until a window lays them out.
-    """
-    from PySide6.QtWidgets import (
-        QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider,
-    )
-    kinds = (QCheckBox, QComboBox, QPushButton, QRadioButton, QSlider)
-    lay = panel.layout()
-    anchor = lay.indexOf(widget)
-    assert anchor >= 0, "the commit button is in the panel's own layout"
-    after = []
-    for i in range(anchor + 1, lay.count()):
-        item = lay.itemAt(i)
-        child = item.widget()
-        if child is None:                     # a nested row: scan it too
-            sub = item.layout()
-            if sub is not None:
-                after += [sub.itemAt(j).widget() for j in range(sub.count())
-                          if isinstance(sub.itemAt(j).widget(), kinds)]
-            continue
-        if isinstance(child, kinds):
-            after.append(child)
-    return after
+    win._go_to_id("levels", user_initiated=False)   # a step WITH a row, first
+    assert shown(), "precondition: the row holds Apply and Reset on Levels"
+    win._go_to_id("load", user_initiated=False)
+    assert win._panel.reset_step_btn is None
+    assert shown() == [], f"Import's row shows {shown()}"
+    win._go_to_id("export", user_initiated=False)
+    assert win._panel.reset_step_btn is None
+    assert shown() == [win._panel.export_btn], f"Export's row shows {shown()}"
 
 
 @pytest.mark.parametrize("stage_id", [s.id for s in path_stages()])
@@ -757,26 +747,141 @@ def test_nothing_sits_below_the_commit_button(qtbot, stage_id):
 
     Andreas, 2026-09-17, on Visual stretch sitting below Apply Stretch: a
     control under the commit button reads as something you do AFTER applying,
-    and Stretch was the only step that broke the rule. Reset step is exempt —
-    it is deliberately below a rule as recovery, not a parameter.
+    and Stretch was the only step that broke the rule.
+
+    Since 2026-09-25 this holds by construction rather than by each panel's
+    care: the main action is not in the panel at all but pinned in the side
+    panel's action slot, BELOW the scroll area that holds every control. So
+    the check is that nothing the step shows lives with it: the main action
+    is outside the card, and Colour's second commit button (Apply Tint) is
+    neither shown nor laid out. Reset step is pinned too, behind a divider,
+    as recovery rather than a parameter.
     """
+    from nocturne.ui.side_panel import SidePanel
     panel = build_panel(_stage(stage_id), on_apply=lambda o: None,
                         on_visual_stretch=lambda: None,
                         on_apply_tint=lambda *a: None,
                         on_remove_green=lambda v: None)
     qtbot.addWidget(panel)
-    commit = getattr(panel, "apply_tint_btn", None) or getattr(panel, "apply_btn", None)
+    commit = panel.primary_action
     if commit is None:
         pytest.skip(f"{stage_id} commits nothing")
-    # Two deliberate exceptions, both of which are ABOUT having applied:
-    # Reset step is recovery, below a rule (see step_panels.py); and
-    # "Show what was removed" is disabled until background extraction has run,
-    # so it is a post-apply view toggle, not a parameter. That they read
-    # correctly below Apply is the same reason Visual stretch read wrongly.
-    exempt = {panel.reset_step_btn, getattr(panel, "show_model_check", None)}
-    stray = [c for c in _controls_after(panel, commit) if c not in exempt]
-    # Not `c.text()`: half these controls are sliders and combo boxes, which
-    # have no text(), and building the message crashed the assertion into an
-    # AttributeError that hid what it had actually found.
-    assert not stray, [f"{type(c).__name__} {getattr(c, 'text', lambda: '')()}"
-                       for c in stray]
+    assert not panel.isAncestorOf(commit), "the commit button is inside the card"
+    tint = getattr(panel, "apply_tint_btn", None)
+    if tint is not None:
+        assert tint.isHidden() and not tint.isVisibleTo(panel)
+        assert all(lay.indexOf(tint) < 0 for lay in panel.findChildren(type(panel.layout()))
+                   + [panel.layout()]), "Apply Tint is laid out"
+    side = SidePanel(400)
+    qtbot.addWidget(side)
+    assert side.step_frame.isAncestorOf(side.scroll)
+    assert 0 <= side.layout_.indexOf(side.step_frame) < side.layout_.indexOf(side.action_slot), (
+        "the pinned action must sit below the scrolling controls")
+
+
+# --- the panel template (consistent-panels, Task 4) -------------------------
+#
+# Every step is title row, a FIXED two-line description box, controls, notes;
+# the main action and Reset step are built here but handed out to the side
+# panel's pinned action slot, so Apply sits in one place on every step.
+
+from nocturne.ui.apply_button import ApplyButton  # noqa: E402
+
+_EXPECTED_ACTION = {"load": None, "enhancements": None, "export": "Export"}
+_ALL_STAGES = path_stages(include=frozenset({"ai_denoise"}))
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_every_panel_follows_the_template(qtbot, stage):
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    assert w.desc_box.text().strip(), f"{stage.id} has no description"
+    assert w.desc_box.objectName() == "stepDesc"
+    lines = w.desc_box.fontMetrics().lineSpacing()
+    assert w.desc_box.height() == w.desc_box.maximumHeight() == w.desc_box.minimumHeight()
+    # Two lines tall — not one, not three — whatever the text is.
+    assert 2 * lines <= w.desc_box.height() < 3 * lines
+    assert not hasattr(w, "pending_label") and not hasattr(w, "compare_hint")
+    exp = _EXPECTED_ACTION.get(stage.id, "apply")
+    if exp is None:
+        assert w.primary_action is None
+    elif exp == "apply":
+        assert isinstance(w.primary_action, ApplyButton) and w.apply_btn is w.primary_action
+    else:
+        assert exp in w.primary_action.text()
+    # not in the panel's own layout — MainWindow pins it
+    if w.primary_action is not None:
+        assert w.isAncestorOf(w.primary_action) is False
+    if w.reset_step_btn is not None:
+        assert w.isAncestorOf(w.reset_step_btn) is False
+
+
+def test_colour_has_one_visible_apply(qtbot):
+    stage = next(s for s in path_stages() if s.id == "color")
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    assert isinstance(w.primary_action, ApplyButton)
+    # the tint button still exists for _apply_sequence, but is never shown
+    assert w.apply_tint_btn is not None and not w.apply_tint_btn.isVisibleTo(w)
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_description_is_at_most_two_lines_at_the_real_width(qtbot, stage):
+    from nocturne.ui.main_window import RIGHT_PANE_W
+    from nocturne.ui.side_panel import SidePanel
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    # At its real width: in a real SidePanel's header slot.
+    side = SidePanel(RIGHT_PANE_W)
+    qtbot.addWidget(side)
+    side.set_header(w.header)
+    side.resize(RIGHT_PANE_W, 800); side.show(); qtbot.waitExposed(side)
+    d = w.desc_box
+    # A free label at the same width: the fixed-height box's own
+    # heightForWidth is clamped to its minimum and can't say it overflows.
+    free = QLabel(d.text()); free.setObjectName("stepDesc"); free.setWordWrap(True)
+    free.setParent(d.parentWidget()); free.hide()
+    free.ensurePolished()
+    needed = free.heightForWidth(d.width())
+    assert needed <= d.height(), f"{stage.id}: description needs {needed}px of a {d.height()}px box"
+
+
+def test_the_description_box_is_two_lines_under_the_real_stylesheet(qtbot):
+    """The suite runs without the app stylesheet, which gives stepDesc its own
+    font size and padding — a height fixed from the construction-time font
+    would be the wrong height in his real window (the ApplyButton's 45 vs
+    47 px lesson). Two lines fit; a third does not."""
+    from nocturne.ui.theme import build_stylesheet
+    w = build_panel(_stage("stretch"), apply_enabled=True)
+    qtbot.addWidget(w)
+    h = w.header
+    qtbot.addWidget(h)
+    h.setStyleSheet(build_stylesheet())
+    h.resize(376, 200); h.show(); qtbot.waitExposed(h)
+    d = w.desc_box
+    probe = QLabel(); probe.setObjectName("stepDesc"); probe.setWordWrap(True)
+    from PySide6.QtWidgets import QVBoxLayout, QWidget
+    host = QWidget(h)
+    QVBoxLayout(host).addWidget(probe)
+    probe.ensurePolished()
+    assert probe.font().pixelSize() == d.font().pixelSize() == 12, "precondition: stylesheet font"
+    probe.setText("one\ntwo")
+    assert probe.heightForWidth(d.width()) <= d.height()
+    probe.setText("one\ntwo\nthree")
+    assert probe.heightForWidth(d.width()) > d.height()
+
+
+@pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)
+def test_controls_and_notes_follow_the_description(qtbot, stage):
+    """The title and the fixed description are the header (pinned above the
+    scroll by MainWindow); the card starts with the controls, so they start
+    at the same height on every step; notes come after the controls."""
+    w = build_panel(stage, apply_enabled=True)
+    qtbot.addWidget(w)
+    lay = w.layout()
+    body = w.controls.parentWidget()
+    notes = w.notes.parentWidget()
+    assert body.objectName() == notes.objectName() == "panelBody"
+    assert w.header.isAncestorOf(w.desc_box) and w.header.isAncestorOf(w.help_link)
+    assert not w.isAncestorOf(w.header), "the header is handed out, not in the card"
+    assert (lay.indexOf(body), lay.indexOf(notes)) == (0, 1)

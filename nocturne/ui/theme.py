@@ -14,8 +14,16 @@ BORDER = "#3c4046"
 RULE = "#31343a"
 ACCENT = "#4a90e2"   # blue — interactive accent (sliders, focus, Next/advance)
 ACCENT_HI = "#5fa0ee"
-SUCCESS = "#3fb950"  # green — commit/apply hero ("done with this edit")
-SUCCESS_HI = "#4cc85e"
+SUCCESS = "#3fb950"  # green — ticks and "applied" text; button fills use APPLY_FILL
+# The green BUTTON fill, darker than SUCCESS (Andreas, 2026-09-26, from a
+# Photoshop mock-up: HSB 128/68/73 -> 65). Only one button is lit at a time,
+# green Apply or blue Next, so they should be equally loud: SUCCESS measured
+# luminance 0.363 against ACCENT's 0.269; this fill is 0.284. Dark ink on it
+# is 5.2:1. Ticks and "applied" text keep SUCCESS: small shapes on a dark
+# background need the brighter value to read.
+APPLY_FILL = "#35a644"       # HSB 128/68/65
+APPLY_FILL_HI = "#39b249"    # hover, 128/68/70
+APPLY_FILL_DOWN = "#329c40"  # pressed, 128/68/61 — darkest that keeps the ink at 4.5:1 (4.62); the old pressed (#37a247) is the new resting colour
 WARNING = "#e3b341"  # amber
 DANGER = "#f85149"   # red
 # Reset step's text, warm but well short of DANGER. Reset is not dangerous in
@@ -34,6 +42,14 @@ def build_stylesheet() -> str:
     return f"""
 * {{ color: {TEXT}; font-size: 14px; }}
 QMainWindow, QWidget {{ background-color: {BG_1}; }}
+/* Inside a step card everything lets the card colour through. The global rule
+   above paints EVERY widget BG_1, which put a darker rectangle behind every
+   label on the BG_2 card (his screenshot, 2026-09-25). Buttons, dropdowns,
+   inputs and sliders keep their own surfaces — only plain text and containers
+   go transparent. */
+QWidget#stepCard QLabel, QWidget#stepCard QWidget#panelBody,
+QWidget#stepCard QCheckBox, QWidget#stepCard QRadioButton,
+QWidget#stepCard QFrame#panelRule {{ background: transparent; }}
 QToolBar {{ background: {BG_2}; border: none; spacing: 4px; padding: 6px; }}
 QToolBar::separator {{ background: {BORDER}; width: 1px; margin: 4px 6px; }}
 QToolBar QToolButton {{ padding: 6px 10px; border-radius: 8px; color: {TEXT_DIM}; }}
@@ -57,21 +73,34 @@ QPushButton {{ background: {BG_3}; border: 1px solid {BORDER}; border-radius: 8p
 QPushButton:hover {{ background: #3e4248; }}
 QPushButton:pressed {{ background: {BG_2}; }}
 QPushButton:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
-QPushButton#primary {{ background: {SUCCESS}; color: #052611; font-weight: 600; border: none; }}
-QPushButton#primary:hover {{ background: {SUCCESS_HI}; }}
-/* SUCCESS is documented above as "there is an edit to commit". A step with
+QPushButton#primary {{ background: {APPLY_FILL}; color: #052611; font-weight: 600; border: none; }}
+QPushButton#primary:hover {{ background: {APPLY_FILL_HI}; }}
+/* The green fill means "there is an edit to commit". A step with
    nothing pending has no edit to commit, and a colour that is always on carries
-   no information — so the hero green is spent only when it is true. Set ONLY on
+   no information — so the green is spent only when it is true. Set ONLY on
    the step-panel apply buttons (see _sync_step_controls); everything else keeps
    the default above. */
 QPushButton#primary[pending="false"] {{ background: {BG_3}; color: {TEXT};
                                         border: 1px solid {BORDER}; }}
 QPushButton#primary[pending="false"]:hover {{ background: #383b41; }}
-QPushButton#primary:pressed {{ background: #37a247; }}
+QPushButton#primary:pressed {{ background: {APPLY_FILL_DOWN}; }}
+/* A plain Apply stays plain while held: turning green under TEXT made the
+   label 3.2:1 and a live "applied" status vanish (SUCCESS on green). */
+QPushButton#primary[pending="false"]:pressed {{ background: {BG_2}; }}
 QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
 QPushButton#nav:hover {{ background: {ACCENT_HI}; }}
 QPushButton#nav:pressed {{ background: #3f80cc; }}
+/* Next is lit (ACCENT, above) only when the step is done — its Apply says
+   applied / no changes, or it has none — so ONE button is lit at a time: the
+   next thing to press (Andreas, 2026-09-26, D2). Unlit it looks like Back but
+   stays clickable; the unapplied-changes prompt still guards it. `lit` is set
+   in MainWindow._sync_next_light. It keeps #nav's weight and `border: none`,
+   so the colour never moves the button. Before
+   :disabled — same specificity, and a disabled Next must stay grey. */
+QPushButton#nav[lit="false"] {{ background: {BG_3}; color: {TEXT}; }}
+QPushButton#nav[lit="false"]:hover {{ background: #3e4248; }}
+QPushButton#nav[lit="false"]:pressed {{ background: {BG_2}; }}
 QPushButton#nav:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 
 QGraphicsView {{ background: {BG_0}; border: 1px solid #2c2f34; }}
@@ -106,11 +135,21 @@ QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
+/* The side panel's ONE step card (Ruling R6): the rounded frame holds the
+   fixed header and the scrolling controls, and every plain container inside
+   it lets the frame colour through — the inner step card included, so there
+   is one visible surface, not a card inside a card. */
+QFrame#stepFrame {{ background: {BG_2}; border-radius: 10px; }}
+QFrame#stepFrame QWidget#stepHeaderSlot, QFrame#stepFrame QWidget#stepHeader,
+QFrame#stepFrame QWidget#stepHeader QLabel, QFrame#stepFrame QScrollArea,
+QFrame#stepFrame QScrollArea > QWidget, QFrame#stepFrame QScrollArea > QWidget > QWidget,
+QFrame#stepFrame QWidget#stepCard, QFrame#stepFrame QWidget#solvePanel,
+QFrame#stepFrame QLabel#stepExplainer, QFrame#stepFrame QLabel#fullHelpLink
+{{ background: transparent; }}
+/* "How this works" on the title line: the link is drawn in ACCENT with no
+   underline by MainWindow's rich text; this sizes it to sit on the title. */
+QLabel#helpHeader {{ font-size: 12px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
-/* The answer to "did that apply?" — so NOT stepDesc's muted help-text grey, which
-   is the styling people skim past. Full-strength text, above the button. */
-QLabel#pendingNote {{ color: {TEXT}; font-size: 13px; font-weight: 600;
-                      padding: 2px 0 6px 0; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}

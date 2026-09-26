@@ -15,6 +15,22 @@ def test_missing_file_returns_defaults(tmp_path):
     assert s.graxpert_path == ""
 
 
+def test_a_removed_field_left_over_in_an_old_file_is_ignored(tmp_path):
+    """A settings file written by a build that still had `apply_look` (the
+    Apply-button A/B trial, removed once Andreas picked look A) must still
+    load — the per-field `.get` in load_settings only reads the keys it
+    knows about, so an orphan key needs no migration."""
+    import json
+    p = tmp_path / "s.json"
+    save_settings(Settings(graxpert_path="/x/graxpert"), str(p))
+    data = json.loads(p.read_text())
+    data["apply_look"] = "B"
+    p.write_text(json.dumps(data))
+    loaded = load_settings(str(p))
+    assert loaded.graxpert_path == "/x/graxpert"
+    assert not hasattr(loaded, "apply_look")
+
+
 def test_graxpert_valid(tmp_path):
     f = tmp_path / "graxpert"
     f.write_text("#!/bin/sh\n")
