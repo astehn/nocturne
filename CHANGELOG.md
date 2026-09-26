@@ -2,6 +2,23 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.41.0] — 2026-09-26
+
+Nothing moves any more, and Nocturne fits a laptop screen.
+
+### Added
+- Every step has the same layout: a short description at the top, the controls always starting at the same height, and Apply and Reset step in the same place at the bottom.
+- The Apply button shows where the step stands — "changes not applied", "not run yet", "✓ applied" or "no changes" — and only one button is lit at a time: Apply while there is something to apply, then Next.
+- A More menu at the end of the toolbar holds the tools that do not fit; it opens on a click and stays open. Settings ▸ General ▸ Toolbar adds Icons only for small screens.
+
+### Changed
+- The bottom bar is gone: the log is in the left column and background stacking shows at the right of the toolbar, so the picture gets the full height of the window.
+- Settings is in three tabs — General, External tools and Privacy — and General shows your version and whether it is the latest.
+- Plate Solve opens in its own window over the picture, and on a small screen Curves uses the large curve editor.
+
+### Fixed
+- Undo, Redo and Reset could run while a step was still working and leave the history out of step with the picture.
+
 ## [0.40.0] — 2026-09-24
 
 Nocturne works on a trackpad, and a problem report can carry the log that explains it.
