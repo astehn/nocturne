@@ -147,7 +147,7 @@ QFrame#stepFrame {{ background: {BG_2}; border-radius: 10px; }}
 QFrame#stepFrame QWidget#stepHeaderSlot, QFrame#stepFrame QWidget#stepHeader,
 QFrame#stepFrame QWidget#stepHeader QLabel, QFrame#stepFrame QScrollArea,
 QFrame#stepFrame QScrollArea > QWidget, QFrame#stepFrame QScrollArea > QWidget > QWidget,
-QFrame#stepFrame QWidget#stepCard, QFrame#stepFrame QWidget#solvePanel,
+QFrame#stepFrame QWidget#stepCard,
 QFrame#stepFrame QLabel#stepExplainer, QFrame#stepFrame QLabel#fullHelpLink
 {{ background: transparent; }}
 /* "How this works" on the title line: the link is drawn in ACCENT with no

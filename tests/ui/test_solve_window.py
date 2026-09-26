@@ -77,3 +77,51 @@ def test_the_next_launch_restores_the_saved_place(qtbot, tmp_path, monkeypatch):
     second.open_fits(_make_fits(other)); second.show(); qtbot.waitExposed(second)
     second._open_plate_solve(); qtbot.wait(20)
     assert second._solve_window.pos() == QPoint(100, 120)
+
+
+def test_close_project_closes_the_tool(win, qtbot):
+    win._open_plate_solve()
+    win._close_project()
+    assert not win._solve_window.isVisible() and not win._solve_act.isChecked()
+
+
+def test_fullscreen_hides_it_and_brings_it_back(win, qtbot):
+    win._open_plate_solve()
+    win._hide_chrome_for_fullscreen()
+    assert not win._solve_window.isVisible()
+    win._restore_chrome_after_fullscreen()
+    assert win._solve_window.isVisible()
+
+
+def test_quitting_with_it_open_keeps_its_place(win, qtbot):
+    win._open_plate_solve(); qtbot.wait(20)
+    win._solve_window.move(90, 110); qtbot.wait(20)
+    win.settings.solve_window_geometry = ""
+    win._dirty = False
+    win.close()
+    assert win.settings.solve_window_geometry, "quitting with it open lost its place"
+
+
+def test_a_solve_landing_after_the_window_closed_leaves_the_button_off(win, qtbot, monkeypatch):
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    from nocturne.core.catalog import CatalogObject
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    win._open_plate_solve()
+    win._solve_window.close()
+    monkeypatch.setattr(win, "_solve_current", lambda img: (
+        SolveResult(True, wc, 100.0, 0.0, 3.6),
+        [CatalogObject("NGC 7000", "North America", 100.0, 0.0, 120.0, 12, 12)]))
+    win._on_resolve_requested(); qtbot.wait(50)
+    assert not win._solve_window.isVisible()
+    assert not win._solve_act.isChecked()
+
+
+def test_solve_is_greyed_out_while_another_step_runs(win, qtbot):
+    win._open_plate_solve()
+    assert win.solve_panel.resolve_btn.isEnabled()
+    win._set_busy(True, "probe")
+    assert not win.solve_panel.resolve_btn.isEnabled()
+    win._set_busy(False)
+    assert win.solve_panel.resolve_btn.isEnabled()

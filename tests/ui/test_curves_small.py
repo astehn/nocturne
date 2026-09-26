@@ -69,3 +69,20 @@ def test_resizing_brings_the_inline_editor_back(qtbot, tmp_path):
     assert win._panel.curve_editor.isVisible()
     win.resize(1280, 800); qtbot.wait(50)
     assert not win._panel.curve_editor.isVisible()
+
+
+def test_where_there_is_room_the_inline_editor_is_its_full_size(qtbot, tmp_path):
+    """Review 2026-09-26: a 240 px minimum made it 240 everywhere (it has no
+    size hint of its own) — 25% smaller than main at his window size. Where
+    the room is there, it is 320 as on main."""
+    from nocturne.ui.main_window import _CURVE_FULL
+    win = _curves(qtbot, tmp_path, 2560, 1440)
+    assert win._panel.curve_editor.height() == _CURVE_FULL
+
+
+def test_in_the_band_between_it_shrinks_but_never_below_240(qtbot, tmp_path):
+    from nocturne.ui.main_window import _CURVE_FULL, _CURVE_MIN
+    win = _curves(qtbot, tmp_path, 1920, 1080)
+    h = win._panel.curve_editor.height()
+    assert _CURVE_MIN <= h <= _CURVE_FULL
+    assert win._panel.minimumSizeHint().height() <= win._side.scroll.viewport().height()

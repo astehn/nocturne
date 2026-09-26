@@ -79,6 +79,11 @@ from .trim_dialog import TrimDialog
 from .apply_button import ApplyButton
 from .side_panel import SidePanel
 from .solve_panel import SolvePanel, SolveWindow
+
+# The inline curve editor: its size on main, and the least it may shrink to
+# before the step offers only the large editor (Andreas, 2026-09-26).
+_CURVE_FULL = 320
+_CURVE_MIN = 240
 from .upscale_dialog import UpscaleDialog
 from .step_panels import BLACK_STEPS, build_panel
 from .icons import load_icon
@@ -772,8 +777,12 @@ class MainWindow(QMainWindow):
             "jobs_bar": self._jobs_bar.isVisible(),
             "left": self._left_column.isVisible(),
             "right": self._right_panel.isVisible(),
+            # A tool window floats above the main one; fullscreen is "the
+            # image and nothing else", so it goes too and comes back after.
+            "solve": self._solve_window.isVisible(),
         }
-        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel):
+        for w in (self._toolbar, self._jobs_bar, self._left_column, self._right_panel,
+                  self._solve_window):
             w.setVisible(False)
 
     def _restore_chrome_after_fullscreen(self) -> None:
@@ -787,6 +796,8 @@ class MainWindow(QMainWindow):
         self._jobs_bar.setVisible(prev["jobs_bar"])
         self._left_column.setVisible(prev["left"])
         self._right_panel.setVisible(prev["right"])
+        if prev.get("solve"):
+            self._solve_window.show()
         self._sync_left_column()    # restates from chrome state, not the captured snapshot
 
     def _show_chrome(self, visible: bool) -> None:
@@ -795,6 +806,11 @@ class MainWindow(QMainWindow):
         self._chrome_visible = visible
         self._sync_left_column()
         self._right_panel.setVisible(visible)
+        if not visible and self._solve_window.isVisible():
+            # Back to the welcome screen (Close Project): with no image the
+            # tool has nothing to solve. In the column it went with the chrome.
+            self._solve_window.hide()
+            self._on_solve_window_closed()
         self._rebuild_panel()
         self._refresh()
 
@@ -824,6 +840,8 @@ class MainWindow(QMainWindow):
         if not self._cancel_jobs_for_quit():
             event.ignore()
             return
+        if self._solve_window.isVisible():
+            self._on_solve_window_closed()   # keep its place for the next launch
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
@@ -1969,7 +1987,8 @@ class MainWindow(QMainWindow):
         self._show_annotations(res, objs)
         self.solve_panel.set_state("solved")
         self._update_solve_result_card(res, objs, cached=False)
-        self._solve_act.setChecked(True)
+        # The button follows the WINDOW: closed mid-solve, it stays closed.
+        self._solve_act.setChecked(self._solve_window.isVisible())
         self._rebuild_panel()                               # refresh Target line
 
     def _update_solve_result_card(self, res, objs, cached: bool) -> None:
@@ -4217,6 +4236,12 @@ class MainWindow(QMainWindow):
         self._sync_next_light()     # off while busy; restored by the sync below
         self._gate_panel_buttons(busy)
         self._sync_history_actions()
+        # Solve lives in its own window now, outside the panel sweep. Pressing
+        # it while a step ran did nothing, silently; say so by greying it.
+        if busy:
+            self.solve_panel.resolve_btn.setEnabled(False)
+        else:
+            self.solve_panel._update_resolve_button()
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"
             self._land_deferred_nav(self._resume_apply_run())
@@ -5040,9 +5065,18 @@ class MainWindow(QMainWindow):
             if not editor.isVisibleTo(p):
                 return
             p.inline_need = p.minimumSizeHint().height()
-        inline = self._side.scroll.viewport().height() >= p.inline_need
+        room = self._side.scroll.viewport().height()
+        inline = room >= p.inline_need
         if editor.isVisibleTo(p) != inline:
             editor.setVisible(inline)
+        if inline:
+            # 320 px where there is room — its size on main, which is what he
+            # sees at his own window size — and smaller only in the band
+            # between, down to 240. The editor has no size hint of its own, so
+            # a minimum IS its size (review 2026-09-26: 240 everywhere was 25%
+            # smaller at 2364x1100).
+            spare = room - p.inline_need
+            editor.setMinimumHeight(min(_CURVE_FULL, _CURVE_MIN + spare))
         p.expand_btn.setText("Open large editor…" if inline else "Open curve editor…")
 
     def _on_curves_dialog_apply(self, curves) -> None:
