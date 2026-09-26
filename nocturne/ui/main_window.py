@@ -5,6 +5,7 @@ import hashlib
 import os
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
 from PySide6.QtWidgets import (
@@ -3079,10 +3080,16 @@ class MainWindow(QMainWindow):
         """
         slot = self._PENDING_SLOTS.get(step_id)
         target = panel if panel is not None else self._panel
+        if target is not None and not shiboken6.isValid(target):
+            # The user left the step while its run was on the worker, so the
+            # captured panel is already deleted — touching its dropdown raised
+            # "QComboBox already deleted" and skipped the refresh. Its baselines
+            # die with it (a revisit builds a fresh panel); the slot still clears.
+            target = None
         if slot is not None:
             if preview is _UNSET:
                 preview = getattr(self, slot, None)
-            if preview is not None and hasattr(target, "neutral_option"):
+            if preview is not None and target is not None and hasattr(target, "neutral_option"):
                 target.neutral_option = preview
             setattr(self, slot, None)
         if applied_option is not None and getattr(target, "option_box", None) is not None:
@@ -4127,9 +4134,18 @@ class MainWindow(QMainWindow):
         self._next_btn.setEnabled(not busy and self._has_next())
         self._sync_next_light()     # off while busy; restored by the sync below
         self._gate_panel_buttons(busy)
+        self._sync_history_actions()
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"
             self._land_deferred_nav(self._resume_apply_run())
+
+    def _sync_history_actions(self) -> None:
+        """Undo, Redo and Reset rewrite the history, so they are off while a
+        step runs — its result lands on the history it started from."""
+        idle = not self._busy
+        self._undo_act.setEnabled(idle and bool(self.project and self.project.can_undo()))
+        self._redo_act.setEnabled(idle and bool(self.project and self.project.can_redo()))
+        self._reset_act.setEnabled(idle and self.project is not None)
 
     def _gate_panel_buttons(self, busy: bool) -> None:
         """Disable every button on the step panel while an operation runs.
@@ -5332,7 +5348,7 @@ class MainWindow(QMainWindow):
 
     # --- history ---
     def _reset_image(self) -> None:
-        if self.project is None:
+        if self.project is None or self._busy:
             return
         resp = QMessageBox.question(
             self, f"{APP_NAME} — Reset",
@@ -5388,7 +5404,9 @@ class MainWindow(QMainWindow):
             self._refresh()
 
     def _undo(self) -> None:
-        if not (self.project and self.project.can_undo()):
+        # Never under a running step: undoing a Crop while Colour calibrated left
+        # the history reading ['Color'] with the crop still in the pixels.
+        if self._busy or not (self.project and self.project.can_undo()):
             return
         entries = self.project.entries()
         affected = entries[-1][0] if entries else None   # step being reverted
@@ -5398,7 +5416,7 @@ class MainWindow(QMainWindow):
         self._navigate_to_step(affected)
 
     def _redo(self) -> None:
-        if not (self.project and self.project.can_redo()):
+        if self._busy or not (self.project and self.project.can_redo()):
             return
         self.project.redo()
         self._mark_dirty()
@@ -6292,9 +6310,7 @@ class MainWindow(QMainWindow):
         # this must not undo mid-operation.
         self._next_btn.setVisible(True)
         self._next_btn.setEnabled(self._has_next() and not self._busy)
-        self._undo_act.setEnabled(bool(self.project and self.project.can_undo()))
-        self._redo_act.setEnabled(bool(self.project and self.project.can_redo()))
-        self._reset_act.setEnabled(self.project is not None)
+        self._sync_history_actions()
         self._share_act.setEnabled(self.project is not None)
         self._upscale_act.setEnabled(self.project is not None)
         self._save_project_act.setEnabled(self.project is not None)
