@@ -502,12 +502,11 @@ def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, resto
         assert win._side.action_slot.isAncestorOf(win._panel.reset_step_btn), sid
         for state in ("pending", "not_run", "applied", "no_change"):
             btn.set_state(state)
-            # The fonts and the full button width paintEvent draws them with —
-            # no insets, since the label and status are centred in the whole
-            # rect (Review Focus 2: measuring and drawing must use the same
-            # fonts and the same room).
+            # The fonts paintEvent draws with (Review Focus 2). The text is
+            # centred in the whole rect, but a label touching the rounded
+            # edge still reads as clipped: keep a 14 px margin each side.
             bold, small = btn._fonts()
-            room = btn.width()
+            room = btn.width() - 2 * 14
             assert QFontMetrics(bold).horizontalAdvance(btn.label_text()) <= room, (
                 f"{btn.label_text()!r} ({state}) clips at {btn.width()} px")
             assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room, (

@@ -14,7 +14,7 @@ BORDER = "#3c4046"
 RULE = "#31343a"
 ACCENT = "#4a90e2"   # blue — interactive accent (sliders, focus, Next/advance)
 ACCENT_HI = "#5fa0ee"
-SUCCESS = "#3fb950"  # green — commit/apply hero ("done with this edit")
+SUCCESS = "#3fb950"  # green — ticks and "applied" text; button fills use APPLY_FILL
 # The green BUTTON fill, darker than SUCCESS (Andreas, 2026-09-26, from a
 # Photoshop mock-up: HSB 128/68/73 -> 65). Only one button is lit at a time,
 # green Apply or blue Next, so they should be equally loud: SUCCESS measured
@@ -23,7 +23,7 @@ SUCCESS = "#3fb950"  # green — commit/apply hero ("done with this edit")
 # background need the brighter value to read.
 APPLY_FILL = "#35a644"       # HSB 128/68/65
 APPLY_FILL_HI = "#39b249"    # hover, 128/68/70
-APPLY_FILL_DOWN = "#2f913c"  # pressed, 128/68/57 — the old pressed (#37a247) is the new resting colour
+APPLY_FILL_DOWN = "#329c40"  # pressed, 128/68/61 — darkest that keeps the ink at 4.5:1 (4.62); the old pressed (#37a247) is the new resting colour
 WARNING = "#e3b341"  # amber
 DANGER = "#f85149"   # red
 # Reset step's text, warm but well short of DANGER. Reset is not dangerous in
@@ -75,15 +75,18 @@ QPushButton:pressed {{ background: {BG_2}; }}
 QPushButton:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
 QPushButton#primary {{ background: {APPLY_FILL}; color: #052611; font-weight: 600; border: none; }}
 QPushButton#primary:hover {{ background: {APPLY_FILL_HI}; }}
-/* SUCCESS is documented above as "there is an edit to commit". A step with
+/* The green fill means "there is an edit to commit". A step with
    nothing pending has no edit to commit, and a colour that is always on carries
-   no information — so the hero green is spent only when it is true. Set ONLY on
+   no information — so the green is spent only when it is true. Set ONLY on
    the step-panel apply buttons (see _sync_step_controls); everything else keeps
    the default above. */
 QPushButton#primary[pending="false"] {{ background: {BG_3}; color: {TEXT};
                                         border: 1px solid {BORDER}; }}
 QPushButton#primary[pending="false"]:hover {{ background: #383b41; }}
 QPushButton#primary:pressed {{ background: {APPLY_FILL_DOWN}; }}
+/* A plain Apply stays plain while held: turning green under TEXT made the
+   label 3.2:1 and a live "applied" status vanish (SUCCESS on green). */
+QPushButton#primary[pending="false"]:pressed {{ background: {BG_2}; }}
 QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
 QPushButton#nav:hover {{ background: {ACCENT_HI}; }}

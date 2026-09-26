@@ -51,7 +51,8 @@ def test_each_state_reads_and_colours_as_ruled(qtbot, state, green, enabled, wor
 
 @pytest.mark.parametrize("label", ["Apply Deconvolution", "Apply De-green Stars", "Apply Linear Denoise"])
 def test_long_names_fit_the_button(qtbot, label):
-    """The bold centred label must not clip at the real right-column width."""
+    """Smoke check at a fixed width, unstyled. The real-width check under the
+    real stylesheet is test_stable_frame's test_every_apply_label_fits_beside_reset."""
     from PySide6.QtGui import QFontMetrics
     b = _btn(qtbot, label=label, width=380)
     b.set_state("pending")
@@ -254,5 +255,26 @@ def test_the_green_body_is_the_darker_button_fill_and_its_ink_reads(qtbot):
         body = img.pixelColor(4, img.height() // 2)
         assert body.name() == theme.APPLY_FILL, body.name()
         assert _contrast_ratio(body, QColor("#052611")) >= 4.5
+    finally:
+        app.setStyleSheet("")
+
+
+@pytest.mark.parametrize("state,expected", [("applied", "BG_2"), ("pending", "APPLY_FILL_DOWN")])
+def test_a_held_button_keeps_its_own_colour_family(qtbot, state, expected):
+    """A plain Apply turned green while held: its TEXT label fell to 3.2:1 and
+    a live "✓ applied" (SUCCESS) vanished into the green. Plain stays plain;
+    green goes one shade darker."""
+    import nocturne.ui.theme as theme
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    app.setStyleSheet(theme.build_stylesheet())
+    try:
+        b = _btn(qtbot)
+        b.set_state(state)            # "applied" here is the live (R13) one
+        assert b.isEnabled()
+        b.setDown(True)
+        b.style().unpolish(b); b.style().polish(b)
+        img = b.grab().toImage()
+        assert img.pixelColor(4, img.height() // 2).name() == getattr(theme, expected)
     finally:
         app.setStyleSheet("")
