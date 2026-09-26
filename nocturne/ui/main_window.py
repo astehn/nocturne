@@ -3472,6 +3472,29 @@ class MainWindow(QMainWindow):
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
             reset_btn.setEnabled(pending or self._step_has_commit(sid))
+        self._sync_next_light()
+
+    def _next_is_lit(self) -> bool:
+        """Is Next the one lit button — the next thing to press? (Andreas,
+        2026-09-26, D2.) Yes when the step is done: its Apply says `applied`
+        (verified-unchanged or not — ruling R13's live Apply still has a commit
+        and nothing pending) or `no_change`, or the step has no Apply at all
+        (Import, Enhancements). No while Apply is green (`pending`, `not_run`),
+        and never while Next is off: busy, or the last step (Export)."""
+        if self._busy or not self._has_next():
+            return False
+        if not isinstance(getattr(self._panel, "apply_btn", None), ApplyButton):
+            return True
+        return self._step_state(self.current_stage_id()) in ("applied", "no_change")
+
+    def _sync_next_light(self) -> None:
+        """Colour only — never enablement, never geometry: Next is not gated
+        by the step's state (the pending prompt is its guard)."""
+        lit = "true" if self._next_is_lit() else "false"
+        if self._next_btn.property("lit") != lit:
+            self._next_btn.setProperty("lit", lit)
+            self._next_btn.style().unpolish(self._next_btn)
+            self._next_btn.style().polish(self._next_btn)
 
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
@@ -4113,6 +4136,7 @@ class MainWindow(QMainWindow):
         # Not setDisabled(busy): ending an operation must not switch Next on
         # at the last step (Export runs busy), where it stays in place, off.
         self._next_btn.setEnabled(not busy and self._has_next())
+        self._sync_next_light()     # off while busy; restored by the sync below
         self._gate_panel_buttons(busy)
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"

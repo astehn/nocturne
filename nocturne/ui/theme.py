@@ -80,6 +80,16 @@ QPushButton#primary:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 QPushButton#nav {{ background: {ACCENT}; color: #041427; font-weight: 600; border: none; }}
 QPushButton#nav:hover {{ background: {ACCENT_HI}; }}
 QPushButton#nav:pressed {{ background: #3f80cc; }}
+/* Next is lit (ACCENT, above) only when the step is done — its Apply says
+   applied / no changes, or it has none — so ONE button is lit at a time: the
+   next thing to press (Andreas, 2026-09-26, D2). Unlit it looks like Back but
+   stays clickable; the unapplied-changes prompt still guards it. `lit` is set
+   in MainWindow._sync_next_light. It keeps #nav's weight and `border: none`,
+   so the colour never moves the button. Before
+   :disabled — same specificity, and a disabled Next must stay grey. */
+QPushButton#nav[lit="false"] {{ background: {BG_3}; color: {TEXT}; }}
+QPushButton#nav[lit="false"]:hover {{ background: #3e4248; }}
+QPushButton#nav[lit="false"]:pressed {{ background: {BG_2}; }}
 QPushButton#nav:disabled {{ background: #2a2c30; color: {TEXT_FAINT}; }}
 
 QGraphicsView {{ background: {BG_0}; border: 1px solid #2c2f34; }}
