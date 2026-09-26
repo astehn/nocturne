@@ -280,3 +280,47 @@ def test_status_is_drawn_at_the_step_descriptions_size(qtbot):
         assert a.height() > h12
     finally:
         app.setStyleSheet("")
+
+
+def test_the_status_line_is_lighter_than_the_label(qtbot):
+    """Andreas, 2026-09-26: in the green state both lines were heavy (label
+    700, status 600 inherited from the stylesheet) in one ink — two
+    headlines. The hierarchy comes from weight: the status is normal. Under
+    the real stylesheet — without it the inherited 600 never arrives and
+    this passes on the old code."""
+    import nocturne.ui.theme as theme
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    app.setStyleSheet(theme.build_stylesheet())
+    try:
+        b = _btn(qtbot)
+        b.set_state("pending")
+        b.ensurePolished()
+        assert b.font().weight() > QFont.Weight.Normal, "precondition: the button font is heavy"
+        bold, small = b._fonts()
+        assert small.weight() == QFont.Weight.Normal
+        assert bold.weight() > small.weight()
+    finally:
+        app.setStyleSheet("")
+
+
+def test_the_green_body_is_the_darker_button_fill_and_its_ink_reads(qtbot):
+    """The lit button alternates between green Apply and blue Next, so the
+    green fill was taken down to Next's loudness (APPLY_FILL, B 73 -> 65).
+    Sampled from the painted body under the real stylesheet, with the dark
+    label ink still >= 4.5:1 on it."""
+    import nocturne.ui.theme as theme
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    app.setStyleSheet(theme.build_stylesheet())
+    try:
+        b = _btn(qtbot)
+        b.set_state("pending")
+        img = b.grab().toImage()
+        body = img.pixelColor(4, img.height() // 2)
+        assert body.name() == theme.APPLY_FILL, body.name()
+        assert _contrast_ratio(body, QColor("#052611")) >= 4.5
+    finally:
+        app.setStyleSheet("")

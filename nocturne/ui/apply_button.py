@@ -174,7 +174,11 @@ class ApplyButton(QPushButton):
         own font; the status line is drawn at the step description's size
         (`_desc_size`), refreshed with the height in `set_look`."""
         bold = self.font(); bold.setBold(True)
-        small = self.font()
+        # Normal weight, not the button's inherited 600: two equally heavy
+        # lines in one ink read as two headlines (Andreas, 2026-09-26). The
+        # hierarchy comes from weight, not a lighter ink — on the green fill a
+        # lighter ink would drop under 4.5:1.
+        small = self.font(); small.setWeight(QFont.Weight.Normal)
         px, pt = self._desc_size
         if px > 0:
             small.setPixelSize(px)
