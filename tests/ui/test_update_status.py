@@ -112,3 +112,16 @@ def test_the_welcome_note_never_moves_the_welcome_screen(qtbot, tmp_path):
     before = win._welcome.open_btn.mapTo(win, QPoint(0, 0))
     win._on_update_check("v99.0.0"); qtbot.wait(20)
     assert win._welcome.open_btn.mapTo(win, QPoint(0, 0)) == before
+
+
+def test_the_same_release_with_or_without_v_is_announced_once(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win._on_update_check("v99.0.0")
+    n = len(_notices(win))
+    win._on_update_check("99.0.0")
+    assert len(_notices(win)) == n
+
+
+def test_the_welcome_note_wraps_on_a_narrow_window(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert win._welcome.update_note.wordWrap()

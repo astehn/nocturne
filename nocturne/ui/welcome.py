@@ -42,6 +42,7 @@ class WelcomeScreen(QWidget):
         self.update_note.setObjectName("welcomeUpdate")
         self.update_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.update_note.setOpenExternalLinks(True)
+        self.update_note.setWordWrap(True)      # a narrow window wraps into the reserved second line
         self.update_note.setFixedHeight(self.update_note.fontMetrics().lineSpacing() * 2)
 
         root.addWidget(title)
