@@ -2373,6 +2373,13 @@ class MainWindow(QMainWindow):
         made while still linear is not — run Narrowband on a linear image, click
         Levels, and the combine was discarded with nothing said.
         """
+        if self._busy:
+            # The stepper stays usable during a run, and this commits a Stretch
+            # synchronously: clicking Levels while Colour calibrated recorded
+            # ['Stretch', 'Color'] over pixels that were never stretched.
+            self._show_warning(f"Wait for the current step to finish before "
+                               f"moving on to {dest_label}.")
+            return False
         preceding = set(GEOMETRY_NAMES) | {
             STEP_NAME[sid]
             for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]

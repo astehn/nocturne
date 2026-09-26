@@ -79,5 +79,50 @@ def test_leaving_colour_while_it_calibrates_lands_cleanly(qtbot, tmp_path, monke
     release.set()
     _idle(qtbot, win)
     assert _names(win) == ["Color"]
-    assert len(win.activity.entries("step")) == lines_before + 1, "the Color line was skipped"
+    assert len(win.activity.entries("step")) == lines_before + 1
     assert win.current_stage_id() == "stretch"
+    # The refresh after the commit ran: the step list marks Colour done. (The
+    # activity line alone cannot tell — it is logged BEFORE the re-baseline
+    # that raised, so it appeared even when the refresh was skipped.)
+    colour = next(i for i, st in enumerate(win._stages) if st.id == "color")
+    assert colour in win.stepper._done, "the refresh after the commit was skipped"
+
+
+def test_moving_past_stretch_waits_for_a_running_step(qtbot, tmp_path, monkeypatch):
+    """Clicking a post-stretch step on a LINEAR image commits a default Stretch
+    on the spot. During a run that Stretch went under the running step: the
+    history read ['Stretch', 'Color'] over pixels that were never stretched.
+    While busy the move is refused with a word, and nothing is recorded."""
+    import threading
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.color import ColorStep
+    from tests.ui.test_main_window import _window
+    from tests.ui.test_step_commit_async import _idle, _names
+
+    release = threading.Event()
+    real = ColorStep.apply
+
+    def held(self, img, option):
+        release.wait(10)
+        return real(self, img, option)
+
+    monkeypatch.setattr(ColorStep, "apply", held)
+    win = _window(qtbot, tmp_path)
+    rng = np.random.default_rng(0)
+    data = (0.01 + 0.002 * rng.random((32, 32, 3))).astype(np.float32)
+    win.open_image(AstroImage(data, is_linear=True, metadata={}), "test")
+    win.show(); qtbot.waitExposed(win)
+    win._async_enabled = True
+    win._go_to_id("color")
+    monkeypatch.setattr(win, "_ask_auto_stretch", lambda *a, **k: True)
+    monkeypatch.setattr(win, "_ask_pending", lambda *a, **k: "discard")
+    win._panel.apply_btn.click()
+    qtbot.waitUntil(lambda: win._busy, timeout=2000)
+    win._go_to_id("levels", user_initiated=True)
+    qtbot.wait(20)
+    assert _names(win) == [], "a Stretch was committed under the running step"
+    assert win.current_stage_id() == "color"
+    release.set()
+    _idle(qtbot, win)
+    assert _names(win) == ["Color"]
+    assert win.project.current().is_linear
