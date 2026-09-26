@@ -9,8 +9,10 @@ from PySide6.QtWidgets import (
 from ..settings import (TOOL_CANDIDATES, Settings, astap_valid, is_tool,
                         detect_tool_paths, resolve_binary)
 from ..tools.probe import probe_binary
+from .. import __version__, app_title
+from ..core.update_check import DOWNLOAD_URL, is_newer
 from . import file_dialogs
-from .theme import ACCENT
+from .theme import ACCENT, WARNING
 
 
 def _longest_default_path() -> str:
@@ -82,8 +84,33 @@ def _folder_row(edit: QLineEdit) -> QWidget:
     return row
 
 
+def update_status_html(result) -> str:
+    """One line for what the update check found. `result` is (outcome, when):
+    outcome is a release tag, "failed", "off" or "pending"; when is "startup"
+    or "now". Plain words — this is read by someone wondering 'am I current?'."""
+    outcome, when = result if result else ("off", None)
+    at = "just now" if when == "now" else "at startup"
+    if outcome == "pending":
+        return "Checking for a new version…"
+    if outcome == "off":
+        return "Update check is off (see Privacy)."
+    if outcome == "failed":
+        return f"Couldn't reach GitHub {at} — maybe offline."
+    if is_newer(outcome, __version__):
+        v = outcome.lstrip("vV")
+        return (f'<span style="color:{WARNING}">Nocturne {v} is available</span> — '
+                f'<a href="{DOWNLOAD_URL}" style="color:{ACCENT}; text-decoration:none">'
+                f'Download&nbsp;↗</a>')
+    return f"✓ You have the latest version (checked {at})."
+
+
 class SettingsDialog(QDialog):
-    def __init__(self, settings: Settings, parent=None) -> None:
+    def __init__(self, settings: Settings, parent=None, *, update_result=None,
+                 on_check_now=None) -> None:
+        """`update_result`: what the startup check found, see
+        `update_status_html`. `on_check_now(done)`: asks GitHub off the UI
+        thread and calls `done((outcome, "now"))` — the owner does the
+        network, so the suite never goes online."""
         super().__init__(parent)
         self.setWindowTitle("Settings")
         # Kept so result_settings can AMEND it. It used to build a fresh
@@ -146,6 +173,27 @@ class SettingsDialog(QDialog):
 
         general = QWidget()
         g = QFormLayout(general)
+        # What is running and whether it is current (Andreas, 2026-09-26): the
+        # toolbar item only ever said "newer"; nothing said "you are up to date".
+        self.version_label = QLabel(app_title())
+        self.version_status = QLabel(update_status_html(update_result))
+        self.version_status.setOpenExternalLinks(True)
+        self.version_status.setWordWrap(True)
+        self._on_check_now = on_check_now
+        # A click is the user asking, so it works with the automatic check off —
+        # the Privacy tab governs what happens WITHOUT their say-so.
+        self.check_now_btn = QPushButton("Check now")
+        self.check_now_btn.clicked.connect(self._check_now)
+        self.check_now_btn.setEnabled(on_check_now is not None)
+        version_row = QWidget()
+        vr = QVBoxLayout(version_row)
+        vr.setContentsMargins(0, 0, 0, 0)
+        top = QHBoxLayout()
+        top.addWidget(self.version_label, 1)
+        top.addWidget(self.check_now_btn)
+        vr.addLayout(top)
+        vr.addWidget(self.version_status)
+        g.addRow("Version", version_row)
         g.addRow("Default folder", _folder_row(self._dir))
         g.addRow("Handle (for shares)", self._handle)
         self.tabs.addTab(general, "General")
@@ -206,6 +254,18 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self._fit_path_boxes()
+
+    def _check_now(self) -> None:
+        import shiboken6
+        self.check_now_btn.setEnabled(False)
+        self.version_status.setText(update_status_html(("pending", None)))
+
+        def done(result) -> None:
+            if not shiboken6.isValid(self):      # closed while GitHub answered
+                return
+            self.version_status.setText(update_status_html(result))
+            self.check_now_btn.setEnabled(True)
+        self._on_check_now(done)
 
     def _fit_path_boxes(self) -> None:
         """Wide enough to read a real install path whole. In tabs the dialog

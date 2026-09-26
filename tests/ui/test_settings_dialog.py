@@ -470,3 +470,60 @@ def test_the_sizing_path_is_the_longest_place_nocturne_looks():
         for p in paths:
             if not p.startswith("which:"):
                 assert len(_TYPICAL_PATH) >= len(os.path.expanduser(p)), p
+
+
+# --- Version on General (Andreas, 2026-09-26 13:53): what is running, and
+# what the update check found. The suite never goes online: results are fed in.
+
+def _version_text(dlg) -> str:
+    return dlg.version_status.text()
+
+
+def test_general_shows_the_running_version(qtbot):
+    from nocturne import app_title
+    dlg = SettingsDialog(Settings())
+    qtbot.addWidget(dlg)
+    page = dlg.tabs.widget(0)
+    assert page.isAncestorOf(dlg.version_label) and page.isAncestorOf(dlg.check_now_btn)
+    assert app_title() in dlg.version_label.text()
+
+
+@pytest.mark.parametrize("result,expect", [
+    (("v99.0.0", "startup"), "99.0.0 is available"),
+    (("v0.0.1", "startup"), "latest version"),
+    (("failed", "startup"), "couldn't reach github"),
+    (("off", None), "update check is off"),
+    (("pending", None), "checking"),
+])
+def test_each_update_state_reads_plainly(qtbot, result, expect):
+    dlg = SettingsDialog(Settings(), update_result=result)
+    qtbot.addWidget(dlg)
+    assert expect in _version_text(dlg).lower(), _version_text(dlg)
+
+
+def test_a_newer_release_links_to_the_download_page(qtbot):
+    from nocturne.core.update_check import DOWNLOAD_URL
+    dlg = SettingsDialog(Settings(), update_result=("v99.0.0", "startup"))
+    qtbot.addWidget(dlg)
+    assert DOWNLOAD_URL in _version_text(dlg) and dlg.version_status.openExternalLinks()
+
+
+def test_check_now_asks_and_shows_the_answer(qtbot):
+    asked = []
+    dlg = SettingsDialog(Settings(check_updates=False), update_result=("off", None),
+                         on_check_now=lambda done: asked.append(done))
+    qtbot.addWidget(dlg)
+    dlg.check_now_btn.click()
+    assert len(asked) == 1
+    assert "checking" in _version_text(dlg).lower() and not dlg.check_now_btn.isEnabled()
+    asked[0](("v0.0.1", "now"))
+    assert "latest version" in _version_text(dlg).lower() and dlg.check_now_btn.isEnabled()
+
+
+def test_check_now_landing_after_the_dialog_closed_is_harmless(qtbot):
+    import shiboken6
+    asked = []
+    dlg = SettingsDialog(Settings(), on_check_now=lambda done: asked.append(done))
+    dlg.check_now_btn.click()
+    shiboken6.delete(dlg)
+    asked[0](("v0.0.1", "now"))          # must not raise

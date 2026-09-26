@@ -693,7 +693,10 @@ class MainWindow(QMainWindow):
         # network; the setting is the user's answer, and until 2026-09-17 there
         # was no way for them to give one — the request went out on every launch
         # with nothing anywhere saying it would.
+        # What the startup check found, for Settings ▸ General: (outcome, when).
+        self._update_result = ("off", None)
         if check_updates and self.settings.check_updates:
+            self._update_result = ("pending", None)
             run_async(self._pool, latest_release_version, self._on_update_check)
 
         # Same shape, same reason: the argument keeps the suite off the network,
@@ -1307,9 +1310,11 @@ class MainWindow(QMainWindow):
         for payload in payloads:
             run_async(self._pool, lambda p=payload: telemetry_mod.send(p), lambda _ok: None)
 
-    def _on_update_check(self, latest) -> None:
-        """Worker result (UI thread): reveal the toolbar item if a newer release
-        is out. Never raises — `latest` is None on any check failure."""
+    def _on_update_check(self, latest, when: str = "startup") -> None:
+        """Worker result (UI thread): remember it for Settings, and reveal the
+        toolbar item if a newer release is out. Never raises — `latest` is None
+        on any check failure."""
+        self._update_result = (latest or "failed", when)
         if latest and is_newer(latest, __version__):
             self._update_act.setToolTip(
                 f"Nocturne {latest.lstrip('vV')} is available — click to download")
@@ -5810,8 +5815,17 @@ class MainWindow(QMainWindow):
         out.save(path)
 
     # --- settings ---
+    def _check_for_update_now(self, done, fetch=latest_release_version) -> None:
+        """Settings ▸ Check now: the user asked, so it runs even with the
+        automatic check off. Updates the toolbar item too, so both agree."""
+        def landed(latest) -> None:
+            self._on_update_check(latest, "now")
+            done(self._update_result)
+        run_async(self._pool, fetch, landed)
+
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self.settings, self)
+        dlg = SettingsDialog(self.settings, self, update_result=self._update_result,
+                             on_check_now=self._check_for_update_now)
         if dlg.exec():
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
