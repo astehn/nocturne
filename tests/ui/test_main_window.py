@@ -1646,7 +1646,7 @@ def test_star_spikes_tool_guarded_when_linear(qtbot, tmp_path, monkeypatch):
 
 def test_starless_levels_action_exists_in_the_finishing_group(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    names = [a.text() for a in win._toolbar.actions()]
+    names = [a.text() for a in win._overflow.all_actions]
     assert "Starless Levels…" in names
     # It finishes an image, so it belongs after Star Spikes and before Recipes.
     assert names.index("Starless Levels…") > names.index("Star Spikes…")
@@ -1654,7 +1654,7 @@ def test_starless_levels_action_exists_in_the_finishing_group(qtbot, tmp_path):
 
 def test_starless_levels_is_disabled_without_a_picture(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    act = next(a for a in win._toolbar.actions()
+    act = next(a for a in win._overflow.all_actions
                if a.text() == "Starless Levels…")
     assert act.isEnabled() is False
 
@@ -1752,46 +1752,20 @@ def test_save_recipe_warns_that_starless_levels_is_not_captured(qtbot, tmp_path,
 
 
 def test_toolbar_overflow_at_the_small_screen_floor(qtbot, tmp_path):
-    """A sixth "finish it" tool pushes the tail behind the chevron at the
-    1280x800 floor (bar overflows ~1058px — see the comment above `tint` in
-    main_window.py). Measured headless: `QCursor`/`screencapture` don't work
-    in this terminal, so this reads the toolbar layout back directly, per
-    CLAUDE.md's "send Qt events to a real window and read the widget back".
-
-    Before this tool existed, Share was the last visible action and Save
-    Recipe/Batch were already behind the chevron. Adding Starless Levels
-    pushes Share behind it too — that's the measured cost of a sixth
-    finishing tool, not a guess, and it is a placement question for Andreas
-    rather than something to silently accept.
-    """
+    """Every tool is reachable at the 1280x800 floor — on the bar or in the
+    click-only More menu (piece 4, 2026-09-26), never behind Qt's hover
+    chevron. Supersedes the old measurement of which tools the chevron hid."""
     win = _window(qtbot, tmp_path)
     win.resize(1280, 800)
-    win.show()
-    qtbot.waitUntil(lambda: win._toolbar.widgetForAction(win._starless_levels_act) is not None)
-    for _ in range(5):
-        qtbot.wait(0)
-
-    def visible(text):
-        act = next(a for a in win._toolbar.actions() if a.text() == text)
-        w = win._toolbar.widgetForAction(act)
-        return w is not None and w.isVisible()
-
-    # The newest tool must be REACHABLE at the floor, everywhere. This is the
-    # part that is about Nocturne rather than about a platform.
-    assert visible("Starless Levels…") is True
-
-    # The rest is a measurement of macOS layout and only holds there. Toolbar
-    # width depends on font metrics and DPI, so Linux fits more actions at the
-    # same 1280px — not a defect, just a different budget. Asserting the macOS
-    # numbers everywhere made the Linux suite fail on a true statement.
-    if sys.platform != "darwin":
-        return
-    # Newly pushed behind the chevron by the sixth "finish it" tool.
-    assert visible("Share") is False
-    # Unchanged from before this tool: already behind the chevron at this size.
-    assert visible("Save Recipe") is False
-    assert visible("Batch…") is False
-
+    win.show(); qtbot.waitExposed(win); qtbot.wait(30)
+    on_bar = set(win._toolbar.actions())
+    for act in win._overflow.all_actions:
+        if act.isSeparator() or not act.text() or act is win._more_act:
+            continue
+        if act in on_bar:
+            continue
+        assert act in win._overflow.hidden, f"{act.text()} is on neither the bar nor More"
+        assert win._overflow.proxy_for(act).isVisible()
 
 def test_open_fits_starts_in_base_dir(qtbot, tmp_path, monkeypatch):
     from nocturne import ui
@@ -5250,7 +5224,7 @@ def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
     from nocturne.ui.icons import ICON_NAMES
     assert "combine" in ICON_NAMES
     win = _window(qtbot, tmp_path)
-    titles = [a.text() for a in win.findChild(QToolBar).actions()]
+    titles = [a.text() for a in win._overflow.all_actions]
     assert any("Combine" in t for t in titles), f"no Combine action: {titles}"
     # Repo root from __file__, never a hardcoded path: "/Volumes/Work/Code/Editor"
     # does not exist on the Linux machine, so this check silently ran nowhere
@@ -5265,7 +5239,7 @@ def test_combine_is_reachable_and_its_icon_is_tracked(qtbot, tmp_path):
 
 def _tools_act(win):
     from PySide6.QtWidgets import QToolBar
-    for a in win.findChild(QToolBar).actions():
+    for a in win._overflow.all_actions:
         if a.objectName() == "toolsWarning":
             return a
     raise AssertionError("no tools warning action on the toolbar")
@@ -5373,7 +5347,7 @@ def test_the_toolbar_follows_the_order_a_session_happens_in(qtbot, tmp_path):
     """
     from PySide6.QtWidgets import QToolBar
     win = _window(qtbot, tmp_path)
-    names = [a.text() for a in win.findChild(QToolBar).actions() if a.text()]
+    names = [a.text() for a in win._overflow.all_actions if a.text()]
     pos = {n: i for i, n in enumerate(names)}
 
     # Auto Enhance leads the tools: it rebuilds from the crop and discards what
@@ -5395,7 +5369,7 @@ def test_the_tool_groups_are_separated(qtbot, tmp_path):
     more legibility than resequencing did."""
     from PySide6.QtWidgets import QToolBar
     win = _window(qtbot, tmp_path)
-    acts = win.findChild(QToolBar).actions()
+    acts = win._overflow.all_actions
     first = next(i for i, a in enumerate(acts) if a.text() == "Auto Enhance")
     last = next(i for i, a in enumerate(acts) if a.text() == "Batch…")
     seps = sum(1 for a in acts[first:last] if a.isSeparator())
@@ -6275,7 +6249,7 @@ def test_view_menu_hides_only_the_activity_box(qtbot, tmp_path):
 
 def test_the_toolbar_has_no_log_button(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    assert "Log" not in [a.text() for a in win._toolbar.actions()]
+    assert "Log" not in [a.text() for a in win._overflow.all_actions]
 
 
 def test_diagnostic_details_open_in_the_large_activity_view(qtbot, tmp_path, monkeypatch):

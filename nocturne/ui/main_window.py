@@ -10,7 +10,7 @@ from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThread
                             QUrl, Signal)
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout,
     QWidget,
 )
 
@@ -84,6 +84,7 @@ from .step_panels import BLACK_STEPS, build_panel
 from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
+from .toolbar_overflow import ToolbarOverflow
 from .busy_bar import BusyBar
 from .worker import run_async
 from . import file_dialogs
@@ -686,6 +687,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.setMinimumSize(*MIN_WINDOW)
         self._build_toolbar()
+        self._apply_toolbar_style()
         self._build_menu()
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
 
@@ -2261,9 +2263,9 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         tb.addSeparator()
         # --- make an image ---
-        tb.addAction(load_icon("stack", tint["stack"]), "Stack…", self._open_stack)
-        tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
-        tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
+        stack_act = tb.addAction(load_icon("stack", tint["stack"]), "Stack…", self._open_stack)
+        haoiii_act = tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
+        combine_act = tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
         tb.addSeparator()
         # --- identify it ---
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
@@ -2273,13 +2275,13 @@ class MainWindow(QMainWindow):
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
         tb.addSeparator()
         # --- colour it ---
-        tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
+        narrowband_act = tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
         self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
                                     "Colour Balance", self._open_color_balance)
         self._cb_act.setEnabled(False)     # a finishing tool needs a picture
         tb.addSeparator()
         # --- finish it ---
-        tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        spikes_act = tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
         self._starless_levels_act = tb.addAction(
             load_icon("starless-levels", tint["starless-levels"]),
             "Starless Levels…", self._open_starless_levels)
@@ -2294,7 +2296,7 @@ class MainWindow(QMainWindow):
         # --- repeat it on other data ---
         self._save_recipe_act = tb.addAction(load_icon("save-recipe", tint["save-recipe"]),
                                      "Save Recipe", self._save_recipe)
-        tb.addAction(load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
+        batch_act = tb.addAction(load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -2307,6 +2309,15 @@ class MainWindow(QMainWindow):
         # View
         tb.addAction(load_icon("fit"), "Fit", self.image_view.fit)
         tb.addAction(load_icon("actual-size"), "100%", self.image_view.actual_size)
+        # More ▾ (piece 4): Qt's own overflow chevron collapses the moment the
+        # pointer leaves it. This opens on click and the bar is always made to
+        # fit. Order of leaving, and the never-leave set, are his (2026-09-26).
+        self._more_btn = QToolButton()
+        self._more_btn.setIcon(load_icon("more"))
+        self._more_btn.setText("More")
+        self._more_btn.setToolTip("More tools")
+        self._more_btn.setToolButtonStyle(tb.toolButtonStyle())
+        self._more_act = tb.addWidget(self._more_btn)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
@@ -2325,6 +2336,27 @@ class MainWindow(QMainWindow):
         # Built parentless, the bar took a 32 px icon size where the main
         # toolbar has 24; the indicator is meant to look like one of its tools.
         self._jobs_bar.setIconSize(tb.iconSize())
+        self._overflow = ToolbarOverflow(
+            tb, [batch_act, self._save_recipe_act, self._share_act, self._upscale_act,
+                 self._trim_act, self._starless_levels_act, spikes_act, self._cb_act,
+                 narrowband_act, self._solve_act, combine_act, haoiii_act, stack_act],
+            self._more_btn, self._more_act,
+            budget=lambda: self.width() - self._jobs_bar.minimumSizeHint().width(),
+            watch=self)
+
+    def _apply_toolbar_style(self) -> None:
+        """Settings ▸ General ▸ Toolbar. Icons only is for screens without room
+        for the names; the tighter padding (theme.py, iconsOnly) is what makes
+        the whole bar fit at 1280. Background tasks keeps its label either way."""
+        icons = self.settings.toolbar_style == "icons"
+        tb = self._toolbar
+        tb.setProperty("iconsOnly", "true" if icons else "false")
+        tb.style().unpolish(tb); tb.style().polish(tb)
+        for w in tb.findChildren(QToolButton):
+            w.style().unpolish(w); w.style().polish(w)
+        # The overflow owns the actual style: text is shown only while the
+        # never-leave tools fit with it (Andreas, 2026-09-26).
+        self._overflow.set_prefer_text(not icons)
 
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.
@@ -5850,6 +5882,7 @@ class MainWindow(QMainWindow):
             self.settings = dlg.result_settings()
             save_settings(self.settings, self._settings_path)
             self._sync_solve_action_enabled()   # installing ASTAP lights it up now
+            self._apply_toolbar_style()
             self._update_tool_warning()
             self._rebuild_panel()
             self._refresh()

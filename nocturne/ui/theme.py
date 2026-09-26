@@ -52,7 +52,11 @@ QWidget#stepCard QCheckBox, QWidget#stepCard QRadioButton,
 QWidget#stepCard QFrame#panelRule {{ background: transparent; }}
 QToolBar {{ background: {BG_2}; border: none; spacing: 4px; padding: 6px; }}
 QToolBar::separator {{ background: {BORDER}; width: 1px; margin: 4px 6px; }}
-QToolBar QToolButton {{ padding: 6px 10px; border-radius: 8px; color: {TEXT_DIM}; }}
+/* 8 px sides, not 10: with text, the never-leave tools + More then fit a
+   1280 window (measured 2026-09-26: ~20 px short at 10). */
+QToolBar QToolButton {{ padding: 6px 8px; border-radius: 8px; color: {TEXT_DIM}; }}
+/* Icons only (Settings ▸ General): tighter, so the whole bar fits at 1280. */
+QToolBar[iconsOnly="true"] QToolButton {{ padding: 6px 5px; }}
 QToolBar QToolButton:hover {{ background: {BG_3}; color: {TEXT}; }}
 QToolBar QToolButton:pressed {{ background: {BORDER}; }}
 QToolBar QToolButton:checked {{ background: {BG_3}; color: {ACCENT}; }}

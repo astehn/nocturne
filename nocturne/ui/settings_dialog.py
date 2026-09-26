@@ -205,6 +205,13 @@ class SettingsDialog(QDialog):
         g.addRow("Version", version_row)
         g.addRow("Default folder", _folder_row(self._dir))
         g.addRow("Handle (for shares)", self._handle)
+        # Icons only is for screens with no room for the names (Andreas,
+        # 2026-09-26); new users learn the tools by name, so text is the default.
+        self.toolbar_box = QComboBox()
+        self.toolbar_box.addItems(["Icons and text", "Icons only"])
+        self.toolbar_box.setCurrentText(
+            "Icons only" if settings.toolbar_style == "icons" else "Icons and text")
+        g.addRow("Toolbar", self.toolbar_box)
         self.tabs.addTab(general, "General")
 
         tools = QWidget()
@@ -418,4 +425,6 @@ class SettingsDialog(QDialog):
             handle=self._handle.text().strip(),
             check_updates=self.check_updates.isChecked(),
             telemetry=("on" if self.telemetry.isChecked() else "off"),
+            toolbar_style=("icons" if self.toolbar_box.currentText() == "Icons only"
+                           else "text"),
         )
