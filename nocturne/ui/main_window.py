@@ -7,7 +7,6 @@ import os
 import numpy as np
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
                             QUrl, Signal)
-from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout,
@@ -1012,19 +1011,6 @@ class MainWindow(QMainWindow):
         self._activity_act.setCheckable(True)
         self._activity_act.setChecked(True)
         self._activity_act.toggled.connect(self.activity.setVisible)
-        # TRIAL (2026-09-25): Andreas chooses between the two Apply looks in
-        # his real window; the losing look and this submenu go before merge.
-        look_menu = view_menu.addMenu("Apply button style")
-        look_group = QActionGroup(self)
-        look_group.setExclusive(True)
-        self._apply_look_acts = {}
-        for key, title in (("A", "Two lines"), ("B", "Chip")):
-            act = look_menu.addAction(title)
-            act.setCheckable(True)
-            act.setChecked(self.settings.apply_look == key)
-            look_group.addAction(act)
-            act.triggered.connect(lambda _=False, k=key: self._set_apply_look(k))
-            self._apply_look_acts[key] = act
 
         help_menu = self.menuBar().addMenu("Help")
         self._help_act = help_menu.addAction("Help…", self._show_help)
@@ -5947,8 +5933,6 @@ class MainWindow(QMainWindow):
         # holding the old step's widgets.
         self._side.set_header(new_panel.header)
         pa = new_panel.primary_action
-        if isinstance(pa, ApplyButton):
-            pa.set_look(self.settings.apply_look)
         if stage.id == "color" and pa is not None:
             # One Apply for the whole step (spec §2.4): it commits whatever is
             # pending in _apply_sequence's order, method before tint, which
@@ -5981,14 +5965,13 @@ class MainWindow(QMainWindow):
         would take.
 
         Measured from real widgets under whatever stylesheet is live, never a
-        constant: the taller of an Apply in the look in use and a Reset step,
-        plus the row's own margins. Look A: 49 + 6 = 55 px under the app
-        stylesheet, 47 + 6 = 53 unstyled (2026-09-26, once its status line
-        took the description's 12 px; 53/51 before). Switching looks may
-        change it; on any one look it is the same on every step.
+        constant: the taller of Apply and a Reset step, plus the row's own
+        margins. 49 + 6 = 55 px under the app stylesheet, 47 + 6 = 53 unstyled
+        (2026-09-26, once its status line took the description's 12 px; 53/51
+        before). It is the same on every step.
         """
         lay = self._side.action_slot.layout()
-        apply_probe = ApplyButton("Apply", look=self.settings.apply_look)
+        apply_probe = ApplyButton("Apply")
         apply_probe.ensurePolished()
         reset_probe = QPushButton("Reset step")
         reset_probe.setObjectName("resetStep")
@@ -5999,21 +5982,6 @@ class MainWindow(QMainWindow):
         for probe in (apply_probe, reset_probe):
             probe.deleteLater()
         return h
-
-    def _set_apply_look(self, look: str) -> None:
-        """TRIAL (2026-09-25): switch every Apply between look A (two lines) and
-        B (chip) — View ▸ Apply button style. Removed with the losing look."""
-        if look not in ("A", "B"):
-            raise ValueError(look)
-        self.settings.apply_look = look
-        self._save_settings()
-        for key, act in getattr(self, "_apply_look_acts", {}).items():
-            if act.isChecked() != (key == look):
-                act.setChecked(key == look)
-        pa = getattr(self._panel, "primary_action", None)
-        if isinstance(pa, ApplyButton):
-            pa.set_look(look)
-        self._side.set_action_height(self._action_area_height())
 
     def _sync_background_model_toggle(self) -> None:
         """Make the "Show what was removed" control agree with the canvas.

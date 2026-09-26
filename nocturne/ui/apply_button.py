@@ -3,9 +3,8 @@ press instead of a line that appeared and disappeared and moved the panel.
 
 The label existed for a reason: Next used to drop unapplied changes silently
 (step-commit work, 2026-09-11), and Andreas then asked for MORE prominence.
-Here it is inside the button, in both trial looks he is choosing between
-(2026-09-25): A = a second line, B = a chip. The losing look is removed before
-merge. One colour rule everywhere: green = pressing this will change your image.
+The button paints two lines: the bold label, and a status line under it. One
+colour rule everywhere: green = pressing this will change your image.
 """
 from __future__ import annotations
 
@@ -13,7 +12,7 @@ from PySide6.QtCore import QEvent, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QLabel, QPushButton
 
-from .theme import BG_1, BG_2, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT, WARNING
+from .theme import SUCCESS, TEXT_FAINT
 
 STATES = ("pending", "not_run", "applied", "no_change", "busy")
 _GREEN = {"pending", "not_run"}
@@ -32,33 +31,6 @@ _STATUS = {
     "applied": "✓ applied",
     "no_change": "no changes",
 }
-_CHIP = {"pending": "not applied", "not_run": "not run", "applied": "✓ applied",
-         "no_change": "no changes"}
-
-# Review Focus 1: every chip in look B needs its OWN opaque fill — a chip with
-# no fill just puts its text directly on the button body, and `not_run` sits
-# on the SUCCESS green body the same as `pending`; TEXT_DIM-on-SUCCESS
-# measured 1.27:1 there (pixel-sampled). (fill, text) below are all real
-# theme.py tokens, chosen so `pending` is the loudest (amber, the only warm
-# colour) and every pair clears WCAG 4.5:1 — verified by computing relative
-# luminance from these exact hex values:
-#   WARNING/#1a1d23 (pending)  8.67:1
-#   #052611/TEXT     (not_run) 13.03:1  — #052611 is theme.py's own
-#                                          on-green ink (QPushButton#primary's
-#                                          `color:`), reused here as a dark
-#                                          fill so not_run reads as "still the
-#                                          green family" without competing
-#                                          with pending's amber.
-#   BG_2/SUCCESS      (applied) 5.81:1
-#   BG_1/TEXT_DIM     (no_change) 5.12:1
-_ON_GREEN_INK = "#052611"
-_DARK_INK = "#1a1d23"
-_CHIP_STYLE = {
-    "pending": (WARNING, _DARK_INK),
-    "not_run": (_ON_GREEN_INK, TEXT),
-    "applied": (BG_2, SUCCESS),
-    "no_change": (BG_1, TEXT_DIM),
-}
 
 # theme.py's `QPushButton { padding: 8px 14px; }` (nocturne/ui/theme.py) is the
 # only padding rule that reaches this button (QPushButton#primary does not
@@ -68,29 +40,20 @@ _CHIP_STYLE = {
 # QPushButton#primary rule is border: none; only the [pending="false"] rule
 # adds a 1px border, and this button fixes its own height regardless of that).
 _VPAD = 16
-# The horizontal 14px half of that same padding rule, used as the label's left
-# inset in look B so the text lines up with every other button's text inset.
-_LABEL_INSET = 14
-# Tuned, not derived from theme.py (chips are not a themed widget there): the
-# gap between the label text and the chip, and the chip's own internal
-# left/right text padding.
-_CHIP_GAP = 10
-_CHIP_HPAD = 9
-_CHIP_RIGHT_MARGIN = 6
 
 
 class ApplyButton(QPushButton):
-    def __init__(self, label: str, look: str = "A", parent=None) -> None:
+    def __init__(self, label: str, parent=None) -> None:
         super().__init__("", parent)
         self.setObjectName("primary")
         self._label = label
         self._state = "not_run"
         # What the words say. Busy (spec §4: "unchanged text") keeps the last
-        # real state's status and chip — only the enablement changes.
+        # real state's status — only the enablement changes.
         self._shown = "not_run"
         self._available = True
-        self._look = "A"
-        self.set_look(look)
+        self._desc_size = self._read_desc_size()
+        self._fit_height()
         self.set_state("not_run")
 
     # --- API ---
@@ -108,26 +71,16 @@ class ApplyButton(QPushButton):
     def state(self) -> str:
         return self._state
 
-    def look(self) -> str:
-        return self._look
-
-    def set_look(self, look: str) -> None:
-        if look not in ("A", "B"):
-            raise ValueError(look)
-        self._look = look
+    def _fit_height(self) -> None:
+        """The button's fixed height: two real lines — the bold label at the
+        button's own font, plus the status line measured at ITS font (the
+        description's size, not guessed off the label line's metrics), 1px
+        apart — plus the stylesheet's real vertical padding."""
         self._desc_size = self._read_desc_size()
         fm = self.fontMetrics()
-        if look == "B":
-            # Today's button height: one line of the button font plus the
-            # stylesheet's real vertical padding.
-            height = fm.height() + _VPAD
-        else:
-            # Two real lines: the bold label line at the button's own font,
-            # plus the status line measured at ITS font (the description's
-            # size, not guessed off the label line's metrics), 1px apart.
-            _, small_font = self._fonts()
-            small_fm = QFontMetrics(small_font)
-            height = fm.height() + small_fm.height() + 1 + _VPAD
+        _, small_font = self._fonts()
+        small_fm = QFontMetrics(small_font)
+        height = fm.height() + small_fm.height() + 1 + _VPAD
         self.setFixedHeight(height)
         self.update()
 
@@ -164,15 +117,14 @@ class ApplyButton(QPushButton):
     def setDisabled(self, disabled: bool) -> None:  # noqa: N802 (Qt API)
         self.setEnabled(not disabled)
 
-    # --- shared geometry/fonts: paintEvent and label_fits() must never
+    # --- shared geometry/fonts: paintEvent and _fit_height must never
     # measure with different fonts than they draw with (Review Focus 2: they
-    # used to — label measured in the regular font but drawn bold, chip
-    # measured at full size but drawn small — and the two errors happened to
-    # cancel for the three names actually tested). ---
+    # used to — the label measured in the regular font but drawn bold — and
+    # the two errors happened to cancel for the three names actually tested). ---
     def _fonts(self) -> tuple[QFont, QFont]:
-        """(bold label font, status/chip font). The label follows this widget's
+        """(bold label font, status font). The label follows this widget's
         own font; the status line is drawn at the step description's size
-        (`_desc_size`), refreshed with the height in `set_look`."""
+        (`_desc_size`), refreshed with the height in `_fit_height`."""
         bold = self.font(); bold.setBold(True)
         # Normal weight, not the button's inherited 600: two equally heavy
         # lines in one ink read as two headlines (Andreas, 2026-09-26). The
@@ -205,32 +157,6 @@ class ApplyButton(QPushButton):
         f = probe.font()
         return f.pixelSize(), f.pointSizeF()
 
-    def _chip_rect(self, r: QRect, small_fm: QFontMetrics) -> QRect:
-        """Look B's chip pill, in `r`'s coordinates."""
-        cw = small_fm.horizontalAdvance(_CHIP[self._shown]) + 2 * _CHIP_HPAD
-        # 20 px was sized for the old 8 pt text; never shorter than the text
-        # line it now carries plus 2 px each side.
-        ch = max(20, small_fm.height() + 4)
-        return QRect(r.right() - cw - _CHIP_RIGHT_MARGIN, r.center().y() - ch // 2, cw, ch)
-
-    def chip_geometry(self) -> QRect:
-        """The chip's rect at the button's current size/state/font — public
-        so a test can sample the ACTUAL painted pixels at the exact rect
-        paintEvent draws into, rather than trust this class's own numbers."""
-        _, small_font = self._fonts()
-        return self._chip_rect(self.rect(), QFontMetrics(small_font))
-
-    def label_fits(self) -> bool:
-        """For look B: the name fits beside the chip without clipping."""
-        if self._look != "B":
-            return True
-        bold_font, small_font = self._fonts()
-        bold_fm = QFontMetrics(bold_font)
-        small_fm = QFontMetrics(small_font)
-        chip_w = small_fm.horizontalAdvance(_CHIP[self._shown]) + 2 * _CHIP_HPAD
-        needed = _LABEL_INSET + bold_fm.horizontalAdvance(self._label) + _CHIP_GAP + chip_w + _CHIP_RIGHT_MARGIN
-        return needed <= self.width()
-
     # --- the stylesheet arrives (and re-arrives) after construction; a fixed
     # height computed once in __init__ can go stale (Review Focus 3: 45px at
     # construction, 47px once the app stylesheet is actually applied). Same
@@ -239,12 +165,12 @@ class ApplyButton(QPushButton):
     def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().changeEvent(event)
         if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
-            self.set_look(self._look)
+            self._fit_height()
 
     def event(self, event) -> bool:  # noqa: A003 (Qt override)
         result = super().event(event)
         if event.type() == QEvent.Type.Polish:
-            self.set_look(self._look)
+            self._fit_height()
         return result
 
     # --- painting: the stylesheet draws the button body; we draw the text ---
@@ -254,7 +180,6 @@ class ApplyButton(QPushButton):
         r = self.rect()
         fm = self.fontMetrics()
         bold_font, small_font = self._fonts()
-        small_fm = QFontMetrics(small_font)
         # palette().buttonText() tracks theme.py's #052611 (green states) or
         # TEXT (plain states) once the "pending" property has been polished —
         # legible against both the green and the plain body. Disabled states
@@ -262,28 +187,15 @@ class ApplyButton(QPushButton):
         # explicitly rather than trusting a stylesheet re-polish that
         # setEnabled() may not trigger.
         fg = self.palette().buttonText().color() if self.isEnabled() else QColor(TEXT_FAINT)
-        if self._look == "A":
-            top = QRect(r.x(), r.y() + 5, r.width(), fm.height())
-            p.setPen(fg)
-            p.setFont(bold_font)
-            p.drawText(top, Qt.AlignmentFlag.AlignCenter, self._label)
-            p.setFont(small_font)
-            # SUCCESS only while pressable: a disabled "✓ applied" is plain and
-            # dim (spec §4), or its green reads as "press me".
-            p.setPen(QColor(SUCCESS) if self._state == "applied" and self.isEnabled() else fg)
-            bottom = QRect(r.x(), top.bottom() + 1, r.width(), r.height() - top.height() - 6)
-            p.drawText(bottom, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                       self.status_text())
-        else:
-            p.setFont(bold_font); p.setPen(fg)
-            p.drawText(r.adjusted(_LABEL_INSET, 0, 0, 0),
-                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._label)
-            cr = self._chip_rect(r, small_fm)
-            fill, text_colour = _CHIP_STYLE[self._shown]
-            p.setRenderHint(QPainter.RenderHint.Antialiasing)
-            p.setBrush(QColor(fill)); p.setPen(Qt.PenStyle.NoPen)
-            p.drawRoundedRect(cr, cr.height() / 2, cr.height() / 2)
-            p.setPen(QColor(text_colour))
-            p.setFont(small_font)
-            p.drawText(cr, Qt.AlignmentFlag.AlignCenter, _CHIP[self._shown])
+        top = QRect(r.x(), r.y() + 5, r.width(), fm.height())
+        p.setPen(fg)
+        p.setFont(bold_font)
+        p.drawText(top, Qt.AlignmentFlag.AlignCenter, self._label)
+        p.setFont(small_font)
+        # SUCCESS only while pressable: a disabled "✓ applied" is plain and
+        # dim (spec §4), or its green reads as "press me".
+        p.setPen(QColor(SUCCESS) if self._state == "applied" and self.isEnabled() else fg)
+        bottom = QRect(r.x(), top.bottom() + 1, r.width(), r.height() - top.height() - 6)
+        p.drawText(bottom, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   self.status_text())
         p.end()

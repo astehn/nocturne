@@ -204,19 +204,10 @@ def test_nothing_moves_with_linear_denoise_installed(qtbot, tmp_path, monkeypatc
     _prove_nothing_moves(qtbot, tmp_path, monkeypatch, (1280, 800), expect_rows=18)
 
 
-@pytest.mark.parametrize("size", [(1280, 800), (1920, 1080)], ids=lambda s: f"{s[0]}x{s[1]}")
-def test_nothing_moves_in_the_chip_look(qtbot, tmp_path, monkeypatch, size):
-    """TRIAL (2026-09-25): look B's Apply is shorter, so its action row is
-    too. The row may differ from look A's, but within look B nothing may move
-    from step to step or state to state."""
-    _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows=17, look="B")
-
-
-def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows, look="A"):
+def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
     monkeypatch.setattr(JobQueue, "_spawn", lambda self, job: _FakeProc())
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    win._set_apply_look(look)
     win.resize(*size)
     win.show()
     qtbot.waitExposed(win)
@@ -243,8 +234,6 @@ def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows, look="
             continue
         win._go_to(index, user_initiated=False)
         _settle(qtbot)
-        pa = win._panel.primary_action
-        assert not hasattr(pa, "look") or pa.look() == look, stage.id
         reset = win._panel.reset_step_btn
         if reset is not None:
             tl = reset.mapTo(win, QPoint(0, 0))
@@ -496,12 +485,13 @@ def _apply_stage_ids():
             if s.id not in ("load", "enhancements", "export")]
 
 
-@pytest.mark.parametrize("look", ["A", "B"])
-def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, restore_stylesheet, look):
+def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, restore_stylesheet):
     """One row: Apply shares its width with Reset step. Every stage's
-    "Apply <step>" must still fit, in both trial looks and every state's
-    chip, at the real right-column width under the real stylesheet."""
+    "Apply <step>" must still fit — the bold centred label and the status
+    line below it, in every state — at the real right-column width under the
+    real stylesheet."""
     from nocturne.ui.apply_button import ApplyButton
+    from PySide6.QtGui import QFontMetrics
     win = _themed_window(qtbot, tmp_path, (1280, 800), monkeypatch=monkeypatch)
     checked = []
     for sid in _apply_stage_ids():
@@ -510,21 +500,18 @@ def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, resto
         btn = win._panel.primary_action
         assert isinstance(btn, ApplyButton), sid
         assert win._side.action_slot.isAncestorOf(win._panel.reset_step_btn), sid
-        btn.set_look(look)
         for state in ("pending", "not_run", "applied", "no_change"):
             btn.set_state(state)
-            assert btn.label_fits(), f"{btn.label_text()!r} ({look}, {state}) clips at {btn.width()} px"
-            if look == "A":
-                # label_fits() only measures look B (A has no chip), so check
-                # A's centred bold label and its status line directly, with
-                # the fonts paintEvent draws them in, inside the text inset.
-                from PySide6.QtGui import QFontMetrics
-                from nocturne.ui.apply_button import _LABEL_INSET
-                bold, small = btn._fonts()
-                room = btn.width() - 2 * _LABEL_INSET
-                assert QFontMetrics(bold).horizontalAdvance(btn.label_text()) <= room, (
-                    f"{btn.label_text()!r} (A) clips at {btn.width()} px")
-                assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room
+            # The fonts and the full button width paintEvent draws them with —
+            # no insets, since the label and status are centred in the whole
+            # rect (Review Focus 2: measuring and drawing must use the same
+            # fonts and the same room).
+            bold, small = btn._fonts()
+            room = btn.width()
+            assert QFontMetrics(bold).horizontalAdvance(btn.label_text()) <= room, (
+                f"{btn.label_text()!r} ({state}) clips at {btn.width()} px")
+            assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room, (
+                f"{btn.status_text()!r} ({state}) clips at {btn.width()} px")
         checked.append(sid)
     assert "ai_denoise" in checked and "green_fringe" in checked and "deconvolution" in checked
 

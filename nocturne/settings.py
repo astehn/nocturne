@@ -81,8 +81,6 @@ class Settings:
     plate_preset: str = "Scrim"
     plate_style: dict = field(default_factory=dict)          # user's edits to it
     plate_user_presets: list = field(default_factory=list)   # their own saved looks
-    # TRIAL (2026-09-25): "A" two lines / "B" chip — removed with the losing look before merge
-    apply_look: str = "A"
 
 
 def load_settings(path: str) -> Settings:
@@ -134,7 +132,6 @@ def load_settings(path: str) -> Settings:
         plate_preset=data.get("plate_preset", "Data" if caption_era else "Scrim"),
         plate_style=data.get("plate_style", {}) or {},
         plate_user_presets=data.get("plate_user_presets", []) or [],
-        apply_look=data.get("apply_look", "A") if data.get("apply_look") in ("A", "B") else "A",
     )
 
 

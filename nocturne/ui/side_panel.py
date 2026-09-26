@@ -195,7 +195,7 @@ class SidePanel(QWidget):
         self._action_lay = QHBoxLayout(self.action_slot)
         self._action_lay.setContentsMargins(0, 6, 0, 0)
         self._action_lay.setSpacing(8)
-        self.action_slot.setFixedHeight(0)   # 0 until MainWindow sets the look's height (Task 5)
+        self.action_slot.setFixedHeight(0)   # 0 until MainWindow sets the real height (Task 5)
         self.layout_.addWidget(self.action_slot)
 
         # status slot — fixed height, reserved while empty

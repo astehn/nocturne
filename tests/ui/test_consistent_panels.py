@@ -1,6 +1,6 @@
 """Consistent panels, Task 5: the pinned action, Apply's state decided in ONE
-place (MainWindow._step_state), Colour's single Apply, Next kept in place on
-Export, and the temporary look switch."""
+place (MainWindow._step_state), Colour's single Apply, and Next kept in place
+on Export."""
 import numpy as np
 import pytest
 from PySide6.QtCore import QPoint
@@ -85,14 +85,6 @@ def test_next_stays_in_place_disabled_on_export(qtbot, tmp_path):
     win._go_to_id("export", user_initiated=False); qtbot.wait(20)
     assert win._next_btn.isVisible() and not win._next_btn.isEnabled()
     assert win._back_btn.geometry() == back and win._next_btn.geometry() == nxt
-
-
-def test_the_look_switch_changes_every_apply_and_is_remembered(qtbot, tmp_path):
-    win = _open(qtbot, tmp_path)
-    win._set_apply_look("B")
-    win._go_to_id("levels", user_initiated=False); qtbot.wait(20)
-    assert win._panel.apply_btn.look() == "B"
-    assert win.settings.apply_look == "B"
 
 
 @pytest.mark.parametrize("sid", sorted(__import__("nocturne.ui.main_window", fromlist=["x"]).NOOP_AT_DEFAULT))
@@ -290,12 +282,10 @@ def test_colour_method_and_tint_both_pending_commit_method_first(qtbot, tmp_path
     assert not win._has_pending()
 
 
-# --- the look switch -------------------------------------------------------------
+# --- the action row -------------------------------------------------------------
 
-@pytest.mark.parametrize("look", ["A", "B"])
-def test_the_action_row_is_one_height_per_look_on_every_step(qtbot, tmp_path, look):
+def test_the_action_row_is_one_height_on_every_step(qtbot, tmp_path):
     win = _open(qtbot, tmp_path)
-    win._set_apply_look(look)
     heights, ys = set(), set()
     for i, st in enumerate(list(win._stages)):
         if not st.enabled:
@@ -304,38 +294,9 @@ def test_the_action_row_is_one_height_per_look_on_every_step(qtbot, tmp_path, lo
         heights.add(win._side.action_slot.height())
         ys.add(win._side.action_slot.mapTo(win, QPoint(0, 0)).y())
         pa = win._panel.primary_action
-        if hasattr(pa, "look"):
-            assert pa.look() == look, st.id
+        if pa is not None:
             assert pa.height() <= win._side.action_slot.height(), st.id
     assert len(heights) == 1 and len(ys) == 1, (heights, ys)
-
-
-def test_the_look_switch_relooks_the_current_apply_immediately(qtbot, tmp_path):
-    win = _open(qtbot, tmp_path)
-    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
-    win._set_apply_look("B")
-    assert win._panel.apply_btn.look() == "B"
-    win._set_apply_look("A")
-    assert win._panel.apply_btn.look() == "A"
-
-
-def test_the_look_menu_is_an_exclusive_checkable_pair(qtbot, tmp_path):
-    win = _open(qtbot, tmp_path)
-    acts = win._apply_look_acts
-    assert set(acts) == {"A", "B"}
-    assert acts["A"].isChecked() and not acts["B"].isChecked()
-    acts["B"].trigger()
-    assert acts["B"].isChecked() and not acts["A"].isChecked()
-    assert win.settings.apply_look == "B"
-
-
-def test_apply_look_persists_through_settings(tmp_path):
-    from nocturne.settings import Settings, load_settings, save_settings
-    assert Settings().apply_look == "A"
-    s = Settings(); s.apply_look = "B"
-    p = str(tmp_path / "s.json")
-    save_settings(s, p)
-    assert load_settings(p).apply_look == "B"
 
 
 # --- fix round 1 ----------------------------------------------------------------
