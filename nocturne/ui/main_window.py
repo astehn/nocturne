@@ -5002,6 +5002,26 @@ class MainWindow(QMainWindow):
         option[curve_key("rgb", "all")] = list(points)
         return normalize_curves(option)
 
+    def _fit_curves_panel(self) -> None:
+        """Curves on small screens (Andreas, 2026-09-26): where the step area
+        cannot hold the inline editor, hide it and offer only the large one.
+        The inline editor stays in the panel, hidden — it is the state the
+        large editor seeds from and writes back to, and what Apply commits.
+        The need is measured once with the editor showing and kept, so hiding
+        it (which shrinks the panel) cannot flip the answer back."""
+        p = self._panel
+        editor = getattr(p, "curve_editor", None)
+        if editor is None or not shiboken6.isValid(editor):
+            return
+        if getattr(p, "inline_need", None) is None:
+            if not editor.isVisibleTo(p):
+                return
+            p.inline_need = p.minimumSizeHint().height()
+        inline = self._side.scroll.viewport().height() >= p.inline_need
+        if editor.isVisibleTo(p) != inline:
+            editor.setVisible(inline)
+        p.expand_btn.setText("Open large editor…" if inline else "Open curve editor…")
+
     def _on_curves_dialog_apply(self, curves) -> None:
         """The large editor returns the whole matrix. Split it: RGB/all goes
         back to the inline editor (which is the only slot it can show), the rest
@@ -5602,6 +5622,10 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, event) -> bool:
         """Space anywhere (except in a text field or while a modal dialog is up)
         toggles the before/after peek."""
+        if (event.type() == QEvent.Type.Resize and hasattr(self, "_side")
+                and obj is self._side.scroll.viewport()):
+            self._fit_curves_panel()        # Curves on small screens
+            return False
         if (event.type() == QEvent.Type.KeyPress
                 and event.key() == Qt.Key.Key_Space
                 and not event.isAutoRepeat()
@@ -6032,6 +6056,7 @@ class MainWindow(QMainWindow):
             # build_panel leaves it unconnected for exactly this.
             pa.clicked.connect(self._apply_colour_step)
         self._side.set_actions(pa, new_panel.reset_step_btn)
+        QTimer.singleShot(0, self, self._fit_curves_panel)   # once the step area has its size
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link

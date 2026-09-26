@@ -361,10 +361,12 @@ def test_every_step_hands_its_own_apply_and_reset_to_the_pinned_slot(qtbot, tmp_
 
 
 def test_a_tall_step_scrolls_its_controls_while_apply_stays_put(qtbot, tmp_path):
-    """Review Focus 1: Curves at 1280x800 is taller than its zone. Its
-    controls scroll; Apply and Reset stay visible and do not move. Under the
-    real stylesheet, which is also where the slot's measured height must equal
-    what its real contents ask for."""
+    """Review Focus 1: a step taller than its zone at 1280x800 scrolls its
+    controls; Apply and Reset stay visible and do not move. Under the real
+    stylesheet, which is also where the slot's measured height must equal what
+    its real contents ask for. Colour, not Curves: since 2026-09-26 Curves at
+    this size hides its inline editor and no longer scrolls (measured: Colour
+    150 px over its zone)."""
     from PySide6.QtWidgets import QApplication
     from nocturne.ui.theme import build_stylesheet
     app = QApplication.instance()
@@ -376,15 +378,15 @@ def test_a_tall_step_scrolls_its_controls_while_apply_stays_put(qtbot, tmp_path)
         win.resize(1280, 800)
         win.show()
         qtbot.waitExposed(win)
-        win._go_to_id("curves", user_initiated=False)
+        win._go_to_id("color", user_initiated=False)
         _settle(qtbot)
         slot = win._side.action_slot
         assert slot.height() == slot.layout().sizeHint().height(), (
             "the measured slot height is not what Apply + rule + Reset need")
         bar = win._side.scroll.verticalScrollBar()
-        assert bar.maximum() > 0, "precondition: Curves must be taller than its zone"
+        assert bar.maximum() > 0, "precondition: Colour must be taller than its zone"
         apply_btn, reset = win._panel.apply_btn, win._panel.reset_step_btn
-        editor = win._panel.curve_editor
+        editor = win._panel.method_box     # the first control: it scrolls
         # Spec §3: the title and description are fixed ABOVE the scroll too.
         title_widgets = (win._panel.help_link.parentWidget(), win._panel.desc_box)
         pinned = (apply_btn, reset) + title_widgets
