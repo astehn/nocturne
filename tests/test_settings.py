@@ -570,3 +570,19 @@ def test_update_notified_version_round_trips(tmp_path):
     p = str(tmp_path / "s.json")
     save_settings(Settings(update_notified_version="v0.41.0"), p)
     assert load_settings(p).update_notified_version == "v0.41.0"
+
+
+def test_frame_options_folded_defaults_open_and_round_trips(tmp_path):
+    """load_settings lists every field by hand; a field missing from that list
+    is written and never read back (check_updates, 2026-09-17)."""
+    assert Settings().frame_options_folded is False
+    p = tmp_path / "s.json"
+    save_settings(Settings(frame_options_folded=True), str(p))
+    assert load_settings(str(p)).frame_options_folded is True
+
+
+def test_frame_options_folded_absent_in_old_file_is_open(tmp_path):
+    import json
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"graxpert_path": "/x"}))
+    assert load_settings(str(p)).frame_options_folded is False

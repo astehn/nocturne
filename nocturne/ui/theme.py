@@ -141,6 +141,13 @@ QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT}
     padding: 3px 4px; }}
 QPushButton#linkButton:hover {{ color: {ACCENT_HI}; }}
 
+/* The option groups above a frame list (option_band.py). Plain text inside a
+   group lets the group's colour through, as in a step card. */
+QFrame#optionGroup {{ background: {BG_2}; border-radius: 7px; }}
+QFrame#optionGroup QLabel, QFrame#optionGroup QCheckBox,
+QFrame#optionGroup QRadioButton {{ background: transparent; }}
+QLabel#optionGroupTitle {{ color: {TEXT_DIM}; font-size: 11px; }}
+
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
