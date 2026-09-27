@@ -129,9 +129,17 @@ QProgressBar::chunk {{ background: {ACCENT}; border-radius: 6px; }}
 
 QHeaderView::section {{ background: {BG_3}; color: {TEXT_DIM}; border: none;
     padding: 6px 8px; }}
-QTableWidget {{ background: {BG_2}; gridline-color: {BORDER};
+QTableView {{ background: {BG_2}; gridline-color: {BORDER};
     border: 1px solid {BORDER}; border-radius: 8px; }}
-QTableWidget::item:hover {{ background: {BG_3}; }}
+QTableView::item:hover {{ background: {BG_3}; }}
+/* The frame browser's bar (frame_browser.py): Show is a segmented choice,
+   Select is three links. */
+QPushButton#segment {{ padding: 3px 10px; border-radius: 6px; }}
+QPushButton#segment:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
+    border: none; }}
+QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT};
+    padding: 3px 4px; }}
+QPushButton#linkButton:hover {{ color: {ACCENT_HI}; }}
 
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 24px; }}
