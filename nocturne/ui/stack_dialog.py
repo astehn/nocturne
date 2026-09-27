@@ -856,7 +856,7 @@ class StackDialog(QDialog):
         user happened to be typing instead of the folder the frames actually
         live in."""
         if self._busy:
-            # NEW-2: a grade that never starts must not leave a stale promise
+            # A grade that never starts must not leave a stale promise
             # behind — a "Move them back" fallback that finds this busy would
             # otherwise leave `_restoring_names` set with nothing running to
             # ever clear it, so a later, unrelated grade or failure reads its
@@ -870,7 +870,7 @@ class StackDialog(QDialog):
             # Forget the last folder's grade. Its frames stayed listed and
             # stackable while Save to followed the NEW folder, so Stack wrote
             # folder A's master into B under A's name.
-            self._restoring_names = None    # NEW-2: same reason as the busy branch above
+            self._restoring_names = None    # same reason as the busy branch above
             self._stats = []
             self._frame_shape = None
             if folder != self._graded_folder:
@@ -980,7 +980,7 @@ class StackDialog(QDialog):
         from, says how many are missing from the count; it updates itself
         away once those frames are back, the next time this runs.
 
-        NEW-1: a name the manifest lists is not necessarily missing from the
+        A name the manifest lists is not necessarily missing from the
         count — a frame moved THIS session is still a row in `self._stats`
         (moved=True) and build_verdict counts it, since it counts the
         grader's decision, not the move. Only a pending name with no such row
