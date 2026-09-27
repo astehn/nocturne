@@ -7,6 +7,7 @@ import errno
 import json
 import os
 import re
+import sys
 import unicodedata
 from datetime import datetime, timezone
 
@@ -327,6 +328,75 @@ def test_already_claimed_detects_a_same_file_destination_under_another_spelling(
     dst3 = os.path.join(rej_dir, "Light_03.fit")
     assert rm._already_claimed(dst3, {paths[1]: dst1}) is False
     assert rm._already_claimed(dst1, {}) is False
+
+
+# --- R4: dedup hardening — stat failure, and inode alone is not enough ------
+
+def test_a_file_that_vanishes_between_validation_and_dedup_is_refused(night, tmp_path, monkeypatch):
+    """The dedup's os.stat(p) can raise a raw OSError if the file vanishes in
+    the gap after the validation loop already confirmed it existed. Task 6
+    catches only RejectMoveError, so this must surface as one, not escape."""
+    folder, paths = night
+    before = tree(tmp_path)
+    real_stat = os.stat
+    hit = []
+
+    def vanish(p, *a, **k):
+        if (sys._getframe(1).f_code.co_name == "move_to_rejected"
+                and os.fspath(p) == paths[1] and not hit):
+            hit.append(1)
+            os.rename(paths[1], paths[1] + ".gone")
+        return real_stat(p, *a, **k)
+
+    monkeypatch.setattr(rm.os, "stat", vanish)
+    with pytest.raises(RejectMoveError, match="Light_01.fit is a link, or is no longer there"):
+        move_to_rejected(folder, [paths[1], paths[2]], paths, now=NOW)
+    monkeypatch.undo()
+    os.rename(paths[1] + ".gone", paths[1])       # restore the fixture for the comparison
+    assert tree(tmp_path) == before
+    assert not os.path.exists(rej(folder))        # dedup runs before rejected/ is created
+
+
+def test_two_different_names_sharing_a_synthetic_inode_both_move(night, monkeypatch):
+    """R4 fix 2: a share can synthesise the same st_ino for two genuinely
+    different files. Dedup must require the (casefolded, NFD-normalized)
+    NAME to match too, or it silently drops one of them — dropping a file
+    he asked to reject, with no error at all, is worse than not deduping."""
+    folder, paths = night
+    real_stat = os.stat
+
+    class FakeStat:
+        def __init__(self, st):
+            self.st_dev, self.st_ino, self.st_mode = st.st_dev, 42, st.st_mode
+
+    def fake(p, *a, **k):
+        st = real_stat(p, *a, **k)
+        path = os.fspath(p)
+        if os.path.dirname(path) == folder and os.path.basename(path).startswith("Light"):
+            return FakeStat(st)
+        return st
+
+    monkeypatch.setattr(rm.os, "stat", fake)
+    moved = move_to_rejected(folder, [paths[1], paths[2]], paths, now=NOW)
+    monkeypatch.undo()
+    assert moved == {paths[1]: os.path.join(rej(folder), "Light_01.fit"),
+                     paths[2]: os.path.join(rej(folder), "Light_02.fit")}
+    assert sorted(os.listdir(rej(folder))) == [MANIFEST_NAME, "Light_01.fit", "Light_02.fit"]
+    assert [e["name"] for e in read_manifest(folder)] == ["Light_01.fit", "Light_02.fit"]
+
+
+def test_hard_linked_names_both_move_as_separate_entries(night):
+    """A hard link is genuinely two directory entries sharing one real inode
+    but different names — not a spelling of the same file — so both must
+    move under their own names, not collapse to one."""
+    folder, paths = night
+    hl = os.path.join(folder, "Light_hl.fit")
+    os.link(paths[1], hl)
+    graded = paths + [hl]
+    moved = move_to_rejected(folder, [paths[1], hl], graded, now=NOW)
+    assert moved == {paths[1]: os.path.join(rej(folder), "Light_01.fit"),
+                     hl: os.path.join(rej(folder), "Light_hl.fit")}
+    assert sorted(os.listdir(rej(folder))) == [MANIFEST_NAME, "Light_01.fit", "Light_hl.fit"]
 
 
 # --- refusals: nothing moves -------------------------------------------------

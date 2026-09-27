@@ -31,10 +31,14 @@ vigilant and careful … but it's a feature worth having". The rules (spec
   when the link's target is a sibling folder next door.
 - Two spellings of one file (a case variant or NFC/NFD form, on a filesystem
   that treats them as the same entry) are deduplicated before anything
-  moves, and the "did it secretly land" filesystem check never claims a
-  destination that is really a different wanted file's already-moved self.
-  A move back into the capture folder is a no-replace rename too, for the
-  same reason a move into rejected/ is.
+  moves — by inode AND casefolded/NFD name together, so a hard link under a
+  genuinely different name, or a share that synthesises a shared st_ino for
+  two different files, still moves both, never silently dropping one — and
+  the "did it secretly land" filesystem check never claims a destination
+  that is really a different wanted file's already-moved self. A vanished
+  file surfaces as the same RejectMoveError as any other missing file, never
+  a raw OSError. A move back into the capture folder is a no-replace rename
+  too, for the same reason a move into rejected/ is.
 """
 from __future__ import annotations
 
@@ -43,6 +47,7 @@ import errno
 import json
 import os
 import tempfile
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
@@ -322,19 +327,31 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
                                   "nothing was moved.")
         wanted.append(p)
     # Two spellings of one file (a case variant, or NFC/NFD, on a filesystem
-    # that treats them as the same entry) are the same inode: keep only the
-    # first spelling given, before anything moves. Otherwise the second
-    # spelling's rename genuinely fails (its source is already gone once the
-    # first spelling moved it) in a way the I1 filesystem check below cannot
-    # tell apart from "it secretly succeeded" — see _already_claimed.
-    seen_inodes: set[tuple[int, int]] = set()
+    # that treats them as the same entry) are the same inode AND the same
+    # name once normalized: keep only the first spelling given, before
+    # anything moves. Otherwise the second spelling's rename genuinely fails
+    # (its source is already gone once the first spelling moved it) in a way
+    # the I1 filesystem check below cannot tell apart from "it secretly
+    # succeeded" — see _already_claimed. Requiring the name too (not inode
+    # alone) means a hard link under a genuinely different name — or two
+    # different files a network share happens to report the same st_ino for
+    # — still move as separate entries, never silently dropped.
+    seen_keys: set[tuple[tuple[int, int], str]] = set()
     deduped: list[str] = []
     for p in wanted:
-        st = os.stat(p)
-        key = (st.st_dev, st.st_ino)
-        if key in seen_inodes:
+        try:
+            st = os.stat(p)
+        except OSError as exc:
+            # It existed a moment ago (the validation loop above checked),
+            # but a file can vanish in the gap; this must surface the same
+            # way, not as a raw OSError Task 6 doesn't catch.
+            raise RejectMoveError(f"{os.path.basename(p)} is a link, or is no "
+                                  "longer there — nothing was moved.") from exc
+        norm_name = unicodedata.normalize("NFD", os.path.basename(p)).casefold()
+        key = ((st.st_dev, st.st_ino), norm_name)
+        if key in seen_keys:
             continue
-        seen_inodes.add(key)
+        seen_keys.add(key)
         deduped.append(p)
     wanted = deduped
     if not wanted:
