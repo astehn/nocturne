@@ -1424,7 +1424,8 @@ class MainWindow(QMainWindow):
         from .haoiii_dialog import HaOIIIDialog
         dlg = HaOIIIDialog(self.settings, self,
                            on_master=lambda img: self._on_foreground_master(
-                               img, "Ha/OIII master", dlg.output_edit.text().strip()))
+                               img, "Ha/OIII master", dlg.output_edit.text().strip()),
+                           on_settings_changed=self._save_settings)
         dlg.exec()
 
     def _start_background_stack(self, options, label: str) -> None:

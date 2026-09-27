@@ -3,10 +3,10 @@ import time
 import pytest
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats  # noqa: E402
+from nocturne.ui.frame_browser import COL_TIME, COL_VERDICT, FrameBrowser  # noqa: E402
 from nocturne.ui.haoiii_dialog import HaOIIIDialog  # noqa: E402
 
 
@@ -29,7 +29,7 @@ def test_grading_fills_table(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
 
 
 def test_extract_hands_off_master(qtbot, tmp_path):
@@ -55,7 +55,7 @@ def test_extract_hands_off_master(qtbot, tmp_path):
     dlg._extract_runner = fake_extract
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
     dlg.output_edit.setText(str(tmp_path / "HaOIII_master.fits"))
     dlg.run()
     qtbot.waitUntil(lambda: "opts" in captured, timeout=2000)
@@ -104,8 +104,7 @@ def test_strictness_rethresholds_without_regrading(qtbot):
     d._on_graded(stats)
 
     def kept():
-        return sum(1 for r in range(d.table.rowCount())
-                   if d.table.item(r, 0).checkState() == Qt.CheckState.Checked)
+        return sum(1 for r in range(len(d.browser.frames())) if d.browser.is_checked(r))
 
     d.strictness_box.setCurrentText("Strict")
     strict = kept()
@@ -127,9 +126,9 @@ def test_a_frame_you_ticked_yourself_survives_a_strictness_change(qtbot):
     d._on_graded([FrameStats(path=f"/x/{i}.fit", star_count=100, fwhm=f,
                              background=0.10, score=1.0, included=True)
                   for i, f in enumerate(fwhms)])
-    d.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)   # a good frame, dropped by hand
+    d.browser.set_checked(0, False)                             # a good frame, dropped by hand
     d.strictness_box.setCurrentText("Relaxed")                  # would re-include it
-    assert d.table.item(0, 0).checkState() == Qt.CheckState.Unchecked
+    assert not d.browser.is_checked(0)
     assert d._stats[0].included is False, "and the stats must agree with the table"
 
 
@@ -172,8 +171,7 @@ def test_strictness_moved_while_grading_is_honoured(qtbot):
 
     d.strictness_box.setCurrentText("Strict")   # user changes it mid-grade
     d._on_graded(stats)                         # ... and then the results land
-    kept = sum(1 for r in range(d.table.rowCount())
-               if d.table.item(r, 0).checkState() == Qt.CheckState.Checked)
+    kept = sum(1 for r in range(len(d.browser.frames())) if d.browser.is_checked(r))
     assert kept == 8, f"table must show the Strict verdict, showed {kept} of 10 kept"
 
 
@@ -188,7 +186,7 @@ def test_selecting_a_row_previews_that_frame(qtbot):
     d._preview_ctl.loader = lambda p: (asked.append(p),
                                        np.zeros((8, 8, 3), np.float32))[1]
     d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(3)])
-    d.table.setCurrentCell(1, 0)
+    d.browser.set_current_row(1)
     qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
     assert asked == ["/x/1.fit"], f"previewed {asked}, wanted the selected row"
 
@@ -198,10 +196,11 @@ def test_the_preview_sits_beside_the_table_in_a_splitter(qtbot):
     It belongs to the preview, and the preview takes the extra width."""
     d = HaOIIIDialog(Settings())
     qtbot.addWidget(d)
-    assert d.splitter.count() == 2
-    assert d.splitter.widget(0) is d.table
-    assert d.splitter.widget(1) is d.preview
-    assert not d.splitter.childrenCollapsible(), "neither side may collapse to nothing"
+    sp = d.browser.splitter
+    assert sp.count() == 2
+    assert sp.widget(0).isAncestorOf(d.browser.view)
+    assert sp.widget(1).isAncestorOf(d.preview)
+    assert not sp.childrenCollapsible(), "neither side may collapse to nothing"
 
 
 def test_changing_strictness_does_not_disturb_the_preview(qtbot):
@@ -218,7 +217,7 @@ def test_changing_strictness_does_not_disturb_the_preview(qtbot):
     d._on_graded([FrameStats(path=f"/x/{i}.fit", star_count=100, fwhm=f,
                              background=0.10, score=1.0, included=True)
                   for i, f in enumerate(fwhms)])
-    d.table.setCurrentCell(2, 0)
+    d.browser.set_current_row(2)
     qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
     before = list(loads)
     d.strictness_box.setCurrentText("Strict")
@@ -237,8 +236,8 @@ def test_the_frame_list_takes_the_extra_height_not_the_blurb(qtbot):
     d.resize(1400, 1100)
     d.show()
     qtbot.waitUntil(lambda: d.height() > 900, timeout=2000)
-    assert d.splitter.height() > 0.5 * d.height(), (
-        f"splitter got {d.splitter.height()} of {d.height()}")
+    assert d.browser.height() > 0.5 * d.height(), (
+        f"the frame list and preview got {d.browser.height()} of {d.height()}")
     assert d.status.height() < 80, (
         f"the one-line status label stretched to {d.status.height()}px")
     natural = d.blurb.heightForWidth(d.blurb.width())
@@ -259,10 +258,10 @@ def test_a_rejected_frame_says_why(qtbot):
                          reason_code="not_raw", reason=REASON_NOT_RAW, error=True)
     good = _stats("/x/sub.fit", 1.0)
     d._on_graded([stacked, good])
-    assert d.table.horizontalHeaderItem(6).text() == "Verdict"
-    assert d.table.item(0, 6).text() == REASON_NOT_RAW
-    assert d.table.item(1, 6).text() == "OK"
-    assert d.table.item(0, 6).toolTip(), "long verdicts must be readable on hover"
+    assert d.browser.headers()[COL_VERDICT] == "Verdict"
+    assert d.browser.cell_text(0, COL_VERDICT) == REASON_NOT_RAW
+    assert d.browser.cell_text(1, COL_VERDICT) == "OK"
+    assert d.browser.cell_tooltip(0, COL_VERDICT), "long verdicts must be readable on hover"
 
 
 def test_a_rejected_row_is_dimmed_and_a_warned_row_is_amber(qtbot):
@@ -281,7 +280,7 @@ def test_a_rejected_row_is_dimmed_and_a_warned_row_is_amber(qtbot):
 
     from nocturne.ui import theme
     def colour(row):
-        return d.table.item(row, 1).foreground().color().name()
+        return d.browser.cell_colour(row, COL_TIME)
     assert colour(9) == QColor(theme.TEXT_FAINT).name(), "rejected row must be dimmed"
     assert colour(8) == QColor(theme.WARNING).name(), "warned row must be amber"
     assert colour(0) == QColor(theme.TEXT).name(), "an ordinary row keeps normal text"
@@ -298,9 +297,9 @@ def test_the_verdict_follows_the_strictness_you_choose(qtbot):
                              background=0.10, score=1.0, included=True)
                   for i, f in enumerate(fwhms)])
     d.strictness_box.setCurrentText("Strict")
-    for row in range(d.table.rowCount()):
-        ticked = d.table.item(row, 0).checkState() == Qt.CheckState.Checked
-        verdict = d.table.item(row, 6).text()
+    for row in range(len(d.browser.frames())):
+        ticked = d.browser.is_checked(row)
+        verdict = d.browser.cell_text(row, COL_VERDICT)
         assert ticked == (verdict == "OK"), (
             f"row {row}: ticked={ticked} but verdict says {verdict!r}")
 
@@ -444,3 +443,75 @@ def test_grading_is_cancellable_too(qtbot, tmp_path):
     qtbot.waitUntil(lambda: "token" in seen, timeout=3000)
     d._cancel_btn.click()
     qtbot.waitUntil(lambda: d.status.text() == "Cancelled.", timeout=3000)
+
+
+# --- Layout A and the shared browser (spec 2026-09-27 §2.1, §2.2, §2.5) ------
+
+def test_haoiii_hosts_the_same_frame_browser_as_stack(qtbot):
+    """Identity, not a copy (spec §7): the drift this exists to stop happened
+    once already, when the preview lived only in Stack."""
+    from PySide6.QtWidgets import QTableWidget
+    from nocturne.ui.stack_dialog import StackDialog
+    d = HaOIIIDialog(Settings()); qtbot.addWidget(d)
+    s = StackDialog(Settings()); qtbot.addWidget(s)
+    assert type(d.browser) is FrameBrowser and type(s.browser) is FrameBrowser
+    assert d.findChildren(QTableWidget) == []
+
+
+def test_haoiii_options_are_the_same_three_groups(qtbot):
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    frames, combine, result = d.options_band.groups
+    assert [g.title.text() for g in (frames, combine, result)] == ["FRAMES", "COMBINE", "RESULT"]
+    assert frames.isAncestorOf(d.strictness_box)
+    assert all(combine.isAncestorOf(w) for w in (d.avg_radio, d.sigma_radio, d.kappa_box))
+    assert result.isAncestorOf(d.crop_check) and result.isAncestorOf(d.channels_check)
+
+
+def test_folding_one_dialog_folds_both(qtbot):
+    """One remembered setting: the bands are the same control."""
+    from nocturne.ui.stack_dialog import StackDialog
+    settings = Settings()
+    s = StackDialog(settings); qtbot.addWidget(s)
+    s.options_band.set_folded(True)
+    d = HaOIIIDialog(settings); qtbot.addWidget(d)
+    assert d.options_band.is_folded()
+    assert d.options_band.summary_label.text() == (
+        "Normal selection · Sigma-clipped, medium rejection · full frame")
+    d.channels_check.setChecked(True)
+    assert d.options_band.summary_label.text().endswith("separate Ha and OIII files")
+
+
+def test_the_app_saves_the_haoiii_fold(qtbot, tmp_path, monkeypatch):
+    """HaOIIIDialog had no way to persist a setting; _open_haoiii must hand it
+    the app's own save, or the fold is forgotten on the next launch."""
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    captured = {}
+
+    class _Stub:
+        def __init__(self, *a, **kw):
+            captured.update(kw)
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr("nocturne.ui.haoiii_dialog.HaOIIIDialog", _Stub)
+    win._open_haoiii()
+    assert captured.get("on_settings_changed") == win._save_settings
+
+
+def test_folding_in_haoiii_is_saved_and_folds_stack(qtbot):
+    """The other direction: Ha/OIII writes the shared setting and asks the app
+    to save it, so Stack opens folded too — and on the next launch."""
+    from nocturne.ui.stack_dialog import StackDialog
+    settings = Settings()
+    saves = []
+    d = HaOIIIDialog(settings, on_settings_changed=lambda: saves.append(
+        settings.frame_options_folded))
+    qtbot.addWidget(d)
+    assert not d.options_band.is_folded(), "fixture must start unfolded"
+    d.options_band.set_folded(True)
+    assert saves == [True], f"the fold was not handed to the app's save: {saves}"
+    s = StackDialog(settings); qtbot.addWidget(s)
+    assert s.options_band.is_folded()

@@ -399,7 +399,7 @@ def test_haoiii_help_describes_the_tool_that_actually_shipped():
     # in the file-chooser title, so a looser check survives half a rename.
     assert "Folder of raw subs" in b and 'form.addRow("Folder of raw subs"' in hd
     assert "Extract" in b and 'QPushButton("Extract")' in hd
-    assert "Integration" in b and 'form.addRow("Integration"' in hd
+    assert "<b>Combine</b>" in b and 'add_group("Combine"' in hd
     assert "Output" in b and 'form.addRow("Output"' in hd
     assert "HaOIII_master.fits" in b and "HaOIII_master.fits" in hd
     for ext in ("<b>.fit</b>", "<b>.fits</b>", "<b>.fts</b>"):
@@ -1450,10 +1450,9 @@ def test_the_haoiii_help_describes_every_column_the_table_shows():
     from nocturne.ui.haoiii_dialog import HaOIIIDialog
     b = _body("haoiii")
     d = HaOIIIDialog(Settings())
-    headers = [d.table.horizontalHeaderItem(c).text()
-               for c in range(d.table.columnCount())]
-    assert headers == ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"]
-    for col in ("Stars", "FWHM", "Round", "Bg", "Verdict"):
+    headers = d.browser.headers()
+    assert headers == ["Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict"]
+    for col in ("Time", "Stars", "FWHM", "Round", "Bg", "Verdict"):
         assert f"<b>{col}</b>" in b, f"the {col} column is not explained"
 
 
