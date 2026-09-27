@@ -15,9 +15,11 @@ from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
+from ..stacking.verdict import build_verdict, read_pixel_scale
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .verdict_strip import VerdictStrip
 from .worker import run_async
 
 
@@ -172,6 +174,19 @@ class StackDialog(QDialog):
         self.browser.selection_changed.connect(self._on_ticks_changed)
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
+
+        # The night's verdict, over the list in its column (spec decision 6,
+        # mockup A). Stack only: Ha/OIII has none in delivery B.
+        self.verdict_strip = VerdictStrip()
+        self.browser.add_above_list(self.verdict_strip)
+        self.verdict_strip.expanded.connect(
+            lambda: self._keep_on_screen() if self._fitted else None)
+        self._pixel_scale: float | None = None
+        # The folder the LISTED frames came from — not whatever the Folder
+        # field says now: it can be retyped after grading, and anything that
+        # acts on the frames' files must act on their own folder.
+        self._grading_folder = ""
+        self._graded_folder = ""
 
         # Layout A: ONE band of three groups between Folder and the output —
         # Frames · Combine · Result (spec §2.1). Each control still says what
@@ -672,6 +687,15 @@ class StackDialog(QDialog):
                 self._apply_hints_visible()    # blocked, so the link is told here
                 needed = self._natural_minimum_height()
                 squeezed = True
+            # Still too tall: the verdict down to its headline, for this window
+            # only. Last, because it is what the grade just told you; "details ▸"
+            # brings it straight back, and then the screen leaves it alone.
+            if (needed > room and not self.verdict_strip.isHidden()
+                    and not self.verdict_strip.is_compact()
+                    and not self.verdict_strip.user_expanded()):
+                self.verdict_strip.set_compact(True)
+                needed = self._natural_minimum_height()
+                squeezed = True
             if squeezed:
                 # Qt already grew the window to the OLD minimum when it was
                 # shown, and it does not shrink by itself: measured 2026-09-27,
@@ -801,6 +825,9 @@ class StackDialog(QDialog):
             # folder A's master into B under A's name (final review I2).
             self._stats = []
             self._frame_shape = None
+            self._graded_folder = folder
+            self._pixel_scale = None
+            self._update_verdict()
             self.browser.set_frames([])
             self._update_drizzle_note()
             self.scan_pointings()          # no paths: mosaic off and disabled
@@ -809,6 +836,7 @@ class StackDialog(QDialog):
             self._sync_name_note()
             self.status.setText("No .fit subs found in that folder.")
             return
+        self._grading_folder = folder
         self.scan_pointings()
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
@@ -830,8 +858,11 @@ class StackDialog(QDialog):
         self._set_busy(False)
         self._stats = stats
         self._frame_shape = self._read_frame_shape(stats)
+        self._graded_folder = self._grading_folder or self.folder_edit.text().strip()
+        self._pixel_scale = read_pixel_scale([s.path for s in stats if not s.error])
         self._update_drizzle_note()
         self.browser.set_frames(stats)
+        self._update_verdict()
         self.status.setText(self._selection_summary())
         self._auto_output_path()
         if self._fitted:
@@ -867,8 +898,16 @@ class StackDialog(QDialog):
             return
         judge(self._stats, self.strictness_box.currentText().lower())
         self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
+        self._update_verdict()
         self.status.setText(self._selection_summary())
         self._auto_output_path()
+
+    def _update_verdict(self) -> None:
+        """Rebuilt when the GRADER's decisions change — a grade or a
+        Strictness move — never on a hand tick: it describes the night, and
+        the status line already counts the ticks."""
+        self.verdict_strip.set_verdict(
+            build_verdict(self._stats, self._pixel_scale) if self._stats else None)
 
     def _auto_output_path(self) -> None:
         if self._name_is_manual or not self._stats:
