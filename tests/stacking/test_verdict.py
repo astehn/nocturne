@@ -47,7 +47,7 @@ def _error(i, code="measure_failed"):
 def _spec_night(timed=True):
     """The spec's example in miniature: 24 frames from 22:00, two soft early,
     four trailed from 23:20 on, the sky 20% brighter in the last third, and
-    one file that could not be read."""
+    one file that could not be measured."""
     stats = []
     for i in range(24):
         code = ("soft_stars" if i in (1, 12)
@@ -65,7 +65,7 @@ def test_the_spec_shaped_night_reads_as_one_paragraph():
         "Good night, but trailing after 23:20.",
         ("18 of 24 frames kept (3 of 4 minutes).",
          "Rejected: 4 trailed · 2 soft.",
-         "1 could not be read.",
+         "1 could not be measured.",
          "Stars about 9″ across (FWHM 2.5 px).",
          "Background brightened towards the end (moon or twilight?)."))
     assert v.text().startswith("Good night, but trailing after 23:20. 18 of 24 frames")
@@ -99,15 +99,15 @@ def test_error_frames_are_counted_apart_and_never_in_the_numbers():
     v = build_verdict(more, pixel_scale=S30, tz=UTC)
     assert v.headline == base.headline
     assert v.details[0] == base.details[0] == "18 of 24 frames kept (3 of 4 minutes)."
-    assert "3 could not be read." not in v.details
-    assert "2 could not be read." in v.details
+    assert "3 could not be measured." not in v.details
+    assert "2 could not be measured." in v.details
     assert "1 is an already stacked master, left out." in v.details
 
 
 def test_only_error_frames():
     v = build_verdict([_error(0), _error(1), _error(2, "not_raw")], tz=UTC)
     assert v == Verdict("No frame could be measured.",
-                        ("2 could not be read.",
+                        ("2 could not be measured.",
                          "1 is an already stacked master, left out."))
 
 
@@ -230,6 +230,15 @@ def test_the_bigger_late_cluster_leads_and_the_other_follows():
                          "Stars about 9″ across (FWHM 2.5 px).",
                          "Soft stars after 23:45."))
     assert [c for c, _w, _n in late_clusters(stats)] == ["trailed", "soft_stars"]
+
+
+def test_a_late_clouds_cluster_reads_clouds_not_cloud():
+    """Review round 1, Ruling R1: CLUSTER_WORDS must read 'clouds', not the
+    singular 'cloud' — 'Good night, but cloud after 04:18' read like a typo."""
+    stats = [_f(i, code="clouds" if i in (16, 18, 20) else "") for i in range(24)]
+    v = build_verdict(stats, tz=UTC)
+    assert v.headline == "Good night, but clouds after 23:20."
+    assert [c for c, _w, _n in late_clusters(stats)] == ["clouds"]
 
 
 # --- no capture times (Review Focus 3) ----------------------------------------

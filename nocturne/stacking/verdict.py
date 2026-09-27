@@ -75,7 +75,7 @@ STACK_MIN = 3              # both dialogs refuse fewer ("at least 3 frames")
 REASON_WORDS = {"trailed": "trailed", "soft_stars": "soft",
                 "clouds": "cloudy", "obstructed": "blocked"}
 CLUSTER_WORDS = {"trailed": "trailing", "soft_stars": "soft stars",
-                 "clouds": "cloud", "obstructed": "something in the way"}
+                 "clouds": "clouds", "obstructed": "something in the way"}
 _REASON_ORDER = ("trailed", "soft_stars", "clouds", "obstructed")
 _TOO_FEW = ("Too few kept to stack — Stack needs at least 3; you can tick "
             "frames back in by hand.")
@@ -263,10 +263,13 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
             details.append(rejected)
         if len(kept) < STACK_MIN:
             details.append(_TOO_FEW)
-    unreadable = sum(1 for s in stats if s.error and s.reason_code != "not_raw")
+    # Not literally unreadable: the MilkyWay cases traced back to sep's pixel
+    # buffer overflowing on very bright frames, which load fine (review round
+    # 1, Ruling R1) — "measured" is the honest word, matching grade.REASON_MEASURE.
+    unmeasured = sum(1 for s in stats if s.error and s.reason_code != "not_raw")
     masters = sum(1 for s in stats if s.error and s.reason_code == "not_raw")
-    if unreadable:
-        details.append(f"{unreadable} could not be read.")
+    if unmeasured:
+        details.append(f"{unmeasured} could not be measured.")
     if masters:
         details.append(f"{masters} "
                        + ("is an already stacked master" if masters == 1
