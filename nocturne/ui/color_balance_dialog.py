@@ -193,7 +193,6 @@ class ColorBalanceDialog(QDialog):
         controls.addRow("", self.invert_check)
         controls.addRow("", self.show_mask_check)
         controls.addRow("", self.compare_check)
-        controls.addRow("", self.reset_btn)
 
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
@@ -201,6 +200,7 @@ class ColorBalanceDialog(QDialog):
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
+        buttons.addWidget(self.reset_btn)   # with Apply and Close, as in Star Spikes
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
 

@@ -160,7 +160,6 @@ class NarrowbandDialog(QDialog):
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow(self.lightness_check)
         controls.addRow(self.compare_check)
-        controls.addRow("", self.reset_btn)
         self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()
         self._describe_palette(self.palette_box.currentText())
@@ -171,7 +170,10 @@ class NarrowbandDialog(QDialog):
         self.apply_btn.clicked.connect(self.apply)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.reject)
+        # Reset sits in the pinned row, as in Star Spikes: the three actions on
+        # the dialog as a whole live together, not one of them mid-form.
         buttons = QHBoxLayout()
+        buttons.addWidget(self.reset_btn)
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
 
