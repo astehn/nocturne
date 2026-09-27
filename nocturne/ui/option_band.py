@@ -13,6 +13,12 @@ from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
                                QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
+# Words both dialogs show. One copy each, because two had already drifted
+# apart (Ha/OIII's trim note was a dash splice with no full stop).
+TRIM_NOTE = ("Off keeps the full frame. The edges are built from fewer frames, "
+             "so they are noisier, but you can always crop later.")
+PICKY_NOTE = "how picky to be about which subs to keep"
+
 
 class WrappedNote(QLabel):
     """Wrapped text whose MINIMUM height is all of its wrapped lines.

@@ -1711,3 +1711,18 @@ def test_the_stacking_help_describes_the_frame_list_and_output_it_has():
     for group in ("Frames", "Combine", "Result"):
         assert f"<b>{group}</b>" in b and f'add_group("{group}"' in sd
     assert "<b>Change…</b>" in b and '"Change…"' in _src("nocturne/ui/option_band.py")
+
+
+def test_the_fold_and_strictness_are_named_as_the_dialogs_draw_them():
+    """Final review m3: the help said "with ▴" after the button became
+    "▴ Fold", named a Strictness control no label showed, and the Ha/OIII
+    topic never said its options fold too."""
+    ob = _src("nocturne/ui/option_band.py")
+    assert '"▴ Fold"' in ob
+    for topic, src in (("stacking", "nocturne/ui/stack_dialog.py"),
+                       ("haoiii", "nocturne/ui/haoiii_dialog.py")):
+        b = _body(topic)
+        assert "<b>▴ Fold</b>" in b, f"{topic}: the fold button is not named"
+        assert "<b>Strictness</b>" in b, f"{topic}: Strictness is not named"
+        assert 'QLabel("strictness:")' in _src(src), f"{src}: no Strictness label"
+    assert "with ▴ when" not in _body("stacking")

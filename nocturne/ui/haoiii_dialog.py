@@ -14,7 +14,7 @@ from ..settings import start_dir
 from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .frame_browser import FrameBrowser
-from .option_band import OptionBand, WrappedNote
+from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .worker import run_async
 from . import file_dialogs
 
@@ -151,8 +151,8 @@ class HaOIIIDialog(QDialog):
         # fold is the same remembered setting (spec §2.2, §2.5).
         self.options_band = OptionBand(self._options_summary)
         frames = self.options_band.add_group("Frames")
-        frames.body.addWidget(self.strictness_box)
-        picky = QLabel("How picky the automatic frame selection is")
+        frames.body.addLayout(_line(QLabel("strictness:"), self.strictness_box))
+        picky = QLabel(PICKY_NOTE)
         picky.setWordWrap(True)
         frames.body.addWidget(picky)
         combine = self.options_band.add_group("Combine")
@@ -160,9 +160,7 @@ class HaOIIIDialog(QDialog):
         combine.body.addLayout(_line(QLabel("rejection:"), self.kappa_box))
         result = self.options_band.add_group("Result", stretch=2)
         result.body.addWidget(self.crop_check)
-        result.body.addWidget(WrappedNote(
-            "Off keeps the full frame — the edges are built from fewer frames, "
-            "so they are noisier, but you can always crop later"))
+        result.body.addWidget(WrappedNote(TRIM_NOTE))
         result.body.addWidget(self.channels_check)
         for sig in (self.strictness_box.currentTextChanged,
                     self.kappa_box.currentTextChanged, self.sigma_radio.toggled,

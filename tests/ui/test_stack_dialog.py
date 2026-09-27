@@ -1019,9 +1019,13 @@ def test_every_hint_starts_at_the_same_left_edge(qtbot):
     qtbot.waitExposed(d)
     for group in d.options_band.groups:
         hints = [h for h in group.findChildren(_Hint) if h.isVisible()]
+        # The row's leftmost widget: a control, or the small label in front
+        # of one ("strictness:", "rejection:") — never the group's title.
         controls = [w for w in group.findChildren(QWidget)
-                    if w.isVisible() and not isinstance(w, QLabel)]
-        lefts = {w.mapTo(d, w.rect().topLeft()).x() for w in hints + controls[:1]}
+                    if w.isVisible() and w is not group.title
+                    and not isinstance(w, _Hint)]
+        edge = min(w.mapTo(d, w.rect().topLeft()).x() for w in controls)
+        lefts = {h.mapTo(d, h.rect().topLeft()).x() for h in hints} | {edge}
         assert len(lefts) == 1, f"{group.title.text()}: hints start at {sorted(lefts)}"
 
 

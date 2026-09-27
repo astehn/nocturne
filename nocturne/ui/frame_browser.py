@@ -392,6 +392,7 @@ class FrameBrowser(QWidget):
 
     def __init__(self, pool, parent=None) -> None:
         super().__init__(parent)
+        self._fitted = False       # fit_list runs once, on first show
         self.model = FrameTableModel(self)
         self.proxy = FrameFilterProxy(self)
         self.proxy.setSourceModel(self.model)
@@ -682,6 +683,6 @@ class FrameBrowser(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        if not getattr(self, "_fitted", False):
+        if not self._fitted:
             self._fitted = True
             self.fit_list()

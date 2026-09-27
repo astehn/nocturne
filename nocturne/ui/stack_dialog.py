@@ -17,7 +17,7 @@ from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
-from .option_band import OptionBand, WrappedNote
+from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .worker import run_async
 
 
@@ -189,8 +189,8 @@ class StackDialog(QDialog):
             "four times the size.")
         self.options_band = OptionBand(self._options_summary)
         frames = self.options_band.add_group("Frames")
-        frames.body.addWidget(self.strictness_box)
-        picky = QLabel("how picky to be about which subs to keep")
+        frames.body.addLayout(_line(QLabel("strictness:"), self.strictness_box))
+        picky = QLabel(PICKY_NOTE)
         picky.setWordWrap(True)
         frames.body.addWidget(picky)
         frames.body.addWidget(_Hint(
@@ -206,9 +206,7 @@ class StackDialog(QDialog):
         # recommendation lives here (spec §2.1), not in a row of its own.
         result = self.options_band.add_group("Result", stretch=2)
         result.body.addWidget(self.crop_check)
-        result.body.addWidget(_Hint(
-            "Off keeps the full frame. The edges are built from fewer frames, "
-            "so they are noisier, but you can always crop later."))
+        result.body.addWidget(_Hint(TRIM_NOTE))
         result.body.addWidget(self.mosaic_check)
         result.body.addWidget(self.mosaic_hint)
         result.body.addWidget(self.exclusive_note)

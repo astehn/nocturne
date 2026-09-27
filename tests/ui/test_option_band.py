@@ -154,3 +154,22 @@ def test_a_note_its_owner_hid_stays_hidden_when_text_arrives(qtbot):
     note.setText("")
     note.setText("back again")
     assert not note.isVisible()
+
+
+def test_both_dialogs_word_the_shared_notes_the_same(qtbot):
+    """The trim note and the Frames line had drifted apart between Stack and
+    Ha/OIII (final review m1): one constant each, Stack's words, in both."""
+    from PySide6.QtWidgets import QLabel
+    from nocturne.settings import Settings
+    from nocturne.ui.haoiii_dialog import HaOIIIDialog
+    from nocturne.ui.option_band import PICKY_NOTE, TRIM_NOTE
+    from nocturne.ui.stack_dialog import StackDialog
+    assert TRIM_NOTE == ("Off keeps the full frame. The edges are built from fewer "
+                         "frames, so they are noisier, but you can always crop later.")
+    assert PICKY_NOTE == "how picky to be about which subs to keep"
+    for cls in (StackDialog, HaOIIIDialog):
+        d = cls(Settings())
+        qtbot.addWidget(d)
+        texts = [w.text() for w in d.options_band.findChildren(QLabel)]
+        assert TRIM_NOTE in texts, f"{cls.__name__}: its own trim note"
+        assert PICKY_NOTE in texts, f"{cls.__name__}: its own Frames line"
