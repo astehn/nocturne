@@ -856,6 +856,12 @@ class StackDialog(QDialog):
         user happened to be typing instead of the folder the frames actually
         live in."""
         if self._busy:
+            # NEW-2: a grade that never starts must not leave a stale promise
+            # behind — a "Move them back" fallback that finds this busy would
+            # otherwise leave `_restoring_names` set with nothing running to
+            # ever clear it, so a later, unrelated grade or failure reads its
+            # message as if it were still about the move.
+            self._restoring_names = None
             return
         if folder is None:
             folder = self.folder_edit.text().strip()
@@ -864,6 +870,7 @@ class StackDialog(QDialog):
             # Forget the last folder's grade. Its frames stayed listed and
             # stackable while Save to followed the NEW folder, so Stack wrote
             # folder A's master into B under A's name.
+            self._restoring_names = None    # NEW-2: same reason as the busy branch above
             self._stats = []
             self._frame_shape = None
             if folder != self._graded_folder:
@@ -919,7 +926,7 @@ class StackDialog(QDialog):
         self._sync_reject_buttons(check_disk=True)
         self.status.setText(self._selection_summary())
         self._auto_output_path()
-        self._clear_restoring_message()      # m1: the full-grade path of a move back
+        self._clear_restoring_message()      # the full-grade path of a move back
         if self._fitted:
             # The grade is what grows the dialog most (status line, drizzle
             # advice): fit now, not a frame later from resizeEvent.
@@ -971,13 +978,22 @@ class StackDialog(QDialog):
         shot, and nothing on screen says why. One more detail line, read
         straight off the same disk check "Move them back" already offers
         from, says how many are missing from the count; it updates itself
-        away once those frames are back, the next time this runs."""
+        away once those frames are back, the next time this runs.
+
+        NEW-1: a name the manifest lists is not necessarily missing from the
+        count — a frame moved THIS session is still a row in `self._stats`
+        (moved=True) and build_verdict counts it, since it counts the
+        grader's decision, not the move. Only a pending name with no such row
+        is actually uncounted; without this filter the line claimed frames
+        "kept" one line above were also "not counted here"."""
         verdict = build_verdict(self._stats, self._pixel_scale) if self._stats else None
         if verdict is not None and self._graded_folder:
             try:
-                back = len(pending_back(self._graded_folder))
+                pending = pending_back(self._graded_folder)
             except (RejectMoveError, OSError):
-                back = 0
+                pending = []
+            listed_moved = {os.path.basename(s.path) for s in self._stats if s.moved}
+            back = len([n for n in pending if n not in listed_moved])
             if back:
                 note = (f"{back} more frame is in rejected/ and is not counted here."
                         if back == 1 else
@@ -1125,7 +1141,7 @@ class StackDialog(QDialog):
         self.browser.remove_frames(lambda s: s.moved and os.path.basename(s.path) in missing)
         self.browser.frames_moved()
         self._stats = self.browser.frames()   # keep in sync — see grade()'s no-paths branch
-        # m2: a frame remove_frames just dropped (deleted from rejected/ by
+        # A frame remove_frames just dropped (deleted from rejected/ by
         # hand) can no longer be counted anywhere — the strip must forget it
         # along with the row.
         self._update_verdict()
@@ -1134,7 +1150,7 @@ class StackDialog(QDialog):
         self._say(self._back_message(result, unlisted))
         if not unlisted:
             return
-        # m1: whichever path re-measures the restored frames, "Measuring…"
+        # Whichever path re-measures the restored frames, "Measuring…"
         # must not outlive the measure — on success as much as on failure.
         # _on_graded/_on_restored_graded replace it with the move's own
         # outcome once the grade actually finishes; _on_error replaces it
@@ -1184,7 +1200,7 @@ class StackDialog(QDialog):
                     "Measuring the frames that came back…")
 
     def _on_restored_graded(self, new_stats) -> None:
-        self._clear_restoring_message()      # m1: the partial-grade path of a move back
+        self._clear_restoring_message()      # the partial-grade path of a move back
         self._active_token = None
         self._set_busy(False)
         self.browser.add_frames(new_stats)
@@ -1205,12 +1221,12 @@ class StackDialog(QDialog):
             self._keep_on_screen()
 
     def _clear_restoring_message(self) -> None:
-        """m1: "Measuring N frames that came back…" is a promise; replace it
-        with the move's own outcome once the grade it was waiting on actually
-        finishes, on both the partial re-grade (_on_restored_graded) and the
-        full re-grade an all-moved reopen falls back to (_on_graded) — a
-        no-op for any other grade, since `_restoring_names` is only set by
-        `_move_back`."""
+        """The "Measuring N frames that came back…" message is a promise;
+        replace it with the move's own outcome once the grade it was waiting
+        on actually finishes, on both the partial re-grade
+        (_on_restored_graded) and the full re-grade an all-moved reopen falls
+        back to (_on_graded) — a no-op for any other grade, since
+        `_restoring_names` is only set by `_move_back`."""
         if self._restoring_names is None:
             return
         self._restoring_names = None

@@ -533,6 +533,26 @@ def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
             in d2.verdict_strip.details.text())
 
 
+def test_new1_same_session_move_does_not_claim_listed_frames_are_uncounted(
+        qtbot, tmp_path):
+    """NEW-1 (scoped re-review): a name the manifest lists is not necessarily
+    missing from the verdict's count — a frame moved THIS session is still a
+    row in self._stats (moved=True), and build_verdict counts it by the
+    grader's own reason, not by whether it has been moved. Reproduced as the
+    reviewer found it: grade, move, then touch Strictness (which calls
+    _update_verdict again over the SAME list, moved rows and all) — before
+    the fix this claimed the very frames "Rejected: 2 soft" just counted were
+    also "not counted here"."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded(qtbot, folder)
+    d.verdict_strip.move_btn.click()          # Light_01, Light_03 -> rejected/
+    d.strictness_box.setCurrentText("Strict")
+    details = d.verdict_strip.details.text()
+    assert "Rejected: 2 soft" in details, "fixture lost its moved, listed rejects"
+    assert "more frame" not in details, (
+        "claimed frames it just counted as rejected were also not counted")
+
+
 def test_ask_yes_no_defaults_to_cancel(qtbot, tmp_path, monkeypatch):
     """m8: proven at the real QMessageBox seam, not just through the
     injectable `_confirm` every other test in this file answers through."""
