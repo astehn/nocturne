@@ -511,9 +511,9 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
 
     # And asking for them explicitly still works -- ONE click, since the
     # link reads "▸" while the screen has them folded. They are shown within
-    # the option band, which the screen folded too and the help leaves alone.
+    # the option band, which the screen folded too, so the band opens with them.
     dlg._toggle_hints()
-    assert not dlg.mosaic_hint.isHidden()
+    assert dlg.mosaic_hint.isVisible() is True
     assert settings.help_expanded is True
 
 

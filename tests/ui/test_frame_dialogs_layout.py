@@ -198,22 +198,46 @@ def test_later_content_that_outgrows_the_screen_is_refitted(qtbot):
 
 def test_the_users_own_toggle_outranks_the_screen(qtbot):
     """While the screen has the explanations folded the link reads "▸", so
-    ONE click means "show": they come back, the preference says so, and the
-    option band -- not the help's to touch -- stays as it was. The window
-    still stays on the screen."""
+    ONE click means "show" -- and since every explanation lives in the option
+    band, the band the screen folded opens with them (Ruling R6): the link
+    must never light ▾ and show nothing. The window still stays on the
+    screen, and nothing folds them away again behind the user's back."""
     room = _minimum_with_the_help_folded(qtbot) - 1
     d, settings = _short_stack(qtbot, room)
     assert d._hints_forced_closed and d.options_band.is_folded()
-    band_before = d.options_band.is_folded()
     d._toggle_hints()
-    qtbot.wait(50)
-    assert not d.mosaic_hint.isHidden(), "the click did not show the explanations"
+    assert not d.options_band.is_folded(), "▾ lit on a folded band"
+    assert d.mosaic_hint.isVisible(), "the click showed no explanation"
     assert "▾" in d._help_link.text()
     assert settings.help_expanded is True
-    assert d.options_band.is_folded() == band_before, "the help click moved the band"
-    assert not d.mosaic_hint.isHidden(), "folded away again behind the user's back"
-    assert settings.frame_options_folded is False
+    qtbot.wait(50)
+    assert not d.options_band.is_folded(), "re-folded behind the user's back"
+    assert d.mosaic_hint.isVisible(), "folded away again behind the user's back"
     assert d.height() <= room, f"{d.height()} px on a {room} px screen"
+    d._toggle_hints()                      # hiding the help leaves the band open
+    qtbot.wait(50)
+    assert not d.options_band.is_folded()
+    assert not d.mosaic_hint.isVisible()
+
+
+def test_showing_the_help_opens_a_band_the_user_folded(qtbot):
+    """The same for a fold the user made: the help is inside the band."""
+    settings = Settings()
+    settings.help_expanded = False
+    d = StackDialog(settings)
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d.options_band.set_folded(True)        # by hand
+    assert settings.frame_options_folded is True
+    d._toggle_hints()
+    qtbot.wait(20)
+    assert not d.options_band.is_folded()
+    assert d.mosaic_hint.isVisible()
+    assert settings.help_expanded is True
+    assert settings.frame_options_folded is False, "saved like the user's own unfold"
 
 
 def test_the_users_change_outranks_the_screens_fold(qtbot):

@@ -491,13 +491,20 @@ class StackDialog(QDialog):
         # (_clamp_to_screen). While the screen has them folded the link reads
         # "▸", so a click there means "show" whatever the saved preference
         # says -- toggling that preference instead hid them and saved False.
-        # The option band is not the help's to touch: it stays as it is.
         if self._hints_forced_closed:
             self._hints_forced_closed = False
             self._settings.help_expanded = True
         else:
             self._settings.help_expanded = not self._settings.help_expanded
         self._user_laid_out = True
+        # Every explanation lives inside the option band, so "show" on a
+        # folded band lit ▾ and showed nothing. Showing unfolds it -- through
+        # the band's own signal, so it is saved like any unfold the user makes
+        # (_on_options_folded): they clicked for it, and a band left folded in
+        # the preference would reopen as the same ▾-and-nothing. Hiding the
+        # help does not fold it back.
+        if self._settings.help_expanded and self.options_band.is_folded():
+            self.options_band.set_folded(False)
         self._persist_settings()
         self._apply_hints_visible()
         if self._fitted:
