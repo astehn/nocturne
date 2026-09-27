@@ -21,9 +21,9 @@ from . import theme
 
 CHART_HEIGHT = 60
 # Any gap between two subs is drawn as at most this. His Sh2-108 folder holds
-# nights on the 21st, 26th and 27th; on a true time axis each night would be a
-# sliver a few pixels wide between days of nothing. Delivery C draws a dashed
-# line where two nights meet.
+# two nights — the 21st, and the 26th into the 27th; on a true time axis each
+# night would be a sliver a few pixels wide between days of nothing. Delivery C
+# draws a dashed line where two nights meet.
 GAP_CAP = timedelta(minutes=20)
 KEPT_COLOUR = theme.ACCENT
 # Amber, as the mockup draws it. The list DIMS a rejected row; a dimmed dot on

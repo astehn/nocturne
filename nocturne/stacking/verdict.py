@@ -16,11 +16,13 @@ from datetime import datetime, tzinfo
 from statistics import median
 from typing import Iterable, Sequence
 
-from .grade import MIN_MEANINGFUL_EXCESS, FrameStats
+from .grade import JUDGE_MIN, MIN_MEANINGFUL_EXCESS, STACK_MIN, FrameStats  # noqa: F401
+# JUDGE_MIN and STACK_MIN are re-exported from here (`verdict.JUDGE_MIN` etc.)
+# for existing callers and tests; grade.py is the one place either is written.
 
 # Headline: the share of measurable frames the grader kept.
 #
-# Measured 2026-09-27, re-run 2026-09-27 fix round 1 (review Ruling R1): the
+# Measured 2026-09-27, re-run 2026-09-27 split by real night: the
 # first pass pooled every sub in a folder into one grade, but Sh2-108,
 # IC 1396A_sub and MilkyWay_sub each span more than one real night, so that
 # run's "trailing after 00:15" and "softer towards the end" were NIGHT
@@ -54,8 +56,7 @@ from .grade import MIN_MEANINGFUL_EXCESS, FrameStats
 #   Sh2-108        "          2026-09-26    88%  Good night.                              +1%    +1%
 # Full output (including the 08-11 MilkyWay night's own numbers: 59 of 60
 # sampled subs could not be measured — sep's pixel buffer overflow on a very
-# bright frame, the same real-world case Ruling R1's wording fix names) is in
-# task-1-report.md.
+# bright frame, the same real-world case named above) is in task-1-report.md.
 #
 # Every one of these 22 real nights reads "Good night" (or "too few to
 # judge" — never "Mixed" or "Poor"), including the spec's own example night,
@@ -73,7 +74,7 @@ FAIR_SHARE = 0.40
 # "meaningfully softer" (grade.py, measured on M 45 / M 16 / NGC 6992): a
 # change smaller than that is one grading itself would not act on.
 FWHM_TREND = MIN_MEANINGFUL_EXCESS
-# Re-measured per night (table above, fix round 1): the pooled run's one
+# Re-measured per night (table above): the pooled run's one
 # "positive" example for both trends — IC 1396A_sub "softer towards the end"
 # and MilkyWay_sub's background "+25%" — do NOT appear once the same subs are
 # split by real night; both were comparing across a night boundary, not
@@ -86,7 +87,7 @@ FWHM_TREND = MIN_MEANINGFUL_EXCESS
 BG_TREND = 0.10
 # A reason "starts late and stays" when at least CLUSTER_MIN frames carry it
 # and CLUSTER_SHARE_PCT of them come at or after a point past the first third
-# of the night. Re-measured per night (fix round 1): 7 of the 22 real nights
+# of the night. Re-measured per night: 7 of the 22 real nights
 # produced a late cluster (all three IC 1396A_sub nights, M 33_sub,
 # NGC 6888_sub, NGC 6995_sub, NGC281_sub) and every one reads right against
 # its own rejection counts and times — a stronger, more numerous set of real
@@ -96,8 +97,6 @@ BG_TREND = 0.10
 CLUSTER_MIN = 3
 CLUSTER_SHARE_PCT = 80
 TREND_MIN_FRAMES = 6       # two a third, at the least
-JUDGE_MIN = 5              # judge() keeps every frame below this many (grade.py)
-STACK_MIN = 3              # both dialogs refuse fewer ("at least 3 frames")
 
 REASON_WORDS = {"trailed": "trailed", "soft_stars": "soft",
                 "clouds": "cloudy", "obstructed": "blocked"}
@@ -291,8 +290,8 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
         if len(kept) < STACK_MIN:
             details.append(_TOO_FEW)
     # Not literally unreadable: the MilkyWay cases traced back to sep's pixel
-    # buffer overflowing on very bright frames, which load fine (review round
-    # 1, Ruling R1) — "measured" is the honest word, matching grade.REASON_MEASURE.
+    # buffer overflowing on very bright frames, which load fine — "measured"
+    # is the honest word, matching grade.REASON_MEASURE.
     unmeasured = sum(1 for s in stats if s.error and s.reason_code != "not_raw")
     masters = sum(1 for s in stats if s.error and s.reason_code == "not_raw")
     if unmeasured:

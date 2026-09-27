@@ -250,6 +250,8 @@ def test_reopening_offers_them_back_without_grading_them(qtbot, tmp_path):
     assert d2.verdict_strip.back_btn.text() == "Move them back (2)"
     assert not d2.verdict_strip.back_btn.isHidden()
     d2.verdict_strip.back_btn.click()
+    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text(), (
+        "the promise while the partial re-grade is still running")
     qtbot.waitUntil(lambda: len(calls) == 2 and not d2._busy, timeout=3000)
     # Fix round 1, I2: only the two restored frames that weren't already
     # listed are measured — not the whole folder, and not a re-measure of
@@ -257,7 +259,9 @@ def test_reopening_offers_them_back_without_grading_them(qtbot, tmp_path):
     assert calls[1] == sorted(str(folder / n) for n in REJECTED)
     assert len(d2.browser.frames()) == 6
     assert outside_rejected(tree(tmp_path)) == before
-    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text()
+    # m1: the promise does not outlive the measure — once it succeeds, the
+    # strip reads the move's own outcome, not "Measuring…" for ever.
+    assert d2.verdict_strip.message.text() == "Moved 2 frames back."
 
 
 def test_with_every_frame_moved_the_folder_still_offers_them_back(qtbot, tmp_path):
@@ -399,11 +403,14 @@ def test_move_back_regrades_the_graded_folder_not_the_retyped_one(qtbot, tmp_pat
     d2, _ = _graded(qtbot, folder, runner=_runner(calls=calls))
     d2.folder_edit.setText(str(other))          # retyped, not graded
     d2.verdict_strip.back_btn.click()
+    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text(), (
+        "the promise while the partial re-grade is still running")
     qtbot.waitUntil(lambda: len(calls) == 2 and not d2._busy, timeout=3000)
     assert calls[1] == sorted(str(folder / n) for n in REJECTED), (
         "regraded the retyped folder instead of the graded one")
     assert not any(str(other) in p for p in calls[1])
-    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text()
+    # m1: the promise does not survive the measure finishing.
+    assert d2.verdict_strip.message.text() == "Moved 2 frames back."
 
 
 def test_move_back_keeps_hand_ticks_while_restoring_an_earlier_session(qtbot, tmp_path):
@@ -478,6 +485,52 @@ def test_a_frame_deleted_from_rejected_by_hand_is_dropped_not_left_moved(qtbot, 
     assert len(after) == len(before) - 1
     assert (folder / "Light_03.fit").exists()          # the OTHER restored frame: fine
     assert "no longer in rejected" in d.verdict_strip.message.text()
+
+
+def test_m2_a_frame_deleted_from_rejected_by_hand_updates_the_verdict(qtbot, tmp_path):
+    """m2: remove_frames drops the row for a frame move_back could not find
+    anywhere (deleted from rejected/ by hand); the verdict it feeds must be
+    rebuilt too, or it goes on counting a frame the list no longer has."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    assert "4 of 6" in d.verdict_strip.details.text()
+    os.unlink(folder / "rejected" / "Light_01.fit")     # gone, not just moved back
+    d.verdict_strip.back_btn.click()
+    assert "4 of 5" in d.verdict_strip.details.text(), (
+        "the verdict kept counting the frame remove_frames dropped")
+
+
+def test_i1_reopened_verdict_says_how_many_are_still_in_rejected(qtbot, tmp_path):
+    """I1: a folder reopened with some of its frames still parked in
+    rejected/ from an earlier session is graded on only what's left at the
+    top, so its verdict describes an easier night than the one he actually
+    shot unless it says why. The line goes away once they are moved back."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()               # Light_01, Light_03 -> rejected/
+    d1.close()
+    d2, _ = _graded(qtbot, folder)                   # reopen: 4 listed at top
+    assert ("2 more frames are in rejected/ and are not counted here."
+            in d2.verdict_strip.details.text())
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    assert "more frame" not in d2.verdict_strip.details.text()
+
+
+def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
+    """I1's own spec: singular wording for exactly one frame left behind."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.browser.set_checked(1, True)     # both grader-rejected frames ticked
+    d1.browser.set_checked(3, True)     # back in
+    d1.browser.set_checked(0, False)    # one kept frame unticked: the only mover
+    assert d1.verdict_strip.move_btn.text() == "Move 1 frame to rejected/…"
+    d1.verdict_strip.move_btn.click()
+    d1.close()
+    d2, _ = _graded(qtbot, folder)
+    assert ("1 more frame is in rejected/ and is not counted here."
+            in d2.verdict_strip.details.text())
 
 
 def test_ask_yes_no_defaults_to_cancel(qtbot, tmp_path, monkeypatch):
@@ -613,5 +666,55 @@ def test_partial_grade_failure_replaces_the_measuring_message(qtbot, tmp_path):
     msg = d2.verdict_strip.message.text()
     assert "back in the folder" in msg and "grade again" in msg
     assert "Measuring" not in msg
+    # m1/R2-2: a real failure's reason travels with it, so a bug report
+    # carries the cause instead of just "grade again".
+    assert "disk went away" in msg
     # The rename is real and already happened — nothing here pretends otherwise.
     assert (folder / "Light_01.fit").exists() and (folder / "Light_03.fit").exists()
+
+
+def test_full_grade_failure_after_all_moved_reopen_replaces_the_measuring_message(
+        qtbot, tmp_path):
+    """m1/T6 R2-1: the SAME promise-replacement the partial path gets must
+    also apply to the full re-grade an all-moved reopen falls back to — it
+    is the other of the two paths "Measuring…" can be left standing on."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.browser.select_none()
+    d1.verdict_strip.move_btn.click()            # everything -> rejected/
+
+    def failing_runner(paths, on_progress=None, strictness="normal"):
+        raise OSError("disk went away")
+
+    d2, _ = _graded(qtbot, folder, runner=failing_runner)   # reopens to nothing at top
+    assert d2._stats == []
+    d2.verdict_strip.back_btn.click()
+    assert "Measuring 6 frames that came back" in d2.verdict_strip.message.text(), (
+        "the promise while the full re-grade is still running")
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    msg = d2.verdict_strip.message.text()
+    assert "back in the folder" in msg and "grade again" in msg
+    assert "Measuring" not in msg
+    assert "disk went away" in msg
+    # The rename already happened, synchronously, before this failed grade
+    # even started — the frames really are back in the folder.
+    assert all((folder / f"Light_{i:02d}.fit").exists() for i in range(6))
+
+
+def test_full_grade_success_after_all_moved_reopen_clears_the_measuring_message(
+        qtbot, tmp_path):
+    """m1: the success-side twin of the test above — the full re-grade path
+    must also stop saying "Measuring…" once the grade it started actually
+    finishes, replacing it with the move's own outcome."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.browser.select_none()
+    d1.verdict_strip.move_btn.click()            # everything -> rejected/
+    d2, _ = _graded(qtbot, folder)                # reopens to nothing at top
+    assert d2._stats == []
+    d2.verdict_strip.back_btn.click()
+    assert "Measuring 6 frames that came back" in d2.verdict_strip.message.text(), (
+        "the promise while the full re-grade is still running")
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    assert d2.verdict_strip.message.text() == "Moved 6 frames back."
+    assert len(d2._stats) == 6

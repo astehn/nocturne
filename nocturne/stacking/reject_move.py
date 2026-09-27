@@ -331,7 +331,7 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
     # name once normalized: keep only the first spelling given, before
     # anything moves. Otherwise the second spelling's rename genuinely fails
     # (its source is already gone once the first spelling moved it) in a way
-    # the I1 filesystem check below cannot tell apart from "it secretly
+    # the filesystem check below cannot tell apart from "it secretly
     # succeeded" — see _already_claimed. Requiring the name too (not inode
     # alone) means a hard link under a genuinely different name — or two
     # different files a network share happens to report the same st_ino for
@@ -344,7 +344,7 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
         except OSError as exc:
             # It existed a moment ago (the validation loop above checked),
             # but a file can vanish in the gap; this must surface the same
-            # way, not as a raw OSError Task 6 doesn't catch.
+            # way, not as a raw OSError the caller doesn't catch.
             raise RejectMoveError(f"{os.path.basename(p)} is a link, or is no "
                                   "longer there — nothing was moved.") from exc
         norm_name = unicodedata.normalize("NFD", os.path.basename(p)).casefold()

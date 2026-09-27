@@ -178,8 +178,8 @@ class FrameTableModel(QAbstractTableModel):
 
     def add_frames(self, new_stats: list) -> None:
         """Append frames graded AFTER the fact — Stack's "Move them back"
-        merging in subs restored from an earlier session (Task 6 fix round 1,
-        I2) — without disturbing a single existing row. `set_frames` would
+        merging in subs restored from an earlier session — without
+        disturbing a single existing row. `set_frames` would
         clear `_overrides` and re-measure everything already listed, which is
         exactly the bug: a hand tick on an existing frame lived only in
         `_overrides`, so a full reset silently threw it away. Existing rows
@@ -193,10 +193,10 @@ class FrameTableModel(QAbstractTableModel):
         self.endInsertRows()
 
     def remove_frames(self, predicate) -> None:
-        """Drop every frame `predicate(stat)` accepts — Task 6 fix round 1,
-        m6: a name `move_back` could not find anywhere (deleted from
-        rejected/ by hand) must stop describing a frame that is nowhere, not
-        go on reading `moved=True` against a path that no longer exists.
+        """Drop every frame `predicate(stat)` accepts: a name `move_back`
+        could not find anywhere (deleted from rejected/ by hand) must stop
+        describing a frame that is nowhere, not go on reading `moved=True`
+        against a path that no longer exists.
         Removed highest index first so the row numbers of everything else —
         and so `_overrides`, keyed by row — stay valid throughout."""
         rows = sorted((i for i, s in enumerate(self._stats) if predicate(s)), reverse=True)
@@ -607,8 +607,8 @@ class FrameBrowser(QWidget):
         self._update_show_counts()
         self.chart.refresh()
         row = self.current_row()
-        # Fix round 2, N2: a preceding remove_frames() can shift the current
-        # row (Qt moves the selection when rows above it vanish), and the
+        # A preceding remove_frames() can shift the current row (Qt moves
+        # the selection when rows above it vanish), and the
         # chart's own idea of "current" is separate state the row alone
         # doesn't carry — left stale, the highlight kept pointing at the OLD
         # row's x-position, which after a removal can belong to a different
@@ -620,9 +620,9 @@ class FrameBrowser(QWidget):
 
     def add_frames(self, new_stats: list) -> None:
         """Merge newly graded frames in without touching what is already
-        listed (Task 6 fix round 1, I2) — Show, counts and chart pick up the
-        addition; the preview and current row are untouched since nothing
-        about the EXISTING rows moved."""
+        listed — Show, counts and chart pick up the addition; the preview and
+        current row are untouched since nothing about the EXISTING rows
+        moved."""
         if not new_stats:
             return
         self.model.add_frames(new_stats)
@@ -630,12 +630,12 @@ class FrameBrowser(QWidget):
         self.chart.refresh()
 
     def remove_frames(self, predicate) -> None:
-        """Drop rows `predicate(stat)` accepts (Task 6 fix round 1, m6). MUST
-        be followed by `frames_moved()` in the same pass — that call is what
-        re-settles the chart's own "current" index (fix round 2, N2), which
-        a removal can shift or invalidate; without it the chart highlight is
-        left pointing at whatever the OLD row index now means, which can be
-        a different frame entirely, or none."""
+        """Drop rows `predicate(stat)` accepts. MUST be followed by
+        `frames_moved()` in the same pass — that call is what re-settles the
+        chart's own "current" index, which a removal can shift or
+        invalidate; without it the chart highlight is left pointing at
+        whatever the OLD row index now means, which can be a different frame
+        entirely, or none."""
         self.model.remove_frames(predicate)
         self._update_show_counts()
         self.chart.refresh()

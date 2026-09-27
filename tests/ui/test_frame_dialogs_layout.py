@@ -16,12 +16,30 @@ from nocturne.stacking.grade import FrameStats
 from nocturne.ui.frame_browser import COL_VERDICT
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui.option_band import WrappedNote
-from nocturne.ui.quality_chart import CHART_HEIGHT
 from nocturne.ui.stack_dialog import StackDialog
 from nocturne.ui.theme import build_stylesheet
 
 SIZES = [(1280, 800), (1920, 1080)]
 T0 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
+
+
+def _chart_within_dialog(dialog, chart) -> bool:
+    """The chart's own rect, mapped into the dialog, lies inside the dialog
+    and inside its immediate parent.
+
+    Final review, T7: `chart.height() == CHART_HEIGHT` is true whatever the
+    layout does — `QualityChart.setFixedHeight(CHART_HEIGHT)` guarantees the
+    WIDGET's own height, so a squeezed layout that pushes the chart past its
+    parent's edge (clipped, not shortened) still passed. This checks the
+    thing that can actually go wrong: the chart's geometry sitting fully
+    inside both its parent and the dialog.
+    """
+    parent_rect = chart.parentWidget().rect()
+    if chart.geometry().bottom() > parent_rect.bottom():
+        return False
+    top_left = chart.mapTo(dialog, chart.rect().topLeft())
+    bottom_right = chart.mapTo(dialog, chart.rect().bottomRight())
+    return dialog.rect().contains(top_left) and dialog.rect().contains(bottom_right)
 
 
 @pytest.fixture(autouse=True)
@@ -196,7 +214,7 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     # Delivery B: the verdict and the chart are both on screen, the verdict
     # whole, and the list the chart took its height from still shows rows.
     assert not d.verdict_strip.isHidden() and not d.verdict_strip.is_compact()
-    assert d.browser.chart.isVisible() and d.browser.chart.height() == CHART_HEIGHT
+    assert d.browser.chart.isVisible() and _chart_within_dialog(d, d.browser.chart)
     v = d.browser.view
     assert v.viewport().height() >= 3 * v.rowHeight(0), "the list gave up every row"
 
@@ -503,7 +521,7 @@ def test_every_column_is_on_screen_at_the_width_it_opens(qtbot, cls):
 def test_the_chart_sits_under_the_list_at_every_size(qtbot, cls, size):
     d = _open(qtbot, cls, size)
     b = d.browser
-    assert b.chart.isVisible() and b.chart.height() == CHART_HEIGHT
+    assert b.chart.isVisible() and _chart_within_dialog(d, b.chart)
     view_bottom = b.view.mapTo(d, b.view.rect().bottomLeft()).y()
     assert b.chart.mapTo(d, b.chart.rect().topLeft()).y() > view_bottom
     lst, pv = b.splitter.sizes()
