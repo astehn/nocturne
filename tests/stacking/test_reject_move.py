@@ -6,6 +6,7 @@ tmp_path ONLY — nothing here may ever be pointed at a real capture folder.
 import errno
 import json
 import os
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -98,6 +99,44 @@ def test_the_module_cannot_copy_or_delete_his_files():
         assert forbidden not in src, forbidden
     # The one unlink removes Nocturne's OWN half-written manifest temp file.
     assert src.count("os.unlink(") == 1 and "os.unlink(tmp)" in src
+    # m1: a native no-replace rename (renamex_np / renameat2, via ctypes) is
+    # allowed — it is still just a RENAME, never a copy or a delete of one of
+    # his files — but nothing may reach for a native delete to sidestep the
+    # os.unlink guard above.
+    for forbidden in ("libc.unlink(", "libc.remove(", "libc.rmdir(", "unlink_np("):
+        assert forbidden not in src, forbidden
+
+
+def test_no_replace_rename_refuses_a_dest_that_appeared_after_the_check(night):
+    """m1: the file that lands in rejected/ between the up-front collision
+    check and this file's own rename must not be silently replaced — proven
+    against the real OS primitive on this Mac, not a Python-level check."""
+    folder, paths = night
+    os.mkdir(rej(folder))
+    dst = os.path.join(rej(folder), "Light_01.fit")
+    with open(dst, "wb") as fh:
+        fh.write(b"intruder, arrived after the up-front check passed")
+    with pytest.raises(FileExistsError, match="appeared in rejected"):
+        rm._rename_no_replace(paths[1], dst)
+    with open(dst, "rb") as fh:
+        assert fh.read() == b"intruder, arrived after the up-front check passed"
+    assert os.path.isfile(paths[1])   # never moved
+
+
+def test_no_replace_rename_fallback_also_refuses(night, monkeypatch):
+    """The check-then-os.rename fallback (used where the OS offers no native
+    no-replace rename) must refuse a collision too."""
+    folder, paths = night
+    os.mkdir(rej(folder))
+    dst = os.path.join(rej(folder), "Light_01.fit")
+    with open(dst, "wb") as fh:
+        fh.write(b"intruder")
+    monkeypatch.setattr(rm, "_native_no_replace_rename", lambda src, dst: False)
+    with pytest.raises(FileExistsError):
+        rm._rename_no_replace(paths[1], dst)
+    with open(dst, "rb") as fh:
+        assert fh.read() == b"intruder"
+    assert os.path.isfile(paths[1])
 
 
 def test_a_round_trip_calls_no_delete_at_all(night, monkeypatch):
@@ -145,6 +184,26 @@ def test_a_record_write_that_fails_moves_nothing_and_keeps_the_old_record(night,
     with pytest.raises(RejectMoveError, match="nothing was moved"):
         move_to_rejected(folder, [paths[3]], paths, now=LATER)
     assert tree(tmp_path) == before, "moved a file, or left a temp file, or changed the record"
+
+
+def test_a_manifest_write_that_hits_a_bad_name_moves_nothing(night, tmp_path, monkeypatch):
+    """m4: a name from surrogateescape-decoded non-UTF-8 bytes (a foreign-
+    formatted network share) can't be re-encoded by a plain UTF-8 json.dump —
+    UnicodeEncodeError, a ValueError, not an OSError. Simulated here: APFS
+    won't let us create the literal byte sequence to reproduce it for real."""
+    folder, paths = night
+    before = tree(tmp_path)
+
+    def bad_name(*_a, **_k):
+        raise UnicodeEncodeError("utf-8", "\udce9", 0, 1, "surrogates not allowed")
+
+    monkeypatch.setattr(rm.json, "dump", bad_name)
+    with pytest.raises(RejectMoveError, match="nothing was moved"):
+        move_to_rejected(folder, [paths[1]], paths, now=NOW)
+    # An empty rejected/ can be left behind by a first-move failure (m5,
+    # accepted as harmless per Ruling R2) — nothing else may change.
+    assert without_rejected(tree(tmp_path)) == without_rejected(before)
+    assert not os.path.exists(os.path.join(rej(folder), MANIFEST_NAME))
 
 
 def test_moving_more_later_adds_to_the_record(night):
@@ -224,6 +283,22 @@ def test_a_rejected_folder_that_is_a_link_is_refused(night, tmp_path):
     with pytest.raises(RejectMoveError):
         pending_back(folder)
     assert os.listdir(elsewhere) == []
+    os.remove(rej(folder))
+
+    # A sibling folder next door, not somewhere external: the "does rejected/'s
+    # real parent equal the capture folder" check does NOT catch this (a
+    # sibling's parent IS the capture folder either way) — only the islink
+    # check does. Both absolute and relative link spellings.
+    flats = os.path.join(folder, "flats")
+    os.mkdir(flats)
+    os.symlink(flats, rej(folder))                      # absolute link
+    _refused(tmp_path, lambda: move_to_rejected(folder, [paths[1]], paths, now=NOW), "link")
+    assert os.listdir(flats) == []
+    os.remove(rej(folder))
+
+    os.symlink("flats", rej(folder))                     # relative link
+    _refused(tmp_path, lambda: move_to_rejected(folder, [paths[1]], paths, now=NOW), "link")
+    assert os.listdir(flats) == []
 
 
 def test_a_file_called_rejected_is_refused(night, tmp_path):
@@ -247,7 +322,7 @@ def test_a_name_already_in_rejected_stops_everything(night, tmp_path):
 def test_a_name_that_appears_mid_way_is_never_overwritten(night, tmp_path, monkeypatch):
     folder, paths = night
     intruder = os.path.join(rej(folder), "Light_03.fit")
-    real = os.rename
+    real = rm._rename_no_replace
     done = []
 
     def rename_then_intrude(src, dst):
@@ -258,7 +333,7 @@ def test_a_name_that_appears_mid_way_is_never_overwritten(night, tmp_path, monke
                 fh.write(b"intruder")
 
     before = tree(tmp_path)
-    monkeypatch.setattr(rm.os, "rename", rename_then_intrude)
+    monkeypatch.setattr(rm, "_rename_no_replace", rename_then_intrude)
     with pytest.raises(RejectMoveError, match="nothing changed"):
         move_to_rejected(folder, [paths[1], paths[3]], paths, now=NOW)
     monkeypatch.undo()
@@ -296,7 +371,7 @@ def test_a_failure_part_way_puts_everything_back(night, tmp_path, monkeypatch):
     """A network share refusing the third rename (EXDEV) — or any OSError."""
     folder, paths = night
     before = tree(tmp_path)
-    real = os.rename
+    real = rm._rename_no_replace
     calls = []
 
     def flaky(src, dst):
@@ -305,7 +380,7 @@ def test_a_failure_part_way_puts_everything_back(night, tmp_path, monkeypatch):
             raise OSError(errno.EXDEV, "Cross-device link", src)
         real(src, dst)
 
-    monkeypatch.setattr(rm.os, "rename", flaky)
+    monkeypatch.setattr(rm, "_rename_no_replace", flaky)
     with pytest.raises(RejectMoveError, match="Light_05.fit.*nothing changed"):
         move_to_rejected(folder, [paths[1], paths[3], paths[5]], paths, now=NOW)
     monkeypatch.undo()
@@ -317,16 +392,24 @@ def test_a_failure_part_way_puts_everything_back(night, tmp_path, monkeypatch):
 def test_a_roll_back_that_fails_names_what_is_left_and_records_it(night, tmp_path, monkeypatch):
     folder, paths = night
     before = tree(tmp_path)
-    real = os.rename
+    real_forward = rm._rename_no_replace
+    real_back = os.rename
     calls = []
 
-    def flaky(src, dst):
+    def flaky_forward(src, dst):
         calls.append(1)
         if len(calls) in (3, 4):        # the 3rd move fails; so does putting Light_03 back
             raise OSError(errno.EIO, "Input/output error", src)
-        real(src, dst)
+        real_forward(src, dst)
 
-    monkeypatch.setattr(rm.os, "rename", flaky)
+    def flaky_back(src, dst):
+        calls.append(1)
+        if len(calls) in (3, 4):
+            raise OSError(errno.EIO, "Input/output error", src)
+        real_back(src, dst)
+
+    monkeypatch.setattr(rm, "_rename_no_replace", flaky_forward)
+    monkeypatch.setattr(rm.os, "rename", flaky_back)
     with pytest.raises(RejectMoveError, match=r"Light_03\.fit could not be put back"):
         move_to_rejected(folder, [paths[1], paths[3], paths[5]], paths, now=NOW)
     monkeypatch.undo()
@@ -334,6 +417,121 @@ def test_a_roll_back_that_fails_names_what_is_left_and_records_it(night, tmp_pat
     assert pending_back(folder) == ["Light_03.fit"]
     move_back(folder)
     assert without_rejected(tree(tmp_path)) == before
+
+
+# --- I1: a rename that succeeds but raises anyway (a NAS timeout) ---------------
+
+def test_a_rename_that_succeeds_but_still_raises_is_rolled_back_all_the_way_home(
+        night, tmp_path, monkeypatch):
+    """A network share can complete the 2nd rename and still raise ETIMEDOUT
+    afterwards. The bookkeeping never saw it land — the filesystem must be
+    asked, or the file sits in rejected/ unrecorded while the error claims
+    'nothing changed'."""
+    folder, paths = night
+    before = tree(tmp_path)
+    real = rm._rename_no_replace
+    calls = []
+
+    def lying(src, dst):
+        calls.append((src, dst))
+        real(src, dst)                                  # the far end completes it
+        if len(calls) == 2:
+            raise OSError(errno.ETIMEDOUT, "Operation timed out", src)
+
+    monkeypatch.setattr(rm, "_rename_no_replace", lying)
+    with pytest.raises(RejectMoveError, match="nothing changed"):
+        move_to_rejected(folder, [paths[1], paths[3], paths[5]], paths, now=NOW)
+    monkeypatch.undo()
+    assert without_rejected(tree(tmp_path)) == before
+    assert read_manifest(folder) == []
+    assert sorted(os.listdir(rej(folder))) == [MANIFEST_NAME]
+
+
+def test_a_rename_that_secretly_succeeds_during_rollback_is_also_reported_home(
+        night, tmp_path, monkeypatch):
+    """The put-back rename can ALSO complete and then raise (a second NAS
+    timeout, undoing the undo): _put_back must report it home too, not stuck."""
+    folder, paths = night
+    before = tree(tmp_path)
+    real = rm._rename_no_replace
+    real_back = os.rename
+    calls = []
+
+    def flaky_forward(src, dst):
+        calls.append(1)
+        real(src, dst)
+        if len(calls) == 2:
+            raise OSError(errno.ETIMEDOUT, "Operation timed out", src)
+
+    def flaky_back(src, dst):
+        calls.append(1)
+        real_back(src, dst)
+        if len(calls) == 3:
+            raise OSError(errno.ETIMEDOUT, "Operation timed out", src)
+
+    monkeypatch.setattr(rm, "_rename_no_replace", flaky_forward)
+    monkeypatch.setattr(rm.os, "rename", flaky_back)
+    with pytest.raises(RejectMoveError, match="nothing changed"):
+        move_to_rejected(folder, [paths[1], paths[3], paths[5]], paths, now=NOW)
+    monkeypatch.undo()
+    assert without_rejected(tree(tmp_path)) == before
+    assert read_manifest(folder) == []
+    assert sorted(os.listdir(rej(folder))) == [MANIFEST_NAME]
+
+
+def test_a_rename_that_succeeds_but_raises_and_truly_cannot_be_rolled_back(
+        night, tmp_path, monkeypatch):
+    """The forward rename secretly succeeds then raises; putting it back
+    fails for real this time (no rename happens): the file must stay both
+    recorded and named in the error, never silently unrecorded."""
+    folder, paths = night
+    real = rm._rename_no_replace
+    real_back = os.rename
+    calls = []
+
+    def flaky_forward(src, dst):
+        calls.append(1)
+        if len(calls) == 2:
+            real(src, dst)                              # completes despite raising
+            raise OSError(errno.ETIMEDOUT, "Operation timed out", src)
+        real(src, dst)
+
+    def flaky_back(src, dst):
+        if os.path.basename(dst) == "Light_03.fit":
+            raise OSError(errno.EIO, "Input/output error", src)   # never really happens
+        real_back(src, dst)
+
+    monkeypatch.setattr(rm, "_rename_no_replace", flaky_forward)
+    monkeypatch.setattr(rm.os, "rename", flaky_back)
+    with pytest.raises(RejectMoveError, match=r"Light_03\.fit could not be put back"):
+        move_to_rejected(folder, [paths[1], paths[3], paths[5]], paths, now=NOW)
+    monkeypatch.undo()
+    assert [e["name"] for e in read_manifest(folder)] == ["Light_03.fit"]
+    assert pending_back(folder) == ["Light_03.fit"]
+    assert os.path.isfile(os.path.join(rej(folder), "Light_03.fit"))
+    move_back(folder)
+    assert not os.path.exists(os.path.join(rej(folder), "Light_03.fit"))
+    assert os.path.isfile(paths[3])
+
+
+def test_move_back_rename_that_succeeds_but_raises_is_reported_as_home(night, monkeypatch):
+    """Mirrors the forward case inside move_back's own rename: a NAS can
+    complete the move-back and still raise. Must be reported as restored,
+    never as 'still in rejected'."""
+    folder, paths = night
+    move_to_rejected(folder, [paths[1]], paths, now=NOW)
+    real = os.rename
+
+    def lying(src, dst):
+        real(src, dst)
+        raise OSError(errno.ETIMEDOUT, "Operation timed out", src)
+
+    monkeypatch.setattr(rm.os, "rename", lying)
+    result = move_back(folder)
+    monkeypatch.undo()
+    assert result.restored == ["Light_01.fit"] and result.failed == ""
+    assert read_manifest(folder) == [] and pending_back(folder) == []
+    assert os.path.isfile(paths[1])
 
 
 # --- moving back -----------------------------------------------------------------
@@ -478,6 +676,18 @@ def test_a_record_that_is_a_link_is_not_trusted(night, tmp_path):
                                                           "moved_at": "x"}]}))
     os.symlink(str(decoy), os.path.join(rej(folder), MANIFEST_NAME))
     _refused(tmp_path, lambda: move_back(folder), "damaged")
+
+
+def test_the_damaged_message_says_how_to_recover(night):
+    """m7: the damaged-record message must tell him what to actually do —
+    move the files back by hand, then clear the record — not just refuse."""
+    folder, paths = night
+    os.mkdir(rej(folder))
+    with open(os.path.join(rej(folder), MANIFEST_NAME), "w", encoding="utf-8") as fh:
+        fh.write("not json")
+    with pytest.raises(RejectMoveError,
+                       match=f"delete or rename {re.escape(MANIFEST_NAME)}"):
+        read_manifest(folder)
 
 
 def test_describe_names_keeps_a_long_list_short():

@@ -7,21 +7,32 @@ vigilant and careful … but it's a feature worth having". The rules (spec
 - Only files the caller graded, only directly inside the folder, only into
   folder/rejected/.
 - Never overwrite: a name already in rejected/ stops everything before the
-  first rename, and every name is checked again right before its own rename.
-- os.rename only. On one volume a rename is atomic and leaves the bytes and
+  first rename, and every name is checked again right before its own rename —
+  atomically where the OS offers it (renamex_np/RENAME_EXCL on macOS,
+  renameat2/RENAME_NOREPLACE on Linux, via ctypes), so nothing can land in
+  the gap between the check and a plain os.rename.
+- Rename only. On one volume a rename is atomic and leaves the bytes and
   the mtime alone; across volumes it FAILS (EXDEV), where the standard
   library's copy-then-delete move helper would quietly copy and delete.
   Nothing here copies, and nothing of his is deleted.
-- A failure part-way puts back what was moved, and says so.
+- A failure part-way puts back what was moved, and says so — but a rename can
+  also complete on a network share and still raise (a timeout arriving after
+  the server finished). Every place that catches a rename failure asks the
+  filesystem, not the exception, whether the file actually landed before
+  deciding what to roll back or report: never left in rejected/ unrecorded,
+  never reported as still there when it is already home.
 - The record (rejected/.nocturne-moved.json) is written BEFORE the first
   rename, atomically (temp file + os.replace), so a crash mid-way leaves a
   record that over-states — never one that forgets a moved file.
 - The record is untrusted on the way back: only bare file names are acted on,
-  only inside rejected/, and a damaged record stops everything.
-- Links: a sub, or rejected/ itself, that resolves elsewhere is refused.
+  only inside rejected/, and a damaged record stops everything — and says how
+  to recover (move the files back by hand, then delete or rename the record).
+- Links: a sub, or rejected/ itself, that resolves elsewhere is refused, even
+  when the link's target is a sibling folder next door.
 """
 from __future__ import annotations
 
+import ctypes
 import errno
 import json
 import os
@@ -33,6 +44,18 @@ from typing import Iterable
 REJECTED_DIR = "rejected"
 MANIFEST_NAME = ".nocturne-moved.json"
 _VERSION = 1
+
+try:
+    _libc = ctypes.CDLL(None, use_errno=True)
+except OSError:                                   # no libc to load from: exotic platform
+    _libc = None
+
+# Errno values meaning "the OS doesn't offer a no-replace rename here" (an
+# old kernel, or a filesystem — a network share is the real case — that
+# doesn't support the flag), as opposed to "there is a collision" (EEXIST).
+_NO_REPLACE_UNAVAILABLE = {errno.ENOTSUP, errno.EINVAL, errno.ENOSYS}
+if hasattr(errno, "EOPNOTSUPP"):
+    _NO_REPLACE_UNAVAILABLE.add(errno.EOPNOTSUPP)
 
 
 class RejectMoveError(Exception):
@@ -75,11 +98,13 @@ def _bare_name(name) -> bool:
 def _damaged(folder: str) -> str:
     return (f"The record of moved frames in {_where(folder)} ({MANIFEST_NAME}) is "
             "damaged, so Nocturne will not move anything there or back. Move the "
-            "files back by hand if you need them.")
+            "files back by hand if you need them, then delete or rename "
+            f"{MANIFEST_NAME} in {_where(folder)} — Nocturne will start a fresh "
+            "record next time and trust it again.")
 
 
-def _cannot_write(folder: str, exc: OSError) -> str:
-    why = exc.strerror or str(exc)
+def _cannot_write(folder: str, exc: Exception) -> str:
+    why = getattr(exc, "strerror", None) or str(exc)
     return (f"Can't write in {_label(folder)} ({why}) — nothing was moved. Is it "
             "read-only, or on a network drive that refuses changes?")
 
@@ -182,6 +207,11 @@ def _put_back(moved: dict[str, str]) -> dict[str, str]:
         try:
             os.rename(dst, src)
         except OSError:
+            # A NAS can complete the rename and still raise (e.g. a timeout
+            # after the server was done): ask the filesystem, not the
+            # exception, whether it actually landed.
+            if os.path.lexists(src) and not os.path.lexists(dst):
+                continue
             stuck[src] = dst
     return stuck
 
@@ -195,6 +225,50 @@ def _failed(folder: str, exc: OSError, stuck: dict[str, str]) -> str:
     one = len(stuck) == 1
     return (text + f" {names} could not be put back and {'is' if one else 'are'} still "
             f"in {_where(folder)}; Move them back will find {'it' if one else 'them'}.")
+
+
+def _native_no_replace_rename(src: str, dst: str) -> bool:
+    """Try the OS's own exclusive rename. True on success; False when the
+    primitive isn't offered here (missing symbol, old kernel, or a
+    filesystem — a network share is the real case — that refuses the flag),
+    so the caller should fall back. Raises FileExistsError for a genuine
+    collision, or the underlying OSError for anything else."""
+    if _libc is None:
+        return False
+    s, d = os.fsencode(src), os.fsencode(dst)
+    if hasattr(_libc, "renamex_np"):                       # macOS
+        ctypes.set_errno(0)
+        rc = _libc.renamex_np(s, d, 0x4)                   # RENAME_EXCL
+        err = ctypes.get_errno()
+    elif hasattr(_libc, "renameat2"):                       # Linux
+        AT_FDCWD, RENAME_NOREPLACE = -100, 1
+        ctypes.set_errno(0)
+        rc = _libc.renameat2(AT_FDCWD, s, AT_FDCWD, d, RENAME_NOREPLACE)
+        err = ctypes.get_errno()
+    else:
+        return False
+    if rc == 0:
+        return True
+    if err == errno.EEXIST:
+        raise FileExistsError(errno.EEXIST,
+                              "a file with this name appeared in rejected/", dst)
+    if err in _NO_REPLACE_UNAVAILABLE:
+        return False
+    raise OSError(err, os.strerror(err), src)
+
+
+def _rename_no_replace(src: str, dst: str) -> None:
+    """Rename src to dst, refusing to replace an existing dst — atomically,
+    where the OS offers it, so nothing can land in the gap between a check
+    and a plain os.rename. Falls back to check-then-os.rename where that
+    primitive is missing or the filesystem refuses the flag; either way
+    a collision raises FileExistsError."""
+    if _native_no_replace_rename(src, dst):
+        return
+    if os.path.lexists(dst):
+        raise FileExistsError(errno.EEXIST,
+                              "a file with this name appeared in rejected/", dst)
+    os.rename(src, dst)
 
 
 def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
@@ -241,27 +315,30 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
     new_entries = [{"name": os.path.basename(p), "moved_at": stamp} for p in wanted]
     try:
         _write_manifest(rej, kept_entries + new_entries)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError: a name that came from surrogateescape-decoded non-UTF-8
+        # bytes (a foreign-formatted network share) can't be re-encoded by a
+        # plain UTF-8 json.dump — UnicodeEncodeError, not an OSError.
         raise RejectMoveError(_cannot_write(folder, exc)) from exc
     moved: dict[str, str] = {}
     try:
         for p in wanted:
             dst = os.path.join(rej, os.path.basename(p))
-            # os.rename REPLACES an existing file on macOS and Linux, and
-            # Python has no no-replace rename there. Checked again here, right
-            # before the rename, the window is microseconds wide.
-            if os.path.lexists(dst):
-                raise FileExistsError(errno.EEXIST,
-                                      "a file with this name appeared in rejected/", dst)
-            os.rename(p, dst)
+            _rename_no_replace(p, dst)
             moved[p] = dst
     except OSError as exc:
+        # A NAS can complete a rename and still raise afterwards (e.g. a
+        # timeout arriving after the server was done): ask the filesystem,
+        # not the bookkeeping, whether this file actually landed before
+        # rolling back — otherwise it sits in rejected/ unrecorded.
+        if not os.path.lexists(p) and os.path.lexists(dst):
+            moved[p] = dst
         stuck = _put_back(moved)
         stuck_names = {os.path.basename(p) for p in stuck}
         try:
             _write_manifest(rej, kept_entries
                             + [e for e in new_entries if e["name"] in stuck_names])
-        except OSError:
+        except (OSError, ValueError):
             pass     # the write-ahead record still names them all: over-states, never forgets
         raise RejectMoveError(_failed(folder, exc, stuck)) from exc
     return moved
@@ -294,6 +371,12 @@ def move_back(folder: str) -> MoveBackResult:
             try:
                 os.rename(src, dst)
             except OSError as exc:
+                # Mirrors move_to_rejected: a rename-back can complete on the
+                # far end and still raise. Ask the filesystem before
+                # reporting it as stuck in rejected/ — it may already be home.
+                if not os.path.lexists(src) and os.path.lexists(dst):
+                    result.restored.append(name)
+                    continue
                 result.failed = (f"Could not move {name} back ({exc.strerror or exc}); "
                                  f"it is still in {_where(folder)}.")
             else:
@@ -303,9 +386,9 @@ def move_back(folder: str) -> MoveBackResult:
     if len(keep) != len(entries):
         try:
             _write_manifest(rej, keep)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            why = getattr(exc, "strerror", None) or str(exc)
             result.failed = result.failed or (
                 f"The frames are back, but the record in {_where(folder)} could not be "
-                f"updated ({exc.strerror or exc}). Moving them back again will find "
-                "them already back.")
+                f"updated ({why}). Moving them back again will find them already back.")
     return result
