@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 
 import numpy as np
 import sep
 
 from ..core.fits_io import is_stacked_master
 from ..core.tasks import current
+from .capture_time import read_capture_time
 from .frames import load_sub, luminance
 
 
@@ -79,6 +81,9 @@ class FrameStats:
     reason: str = ""        # human-readable, non-empty iff rejected
     warning: str = ""       # human-readable, kept-with-warning (bright sky)
     error: bool = False     # measurement failed; excluded from statistics
+    # When the sub was taken (aware datetime), for the frame list's Time column
+    # and its default sort. None when neither DATE-OBS nor the file name says.
+    captured: datetime | None = None
 
 
 def _measure(lum: np.ndarray) -> tuple[int, float, float, float, float]:
@@ -144,22 +149,24 @@ def _score(star_count: int, fwhm: float, background: float, elongation: float) -
 
 
 def grade_frame(path: str) -> FrameStats:
+    captured = read_capture_time(path)
     try:
         if is_stacked_master(path):
             return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
                               reason_code="not_raw", reason=REASON_NOT_RAW,
-                              error=True)
+                              error=True, captured=captured)
         img = load_sub(path, normalize=False)
         star_count, fwhm, background, elongation, bg_spread = _measure(luminance(img.data))
         score = _score(star_count, fwhm, background, elongation)
         return FrameStats(path, star_count, fwhm, background, float(score), True,
                           elongation=elongation, bg_spread=bg_spread,
                           exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
-                          target=str(img.metadata.get("target") or ""))
+                          target=str(img.metadata.get("target") or ""),
+                          captured=captured)
     except Exception:
         return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
                           reason_code="measure_failed", reason=REASON_MEASURE,
-                          error=True)
+                          error=True, captured=captured)
 
 
 def upper_gate(values: list[float], k: float) -> float:

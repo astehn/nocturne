@@ -754,3 +754,18 @@ def test_the_long_form_survives_where_the_short_one_cannot():
     assert len(bad.reason_detail) > len(bad.reason)
     assert "roof" in bad.reason_detail
     assert "noise" in bad.reason_detail
+
+
+def test_grading_records_when_each_frame_was_taken(tmp_path):
+    """The frame list sorts by capture time; grade_frame is where it is read —
+    on the success path and on a failure path, because a rejected frame still
+    has to find its place in time."""
+    from nocturne.stacking.capture_time import from_date_obs, from_filename
+    good = tmp_path / "Light_X_10.0s_LP_20260921-221941.fit"
+    write_color_fits(good, make_star_field(n_stars=25, seed=3),
+                     header={"DATE-OBS": "2026-09-21T20:19:21"})
+    broken = tmp_path / "Light_X_10.0s_LP_20260921-223009.fit"
+    broken.write_bytes(b"not a fits file")
+    assert grade_frame(str(good)).captured == from_date_obs("2026-09-21T20:19:21")
+    failed = grade_frame(str(broken))
+    assert failed.error and failed.captured == from_filename(str(broken))
