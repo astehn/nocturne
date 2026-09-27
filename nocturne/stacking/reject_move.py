@@ -1,0 +1,311 @@
+"""Move rejected subs into <folder>/rejected/ and back.
+
+These are his ORIGINAL subs. Andreas, 2026-09-27: "we need to be very
+vigilant and careful … but it's a feature worth having". The rules (spec
+2026-09-27 §5), each pinned by tests/stacking/test_reject_move.py:
+
+- Only files the caller graded, only directly inside the folder, only into
+  folder/rejected/.
+- Never overwrite: a name already in rejected/ stops everything before the
+  first rename, and every name is checked again right before its own rename.
+- os.rename only. On one volume a rename is atomic and leaves the bytes and
+  the mtime alone; across volumes it FAILS (EXDEV), where the standard
+  library's copy-then-delete move helper would quietly copy and delete.
+  Nothing here copies, and nothing of his is deleted.
+- A failure part-way puts back what was moved, and says so.
+- The record (rejected/.nocturne-moved.json) is written BEFORE the first
+  rename, atomically (temp file + os.replace), so a crash mid-way leaves a
+  record that over-states — never one that forgets a moved file.
+- The record is untrusted on the way back: only bare file names are acted on,
+  only inside rejected/, and a damaged record stops everything.
+- Links: a sub, or rejected/ itself, that resolves elsewhere is refused.
+"""
+from __future__ import annotations
+
+import errno
+import json
+import os
+import tempfile
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Iterable
+
+REJECTED_DIR = "rejected"
+MANIFEST_NAME = ".nocturne-moved.json"
+_VERSION = 1
+
+
+class RejectMoveError(Exception):
+    """Refused, or failed with everything put back — or, when putting back
+    failed too, with every leftover named and recorded. str() is the
+    sentence for the user."""
+
+
+@dataclass
+class MoveBackResult:
+    restored: list[str] = field(default_factory=list)       # back in the folder now
+    already_back: list[str] = field(default_factory=list)   # found back already (by hand)
+    taken: list[str] = field(default_factory=list)          # the name is in use again
+    refused: list[str] = field(default_factory=list)        # not a plain file in rejected/
+    missing: list[str] = field(default_factory=list)        # in neither place
+    failed: str = ""                                         # an OSError stopped it part-way
+
+
+def describe_names(names, limit: int = 3) -> str:
+    names = list(names)
+    if len(names) <= limit:
+        return ", ".join(names)
+    return f"{', '.join(names[:limit])} and {len(names) - limit} more"
+
+
+def _label(folder: str) -> str:
+    return os.path.basename(os.path.normpath(os.path.abspath(folder)))
+
+
+def _where(folder: str) -> str:
+    return f"{_label(folder)}/{REJECTED_DIR}"
+
+
+def _bare_name(name) -> bool:
+    return (isinstance(name, str) and name not in ("", ".", "..")
+            and "/" not in name and "\\" not in name and "\x00" not in name
+            and name != MANIFEST_NAME)
+
+
+def _damaged(folder: str) -> str:
+    return (f"The record of moved frames in {_where(folder)} ({MANIFEST_NAME}) is "
+            "damaged, so Nocturne will not move anything there or back. Move the "
+            "files back by hand if you need them.")
+
+
+def _cannot_write(folder: str, exc: OSError) -> str:
+    why = exc.strerror or str(exc)
+    return (f"Can't write in {_label(folder)} ({why}) — nothing was moved. Is it "
+            "read-only, or on a network drive that refuses changes?")
+
+
+def _safe_rejected_dir(folder: str, create: bool) -> str | None:
+    """rejected/ as a real folder directly inside `folder`, or None when it is
+    absent and `create` is False."""
+    folder = os.path.abspath(folder)
+    path = os.path.join(folder, REJECTED_DIR)
+    linked = (f"{_where(folder)} is a link to another place, so Nocturne will not "
+              "move anything there or back.")
+    if os.path.islink(path):
+        raise RejectMoveError(linked)
+    if not os.path.lexists(path):
+        if not create:
+            return None
+        try:
+            os.mkdir(path)
+        except OSError as exc:
+            raise RejectMoveError(_cannot_write(folder, exc)) from exc
+    if not os.path.isdir(path):
+        raise RejectMoveError(f"{_label(folder)} has a file called {REJECTED_DIR}, "
+                              "not a folder — nothing was moved.")
+    if os.path.dirname(os.path.realpath(path)) != os.path.realpath(folder):
+        raise RejectMoveError(linked)
+    return path
+
+
+def read_manifest(folder: str) -> list[dict]:
+    """The record's entries, [{"name", "moved_at"}]; [] when there is none.
+    Raises RejectMoveError when it exists and cannot be trusted."""
+    rej = _safe_rejected_dir(folder, create=False)
+    if rej is None:
+        return []
+    path = os.path.join(rej, MANIFEST_NAME)
+    if not os.path.lexists(path):
+        return []
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise RejectMoveError(_damaged(folder))
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise RejectMoveError(_damaged(folder)) from exc
+    moved = data.get("moved") if isinstance(data, dict) else None
+    if (not isinstance(data, dict) or data.get("version") != _VERSION
+            or not isinstance(moved, list)):
+        raise RejectMoveError(_damaged(folder))
+    entries = []
+    for e in moved:
+        if (not isinstance(e, dict) or not _bare_name(e.get("name"))
+                or not isinstance(e.get("moved_at"), str)):
+            raise RejectMoveError(_damaged(folder))
+        entries.append({"name": e["name"], "moved_at": e["moved_at"]})
+    if len({e["name"] for e in entries}) != len(entries):
+        raise RejectMoveError(_damaged(folder))
+    return entries
+
+
+def _write_manifest(rej: str, entries: list[dict]) -> None:
+    fd, tmp = tempfile.mkstemp(prefix=MANIFEST_NAME + ".", suffix=".tmp", dir=rej)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"version": _VERSION, "moved": entries}, fh, indent=1,
+                      ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, os.path.join(rej, MANIFEST_NAME))
+    except BaseException:
+        # Our own half-written temp file — never one of his.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def pending_back(folder: str) -> list[str]:
+    """Names the record lists that are plain files in rejected/ now: what
+    "Move them back" would put back."""
+    if not os.path.isdir(folder):
+        return []
+    entries = read_manifest(folder)
+    rej = os.path.join(os.path.abspath(folder), REJECTED_DIR)
+    out = []
+    for e in entries:
+        p = os.path.join(rej, e["name"])
+        if os.path.isfile(p) and not os.path.islink(p):
+            out.append(e["name"])
+    return out
+
+
+def _put_back(moved: dict[str, str]) -> dict[str, str]:
+    """Undo `moved`, newest first. Returns what could NOT be put back."""
+    stuck: dict[str, str] = {}
+    for src, dst in reversed(list(moved.items())):
+        if os.path.lexists(src):
+            stuck[src] = dst      # something new has its old name: never overwrite it
+            continue
+        try:
+            os.rename(dst, src)
+        except OSError:
+            stuck[src] = dst
+    return stuck
+
+
+def _failed(folder: str, exc: OSError, stuck: dict[str, str]) -> str:
+    what = os.path.basename(exc.filename) if getattr(exc, "filename", None) else "a frame"
+    text = f"Could not move {what} ({exc.strerror or exc})."
+    if not stuck:
+        return text + " Everything already moved was put back — nothing changed."
+    names = describe_names(sorted(os.path.basename(p) for p in stuck))
+    one = len(stuck) == 1
+    return (text + f" {names} could not be put back and {'is' if one else 'are'} still "
+            f"in {_where(folder)}; Move them back will find {'it' if one else 'them'}.")
+
+
+def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
+                     now: datetime | None = None) -> dict[str, str]:
+    """Move `paths` into folder/rejected/. Returns {old path: new path}.
+
+    `graded` is every path the caller graded; anything else is refused. On any
+    refusal or failure nothing stays moved (RejectMoveError) — unless putting
+    a file back failed too, and then the error names it and the record keeps it.
+    """
+    folder = os.path.abspath(folder)
+    real_folder = os.path.realpath(folder)
+    graded_set = {os.path.abspath(p) for p in graded}
+    wanted: list[str] = []
+    for p in dict.fromkeys(os.path.abspath(x) for x in paths):
+        name = os.path.basename(p)
+        if p not in graded_set:
+            raise RejectMoveError(f"{name} was not graded in this window — nothing was moved.")
+        if os.path.dirname(p) != folder or not _bare_name(name):
+            raise RejectMoveError(f"{name} is not directly inside {_label(folder)} — "
+                                  "nothing was moved.")
+        if os.path.islink(p) or not os.path.isfile(p):
+            raise RejectMoveError(f"{name} is a link, or is no longer there — "
+                                  "nothing was moved.")
+        if os.path.dirname(os.path.realpath(p)) != real_folder:
+            raise RejectMoveError(f"{name} is stored outside {_label(folder)} — "
+                                  "nothing was moved.")
+        wanted.append(p)
+    if not wanted:
+        return {}
+    earlier = read_manifest(folder)              # damaged: stop before anything moves
+    rej = _safe_rejected_dir(folder, create=True)
+    taken = [os.path.basename(p) for p in wanted
+             if os.path.lexists(os.path.join(rej, os.path.basename(p)))]
+    if taken:
+        raise RejectMoveError(
+            f"{describe_names(taken)} {'is' if len(taken) == 1 else 'are'} already in "
+            f"{_where(folder)} — nothing was moved, so nothing was overwritten.")
+    stamp = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    names = {os.path.basename(p) for p in wanted}
+    # An entry for a name that is moving again describes a file that came back
+    # by hand: it is not in rejected/, or `taken` would have stopped us.
+    kept_entries = [e for e in earlier if e["name"] not in names]
+    new_entries = [{"name": os.path.basename(p), "moved_at": stamp} for p in wanted]
+    try:
+        _write_manifest(rej, kept_entries + new_entries)
+    except OSError as exc:
+        raise RejectMoveError(_cannot_write(folder, exc)) from exc
+    moved: dict[str, str] = {}
+    try:
+        for p in wanted:
+            dst = os.path.join(rej, os.path.basename(p))
+            # os.rename REPLACES an existing file on macOS and Linux, and
+            # Python has no no-replace rename there. Checked again here, right
+            # before the rename, the window is microseconds wide.
+            if os.path.lexists(dst):
+                raise FileExistsError(errno.EEXIST,
+                                      "a file with this name appeared in rejected/", dst)
+            os.rename(p, dst)
+            moved[p] = dst
+    except OSError as exc:
+        stuck = _put_back(moved)
+        stuck_names = {os.path.basename(p) for p in stuck}
+        try:
+            _write_manifest(rej, kept_entries
+                            + [e for e in new_entries if e["name"] in stuck_names])
+        except OSError:
+            pass     # the write-ahead record still names them all: over-states, never forgets
+        raise RejectMoveError(_failed(folder, exc, stuck)) from exc
+    return moved
+
+
+def move_back(folder: str) -> MoveBackResult:
+    """Put back exactly what the record lists. A name in use again stays in
+    rejected/ with its entry; an entry is removed only once its file is back."""
+    folder = os.path.abspath(folder)
+    result = MoveBackResult()
+    rej = _safe_rejected_dir(folder, create=False)
+    if rej is None:
+        return result
+    entries = read_manifest(folder)
+    keep: list[dict] = []
+    for e in entries:
+        name = e["name"]
+        src, dst = os.path.join(rej, name), os.path.join(folder, name)
+        in_rejected, at_home = os.path.lexists(src), os.path.lexists(dst)
+        if at_home and not in_rejected:
+            result.already_back.append(name)        # back already, by hand
+            continue
+        if not in_rejected:
+            result.missing.append(name)
+        elif os.path.islink(src) or not os.path.isfile(src):
+            result.refused.append(name)
+        elif at_home:
+            result.taken.append(name)
+        elif not result.failed:
+            try:
+                os.rename(src, dst)
+            except OSError as exc:
+                result.failed = (f"Could not move {name} back ({exc.strerror or exc}); "
+                                 f"it is still in {_where(folder)}.")
+            else:
+                result.restored.append(name)
+                continue
+        keep.append(e)
+    if len(keep) != len(entries):
+        try:
+            _write_manifest(rej, keep)
+        except OSError as exc:
+            result.failed = result.failed or (
+                f"The frames are back, but the record in {_where(folder)} could not be "
+                f"updated ({exc.strerror or exc}). Moving them back again will find "
+                "them already back.")
+    return result
