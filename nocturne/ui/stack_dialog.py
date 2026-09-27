@@ -52,6 +52,7 @@ class _Signals(QObject):
 
 
 def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
+    """The field and its Browse… in one widget, so both can be disabled."""
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -118,6 +119,7 @@ class StackDialog(QDialog):
         self.save_to_edit.setToolTip("The folder the master is written to — the "
                                      "subs folder unless you choose another")
         self.save_to_edit.textEdited.connect(self._on_save_to_typed)
+        self.save_to_edit.editingFinished.connect(self._refill_save_to)
         self.name_edit = QLineEdit()
         self.name_edit.setToolTip("Named from the frames you keep, and kept up to "
                                   "date as you tick. Type your own and it stays.")
@@ -297,7 +299,9 @@ class StackDialog(QDialog):
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
         form.addRow(self.options_band)
         form.addRow(self._help_link)
-        form.addRow("Save to", _picker_row(self.save_to_edit, self._browse_save_to))
+        self._save_to_row = _picker_row(self.save_to_edit, self._browse_save_to)
+        self._name_field = name_field
+        form.addRow("Save to", self._save_to_row)
         form.addRow("Name", name_field)
 
         root = QVBoxLayout(self)
@@ -320,16 +324,28 @@ class StackDialog(QDialog):
         if os.path.splitext(name)[1].lower() not in (".fit", ".fits", ".fts"):
             name += ".fits"
         folder = self.save_to_edit.text().strip() or self.folder_edit.text().strip()
-        return os.path.join(folder, name)
+        if not folder:
+            return ""      # never a path relative to wherever the app was started
+        # "~/Astro" is a folder to the person typing it, not to save_fits.
+        return os.path.join(os.path.expanduser(folder), name)
 
     def _on_name_typed(self, _text: str) -> None:
         self._name_is_manual = True
         self.auto_name_btn.show()
         self._sync_name_note()
 
-    def _on_save_to_typed(self, _text: str) -> None:
-        self._save_to_is_manual = True
+    def _on_save_to_typed(self, text: str) -> None:
+        # Cleared by hand: back to following the subs folder. An empty
+        # "manual" field quietly used a folder it did not display, and missed
+        # every later change of subs folder.
+        self._save_to_is_manual = bool(text.strip())
         self._sync_name_note()
+
+    def _refill_save_to(self) -> None:
+        # Not on every keystroke: that would refill the field the moment
+        # backspace emptied it, before the user could type a new folder.
+        if not self._save_to_is_manual and not self.save_to_edit.text().strip():
+            self.save_to_edit.setText(self.folder_edit.text().strip())
 
     def _follow_subs_folder(self, folder: str) -> None:
         if not self._save_to_is_manual:
@@ -339,6 +355,12 @@ class StackDialog(QDialog):
     def _restore_automatic_name(self) -> None:
         self._name_is_manual = False
         self.auto_name_btn.hide()
+        if not self._stats:
+            # Nothing graded, nothing to name it from: a typed name left in
+            # the field would pass for the automatic one.
+            self.name_edit.setText("")
+            self._sync_name_note()
+            return
         self._auto_output_path()
 
     def _sync_name_note(self) -> None:
@@ -427,6 +449,10 @@ class StackDialog(QDialog):
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)
+        # main_window reads output_path() when the master arrives, so an edit
+        # made mid-stack would record a path the file is not at.
+        self._save_to_row.setEnabled(not busy)
+        self._name_field.setEnabled(not busy)
         self._sync_background_availability()
 
     # --- cancellable async dispatch ---
@@ -772,6 +798,17 @@ class StackDialog(QDialog):
         folder = self.folder_edit.text().strip()
         paths = discover_subs(folder) if folder else []
         if not paths:
+            # Forget the last folder's grade. Its frames stayed listed and
+            # stackable while Save to followed the NEW folder, so Stack wrote
+            # folder A's master into B under A's name (final review I2).
+            self._stats = []
+            self._frame_shape = None
+            self.browser.set_frames([])
+            self._update_drizzle_note()
+            self.scan_pointings()          # no paths: mosaic off and disabled
+            if not self._name_is_manual:
+                self.name_edit.setText("")
+            self._sync_name_note()
             self.status.setText("No .fit subs found in that folder.")
             return
         self.scan_pointings()
@@ -904,6 +941,13 @@ class StackDialog(QDialog):
             return False
         if len(self._included_paths_best_first()) < 3:
             self.status.setText("Select at least 3 frames to stack.")
+            return False
+        # save_fits creates no folders, so a typo here used to fail only
+        # AFTER the stack — hours, for a drizzle or a mosaic.
+        folder = os.path.dirname(self.output_path())
+        if not os.path.isdir(folder):
+            self.status.setText(f"The folder {folder} does not exist — "
+                                "choose one with Browse….")
             return False
         return True
 
@@ -1038,6 +1082,11 @@ class StackDialog(QDialog):
         old_path = result.output_path
         new_path = os.path.join(os.path.dirname(old_path), want)
         if new_path == old_path or not os.path.exists(old_path):
+            return
+        if os.path.exists(new_path):
+            # Another master already has the honest name. The dialog only
+            # warns about replacing the name the user SAW; this one they never
+            # did, so keep the old name rather than destroy a file.
             return
         try:
             os.replace(old_path, new_path)

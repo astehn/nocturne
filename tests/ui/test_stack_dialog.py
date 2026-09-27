@@ -1123,10 +1123,33 @@ def test_the_rename_is_actually_wired_into_the_finish(qtbot, tmp_path):
     """
     d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
     qtbot.addWidget(d)
+    d.folder_edit.setText(str(tmp_path))
+    d.name_edit.setText(original.name)
     d._on_master = lambda _img: None
     d._on_stacked(res)
     assert not original.exists(), "finishing a stack left the misnamed file"
     assert "2034" in os.path.basename(res.output_path), res.output_path
+    # main_window reads output_path() after this: it must be the renamed file
+    assert d.name_edit.text() == os.path.basename(res.output_path)
+    assert d.output_path() == res.output_path
+
+
+def test_the_rename_never_replaces_a_file_already_there(qtbot, tmp_path):
+    """Final review m2: the corrected name can belong to an earlier run's
+    master (204 graded, 203 registered, and a 203-frame master from last
+    week). os.replace destroyed it without a word. Keep the old name."""
+    d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
+    qtbot.addWidget(d)
+    earlier = tmp_path / "IC1396A_2034x10s_339min.fits"
+    earlier.write_bytes(b"last week's master")
+    d.folder_edit.setText(str(tmp_path))
+    d.name_edit.setText(original.name)
+    d._on_master = lambda _img: None
+    d._on_stacked(res)
+    assert earlier.read_bytes() == b"last week's master", "an earlier master was replaced"
+    assert original.read_bytes() == b"x", "the new master is gone"
+    assert res.output_path == str(original)
+    assert d.output_path() == str(original)
 
 
 def _mosaic_ready(d):
@@ -1556,6 +1579,9 @@ def test_browse_picks_a_folder_and_the_automatic_name_survives(qtbot, tmp_path, 
     assert dlg.output_path() == str(elsewhere / name_before)
     dlg.browser.set_checked(0, False)
     assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits", "the name is no longer automatic"
+    other_subs = tmp_path / "other"
+    dlg.folder_edit.setText(str(other_subs))
+    assert dlg.save_to_edit.text() == str(elsewhere), "Browse… did not make Save to the user's"
 
 
 def test_save_to_follows_the_subs_folder_until_the_user_chooses_one(qtbot, tmp_path):
@@ -1612,6 +1638,131 @@ def test_the_editor_is_told_the_path_the_master_was_written_to(qtbot, tmp_path, 
     monkeypatch.setattr(StackDialog, "exec", fake_exec)
     win._open_stack()
     assert seen["path"] == str(tmp_path / "M31.fits")
+
+
+def test_automatic_before_grading_clears_a_typed_name(qtbot):
+    """Nothing graded, nothing to name it from: "↺ automatic" left the typed
+    name in the field, now passing for the automatic one (T5-4)."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.name_edit.setText("mine")
+    dlg.name_edit.textEdited.emit("mine")
+    qtbot.mouseClick(dlg.auto_name_btn, Qt.MouseButton.LeftButton)
+    assert dlg.name_edit.text() == ""
+    assert dlg._name_is_manual is False
+    assert dlg.output_path() == ""
+
+
+def test_no_folder_at_all_is_no_path_not_a_relative_one(qtbot):
+    """A name and no folder anywhere joined to 'x.fits' — relative to wherever
+    the app was started (T5-5)."""
+    ran = []
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg.name_edit.setText("x")
+    dlg.name_edit.textEdited.emit("x")
+    assert dlg.output_path() == ""
+    dlg.run()
+    assert ran == [] and not dlg._busy
+
+
+def test_a_save_to_that_does_not_exist_is_refused_before_stacking(qtbot, tmp_path):
+    """save_fits creates no folders, so a typo failed only AFTER the stack —
+    hours for a drizzle or a mosaic (final review I3)."""
+    ran, queued = [], []
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg._on_background = lambda *a: queued.append(a)
+    missing = tmp_path / "nope"
+    dlg.save_to_edit.setText(str(missing))
+    dlg.save_to_edit.textEdited.emit(str(missing))
+    dlg.run()
+    assert ran == [] and not dlg._busy, "stacked towards a folder that is not there"
+    assert str(missing) in dlg.status.text(), dlg.status.text()
+    assert "does not exist" in dlg.status.text()
+    dlg._stack_in_background()
+    assert queued == [], "queued towards a folder that is not there"
+
+
+def test_a_tilde_in_save_to_is_the_home_folder(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Astro").mkdir()
+    dlg, _ = _graded_ngc(qtbot, tmp_path / "Astro")
+    dlg.save_to_edit.setText("~/Astro")
+    dlg.save_to_edit.textEdited.emit("~/Astro")
+    assert dlg.output_path() == str(tmp_path / "Astro" / "NGC7000_4x20s_1min.fits")
+    assert dlg._validate_ready_to_run() is True
+
+
+def test_save_to_cleared_by_hand_follows_the_subs_folder_again(qtbot, tmp_path):
+    """Final review m6: an empty field stayed "manual", quietly used the subs
+    folder, and missed every later change of subs folder."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path / "a"))
+    dlg.save_to_edit.setText(str(tmp_path / "mine"))
+    dlg.save_to_edit.textEdited.emit(str(tmp_path / "mine"))
+    dlg.save_to_edit.setText("")
+    dlg.save_to_edit.textEdited.emit("")
+    assert dlg.save_to_edit.text() == "", "refilled while the user was still typing"
+    dlg.save_to_edit.editingFinished.emit()
+    assert dlg.save_to_edit.text() == str(tmp_path / "a")
+    dlg.folder_edit.setText(str(tmp_path / "b"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "b")
+
+
+def test_the_output_cannot_be_edited_while_stacking(qtbot, tmp_path):
+    """main_window reads output_path() when the master arrives; an edit made
+    mid-stack recorded a path the file was not at (final review m7)."""
+    import threading
+    from nocturne.core.tasks import Cancelled
+    release = threading.Event()
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+
+    def runner(*a, **k):
+        release.wait(5)
+        raise Cancelled()
+
+    dlg._stack_runner = runner
+    assert dlg.save_to_edit.isEnabled() and dlg.name_edit.isEnabled()
+    dlg.run()
+    assert dlg._busy
+    assert not dlg.save_to_edit.isEnabled(), "Save to editable mid-stack"
+    assert not dlg.name_edit.isEnabled(), "Name editable mid-stack"
+    release.set()
+    qtbot.waitUntil(lambda: not dlg._busy, timeout=5000)
+    assert dlg.save_to_edit.isEnabled() and dlg.name_edit.isEnabled()
+
+
+def test_a_folder_with_no_subs_forgets_the_last_grade(qtbot, tmp_path, monkeypatch):
+    """Final review I2: grade A, then browse to an empty B. A's frames stayed
+    listed and stackable while Save to followed B, so Stack wrote A's master
+    into B under A's name — and the mosaic state was A's too."""
+    from nocturne.ui import file_dialogs
+    a, b = tmp_path / "A", tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    ran, queued = [], []
+    dlg, _ = _graded_ngc(qtbot, a)
+    dlg._stack_runner = lambda *x, **k: ran.append(1)
+    dlg._on_background = lambda *x: queued.append(x)
+    dlg.drizzle_check.setChecked(True)
+    dlg.mosaic_check.setEnabled(True)
+    dlg.mosaic_check.setChecked(True)
+    assert dlg.browser.frames() and dlg.name_edit.text() and dlg.drizzle_note.text()
+    monkeypatch.setattr(file_dialogs, "choose_folder", lambda *x, **k: str(b))
+    dlg._browse_folder()
+    assert "No .fit subs" in dlg.status.text()
+    assert dlg.browser.frames() == [] and dlg.browser.checked_frames() == []
+    assert dlg.name_edit.text() == "", "A's automatic name survived"
+    assert dlg.drizzle_note.text() == ""
+    assert not dlg.mosaic_check.isEnabled() and not dlg.mosaic_check.isChecked()
+    assert dlg._validate_ready_to_run() is False
+    dlg.run()
+    dlg._stack_in_background()
+    assert ran == [] and queued == [] and not dlg._busy, "Stack ran on A's frames"
+    assert os.listdir(b) == [], "something was written into B"
 
 
 # --- Layout A (spec 2026-09-27 §2.1, §2.2, §2.5) -----------------------------

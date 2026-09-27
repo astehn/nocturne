@@ -1,3 +1,4 @@
+import os
 import time
 
 import pytest
@@ -515,3 +516,27 @@ def test_folding_in_haoiii_is_saved_and_folds_stack(qtbot):
     assert saves == [True], f"the fold was not handed to the app's save: {saves}"
     s = StackDialog(settings); qtbot.addWidget(s)
     assert s.options_band.is_folded()
+
+
+def test_a_folder_with_no_subs_forgets_the_last_grade(qtbot, tmp_path, monkeypatch):
+    """As in Stack (final review I2): a folder with no subs left the last
+    folder's frames listed and extractable."""
+    from nocturne.ui import file_dialogs
+    a, b = tmp_path / "A", tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    ran = []
+    dlg = HaOIIIDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._extract_runner = lambda *x, **k: ran.append(1)
+    dlg.folder_edit.setText(str(a))
+    dlg.output_edit.setText(str(b / "HaOIII_master.fits"))
+    dlg._on_graded([_stats(str(a / f"{i}.fit"), 0.9) for i in range(4)])
+    assert dlg.browser.row_count() == 4
+    monkeypatch.setattr(file_dialogs, "choose_folder", lambda *x, **k: str(b))
+    dlg._browse_folder()
+    assert "No .fit subs" in dlg.status.text()
+    assert dlg.browser.row_count() == 0 and dlg._stats == []
+    dlg.run()
+    assert ran == [] and not dlg._busy, "extracted A's frames"
+    assert os.listdir(b) == []

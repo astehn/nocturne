@@ -277,6 +277,10 @@ class HaOIIIDialog(QDialog):
             return
         paths = self._discover()
         if not paths:
+            # Forget the last folder's frames, as Stack does: they stayed
+            # listed and extractable after choosing a folder with none.
+            self._stats = []
+            self.browser.set_frames([])
             self.status.setText("No .fit subs found in that folder.")
             return
         runner = self._grade_runner
