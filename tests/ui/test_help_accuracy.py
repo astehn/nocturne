@@ -1690,3 +1690,25 @@ def test_moved_sentences_have_a_home():
         body = (t.summary + t.body).lower()
         for phrase in phrases:
             assert phrase.lower() in body, f"{tid} lost {phrase!r}"
+
+
+def test_the_stacking_help_describes_the_frame_list_and_output_it_has():
+    """Four new controls and a split output, each pinned to the widget that
+    draws it: help goes stale every release unless something holds it."""
+    from nocturne.ui.frame_browser import FrameBrowser
+    b = _body("stacking")
+    fb = _src("nocturne/ui/frame_browser.py")
+    sd = _src("nocturne/ui/stack_dialog.py")
+    assert "<b>Time</b>" in b and "Time" in FrameBrowser.headers()
+    for words in ("Back to the verdicts", "⇤ bigger preview"):
+        assert f"<b>{words}</b>" in b, f"{words!r} is not in the help"
+        assert f'"{words}"' in fb, f"{words!r} is no longer a control"
+    for mode in ("Kept", "Rejected"):
+        assert f"<b>{mode}</b>" in b and f'"{mode}"' in fb
+    assert "arrow keys" in b and "space bar" in b
+    assert "<b>Save to</b>" in b and 'form.addRow("Save to"' in sd
+    assert "<b>Name</b>" in b and 'form.addRow("Name"' in sd
+    assert "<b>↺ automatic</b>" in b and '"↺ automatic"' in sd
+    for group in ("Frames", "Combine", "Result"):
+        assert f"<b>{group}</b>" in b and f'add_group("{group}"' in sd
+    assert "<b>Change…</b>" in b and '"Change…"' in _src("nocturne/ui/option_band.py")
