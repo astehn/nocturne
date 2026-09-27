@@ -3,13 +3,27 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import QLabel, QWidget  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats, judge  # noqa: E402
+from nocturne.ui.frame_browser import (  # noqa: E402
+    COL_BG, COL_ROUND, COL_VERDICT, FrameBrowser,
+)
 from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
 
 
 def _stats(path, score, included=True):
     return FrameStats(path, 100, 3.0, 0.02, score, included)
+
+
+def _choose_output(dlg, path):
+    """What a user does: types a folder into Save to and a name into Name.
+    textEdited is what typing emits; setText alone would leave both automatic."""
+    folder, name = os.path.split(str(path))
+    dlg.save_to_edit.setText(folder)
+    dlg.save_to_edit.textEdited.emit(folder)
+    dlg.name_edit.setText(name)
+    dlg.name_edit.textEdited.emit(name)
 
 
 def _stats2(path, score, included=True, reason="", warning="", exposure=20.0):
@@ -29,7 +43,7 @@ def test_grading_fills_table(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
 
 
 def test_stack_calls_handoff_best_first(qtbot, tmp_path):
@@ -57,8 +71,8 @@ def test_stack_calls_handoff_best_first(qtbot, tmp_path):
     dlg._stack_runner = fake_stack
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "master.fits")
     dlg.run()
     qtbot.waitUntil(lambda: "opts" in captured, timeout=2000)
     # include is best-first: highest score first
@@ -111,8 +125,8 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
     dlg._stack_runner = slow_stack
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "m.fits")
     dlg.run()                                                 # dispatches, goes busy
     qtbot.waitUntil(lambda: started.is_set(), timeout=2000)
     assert dlg._stack_btn.isEnabled() is False                # button disabled while running
@@ -140,14 +154,12 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
-    assert dlg.table.columnCount() == 7
-    from nocturne.ui.stack_dialog import _VERDICT_COL
-    cell = dlg.table.item(0, _VERDICT_COL)
-    assert "Soft" in cell.text()
-    assert "softer" in cell.toolTip()      # the long form is one hover away
-    assert "Brighter sky" in dlg.table.item(1, _VERDICT_COL).text()
-    assert dlg.table.item(2, _VERDICT_COL).text() == "OK"
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
+    assert len(dlg.browser.headers()) == 7
+    assert "Soft" in dlg.browser.cell_text(0, COL_VERDICT)
+    assert "softer" in dlg.browser.cell_tooltip(0, COL_VERDICT)   # the long form is one hover away
+    assert "Brighter sky" in dlg.browser.cell_text(1, COL_VERDICT)
+    assert dlg.browser.cell_text(2, COL_VERDICT) == "OK"
 
 
 def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
@@ -164,7 +176,7 @@ def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 5, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 5, timeout=2000)
     # 4 of 5 kept x 20s = 1 of 2 minutes
     assert "Keeping 4 of 5 frames" in dlg.status.text()
     assert "minute" in dlg.status.text()
@@ -185,11 +197,11 @@ def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
     dlg._grade_runner = runner
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 6, timeout=2000)
     assert calls == ["normal"]
     dlg.strictness_box.setCurrentText("Strict")
     assert calls == ["normal"]          # measurement NOT re-run
-    assert dlg.table.rowCount() == 6    # table re-judged in place
+    assert dlg.browser.row_count() == 6    # table re-judged in place
 
 
 def test_on_graded_rejudges_with_current_strictness(qtbot, tmp_path):
@@ -212,7 +224,7 @@ def test_on_graded_rejudges_with_current_strictness(qtbot, tmp_path):
     dlg._on_graded(stats)
 
     edge_row = len(stats) - 1
-    assert dlg.table.item(edge_row, 0).checkState() == Qt.CheckState.Unchecked
+    assert not dlg.browser.is_checked(edge_row)
 
 
 def test_manual_override_survives_rejudge(qtbot, tmp_path):
@@ -225,13 +237,13 @@ def test_manual_override_survives_rejudge(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 6, timeout=2000)
     # user manually unchecks row 2
-    dlg.table.item(2, 0).setCheckState(Qt.CheckState.Unchecked)
-    assert 2 in dlg._user_touched
+    dlg.browser.set_checked(2, False)
+    assert 2 in dlg.browser.user_touched
     dlg.strictness_box.setCurrentText("Relaxed")
     # re-judge would keep everything, but the user's choice wins:
-    assert dlg.table.item(2, 0).checkState() == Qt.CheckState.Unchecked
+    assert not dlg.browser.is_checked(2)
 
 
 def test_output_filename_derived_from_selection(qtbot, tmp_path):
@@ -245,10 +257,11 @@ def test_output_filename_derived_from_selection(qtbot, tmp_path):
         s.target = "NGC 7000"
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText("")          # nothing user-chosen
-    dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    assert dlg.output_edit.text() == str(tmp_path / "NGC7000_3x20s_1min.fits")
+    dlg.grade()                           # nothing user-chosen
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits"
+    assert dlg.save_to_edit.text() == str(tmp_path), "Save to must follow the subs folder"
+    assert dlg.output_path() == str(tmp_path / "NGC7000_3x20s_1min.fits")
 
 
 def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
@@ -260,11 +273,11 @@ def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
         _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(3)
     ]
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText("keep-me.fits")
-    dlg.output_edit.textEdited.emit("keep-me.fits")   # simulate manual typing
+    dlg.name_edit.setText("keep-me.fits")
+    dlg.name_edit.textEdited.emit("keep-me.fits")     # simulate manual typing
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    assert dlg.output_edit.text() == "keep-me.fits"
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    assert dlg.name_edit.text() == "keep-me.fits"
 
 
 def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
@@ -285,13 +298,13 @@ def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
     dlg._preview_loader = fake_loader
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
-    dlg.table.setCurrentCell(0, 1)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
+    dlg.browser.set_current_row(0)
     qtbot.waitUntil(lambda: dlg.preview.has_image(), timeout=2000)
     assert loads == [str(tmp_path / "f0.fit")]
-    dlg.table.setCurrentCell(1, 1)
+    dlg.browser.set_current_row(1)
     qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
-    dlg.table.setCurrentCell(0, 1)      # cached — no third load
+    dlg.browser.set_current_row(0)      # cached — no third load
     qtbot.wait(100)
     assert len(loads) == 2
 
@@ -314,8 +327,8 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     dlg._preview_loader = fake_loader
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
-    dlg.table.setCurrentCell(1, 1)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
+    dlg.browser.set_current_row(1)
     qtbot.waitUntil(lambda: len(loads) == 1, timeout=2000)
     assert loads == [str(tmp_path / "f1.fit")]
 
@@ -330,7 +343,7 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(other_dir))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
     # preview must resync to the new row 1's file, not keep showing the old one
     qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
     assert loads[-1] == str(other_dir / "g1.fit")
@@ -357,14 +370,16 @@ def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
     dlg._preview_loader = fake_loader
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 6, timeout=2000)
     for row in range(5):                       # visit rows 0..4 -> 5 loads
-        dlg.table.setCurrentCell(row, 1)
-        qtbot.waitUntil(lambda r=row: len(loads) == r + 1, timeout=2000)
+        dlg.browser.set_current_row(row)
+        qtbot.waitUntil(lambda r=row: len(loads) == r + 1
+                        and paths[r] in dlg._preview_cache, timeout=2000)
     assert len(dlg._preview_cache) == 4        # LRU capped
-    dlg.table.setCurrentCell(0, 1)             # row 0 was evicted -> reloads
-    qtbot.waitUntil(lambda: len(loads) == 6, timeout=2000)
-    dlg.table.setCurrentCell(4, 1)             # row 4 still cached -> no load
+    dlg.browser.set_current_row(0)             # row 0 was evicted -> reloads
+    qtbot.waitUntil(lambda: len(loads) == 6 and paths[0] in dlg._preview_cache,
+                    timeout=2000)
+    dlg.browser.set_current_row(4)             # row 4 still cached -> no load
     qtbot.wait(100)
     assert len(loads) == 6
 
@@ -394,25 +409,27 @@ def test_preview_cache_lru_access_order_not_fifo(qtbot, tmp_path):
     dlg._preview_loader = fake_loader
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 6, timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 6, timeout=2000)
 
     for row in range(4):                       # visit rows 0..3 -> 4 loads, cache full
-        dlg.table.setCurrentCell(row, 1)
-        qtbot.waitUntil(lambda r=row: len(loads) == r + 1, timeout=2000)
+        dlg.browser.set_current_row(row)
+        qtbot.waitUntil(lambda r=row: len(loads) == r + 1
+                        and paths[r] in dlg._preview_cache, timeout=2000)
     assert len(dlg._preview_cache) == 4
 
-    dlg.table.setCurrentCell(0, 1)              # re-select row 0 -> cache hit, becomes MRU
+    dlg.browser.set_current_row(0)              # re-select row 0 -> cache hit, becomes MRU
     qtbot.wait(100)
     assert len(loads) == 4                      # no new load
 
-    dlg.table.setCurrentCell(4, 1)              # 5th load -> must evict row 1, not row 0
-    qtbot.waitUntil(lambda: len(loads) == 5, timeout=2000)
+    dlg.browser.set_current_row(4)              # 5th load -> must evict row 1, not row 0
+    qtbot.waitUntil(lambda: len(loads) == 5 and paths[4] in dlg._preview_cache,
+                    timeout=2000)
 
-    dlg.table.setCurrentCell(0, 1)              # still cached -> FIFO would have evicted it
+    dlg.browser.set_current_row(0)              # still cached -> FIFO would have evicted it
     qtbot.wait(100)
     assert len(loads) == 5                      # no new load
 
-    dlg.table.setCurrentCell(1, 1)              # row 1 was evicted -> new load
+    dlg.browser.set_current_row(1)              # row 1 was evicted -> new load
     qtbot.waitUntil(lambda: len(loads) == 6, timeout=2000)
 
 
@@ -432,13 +449,15 @@ def test_stack_report_names_unregistered_frames(qtbot):
 
 
 def test_splitter_holds_table_and_preview(qtbot):
+    """The list and the preview share one splitter — now the FrameBrowser's."""
     from PySide6.QtWidgets import QSplitter
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
-    assert isinstance(dlg.splitter, QSplitter)
-    assert dlg.splitter.count() == 2
-    assert dlg.splitter.widget(0) is dlg.table
-    assert dlg.splitter.widget(1) is dlg.preview
+    sp = dlg.browser.splitter
+    assert isinstance(sp, QSplitter) and sp.count() == 2
+    assert sp.widget(0).isAncestorOf(dlg.browser.view)
+    assert sp.widget(1).isAncestorOf(dlg.preview)
+    assert dlg.preview is dlg.browser.preview
 
 
 def test_dialog_is_never_shorter_than_its_own_layout(qtbot):
@@ -490,10 +509,12 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
         "the screen is not the user: a forced collapse must not rewrite "
         "the saved preference")
 
-    # And asking for them explicitly still works.
-    dlg._toggle_hints()
+    # And asking for them explicitly still works -- ONE click, since the
+    # link reads "▸" while the screen has them folded. They are shown within
+    # the option band, which the screen folded too, so the band opens with them.
     dlg._toggle_hints()
     assert dlg.mosaic_hint.isVisible() is True
+    assert settings.help_expanded is True
 
 
 def test_cancel_button_stops_a_grade(qtbot, tmp_path):
@@ -532,9 +553,8 @@ def test_cells_carry_tooltips(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    item = dlg.table.item(0, 5)
-    assert item.toolTip() == item.text() != ""
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    assert dlg.browser.cell_tooltip(0, COL_BG) == dlg.browser.cell_text(0, COL_BG) != ""
 
 
 def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
@@ -543,7 +563,7 @@ def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
     that column created: _rejudge rewrites the verdict cell by index, and with a
     literal 5 it would now overwrite Bg instead."""
     from nocturne.stacking.grade import FrameStats
-    from nocturne.ui.stack_dialog import StackDialog, _VERDICT_COL
+    from nocturne.ui.stack_dialog import StackDialog
 
     for i in range(10):
         (tmp_path / f"f{i}.fit").write_text("x")
@@ -556,15 +576,15 @@ def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == len(stats), timeout=2000)
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
 
-    trailed = next(r for r in range(dlg.table.rowCount())
-                   if dlg.table.item(r, 4).text() == "1.90")
-    assert "trailed" in dlg.table.item(trailed, _VERDICT_COL).text().lower()
-    assert dlg.table.item(trailed, 5).text() == "0.020", "Bg column was overwritten"
+    trailed = next(r for r in range(len(dlg.browser.frames()))
+                   if dlg.browser.cell_text(r, COL_ROUND) == "1.90")
+    assert "trailed" in dlg.browser.cell_text(trailed, COL_VERDICT).lower()
+    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", "Bg column was overwritten"
 
     dlg.strictness_box.setCurrentText("Relaxed")
-    assert dlg.table.item(trailed, 5).text() == "0.020", \
+    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", \
         "_rejudge wrote the verdict into the wrong column"
 
 
@@ -595,8 +615,8 @@ def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
     dlg._stack_runner = fake_stack
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "m.fits")
 
     # Off by DEFAULT since 2026-09-01: trimming cannot be undone without
     # re-stacking (hours, and most of a day for a drizzle), while keeping the
@@ -690,7 +710,7 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText(str(tmp_path / "out.fits"))
+    _choose_output(dlg, tmp_path / "out.fits")
     dlg._on_graded([_stats2(p, 0.9) for p in paths])       # fills the table
     dlg.scan_pointings()
     dlg.mosaic_check.setChecked(True)
@@ -738,13 +758,12 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
         s.target = "M 31"
     dlg._on_graded(stats)
 
-    import os
-    plain = os.path.basename(dlg.output_edit.text())
+    plain = dlg.name_edit.text()
     assert "mosaic" not in plain.lower()
 
     dlg.mosaic_check.setEnabled(True)
     dlg.mosaic_check.setChecked(True)
-    named = os.path.basename(dlg.output_edit.text())
+    named = dlg.name_edit.text()
     assert "mosaic" in named.lower(), named
     assert named.startswith("M31_mosaic_"), named
 
@@ -763,10 +782,9 @@ def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
     dlg._on_graded(stats)
     dlg.mosaic_check.setEnabled(True)
 
-    import os
     dlg.mosaic_check.setChecked(True)
     dlg.mosaic_check.setChecked(False)
-    assert "mosaic" not in os.path.basename(dlg.output_edit.text()).lower()
+    assert "mosaic" not in dlg.name_edit.text().lower()
 
 
 def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
@@ -781,11 +799,11 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg._on_graded([_stats2(str(tmp_path / "s0.fit"), 0.9, exposure=10.0)])
 
-    dlg.output_edit.setText("/tmp/my_name.fits")
-    dlg._mark_output_edited("/tmp/my_name.fits")
+    dlg.name_edit.setText("my_name.fits")
+    dlg.name_edit.textEdited.emit("my_name.fits")
     dlg.mosaic_check.setEnabled(True)
     dlg.mosaic_check.setChecked(True)
-    assert dlg.output_edit.text() == "/tmp/my_name.fits"
+    assert dlg.name_edit.text() == "my_name.fits"
 
 
 def test_the_reference_frame_is_first_in_the_stack_order(qtbot, tmp_path):
@@ -955,64 +973,79 @@ def test_no_option_row_is_squeezed_below_the_space_its_text_needs(qtbot):
     over the row beneath them — which is what the first two attempts at this
     did, in a way no test would have caught.
 
-    The cause is worth keeping: the row is wider than the hint label, so the
-    layout asked the label heightForWidth(1030) and a plain QLabel answered for
-    text wrapped at 1030 — two lines, where the label is fixed at 560 and needs
-    three. Every row came out exactly one line short.
+    Since layout A (2026-09-27) the options are groups in one band, so the
+    check covers each form row AND each group inside the band.
     """
     from PySide6.QtWidgets import QFormLayout
     d = StackDialog(Settings())
     qtbot.addWidget(d)
+    d._available_height = lambda: 4000     # a short screen would fold the hints away
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
     form = d.findChild(QFormLayout)
+    boxes = [form.itemAt(r, role).widget()
+             for r in range(form.rowCount())
+             for role in (QFormLayout.ItemRole.FieldRole, QFormLayout.ItemRole.SpanningRole)
+             if form.itemAt(r, role) and form.itemAt(r, role).widget()]
+    boxes += d.options_band.groups
     squeezed = []
-    for r in range(form.rowCount()):
-        field = form.itemAt(r, QFormLayout.ItemRole.FieldRole)
-        label = form.itemAt(r, QFormLayout.ItemRole.LabelRole)
-        if not (field and field.widget()):
-            continue
-        w = field.widget()
-        need = w.minimumSizeHint().height()
-        if w.height() < need:
-            name = label.widget().text() if label and label.widget() else f"row {r}"
-            squeezed.append(f"{name}: {w.height()}px given, {need} needed")
-    assert not squeezed, "option rows too short for their text: " + "; ".join(squeezed)
+
+    def check():
+        squeezed.clear()
+        squeezed.extend(f"{type(w).__name__}: {w.height()}px given, "
+                        f"{w.minimumSizeHint().height()} needed"
+                        for w in boxes
+                        if w.isVisible() and w.height() < w.minimumSizeHint().height())
+        return not squeezed
+
+    qtbot.waitUntil(check, timeout=2000)      # a width change re-lays on the next pass
+    assert not squeezed, "rows too short for their text: " + "; ".join(squeezed)
 
 
 def test_every_hint_starts_at_the_same_left_edge(qtbot):
-    """The original complaint. Each hint used to be appended to its control's
-    own row, so it began wherever that control's label happened to end —
-    Framing at ~460px, Mosaic at ~390, Detail at ~590 — leaving the prose
-    ragged down the whole form."""
+    """The original complaint: each hint was appended to its control's own row,
+    so it began wherever that control's label ended and the prose ran ragged.
+    In layout A the rule holds per group: every explanation in a group starts
+    at the group's own left edge, level with the controls it explains."""
     from nocturne.ui.stack_dialog import _Hint
     d = StackDialog(Settings())
     qtbot.addWidget(d)
+    d._available_height = lambda: 4000     # a short screen would fold the hints away
+    d._settings.help_expanded = True
+    d._apply_hints_visible()
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
-    # `background_note` is excluded: it sits under the button ROW, explaining
-    # why the button beside it is dead, and has no column of prose to line up
-    # with. The rule this test exists for is about the options form, where
-    # ragged left edges were the original complaint.
-    lefts = {h.mapTo(d, h.rect().topLeft()).x()
-             for h in d.findChildren(_Hint)
-             if h.isVisible() and h is not d.background_note}
-    assert len(lefts) == 1, f"hints start at {len(lefts)} different x positions: {sorted(lefts)}"
+    for group in d.options_band.groups:
+        hints = [h for h in group.findChildren(_Hint) if h.isVisible()]
+        # The row's leftmost widget: a control, or the small label in front
+        # of one ("strictness:", "rejection:") — never the group's title.
+        controls = [w for w in group.findChildren(QWidget)
+                    if w.isVisible() and w is not group.title
+                    and not isinstance(w, _Hint)]
+        edge = min(w.mapTo(d, w.rect().topLeft()).x() for w in controls)
+        lefts = {h.mapTo(d, h.rect().topLeft()).x() for h in hints} | {edge}
+        assert len(lefts) == 1, f"{group.title.text()}: hints start at {sorted(lefts)}"
 
 
 def test_the_gate_note_belongs_to_the_detail_row(qtbot):
-    """It used to be added as its own label-less form row, which is where the
-    dead vertical gap above Output came from."""
+    """The drizzle advice sits with the Drizzle box, in the Result group (spec
+    §2.1: "drizzle ×2 + its recommendation"), not in a row of its own — a
+    label-less row was where the dead vertical gap above Output came from."""
     from PySide6.QtWidgets import QFormLayout
     d = StackDialog(Settings())
     qtbot.addWidget(d)
+    result = d.options_band.groups[2]
+    assert result.title.text() == "RESULT"
+    for w in (d.drizzle_check, d.drizzle_note, d.mosaic_check, d.exclusive_note,
+              d.crop_check):
+        assert result.isAncestorOf(w), f"{type(w).__name__} left the Result group"
     form = d.findChild(QFormLayout)
-    labels = [form.itemAt(r, QFormLayout.ItemRole.LabelRole) for r in range(form.rowCount())]
-    empty = [i for i, it in enumerate(labels)
-             if it and it.widget() and not it.widget().text().strip()]
-    assert not empty, f"form has label-less rows at {empty}"
+    stray = [r for r in range(form.rowCount())
+             if form.itemAt(r, QFormLayout.ItemRole.LabelRole) is not None
+             and not form.itemAt(r, QFormLayout.ItemRole.LabelRole).widget().text().strip()]
+    assert not stray, f"form has label-less rows at {stray}"
 
 
 def test_nothing_optional_is_ticked_when_the_dialog_opens(qtbot):
@@ -1044,7 +1077,7 @@ def _stacked(tmp_path, kept, actually_used, user_edited=False):
     d = StackDialog(Settings())
     d._stats = [FrameStats(str(tmp_path / f"{i}.fit"), 800, 2.4, 0.02, 0.9, True,
                            exposure=10.0, target="IC1396A") for i in range(kept)]
-    d._output_user_edited = user_edited
+    d._name_is_manual = user_edited
     name = tmp_path / f"IC1396A_{kept}x10s_{round(kept*10/60)}min.fits"
     name.write_bytes(b"x")
     img = AstroImage(np.zeros((4, 4, 3), np.float32))
@@ -1094,10 +1127,33 @@ def test_the_rename_is_actually_wired_into_the_finish(qtbot, tmp_path):
     """
     d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
     qtbot.addWidget(d)
+    d.folder_edit.setText(str(tmp_path))
+    d.name_edit.setText(original.name)
     d._on_master = lambda _img: None
     d._on_stacked(res)
     assert not original.exists(), "finishing a stack left the misnamed file"
     assert "2034" in os.path.basename(res.output_path), res.output_path
+    # main_window reads output_path() after this: it must be the renamed file
+    assert d.name_edit.text() == os.path.basename(res.output_path)
+    assert d.output_path() == res.output_path
+
+
+def test_the_rename_never_replaces_a_file_already_there(qtbot, tmp_path):
+    """Final review m2: the corrected name can belong to an earlier run's
+    master (204 graded, 203 registered, and a 203-frame master from last
+    week). os.replace destroyed it without a word. Keep the old name."""
+    d, res, original = _stacked(tmp_path, kept=2037, actually_used=2034)
+    qtbot.addWidget(d)
+    earlier = tmp_path / "IC1396A_2034x10s_339min.fits"
+    earlier.write_bytes(b"last week's master")
+    d.folder_edit.setText(str(tmp_path))
+    d.name_edit.setText(original.name)
+    d._on_master = lambda _img: None
+    d._on_stacked(res)
+    assert earlier.read_bytes() == b"last week's master", "an earlier master was replaced"
+    assert original.read_bytes() == b"x", "the new master is gone"
+    assert res.output_path == str(original)
+    assert d.output_path() == str(original)
 
 
 def _mosaic_ready(d):
@@ -1208,10 +1264,16 @@ def test_no_explanation_is_ever_cut_off(qtbot, tmp_path, size):
     d.resize(*size)
     d.show()
     qtbot.waitExposed(d)
-    clipped = [(h.text()[:40], h.minimumSizeHint().height(), h.height())
-               for h in d.findChildren(_Hint)
-               if h.isVisible() and h.height() < h.minimumSizeHint().height() - 1]
-    assert not clipped, f"at {size}: {clipped}"
+
+    def clipped():
+        return [(h.text()[:40], h.heightForWidth(h.width()), h.height())
+                for h in d.findChildren(_Hint)
+                if h.isVisible() and h.height() < h.heightForWidth(h.width()) - 1]
+
+    # A width change re-lays wrapped text on the NEXT layout pass; a clip that
+    # is still there after it settles is the failure.
+    qtbot.waitUntil(lambda: not clipped(), timeout=2000)
+    assert not clipped(), f"at {size}: {clipped()}"
 
 
 # --- "Stack in background" (Task 5 fix round 1) ---
@@ -1259,8 +1321,8 @@ def test_clicking_background_button_calls_on_background_with_options(qtbot, tmp_
     dlg._grade_runner = graded
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "master.fits")
 
     assert dlg.background_btn.isEnabled()
     qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
@@ -1379,8 +1441,8 @@ def test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy(qtbot, tmp_path
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "master.fits")
 
     dlg.run()
 
@@ -1413,8 +1475,8 @@ def test_a_fresh_dialog_runs_when_the_queue_is_free(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
+    _choose_output(dlg, tmp_path / "master.fits")
 
     dlg.run()
 
@@ -1456,11 +1518,376 @@ def test_clicking_background_button_with_too_few_frames_refuses(qtbot, tmp_path)
     ]
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
+    _choose_output(dlg, tmp_path / "master.fits")
 
     qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
 
     assert "opts" not in got, "must not enqueue with fewer than 3 frames"
     assert dlg.isVisible()
     assert "at least 3" in dlg.status.text().lower()
+
+
+# --- Output: a folder and a name (spec 2026-09-27 §2.3, §4) -----------------
+
+def _graded_ngc(qtbot, tmp_path, n=4):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5, exposure=20.0) for i in range(n)]
+    for s in stats:
+        s.target = "NGC 7000"
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg._on_graded(stats)
+    return dlg, stats
+
+
+def test_the_automatic_name_follows_the_ticks(qtbot, tmp_path):
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    assert dlg.name_edit.text() == "NGC7000_4x20s_1min.fits"
+    dlg.browser.set_checked(0, False)
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits"
+
+
+def test_a_typed_name_is_the_users_until_they_ask_for_the_automatic_one(qtbot, tmp_path):
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    assert not dlg.auto_name_btn.isVisibleTo(dlg), "nothing to restore yet"
+    dlg.name_edit.setText("tonight.fits")
+    dlg.name_edit.textEdited.emit("tonight.fits")
+    assert dlg.auto_name_btn.isVisibleTo(dlg)
+    dlg.browser.set_checked(0, False)
+    dlg.drizzle_check.setChecked(True)
+    assert dlg.name_edit.text() == "tonight.fits", "a typed name was overwritten"
+    qtbot.mouseClick(dlg.auto_name_btn, Qt.MouseButton.LeftButton)
+    assert dlg.name_edit.text() == "NGC7000_drizzle_3x20s_1min.fits"
+    assert not dlg.auto_name_btn.isVisibleTo(dlg)
+    dlg.browser.set_checked(1, False)
+    assert dlg.name_edit.text() == "NGC7000_drizzle_2x20s_1min.fits", \
+        "the restored name stopped following the ticks"
+
+
+def test_browse_picks_a_folder_and_the_automatic_name_survives(qtbot, tmp_path, monkeypatch):
+    """Andreas' bug: Browse… for another folder lost SH2-108_190x10s_32min.fits
+    and left him typing a name."""
+    from nocturne.ui import file_dialogs
+    elsewhere = tmp_path / "masters"
+    elsewhere.mkdir()
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    name_before = dlg.name_edit.text()
+    monkeypatch.setattr(file_dialogs, "choose_folder",
+                        lambda parent, caption, directory="": str(elsewhere))
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        lambda *a, **k: pytest.fail("Browse must pick a folder, not a file"))
+    dlg._browse_save_to()
+    assert dlg.save_to_edit.text() == str(elsewhere)
+    assert dlg.name_edit.text() == name_before, "choosing a folder changed the name"
+    assert dlg.output_path() == str(elsewhere / name_before)
+    dlg.browser.set_checked(0, False)
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits", "the name is no longer automatic"
+    other_subs = tmp_path / "other"
+    dlg.folder_edit.setText(str(other_subs))
+    assert dlg.save_to_edit.text() == str(elsewhere), "Browse… did not make Save to the user's"
+
+
+def test_save_to_follows_the_subs_folder_until_the_user_chooses_one(qtbot, tmp_path):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path / "a"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "a")
+    dlg.save_to_edit.setText(str(tmp_path / "mine"))
+    dlg.save_to_edit.textEdited.emit(str(tmp_path / "mine"))
+    dlg.folder_edit.setText(str(tmp_path / "b"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "mine")
+
+
+def test_a_name_without_an_extension_is_written_as_fits(qtbot, tmp_path):
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    _choose_output(dlg, tmp_path / "tonight")
+    assert dlg.output_path() == str(tmp_path / "tonight.fits")
+
+
+def test_a_name_with_a_folder_in_it_is_refused(qtbot, tmp_path):
+    ran = []
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg.name_edit.setText("sub/dir.fits")
+    dlg.name_edit.textEdited.emit("sub/dir.fits")
+    dlg.run()
+    assert ran == [] and not dlg._busy
+    assert "save to" in dlg.status.text().lower()
+
+
+def test_an_existing_file_is_named_before_it_is_replaced(qtbot, tmp_path):
+    """The Save panel used to ask; a folder picker does not, so the dialog says."""
+    (tmp_path / "NGC7000_4x20s_1min.fits").write_bytes(b"x")
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    assert "already there" in dlg.name_note.text()
+    dlg.browser.set_checked(0, False)   # a new name
+    assert dlg.name_note.text() == ""
+
+
+def test_the_editor_is_told_the_path_the_master_was_written_to(qtbot, tmp_path, monkeypatch):
+    """main_window reads the path from the dialog when the master arrives; with
+    the output split in two it must read the joined path, not one field."""
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    seen = {}
+    monkeypatch.setattr(win, "_on_foreground_master",
+                        lambda img, label, path: seen.update(path=path))
+
+    def fake_exec(dlg):
+        _choose_output(dlg, tmp_path / "M31.fits")
+        dlg._on_master(object())
+        return 0
+
+    monkeypatch.setattr(StackDialog, "exec", fake_exec)
+    win._open_stack()
+    assert seen["path"] == str(tmp_path / "M31.fits")
+
+
+def test_automatic_before_grading_clears_a_typed_name(qtbot):
+    """Nothing graded, nothing to name it from: "↺ automatic" left the typed
+    name in the field, now passing for the automatic one (T5-4)."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.name_edit.setText("mine")
+    dlg.name_edit.textEdited.emit("mine")
+    qtbot.mouseClick(dlg.auto_name_btn, Qt.MouseButton.LeftButton)
+    assert dlg.name_edit.text() == ""
+    assert dlg._name_is_manual is False
+    assert dlg.output_path() == ""
+
+
+def test_no_folder_at_all_is_no_path_not_a_relative_one(qtbot):
+    """A name and no folder anywhere joined to 'x.fits' — relative to wherever
+    the app was started (T5-5)."""
+    ran = []
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg.name_edit.setText("x")
+    dlg.name_edit.textEdited.emit("x")
+    assert dlg.output_path() == ""
+    dlg.run()
+    assert ran == [] and not dlg._busy
+
+
+def test_a_save_to_that_does_not_exist_is_refused_before_stacking(qtbot, tmp_path):
+    """save_fits creates no folders, so a typo failed only AFTER the stack —
+    hours for a drizzle or a mosaic (final review I3)."""
+    ran, queued = [], []
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg._on_background = lambda *a: queued.append(a)
+    missing = tmp_path / "nope"
+    dlg.save_to_edit.setText(str(missing))
+    dlg.save_to_edit.textEdited.emit(str(missing))
+    dlg.run()
+    assert ran == [] and not dlg._busy, "stacked towards a folder that is not there"
+    assert str(missing) in dlg.status.text(), dlg.status.text()
+    assert "does not exist" in dlg.status.text()
+    dlg._stack_in_background()
+    assert queued == [], "queued towards a folder that is not there"
+
+
+def test_a_tilde_in_save_to_is_the_home_folder(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Astro").mkdir()
+    dlg, _ = _graded_ngc(qtbot, tmp_path / "Astro")
+    dlg.save_to_edit.setText("~/Astro")
+    dlg.save_to_edit.textEdited.emit("~/Astro")
+    assert dlg.output_path() == str(tmp_path / "Astro" / "NGC7000_4x20s_1min.fits")
+    assert dlg._validate_ready_to_run() is True
+
+
+def test_save_to_cleared_by_hand_follows_the_subs_folder_again(qtbot, tmp_path):
+    """Final review m6: an empty field stayed "manual", quietly used the subs
+    folder, and missed every later change of subs folder."""
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path / "a"))
+    dlg.save_to_edit.setText(str(tmp_path / "mine"))
+    dlg.save_to_edit.textEdited.emit(str(tmp_path / "mine"))
+    dlg.save_to_edit.setText("")
+    dlg.save_to_edit.textEdited.emit("")
+    assert dlg.save_to_edit.text() == "", "refilled while the user was still typing"
+    dlg.save_to_edit.editingFinished.emit()
+    assert dlg.save_to_edit.text() == str(tmp_path / "a")
+    dlg.folder_edit.setText(str(tmp_path / "b"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "b")
+
+
+def test_the_output_cannot_be_edited_while_stacking(qtbot, tmp_path):
+    """main_window reads output_path() when the master arrives; an edit made
+    mid-stack recorded a path the file was not at (final review m7)."""
+    import threading
+    from nocturne.core.tasks import Cancelled
+    release = threading.Event()
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+
+    def runner(*a, **k):
+        release.wait(5)
+        raise Cancelled()
+
+    dlg._stack_runner = runner
+    assert dlg.save_to_edit.isEnabled() and dlg.name_edit.isEnabled()
+    dlg.run()
+    assert dlg._busy
+    assert not dlg.save_to_edit.isEnabled(), "Save to editable mid-stack"
+    assert not dlg.name_edit.isEnabled(), "Name editable mid-stack"
+    release.set()
+    qtbot.waitUntil(lambda: not dlg._busy, timeout=5000)
+    assert dlg.save_to_edit.isEnabled() and dlg.name_edit.isEnabled()
+
+
+def test_a_folder_with_no_subs_forgets_the_last_grade(qtbot, tmp_path, monkeypatch):
+    """Final review I2: grade A, then browse to an empty B. A's frames stayed
+    listed and stackable while Save to followed B, so Stack wrote A's master
+    into B under A's name — and the mosaic state was A's too."""
+    from nocturne.ui import file_dialogs
+    a, b = tmp_path / "A", tmp_path / "B"
+    a.mkdir()
+    b.mkdir()
+    ran, queued = [], []
+    dlg, _ = _graded_ngc(qtbot, a)
+    dlg._stack_runner = lambda *x, **k: ran.append(1)
+    dlg._on_background = lambda *x: queued.append(x)
+    dlg.drizzle_check.setChecked(True)
+    dlg.mosaic_check.setEnabled(True)
+    dlg.mosaic_check.setChecked(True)
+    assert dlg.browser.frames() and dlg.name_edit.text() and dlg.drizzle_note.text()
+    monkeypatch.setattr(file_dialogs, "choose_folder", lambda *x, **k: str(b))
+    dlg._browse_folder()
+    assert "No .fit subs" in dlg.status.text()
+    assert dlg.browser.frames() == [] and dlg.browser.checked_frames() == []
+    assert dlg.name_edit.text() == "", "A's automatic name survived"
+    assert dlg.drizzle_note.text() == ""
+    assert not dlg.mosaic_check.isEnabled() and not dlg.mosaic_check.isChecked()
+    assert dlg._validate_ready_to_run() is False
+    dlg.run()
+    dlg._stack_in_background()
+    assert ran == [] and queued == [] and not dlg._busy, "Stack ran on A's frames"
+    assert os.listdir(b) == [], "something was written into B"
+
+
+# --- Layout A (spec 2026-09-27 §2.1, §2.2, §2.5) -----------------------------
+
+def test_stack_hosts_the_shared_frame_browser(qtbot):
+    """One component for both dialogs — identity, not a copy (spec §7)."""
+    from PySide6.QtWidgets import QTableWidget
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    assert type(d.browser) is FrameBrowser
+    assert d.findChildren(QTableWidget) == [], "a hand-built table is still here"
+
+
+def test_layout_a_runs_folder_options_output_then_the_list(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.resize(1280, 800); d.show(); qtbot.waitExposed(d)
+
+    def top(w):
+        return w.mapTo(d, w.rect().topLeft()).y()
+
+    order = [top(d.folder_edit), top(d.options_band), top(d.save_to_edit),
+             top(d.name_edit), top(d.browser)]
+    assert order == sorted(order) and len(set(order)) == 5, order
+    assert [g.title.text() for g in d.options_band.groups] == ["FRAMES", "COMBINE", "RESULT"]
+    frames, combine, _result = d.options_band.groups
+    assert frames.isAncestorOf(d.strictness_box)
+    assert all(combine.isAncestorOf(w) for w in (d.avg_radio, d.sigma_radio, d.kappa_box))
+
+
+def test_the_fold_is_remembered(qtbot):
+    saved = []
+    settings = Settings()
+    d = StackDialog(settings, on_settings_changed=lambda: saved.append(
+        settings.frame_options_folded))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000     # the screen's own fold is not the user's
+    d.show(); qtbot.waitExposed(d)
+    qtbot.mouseClick(d.options_band.fold_btn, Qt.MouseButton.LeftButton)
+    assert settings.frame_options_folded is True and saved == [True]
+    again = StackDialog(settings)
+    qtbot.addWidget(again)
+    assert again.options_band.is_folded(), "a new dialog forgot the fold"
+
+
+def test_the_fold_reaches_the_apps_settings_file(qtbot, tmp_path):
+    """Through the path the app was given — the sandbox rule of
+    test_settings_write_path, and load_settings must read the field back."""
+    from nocturne.settings import load_settings
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    d = StackDialog(win.settings, win, on_settings_changed=win._save_settings)
+    qtbot.addWidget(d)
+    d.options_band.set_folded(True)
+    assert load_settings(win._settings_path).frame_options_folded is True
+
+
+def test_the_folded_line_says_what_is_chosen(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text() == (
+        "Normal selection · Sigma-clipped, medium rejection · full frame")
+    d.strictness_box.setCurrentText("Strict")
+    d.avg_radio.setChecked(True)
+    d.crop_check.setChecked(True)
+    d.drizzle_check.setChecked(True)
+    assert d.options_band.summary_label.text() == (
+        "Strict selection · Average · trim edges · Drizzle ×2")
+
+
+def test_folding_never_hides_a_cost_you_are_about_to_pay(qtbot):
+    """The rule `_apply_hints_visible` follows for the help toggle holds for
+    the fold: what you decide ON stays on screen."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.show(); qtbot.waitExposed(d)
+    d.mosaic_check.setEnabled(True)
+    d.mosaic_check.setChecked(True)
+    d.drizzle_check.setChecked(True)
+    d.drizzle_note.setText("At least 40 minutes for these 190 frames.")
+    d._sync_folded_note()
+    d.options_band.set_folded(True)
+    note = d.options_band.folded_note
+    assert note.isVisible()
+    assert "very long time" in note.text() and "40 minutes" in note.text()
+    d.drizzle_check.setChecked(False)
+    assert "40 minutes" not in note.text(), "the estimate outlived the box it prices"
+
+
+def test_blank_decision_notes_leave_no_gap(qtbot):
+    """Fix round 1: with exclusive_note blank, "Stack as mosaic"'s hint and the
+    Drizzle box sit one spacing apart, as the checkbox rows above them do."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.resize(1280, 900); d.show(); qtbot.waitExposed(d)
+    assert d.exclusive_note.text() == ""
+
+    def top(w):
+        return w.mapTo(d, w.rect().topLeft()).y()
+
+    def gap(a, b):
+        return top(b) - (top(a) + a.height())
+
+    assert gap(d.mosaic_hint, d.drizzle_check) == gap(d.drizzle_check, d.drizzle_hint), \
+        "a blank note between Mosaic and Drizzle still reserves a line"
+    for name in ("exclusive_note", "drizzle_note", "name_note", "background_note"):
+        note = getattr(d, name)
+        assert note.text() == "" and not note.isVisible(), f"blank {name} takes room"
+
+
+def test_the_folded_line_names_a_mosaic(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.mosaic_check.setEnabled(True)
+    d.mosaic_check.setChecked(True)
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text() == (
+        "Normal selection · Sigma-clipped, medium rejection · full frame · mosaic")
+    d.drizzle_check.setChecked(True)
+    assert d.options_band.summary_label.text().endswith("· mosaic · Drizzle ×2")
+    d.mosaic_check.setChecked(False)
+    assert "mosaic" not in d.options_band.summary_label.text()

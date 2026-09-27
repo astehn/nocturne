@@ -48,6 +48,11 @@ class Settings:
     # quality match". See docs/superpowers/specs/2026-09-18-starnet2-integration.md.
     starnet_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
+    # Stack and Ha/OIII fold their option groups to one summary line; the
+    # choice is remembered (spec 2026-09-27 §2.2). One setting for both: the
+    # two bands are the same control, and folding one is a statement about
+    # how much of the dialog you want to see, not about Ha/OIII.
+    frame_options_folded: bool = False
     window_geometry: str = ""       # Qt saveGeometry(), hex; "" = size from the screen
     # Nocturne asks GitHub for the latest release on every launch, which means
     # every start sends the user's IP to github.com tagged as a Nocturne user.
@@ -110,6 +115,7 @@ def load_settings(path: str) -> Settings:
         astap_path=data.get("astap_path", ""),
         starnet_path=data.get("starnet_path", ""),
         help_expanded=data.get("help_expanded", True),
+        frame_options_folded=data.get("frame_options_folded", False),
         window_geometry=data.get("window_geometry", ""),
         # Explicit, like every line here — which means A NEW FIELD MUST BE ADDED
         # TO THIS LIST or it is written by save_settings and never read back.

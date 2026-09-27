@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLayout,
-    QLineEdit, QCheckBox, QMessageBox, QProgressBar, QPushButton, QRadioButton, QSizePolicy,
-    QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
@@ -18,59 +15,36 @@ from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from . import theme
+from . import file_dialogs, theme
+from .frame_browser import FrameBrowser
+from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .worker import run_async
 
-# Hint text wraps here. ~65-75 characters is the comfortable measure; the old
-# inline hints ran to about 130.
-_HINT_WIDTH = 560
 
+class _Hint(WrappedNote):
+    """A note in this dialog — mostly explanations "How this works" hides.
 
-class _Hint(QLabel):
-    """Wrapped explanatory text that will not be squeezed onto one line.
-
-    A word-wrapped QLabel reports ONE LINE as its minimumSizeHint, because it
-    can always shrink — so a QFormLayout short of room gives it that, and the
-    rows paint over each other. Measured on the first attempt at this: sizeHints
-    of 69/54/54/90 px were served 52/37/37/73, seventeen short in every case,
-    which is exactly one line.
-
-    Reporting the real wrapped height as the MINIMUM fixes it, and doing it in
-    minimumSizeHint rather than setMinimumHeight means it keeps working when the
-    text changes — which it does, for the drizzle gate note.
+    Its own class so the help toggle finds exactly these and not the band's
+    folded note, which is a plain WrappedNote. The decision notes
+    (drizzle_note, exclusive_note, background_note, name_note) ARE _Hints; they
+    stay on screen only because `_apply_hints_visible` names them in its
+    `always` set. The old fixed 560 px width is gone with the QFormLayout rows
+    it was fighting (see WrappedNote); in a group the text wraps at the group.
     """
 
-    def __init__(self, text: str = "") -> None:
-        super().__init__(text)
-        self.setObjectName("stepExplainer")
-        self.setWordWrap(True)
-        self.setFixedWidth(_HINT_WIDTH)
 
-    def heightForWidth(self, _width: int) -> int:
-        """Always answer for the width this label ACTUALLY wraps at.
+def _line(*widgets, stretch_last: bool = True) -> QHBoxLayout:
+    line = QHBoxLayout()
+    line.setContentsMargins(0, 0, 0, 0)
+    for w in widgets:
+        line.addWidget(w)
+    if stretch_last:
+        line.addStretch(1)
+    return line
 
-        The containing row is wider than the label, so the layout asks
-        heightForWidth(1030) and a plain QLabel answers for text wrapped at
-        1030 — two lines where the label, fixed at 560, needs three. Every row
-        then came out exactly one line short and painted over its neighbour.
-        """
-        return super().heightForWidth(_HINT_WIDTH)
-
-    def minimumSizeHint(self):
-        from PySide6.QtCore import QSize
-        return QSize(_HINT_WIDTH, self.heightForWidth(_HINT_WIDTH))
-
-    def sizeHint(self):
-        return self.minimumSizeHint()
-from .frame_preview import FramePreview
-from .frame_preview_controller import FramePreviewController
-from .worker import run_async
-from . import file_dialogs
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
-# The verdict is the last column and _rejudge rewrites it in place. Named
-# because it was a bare 5 in two places and adding the Round column moved it —
-# a literal index would have written verdicts into the Bg cell.
-_VERDICT_COL = 6
+_OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
 
 
 class _Signals(QObject):
@@ -78,6 +52,7 @@ class _Signals(QObject):
 
 
 def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
+    """The field and its Browse… in one widget, so both can be disabled."""
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -105,7 +80,7 @@ class StackDialog(QDialog):
         # Andreas never saw it because his help_expanded is False -- collapsed
         # the dialog needs 658px and fits.
         self.setMinimumWidth(800)
-        self.resize(1100, 700)
+        self.resize(1100, _OPEN_HEIGHT)
         self._settings = settings
         self._on_settings_changed = on_settings_changed
         self._on_master = on_master
@@ -124,33 +99,37 @@ class StackDialog(QDialog):
         self._frame_shape = None
         self._busy = False
         self._active_token: CancelToken | None = None
-        self._output_user_edited = False
+        # The output is a folder and a name (spec 2026-09-27 §4). Both follow
+        # the dialog until the user sets them, and then they are the user's.
+        self._name_is_manual = False
+        self._save_to_is_manual = False
+        self._fitted = False       # _fit_to_content runs once, on first show
+        # The screen's folds (help, then the option band) stop once the user
+        # has toggled either by hand in this window: their click outranks it.
+        self._user_laid_out = False
+        self._hints_forced_closed = False
+        self._refit_pending = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
 
         self.folder_edit = QLineEdit()
-        self.output_edit = QLineEdit()
-        self.output_edit.textEdited.connect(self._mark_output_edited)
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(
-            ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
-        # Seestar filenames differ only in the trailing timestamp
-        # (Light_IC 1396A_10.0s_LP_20260825-040735.fit), so eliding from the
-        # right drops the only part that tells two rows apart.
-        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        hdr = self.table.horizontalHeader()
-        for col in (0, 2, 3, 4, 5):
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        # Verdict takes exactly what it needs; File absorbs the rest. Sharing
-        # the slack meant the column's width moved with the CONTENT of the
-        # numeric columns and with whether a scrollbar was showing -- measured
-        # 285px empty and 250px with 60 rows of four-digit star counts -- so no
-        # fixed budget could hold. A verdict is prose that cannot be
-        # reconstructed once cut; a filename mid-elides and stays identifiable,
-        # and its full form is in the tooltip either way.
-        hdr.setSectionResizeMode(_VERDICT_COL, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.folder_edit.textChanged.connect(self._follow_subs_folder)
+        self.save_to_edit = QLineEdit()
+        self.save_to_edit.setToolTip("The folder the master is written to — the "
+                                     "subs folder unless you choose another")
+        self.save_to_edit.textEdited.connect(self._on_save_to_typed)
+        self.save_to_edit.editingFinished.connect(self._refill_save_to)
+        self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("Named from the frames you keep, and kept up to "
+                                  "date as you tick. Type your own and it stays.")
+        self.name_edit.textEdited.connect(self._on_name_typed)
+        self.auto_name_btn = QPushButton("↺ automatic")
+        self.auto_name_btn.setObjectName("linkButton")
+        self.auto_name_btn.setToolTip("Go back to the name made from your frames")
+        self.auto_name_btn.clicked.connect(self._restore_automatic_name)
+        self.auto_name_btn.hide()
+
         self.avg_radio = QRadioButton("Average")
         self.sigma_radio = QRadioButton("Sigma-clipped")
         self.sigma_radio.setChecked(True)
@@ -166,7 +145,6 @@ class StackDialog(QDialog):
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
-        self.mosaic_check.toggled.connect(lambda _on: self._auto_output_path())
         # OFF by default. Trimming is NOT recoverable — the outer data is gone
         # and getting it back means re-stacking, which is hours for a large set
         # and most of a day for a drizzle. Leaving it is recoverable for the
@@ -184,104 +162,76 @@ class StackDialog(QDialog):
         self.strictness_box.addItems(["Relaxed", "Normal", "Strict"])
         self.strictness_box.setCurrentText("Normal")
         self.strictness_box.currentTextChanged.connect(self._rejudge)
-        self._user_touched: set[int] = set()
-        self._updating_table = False
-        self.table.itemChanged.connect(self._on_item_changed)
         self.progress = QProgressBar()
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        self.preview = FramePreview()
-        self.preview.setMinimumSize(300, 220)
+        # The frame list and its preview: the SAME component Ha/OIII hosts
+        # (spec 2026-09-27 §2.5), so the two cannot drift apart again.
+        self.browser = FrameBrowser(self._pool)
+        self.browser.selection_changed.connect(self._on_ticks_changed)
+        self.preview = self.browser.preview
+        self._preview_ctl = self.browser.preview_controller
 
-        self._preview_ctl = FramePreviewController(
-            self.preview, self._pool,
-            lambda row: (self._stats[row].path
-                         if self._stats and 0 <= row < len(self._stats) else None))
-        self.table.currentCellChanged.connect(
-            lambda row, _c, _pr, _pc: self._show_preview(row))
-
-        # Every option row is built the same way: the controls on one line, and
-        # any explanation on its OWN line beneath them, dimmed and wrapped to a
-        # readable measure.
-        #
-        # It used to append the hint to the same QHBoxLayout as the control, so
-        # each hint began wherever its control's label happened to end —
-        # Framing at ~460px, Mosaic at ~390, Detail at ~590 — leaving the left
-        # edge of the prose ragged down the whole form, and each hint sharing a
-        # baseline with its control so the two read as one run-on sentence.
-        # Framing's ran about 130 characters against a comfortable 65-75.
-        def option_row(*controls, hint="", extra=None) -> QWidget:
-            """`hint` may be text or a QLabel, so a caller that needs to reach
-            it later (a test, or code that rewrites it) can keep the handle."""
-            col = QVBoxLayout()
-            col.setContentsMargins(0, 0, 0, 0)
-            col.setSpacing(2)
-            line = QHBoxLayout()
-            line.setContentsMargins(0, 0, 0, 0)
-            for c in controls:
-                line.addWidget(c)
-            line.addStretch(1)
-            col.addLayout(line)
-            # FIXED width, not maximum. A word-wrapped QLabel cannot compute its
-            # height until it knows its width, so with only a maximum it reports
-            # a one-line sizeHint and the form lays the rows on top of each
-            # other — which is exactly what the first attempt at this did.
-            for label in (w for w in (hint, extra) if w is not None and w != ""):
-                col.addWidget(label if isinstance(label, QLabel) else _Hint(label))
-            wrap = QWidget()
-            wrap.setLayout(col)
-            # The row must not be squeezed below the height its text needs. A
-            # QFormLayout short of vertical room shrinks its rows, and the hints
-            # were then cut mid-sentence and painted over the row beneath:
-            # measured 2026-09-02 at 1100x760, two of five clipped; at 900x700,
-            # four of five, the worst losing 29 of 51 px. It degrades as the
-            # window shrinks, so it is worst exactly where there is least room.
-            # Either of these alone is sufficient — measured by removing each
-            # in turn — and removing BOTH clips all five hints at 900x700.
-            col.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-            wrap.setSizePolicy(QSizePolicy.Policy.Preferred,
-                               QSizePolicy.Policy.Minimum)
-            return wrap
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
-        form.setVerticalSpacing(12)
-        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
-        # Each control says what it IS in its own label, so the collapsed state
-        # is still readable: "Strictness: Normal" alone does not say what is
-        # being judged, and "k:" is jargon to the person this app is for.
-        form.addRow("Frame selection", option_row(
-            self.strictness_box, QLabel("— how picky to be about which subs to keep"),
-            hint="Stricter drops more frames for soft or trailed stars. Every "
-                 "frame's verdict is in the list below, and you can overrule it."))
-        form.addRow("Combining", option_row(
-            self.avg_radio, self.sigma_radio, QLabel("rejection:"), self.kappa_box,
-            hint="Sigma-clipped rejects outliers — satellites, cosmic rays — "
-                 "at the cost of a second pass over the frames."))
-        form.addRow("Framing", option_row(
-            self.crop_check,
-            hint="Off keeps the full frame. The edges are built from fewer "
-                 "frames, so they are noisier, but you can always crop later."))
+        # Layout A: ONE band of three groups between Folder and the output —
+        # Frames · Combine · Result (spec §2.1). Each control still says what
+        # it IS in its own label, so the folded summary and a collapsed help
+        # both read on their own: "k:" is jargon to the person this is for.
         self.exclusive_note = _Hint("")
         self.mosaic_hint = _Hint(
             "Several pointings assembled into one wide image — needs ASTAP, "
             "and takes considerably longer.")
-        form.addRow("Mosaic", option_row(self.mosaic_check, hint=self.mosaic_hint,
-                                         extra=self.exclusive_note))
-        # The gate's advice and the time estimate belong to this row, not to a
-        # label-less row of their own — which is where the dead vertical gap
-        # above Output came from.
         self.drizzle_note = _Hint("")
         self.drizzle_hint = _Hint(
             "Rebuilds the image on a 2× grid instead of enlarging it — finer "
             "detail and more stars from well-dithered subs. Stacking takes "
             "about 10× longer, and every step afterwards works on an image "
             "four times the size.")
-        form.addRow("Detail", option_row(self.drizzle_check,
-                                         hint=self.drizzle_hint,
-                                         extra=self.drizzle_note))
-        form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
+        self.options_band = OptionBand(self._options_summary)
+        frames = self.options_band.add_group("Frames")
+        frames.body.addLayout(_line(QLabel("strictness:"), self.strictness_box))
+        picky = QLabel(PICKY_NOTE)
+        picky.setWordWrap(True)
+        frames.body.addWidget(picky)
+        frames.body.addWidget(_Hint(
+            "Stricter drops more frames for soft or trailed stars. Every "
+            "frame's verdict is in the list below, and you can overrule it."))
+        combine = self.options_band.add_group("Combine")
+        combine.body.addLayout(_line(self.avg_radio, self.sigma_radio))
+        combine.body.addLayout(_line(QLabel("rejection:"), self.kappa_box))
+        combine.body.addWidget(_Hint(
+            "Sigma-clipped rejects outliers — satellites, cosmic rays — "
+            "at the cost of a second pass over the frames."))
+        # Result gets the most room: three choices, and the drizzle
+        # recommendation lives here (spec §2.1), not in a row of its own.
+        result = self.options_band.add_group("Result", stretch=2)
+        result.body.addWidget(self.crop_check)
+        result.body.addWidget(_Hint(TRIM_NOTE))
+        result.body.addWidget(self.mosaic_check)
+        result.body.addWidget(self.mosaic_hint)
+        result.body.addWidget(self.exclusive_note)
+        result.body.addWidget(self.drizzle_check)
+        result.body.addWidget(self.drizzle_hint)
+        result.body.addWidget(self.drizzle_note)
+        for sig in (self.strictness_box.currentTextChanged,
+                    self.kappa_box.currentTextChanged, self.sigma_radio.toggled,
+                    self.crop_check.toggled, self.mosaic_check.toggled,
+                    self.drizzle_check.toggled):
+            sig.connect(lambda *_: self.options_band.refresh_summary())
+        self.drizzle_check.toggled.connect(lambda *_: self._sync_folded_note())
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.folded_changed.connect(self._on_options_folded)
+
+        # The Save panel used to say "already exists — replace?"; choosing a
+        # folder instead does not, so the dialog says it. Informs, never blocks:
+        # replacing a master by re-stacking is a normal thing to do.
+        self.name_note = _Hint("")
+        name_field = QWidget()
+        name_col = QVBoxLayout(name_field)
+        name_col.setContentsMargins(0, 0, 0, 0)
+        name_col.setSpacing(2)
+        name_col.addLayout(_line(self.name_edit, self.auto_name_btn, stretch_last=False))
+        name_col.addWidget(self.name_note)
 
         self._stack_btn = QPushButton("Stack")
         self._stack_btn.setObjectName("primary")
@@ -324,21 +274,6 @@ class StackDialog(QDialog):
         buttons_col.addLayout(buttons_row)
         buttons_col.addWidget(self.background_note)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(self.table)
-        self.splitter.addWidget(self.preview)
-        # The TABLE absorbs extra width, not the preview. It was the other way
-        # round, which meant the Verdict column was stuck at 209px however wide
-        # the user made the dialog -- the one control that could have fixed the
-        # truncation did nothing. The frame list is the surface being READ; the
-        # preview is a thumbnail with a 300px minimum and does not improve much
-        # past it.
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([800, 300])
-        self.splitter.setChildrenCollapsible(False)
-
-        root = QVBoxLayout(self)
         # The same collapsible help the main window uses, bound to the same
         # sticky setting — so turning it off here turns it off there, and a
         # novice still gets it by default (help_expanded starts True).
@@ -352,17 +287,85 @@ class StackDialog(QDialog):
         self._help_link.setTextFormat(Qt.TextFormat.RichText)
         self._help_link.linkActivated.connect(self._toggle_hints)
 
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        form.setVerticalSpacing(8)
+        # The macOS style keeps form fields at their size hint (~225 px under
+        # cocoa) whatever the dialog's width, which cut an automatic name like
+        # "SH2-108_204x10s_34min.fits" at the left even at 1920. Fill the row.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
+        form.addRow(self.options_band)
+        form.addRow(self._help_link)
+        self._save_to_row = _picker_row(self.save_to_edit, self._browse_save_to)
+        self._name_field = name_field
+        form.addRow("Save to", self._save_to_row)
+        form.addRow("Name", name_field)
+
+        root = QVBoxLayout(self)
         root.addLayout(form)
-        root.addWidget(self._help_link)
         self._apply_hints_visible()
-        root.addWidget(self.splitter, 1)
+        root.addWidget(self.browser, 1)
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons_col)
-        self._fitted = False       # _fit_to_content runs once, on first show
+        self._sync_folded_note()
 
-    def _mark_output_edited(self, _text: str) -> None:
-        self._output_user_edited = True
+    # --- output: a folder and a name ---
+    def output_path(self) -> str:
+        """Where the master will be written, or "" while there is no name.
+        A name typed without an extension gets .fits — the stacker writes FITS,
+        and a file with no extension is one Open will not list."""
+        name = self.name_edit.text().strip()
+        if not name:
+            return ""
+        if os.path.splitext(name)[1].lower() not in (".fit", ".fits", ".fts"):
+            name += ".fits"
+        folder = self.save_to_edit.text().strip() or self.folder_edit.text().strip()
+        if not folder:
+            return ""      # never a path relative to wherever the app was started
+        # "~/Astro" is a folder to the person typing it, not to save_fits.
+        return os.path.join(os.path.expanduser(folder), name)
+
+    def _on_name_typed(self, _text: str) -> None:
+        self._name_is_manual = True
+        self.auto_name_btn.show()
+        self._sync_name_note()
+
+    def _on_save_to_typed(self, text: str) -> None:
+        # Cleared by hand: back to following the subs folder. An empty
+        # "manual" field quietly used a folder it did not display, and missed
+        # every later change of subs folder.
+        self._save_to_is_manual = bool(text.strip())
+        self._sync_name_note()
+
+    def _refill_save_to(self) -> None:
+        # Not on every keystroke: that would refill the field the moment
+        # backspace emptied it, before the user could type a new folder.
+        if not self._save_to_is_manual and not self.save_to_edit.text().strip():
+            self.save_to_edit.setText(self.folder_edit.text().strip())
+
+    def _follow_subs_folder(self, folder: str) -> None:
+        if not self._save_to_is_manual:
+            self.save_to_edit.setText(folder.strip())
+        self._sync_name_note()
+
+    def _restore_automatic_name(self) -> None:
+        self._name_is_manual = False
+        self.auto_name_btn.hide()
+        if not self._stats:
+            # Nothing graded, nothing to name it from: a typed name left in
+            # the field would pass for the automatic one.
+            self.name_edit.setText("")
+            self._sync_name_note()
+            return
+        self._auto_output_path()
+
+    def _sync_name_note(self) -> None:
+        path = self.output_path()
+        self.name_note.setText(
+            "A file with this name is already there — stacking will replace it."
+            if path and os.path.exists(path) else "")
 
     # --- browse ---
     @staticmethod
@@ -390,6 +393,7 @@ class StackDialog(QDialog):
         from ..stacking.drizzle_stack import estimate_megabytes, estimate_seconds
         if not self._stats:
             self.drizzle_note.setText("")
+            self._sync_folded_note()
             return
         advice = drizzle_advice(self._stats)
         colour = {"recommended": theme.SUCCESS,
@@ -413,6 +417,7 @@ class StackDialog(QDialog):
                      f"{estimate_megabytes(self._frame_shape):.0f} MB.")
         self.drizzle_note.setText(text)
         self.drizzle_note.setStyleSheet(f"color: {colour};")
+        self._sync_folded_note()
 
     def _browse_folder(self) -> None:
         path = file_dialogs.choose_folder(self, "Folder of subs", start_dir(self._settings.base_dir))
@@ -420,11 +425,16 @@ class StackDialog(QDialog):
             self.folder_edit.setText(path)
             self.grade()
 
-    def _browse_output(self) -> None:
-        path = file_dialogs.save_file(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
+    def _browse_save_to(self) -> None:
+        """A folder only. The name is left exactly as it was — automatic stays
+        automatic — which is the bug this replaced: Browse… used to hand back a
+        whole path and the automatic name was gone (Andreas, 2026-09-27)."""
+        start = self.save_to_edit.text().strip() or start_dir(self._settings.base_dir)
+        path = file_dialogs.choose_folder(self, "Save the master to", start)
         if path:
-            self.output_edit.setText(path)
-            self._output_user_edited = True
+            self.save_to_edit.setText(path)
+            self._save_to_is_manual = True
+            self._sync_name_note()
 
     # --- busy state ---
     def _set_busy(self, busy: bool) -> None:
@@ -437,6 +447,10 @@ class StackDialog(QDialog):
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)
+        # main_window reads output_path() when the master arrives, so an edit
+        # made mid-stack would record a path the file is not at.
+        self._save_to_row.setEnabled(not busy)
+        self._name_field.setEnabled(not busy)
         self._sync_background_availability()
 
     # --- cancellable async dispatch ---
@@ -494,12 +508,41 @@ class StackDialog(QDialog):
             "wide image")
         self._sync_exclusive()
 
+    def _hints_showing(self) -> bool:
+        """What the link's arrow claims: explanations actually on screen.
+        The preference alone is not that — the screen may have folded them
+        (_keep_on_screen), and every one lives inside the option band, so a
+        folded band shows none of them whatever the preference says."""
+        return (bool(getattr(self._settings, "help_expanded", True))
+                and not self._hints_forced_closed
+                and not self.options_band.is_folded())
+
     def _toggle_hints(self) -> None:
-        # An explicit click outranks the screen-height override: if the user
-        # asks for the explanations on a short screen they get them, and the
-        # dialog grows as far as the screen allows.
-        self._hints_forced_closed = False
-        self._settings.help_expanded = not self._settings.help_expanded
+        # The click acts on what the link SHOWS, never on the bare preference:
+        # opened folded with help on, the link read ▾ over nothing and the
+        # first click saved help off and changed nothing on screen (final
+        # review I1). "▸" always means show. An explicit click outranks the
+        # screen's FOLD, never its EDGE: the frame list gives up the height
+        # (_clamp_to_screen).
+        self._user_laid_out = True
+        if self._hints_showing():
+            self._settings.help_expanded = False
+            self._persist_settings()
+        else:
+            self._hints_forced_closed = False
+            self._settings.help_expanded = True
+            if self.options_band.is_folded():
+                # Through the band's own signal, so it is saved like any
+                # unfold the user makes — once, help included
+                # (_on_options_folded). Hiding the help never folds it back.
+                self.options_band.set_folded(False)
+            else:
+                self._persist_settings()
+        self._apply_hints_visible()
+        if self._fitted:
+            self._keep_on_screen()
+
+    def _persist_settings(self) -> None:
         # Persisted by whoever OWNS the settings, through the path the app was
         # actually given. Resolving the default path here wrote the whole object
         # to the real ~/.nocturne/settings.json whatever file was in use — which
@@ -510,7 +553,38 @@ class StackDialog(QDialog):
                 self._on_settings_changed()
             except OSError:
                 pass      # a preference that will not save is not worth a dialog
-        self._apply_hints_visible()
+
+    # --- the option band's fold ---
+    def _on_options_folded(self, folded: bool) -> None:
+        # Only the user's fold reaches here: the screen's is signal-blocked.
+        self._user_laid_out = True
+        self._settings.frame_options_folded = folded
+        self._persist_settings()
+        self._apply_hints_visible()        # the link's arrow follows the fold
+        if self._fitted:
+            self._keep_on_screen()
+
+    def _options_summary(self) -> str:
+        """The folded band in one line, e.g. "Normal selection · Sigma-clipped,
+        medium rejection · full frame · Drizzle ×2"."""
+        parts = [f"{self.strictness_box.currentText()} selection",
+                 (f"Sigma-clipped, {self.kappa_box.currentText().lower()} rejection"
+                  if self.sigma_radio.isChecked() else "Average"),
+                 "trim edges" if self.crop_check.isChecked() else "full frame"]
+        if self.mosaic_check.isChecked():
+            parts.append("mosaic")
+        if self.drizzle_check.isChecked():
+            parts.append("Drizzle ×2")
+        return " · ".join(parts)
+
+    def _sync_folded_note(self) -> None:
+        """Folding hides the groups, never what they warn about: the combined
+        mosaic+drizzle cost, and — once Drizzle is ticked — its time and size
+        estimate. The same rule `_apply_hints_visible` follows."""
+        notes = [self.exclusive_note.text()]
+        if self.drizzle_check.isChecked():
+            notes.append(self.drizzle_note.text())
+        self.options_band.set_folded_note("  ".join(n for n in notes if n))
 
     def _apply_hints_visible(self) -> None:
         """Show or hide every explanation, and say which state you are in.
@@ -519,8 +593,11 @@ class StackDialog(QDialog):
         you actually work in — 63% more height. That matters most on the small
         screens where the explanations were being clipped anyway.
         """
+        # Per hint, the preference: a hint inside a folded band is invisible
+        # anyway, and _natural_minimum_height needs it counted once the band
+        # opens. The link says what is actually on screen.
         shown = (bool(getattr(self._settings, "help_expanded", True))
-                 and not getattr(self, "_hints_forced_closed", False))
+                 and not self._hints_forced_closed)
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
         # "this will take N hours and write M MB" estimate, `exclusive_note`
         # says why a box you just ticked untucked another, and
@@ -529,13 +606,15 @@ class StackDialog(QDialog):
         # with the help would mean collapsing the explanations quietly removed
         # the numbers you needed to choose, or left a disabled control with no
         # reason anywhere on screen.
-        always = {self.drizzle_note, self.exclusive_note, self.background_note}
+        always = {self.drizzle_note, self.exclusive_note, self.background_note,
+                  self.name_note}
         for hint in self.findChildren(_Hint):
             if hint not in always:
                 hint.setVisible(shown)
         self._help_link.setText(
             '<a href="#" style="color:#7fb2e5;text-decoration:none">'
-            + ("How this works ▾" if shown else "How this works ▸") + "</a>")
+            + ("How this works ▾" if self._hints_showing()
+               else "How this works ▸") + "</a>")
 
     def showEvent(self, event) -> None:
         # Sizing happens HERE, not in __init__. An un-shown window does not have
@@ -558,20 +637,103 @@ class StackDialog(QDialog):
         collapse control already offers, and _apply_hints_visible's own note
         says it "matters most on the small screens where the explanations were
         being clipped anyway". The saved preference is left alone: this is what
-        THIS window can show, not a change to what the user asked for.
+        THIS window can show, not a change to what the user asked for. If the
+        explanations folded away are still not enough, the option band folds
+        for this window as well, on the same terms.
         """
-        self.layout().activate()
-        needed = self.minimumSizeHint().height()
         room = self._available_height()
-
-        if needed > room and getattr(self._settings, "help_expanded", True):
-            self._hints_forced_closed = True
-            self._apply_hints_visible()
-            self.layout().activate()
-            needed = self.minimumSizeHint().height()
-
+        if self._keep_on_screen():
+            return
+        needed = self._settled_minimum_height()
         if needed > self.height():
             self.resize(self.width(), min(needed, room))
+
+    def _keep_on_screen(self) -> bool:
+        """Fold what the screen cannot hold and bring the window back down;
+        True when it folded something. Help first, then the option band —
+        both for THIS window only, never saved, and never once the user has
+        toggled either here. The height clamp after them always runs."""
+        squeezed = False
+        if not self._user_laid_out:
+            room = self._available_height()
+            needed = self._natural_minimum_height()
+            if (needed > room and getattr(self._settings, "help_expanded", True)
+                    and not self._hints_forced_closed):
+                self._hints_forced_closed = True
+                self._apply_hints_visible()
+                needed = self._natural_minimum_height()
+                squeezed = True
+            # Still too tall: fold the options for THIS window too. Not saved —
+            # folded_changed is blocked — for the same reason the help is not.
+            if needed > room and not self.options_band.is_folded():
+                self.options_band.blockSignals(True)
+                self.options_band.set_folded(True)
+                self.options_band.blockSignals(False)
+                self._apply_hints_visible()    # blocked, so the link is told here
+                needed = self._natural_minimum_height()
+                squeezed = True
+            if squeezed:
+                # Qt already grew the window to the OLD minimum when it was
+                # shown, and it does not shrink by itself: measured 2026-09-27,
+                # the pre-layout-A dialog stayed 825 px tall on a 740 px screen
+                # after collapsing. Bring it back down to what now fits.
+                self.resize(self.width(), min(max(needed, _OPEN_HEIGHT), room))
+        self._clamp_to_screen()
+        return squeezed
+
+    def _natural_minimum_height(self) -> int:
+        """The minimum with the frame list at its OWN floor, not the one
+        _clamp_to_screen may have lowered — what the content really asks for."""
+        needed = self._settled_minimum_height()
+        floor = self.browser.minimumHeight()
+        if floor > 0:
+            needed += self.browser.minimumSizeHint().height() - floor
+        return needed
+
+    def _clamp_to_screen(self) -> None:
+        """The screen's edge, which nothing outranks. The user's click can
+        overrule the screen's folds, and then the content needs more than the
+        screen has (842 px on a 642 px screen, measured offscreen 2026-09-27);
+        the frame list is the stretch area, so it is what gives up height, and
+        gets its own floor back as soon as there is room for it."""
+        room = self._available_height()
+        natural = self._natural_minimum_height()
+        own = self.browser.minimumSizeHint().height()
+        floor = 0 if natural <= room else max(1, own - (natural - room))
+        if floor != self.browser.minimumHeight():
+            self.browser.setMinimumHeight(floor)
+            self._settled_minimum_height()
+        if self.height() > room:
+            self.resize(self.width(), room)
+
+    def _settled_minimum_height(self) -> int:
+        """The dialog's minimum once a show/hide has reached every nested
+        layout. activate() on the top layout alone read the groups' CACHED
+        minimum — 858 px with the explanations already hidden, where 567 was
+        true (measured 2026-09-27) — and folded the band on a screen that had
+        room for it. Innermost layouts first, so each parent sees fresh
+        children."""
+        for w in reversed(self.findChildren(QWidget)):
+            if w.layout() is not None:
+                w.layout().activate()
+        self.layout().activate()
+        return self.minimumSizeHint().height()
+
+    def resizeEvent(self, event) -> None:
+        # Content that arrives after opening — a grade's status line and
+        # drizzle advice, a name or mosaic note — grows the window through its
+        # minimum, and on the 800 px laptop past the bottom of the screen
+        # (measured cocoa: 688 px empty, 766 graded with the help folded).
+        # Re-fit once the layout has settled.
+        super().resizeEvent(event)
+        if (self._fitted and not self._refit_pending
+                and self.height() > self._available_height()):
+            self._refit_pending = True
+            QTimer.singleShot(0, self._refit)
+
+    def _refit(self) -> None:
+        self._refit_pending = False
+        self._keep_on_screen()
 
     def _available_height(self) -> int:
         """Usable screen height. Its own method so a test can shrink the screen —
@@ -609,6 +771,7 @@ class StackDialog(QDialog):
             "Drizzle runs on every pointing, so a mosaic multiplies its cost — "
             "expect this to take a very long time."
             if both and self.mosaic_check.isEnabled() else "")
+        self._sync_folded_note()
 
     def _sync_background_availability(self) -> None:
         """Disabled while THIS dialog's own foreground stack is running (the
@@ -633,6 +796,17 @@ class StackDialog(QDialog):
         folder = self.folder_edit.text().strip()
         paths = discover_subs(folder) if folder else []
         if not paths:
+            # Forget the last folder's grade. Its frames stayed listed and
+            # stackable while Save to followed the NEW folder, so Stack wrote
+            # folder A's master into B under A's name (final review I2).
+            self._stats = []
+            self._frame_shape = None
+            self.browser.set_frames([])
+            self._update_drizzle_note()
+            self.scan_pointings()          # no paths: mosaic off and disabled
+            if not self._name_is_manual:
+                self.name_edit.setText("")
+            self._sync_name_note()
             self.status.setText("No .fit subs found in that folder.")
             return
         self.scan_pointings()
@@ -646,7 +820,7 @@ class StackDialog(QDialog):
 
         self._start(work, self._on_graded,
                     "Measuring every frame — this is the slow part, and your "
-                    "Strictness and Integration choices apply instantly afterwards.")
+                    "Frames and Combine choices apply instantly afterwards.")
 
     def _on_graded(self, stats) -> None:
         # Strictness may have changed while the async measure was running —
@@ -657,38 +831,13 @@ class StackDialog(QDialog):
         self._stats = stats
         self._frame_shape = self._read_frame_shape(stats)
         self._update_drizzle_note()
-        self._user_touched = set()
-        self._updating_table = True
-
-        def _cell(text: str) -> QTableWidgetItem:
-            it = QTableWidgetItem(text)
-            it.setToolTip(text)
-            return it
-
-        try:
-            self.table.setRowCount(len(stats))
-            for row, s in enumerate(stats):
-                check = QTableWidgetItem()
-                check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
-                self.table.setItem(row, 0, check)
-                self.table.setItem(row, 1, _cell(os.path.basename(s.path)))
-                self.table.setItem(row, 2, _cell(str(s.star_count)))
-                self.table.setItem(row, 3, _cell(f"{s.fwhm:.1f}"))
-                # "Round" is elongation: 1.00 is circular, higher is trailed.
-                # Shown because a "stars trailed" rejection is unreadable
-                # without the number that caused it.
-                self.table.setItem(row, 4, _cell(f"{s.elongation:.2f}"))
-                self.table.setItem(row, 5, _cell(f"{s.background:.3f}"))
-                verdict = _cell(self._verdict_text(s))
-                verdict.setToolTip(self._verdict_tooltip(s))
-                self.table.setItem(row, _VERDICT_COL, verdict)
-                self._tint_row(row, s)
-        finally:
-            self._updating_table = False
+        self.browser.set_frames(stats)
         self.status.setText(self._selection_summary())
         self._auto_output_path()
-        self._resync_preview()
+        if self._fitted:
+            # The grade is what grows the dialog most (status line, drizzle
+            # advice): fit now, not a frame later from resizeEvent.
+            self._keep_on_screen()
 
     # The preview machinery moved to FramePreviewController so Ha/OIII could have
     # it too; these keep the dialog's own surface unchanged.
@@ -708,52 +857,22 @@ class StackDialog(QDialog):
     def _preview_wanted(self):
         return self._preview_ctl.wanted
 
-    def _show_preview(self, row: int) -> None:
-        self._preview_ctl.show_row(row)
-
-    def _resync_preview(self) -> None:
-        self._preview_ctl.resync(self.table.currentRow())
-
-    def _on_item_changed(self, item) -> None:
-        if self._updating_table or item.column() != 0:
-            return
-        self._user_touched.add(item.row())
+    def _on_ticks_changed(self) -> None:
         if self._stats:
-            self.status.setText(self._sync_included_and_summarize())
+            self.status.setText(self._selection_summary())
             self._auto_output_path()
-
-    def _sync_included_and_summarize(self) -> str:
-        for row in range(self.table.rowCount()):
-            checked = self.table.item(row, 0).checkState() == Qt.CheckState.Checked
-            self._stats[row].included = checked
-        return self._selection_summary()
 
     def _rejudge(self, _text=None) -> None:
         if not self._stats:
             return
         judge(self._stats, self.strictness_box.currentText().lower())
-        self._updating_table = True
-        try:
-            for row, s in enumerate(self._stats):
-                if row not in self._user_touched:
-                    self.table.item(row, 0).setCheckState(
-                        Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
-                else:
-                    s.included = (self.table.item(row, 0).checkState()
-                                  == Qt.CheckState.Checked)
-                verdict = self.table.item(row, _VERDICT_COL)
-                verdict.setText(self._verdict_text(s))
-                verdict.setToolTip(self._verdict_tooltip(s))
-                self._tint_row(row, s)
-        finally:
-            self._updating_table = False
+        self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
         self.status.setText(self._selection_summary())
         self._auto_output_path()
 
     def _auto_output_path(self) -> None:
-        if self._output_user_edited or not self._stats:
+        if self._name_is_manual or not self._stats:
             return
-        folder = self.folder_edit.text().strip()
         kept = [s for s in self._stats if s.included]
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
@@ -762,33 +881,8 @@ class StackDialog(QDialog):
                                sum(s.exposure for s in kept),
                                mosaic=self.mosaic_check.isChecked(),
                                drizzle=self.drizzle_check.isChecked())
-        self.output_edit.setText(os.path.join(folder, name))
-
-    @staticmethod
-    def _verdict_text(s) -> str:
-        if s.reason:
-            return s.reason
-        if s.warning:
-            return s.warning
-        return "OK"
-
-    @staticmethod
-    def _verdict_tooltip(s) -> str:
-        """The unabbreviated verdict. The cell shows the short form because the
-        column cannot hold the long one; hovering must still explain it."""
-        return s.reason_detail or StackDialog._verdict_text(s)
-
-    def _tint_row(self, row: int, s) -> None:
-        default = QColor(theme.TEXT)
-        colour = None
-        if s.reason:
-            colour = QColor(theme.TEXT_FAINT)   # rejected: dimmed
-        elif s.warning:
-            colour = QColor(theme.WARNING)      # kept with warning: amber
-        for col in range(1, self.table.columnCount()):
-            item = self.table.item(row, col)
-            if item is not None:
-                item.setForeground(colour if colour is not None else default)
+        self.name_edit.setText(name)
+        self._sync_name_note()
 
     def _selection_summary(self) -> str:
         total = len(self._stats)
@@ -807,11 +901,7 @@ class StackDialog(QDialog):
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
-        chosen = []
-        for row in range(self.table.rowCount()):
-            if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
-                chosen.append(self._stats[row])
-        return order_best_first(chosen)
+        return order_best_first(self.browser.checked_frames())
 
     def _method(self) -> str:
         if self.drizzle_check.isChecked():
@@ -824,7 +914,7 @@ class StackDialog(QDialog):
         different things."""
         return StackOptions(self._method(), KAPPA[self.kappa_box.currentText()],
                             self._included_paths_best_first(),
-                            self.output_edit.text().strip(),
+                            self.output_path(),
                             autocrop=self.crop_check.isChecked())
 
     def _target_label(self) -> str:
@@ -840,11 +930,22 @@ class StackDialog(QDialog):
         same message rather than drift into checking different things — see
         the bug this closed, where the background button skipped both of
         these and enqueued StackOptions(include=[], output_path='', ...)."""
-        if not self.output_edit.text().strip():
-            self.status.setText("Pick an output path.")
+        if not self.output_path():
+            self.status.setText("Pick an output path — a folder and a name.")
+            return False
+        if "/" in self.name_edit.text() or os.sep in self.name_edit.text():
+            self.status.setText("The name cannot contain a folder — choose the "
+                                "folder with Save to.")
             return False
         if len(self._included_paths_best_first()) < 3:
             self.status.setText("Select at least 3 frames to stack.")
+            return False
+        # save_fits creates no folders, so a typo here used to fail only
+        # AFTER the stack — hours, for a drizzle or a mosaic.
+        folder = os.path.dirname(self.output_path())
+        if not os.path.isdir(folder):
+            self.status.setText(f"The folder {folder} does not exist — "
+                                "choose one with Browse….")
             return False
         return True
 
@@ -874,7 +975,7 @@ class StackDialog(QDialog):
 
         if self.mosaic_check.isChecked():
             mosaic_opts = MosaicOptions(
-                include=include, output_path=self.output_edit.text().strip(),
+                include=include, output_path=self.output_path(),
                 astap_path=self._settings.astap_path, method=method,
                 kappa=KAPPA[self.kappa_box.currentText()],
                 autocrop=self.crop_check.isChecked())
@@ -966,7 +1067,7 @@ class StackDialog(QDialog):
         Only a name this dialog generated is touched. If the path was typed or
         browsed to, it is the user's and stays as chosen.
         """
-        if self._output_user_edited or not self._stats:
+        if self._name_is_manual or not self._stats:
             return
         target = next((s.target for s in self._stats if s.included and s.target), "")
         kept = [s for s in self._stats if s.included]
@@ -980,12 +1081,17 @@ class StackDialog(QDialog):
         new_path = os.path.join(os.path.dirname(old_path), want)
         if new_path == old_path or not os.path.exists(old_path):
             return
+        if os.path.exists(new_path):
+            # Another master already has the honest name. The dialog only
+            # warns about replacing the name the user SAW; this one they never
+            # did, so keep the old name rather than destroy a file.
+            return
         try:
             os.replace(old_path, new_path)
         except OSError:
             return          # a rename is a nicety; never fail a finished stack
         result.output_path = new_path
-        self.output_edit.setText(new_path)
+        self.name_edit.setText(os.path.basename(new_path))
 
     def _on_stacked(self, result) -> None:
         self._active_token = None

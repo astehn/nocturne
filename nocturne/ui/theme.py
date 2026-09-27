@@ -129,14 +129,36 @@ QProgressBar::chunk {{ background: {ACCENT}; border-radius: 6px; }}
 
 QHeaderView::section {{ background: {BG_3}; color: {TEXT_DIM}; border: none;
     padding: 6px 8px; }}
-QTableWidget {{ background: {BG_2}; gridline-color: {BORDER};
+QTableView {{ background: {BG_2}; gridline-color: {BORDER};
     border: 1px solid {BORDER}; border-radius: 8px; }}
-QTableWidget::item:hover {{ background: {BG_3}; }}
+QTableView::item:hover {{ background: {BG_3}; }}
+/* The frame browser's bar (frame_browser.py): Show is a segmented choice,
+   Select is three links. */
+QPushButton#segment {{ padding: 3px 10px; border-radius: 6px; }}
+QPushButton#segment:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
+    border: none; }}
+QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT};
+    padding: 3px 4px; }}
+QPushButton#linkButton:hover {{ color: {ACCENT_HI}; }}
+
+/* The option groups above a frame list (option_band.py). Plain text inside a
+   group lets the group's colour through, as in a step card. */
+QFrame#optionGroup {{ background: {BG_2}; border-radius: 7px; }}
+QFrame#optionGroup QLabel, QFrame#optionGroup QCheckBox,
+QFrame#optionGroup QRadioButton {{ background: transparent; }}
+QLabel#optionGroupTitle {{ color: {TEXT_DIM}; font-size: 11px; }}
 
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+/* The same bar lying down. Unstyled, a horizontal one kept the platform's
+   light groove and outline (max lightness 191 cocoa, 255 offscreen, against
+   65 for the vertical) — a white box under the dark frame list. */
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: {BORDER}; border-radius: 5px; min-width: 24px; }}
+QScrollBar::handle:horizontal:hover {{ background: #4a4f56; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
 /* The side panel's ONE step card (Ruling R6): the rounded frame holds the

@@ -3,26 +3,20 @@ from __future__ import annotations
 import glob
 import os
 
-from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, QThreadPool, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-    QHeaderView, QLineEdit, QProgressBar, QPushButton, QRadioButton, QSplitter,
-    QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
 from ..stacking.grade import grade_frames, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
-from . import theme
-from .frame_preview import FramePreview
-from .frame_preview_controller import FramePreviewController
+from .frame_browser import FrameBrowser
+from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .worker import run_async
 from . import file_dialogs
-
-_VERDICT_COL = 6
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 
@@ -40,6 +34,15 @@ class _Signals(QObject):
     progress = Signal(int, int, str)
 
 
+def _line(*widgets) -> QHBoxLayout:
+    line = QHBoxLayout()
+    line.setContentsMargins(0, 0, 0, 0)
+    for w in widgets:
+        line.addWidget(w)
+    line.addStretch(1)
+    return line
+
+
 def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
     row = QWidget()
     lay = QHBoxLayout(row)
@@ -52,12 +55,18 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
 
 
 class HaOIIIDialog(QDialog):
-    def __init__(self, settings, parent=None, on_master=None) -> None:
+    def __init__(self, settings, parent=None, on_master=None,
+                 on_settings_changed=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Ha/OIII extract")
         self.setMinimumWidth(560)
+        # Stack's opening size. Left to its size hint it opened 832 px wide
+        # (cocoa), a 351 px list with Verdict behind a scrollbar; 700 tall
+        # fits the 800 px laptop with the options open (688 px needed, cocoa).
+        self.resize(1100, 700)
         self._settings = settings
         self._on_master = on_master
+        self._on_settings_changed = on_settings_changed
         self._grade_runner = grade_frames       # injectable for tests
         self._extract_runner = run_haoiii_extract  # injectable for tests
         self._stats = []
@@ -108,33 +117,6 @@ class HaOIIIDialog(QDialog):
             "Writes each gas as its own mono FITS beside the master, un-equalised "
             "— OIII stays as faint as it really is, so you choose the balance when "
             "you recombine them. For taking the channels into another tool.")
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(
-            ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
-        # Seestar filenames differ only in the trailing timestamp
-        # (Light_IC 1396A_10.0s_LP_20260825-040735.fit), so eliding from the
-        # right drops the only part that tells two rows apart.
-        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
-        hdr = self.table.horizontalHeader()
-        for col in (0, 2, 3, 4, 5):
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        # Verdict takes exactly what it needs; File absorbs the rest. Sharing
-        # the slack meant the column's width moved with the CONTENT of the
-        # numeric columns and with whether a scrollbar was showing -- measured
-        # 285px empty and 250px with 60 rows of four-digit star counts -- so no
-        # fixed budget could hold. A verdict is prose that cannot be
-        # reconstructed once cut; a filename mid-elides and stays identifiable,
-        # and its full form is in the tooltip either way.
-        hdr.setSectionResizeMode(_VERDICT_COL, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.setToolTip(
-            "One row per sub: how many stars it showed, how sharp they were (FWHM, "
-            "lower is better), how round (1.00 is circular, higher is trailed) and how "
-            "bright the sky was. Verdict says why a frame was left out. Untick a frame "
-            "to leave it out yourself.")
-        self._user_touched: set = set()
-        self._updating_table = False
-        self.table.itemChanged.connect(self._on_item_changed)
         self.avg_radio = QRadioButton("Average")
         self.avg_radio.setToolTip(
             "Plain mean of every frame. Slightly less noise, but a satellite or plane "
@@ -150,50 +132,50 @@ class HaOIIIDialog(QDialog):
         self.kappa_box.setToolTip(
             "How far a pixel may stray before it is discarded. High rejects the most "
             "and is the one to reach for when trails survive; Low keeps more signal.")
-        self.preview = FramePreview()
-        self.preview.setMinimumSize(300, 220)
-        self._preview_ctl = FramePreviewController(
-            self.preview, self._pool,
-            lambda row: (self._stats[row].path
-                         if self._stats and 0 <= row < len(self._stats) else None))
-        self.table.currentCellChanged.connect(
-            lambda row, _c, _pr, _pc: self._preview_ctl.show_row(row))
+        # The same list + preview Stack hosts (spec 2026-09-27 §2.5).
+        self.browser = FrameBrowser(self._pool)
+        self.browser.view.setToolTip(
+            "One row per sub: when it was taken, how many stars it showed, how "
+            "sharp they were (FWHM, lower is better), how round (1.00 is "
+            "circular, higher is trailed) and how bright the sky was. Verdict "
+            "says why a frame was left out. Untick a frame to leave it out "
+            "yourself.")
+        self.preview = self.browser.preview
+        self._preview_ctl = self.browser.preview_controller
 
         self.progress = QProgressBar()
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
+        # Layout A, in Stack's style: one band of groups that folds, and the
+        # fold is the same remembered setting (spec §2.2, §2.5).
+        self.options_band = OptionBand(self._options_summary)
+        frames = self.options_band.add_group("Frames")
+        frames.body.addLayout(_line(QLabel("strictness:"), self.strictness_box))
+        picky = QLabel(PICKY_NOTE)
+        picky.setWordWrap(True)
+        frames.body.addWidget(picky)
+        combine = self.options_band.add_group("Combine")
+        combine.body.addLayout(_line(self.avg_radio, self.sigma_radio))
+        combine.body.addLayout(_line(QLabel("rejection:"), self.kappa_box))
+        result = self.options_band.add_group("Result", stretch=2)
+        result.body.addWidget(self.crop_check)
+        result.body.addWidget(WrappedNote(TRIM_NOTE))
+        result.body.addWidget(self.channels_check)
+        for sig in (self.strictness_box.currentTextChanged,
+                    self.kappa_box.currentTextChanged, self.sigma_radio.toggled,
+                    self.crop_check.toggled, self.channels_check.toggled):
+            sig.connect(lambda *_: self.options_band.refresh_summary())
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.folded_changed.connect(self._on_options_folded)
+
         form = QFormLayout()
+        # As in Stack: the macOS style keeps fields at their size hint, which
+        # cut the Output path short at every width. Fill the row.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Folder of raw subs", _picker_row(self.folder_edit, self._browse_folder))
-
-        strict_row = QHBoxLayout()
-        strict_row.addWidget(self.strictness_box)
-        strict_row.addWidget(QLabel("How picky the automatic frame selection is"))
-        strict_row.addStretch(1)
-        strict_wrap = QWidget()
-        strict_wrap.setLayout(strict_row)
-        form.addRow("Strictness", strict_wrap)
-
-        method_row = QHBoxLayout()
-        method_row.addWidget(self.avg_radio)
-        method_row.addWidget(self.sigma_radio)
-        method_row.addWidget(QLabel("κ:"))
-        method_row.addWidget(self.kappa_box)
-        method_row.addStretch(1)
-        method_wrap = QWidget()
-        method_wrap.setLayout(method_row)
-        form.addRow("Integration", method_wrap)
+        form.addRow(self.options_band)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
-        crop_row = QHBoxLayout()
-        crop_row.addWidget(self.crop_check)
-        crop_row.addWidget(QLabel(
-            "Off keeps the full frame — the edges are built from fewer frames, "
-            "so they are noisier, but you can always crop later"))
-        crop_row.addStretch(1)
-        crop_wrap = QWidget()
-        crop_wrap.setLayout(crop_row)
-        form.addRow("Framing", crop_wrap)
-        form.addRow("", self.channels_check)
 
         self._stack_btn = QPushButton("Extract")
         self._stack_btn.setObjectName("primary")
@@ -209,27 +191,31 @@ class HaOIIIDialog(QDialog):
         buttons.addWidget(self._cancel_btn)
         buttons.addWidget(close_btn)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(self.table)
-        self.splitter.addWidget(self.preview)
-        # The TABLE absorbs extra width, not the preview. It was the other way
-        # round, which meant the Verdict column was stuck at 209px however wide
-        # the user made the dialog -- the one control that could have fixed the
-        # truncation did nothing. The frame list is the surface being READ; the
-        # preview is a thumbnail with a 300px minimum and does not improve much
-        # past it.
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 0)
-        self.splitter.setSizes([800, 300])
-        self.splitter.setChildrenCollapsible(False)
-
         root = QVBoxLayout(self)
         root.addWidget(self.blurb)
         root.addLayout(form)
-        root.addWidget(self.splitter, 1)   # the frame list and preview take the height
+        root.addWidget(self.browser, 1)    # the frame list and preview take the height
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
+
+    # --- the option band's fold ---
+    def _on_options_folded(self, folded: bool) -> None:
+        self._settings.frame_options_folded = folded
+        if self._on_settings_changed is not None:
+            try:
+                self._on_settings_changed()
+            except OSError:
+                pass      # a preference that will not save is not worth a dialog
+
+    def _options_summary(self) -> str:
+        parts = [f"{self.strictness_box.currentText()} selection",
+                 (f"Sigma-clipped, {self.kappa_box.currentText().lower()} rejection"
+                  if self.sigma_radio.isChecked() else "Average"),
+                 "trim edges" if self.crop_check.isChecked() else "full frame"]
+        if self.channels_check.isChecked():
+            parts.append("separate Ha and OIII files")
+        return " · ".join(parts)
 
     # --- browse ---
     def _browse_folder(self) -> None:
@@ -289,6 +275,10 @@ class HaOIIIDialog(QDialog):
             return
         paths = self._discover()
         if not paths:
+            # Forget the last folder's frames, as Stack does: they stayed
+            # listed and extractable after choosing a folder with none.
+            self._stats = []
+            self.browser.set_frames([])
             self.status.setText("No .fit subs found in that folder.")
             return
         runner = self._grade_runner
@@ -307,70 +297,9 @@ class HaOIIIDialog(QDialog):
         # grade() captured Strictness when it started; if it moved while the folder
         # was being measured, the box is what the user meant.
         judge(stats, self.strictness_box.currentText().lower())
-        self._user_touched.clear()
-        self._updating_table = True
-        try:
-            self._fill_table(stats)
-        finally:
-            self._updating_table = False
+        self.browser.set_frames(stats)
         kept = sum(1 for s in stats if s.included)
         self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
-        self._preview_ctl.resync(self.table.currentRow())
-
-    @staticmethod
-    def _cell(text: str) -> QTableWidgetItem:
-        it = QTableWidgetItem(text)
-        it.setToolTip(text)                   # verdicts outrun the column width
-        return it
-
-    @staticmethod
-    def _verdict_text(s) -> str:
-        if s.reason:
-            return s.reason
-        if s.warning:
-            return s.warning
-        return "OK"
-
-    @staticmethod
-    def _verdict_tooltip(s) -> str:
-        """The unabbreviated verdict. The cell shows the short form because the
-        column cannot hold the long one; hovering must still explain it."""
-        return s.reason_detail or HaOIIIDialog._verdict_text(s)
-
-    def _tint_row(self, row: int, s) -> None:
-        default = QColor(theme.TEXT)
-        colour = None
-        if s.reason:
-            colour = QColor(theme.TEXT_FAINT)   # rejected: dimmed
-        elif s.warning:
-            colour = QColor(theme.WARNING)      # kept with warning: amber
-        for col in range(1, self.table.columnCount()):
-            item = self.table.item(row, col)
-            if item is not None:
-                item.setForeground(colour if colour is not None else default)
-
-    def _fill_table(self, stats) -> None:
-        self.table.setRowCount(len(stats))
-        for row, s in enumerate(stats):
-            check = QTableWidgetItem()
-            check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            check.setCheckState(Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
-            self.table.setItem(row, 0, check)
-            self.table.setItem(row, 1, self._cell(os.path.basename(s.path)))
-            self.table.setItem(row, 2, self._cell(str(s.star_count)))
-            self.table.setItem(row, 3, self._cell(f"{s.fwhm:.1f}"))
-            # "Round" is elongation: 1.00 is circular, higher is trailed. Shown
-            # because a "stars trailed" rejection is unreadable without it.
-            self.table.setItem(row, 4, self._cell(f"{s.elongation:.2f}"))
-            self.table.setItem(row, 5, self._cell(f"{s.background:.3f}"))
-            verdict = self._cell(self._verdict_text(s))
-            verdict.setToolTip(self._verdict_tooltip(s))
-            self.table.setItem(row, _VERDICT_COL, verdict)
-            self._tint_row(row, s)
-
-    def _on_item_changed(self, item) -> None:
-        if not self._updating_table and item.column() == 0:
-            self._user_touched.add(item.row())
 
     def _rejudge(self, _text=None) -> None:
         """Strictness is a threshold on statistics already measured, so it costs
@@ -378,31 +307,13 @@ class HaOIIIDialog(QDialog):
         if not self._stats:
             return
         judge(self._stats, self.strictness_box.currentText().lower())
-        self._updating_table = True
-        try:
-            for row, s in enumerate(self._stats):
-                if row in self._user_touched:
-                    s.included = (self.table.item(row, 0).checkState()
-                                  == Qt.CheckState.Checked)
-                else:
-                    self.table.item(row, 0).setCheckState(
-                        Qt.CheckState.Checked if s.included else Qt.CheckState.Unchecked)
-                verdict = self.table.item(row, _VERDICT_COL)
-                verdict.setText(self._verdict_text(s))
-                verdict.setToolTip(self._verdict_tooltip(s))
-                self._tint_row(row, s)
-        finally:
-            self._updating_table = False
+        self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
         kept = sum(1 for s in self._stats if s.included)
         self.status.setText(f"Graded {len(self._stats)} frames — {kept} kept.")
 
     # --- run ---
     def _included_best_first(self) -> list:
-        chosen = []
-        for row in range(self.table.rowCount()):
-            if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
-                chosen.append(self._stats[row])
-        return order_best_first(chosen)
+        return order_best_first(self.browser.checked_frames())
 
     def run(self) -> None:
         if self._busy:

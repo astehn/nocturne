@@ -399,7 +399,7 @@ def test_haoiii_help_describes_the_tool_that_actually_shipped():
     # in the file-chooser title, so a looser check survives half a rename.
     assert "Folder of raw subs" in b and 'form.addRow("Folder of raw subs"' in hd
     assert "Extract" in b and 'QPushButton("Extract")' in hd
-    assert "Integration" in b and 'form.addRow("Integration"' in hd
+    assert "<b>Combine</b>" in b and 'add_group("Combine"' in hd
     assert "Output" in b and 'form.addRow("Output"' in hd
     assert "HaOIII_master.fits" in b and "HaOIII_master.fits" in hd
     for ext in ("<b>.fit</b>", "<b>.fits</b>", "<b>.fts</b>"):
@@ -1450,10 +1450,9 @@ def test_the_haoiii_help_describes_every_column_the_table_shows():
     from nocturne.ui.haoiii_dialog import HaOIIIDialog
     b = _body("haoiii")
     d = HaOIIIDialog(Settings())
-    headers = [d.table.horizontalHeaderItem(c).text()
-               for c in range(d.table.columnCount())]
-    assert headers == ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"]
-    for col in ("Stars", "FWHM", "Round", "Bg", "Verdict"):
+    headers = d.browser.headers()
+    assert headers == ["Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict"]
+    for col in ("Time", "Stars", "FWHM", "Round", "Bg", "Verdict"):
         assert f"<b>{col}</b>" in b, f"the {col} column is not explained"
 
 
@@ -1690,3 +1689,40 @@ def test_moved_sentences_have_a_home():
         body = (t.summary + t.body).lower()
         for phrase in phrases:
             assert phrase.lower() in body, f"{tid} lost {phrase!r}"
+
+
+def test_the_stacking_help_describes_the_frame_list_and_output_it_has():
+    """Four new controls and a split output, each pinned to the widget that
+    draws it: help goes stale every release unless something holds it."""
+    from nocturne.ui.frame_browser import FrameBrowser
+    b = _body("stacking")
+    fb = _src("nocturne/ui/frame_browser.py")
+    sd = _src("nocturne/ui/stack_dialog.py")
+    assert "<b>Time</b>" in b and "Time" in FrameBrowser.headers()
+    for words in ("Back to the verdicts", "⇤ bigger preview"):
+        assert f"<b>{words}</b>" in b, f"{words!r} is not in the help"
+        assert f'"{words}"' in fb, f"{words!r} is no longer a control"
+    for mode in ("Kept", "Rejected"):
+        assert f"<b>{mode}</b>" in b and f'"{mode}"' in fb
+    assert "arrow keys" in b and "space bar" in b
+    assert "<b>Save to</b>" in b and 'form.addRow("Save to"' in sd
+    assert "<b>Name</b>" in b and 'form.addRow("Name"' in sd
+    assert "<b>↺ automatic</b>" in b and '"↺ automatic"' in sd
+    for group in ("Frames", "Combine", "Result"):
+        assert f"<b>{group}</b>" in b and f'add_group("{group}"' in sd
+    assert "<b>Change…</b>" in b and '"Change…"' in _src("nocturne/ui/option_band.py")
+
+
+def test_the_fold_and_strictness_are_named_as_the_dialogs_draw_them():
+    """Final review m3: the help said "with ▴" after the button became
+    "▴ Fold", named a Strictness control no label showed, and the Ha/OIII
+    topic never said its options fold too."""
+    ob = _src("nocturne/ui/option_band.py")
+    assert '"▴ Fold"' in ob
+    for topic, src in (("stacking", "nocturne/ui/stack_dialog.py"),
+                       ("haoiii", "nocturne/ui/haoiii_dialog.py")):
+        b = _body(topic)
+        assert "<b>▴ Fold</b>" in b, f"{topic}: the fold button is not named"
+        assert "<b>Strictness</b>" in b, f"{topic}: Strictness is not named"
+        assert 'QLabel("strictness:")' in _src(src), f"{src}: no Strictness label"
+    assert "with ▴ when" not in _body("stacking")
