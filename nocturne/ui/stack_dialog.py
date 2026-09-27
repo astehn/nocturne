@@ -102,6 +102,12 @@ class StackDialog(QDialog):
         # the dialog until the user sets them, and then they are the user's.
         self._name_is_manual = False
         self._save_to_is_manual = False
+        self._fitted = False       # _fit_to_content runs once, on first show
+        # The screen's folds (help, then the option band) stop once the user
+        # has toggled either by hand in this window: their click outranks it.
+        self._user_laid_out = False
+        self._hints_forced_closed = False
+        self._refit_pending = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
@@ -302,13 +308,6 @@ class StackDialog(QDialog):
         root.addWidget(self.status)
         root.addLayout(buttons_col)
         self._sync_folded_note()
-        self._fitted = False       # _fit_to_content runs once, on first show
-        # The screen's folds (help, then the option band) stop once the user
-        # has toggled either by hand in this window: their click outranks it.
-        self._user_laid_out = False
-        self._hints_forced_closed = False
-        self._band_forced_folded = False
-        self._refit_pending = False
 
     # --- output: a folder and a name ---
     def output_path(self) -> str:
@@ -485,27 +484,36 @@ class StackDialog(QDialog):
             "wide image")
         self._sync_exclusive()
 
+    def _hints_showing(self) -> bool:
+        """What the link's arrow claims: explanations actually on screen.
+        The preference alone is not that — the screen may have folded them
+        (_keep_on_screen), and every one lives inside the option band, so a
+        folded band shows none of them whatever the preference says."""
+        return (bool(getattr(self._settings, "help_expanded", True))
+                and not self._hints_forced_closed
+                and not self.options_band.is_folded())
+
     def _toggle_hints(self) -> None:
-        # An explicit click outranks the screen's FOLD, never its EDGE: the
-        # explanations come back, and the frame list gives up the height
-        # (_clamp_to_screen). While the screen has them folded the link reads
-        # "▸", so a click there means "show" whatever the saved preference
-        # says -- toggling that preference instead hid them and saved False.
-        if self._hints_forced_closed:
+        # The click acts on what the link SHOWS, never on the bare preference:
+        # opened folded with help on, the link read ▾ over nothing and the
+        # first click saved help off and changed nothing on screen (final
+        # review I1). "▸" always means show. An explicit click outranks the
+        # screen's FOLD, never its EDGE: the frame list gives up the height
+        # (_clamp_to_screen).
+        self._user_laid_out = True
+        if self._hints_showing():
+            self._settings.help_expanded = False
+            self._persist_settings()
+        else:
             self._hints_forced_closed = False
             self._settings.help_expanded = True
-        else:
-            self._settings.help_expanded = not self._settings.help_expanded
-        self._user_laid_out = True
-        # Every explanation lives inside the option band, so "show" on a
-        # folded band lit ▾ and showed nothing. Showing unfolds it -- through
-        # the band's own signal, so it is saved like any unfold the user makes
-        # (_on_options_folded): they clicked for it, and a band left folded in
-        # the preference would reopen as the same ▾-and-nothing. Hiding the
-        # help does not fold it back.
-        if self._settings.help_expanded and self.options_band.is_folded():
-            self.options_band.set_folded(False)
-        self._persist_settings()
+            if self.options_band.is_folded():
+                # Through the band's own signal, so it is saved like any
+                # unfold the user makes — once, help included
+                # (_on_options_folded). Hiding the help never folds it back.
+                self.options_band.set_folded(False)
+            else:
+                self._persist_settings()
         self._apply_hints_visible()
         if self._fitted:
             self._keep_on_screen()
@@ -526,9 +534,9 @@ class StackDialog(QDialog):
     def _on_options_folded(self, folded: bool) -> None:
         # Only the user's fold reaches here: the screen's is signal-blocked.
         self._user_laid_out = True
-        self._band_forced_folded = False
         self._settings.frame_options_folded = folded
         self._persist_settings()
+        self._apply_hints_visible()        # the link's arrow follows the fold
         if self._fitted:
             self._keep_on_screen()
 
@@ -561,8 +569,11 @@ class StackDialog(QDialog):
         you actually work in — 63% more height. That matters most on the small
         screens where the explanations were being clipped anyway.
         """
+        # Per hint, the preference: a hint inside a folded band is invisible
+        # anyway, and _natural_minimum_height needs it counted once the band
+        # opens. The link says what is actually on screen.
         shown = (bool(getattr(self._settings, "help_expanded", True))
-                 and not getattr(self, "_hints_forced_closed", False))
+                 and not self._hints_forced_closed)
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
         # "this will take N hours and write M MB" estimate, `exclusive_note`
         # says why a box you just ticked untucked another, and
@@ -578,7 +589,8 @@ class StackDialog(QDialog):
                 hint.setVisible(shown)
         self._help_link.setText(
             '<a href="#" style="color:#7fb2e5;text-decoration:none">'
-            + ("How this works ▾" if shown else "How this works ▸") + "</a>")
+            + ("How this works ▾" if self._hints_showing()
+               else "How this works ▸") + "</a>")
 
     def showEvent(self, event) -> None:
         # Sizing happens HERE, not in __init__. An un-shown window does not have
@@ -633,7 +645,7 @@ class StackDialog(QDialog):
                 self.options_band.blockSignals(True)
                 self.options_band.set_folded(True)
                 self.options_band.blockSignals(False)
-                self._band_forced_folded = True
+                self._apply_hints_visible()    # blocked, so the link is told here
                 needed = self._natural_minimum_height()
                 squeezed = True
             if squeezed:

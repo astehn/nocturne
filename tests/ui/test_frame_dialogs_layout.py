@@ -240,6 +240,74 @@ def test_showing_the_help_opens_a_band_the_user_folded(qtbot):
     assert settings.frame_options_folded is False, "saved like the user's own unfold"
 
 
+def _arrow(d) -> str:
+    text = d._help_link.text()
+    assert ("▾" in text) != ("▸" in text), text
+    return "▾" if "▾" in text else "▸"
+
+
+def _roomy_stack(qtbot, settings, saves=None):
+    d = StackDialog(settings, on_settings_changed=(
+        None if saves is None else
+        lambda: saves.append((settings.frame_options_folded, settings.help_expanded))))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    return d
+
+
+def test_opened_folded_with_the_help_on_the_link_says_nothing_is_shown(qtbot):
+    """Final review I1: the band folded and help on read "▾" over no
+    explanation at all, and the first click saved help OFF and changed
+    nothing on screen. The arrow says what is visible; "▸" means show."""
+    settings = Settings()
+    settings.frame_options_folded = True
+    settings.help_expanded = True
+    saves = []
+    d = _roomy_stack(qtbot, settings, saves)
+    assert d.options_band.is_folded()
+    assert _arrow(d) == "▸", "▾ over a folded band that shows nothing"
+    d._toggle_hints()
+    qtbot.wait(20)
+    assert not d.options_band.is_folded(), "the click did not open the band"
+    assert d.mosaic_hint.isVisible(), "the click showed no explanation"
+    assert _arrow(d) == "▾"
+    assert settings.help_expanded is True, "the click saved help off"
+    assert saves == [(False, True)], f"saved {saves}, not once with both"
+
+
+def test_folding_the_band_with_the_help_on_turns_the_arrow(qtbot):
+    """Folding by hand hides every explanation with the band; the link
+    follows, and "Change…" brings both back with ▾."""
+    settings = Settings()
+    settings.help_expanded = True
+    d = _roomy_stack(qtbot, settings)
+    assert _arrow(d) == "▾" and d.mosaic_hint.isVisible()
+    d.options_band.fold_btn.click()
+    qtbot.wait(20)
+    assert _arrow(d) == "▸", "▾ kept over a folded band"
+    assert settings.help_expanded is True, "folding must not rewrite the help preference"
+    d.options_band.change_btn.click()
+    qtbot.wait(20)
+    assert _arrow(d) == "▾" and d.mosaic_hint.isVisible()
+    d.options_band.fold_btn.click()
+    d._toggle_hints()                      # ▸ on the folded band: show
+    qtbot.wait(20)
+    assert not d.options_band.is_folded() and _arrow(d) == "▾"
+    assert settings.help_expanded is True
+
+
+def test_the_screens_fold_turns_the_arrow_too(qtbot):
+    """The screen's fold is signal-blocked, so the link is told directly."""
+    room = _minimum_with_the_help_folded(qtbot) - 1
+    d, settings = _short_stack(qtbot, room)
+    assert d.options_band.is_folded()
+    assert _arrow(d) == "▸"
+    assert settings.help_expanded is True
+
+
 def test_the_users_change_outranks_the_screens_fold(qtbot):
     """"Change…" on a band the screen folded opens it, and it stays open:
     the screen does not fold it straight back."""
@@ -250,7 +318,6 @@ def test_the_users_change_outranks_the_screens_fold(qtbot):
     qtbot.wait(50)
     assert not d.options_band.is_folded(), "re-folded behind the user's back"
     assert settings.frame_options_folded is False
-    assert not d._band_forced_folded
     assert d.height() <= room, f"{d.height()} px on a {room} px screen"
 
 
