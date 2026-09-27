@@ -152,6 +152,13 @@ QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: #4a4f56; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+/* The same bar lying down. Unstyled, a horizontal one kept the platform's
+   light groove and outline (max lightness 191 cocoa, 255 offscreen, against
+   65 for the vertical) — a white box under the dark frame list. */
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: {BORDER}; border-radius: 5px; min-width: 24px; }}
+QScrollBar::handle:horizontal:hover {{ background: #4a4f56; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
 QWidget#stepCard {{ background: {BG_2}; border-radius: 10px; }}
 /* The side panel's ONE step card (Ruling R6): the rounded frame holds the

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget,
@@ -44,6 +44,7 @@ def _line(*widgets, stretch_last: bool = True) -> QHBoxLayout:
 
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
+_OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
 
 
 class _Signals(QObject):
@@ -78,7 +79,7 @@ class StackDialog(QDialog):
         # Andreas never saw it because his help_expanded is False -- collapsed
         # the dialog needs 658px and fits.
         self.setMinimumWidth(800)
-        self.resize(1100, 700)
+        self.resize(1100, _OPEN_HEIGHT)
         self._settings = settings
         self._on_settings_changed = on_settings_changed
         self._on_master = on_master
@@ -298,6 +299,12 @@ class StackDialog(QDialog):
         root.addLayout(buttons_col)
         self._sync_folded_note()
         self._fitted = False       # _fit_to_content runs once, on first show
+        # The screen's folds (help, then the option band) stop once the user
+        # has toggled either by hand in this window: their click outranks it.
+        self._user_laid_out = False
+        self._hints_forced_closed = False
+        self._band_forced_folded = False
+        self._refit_pending = False
 
     # --- output: a folder and a name ---
     def output_path(self) -> str:
@@ -479,6 +486,12 @@ class StackDialog(QDialog):
         # asks for the explanations on a short screen they get them, and the
         # dialog grows as far as the screen allows.
         self._hints_forced_closed = False
+        self._user_laid_out = True
+        if self._band_forced_folded:
+            self._band_forced_folded = False
+            self.options_band.blockSignals(True)     # the screen's fold, not theirs
+            self.options_band.set_folded(False)
+            self.options_band.blockSignals(False)
         self._settings.help_expanded = not self._settings.help_expanded
         self._persist_settings()
         self._apply_hints_visible()
@@ -497,6 +510,9 @@ class StackDialog(QDialog):
 
     # --- the option band's fold ---
     def _on_options_folded(self, folded: bool) -> None:
+        # Only the user's fold reaches here: the screen's is signal-blocked.
+        self._user_laid_out = True
+        self._band_forced_folded = False
         self._settings.frame_options_folded = folded
         self._persist_settings()
 
@@ -569,20 +585,79 @@ class StackDialog(QDialog):
         collapse control already offers, and _apply_hints_visible's own note
         says it "matters most on the small screens where the explanations were
         being clipped anyway". The saved preference is left alone: this is what
-        THIS window can show, not a change to what the user asked for.
+        THIS window can show, not a change to what the user asked for. If the
+        explanations folded away are still not enough, the option band folds
+        for this window as well, on the same terms.
         """
-        self.layout().activate()
-        needed = self.minimumSizeHint().height()
         room = self._available_height()
-
-        if needed > room and getattr(self._settings, "help_expanded", True):
-            self._hints_forced_closed = True
-            self._apply_hints_visible()
-            self.layout().activate()
-            needed = self.minimumSizeHint().height()
-
+        if self._keep_on_screen():
+            return
+        needed = self._settled_minimum_height()
         if needed > self.height():
             self.resize(self.width(), min(needed, room))
+
+    def _keep_on_screen(self) -> bool:
+        """Fold what the screen cannot hold and bring the window back down;
+        True when it folded something. Help first, then the option band —
+        both for THIS window only, never saved, and never once the user has
+        toggled either here."""
+        if self._user_laid_out:
+            return False
+        room = self._available_height()
+        needed = self._settled_minimum_height()
+        squeezed = False
+        if (needed > room and getattr(self._settings, "help_expanded", True)
+                and not self._hints_forced_closed):
+            self._hints_forced_closed = True
+            self._apply_hints_visible()
+            needed = self._settled_minimum_height()
+            squeezed = True
+        # Still too tall: fold the options for THIS window too. Not saved —
+        # folded_changed is blocked — for the same reason the help is not.
+        if needed > room and not self.options_band.is_folded():
+            self.options_band.blockSignals(True)
+            self.options_band.set_folded(True)
+            self.options_band.blockSignals(False)
+            self._band_forced_folded = True
+            needed = self._settled_minimum_height()
+            squeezed = True
+
+        if squeezed:
+            # Qt already grew the window to the OLD minimum when it was shown,
+            # and it does not shrink by itself: measured 2026-09-27, the
+            # pre-layout-A dialog stayed 825 px tall on a 740 px screen after
+            # collapsing. Bring it back down to what now fits.
+            self.resize(self.width(), min(max(needed, _OPEN_HEIGHT), room))
+        return squeezed
+
+    def _settled_minimum_height(self) -> int:
+        """The dialog's minimum once a show/hide has reached every nested
+        layout. activate() on the top layout alone read the groups' CACHED
+        minimum — 858 px with the explanations already hidden, where 567 was
+        true (measured 2026-09-27) — and folded the band on a screen that had
+        room for it. Innermost layouts first, so each parent sees fresh
+        children."""
+        for w in reversed(self.findChildren(QWidget)):
+            if w.layout() is not None:
+                w.layout().activate()
+        self.layout().activate()
+        return self.minimumSizeHint().height()
+
+    def resizeEvent(self, event) -> None:
+        # Content that arrives after opening — a grade's status line and
+        # drizzle advice, a name or mosaic note — grows the window through its
+        # minimum, and on the 800 px laptop past the bottom of the screen
+        # (measured cocoa: 688 px empty, 766 graded with the help folded).
+        # Re-fit once the layout has settled.
+        super().resizeEvent(event)
+        if (self._fitted and not self._refit_pending
+                and self.height() > self._available_height()):
+            self._refit_pending = True
+            QTimer.singleShot(0, self._refit)
+
+    def _refit(self) -> None:
+        self._refit_pending = False
+        self._keep_on_screen()
 
     def _available_height(self) -> int:
         """Usable screen height. Its own method so a test can shrink the screen —
@@ -672,6 +747,10 @@ class StackDialog(QDialog):
         self.browser.set_frames(stats)
         self.status.setText(self._selection_summary())
         self._auto_output_path()
+        if self._fitted:
+            # The grade is what grows the dialog most (status line, drizzle
+            # advice): fit now, not a frame later from resizeEvent.
+            self._keep_on_screen()
 
     # The preview machinery moved to FramePreviewController so Ha/OIII could have
     # it too; these keep the dialog's own surface unchanged.

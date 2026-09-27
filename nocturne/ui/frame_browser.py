@@ -13,13 +13,13 @@ from __future__ import annotations
 import os
 from typing import Callable
 
-from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel,
-                            Qt, Signal)
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSize,
+                            QSortFilterProxyModel, Qt, Signal)
+from PySide6.QtGui import QColor, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QHeaderView, QLabel, QPushButton, QSplitter,
-                               QSplitterHandle, QTableView, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QSplitterHandle, QStyle, QStyleOptionHeader,
+                               QTableView, QToolButton, QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label, time_label
 from . import theme
@@ -41,8 +41,11 @@ DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
 GRIP_WIDTH = 12
 # The list's share of the splitter is capped so the preview always gets the
 # larger half, whatever the Verdict strings measure (spec §2.4.7). Load-bearing
-# at 1280: with his session's longest verdicts the list's natural width is more
-# than half (mutating this to 0.95 fails the 1280 layout test in Task 8).
+# at the 1100 px the dialogs open at: with his session's longest verdicts the
+# list's natural width (606 px offscreen, 622 cocoa, since _CompactHeader) is
+# more than half of it (mutating this to 0.95 fails
+# test_every_column_is_on_screen_at_the_width_it_opens). At 1280 the narrower
+# columns now fit under half without it.
 LIST_MAX_SHARE = 0.45
 
 
@@ -313,6 +316,47 @@ class _FrameTable(QTableView):
         super().keyPressEvent(event)
 
 
+class _CompactHeader(QHeaderView):
+    """Room for the sort arrow only in the column that shows it.
+
+    With sorting on, Qt reserves the arrow's width — the section's height plus
+    a margin — in EVERY section, arrow or not. Measured under cocoa with the
+    real stylesheet, 2026-09-27: 29 px a column, 761 px of columns for a list
+    capped at 552 px in a 1280 px dialog, so Bg and Verdict sat behind a
+    horizontal scrollbar. Without the six unused arrows the list needs 581
+    and Verdict is on screen, eliding its longest reasons (the full text is
+    its tooltip).
+
+    The width is the style's own, computed as Qt computes it (bold font, as
+    for a highlighted section) — it matched sectionSizeHint to the pixel,
+    offscreen and cocoa — minus the arrow.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        # What QTableView gives its own header, and a replacement does not get.
+        self.setSectionsClickable(True)
+        self.setHighlightSections(True)
+        # When the arrow moves, Qt re-sizes ResizeToContents sections itself,
+        # so the newly sorted column gets its room without help from here.
+
+    def sectionSizeFromContents(self, logical: int) -> QSize:
+        size = super().sectionSizeFromContents(logical)
+        if not self.isSortIndicatorShown() or logical == self.sortIndicatorSection():
+            return size
+        opt = QStyleOptionHeader()
+        self.initStyleOption(opt)
+        opt.section = logical
+        opt.text = str(self.model().headerData(logical, self.orientation()) or "")
+        font = self.font()
+        font.setBold(True)
+        opt.fontMetrics = QFontMetrics(font)
+        opt.sortIndicator = QStyleOptionHeader.SortIndicator.None_
+        bare = self.style().sizeFromContents(QStyle.ContentsType.CT_HeaderSection,
+                                             opt, QSize(), self)
+        return QSize(min(size.width(), bare.width()), size.height())
+
+
 class _GripHandle(QSplitterHandle):
     """A divider you can see: dotted bars centred in the handle."""
 
@@ -354,6 +398,7 @@ class FrameBrowser(QWidget):
         self.model.ticks_changed.connect(self._on_ticks_changed)
 
         self.view = _FrameTable()
+        self.view.setHorizontalHeader(_CompactHeader(self.view))
         self.view.setModel(self.proxy)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

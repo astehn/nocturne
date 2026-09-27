@@ -60,6 +60,10 @@ class HaOIIIDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Ha/OIII extract")
         self.setMinimumWidth(560)
+        # Stack's opening size. Left to its size hint it opened 832 px wide
+        # (cocoa), a 351 px list with Verdict behind a scrollbar; 700 tall
+        # fits the 800 px laptop with the options open (688 px needed, cocoa).
+        self.resize(1100, 700)
         self._settings = settings
         self._on_master = on_master
         self._on_settings_changed = on_settings_changed
