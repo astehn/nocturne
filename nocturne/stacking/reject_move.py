@@ -29,6 +29,12 @@ vigilant and careful … but it's a feature worth having". The rules (spec
   to recover (move the files back by hand, then delete or rename the record).
 - Links: a sub, or rejected/ itself, that resolves elsewhere is refused, even
   when the link's target is a sibling folder next door.
+- Two spellings of one file (a case variant or NFC/NFD form, on a filesystem
+  that treats them as the same entry) are deduplicated before anything
+  moves, and the "did it secretly land" filesystem check never claims a
+  destination that is really a different wanted file's already-moved self.
+  A move back into the capture folder is a no-replace rename too, for the
+  same reason a move into rejected/ is.
 """
 from __future__ import annotations
 
@@ -197,15 +203,16 @@ def pending_back(folder: str) -> list[str]:
     return out
 
 
-def _put_back(moved: dict[str, str]) -> dict[str, str]:
-    """Undo `moved`, newest first. Returns what could NOT be put back."""
+def _put_back(moved: dict[str, str], dest_label: str) -> dict[str, str]:
+    """Undo `moved`, newest first. Returns what could NOT be put back.
+    `dest_label` names the capture folder, for a collision message."""
     stuck: dict[str, str] = {}
     for src, dst in reversed(list(moved.items())):
         if os.path.lexists(src):
             stuck[src] = dst      # something new has its old name: never overwrite it
             continue
         try:
-            os.rename(dst, src)
+            _rename_no_replace(dst, src, dest_label)
         except OSError:
             # A NAS can complete the rename and still raise (e.g. a timeout
             # after the server was done): ask the filesystem, not the
@@ -227,12 +234,13 @@ def _failed(folder: str, exc: OSError, stuck: dict[str, str]) -> str:
             f"in {_where(folder)}; Move them back will find {'it' if one else 'them'}.")
 
 
-def _native_no_replace_rename(src: str, dst: str) -> bool:
+def _native_no_replace_rename(src: str, dst: str, dest: str) -> bool:
     """Try the OS's own exclusive rename. True on success; False when the
     primitive isn't offered here (missing symbol, old kernel, or a
     filesystem — a network share is the real case — that refuses the flag),
     so the caller should fall back. Raises FileExistsError for a genuine
-    collision, or the underlying OSError for anything else."""
+    collision (`dest` names the destination folder in the message), or the
+    underlying OSError for anything else."""
     if _libc is None:
         return False
     s, d = os.fsencode(src), os.fsencode(dst)
@@ -251,24 +259,40 @@ def _native_no_replace_rename(src: str, dst: str) -> bool:
         return True
     if err == errno.EEXIST:
         raise FileExistsError(errno.EEXIST,
-                              "a file with this name appeared in rejected/", dst)
+                              f"a file with this name appeared in {dest}", dst)
     if err in _NO_REPLACE_UNAVAILABLE:
         return False
     raise OSError(err, os.strerror(err), src)
 
 
-def _rename_no_replace(src: str, dst: str) -> None:
+def _rename_no_replace(src: str, dst: str, dest: str) -> None:
     """Rename src to dst, refusing to replace an existing dst — atomically,
     where the OS offers it, so nothing can land in the gap between a check
     and a plain os.rename. Falls back to check-then-os.rename where that
     primitive is missing or the filesystem refuses the flag; either way
-    a collision raises FileExistsError."""
-    if _native_no_replace_rename(src, dst):
+    a collision raises FileExistsError naming the destination folder (`dest`
+    — 'rejected/' for the forward move, the capture folder for a move back)."""
+    if _native_no_replace_rename(src, dst, dest):
         return
     if os.path.lexists(dst):
         raise FileExistsError(errno.EEXIST,
-                              "a file with this name appeared in rejected/", dst)
+                              f"a file with this name appeared in {dest}", dst)
     os.rename(src, dst)
+
+
+def _already_claimed(dst: str, moved: dict[str, str]) -> bool:
+    """True when `dst` is the SAME file (by inode, not spelling) as a
+    destination already recorded in `moved` — a case-insensitive or
+    NFC/NFD-insensitive filesystem can make a second spelling's destination
+    path look like it exists when it is really the first spelling's already-
+    moved file."""
+    for existing in moved.values():
+        try:
+            if os.path.samefile(dst, existing):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
@@ -297,6 +321,22 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
             raise RejectMoveError(f"{name} is stored outside {_label(folder)} — "
                                   "nothing was moved.")
         wanted.append(p)
+    # Two spellings of one file (a case variant, or NFC/NFD, on a filesystem
+    # that treats them as the same entry) are the same inode: keep only the
+    # first spelling given, before anything moves. Otherwise the second
+    # spelling's rename genuinely fails (its source is already gone once the
+    # first spelling moved it) in a way the I1 filesystem check below cannot
+    # tell apart from "it secretly succeeded" — see _already_claimed.
+    seen_inodes: set[tuple[int, int]] = set()
+    deduped: list[str] = []
+    for p in wanted:
+        st = os.stat(p)
+        key = (st.st_dev, st.st_ino)
+        if key in seen_inodes:
+            continue
+        seen_inodes.add(key)
+        deduped.append(p)
+    wanted = deduped
     if not wanted:
         return {}
     earlier = read_manifest(folder)              # damaged: stop before anything moves
@@ -324,16 +364,21 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
     try:
         for p in wanted:
             dst = os.path.join(rej, os.path.basename(p))
-            _rename_no_replace(p, dst)
+            _rename_no_replace(p, dst, _where(folder))
             moved[p] = dst
     except OSError as exc:
         # A NAS can complete a rename and still raise afterwards (e.g. a
         # timeout arriving after the server was done): ask the filesystem,
         # not the bookkeeping, whether this file actually landed before
-        # rolling back — otherwise it sits in rejected/ unrecorded.
-        if not os.path.lexists(p) and os.path.lexists(dst):
+        # rolling back — otherwise it sits in rejected/ unrecorded. But never
+        # claim a destination that is really a DIFFERENT wanted file's
+        # already-moved self (a case-insensitive or NFC/NFD-insensitive
+        # filesystem can make this file's destination path look like it
+        # exists when `wanted`'s dedup already accounted for it).
+        if (not os.path.lexists(p) and os.path.lexists(dst)
+                and not _already_claimed(dst, moved)):
             moved[p] = dst
-        stuck = _put_back(moved)
+        stuck = _put_back(moved, _label(folder))
         stuck_names = {os.path.basename(p) for p in stuck}
         try:
             _write_manifest(rej, kept_entries
@@ -369,7 +414,7 @@ def move_back(folder: str) -> MoveBackResult:
             result.taken.append(name)
         elif not result.failed:
             try:
-                os.rename(src, dst)
+                _rename_no_replace(src, dst, _label(folder))
             except OSError as exc:
                 # Mirrors move_to_rejected: a rename-back can complete on the
                 # far end and still raise. Ask the filesystem before
