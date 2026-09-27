@@ -12,6 +12,16 @@ def _stats(path, score, included=True):
     return FrameStats(path, 100, 3.0, 0.02, score, included)
 
 
+def _choose_output(dlg, path):
+    """What a user does: types a folder into Save to and a name into Name.
+    textEdited is what typing emits; setText alone would leave both automatic."""
+    folder, name = os.path.split(str(path))
+    dlg.save_to_edit.setText(folder)
+    dlg.save_to_edit.textEdited.emit(folder)
+    dlg.name_edit.setText(name)
+    dlg.name_edit.textEdited.emit(name)
+
+
 def _stats2(path, score, included=True, reason="", warning="", exposure=20.0):
     s = FrameStats(path, 100, 3.0, 0.02, score, included)
     s.reason, s.warning, s.exposure = reason, warning, exposure
@@ -58,7 +68,7 @@ def test_stack_calls_handoff_best_first(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    _choose_output(dlg, tmp_path / "master.fits")
     dlg.run()
     qtbot.waitUntil(lambda: "opts" in captured, timeout=2000)
     # include is best-first: highest score first
@@ -112,7 +122,7 @@ def test_second_run_ignored_while_busy(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+    _choose_output(dlg, tmp_path / "m.fits")
     dlg.run()                                                 # dispatches, goes busy
     qtbot.waitUntil(lambda: started.is_set(), timeout=2000)
     assert dlg._stack_btn.isEnabled() is False                # button disabled while running
@@ -245,10 +255,11 @@ def test_output_filename_derived_from_selection(qtbot, tmp_path):
         s.target = "NGC 7000"
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText("")          # nothing user-chosen
-    dlg.grade()
+    dlg.grade()                           # nothing user-chosen
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    assert dlg.output_edit.text() == str(tmp_path / "NGC7000_3x20s_1min.fits")
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits"
+    assert dlg.save_to_edit.text() == str(tmp_path), "Save to must follow the subs folder"
+    assert dlg.output_path() == str(tmp_path / "NGC7000_3x20s_1min.fits")
 
 
 def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
@@ -260,11 +271,11 @@ def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
         _stats2(str(tmp_path / f"f{i}.fit"), 0.5) for i in range(3)
     ]
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText("keep-me.fits")
-    dlg.output_edit.textEdited.emit("keep-me.fits")   # simulate manual typing
+    dlg.name_edit.setText("keep-me.fits")
+    dlg.name_edit.textEdited.emit("keep-me.fits")     # simulate manual typing
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    assert dlg.output_edit.text() == "keep-me.fits"
+    assert dlg.name_edit.text() == "keep-me.fits"
 
 
 def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
@@ -596,7 +607,7 @@ def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "m.fits"))
+    _choose_output(dlg, tmp_path / "m.fits")
 
     # Off by DEFAULT since 2026-09-01: trimming cannot be undone without
     # re-stacking (hours, and most of a day for a drizzle), while keeping the
@@ -690,7 +701,7 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
-    dlg.output_edit.setText(str(tmp_path / "out.fits"))
+    _choose_output(dlg, tmp_path / "out.fits")
     dlg._on_graded([_stats2(p, 0.9) for p in paths])       # fills the table
     dlg.scan_pointings()
     dlg.mosaic_check.setChecked(True)
@@ -738,13 +749,12 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
         s.target = "M 31"
     dlg._on_graded(stats)
 
-    import os
-    plain = os.path.basename(dlg.output_edit.text())
+    plain = dlg.name_edit.text()
     assert "mosaic" not in plain.lower()
 
     dlg.mosaic_check.setEnabled(True)
     dlg.mosaic_check.setChecked(True)
-    named = os.path.basename(dlg.output_edit.text())
+    named = dlg.name_edit.text()
     assert "mosaic" in named.lower(), named
     assert named.startswith("M31_mosaic_"), named
 
@@ -763,10 +773,9 @@ def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
     dlg._on_graded(stats)
     dlg.mosaic_check.setEnabled(True)
 
-    import os
     dlg.mosaic_check.setChecked(True)
     dlg.mosaic_check.setChecked(False)
-    assert "mosaic" not in os.path.basename(dlg.output_edit.text()).lower()
+    assert "mosaic" not in dlg.name_edit.text().lower()
 
 
 def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
@@ -781,11 +790,11 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg._on_graded([_stats2(str(tmp_path / "s0.fit"), 0.9, exposure=10.0)])
 
-    dlg.output_edit.setText("/tmp/my_name.fits")
-    dlg._mark_output_edited("/tmp/my_name.fits")
+    dlg.name_edit.setText("my_name.fits")
+    dlg.name_edit.textEdited.emit("my_name.fits")
     dlg.mosaic_check.setEnabled(True)
     dlg.mosaic_check.setChecked(True)
-    assert dlg.output_edit.text() == "/tmp/my_name.fits"
+    assert dlg.name_edit.text() == "my_name.fits"
 
 
 def test_the_reference_frame_is_first_in_the_stack_order(qtbot, tmp_path):
@@ -1044,7 +1053,7 @@ def _stacked(tmp_path, kept, actually_used, user_edited=False):
     d = StackDialog(Settings())
     d._stats = [FrameStats(str(tmp_path / f"{i}.fit"), 800, 2.4, 0.02, 0.9, True,
                            exposure=10.0, target="IC1396A") for i in range(kept)]
-    d._output_user_edited = user_edited
+    d._name_is_manual = user_edited
     name = tmp_path / f"IC1396A_{kept}x10s_{round(kept*10/60)}min.fits"
     name.write_bytes(b"x")
     img = AstroImage(np.zeros((4, 4, 3), np.float32))
@@ -1260,7 +1269,7 @@ def test_clicking_background_button_calls_on_background_with_options(qtbot, tmp_
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    _choose_output(dlg, tmp_path / "master.fits")
 
     assert dlg.background_btn.isEnabled()
     qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
@@ -1380,7 +1389,7 @@ def test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy(qtbot, tmp_path
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    _choose_output(dlg, tmp_path / "master.fits")
 
     dlg.run()
 
@@ -1414,7 +1423,7 @@ def test_a_fresh_dialog_runs_when_the_queue_is_free(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 3, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    _choose_output(dlg, tmp_path / "master.fits")
 
     dlg.run()
 
@@ -1457,10 +1466,123 @@ def test_clicking_background_button_with_too_few_frames_refuses(qtbot, tmp_path)
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.table.rowCount() == 2, timeout=2000)
-    dlg.output_edit.setText(str(tmp_path / "master.fits"))
+    _choose_output(dlg, tmp_path / "master.fits")
 
     qtbot.mouseClick(dlg.background_btn, Qt.MouseButton.LeftButton)
 
     assert "opts" not in got, "must not enqueue with fewer than 3 frames"
     assert dlg.isVisible()
     assert "at least 3" in dlg.status.text().lower()
+
+
+# --- Output: a folder and a name (spec 2026-09-27 §2.3, §4) -----------------
+
+def _graded_ngc(qtbot, tmp_path, n=4):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5, exposure=20.0) for i in range(n)]
+    for s in stats:
+        s.target = "NGC 7000"
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg._on_graded(stats)
+    return dlg, stats
+
+
+def test_the_automatic_name_follows_the_ticks(qtbot, tmp_path):
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    assert dlg.name_edit.text() == "NGC7000_4x20s_1min.fits"
+    dlg.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits"
+
+
+def test_a_typed_name_is_the_users_until_they_ask_for_the_automatic_one(qtbot, tmp_path):
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    assert not dlg.auto_name_btn.isVisibleTo(dlg), "nothing to restore yet"
+    dlg.name_edit.setText("tonight.fits")
+    dlg.name_edit.textEdited.emit("tonight.fits")
+    assert dlg.auto_name_btn.isVisibleTo(dlg)
+    dlg.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    dlg.drizzle_check.setChecked(True)
+    assert dlg.name_edit.text() == "tonight.fits", "a typed name was overwritten"
+    qtbot.mouseClick(dlg.auto_name_btn, Qt.MouseButton.LeftButton)
+    assert dlg.name_edit.text() == "NGC7000_drizzle_3x20s_1min.fits"
+    assert not dlg.auto_name_btn.isVisibleTo(dlg)
+    dlg.table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert dlg.name_edit.text() == "NGC7000_drizzle_2x20s_1min.fits", \
+        "the restored name stopped following the ticks"
+
+
+def test_browse_picks_a_folder_and_the_automatic_name_survives(qtbot, tmp_path, monkeypatch):
+    """Andreas' bug: Browse… for another folder lost SH2-108_190x10s_32min.fits
+    and left him typing a name."""
+    from nocturne.ui import file_dialogs
+    elsewhere = tmp_path / "masters"
+    elsewhere.mkdir()
+    dlg, stats = _graded_ngc(qtbot, tmp_path)
+    name_before = dlg.name_edit.text()
+    monkeypatch.setattr(file_dialogs, "choose_folder",
+                        lambda parent, caption, directory="": str(elsewhere))
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        lambda *a, **k: pytest.fail("Browse must pick a folder, not a file"))
+    dlg._browse_save_to()
+    assert dlg.save_to_edit.text() == str(elsewhere)
+    assert dlg.name_edit.text() == name_before, "choosing a folder changed the name"
+    assert dlg.output_path() == str(elsewhere / name_before)
+    dlg.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+    assert dlg.name_edit.text() == "NGC7000_3x20s_1min.fits", "the name is no longer automatic"
+
+
+def test_save_to_follows_the_subs_folder_until_the_user_chooses_one(qtbot, tmp_path):
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path / "a"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "a")
+    dlg.save_to_edit.setText(str(tmp_path / "mine"))
+    dlg.save_to_edit.textEdited.emit(str(tmp_path / "mine"))
+    dlg.folder_edit.setText(str(tmp_path / "b"))
+    assert dlg.save_to_edit.text() == str(tmp_path / "mine")
+
+
+def test_a_name_without_an_extension_is_written_as_fits(qtbot, tmp_path):
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    _choose_output(dlg, tmp_path / "tonight")
+    assert dlg.output_path() == str(tmp_path / "tonight.fits")
+
+
+def test_a_name_with_a_folder_in_it_is_refused(qtbot, tmp_path):
+    ran = []
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    dlg._stack_runner = lambda *a, **k: ran.append(1)
+    dlg.name_edit.setText("sub/dir.fits")
+    dlg.name_edit.textEdited.emit("sub/dir.fits")
+    dlg.run()
+    assert ran == [] and not dlg._busy
+    assert "save to" in dlg.status.text().lower()
+
+
+def test_an_existing_file_is_named_before_it_is_replaced(qtbot, tmp_path):
+    """The Save panel used to ask; a folder picker does not, so the dialog says."""
+    (tmp_path / "NGC7000_4x20s_1min.fits").write_bytes(b"x")
+    dlg, _ = _graded_ngc(qtbot, tmp_path)
+    assert "already there" in dlg.name_note.text()
+    dlg.table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)   # a new name
+    assert dlg.name_note.text() == ""
+
+
+def test_the_editor_is_told_the_path_the_master_was_written_to(qtbot, tmp_path, monkeypatch):
+    """main_window reads the path from the dialog when the master arrives; with
+    the output split in two it must read the joined path, not one field."""
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    seen = {}
+    monkeypatch.setattr(win, "_on_foreground_master",
+                        lambda img, label, path: seen.update(path=path))
+
+    def fake_exec(dlg):
+        _choose_output(dlg, tmp_path / "M31.fits")
+        dlg._on_master(object())
+        return 0
+
+    monkeypatch.setattr(StackDialog, "exec", fake_exec)
+    win._open_stack()
+    assert seen["path"] == str(tmp_path / "M31.fits")

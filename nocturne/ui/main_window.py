@@ -1399,12 +1399,12 @@ class MainWindow(QMainWindow):
                           on_background=self._start_background_stack,
                           queue_busy=self._job_queue.busy,
                           # dlg, not a captured path: _rename_to_true_count
-                          # can rewrite output_edit AFTER the user's own
+                          # can rewrite the name AFTER the user's own
                           # choice, right before on_master fires, and reading
                           # it here (closure, called only once dlg exists)
                           # always sees that final value.
                           on_master=lambda img: self._on_foreground_master(
-                              img, "stacked master", dlg.output_edit.text().strip()))
+                              img, "stacked master", dlg.output_path()))
         dlg.exec()
 
     def _open_combine(self) -> None:

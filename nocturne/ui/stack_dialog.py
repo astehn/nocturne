@@ -124,14 +124,29 @@ class StackDialog(QDialog):
         self._frame_shape = None
         self._busy = False
         self._active_token: CancelToken | None = None
-        self._output_user_edited = False
+        # The output is a folder and a name (spec 2026-09-27 §4). Both follow
+        # the dialog until the user sets them, and then they are the user's.
+        self._name_is_manual = False
+        self._save_to_is_manual = False
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
         self._signals.progress.connect(self._on_progress)
 
         self.folder_edit = QLineEdit()
-        self.output_edit = QLineEdit()
-        self.output_edit.textEdited.connect(self._mark_output_edited)
+        self.folder_edit.textChanged.connect(self._follow_subs_folder)
+        self.save_to_edit = QLineEdit()
+        self.save_to_edit.setToolTip("The folder the master is written to — the "
+                                     "subs folder unless you choose another")
+        self.save_to_edit.textEdited.connect(self._on_save_to_typed)
+        self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("Named from the frames you keep, and kept up to "
+                                  "date as you tick. Type your own and it stays.")
+        self.name_edit.textEdited.connect(self._on_name_typed)
+        self.auto_name_btn = QPushButton("↺ automatic")
+        self.auto_name_btn.setObjectName("linkButton")
+        self.auto_name_btn.setToolTip("Go back to the name made from your frames")
+        self.auto_name_btn.clicked.connect(self._restore_automatic_name)
+        self.auto_name_btn.hide()
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
             ["Use", "File", "Stars", "FWHM", "Round", "Bg", "Verdict"])
@@ -281,7 +296,13 @@ class StackDialog(QDialog):
         form.addRow("Detail", option_row(self.drizzle_check,
                                          hint=self.drizzle_hint,
                                          extra=self.drizzle_note))
-        form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
+        form.addRow("Save to", _picker_row(self.save_to_edit, self._browse_save_to))
+        # The Save panel used to say "already exists — replace?"; choosing a
+        # folder instead does not, so the dialog says it. Informs, never blocks:
+        # replacing a master by re-stacking is a normal thing to do.
+        self.name_note = _Hint("")
+        form.addRow("Name", option_row(self.name_edit, self.auto_name_btn,
+                                       hint=self.name_note))
 
         self._stack_btn = QPushButton("Stack")
         self._stack_btn.setObjectName("primary")
@@ -361,8 +382,43 @@ class StackDialog(QDialog):
         root.addLayout(buttons_col)
         self._fitted = False       # _fit_to_content runs once, on first show
 
-    def _mark_output_edited(self, _text: str) -> None:
-        self._output_user_edited = True
+    # --- output: a folder and a name ---
+    def output_path(self) -> str:
+        """Where the master will be written, or "" while there is no name.
+        A name typed without an extension gets .fits — the stacker writes FITS,
+        and a file with no extension is one Open will not list."""
+        name = self.name_edit.text().strip()
+        if not name:
+            return ""
+        if os.path.splitext(name)[1].lower() not in (".fit", ".fits", ".fts"):
+            name += ".fits"
+        folder = self.save_to_edit.text().strip() or self.folder_edit.text().strip()
+        return os.path.join(folder, name)
+
+    def _on_name_typed(self, _text: str) -> None:
+        self._name_is_manual = True
+        self.auto_name_btn.show()
+        self._sync_name_note()
+
+    def _on_save_to_typed(self, _text: str) -> None:
+        self._save_to_is_manual = True
+        self._sync_name_note()
+
+    def _follow_subs_folder(self, folder: str) -> None:
+        if not self._save_to_is_manual:
+            self.save_to_edit.setText(folder.strip())
+        self._sync_name_note()
+
+    def _restore_automatic_name(self) -> None:
+        self._name_is_manual = False
+        self.auto_name_btn.hide()
+        self._auto_output_path()
+
+    def _sync_name_note(self) -> None:
+        path = self.output_path()
+        self.name_note.setText(
+            "A file with this name is already there — stacking will replace it."
+            if path and os.path.exists(path) else "")
 
     # --- browse ---
     @staticmethod
@@ -420,11 +476,16 @@ class StackDialog(QDialog):
             self.folder_edit.setText(path)
             self.grade()
 
-    def _browse_output(self) -> None:
-        path = file_dialogs.save_file(self, "Master FITS", start_dir(self._settings.base_dir), "FITS (*.fits)")[0]
+    def _browse_save_to(self) -> None:
+        """A folder only. The name is left exactly as it was — automatic stays
+        automatic — which is the bug this replaced: Browse… used to hand back a
+        whole path and the automatic name was gone (Andreas, 2026-09-27)."""
+        start = self.save_to_edit.text().strip() or start_dir(self._settings.base_dir)
+        path = file_dialogs.choose_folder(self, "Save the master to", start)
         if path:
-            self.output_edit.setText(path)
-            self._output_user_edited = True
+            self.save_to_edit.setText(path)
+            self._save_to_is_manual = True
+            self._sync_name_note()
 
     # --- busy state ---
     def _set_busy(self, busy: bool) -> None:
@@ -529,7 +590,8 @@ class StackDialog(QDialog):
         # with the help would mean collapsing the explanations quietly removed
         # the numbers you needed to choose, or left a disabled control with no
         # reason anywhere on screen.
-        always = {self.drizzle_note, self.exclusive_note, self.background_note}
+        always = {self.drizzle_note, self.exclusive_note, self.background_note,
+                  self.name_note}
         for hint in self.findChildren(_Hint):
             if hint not in always:
                 hint.setVisible(shown)
@@ -751,9 +813,8 @@ class StackDialog(QDialog):
         self._auto_output_path()
 
     def _auto_output_path(self) -> None:
-        if self._output_user_edited or not self._stats:
+        if self._name_is_manual or not self._stats:
             return
-        folder = self.folder_edit.text().strip()
         kept = [s for s in self._stats if s.included]
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
@@ -762,7 +823,8 @@ class StackDialog(QDialog):
                                sum(s.exposure for s in kept),
                                mosaic=self.mosaic_check.isChecked(),
                                drizzle=self.drizzle_check.isChecked())
-        self.output_edit.setText(os.path.join(folder, name))
+        self.name_edit.setText(name)
+        self._sync_name_note()
 
     @staticmethod
     def _verdict_text(s) -> str:
@@ -824,7 +886,7 @@ class StackDialog(QDialog):
         different things."""
         return StackOptions(self._method(), KAPPA[self.kappa_box.currentText()],
                             self._included_paths_best_first(),
-                            self.output_edit.text().strip(),
+                            self.output_path(),
                             autocrop=self.crop_check.isChecked())
 
     def _target_label(self) -> str:
@@ -840,8 +902,12 @@ class StackDialog(QDialog):
         same message rather than drift into checking different things — see
         the bug this closed, where the background button skipped both of
         these and enqueued StackOptions(include=[], output_path='', ...)."""
-        if not self.output_edit.text().strip():
-            self.status.setText("Pick an output path.")
+        if not self.output_path():
+            self.status.setText("Pick an output path — a folder and a name.")
+            return False
+        if "/" in self.name_edit.text() or os.sep in self.name_edit.text():
+            self.status.setText("The name cannot contain a folder — choose the "
+                                "folder with Save to.")
             return False
         if len(self._included_paths_best_first()) < 3:
             self.status.setText("Select at least 3 frames to stack.")
@@ -874,7 +940,7 @@ class StackDialog(QDialog):
 
         if self.mosaic_check.isChecked():
             mosaic_opts = MosaicOptions(
-                include=include, output_path=self.output_edit.text().strip(),
+                include=include, output_path=self.output_path(),
                 astap_path=self._settings.astap_path, method=method,
                 kappa=KAPPA[self.kappa_box.currentText()],
                 autocrop=self.crop_check.isChecked())
@@ -966,7 +1032,7 @@ class StackDialog(QDialog):
         Only a name this dialog generated is touched. If the path was typed or
         browsed to, it is the user's and stays as chosen.
         """
-        if self._output_user_edited or not self._stats:
+        if self._name_is_manual or not self._stats:
             return
         target = next((s.target for s in self._stats if s.included and s.target), "")
         kept = [s for s in self._stats if s.included]
@@ -985,7 +1051,7 @@ class StackDialog(QDialog):
         except OSError:
             return          # a rename is a nicety; never fail a finished stack
         result.output_path = new_path
-        self.output_edit.setText(new_path)
+        self.name_edit.setText(os.path.basename(new_path))
 
     def _on_stacked(self, result) -> None:
         self._active_token = None
