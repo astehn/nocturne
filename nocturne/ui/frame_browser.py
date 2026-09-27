@@ -134,14 +134,21 @@ class FrameTableModel(QAbstractTableModel):
     # --- ticks ---
     def set_ticked(self, rows, checked: bool) -> None:
         """A tick the USER made. It is remembered, so a re-judge (Strictness
-        moved) does not undo it — the old tables' `_user_touched`."""
+        moved) does not undo it — the old tables' `_user_touched`.
+
+        An error frame can never be ticked IN (see `flags`) — Select All must
+        respect the same rule the checkbox itself does, or "All" would still
+        smuggle a non-raw/unreadable file past it.
+        """
         rows = list(rows)
         if not rows:
             return
         changed = False
         for row in rows:
-            self._overrides[row] = checked
             s = self._stats[row]
+            if checked and s.error:
+                continue
+            self._overrides[row] = checked
             if bool(s.included) != checked:
                 s.included = checked
                 changed = True
@@ -191,7 +198,11 @@ class FrameTableModel(QAbstractTableModel):
 
     def flags(self, index):
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if index.column() == COL_USE:
+        # An error frame (a stacked master, or a sub that couldn't be measured)
+        # is never checkable: nothing downstream filters it back out, so a
+        # tick reaching one would hand a non-raw or unreadable file straight
+        # to the stack.
+        if index.column() == COL_USE and not self._stats[index.row()].error:
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         return flags
 
@@ -257,7 +268,19 @@ class FrameFilterProxy(QSortFilterProxyModel):
         return self._extra is None or bool(self._extra(s))
 
     def lessThan(self, left, right) -> bool:
-        return left.data(SORT_ROLE) < right.data(SORT_ROLE)
+        lk, rk = left.data(SORT_ROLE), right.data(SORT_ROLE)
+        if lk[0] != rk[0]:
+            # A timeless row's key is tagged 1, a dated one's 0, precisely so
+            # it sorts last when ASCENDING. Qt reverses the whole comparison
+            # for a descending column by swapping the arguments it hands us,
+            # which would otherwise put the timeless row FIRST; invert just
+            # this tag comparison to cancel that out, so it stays last either
+            # way. Same-tag rows are left to Qt's own reversal, which is what
+            # makes every other column behave the way clicking the header
+            # twice is supposed to.
+            base = lk < rk
+            return not base if self.sortOrder() == Qt.SortOrder.DescendingOrder else base
+        return lk < rk
 
 
 class FrameBrowser(QWidget):
@@ -382,6 +405,10 @@ class FrameBrowser(QWidget):
         else:
             self.preview_controller.clear()
             self._update_preview_header(-1)
+            if not stats:
+                # An empty list has no neighbour for Qt's selection model to
+                # land the cursor on, so nothing else fires this signal.
+                self.current_changed.emit(-1)
 
     def refresh_verdicts(self) -> None:
         """Call after judge() re-ran on the same list."""
@@ -491,6 +518,7 @@ class FrameBrowser(QWidget):
         stats = self.model.frames()
         if not (0 <= row < len(stats)):
             self.preview_name.setText("")
+            self.preview_name.setToolTip("")
             self.preview_facts.setText("")
             return
         s = stats[row]

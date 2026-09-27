@@ -12,7 +12,8 @@ from PySide6.QtCore import QEvent, QPointF, Qt, QThreadPool
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from nocturne.stacking.grade import FrameStats, judge
+from nocturne.stacking.grade import (REASON_MEASURE, REASON_NOT_RAW, FrameStats,
+                                     judge)
 from nocturne.ui import frame_browser as fb
 from nocturne.ui.frame_browser import FrameBrowser
 
@@ -23,6 +24,15 @@ def _frame(i, minute=None, fwhm=2.5, stars=800):
     s = FrameStats(f"/x/f{i}.fit", stars, fwhm, 0.02, 0.5, True, exposure=10.0)
     s.captured = None if minute is None else T0 + timedelta(minutes=minute)
     return s
+
+
+def _error_frame(i, code):
+    """A stacked master (not_raw) or a sub that couldn't be measured
+    (measure_failed) — grade_frame() always hands these back with
+    included=False and error=True; never a candidate to tick in."""
+    reason = REASON_NOT_RAW if code == "not_raw" else REASON_MEASURE
+    return FrameStats(f"/x/err_{code}{i}.fit", 0, 0.0, 0.0, 0.0, False,
+                      reason_code=code, reason=reason, error=True)
 
 
 def _session():
@@ -117,10 +127,14 @@ def test_select_all_and_none_touch_only_the_rows_shown(qtbot):
     stats = _session()
     b = _browser(qtbot, stats)
     b.set_show(fb.SHOW_KEPT)
+    # Give the hidden frame a value None WOULD change if it (wrongly) reached
+    # it — set directly, not via a tick, so it starts out untouched.
+    stats[2].included = True
     hidden_before = stats[2].included
     b.select_none()
     assert [s.included for i, s in enumerate(stats) if i != 2] == [False] * 5
     assert stats[2].included == hidden_before, "a hidden frame was changed"
+    assert 2 not in b.user_touched, "select_none touched a row it never showed"
     b.set_show(fb.SHOW_REJECTED)
     b.select_all()
     assert stats[2].included is True
@@ -222,6 +236,7 @@ def test_a_filter_that_empties_the_list_clears_the_preview(qtbot):
     assert b.row_count() == 0 and b.current_row() == -1
     assert not b.preview.has_image() and b.preview_controller.wanted == ""
     assert b.preview_name.text() == ""
+    assert b.preview_name.toolTip() == "", "the old frame's path lingered in the tooltip"
 
 
 def test_the_preview_takes_the_leftover_width(qtbot):
@@ -243,3 +258,43 @@ def test_arrow_keys_step_through_frames_and_the_preview_follows(qtbot):
     qtbot.waitUntil(lambda: "/x/f1.fit" in loads, timeout=2000)
     _key(b.view, Qt.Key.Key_Up)
     assert b.current_row() == 3
+
+
+# --- Fix round 1: R1 (select-none teeth), R2 (error rows), minors ----------
+
+def test_error_frames_cannot_be_ticked_in(qtbot):
+    """A stacked master or an unreadable sub must never reach the stack —
+    stack_dialog's own path filter doesn't screen them out, so this table
+    is the only gate."""
+    stats = _session() + [_error_frame(0, "not_raw"), _error_frame(1, "measure_failed")]
+    b = _browser(qtbot, stats)
+    for row in (6, 7):
+        flags = b.model.flags(b.model.index(row, fb.COL_USE))
+        assert not (flags & Qt.ItemFlag.ItemIsUserCheckable), f"row {row} is checkable"
+    b.select_all()
+    assert stats[6].included is False and stats[7].included is False, \
+        "Select All ticked an error frame in"
+    b.set_checked(6, True)              # what a click/Space attempt does
+    b.set_checked(7, True)
+    assert stats[6].included is False and stats[7].included is False
+    b.set_checked(2, True)              # a real tick elsewhere still works
+    b.back_to_verdicts()
+    assert stats[6].included is False and stats[7].included is False
+
+
+def test_set_frames_to_empty_emits_current_changed(qtbot):
+    b = _browser(qtbot, _session())
+    b.set_current_row(0)
+    seen = []
+    b.current_changed.connect(seen.append)
+    b.set_frames([])
+    assert -1 in seen, "current_changed(-1) never fired for an empty list"
+
+
+def test_timeless_frames_sort_last_in_descending_order_too(qtbot):
+    stats = _session() + [_frame(6)]          # no time at all
+    b = _browser(qtbot, stats)
+    b.view.sortByColumn(fb.COL_TIME, Qt.SortOrder.DescendingOrder)
+    rows = b.view_rows()
+    assert rows[-1] == 6, f"the timeless frame moved to the front: {rows}"
+    assert rows[:-1] == [5, 4, 0, 2, 1, 3], "dated frames are not latest-first"
