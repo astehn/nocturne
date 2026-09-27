@@ -500,3 +500,118 @@ def test_ask_yes_no_defaults_to_cancel(qtbot, tmp_path, monkeypatch):
     assert got["default"] == QMessageBox.StandardButton.Cancel
     assert got["buttons"] & QMessageBox.StandardButton.Yes
     assert tree(tmp_path) == before
+
+
+# --- fix round 2 (review, Ruling R7) -------------------------------------------------
+
+def _fits_folder(tmp_path, n=6, name="Sh2-108"):
+    """Like _folder, but real minimal FITS headers (FOCALLEN/XPIXSZ/XBINNING)
+    so read_pixel_scale has something real to read — the synthetic garbage
+    bytes _folder() writes give every header read a clean failure, which
+    would make N1's pixel-scale assertion trivially true for the wrong
+    reason."""
+    from astropy.io import fits
+
+    folder = tmp_path / name
+    folder.mkdir()
+    paths = []
+    for i in range(n):
+        p = folder / f"Light_{i:02d}.fit"
+        hdu = fits.PrimaryHDU(np.zeros((8, 8), dtype=np.float32))
+        hdu.header["FOCALLEN"] = 250.0
+        hdu.header["XPIXSZ"] = 2.9
+        hdu.header["XBINNING"] = 1
+        hdu.writeto(str(p), overwrite=True)
+        paths.append(str(p))
+    return folder, paths
+
+
+def test_moving_everything_back_from_empty_runs_a_full_grade(qtbot, tmp_path):
+    """N1 (Ruling R7): reopening a folder with nothing left at the top, then
+    Move them back, must run the SAME full grade an ordinary folder-open
+    does — scan_pointings, read_pixel_scale, _read_frame_shape,
+    _update_drizzle_note — because nothing was listed yet, so there is no
+    hand tick to protect. The partial re-grade (fix round 1's mechanism,
+    correct when something IS already listed) runs none of those."""
+    folder, _paths = _fits_folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.browser.select_none()
+    d1.verdict_strip.move_btn.click()           # everything -> rejected/
+    d2, _ = _graded(qtbot, folder)               # reopens to nothing at top
+    assert d2._stats == [] and d2._pixel_scale is None
+    calls = []
+
+    def fake_scan(scan_folder=None):
+        calls.append(scan_folder)
+        d2.mosaic_check.setEnabled(True)
+        d2.mosaic_check.setText("Stack as mosaic — 2 pointings")
+
+    d2.scan_pointings = fake_scan
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    assert calls == [str(folder)], (
+        "scan_pointings must run once, on the FULL re-grade of the graded folder")
+    assert d2.mosaic_check.isEnabled(), "Mosaic stayed disabled after the full re-grade"
+    assert d2._pixel_scale is not None, "the pixel scale went missing"
+    assert len(d2._stats) == 6
+
+
+def test_moving_some_back_when_something_is_already_listed_stays_partial(qtbot, tmp_path):
+    """N1's flip side: when frames ARE already listed, the partial re-grade
+    (fix round 1, I2) must still be the one that runs — a full re-grade here
+    would be the regression fix round 1 fixed, resetting hand ticks."""
+    folder, _paths = _fits_folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()            # Light_01, Light_03 -> rejected/
+    d2, _ = _graded(qtbot, folder)                # 4 frames listed at top
+    assert d2._stats != []
+    calls = []
+    d2.scan_pointings = lambda scan_folder=None: calls.append(scan_folder)
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    assert calls == [], "ran a full grade (and so scan_pointings) although frames were already listed"
+    assert len(d2._stats) == 6
+
+
+def test_chart_current_follows_a_removed_row(qtbot, tmp_path):
+    """N2 (Ruling R7): after a row is dropped (m6), the chart's own idea of
+    "current" must follow the list's current row, not go on pointing at
+    whatever x-position used to be highlighted — which after a removal can
+    belong to a different frame entirely, or none."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    b = d.browser
+    b.set_current_row(5)
+    os.unlink(folder / "rejected" / "Light_01.fit")     # gone, not just moved back
+    d.verdict_strip.back_btn.click()
+    assert b.chart.current_row() == b.current_row()
+    assert b.preview_name.text() == "Light_05.fit"
+
+
+def test_partial_grade_failure_replaces_the_measuring_message(qtbot, tmp_path):
+    """N3 (Ruling R7): a partial re-grade that fails must not leave
+    "Measuring N frames that came back…" standing as an unfulfilled promise —
+    move_back's rename already happened, synchronously, before this async
+    measure even started, so the frames really are back in the folder."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()            # Light_01, Light_03 -> rejected/
+    calls = []
+    base = _runner(calls=calls)
+
+    def run(p, on_progress=None, strictness="normal"):
+        if calls:                                # the SECOND call: fail it
+            calls.append(p)
+            raise OSError("disk went away")
+        return base(p, on_progress, strictness)  # the first (initial) grade: succeed
+
+    d2, _ = _graded(qtbot, folder, runner=run)
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    assert len(calls) == 2, "the partial grade never ran"
+    msg = d2.verdict_strip.message.text()
+    assert "back in the folder" in msg and "grade again" in msg
+    assert "Measuring" not in msg
+    # The rename is real and already happened — nothing here pretends otherwise.
+    assert (folder / "Light_01.fit").exists() and (folder / "Light_03.fit").exists()

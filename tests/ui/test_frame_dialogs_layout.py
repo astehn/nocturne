@@ -150,21 +150,35 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     assert d.verdict_strip.move_btn.isVisible(), "fixture lost its rejects"
     assert settings.help_expanded is True, "the screen must not rewrite the preference"
 
-    # Fix round 1, m5: the measured relation, not a fixed expectation that a
-    # pixel count would silently re-freeze. `_minimum_with_the_help_folded`
-    # (a fresh, unclamped dialog) and a same-dialog before/after toggle were
-    # both tried and both mismeasure here: the first is offscreen-font-
-    # sensitive across a SEPARATE widget tree (732 to 766 px for the
-    # identical session across runs, measured 2026-09-27 — see CLAUDE.md,
-    # "these assert RELATIONS... never pixel values"), and the second is
-    # thrown off by `_clamp_to_screen` already having shrunk THIS dialog's
-    # own list floor once verdict-compact made it fit — recomputing after
-    # toggling folds back only replays that already-baked-in shrink. The
-    # relation that survives both traps: build a SECOND dialog, same
-    # settings and room, whose session has nothing to move (so the row this
-    # fix is about never appears) — it must not need the options band folded
-    # to fit, proving THIS test's fold is because of the row Task 6 added,
-    # not a habit `_keep_on_screen` always reaches for regardless.
+    # Fix round 1, m5 — rewritten in fix round 2 for accuracy. Two things the
+    # first version of this comment got wrong:
+    #
+    # It framed `kept` below as isolating JUST the move-button row. It does
+    # not: `_uniform_session()` also has no soft or trailed frames, so the
+    # Verdict column and the strip's own detail line are shorter too ("OK"
+    # against "Soft stars (FWHM …)" / "Stars trailed (…)"). This is a
+    # comparison of "a session with something to report" against "one with
+    # nothing to report" — several differences at once, not a controlled
+    # isolation of the row alone.
+    #
+    # It also claimed "732 to 766 px measured... across runs" as this test's
+    # own finding. 766 is `_minimum_with_the_help_folded`'s own docstring
+    # figure for COCOA (not offscreen), quoted from elsewhere and presented
+    # here as if independently reproduced. What IS true, and is why neither
+    # `_minimum_with_the_help_folded` nor a same-dialog before/after toggle
+    # works as a check here: the latter is thrown off by `_clamp_to_screen`
+    # already having shrunk THIS dialog's own list floor once a fallback made
+    # it fit — recomputing after toggling folds back only replays that
+    # already-baked-in shrink — and the former builds a SEPARATE widget tree,
+    # which this codebase's own rule already warns against comparing by pixel
+    # count (CLAUDE.md: offscreen fonts differ; assert RELATIONS, never pixel
+    # values).
+    #
+    # The relation that survives both problems is comparative, not absolute:
+    # build a SECOND dialog, same settings and room, from a session with
+    # nothing to report at all. It must fit without needing either fallback
+    # `_keep_on_screen` offers. The first dialog, with something to report,
+    # must have needed at least one of them.
     kept, _ = _fit_at_740(qtbot, _uniform_session())
     assert not kept.verdict_strip.move_btn.isVisible(), "fixture rejected a frame"
     assert kept.height() <= 740

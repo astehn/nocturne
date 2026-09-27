@@ -607,6 +607,13 @@ class FrameBrowser(QWidget):
         self._update_show_counts()
         self.chart.refresh()
         row = self.current_row()
+        # Fix round 2, N2: a preceding remove_frames() can shift the current
+        # row (Qt moves the selection when rows above it vanish), and the
+        # chart's own idea of "current" is separate state the row alone
+        # doesn't carry — left stale, the highlight kept pointing at the OLD
+        # row's x-position, which after a removal can belong to a different
+        # frame entirely, or none.
+        self.chart.set_current(row)
         self._update_preview_header(row)
         if row >= 0:
             self.preview_controller.show_row(row)
@@ -623,9 +630,12 @@ class FrameBrowser(QWidget):
         self.chart.refresh()
 
     def remove_frames(self, predicate) -> None:
-        """Drop rows `predicate(stat)` accepts (Task 6 fix round 1, m6);
-        follow with `frames_moved()` if other frames also changed home in the
-        same pass, so rows/Show/counts/chart/preview all settle together."""
+        """Drop rows `predicate(stat)` accepts (Task 6 fix round 1, m6). MUST
+        be followed by `frames_moved()` in the same pass — that call is what
+        re-settles the chart's own "current" index (fix round 2, N2), which
+        a removal can shift or invalidate; without it the chart highlight is
+        left pointing at whatever the OLD row index now means, which can be
+        a different frame entirely, or none."""
         self.model.remove_frames(predicate)
         self._update_show_counts()
         self.chart.refresh()

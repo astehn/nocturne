@@ -203,6 +203,12 @@ class StackDialog(QDialog):
         # run alongside — "Moved N frames back" must NOT disappear the moment
         # the routine back-count check that follows it happens to succeed.
         self._damaged_folder = False
+        # The names a partial re-grade (_grade_restored) is currently
+        # measuring, or None. _on_error reads this to give a failed or
+        # cancelled partial grade its OWN message (fix round 2, N3) instead
+        # of leaving "Measuring N frames that came back…" standing as a
+        # promise that never resolved.
+        self._restoring_names: list[str] | None = None
 
         # Layout A: ONE band of three groups between Folder and the output —
         # Frames · Combine · Result (spec §2.1). Each control still says what
@@ -506,15 +512,21 @@ class StackDialog(QDialog):
         if tok is not None:
             tok.cancel()
 
-    def scan_pointings(self) -> None:
+    def scan_pointings(self, folder: str | None = None) -> None:
         """Notice a mosaic and say so.
 
         Nothing in this dialog distinguished 400 subs of one field from 400
         across twenty pointings, so a user who shot a mosaic got a stack of the
         whole lot registered to one frame — which cannot work. Reading the
         pointings is header-only and costs about 0.2 s for 400 subs.
+
+        `folder` is optional for the same reason grade()'s is (fix round 2,
+        N1/N4): a caller that already knows which folder it means must pass
+        it, so this never silently reads the Folder field's CURRENT text
+        when that has nothing to do with the frames actually being graded.
         """
-        folder = self.folder_edit.text().strip()
+        if folder is None:
+            folder = self.folder_edit.text().strip()
         paths = discover_subs(folder) if folder else []
         panels = discover_panels(read_pointings(paths), 0.56) if paths else []
 
@@ -864,14 +876,14 @@ class StackDialog(QDialog):
             # were never allowed to become two different empty lists here).
             self.browser.set_frames(self._stats)
             self._update_drizzle_note()
-            self.scan_pointings()          # no paths: mosaic off and disabled
+            self.scan_pointings(folder)    # no paths: mosaic off and disabled
             if not self._name_is_manual:
                 self.name_edit.setText("")
             self._sync_name_note()
             self.status.setText("No .fit subs found in that folder.")
             return
         self._grading_folder = folder
-        self.scan_pointings()
+        self.scan_pointings(folder)
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
@@ -1067,6 +1079,9 @@ class StackDialog(QDialog):
                       "has finished.")
             return
         folder = self._graded_folder
+        # Fix round 2, N1: nothing listed yet means nothing to lose. Captured
+        # BEFORE the bookkeeping below touches self._stats.
+        was_empty = not self._stats
         try:
             result = move_back(folder)
         except RejectMoveError as exc:
@@ -1089,20 +1104,35 @@ class StackDialog(QDialog):
         unlisted = [n for n in result.restored if n not in listed]
         self._sync_reject_buttons(check_disk=True)
         self._say(self._back_message(result, unlisted))
-        if unlisted:
-            # Frames restored from an earlier session: never graded in THIS
-            # window. Fix round 1, I1+I2: this used to call self.grade() with
-            # no folder, which read the FOLDER FIELD (wrong once retyped) and
-            # re-measured the WHOLE folder, silently resetting every hand
-            # tick already made on what was already listed. Grade only the
-            # names that are actually new, off-thread like any other grade,
-            # and merge them in without touching an existing row.
-            self._grade_restored(folder, unlisted)
+        if not unlisted:
+            return
+        if was_empty:
+            # Fix round 2, N1: nothing was listed before this move, so there
+            # is no hand tick to protect — a FULL grade of the graded folder
+            # is not just safe here, it is REQUIRED. The partial grade below
+            # exists to protect hand ticks on rows already listed; it never
+            # runs scan_pointings/read_pixel_scale/_read_frame_shape/
+            # _update_drizzle_note (_on_restored_graded does none of that),
+            # so a folder opened with everything already moved out, then
+            # moved back in one go, left Mosaic disabled and the pixel scale
+            # and drizzle note missing — exactly the state a normal grade()
+            # of that same folder would never leave it in.
+            self.grade(folder)
+            return
+        # Frames restored from an earlier session: never graded in THIS
+        # window. Fix round 1, I1+I2: this used to call self.grade() with
+        # no folder, which read the FOLDER FIELD (wrong once retyped) and
+        # re-measured the WHOLE folder, silently resetting every hand
+        # tick already made on what was already listed. Grade only the
+        # names that are actually new, off-thread like any other grade,
+        # and merge them in without touching an existing row.
+        self._grade_restored(folder, unlisted)
 
     def _grade_restored(self, folder: str, names: list[str]) -> None:
         """Off-thread, exactly like grade(), but for just the frames
         `_move_back` found restored and not already listed — see the comment
         there for why this replaced a full self.grade() (fix round 1, I2)."""
+        self._restoring_names = names       # read by _on_error if this fails (N3)
         paths = [os.path.join(folder, n) for n in names]
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
@@ -1116,6 +1146,7 @@ class StackDialog(QDialog):
                     "Measuring the frames that came back…")
 
     def _on_restored_graded(self, new_stats) -> None:
+        self._restoring_names = None
         self._active_token = None
         self._set_busy(False)
         self.browser.add_frames(new_stats)
@@ -1399,6 +1430,23 @@ class StackDialog(QDialog):
         self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        if self._restoring_names is not None:
+            # Fix round 2, N3: a partial re-grade (_grade_restored) that
+            # failed OR was cancelled leaves the frames genuinely back in the
+            # folder — move_back's rename already happened, synchronously,
+            # before this async measure even started — but not yet LISTED.
+            # "Measuring N frames that came back…" was a promise this run
+            # broke; replace it with what is actually true and actionable,
+            # for either reason it can not finish.
+            names = self._restoring_names
+            self._restoring_names = None
+            self._active_token = None
+            self._set_busy(False)
+            n = len(names)
+            self._say(f"{n} {'frame is' if n == 1 else 'frames are'} back in the "
+                      "folder; grade again to list "
+                      f"{'it' if n == 1 else 'them'}.")
+            return
         if isinstance(exc, Cancelled):
             self._active_token = None
             self._set_busy(False)
