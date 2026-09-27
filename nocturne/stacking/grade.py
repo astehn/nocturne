@@ -84,6 +84,9 @@ class FrameStats:
     # When the sub was taken (aware datetime), for the frame list's Time column
     # and its default sort. None when neither DATE-OBS nor the file name says.
     captured: datetime | None = None
+    # In <folder>/rejected/ now (stacking/reject_move.py): `path` points there,
+    # and the frame can never be ticked in — nothing may stack from rejected/.
+    moved: bool = False
 
 
 def _measure(lum: np.ndarray) -> tuple[int, float, float, float, float]:

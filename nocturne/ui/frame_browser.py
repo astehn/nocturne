@@ -36,6 +36,9 @@ SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 # a list you cannot tick from is a list you have to widen again to use.
 DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
 
+# The Verdict cell of a frame moved into <folder>/rejected/.
+MOVED_TEXT = "In rejected/"
+
 # The divider's hit area. Qt's default on macOS is 1 px of visible line inside a
 # few px of target — Andreas, 2026-09-27: "very hard to grab". The spec's floor
 # is 10; 12 leaves room for the painted grip to sit centred.
@@ -50,7 +53,13 @@ GRIP_WIDTH = 12
 LIST_MAX_SHARE = 0.45
 
 
+def is_moved(s) -> bool:
+    return bool(getattr(s, "moved", False))
+
+
 def verdict_text(s) -> str:
+    if is_moved(s):
+        return MOVED_TEXT
     if s.reason:
         return s.reason
     if s.warning:
@@ -60,18 +69,29 @@ def verdict_text(s) -> str:
 
 def verdict_tooltip(s) -> str:
     """The unabbreviated verdict: the cell holds the short form."""
+    if is_moved(s):
+        why = s.reason_detail or s.reason or "unticked by hand"
+        return (f"Moved into the rejected folder ({why}). Move them back to "
+                "stack it again.")
     return s.reason_detail or verdict_text(s)
 
 
 def is_rejected(s) -> bool:
     """What Show Rejected, the Rejected count and the chart's amber all mean —
-    one definition, so the three cannot disagree."""
-    return bool(s.reason)
+    one definition, so the three cannot disagree. A frame in rejected/ counts,
+    whatever its grader verdict was."""
+    return bool(s.reason) or is_moved(s)
+
+
+def _locked(s) -> bool:
+    """Never tickable in: an error frame (nothing downstream filters it back
+    out) or a frame in rejected/ (nothing may stack from there)."""
+    return bool(s.error) or is_moved(s)
 
 
 def _tint(s) -> str:
     if is_rejected(s):
-        return theme.TEXT_FAINT        # rejected: dimmed
+        return theme.TEXT_FAINT        # rejected or moved: dimmed
     if s.warning:
         return theme.WARNING           # kept with a warning: amber
     return theme.TEXT
@@ -161,9 +181,10 @@ class FrameTableModel(QAbstractTableModel):
         """A tick the USER made. It is remembered, so a re-judge (Strictness
         moved) does not undo it — the old tables' `_user_touched`.
 
-        An error frame can never be ticked IN (see `flags`) — Select All must
-        respect the same rule the checkbox itself does, or "All" would still
-        smuggle a non-raw/unreadable file past it.
+        An error frame, or one moved into rejected/, can never be ticked IN
+        (see `flags`) — Select All must respect the same rule the checkbox
+        itself does, or "All" would still smuggle a non-raw/unreadable file
+        past it.
         """
         rows = list(rows)
         if not rows:
@@ -171,7 +192,7 @@ class FrameTableModel(QAbstractTableModel):
         changed = False
         for row in rows:
             s = self._stats[row]
-            if checked and s.error:
+            if checked and _locked(s):
                 continue
             self._overrides[row] = checked
             if bool(s.included) != checked:
@@ -187,7 +208,7 @@ class FrameTableModel(QAbstractTableModel):
         self._overrides.clear()
         changed = False
         for s in self._stats:
-            want = not s.reason
+            want = not s.reason and not is_moved(s)
             if bool(s.included) != want:
                 s.included = want
                 changed = True
@@ -198,9 +219,13 @@ class FrameTableModel(QAbstractTableModel):
 
     def reapply_ticks(self) -> None:
         """After the host re-ran judge(): the fresh verdict stands except where
-        the user ticked by hand."""
+        the user ticked by hand. judge() sets `included` on every usable frame
+        — moved ones too — so a locked frame is put back out here, always."""
         for row, checked in self._overrides.items():
             self._stats[row].included = checked
+        for s in self._stats:
+            if _locked(s):
+                s.included = False
         if self._stats:
             self._emit_rows(0, len(self._stats) - 1)
 
@@ -227,7 +252,7 @@ class FrameTableModel(QAbstractTableModel):
         # is never checkable: nothing downstream filters it back out, so a
         # tick reaching one would hand a non-raw or unreadable file straight
         # to the stack.
-        if index.column() == COL_USE and not self._stats[index.row()].error:
+        if index.column() == COL_USE and not _locked(self._stats[index.row()]):
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         return flags
 
@@ -542,6 +567,24 @@ class FrameBrowser(QWidget):
         self._update_show_counts()
         self.chart.refresh()
 
+    def frames_moved(self) -> None:
+        """After the host moved frames into rejected/ or back (their `path`
+        and `moved` changed): rows, Show, counts and chart follow, and the
+        preview re-reads the current frame from where it now is."""
+        self.model.reapply_ticks()
+        self.proxy.set_show(self.proxy.show_mode())     # Kept/Rejected read `moved`
+        self._update_show_counts()
+        self.chart.refresh()
+        row = self.current_row()
+        self._update_preview_header(row)
+        if row >= 0:
+            self.preview_controller.show_row(row)
+
+    def add_above_list(self, widget: QWidget) -> None:
+        """A host's own strip over the list, in the list's column: Stack's
+        night verdict (spec decision 6). Not built in: Ha/OIII has none."""
+        self.list_layout.insertWidget(0, widget)
+
     def frames(self) -> list:
         return self.model.frames()
 
@@ -550,7 +593,9 @@ class FrameBrowser(QWidget):
         return list(HEADERS)
 
     def checked_frames(self) -> list:
-        return [s for s in self.model.frames() if s.included]
+        """What the stack reads. A locked frame is left out even if something
+        set `included` on it behind the model's back."""
+        return [s for s in self.model.frames() if s.included and not _locked(s)]
 
     @property
     def user_touched(self) -> set[int]:
