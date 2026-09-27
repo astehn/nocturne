@@ -172,6 +172,9 @@ class HaOIIIDialog(QDialog):
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         form = QFormLayout()
+        # As in Stack: the macOS style keeps fields at their size hint, which
+        # cut the Output path short at every width. Fill the row.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Folder of raw subs", _picker_row(self.folder_edit, self._browse_folder))
         form.addRow(self.options_band)
         form.addRow("Output", _picker_row(self.output_edit, self._browse_output))

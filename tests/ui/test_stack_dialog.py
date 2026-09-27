@@ -509,10 +509,12 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
         "the screen is not the user: a forced collapse must not rewrite "
         "the saved preference")
 
-    # And asking for them explicitly still works.
+    # And asking for them explicitly still works -- ONE click, since the
+    # link reads "▸" while the screen has them folded. They are shown within
+    # the option band, which the screen folded too and the help leaves alone.
     dlg._toggle_hints()
-    dlg._toggle_hints()
-    assert dlg.mosaic_hint.isVisible() is True
+    assert not dlg.mosaic_hint.isHidden()
+    assert settings.help_expanded is True
 
 
 def test_cancel_button_stops_a_grade(qtbot, tmp_path):

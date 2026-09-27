@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFormLayout, QProxyStyle, QStyle, QStyleFactory
 
 from nocturne.settings import Settings
 from nocturne.stacking.grade import FrameStats
@@ -113,6 +113,7 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     d.show()
     qtbot.waitExposed(d)
     d._on_graded(_session())
+    qtbot.wait(50)                   # let any late layout pass land
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
     assert d.preview.height() >= 220
     assert not d.options_band.is_folded(), (
@@ -196,19 +197,23 @@ def test_later_content_that_outgrows_the_screen_is_refitted(qtbot):
 
 
 def test_the_users_own_toggle_outranks_the_screen(qtbot):
-    """Asking for the explanations on a short screen gets them — and the
-    options the screen folded come back with them — and nothing folds them
-    away again behind the user's back."""
+    """While the screen has the explanations folded the link reads "▸", so
+    ONE click means "show": they come back, the preference says so, and the
+    option band -- not the help's to touch -- stays as it was. The window
+    still stays on the screen."""
     room = _minimum_with_the_help_folded(qtbot) - 1
     d, settings = _short_stack(qtbot, room)
-    assert d.options_band.is_folded() and d._band_forced_folded
-    d._toggle_hints()                      # the screen had them folded: show
+    assert d._hints_forced_closed and d.options_band.is_folded()
+    band_before = d.options_band.is_folded()
     d._toggle_hints()
-    assert not d.options_band.is_folded(), "the screen's fold outlived the click"
     qtbot.wait(50)
-    assert d.mosaic_hint.isVisible(), "folded away again behind the user's back"
-    assert not d.options_band.is_folded(), "re-folded behind the user's back"
+    assert not d.mosaic_hint.isHidden(), "the click did not show the explanations"
+    assert "▾" in d._help_link.text()
+    assert settings.help_expanded is True
+    assert d.options_band.is_folded() == band_before, "the help click moved the band"
+    assert not d.mosaic_hint.isHidden(), "folded away again behind the user's back"
     assert settings.frame_options_folded is False
+    assert d.height() <= room, f"{d.height()} px on a {room} px screen"
 
 
 def test_the_users_change_outranks_the_screens_fold(qtbot):
@@ -222,6 +227,57 @@ def test_the_users_change_outranks_the_screens_fold(qtbot):
     assert not d.options_band.is_folded(), "re-folded behind the user's back"
     assert settings.frame_options_folded is False
     assert not d._band_forced_folded
+    assert d.height() <= room, f"{d.height()} px on a {room} px screen"
+
+
+def test_the_users_help_click_never_runs_off_the_screen(qtbot):
+    """Options opened by hand AND the explanations asked for: more than the
+    screen holds (842 px on 642 measured offscreen). The click outranks the
+    screen's folds, never its edge -- the frame list gives up the height."""
+    room = _minimum_with_the_help_folded(qtbot) - 1
+    d, settings = _short_stack(qtbot, room)
+    d.options_band.change_btn.click()
+    d._toggle_hints()
+    qtbot.wait(50)
+    assert not d.options_band.is_folded() and d.mosaic_hint.isVisible()
+    assert d.height() <= room, f"{d.height()} px on a {room} px screen"
+    squeezed = d.browser.minimumHeight()
+    assert 0 < squeezed < d.browser.minimumSizeHint().height()
+    d._toggle_hints()                      # hide them again: the list gets height back
+    qtbot.wait(50)
+    assert d.height() <= room
+    assert d.browser.minimumHeight() > squeezed + 50
+
+
+def test_the_list_gets_its_own_floor_back_when_there_is_room(qtbot):
+    """The clamp lowers the frame list's floor only while the screen is short
+    of it; once the content fits again the list's own minimum returns."""
+    room = _minimum_with_the_help_folded(qtbot) + 5
+    d, _settings = _short_stack(qtbot, room)
+    d.options_band.set_folded(True)
+    d.options_band.set_folded(False)       # by hand
+    d._toggle_hints()                      # help on: more than the room
+    qtbot.wait(50)
+    assert 0 < d.browser.minimumHeight()
+    d._toggle_hints()                      # help off: fits again
+    qtbot.wait(50)
+    assert d.browser.minimumHeight() == 0
+    assert d.height() <= room
+
+
+def test_after_the_users_toggle_a_grade_still_stays_on_the_screen(qtbot):
+    """Once the user has toggled the band, the screen folds nothing -- but a
+    grade's extra lines must not carry the window past the bottom either
+    (834 px on a 648 px screen before the clamp)."""
+    room = _minimum_with_the_help_folded(qtbot) + 5
+    d, _settings = _short_stack(qtbot, room)
+    assert not d.options_band.is_folded()
+    d.options_band.set_folded(True)
+    d.options_band.set_folded(False)       # by hand: the screen is out of it
+    d._on_graded(_session())
+    qtbot.wait(50)
+    assert not d.options_band.is_folded()
+    assert d.height() <= room, f"{d.height()} px on a {room} px screen"
 
 
 # --- the Verdict column (Ruling R4 b) and the scrollbar (R4 c) ---
@@ -311,3 +367,55 @@ def test_haoiii_fits_the_1280x800_laptop_with_the_options_open(qtbot):
     assert not d.options_band.is_folded()
     assert d.minimumSizeHint().height() <= 740
     assert d.height() <= 740, f"opens {d.height()} px tall"
+
+
+# --- the output fields fill their row (Ruling R5) ---
+
+class _FieldsStayAtSizeHint(QProxyStyle):
+    """What the macOS style tells a QFormLayout: fields stay at their size
+    hint. Offscreen's Fusion lets them grow, so without this the tests below
+    would pass against the bug."""
+
+    def styleHint(self, hint, option=None, widget=None, data=None):
+        if hint == QStyle.StyleHint.SH_FormLayoutFieldGrowthPolicy:
+            return QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint.value
+        return super().styleHint(hint, option, widget, data)
+
+
+def _open_mac_form(qtbot, cls, size):
+    d = cls(Settings())
+    qtbot.addWidget(d)
+    d._mac_style = _FieldsStayAtSizeHint(QStyleFactory.create("Fusion"))
+    d.setStyle(d._mac_style)
+    if cls is StackDialog:
+        d._available_height = lambda: 4000
+    d.resize(*size)
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_graded(_session())
+    qtbot.wait(20)
+    return d
+
+
+def _shows_whole(edit) -> bool:
+    return edit.fontMetrics().horizontalAdvance(edit.text()) + 16 <= edit.width()
+
+
+@pytest.mark.parametrize("cls, field", [(StackDialog, "name_edit"),
+                                        (HaOIIIDialog, "output_edit")])
+def test_the_output_field_fills_its_row(qtbot, cls, field):
+    typical = {"name_edit": None,
+               "output_edit": "/Users/andreas/Astro/SH2-108/SH2-108_190x10s_32min_HaOIII.fits"}
+    widths = {}
+    for size in SIZES:
+        d = _open_mac_form(qtbot, cls, size)
+        edit = getattr(d, field)
+        if typical[field]:
+            edit.setText(typical[field])
+        widths[size[0]] = edit.width()
+        if size[0] == 1280:
+            assert len(edit.text()) >= len("SH2-108_190x10s_32min.fits"), edit.text()
+            assert _shows_whole(edit), (
+                f"{field} {edit.width()} px cuts {edit.text()!r} at 1280")
+        d.close()
+    assert widths[1920] > widths[1280], widths

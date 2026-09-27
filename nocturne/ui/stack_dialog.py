@@ -284,6 +284,10 @@ class StackDialog(QDialog):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         form.setVerticalSpacing(8)
+        # The macOS style keeps form fields at their size hint (~225 px under
+        # cocoa) whatever the dialog's width, which cut an automatic name like
+        # "SH2-108_204x10s_34min.fits" at the left even at 1920. Fill the row.
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
         form.addRow(self.options_band)
         form.addRow(self._help_link)
@@ -482,19 +486,22 @@ class StackDialog(QDialog):
         self._sync_exclusive()
 
     def _toggle_hints(self) -> None:
-        # An explicit click outranks the screen-height override: if the user
-        # asks for the explanations on a short screen they get them, and the
-        # dialog grows as far as the screen allows.
-        self._hints_forced_closed = False
+        # An explicit click outranks the screen's FOLD, never its EDGE: the
+        # explanations come back, and the frame list gives up the height
+        # (_clamp_to_screen). While the screen has them folded the link reads
+        # "▸", so a click there means "show" whatever the saved preference
+        # says -- toggling that preference instead hid them and saved False.
+        # The option band is not the help's to touch: it stays as it is.
+        if self._hints_forced_closed:
+            self._hints_forced_closed = False
+            self._settings.help_expanded = True
+        else:
+            self._settings.help_expanded = not self._settings.help_expanded
         self._user_laid_out = True
-        if self._band_forced_folded:
-            self._band_forced_folded = False
-            self.options_band.blockSignals(True)     # the screen's fold, not theirs
-            self.options_band.set_folded(False)
-            self.options_band.blockSignals(False)
-        self._settings.help_expanded = not self._settings.help_expanded
         self._persist_settings()
         self._apply_hints_visible()
+        if self._fitted:
+            self._keep_on_screen()
 
     def _persist_settings(self) -> None:
         # Persisted by whoever OWNS the settings, through the path the app was
@@ -515,6 +522,8 @@ class StackDialog(QDialog):
         self._band_forced_folded = False
         self._settings.frame_options_folded = folded
         self._persist_settings()
+        if self._fitted:
+            self._keep_on_screen()
 
     def _options_summary(self) -> str:
         """The folded band in one line, e.g. "Normal selection · Sigma-clipped,
@@ -600,35 +609,59 @@ class StackDialog(QDialog):
         """Fold what the screen cannot hold and bring the window back down;
         True when it folded something. Help first, then the option band —
         both for THIS window only, never saved, and never once the user has
-        toggled either here."""
-        if self._user_laid_out:
-            return False
-        room = self._available_height()
-        needed = self._settled_minimum_height()
+        toggled either here. The height clamp after them always runs."""
         squeezed = False
-        if (needed > room and getattr(self._settings, "help_expanded", True)
-                and not self._hints_forced_closed):
-            self._hints_forced_closed = True
-            self._apply_hints_visible()
-            needed = self._settled_minimum_height()
-            squeezed = True
-        # Still too tall: fold the options for THIS window too. Not saved —
-        # folded_changed is blocked — for the same reason the help is not.
-        if needed > room and not self.options_band.is_folded():
-            self.options_band.blockSignals(True)
-            self.options_band.set_folded(True)
-            self.options_band.blockSignals(False)
-            self._band_forced_folded = True
-            needed = self._settled_minimum_height()
-            squeezed = True
-
-        if squeezed:
-            # Qt already grew the window to the OLD minimum when it was shown,
-            # and it does not shrink by itself: measured 2026-09-27, the
-            # pre-layout-A dialog stayed 825 px tall on a 740 px screen after
-            # collapsing. Bring it back down to what now fits.
-            self.resize(self.width(), min(max(needed, _OPEN_HEIGHT), room))
+        if not self._user_laid_out:
+            room = self._available_height()
+            needed = self._natural_minimum_height()
+            if (needed > room and getattr(self._settings, "help_expanded", True)
+                    and not self._hints_forced_closed):
+                self._hints_forced_closed = True
+                self._apply_hints_visible()
+                needed = self._natural_minimum_height()
+                squeezed = True
+            # Still too tall: fold the options for THIS window too. Not saved —
+            # folded_changed is blocked — for the same reason the help is not.
+            if needed > room and not self.options_band.is_folded():
+                self.options_band.blockSignals(True)
+                self.options_band.set_folded(True)
+                self.options_band.blockSignals(False)
+                self._band_forced_folded = True
+                needed = self._natural_minimum_height()
+                squeezed = True
+            if squeezed:
+                # Qt already grew the window to the OLD minimum when it was
+                # shown, and it does not shrink by itself: measured 2026-09-27,
+                # the pre-layout-A dialog stayed 825 px tall on a 740 px screen
+                # after collapsing. Bring it back down to what now fits.
+                self.resize(self.width(), min(max(needed, _OPEN_HEIGHT), room))
+        self._clamp_to_screen()
         return squeezed
+
+    def _natural_minimum_height(self) -> int:
+        """The minimum with the frame list at its OWN floor, not the one
+        _clamp_to_screen may have lowered — what the content really asks for."""
+        needed = self._settled_minimum_height()
+        floor = self.browser.minimumHeight()
+        if floor > 0:
+            needed += self.browser.minimumSizeHint().height() - floor
+        return needed
+
+    def _clamp_to_screen(self) -> None:
+        """The screen's edge, which nothing outranks. The user's click can
+        overrule the screen's folds, and then the content needs more than the
+        screen has (842 px on a 642 px screen, measured offscreen 2026-09-27);
+        the frame list is the stretch area, so it is what gives up height, and
+        gets its own floor back as soon as there is room for it."""
+        room = self._available_height()
+        natural = self._natural_minimum_height()
+        own = self.browser.minimumSizeHint().height()
+        floor = 0 if natural <= room else max(1, own - (natural - room))
+        if floor != self.browser.minimumHeight():
+            self.browser.setMinimumHeight(floor)
+            self._settled_minimum_height()
+        if self.height() > room:
+            self.resize(self.width(), room)
 
     def _settled_minimum_height(self) -> int:
         """The dialog's minimum once a show/hide has reached every nested
