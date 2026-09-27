@@ -25,6 +25,7 @@ from ..stacking.capture_time import full_label, time_label
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
+from .quality_chart import QualityChart
 
 COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_ROUND, COL_BG, COL_VERDICT = range(7)
 HEADERS = ("Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict")
@@ -60,6 +61,12 @@ def verdict_text(s) -> str:
 def verdict_tooltip(s) -> str:
     """The unabbreviated verdict: the cell holds the short form."""
     return s.reason_detail or verdict_text(s)
+
+
+def is_rejected(s) -> bool:
+    """What Show Rejected, the Rejected count and the chart's amber all mean —
+    one definition, so the three cannot disagree."""
+    return bool(s.reason)
 
 
 def _tint(s) -> str:
@@ -279,9 +286,9 @@ class FrameFilterProxy(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
         s = self.sourceModel().frame(source_row)
-        if self._show == SHOW_KEPT and s.reason:
+        if self._show == SHOW_KEPT and is_rejected(s):
             return False
-        if self._show == SHOW_REJECTED and not s.reason:
+        if self._show == SHOW_REJECTED and not is_rejected(s):
             return False
         return self._extra is None or bool(self._extra(s))
 
@@ -468,6 +475,14 @@ class FrameBrowser(QWidget):
         self.list_layout = QVBoxLayout(list_side)   # delivery B adds its chart here
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.addWidget(self.view, 1)
+        # FWHM over the session (spec decision 4.6), under the list in both
+        # dialogs. Fixed height: the list is the stretch and gives it up. The
+        # list column's floor stays far under the preview's (56 + 60 against
+        # 250 px, measured offscreen 2026-09-27), so neither dialog's minimum
+        # height moves and the 1280×800 floor holds.
+        self.chart = QualityChart(verdict_text, is_rejected)
+        self.chart.point_clicked.connect(self.select_from_chart)
+        self.list_layout.addWidget(self.chart)
         preview_side = QWidget()
         pv = QVBoxLayout(preview_side)
         pv.setContentsMargins(0, 0, 0, 0)
@@ -507,6 +522,7 @@ class FrameBrowser(QWidget):
         # rather than going on showing one from the previous folder.
         place = self.view.currentIndex().row()
         self.model.set_frames(stats)
+        self.chart.set_frames(stats)
         self._update_show_counts()
         self.fit_list()
         if 0 <= place < self.proxy.rowCount():
@@ -514,6 +530,7 @@ class FrameBrowser(QWidget):
         else:
             self.preview_controller.clear()
             self._update_preview_header(-1)
+            self.chart.set_current(-1)
             if not stats:
                 # An empty list has no neighbour for Qt's selection model to
                 # land the cursor on, so nothing else fires this signal.
@@ -523,6 +540,7 @@ class FrameBrowser(QWidget):
         """Call after judge() re-ran on the same list."""
         self.model.reapply_ticks()
         self._update_show_counts()
+        self.chart.refresh()
 
     def frames(self) -> list:
         return self.model.frames()
@@ -560,7 +578,7 @@ class FrameBrowser(QWidget):
 
     def _update_show_counts(self) -> None:
         stats = self.model.frames()
-        rejected = sum(1 for s in stats if s.reason)
+        rejected = sum(1 for s in stats if is_rejected(s))
         counts = {SHOW_ALL: len(stats), SHOW_KEPT: len(stats) - rejected,
                   SHOW_REJECTED: rejected}
         names = {SHOW_ALL: "All", SHOW_KEPT: "Kept", SHOW_REJECTED: "Rejected"}
@@ -608,6 +626,18 @@ class FrameBrowser(QWidget):
         if idx.isValid():
             self.view.setCurrentIndex(idx)
 
+    def select_from_chart(self, row: int) -> None:
+        """A click on the chart: that frame, in the list. If Show hides it,
+        Show goes to All first — a click that selected nothing would read as
+        a broken chart. (Delivery C's night toggles hide through the extra
+        filter; C must lift that too.)"""
+        if not self.proxy.mapFromSource(self.model.index(row, COL_TIME)).isValid():
+            self.set_show(SHOW_ALL)
+        self.set_current_row(row)
+        idx = self.view.currentIndex()
+        if idx.isValid():
+            self.view.scrollTo(idx)
+
     # --- internals ---
     def _path_for_row(self, row: int):
         stats = self.model.frames()
@@ -621,6 +651,7 @@ class FrameBrowser(QWidget):
         else:
             self.preview_controller.clear()
         self._update_preview_header(row)
+        self.chart.set_current(row)
         self.current_changed.emit(row)
 
     def _update_preview_header(self, row: int) -> None:
