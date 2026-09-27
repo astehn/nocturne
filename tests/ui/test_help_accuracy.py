@@ -1726,3 +1726,38 @@ def test_the_fold_and_strictness_are_named_as_the_dialogs_draw_them():
         assert "<b>Strictness</b>" in b, f"{topic}: Strictness is not named"
         assert 'QLabel("strictness:")' in _src(src), f"{src}: no Strictness label"
     assert "with ▴ when" not in _body("stacking")
+
+
+def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder():
+    """Delivery B's three additions, each claim pinned to the code that makes
+    it true, so the words and the behaviour cannot drift apart."""
+    from nocturne.stacking import reject_move
+    from nocturne.ui import frame_browser, quality_chart, theme, verdict_strip
+    b = _body("stacking")
+    v = _src("nocturne/stacking/verdict.py")
+    for word in ("Good night", "Mixed night", "Poor night"):
+        assert f"<b>{word}</b>" in b and f'"{word}"' in v, word
+    assert "not a measure of the seeing" in b
+    assert f"<b>{verdict_strip.MORE_TEXT}</b>" in b
+    # the chart
+    assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
+    assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME
+    assert "drawn short" in b and "GAP_CAP" in _src("nocturne/ui/quality_chart.py")
+    # the rejected folder
+    assert f"<b>{verdict_strip.move_label(7).replace('7', 'N')}</b>" in b
+    assert f"<b>{verdict_strip.BACK_TEXT}</b>" in b
+    assert f"<b>{reject_move.MANIFEST_NAME}</b>" in b
+    assert f"<b>{frame_browser.MOVED_TEXT}</b>" in b
+    assert "Nothing is deleted" in b and "nothing is copied" in b
+    rm = _src("nocturne/stacking/reject_move.py")
+    assert "shutil" not in rm and "os.rename(" in rm
+    # "a folder you open again lists only the frames still there": not recursive
+    assert "directly inside the folder" in b
+    assert "glob.glob(os.path.join(folder, pattern))" in _src("nocturne/stacking/frames.py")
+
+
+def test_haoiii_help_mentions_the_chart_it_now_has():
+    b = _body("haoiii")
+    assert "chart under the list" in b and "<b>FWHM</b>" in b
+    assert "self.chart = QualityChart(" in _src("nocturne/ui/frame_browser.py")
+    assert "FrameBrowser(" in _src("nocturne/ui/haoiii_dialog.py")

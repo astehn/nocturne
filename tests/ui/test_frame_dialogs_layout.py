@@ -16,6 +16,7 @@ from nocturne.stacking.grade import FrameStats
 from nocturne.ui.frame_browser import COL_VERDICT
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui.option_band import WrappedNote
+from nocturne.ui.quality_chart import CHART_HEIGHT
 from nocturne.ui.stack_dialog import StackDialog
 from nocturne.ui.theme import build_stylesheet
 
@@ -191,6 +192,19 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
         "fit the taller strip for free — the row Task 6 added should have "
         "forced some fallback, the same way a taller Verdict column already did"
     )
+
+    # Delivery B: the verdict and the chart are both on screen, the verdict
+    # whole, and the list the chart took its height from still shows rows.
+    assert not d.verdict_strip.isHidden() and not d.verdict_strip.is_compact()
+    assert d.browser.chart.isVisible() and d.browser.chart.height() == CHART_HEIGHT
+    v = d.browser.view
+    assert v.viewport().height() >= 3 * v.rowHeight(0), "the list gave up every row"
+
+    def clipped():
+        return [n.text()[:30] for n in d.findChildren(WrappedNote)
+                if n.isVisible() and n.height() < n.heightForWidth(n.width()) - 1]
+
+    qtbot.waitUntil(lambda: not clipped(), timeout=2000)
 
 
 def _minimum_with_the_help_folded(qtbot, graded=False) -> int:
@@ -484,6 +498,18 @@ def test_every_column_is_on_screen_at_the_width_it_opens(qtbot, cls):
     assert pv > lst
 
 
+@pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
+@pytest.mark.parametrize("size", SIZES)
+def test_the_chart_sits_under_the_list_at_every_size(qtbot, cls, size):
+    d = _open(qtbot, cls, size)
+    b = d.browser
+    assert b.chart.isVisible() and b.chart.height() == CHART_HEIGHT
+    view_bottom = b.view.mapTo(d, b.view.rect().bottomLeft()).y()
+    assert b.chart.mapTo(d, b.chart.rect().topLeft()).y() > view_bottom
+    lst, pv = b.splitter.sizes()
+    assert pv > lst, "the chart widened the list"
+
+
 def test_the_sorted_column_gets_room_for_its_arrow(qtbot):
     """Only the sorted column reserves the arrow — so sorting by another
     column must hand the room over, or its header would be cut."""
@@ -530,6 +556,7 @@ def test_haoiii_fits_the_1280x800_laptop_with_the_options_open(qtbot):
     assert not d.options_band.is_folded()
     assert d.minimumSizeHint().height() <= 740
     assert d.height() <= 740, f"opens {d.height()} px tall"
+    assert d.browser.chart.isVisible(), "Ha/OIII lost the shared chart"
 
 
 # --- the output fields fill their row (Ruling R5) ---
