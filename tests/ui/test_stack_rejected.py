@@ -251,9 +251,13 @@ def test_reopening_offers_them_back_without_grading_them(qtbot, tmp_path):
     assert not d2.verdict_strip.back_btn.isHidden()
     d2.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: len(calls) == 2 and not d2._busy, timeout=3000)
-    assert calls[1] == paths and len(d2.browser.frames()) == 6
+    # Fix round 1, I2: only the two restored frames that weren't already
+    # listed are measured — not the whole folder, and not a re-measure of
+    # the four frames already on screen.
+    assert calls[1] == sorted(str(folder / n) for n in REJECTED)
+    assert len(d2.browser.frames()) == 6
     assert outside_rejected(tree(tmp_path)) == before
-    assert "Measuring the folder again" in d2.verdict_strip.message.text()
+    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text()
 
 
 def test_with_every_frame_moved_the_folder_still_offers_them_back(qtbot, tmp_path):
@@ -375,3 +379,124 @@ def test_the_move_acts_on_the_graded_folder_not_the_retyped_one(qtbot, tmp_path)
     assert sorted(os.listdir(folder / "rejected")) == [MANIFEST_NAME, "Light_01.fit",
                                                         "Light_03.fit"]
     assert os.listdir(other) == []
+
+
+# --- fix round 1 (review, Ruling R6) -------------------------------------------------
+
+def test_move_back_regrades_the_graded_folder_not_the_retyped_one(qtbot, tmp_path):
+    """I1: the Folder field can be retyped after grading; the frames move_back
+    restores must be measured from the folder they actually came from, and
+    the outcome message must survive that measurement, not get wiped by a
+    'folder changed' clear meant for an actual folder switch."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()
+    other = tmp_path / "Other"
+    other.mkdir()
+    for i in range(3):
+        (other / f"O_{i}.fit").write_bytes(b"x" * 100)
+    calls = []
+    d2, _ = _graded(qtbot, folder, runner=_runner(calls=calls))
+    d2.folder_edit.setText(str(other))          # retyped, not graded
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: len(calls) == 2 and not d2._busy, timeout=3000)
+    assert calls[1] == sorted(str(folder / n) for n in REJECTED), (
+        "regraded the retyped folder instead of the graded one")
+    assert not any(str(other) in p for p in calls[1])
+    assert "Measuring 2 frames that came back" in d2.verdict_strip.message.text()
+
+
+def test_move_back_keeps_hand_ticks_while_restoring_an_earlier_session(qtbot, tmp_path):
+    """I2: a partial re-grade of only the newly-restored frames must not
+    disturb a hand tick already made on a frame that was already listed."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()               # Light_01, Light_03 -> rejected/
+    # d2 grades the 4 remaining subs with a DIFFERENT grader verdict, so he
+    # has something to overrule by hand: Light_02 rejected, Light_04 kept.
+    d2, _ = _graded(qtbot, folder, runner=_runner(
+        rejected=("Light_01.fit", "Light_03.fit", "Light_02.fit")))
+    b = d2.browser
+    names = [os.path.basename(s.path) for s in d2._stats]
+    b.set_checked(names.index("Light_02.fit"), True)     # ticked back in by hand
+    b.set_checked(names.index("Light_04.fit"), False)    # unticked by hand
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    after = {os.path.basename(s.path): s.included for s in d2._stats}
+    assert after["Light_02.fit"] is True, "the hand tick to keep it was lost"
+    assert after["Light_04.fit"] is False, "the hand tick to drop it was lost"
+    listed = {os.path.basename(s.path) for s in d2._stats}
+    assert listed == {f"Light_{i:02d}.fit" for i in range(6)}, "the restored frames "\
+        "did not appear"
+    assert len(d2.browser.frames()) == 6
+
+
+def test_a_known_damaged_record_refuses_before_asking(qtbot, tmp_path):
+    """m3: pending_back already raised while grading (that is why the back
+    button stayed hidden — see test_a_damaged_record_is_reported_and_nothing_moves).
+    Move must refuse the SAME way, before asking, not after he has already
+    said yes to a move that cannot happen."""
+    folder, _paths = _folder(tmp_path)
+    (folder / "rejected").mkdir()
+    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json")
+    before = tree(tmp_path)
+    d, asked = _graded(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    assert asked == [], "asked him to move although the record is known damaged"
+    assert tree(tmp_path) == before
+    assert "damaged" in d.verdict_strip.message.text()
+
+
+def test_the_damaged_message_clears_once_the_record_is_fixed(qtbot, tmp_path):
+    """m4: the folder never changes when he fixes the record by hand and
+    measures again, so the 'folder changed' clear in grade()/_on_graded never
+    fires — without its own fix the complaint sat there forever."""
+    folder, _paths = _folder(tmp_path)
+    (folder / "rejected").mkdir()
+    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json")
+    d, _ = _graded(qtbot, folder)
+    assert "damaged" in d.verdict_strip.message.text()
+    os.unlink(folder / "rejected" / MANIFEST_NAME)
+    d.grade()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    assert "damaged" not in d.verdict_strip.message.text()
+
+
+def test_a_frame_deleted_from_rejected_by_hand_is_dropped_not_left_moved(qtbot, tmp_path):
+    """m6: move_back cannot find this name anywhere — not in rejected/, not
+    at home — because it was deleted by hand. The row must stop describing a
+    moved frame that points at a file which no longer exists anywhere."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    os.unlink(folder / "rejected" / "Light_01.fit")     # gone, not just moved back
+    before = [os.path.basename(s.path) for s in d._stats]
+    d.verdict_strip.back_btn.click()
+    after = [os.path.basename(s.path) for s in d._stats]
+    assert "Light_01.fit" in before
+    assert "Light_01.fit" not in after, "still listed as a moved frame pointing at nothing"
+    assert len(after) == len(before) - 1
+    assert (folder / "Light_03.fit").exists()          # the OTHER restored frame: fine
+    assert "no longer in rejected" in d.verdict_strip.message.text()
+
+
+def test_ask_yes_no_defaults_to_cancel(qtbot, tmp_path, monkeypatch):
+    """m8: proven at the real QMessageBox seam, not just through the
+    injectable `_confirm` every other test in this file answers through."""
+    from PySide6.QtWidgets import QMessageBox
+
+    got = {}
+
+    def fake_question(parent, title, text, buttons, default):
+        got.update(title=title, text=text, buttons=buttons, default=default)
+        return QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+    folder, _paths = _folder(tmp_path)
+    before = tree(tmp_path)
+    d, _ = _graded(qtbot, folder)
+    d._confirm = d._ask_yes_no          # the real seam, not the test's own override
+    d.verdict_strip.move_btn.click()
+    assert got["default"] == QMessageBox.StandardButton.Cancel
+    assert got["buttons"] & QMessageBox.StandardButton.Yes
+    assert tree(tmp_path) == before

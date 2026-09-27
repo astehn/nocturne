@@ -107,10 +107,15 @@ class JobQueue(QObject):
         """True if a foreground stack anywhere in the app must not start —
         this job (or the next one in line) may still be writing a file a
         fresh dialog's own output-path guess could collide with. See
-        StackDialog's `queue_busy`, the only consumer: `_set_busy`/mosaic
-        already keep two clicks on ONE dialog from racing each other, but a
-        FRESH StackDialog starts with `_busy = False` and knows nothing about
-        this queue on its own."""
+        StackDialog's `queue_busy`, passed in at construction with TWO
+        consumers: `_set_busy`/mosaic already keep two clicks on ONE dialog
+        from racing each other, but a FRESH StackDialog starts with
+        `_busy = False` and knows nothing about this queue on its own — that
+        is the first consumer. The second is `_move_rejected`/`_move_back`:
+        a queued or running background stack may still be READING the very
+        subs a move would rename out from under it, which is a different
+        hazard from the output-path race above and needs the same "is
+        anything else touching this folder" answer."""
         return self._running is not None or any(
             j.state == "queued" for j in self._jobs)
 

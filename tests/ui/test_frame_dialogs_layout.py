@@ -97,6 +97,36 @@ def test_folding_gives_the_list_the_height(qtbot, cls):
     qtbot.waitUntil(lambda: d.browser.height() > before + 40, timeout=2000)
 
 
+def _uniform_session(n=254):
+    """The same shape as `_session()` — count, exposure, target, capture
+    times — but with NOTHING for judge() to reject: uniform FWHM and
+    elongation, no soft or trailed run. Used only to isolate whether a
+    layout decision follows from the "Move N frames to rejected/…" row
+    specifically, by comparing against a session that never shows it."""
+    stats = []
+    for i in range(n):
+        s = FrameStats(f"/x/Light_SH2-108_10.0s_LP_{i:04d}.fit", 1200 - i % 50,
+                       2.5, 0.02, 0.5, True, elongation=1.10, exposure=10.0,
+                       target="SH2-108")
+        s.captured = T0 + timedelta(seconds=11 * i)
+        stats.append(s)
+    return stats
+
+
+def _fit_at_740(qtbot, session):
+    settings = Settings()
+    settings.help_expanded = True
+    d = StackDialog(settings)
+    qtbot.addWidget(d)
+    d._available_height = lambda: 740
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_graded(session)
+    qtbot.wait(50)                   # let any late layout pass land
+    return d, settings
+
+
 def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     """The floor this app targets: 800 px of screen, 740 of it usable
     (_available_height's own margin). With the explanations on, the band is
@@ -114,19 +144,39 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     had for a taller band, is the correct next step, not a regression. What
     must still hold is the floor itself: on screen, and the preview usable.
     """
-    settings = Settings()
-    settings.help_expanded = True
-    d = StackDialog(settings)
-    qtbot.addWidget(d)
-    d._available_height = lambda: 740
-    d.resize(1280, 700)
-    d.show()
-    qtbot.waitExposed(d)
-    d._on_graded(_session())
-    qtbot.wait(50)                   # let any late layout pass land
+    d, settings = _fit_at_740(qtbot, _session())
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
     assert d.preview.height() >= 220
+    assert d.verdict_strip.move_btn.isVisible(), "fixture lost its rejects"
     assert settings.help_expanded is True, "the screen must not rewrite the preference"
+
+    # Fix round 1, m5: the measured relation, not a fixed expectation that a
+    # pixel count would silently re-freeze. `_minimum_with_the_help_folded`
+    # (a fresh, unclamped dialog) and a same-dialog before/after toggle were
+    # both tried and both mismeasure here: the first is offscreen-font-
+    # sensitive across a SEPARATE widget tree (732 to 766 px for the
+    # identical session across runs, measured 2026-09-27 — see CLAUDE.md,
+    # "these assert RELATIONS... never pixel values"), and the second is
+    # thrown off by `_clamp_to_screen` already having shrunk THIS dialog's
+    # own list floor once verdict-compact made it fit — recomputing after
+    # toggling folds back only replays that already-baked-in shrink. The
+    # relation that survives both traps: build a SECOND dialog, same
+    # settings and room, whose session has nothing to move (so the row this
+    # fix is about never appears) — it must not need the options band folded
+    # to fit, proving THIS test's fold is because of the row Task 6 added,
+    # not a habit `_keep_on_screen` always reaches for regardless.
+    kept, _ = _fit_at_740(qtbot, _uniform_session())
+    assert not kept.verdict_strip.move_btn.isVisible(), "fixture rejected a frame"
+    assert kept.height() <= 740
+    assert not kept.options_band.is_folded() and not kept.verdict_strip.is_compact(), (
+        "folded or compacted something although nothing needed the row Task 6 added")
+    # The row itself costs real height (spec decision 7 gave it a full
+    # button, not a footnote), so fitting the SAME screen alongside it must
+    # have cost something the reject-free dialog above never needed to pay.
+    assert d.options_band.is_folded() or d.verdict_strip.is_compact(), (
+        "fit the taller strip for free — the row Task 6 added should have "
+        "forced some fallback, the same way a taller Verdict column already did"
+    )
 
 
 def _minimum_with_the_help_folded(qtbot, graded=False) -> int:

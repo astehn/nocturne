@@ -197,6 +197,12 @@ class StackDialog(QDialog):
         self.verdict_strip.move_requested.connect(self._move_rejected)
         self.verdict_strip.back_requested.connect(self._move_back)
         self._confirm = self._ask_yes_no
+        # True once a disk check has reported the record damaged, so the NEXT
+        # successful check knows to clear that specific complaint (fix round
+        # 1, m4) rather than blindly wiping every message a disk check might
+        # run alongside — "Moved N frames back" must NOT disappear the moment
+        # the routine back-count check that follows it happens to succeed.
+        self._damaged_folder = False
 
         # Layout A: ONE band of three groups between Folder and the output —
         # Frames · Combine · Result (spec §2.1). Each control still says what
@@ -825,10 +831,18 @@ class StackDialog(QDialog):
             if mosaic else "")
 
     # --- grade ---
-    def grade(self) -> None:
+    def grade(self, folder: str | None = None) -> None:
+        """Measure every sub in `folder`, or in the Folder field's text when
+        `folder` is omitted. A caller that already knows which folder it
+        means — Move them back re-measuring frames that came back from an
+        earlier session — must pass it: the field can have been retyped
+        since grading (fix round 1, I1), and reading it here silently
+        measured whatever the user happened to be typing instead of the
+        folder the frames actually live in."""
         if self._busy:
             return
-        folder = self.folder_edit.text().strip()
+        if folder is None:
+            folder = self.folder_edit.text().strip()
         paths = discover_subs(folder) if folder else []
         if not paths:
             # Forget the last folder's grade. Its frames stayed listed and
@@ -844,7 +858,11 @@ class StackDialog(QDialog):
             # Everything moved into rejected/ leaves no subs at the top — and
             # that is exactly when "Move them back" must still be offered.
             self._sync_reject_buttons(check_disk=True)
-            self.browser.set_frames([])
+            # The SAME list object as self._stats (empty here, but a later
+            # Move them back extends it in place — see _on_restored_graded —
+            # and that only reaches this dialog's own `_stats` if the two
+            # were never allowed to become two different empty lists here).
+            self.browser.set_frames(self._stats)
             self._update_drizzle_note()
             self.scan_pointings()          # no paths: mosaic off and disabled
             if not self._name_is_manual:
@@ -941,7 +959,15 @@ class StackDialog(QDialog):
 
     def _sync_reject_buttons(self, check_disk: bool = False) -> None:
         """The move count follows the ticks. The back count reads the folder,
-        so only after a grade or a move — never on every tick."""
+        so only after a grade or a move — never on every tick. A successful
+        check clears a stale "damaged" message (fix round 1, m4) — but ONLY
+        that one: the folder never changes when he fixes the record by hand
+        and measures again, so the "folder changed" clear in
+        grade()/_on_graded never fires, and the complaint used to sit there
+        forever after the thing it complained about was gone. Clearing every
+        message a successful check happened to run alongside would be worse —
+        it would erase "Moved N frames back" the moment the routine back-count
+        check right after it succeeds, which is every time."""
         self.verdict_strip.set_move_count(len(self._frames_to_move()))
         if not check_disk:
             return
@@ -951,8 +977,13 @@ class StackDialog(QDialog):
                 back = len(pending_back(self._graded_folder))
             except RejectMoveError as exc:
                 self.verdict_strip.set_message(str(exc))
+                self._damaged_folder = True
             except OSError:
                 back = 0            # an unreadable folder: nothing to offer
+            else:
+                if self._damaged_folder:
+                    self.verdict_strip.set_message("")
+                self._damaged_folder = False
         self.verdict_strip.set_back_count(back)
 
     def _ask_yes_no(self, title: str, text: str) -> bool:
@@ -972,12 +1003,34 @@ class StackDialog(QDialog):
         return self._queue_busy is not None and bool(self._queue_busy())
 
     def _move_rejected(self) -> None:
+        # Only one move (or move-back) may run at a time (Task 2 finding m3:
+        # two moves at once on one folder can lose manifest entries). This is
+        # what makes that safe WITHOUT a lock file: the rename itself runs on
+        # the GUI thread — see `move_to_rejected`, called straight from here
+        # rather than through `_start`/the thread pool — and `self._confirm`'s
+        # modal dialog blocks the whole event loop while it is up, so nothing
+        # else on this thread can start a second move while the first is
+        # still being asked about or still renaming. Moving the rename
+        # off-thread (to keep a big folder from freezing the UI) would break
+        # this guarantee and reopen the entries-lost bug the busy/queue
+        # checks below cannot catch by themselves — a real fix would need an
+        # actual lock, not just "the callbacks happen to be serialised".
         if self._busy or not self._stats or not self._graded_folder:
             return
         if self._queue_is_reading():
             self._say("A background stack is running and may be reading these "
                       "frames — move them once it has finished.")
             return
+        try:
+            pending_back(self._graded_folder)
+        except RejectMoveError as exc:
+            # A known-damaged record (fix round 1, m3): refuse before asking,
+            # not after he has already said yes to a move that cannot happen.
+            self._say(str(exc))
+            self._damaged_folder = True
+            return
+        except OSError:
+            pass
         frames = self._frames_to_move()
         if not frames:
             return
@@ -1005,6 +1058,8 @@ class StackDialog(QDialog):
                   "Nothing was deleted.")
 
     def _move_back(self) -> None:
+        # See the comment in _move_rejected: the same "one move at a time"
+        # guarantee applies here, for the same reason.
         if self._busy or not self._graded_folder:
             return
         if self._queue_is_reading():
@@ -1018,23 +1073,70 @@ class StackDialog(QDialog):
             self._say(str(exc))
             return
         home = set(result.restored) | set(result.already_back)
+        missing = set(result.missing)
         listed = set()
         for s in self._stats:
             name = os.path.basename(s.path)
             listed.add(name)
             if s.moved and name in home:
                 s.path, s.moved = os.path.join(folder, name), False
+        # Fix round 1, m6: a name move_back could not find anywhere — not in
+        # rejected/, not at home, deleted by hand — must stop being listed as
+        # a moved frame pointing at a file that no longer exists anywhere.
+        self.browser.remove_frames(lambda s: s.moved and os.path.basename(s.path) in missing)
         self.browser.frames_moved()
+        self._stats = self.browser.frames()   # keep in sync — see grade()'s no-paths branch
         unlisted = [n for n in result.restored if n not in listed]
         self._sync_reject_buttons(check_disk=True)
-        self._say(self._back_message(result, bool(unlisted)))
+        self._say(self._back_message(result, unlisted))
         if unlisted:
-            # Frames moved in an earlier session came back: they were never
-            # graded in this window, so measure the folder again to list them.
-            self.grade()
+            # Frames restored from an earlier session: never graded in THIS
+            # window. Fix round 1, I1+I2: this used to call self.grade() with
+            # no folder, which read the FOLDER FIELD (wrong once retyped) and
+            # re-measured the WHOLE folder, silently resetting every hand
+            # tick already made on what was already listed. Grade only the
+            # names that are actually new, off-thread like any other grade,
+            # and merge them in without touching an existing row.
+            self._grade_restored(folder, unlisted)
+
+    def _grade_restored(self, folder: str, names: list[str]) -> None:
+        """Off-thread, exactly like grade(), but for just the frames
+        `_move_back` found restored and not already listed — see the comment
+        there for why this replaced a full self.grade() (fix round 1, I2)."""
+        paths = [os.path.join(folder, n) for n in names]
+        runner = self._grade_runner
+        strictness = self.strictness_box.currentText().lower()
+
+        def work():
+            return runner(paths, on_progress=lambda i, n, name:
+                          self._signals.progress.emit(i, n, "grading"),
+                          strictness=strictness)
+
+        self._start(work, self._on_restored_graded,
+                    "Measuring the frames that came back…")
+
+    def _on_restored_graded(self, new_stats) -> None:
+        self._active_token = None
+        self._set_busy(False)
+        self.browser.add_frames(new_stats)
+        self._stats = self.browser.frames()    # keep in sync — see _move_back
+        # Re-judge the MERGED list — a session-relative gate needs the whole
+        # set — then restore every hand tick judge() just overwrote:
+        # reapply_ticks() is the exact mechanism _rejudge already relies on
+        # for a Strictness move, and it works here for the same reason: the
+        # newly-added rows were never hand-touched, so judge()'s fresh
+        # verdict is simply what stands for them.
+        judge(self._stats, self.strictness_box.currentText().lower())
+        self.browser.refresh_verdicts()
+        self._update_verdict()
+        self._sync_reject_buttons(check_disk=True)
+        self.status.setText(self._selection_summary())
+        self._auto_output_path()
+        if self._fitted:
+            self._keep_on_screen()
 
     @staticmethod
-    def _back_message(result, regrading: bool) -> str:
+    def _back_message(result, unlisted: list[str] = ()) -> str:
         def count(n):
             return f"{n} {'frame' if n == 1 else 'frames'}"
 
@@ -1056,8 +1158,9 @@ class StackDialog(QDialog):
                          "longer in rejected.")
         if result.failed:
             parts.append(result.failed)
-        if regrading:
-            parts.append("Measuring the folder again so they are listed.")
+        if unlisted:
+            parts.append(f"Measuring {count(len(unlisted))} that came back so "
+                         "they are listed.")
         return " ".join(parts) or "Nothing to move back."
 
     def _auto_output_path(self) -> None:

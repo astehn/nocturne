@@ -176,6 +176,37 @@ class FrameTableModel(QAbstractTableModel):
     def touched(self) -> set[int]:
         return set(self._overrides)
 
+    def add_frames(self, new_stats: list) -> None:
+        """Append frames graded AFTER the fact — Stack's "Move them back"
+        merging in subs restored from an earlier session (Task 6 fix round 1,
+        I2) — without disturbing a single existing row. `set_frames` would
+        clear `_overrides` and re-measure everything already listed, which is
+        exactly the bug: a hand tick on an existing frame lived only in
+        `_overrides`, so a full reset silently threw it away. Existing rows
+        keep their index here, so `_overrides` still points at the same
+        frames afterward."""
+        if not new_stats:
+            return
+        first = len(self._stats)
+        self.beginInsertRows(QModelIndex(), first, first + len(new_stats) - 1)
+        self._stats.extend(new_stats)
+        self.endInsertRows()
+
+    def remove_frames(self, predicate) -> None:
+        """Drop every frame `predicate(stat)` accepts — Task 6 fix round 1,
+        m6: a name `move_back` could not find anywhere (deleted from
+        rejected/ by hand) must stop describing a frame that is nowhere, not
+        go on reading `moved=True` against a path that no longer exists.
+        Removed highest index first so the row numbers of everything else —
+        and so `_overrides`, keyed by row — stay valid throughout."""
+        rows = sorted((i for i, s in enumerate(self._stats) if predicate(s)), reverse=True)
+        for row in rows:
+            self.beginRemoveRows(QModelIndex(), row, row)
+            del self._stats[row]
+            self._overrides = {(r - 1 if r > row else r): v
+                               for r, v in self._overrides.items() if r != row}
+            self.endRemoveRows()
+
     # --- ticks ---
     def set_ticked(self, rows, checked: bool) -> None:
         """A tick the USER made. It is remembered, so a re-judge (Strictness
@@ -579,6 +610,25 @@ class FrameBrowser(QWidget):
         self._update_preview_header(row)
         if row >= 0:
             self.preview_controller.show_row(row)
+
+    def add_frames(self, new_stats: list) -> None:
+        """Merge newly graded frames in without touching what is already
+        listed (Task 6 fix round 1, I2) — Show, counts and chart pick up the
+        addition; the preview and current row are untouched since nothing
+        about the EXISTING rows moved."""
+        if not new_stats:
+            return
+        self.model.add_frames(new_stats)
+        self._update_show_counts()
+        self.chart.refresh()
+
+    def remove_frames(self, predicate) -> None:
+        """Drop rows `predicate(stat)` accepts (Task 6 fix round 1, m6);
+        follow with `frames_moved()` if other frames also changed home in the
+        same pass, so rows/Show/counts/chart/preview all settle together."""
+        self.model.remove_frames(predicate)
+        self._update_show_counts()
+        self.chart.refresh()
 
     def add_above_list(self, widget: QWidget) -> None:
         """A host's own strip over the list, in the list's column: Stack's
