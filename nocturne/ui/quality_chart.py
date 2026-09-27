@@ -13,7 +13,7 @@ from datetime import timedelta
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from ..stacking.capture_time import full_label
@@ -167,6 +167,32 @@ class QualityChart(QWidget):
                 return
         super().mousePressEvent(e)
 
+    def _draw_note(self, p: QPainter, font: QFont) -> None:
+        """The caption's own "●" must read as REJECTED_COLOUR — the list dims
+        a rejected row, but a dimmed ● in the legend would describe the wrong
+        colour for the dots the chart actually paints. Painted in segments,
+        each measured against the one before it, since QPainter has no
+        per-run colour within one drawText call."""
+        note = self.note()
+        top, height = 1.0, _TOP - 2
+        right = max(1.0, self.width() - _RIGHT)
+        fm = QFontMetrics(font)
+        before, _dot, after = note.partition("●")
+        x = _LEFT
+        p.setPen(QColor(theme.TEXT_DIM))
+        p.drawText(QRectF(x, top, max(1.0, right - x), height),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, before)
+        if not _dot:
+            return
+        x += fm.horizontalAdvance(before)
+        p.setPen(QColor(REJECTED_COLOUR))
+        p.drawText(QRectF(x, top, max(1.0, right - x), height),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, _dot)
+        x += fm.horizontalAdvance(_dot)
+        p.setPen(QColor(theme.TEXT_DIM))
+        p.drawText(QRectF(x, top, max(1.0, right - x), height),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, after)
+
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -174,9 +200,7 @@ class QualityChart(QWidget):
         font = QFont(self.font())
         font.setPixelSize(10)
         p.setFont(font)
-        p.setPen(QColor(theme.TEXT_DIM))
-        p.drawText(QRectF(_LEFT, 1.0, max(1.0, self.width() - _LEFT - _RIGHT), _TOP - 2),
-                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self.note())
+        self._draw_note(p, font)
         pts = self._positions()
         if len(pts) >= 2:
             p.setPen(QPen(QColor(KEPT_COLOUR), 1.0))

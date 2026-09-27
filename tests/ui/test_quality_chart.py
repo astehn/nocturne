@@ -21,6 +21,7 @@ from nocturne.ui.quality_chart import (CHART_HEIGHT, KEPT_COLOUR, NOTE_NO_TIME,
                                        NOTE_TIME, REJECTED_COLOUR, RING_RADIUS,
                                        QualityChart)
 from nocturne.ui.stack_dialog import StackDialog
+from nocturne.ui.theme import build_stylesheet
 
 T0 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
 
@@ -162,6 +163,27 @@ def test_rejected_points_are_amber_and_kept_ones_blue(qtbot):
     assert b.chart.point_colour(0) == KEPT_COLOUR
     assert _close(_pixel(b.chart, b.chart.point_pos(2)), theme.WARNING)
     assert _close(_pixel(b.chart, b.chart.point_pos(0)), theme.ACCENT)
+
+
+def test_the_caption_bullet_is_amber_not_grey(qtbot):
+    """Fix round 1 (Ruling R5): the note reads "...— ● rejected" — the ●
+    must be REJECTED_COLOUR, not the caption's own TEXT_DIM grey, or the
+    legend describes the wrong colour for the dots the chart actually
+    paints. Rendered under the real stylesheet, as the app would show it."""
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        b = _shown(qtbot, _night())
+        img = b.chart.grab().toImage()
+        # The caption text sits in y 1..15; rows 2..12 are inside its ink but
+        # clear of a softest-frame dot's anti-aliased top edge, which can
+        # bleed up to y~15 when it sits right under the caption.
+        found = any(_close(QColor(img.pixel(x, y)), theme.WARNING, tol=60)
+                    for y in range(2, 13) for x in range(min(300, img.width())))
+        assert found
+    finally:
+        app.setStyleSheet(before)
 
 
 def test_the_current_frame_is_ringed(qtbot):

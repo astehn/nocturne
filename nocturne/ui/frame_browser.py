@@ -70,7 +70,7 @@ def is_rejected(s) -> bool:
 
 
 def _tint(s) -> str:
-    if s.reason:
+    if is_rejected(s):
         return theme.TEXT_FAINT        # rejected: dimmed
     if s.warning:
         return theme.WARNING           # kept with a warning: amber
