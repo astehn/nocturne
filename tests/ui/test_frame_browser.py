@@ -298,3 +298,79 @@ def test_timeless_frames_sort_last_in_descending_order_too(qtbot):
     rows = b.view_rows()
     assert rows[-1] == 6, f"the timeless frame moved to the front: {rows}"
     assert rows[:-1] == [5, 4, 0, 2, 1, 3], "dated frames are not latest-first"
+
+
+# --- Task 3: the divider, bigger preview, Space, width ----------------------
+
+@pytest.fixture
+def styled():
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    yield
+    app.setStyleSheet(before)
+
+
+@pytest.mark.parametrize("use_style", [False, True])
+def test_the_divider_is_wide_enough_to_hit(qtbot, request, use_style):
+    """"Very hard to grab" (Andreas, 2026-09-27). Checked under the real
+    stylesheet too: a QSplitter::handle rule would override handleWidth."""
+    if use_style:
+        request.getfixturevalue("styled")
+    b = _shown(qtbot, _session())
+    assert b.splitter.handle(1).width() >= 10
+
+
+def test_the_divider_is_drawn_not_just_wide(qtbot):
+    b = _shown(qtbot, _session())
+    img = b.splitter.handle(1).grab().toImage()
+    faint = QColor(fb.theme.TEXT_FAINT).rgb()
+    dots = sum(1 for x in range(img.width()) for y in range(img.height())
+               if img.pixel(x, y) == faint)
+    assert dots >= 20, "the grip is invisible"
+
+
+def test_the_list_is_only_as_wide_as_its_columns(qtbot):
+    b = _shown(qtbot, _session(), width=1920)
+    assert b.splitter.sizes()[0] == b.list_natural_width()
+
+
+def test_bigger_preview_narrows_the_list_to_time_and_verdict(qtbot):
+    b = _shown(qtbot, _session())
+    before = b.splitter.sizes()
+    qtbot.mouseClick(b.bigger_btn, Qt.MouseButton.LeftButton)
+    hidden = {c for c in range(len(fb.HEADERS)) if b.view.isColumnHidden(c)}
+    assert hidden == set(fb.DETAIL_COLUMNS)
+    assert {fb.COL_USE, fb.COL_TIME, fb.COL_VERDICT}.isdisjoint(hidden)
+    assert b.splitter.sizes()[0] < before[0] and b.splitter.sizes()[1] > before[1]
+    qtbot.mouseClick(b.bigger_btn, Qt.MouseButton.LeftButton)
+    assert not any(b.view.isColumnHidden(c) for c in range(len(fb.HEADERS)))
+    assert b.splitter.sizes() == before, "the second click did not restore the list"
+
+
+@pytest.mark.parametrize("col", [fb.COL_USE, fb.COL_TIME, fb.COL_VERDICT])
+def test_space_ticks_the_current_frame_once_from_any_column(qtbot, col):
+    """Qt's own Space only toggles on the checkbox cell; from Time or Verdict
+    it did nothing. On the checkbox cell it must not toggle twice."""
+    stats = _session()
+    b = _shown(qtbot, stats)
+    b.set_current_row(4)
+    b.view.setCurrentIndex(b.proxy.index(b.view.currentIndex().row(), col))
+    b.view.setFocus()
+    _key(b.view, Qt.Key.Key_Space, " ")
+    assert stats[4].included is False and 4 in b.user_touched
+    _key(b.view, Qt.Key.Key_Space, " ")
+    assert stats[4].included is True
+
+
+def test_space_does_not_tick_an_error_frame(qtbot):
+    """Space reaches ticking through the same set_checked() path a click
+    does, so it must be turned away by the same rule: an error frame (a
+    stacked master or an unreadable sub) is never a candidate to tick in."""
+    stats = _session() + [_error_frame(0, "not_raw")]
+    b = _shown(qtbot, stats)
+    b.set_current_row(6)
+    b.view.setFocus()
+    _key(b.view, Qt.Key.Key_Space, " ")
+    assert stats[6].included is False, "Space ticked an error frame in"

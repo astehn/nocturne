@@ -15,10 +15,11 @@ from typing import Callable
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSortFilterProxyModel,
                             Qt, Signal)
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QHeaderView, QLabel, QPushButton, QSplitter,
-                               QTableView, QVBoxLayout, QWidget)
+                               QSplitterHandle, QTableView, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label, time_label
 from . import theme
@@ -29,6 +30,20 @@ COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_ROUND, COL_BG, COL_VERDICT = range(7
 HEADERS = ("Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict")
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
+
+# What "bigger preview" hides: the measurements. Use stays — it IS the tick, and
+# a list you cannot tick from is a list you have to widen again to use.
+DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
+
+# The divider's hit area. Qt's default on macOS is 1 px of visible line inside a
+# few px of target — Andreas, 2026-09-27: "very hard to grab". The spec's floor
+# is 10; 12 leaves room for the painted grip to sit centred.
+GRIP_WIDTH = 12
+# The list's share of the splitter is capped so the preview always gets the
+# larger half, whatever the Verdict strings measure (spec §2.4.7). Load-bearing
+# at 1280: with his session's longest verdicts the list's natural width is more
+# than half (mutating this to 0.95 fails the 1280 layout test in Task 8).
+LIST_MAX_SHARE = 0.45
 
 
 def verdict_text(s) -> str:
@@ -283,8 +298,46 @@ class FrameFilterProxy(QSortFilterProxyModel):
         return lk < rk
 
 
+class _FrameTable(QTableView):
+    """Space ticks the current frame from ANY column. Qt's own Space only
+    toggles when the current cell is the checkbox itself, and after a click on
+    Time or Verdict it is not."""
+
+    space_pressed = Signal()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Space and not event.modifiers():
+            self.space_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class _GripHandle(QSplitterHandle):
+    """A divider you can see: dotted bars centred in the handle."""
+
+    def paintEvent(self, _event) -> None:
+        p = QPainter(self)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme.TEXT_FAINT))
+        x = self.width() // 2 - 1
+        top = self.height() // 2 - 20
+        for y in range(top, top + 40, 5):
+            p.drawRoundedRect(x - 1, y, 4, 2, 1, 1)
+        p.end()
+
+
+class GripSplitter(QSplitter):
+    def __init__(self, orientation, parent=None) -> None:
+        super().__init__(orientation, parent)
+        self.setHandleWidth(GRIP_WIDTH)
+
+    def createHandle(self) -> QSplitterHandle:
+        return _GripHandle(self.orientation(), self)
+
+
 class FrameBrowser(QWidget):
-    """List (left) + preview (right), with Show/Select/sort.
+    """List (left) + preview (right) behind one grip, with Show/Select/sort.
 
     Rows in this class's API are SOURCE rows — indices into the host's list —
     whatever the view's current sort or filter.
@@ -300,7 +353,7 @@ class FrameBrowser(QWidget):
         self.proxy.setSourceModel(self.model)
         self.model.ticks_changed.connect(self._on_ticks_changed)
 
-        self.view = QTableView()
+        self.view = _FrameTable()
         self.view.setModel(self.proxy)
         self.view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -313,6 +366,7 @@ class FrameBrowser(QWidget):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         # Verdict takes what the list is given and elides; its long form is on hover.
         hdr.setSectionResizeMode(COL_VERDICT, QHeaderView.ResizeMode.Stretch)
+        self.view.space_pressed.connect(self._toggle_current)
         self.view.selectionModel().currentRowChanged.connect(
             lambda cur, _prev: self._on_current(cur))
 
@@ -352,10 +406,17 @@ class FrameBrowser(QWidget):
         self.preview_name.setObjectName("stepExplainer")
         self.preview_facts = QLabel("")
         self.preview_facts.setObjectName("stepExplainer")
+        self.bigger_btn = QToolButton()
+        self.bigger_btn.setText("⇤ bigger preview")
+        self.bigger_btn.setCheckable(True)
+        self.bigger_btn.setToolTip("Narrow the list to Time and Verdict; click "
+                                   "again to bring the columns back")
+        self.bigger_btn.toggled.connect(self.set_bigger_preview)
         head = QHBoxLayout()
         head.setContentsMargins(4, 0, 4, 0)
         head.addWidget(self.preview_name, 1)
         head.addWidget(self.preview_facts)
+        head.addWidget(self.bigger_btn)
 
         list_side = QWidget()
         self.list_layout = QVBoxLayout(list_side)   # delivery B adds its chart here
@@ -367,7 +428,7 @@ class FrameBrowser(QWidget):
         pv.addLayout(head)
         pv.addWidget(self.preview, 1)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter = GripSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(list_side)
         self.splitter.addWidget(preview_side)
         # The PREVIEW absorbs extra width now, the reverse of before: the list
@@ -381,6 +442,7 @@ class FrameBrowser(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.addLayout(show_row)
         root.addWidget(self.splitter, 1)
+        self._sizes_before_bigger: list[int] | None = None
         self._update_show_counts()
 
     def _link(self, text, slot) -> QPushButton:
@@ -400,6 +462,7 @@ class FrameBrowser(QWidget):
         place = self.view.currentIndex().row()
         self.model.set_frames(stats)
         self._update_show_counts()
+        self.fit_list()
         if 0 <= place < self.proxy.rowCount():
             self.view.setCurrentIndex(self.proxy.index(place, COL_TIME))
         else:
@@ -528,5 +591,52 @@ class FrameBrowser(QWidget):
                  f"{s.star_count} stars", f"FWHM {s.fwhm:.1f}"]
         self.preview_facts.setText(" · ".join(f for f in facts if f))
 
+    def _toggle_current(self) -> None:
+        row = self.current_row()
+        if row >= 0:
+            self.set_checked(row, not self.is_checked(row))
+
     def _on_ticks_changed(self) -> None:
         self.selection_changed.emit()
+
+    # --- width ---
+    def list_natural_width(self) -> int:
+        """What the visible columns need, plus the frame and a scrollbar."""
+        hdr = self.view.horizontalHeader()
+        total = 0
+        for col in range(len(HEADERS)):
+            if self.view.isColumnHidden(col):
+                continue
+            total += max(self.view.sizeHintForColumn(col), hdr.sectionSizeHint(col))
+        return (total + self.view.verticalScrollBar().sizeHint().width()
+                + 2 * self.view.frameWidth())
+
+    def fit_list(self) -> None:
+        """Give the list what its columns need, capped, and the preview the rest."""
+        total = sum(self.splitter.sizes()) or self.splitter.width()
+        if total <= 0:
+            return
+        want = min(self.list_natural_width(), int(total * LIST_MAX_SHARE))
+        self.splitter.setSizes([want, total - want])
+
+    def set_bigger_preview(self, on: bool) -> None:
+        if self.bigger_btn.isChecked() != on:
+            self.bigger_btn.setChecked(on)      # re-enters through toggled
+            return
+        if on:
+            self._sizes_before_bigger = self.splitter.sizes()
+            for col in DETAIL_COLUMNS:
+                self.view.hideColumn(col)
+            self.fit_list()
+        else:
+            for col in DETAIL_COLUMNS:
+                self.view.showColumn(col)
+            if self._sizes_before_bigger:
+                self.splitter.setSizes(self._sizes_before_bigger)
+            self._sizes_before_bigger = None
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not getattr(self, "_fitted", False):
+            self._fitted = True
+            self.fit_list()
