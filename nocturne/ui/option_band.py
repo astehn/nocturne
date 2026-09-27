@@ -23,6 +23,13 @@ class WrappedNote(QLabel):
     number StackDialog._fit_to_content reads to decide a screen is too short.
     Here the minimum is the real wrapped height AT THE WIDTH THE LABEL HAS,
     recomputed whenever that width or the text changes.
+
+    EMPTY, it takes no room at all: no height, and hidden so the layout drops
+    its spacing too. Several are decision notes that are blank most of the
+    time (drizzle_note before grading, exclusive_note unless mosaic AND
+    drizzle); reserving a line each left 21-42 px of dead gaps at the 800 px
+    floor. Only a hide it made itself is undone when text arrives — a note a
+    caller hid (the help toggle) stays hidden.
     """
 
     def __init__(self, text: str = "", object_name: str = "stepExplainer") -> None:
@@ -31,6 +38,28 @@ class WrappedNote(QLabel):
         self.setWordWrap(True)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
         self._last_width = -1
+        self._hidden_while_empty = False
+        self._sync_empty()
+
+    def _sync_empty(self) -> None:
+        explicit = Qt.WidgetAttribute.WA_WState_ExplicitShowHide
+        if not self.text():
+            # Claim the hide unless a caller already hid it on purpose (a fresh
+            # widget is "hidden" too, but not explicitly).
+            if not self.isHidden() or not self.testAttribute(explicit):
+                super().setVisible(False)
+                self._hidden_while_empty = True
+        elif self._hidden_while_empty:
+            self._hidden_while_empty = False
+            if self.parentWidget() is None:
+                self.setAttribute(explicit, False)   # shown with its future parent
+            else:
+                super().setVisible(True)
+
+    def setVisible(self, visible: bool) -> None:
+        # Anyone else deciding visibility overrides the empty-hide bookkeeping.
+        self._hidden_while_empty = False
+        super().setVisible(visible)
 
     def minimumSizeHint(self) -> QSize:
         base = super().minimumSizeHint()
@@ -39,10 +68,13 @@ class WrappedNote(QLabel):
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()
+        if not self.text():
+            return QSize(hint.width(), 0)
         return QSize(hint.width(), max(hint.height(), self.minimumSizeHint().height()))
 
     def setText(self, text: str) -> None:
         super().setText(text)
+        self._sync_empty()
         self.updateGeometry()
 
     def resizeEvent(self, event) -> None:
@@ -86,7 +118,9 @@ class OptionBand(QWidget):
         self._open_row.setContentsMargins(0, 0, 0, 0)
         self._open_row.setSpacing(6)
         self.fold_btn = QToolButton()
-        self.fold_btn.setText("▴")
+        # Words, not a bare arrow: a 5 px glyph alone in the corner was the
+        # one control in the band nobody would find (review, 2026-09-27).
+        self.fold_btn.setText("▴ Fold")
         self.fold_btn.setToolTip("Fold the options into one line")
         self.fold_btn.clicked.connect(lambda: self.set_folded(True))
         self._open_row.addWidget(self.fold_btn, 0, Qt.AlignmentFlag.AlignTop)

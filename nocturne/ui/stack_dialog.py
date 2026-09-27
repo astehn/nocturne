@@ -22,12 +22,14 @@ from .worker import run_async
 
 
 class _Hint(WrappedNote):
-    """An explanation of a control — the text "How this works" hides.
+    """A note in this dialog — mostly explanations "How this works" hides.
 
-    Its own class so the help toggle can find exactly these: the band's
-    folded note and the decision notes are WrappedNotes too, and must not be
-    swept up. The old fixed 560 px width is gone with the QFormLayout rows it
-    was fighting (see WrappedNote); in a group the text wraps at the group.
+    Its own class so the help toggle finds exactly these and not the band's
+    folded note, which is a plain WrappedNote. The decision notes
+    (drizzle_note, exclusive_note, background_note, name_note) ARE _Hints; they
+    stay on screen only because `_apply_hints_visible` names them in its
+    `always` set. The old fixed 560 px width is gone with the QFormLayout rows
+    it was fighting (see WrappedNote); in a group the text wraps at the group.
     """
 
 

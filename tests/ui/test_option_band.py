@@ -99,3 +99,58 @@ def test_the_bands_minimum_height_counts_every_line_of_its_notes(qtbot, size):
                for g in band.groups)
     assert band.minimumSizeHint().height() >= need, (
         f"band minimum {band.minimumSizeHint().height()} px, notes need {need} px")
+
+
+def _column(qtbot, *notes):
+    """A checkbox, the notes, a checkbox — so a note's cost is the gap it
+    leaves between the two boxes."""
+    from PySide6.QtWidgets import QWidget
+    w = QWidget()
+    qtbot.addWidget(w)
+    col = QVBoxLayout(w)
+    col.setSpacing(4)
+    above, below = QCheckBox("above"), QCheckBox("below")
+    col.addWidget(above)
+    for n in notes:
+        col.addWidget(n)
+    col.addWidget(below)
+    col.addStretch(1)
+    w.resize(400, 400); w.show(); qtbot.waitExposed(w)
+    return w, above, below
+
+
+def _gap(above, below):
+    return below.geometry().top() - above.geometry().bottom() - 1
+
+
+def test_an_empty_note_takes_no_room_and_a_filled_one_all_its_lines(qtbot):
+    """The decision notes are blank most of the time. Reserving a line each
+    (17 px + spacing) left 21-42 px of dead gaps in the Stack dialog at the
+    800 px floor — the review of layout A measured it against the base."""
+    _w, a0, b0 = _column(qtbot)
+    bare = _gap(a0, b0)                             # just the layout spacing
+
+    note = WrappedNote("")
+    assert note.sizeHint().height() == 0 and note.minimumSizeHint().height() == 0
+    _w, above, below = _column(qtbot, note)
+    assert _gap(above, below) == bare, "an empty note still reserves room"
+
+    note.setText(LONG)
+    qtbot.waitUntil(lambda: note.isVisible()
+                    and note.height() >= note.heightForWidth(note.width()) > 20,
+                    timeout=2000)
+    assert _gap(above, below) >= note.heightForWidth(note.width())
+
+    note.setText("")
+    qtbot.waitUntil(lambda: _gap(above, below) == bare, timeout=2000)
+
+
+def test_a_note_its_owner_hid_stays_hidden_when_text_arrives(qtbot):
+    """Emptiness hides and un-hides only what it hid itself: the help toggle's
+    choice to hide an explanation must survive the explanation's text."""
+    note = WrappedNote("x")
+    _w, _a, _b = _column(qtbot, note)
+    note.setVisible(False)
+    note.setText("")
+    note.setText("back again")
+    assert not note.isVisible()

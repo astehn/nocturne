@@ -1698,3 +1698,39 @@ def test_folding_never_hides_a_cost_you_are_about_to_pay(qtbot):
     assert "very long time" in note.text() and "40 minutes" in note.text()
     d.drizzle_check.setChecked(False)
     assert "40 minutes" not in note.text(), "the estimate outlived the box it prices"
+
+
+def test_blank_decision_notes_leave_no_gap(qtbot):
+    """Fix round 1: with exclusive_note blank, "Stack as mosaic"'s hint and the
+    Drizzle box sit one spacing apart, as the checkbox rows above them do."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.resize(1280, 900); d.show(); qtbot.waitExposed(d)
+    assert d.exclusive_note.text() == ""
+
+    def top(w):
+        return w.mapTo(d, w.rect().topLeft()).y()
+
+    def gap(a, b):
+        return top(b) - (top(a) + a.height())
+
+    assert gap(d.mosaic_hint, d.drizzle_check) == gap(d.drizzle_check, d.drizzle_hint), \
+        "a blank note between Mosaic and Drizzle still reserves a line"
+    for name in ("exclusive_note", "drizzle_note", "name_note", "background_note"):
+        note = getattr(d, name)
+        assert note.text() == "" and not note.isVisible(), f"blank {name} takes room"
+
+
+def test_the_folded_line_names_a_mosaic(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.mosaic_check.setEnabled(True)
+    d.mosaic_check.setChecked(True)
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text() == (
+        "Normal selection · Sigma-clipped, medium rejection · full frame · mosaic")
+    d.drizzle_check.setChecked(True)
+    assert d.options_band.summary_label.text().endswith("· mosaic · Drizzle ×2")
+    d.mosaic_check.setChecked(False)
+    assert "mosaic" not in d.options_band.summary_label.text()
