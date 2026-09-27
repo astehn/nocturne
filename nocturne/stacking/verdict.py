@@ -19,24 +19,53 @@ from typing import Iterable, Sequence
 from .grade import MIN_MEANINGFUL_EXCESS, FrameStats
 
 # Headline: the share of measurable frames the grader kept.
-# PROVISIONAL. The one measurement behind them is his Sh2-108 folder: 190 of
-# 254 kept (75%), which the spec's own example calls a good night, so
-# GOOD_SHARE must sit at or below 0.75 — 0.70 leaves it a margin. FAIR_SHARE
-# is a starting value with no measurement yet. Task 1 of the delivery-B plan
-# runs this over his real folders and records the headlines; the values change
-# only on his word, and the measured shares go here.
+#
+# Measured 2026-09-27, read-only over /Volumes/Work/Astro (60 frames a folder,
+# evenly spaced; Sh2-108 in full). kept% is usable frames kept; thirds are
+# last-third/first-third, FWHM then background (blank = below TREND_MIN_FRAMES
+# or no change worth a ratio):
+#   folder                      kept  headline                                  fwhm   bg
+#   IC 1396A_sub                 78%  Good night, but trailing after 00:15.    +22%   +2%
+#   M 17_sub                     93%  Good night.                               -4%   -1%
+#   M 27_sub                     92%  Good night.                                0%    0%
+#   M 31_mosaic_sub               73%  Good night.                              -2%    0%
+#   M 31_sub                    100%  Good night.                               +3%    0%
+#   M 33_sub                      90%  Good night, but cloud after 04:18.       +7%   +1%
+#   M 45_sub                      97%  Good night.                              -2%    0%
+#   M 8_sub                       85%  Good night.                              -1%    0%
+#   M16_sub                       88%  Good night.                              -1%   -1%
+#   MilkyWay_sub                  57%  Mixed night.                             +1%  +25%
+#   MilkyWay_timelapse_sub       100%  Good night.                               0%    0%
+#   NGC 6888_sub                  85%  Good night, but trailing after 22:48.    +5%    0%
+#   NGC 6992_sub                  95%  Good night.                              +2%    0%
+#   NGC 6995_sub                  89%  Good night, but trailing after 00:22.    -2%    0%
+#   NGC281_sub                    75%  Good night, but soft stars after 03:02.  +4%   -2%
+#   Sh2-108 (full, 253 usable)    75%  Good night.                             -11%   +4%
+# Sh2-108, the folder the thresholds are argued from, kept 190 of 253 (75%),
+# reads "Good night" — the spec's own example — so GOOD_SHARE must sit at or
+# below 0.75; 0.70 leaves it a margin. FAIR_SHARE still has no folder that
+# crossed it (MilkyWay_sub at 57% is the closest, and its "Mixed night" reads
+# right — heavy tree/roof obstruction most of the night, moon rising at the
+# end). The values above change only on his word; full run output is in
+# task-1-report.md.
 GOOD_SHARE = 0.70
 FAIR_SHARE = 0.40
 # Trends, first third against last third. FWHM uses grading's own floor for
 # "meaningfully softer" (grade.py, measured on M 45 / M 16 / NGC 6992): a
 # change smaller than that is one grading itself would not act on.
 FWHM_TREND = MIN_MEANINGFUL_EXCESS
-# PROVISIONAL, same calibration run: `background` is sep's globalback on RAW
-# counts, pedestal included, so a relative change reads smaller than the sky's.
+# Measured in the same run (table above): every real folder's background
+# thirds ratio sits under 5% except MilkyWay_sub's +25% (moon/twilight, and
+# the headline text calls it out correctly) — 10% clears the noise floor from
+# `background` being sep's globalback on RAW counts, pedestal included, so a
+# relative change reads smaller than the sky's own.
 BG_TREND = 0.10
 # A reason "starts late and stays" when at least CLUSTER_MIN frames carry it
 # and CLUSTER_SHARE_PCT of them come at or after a point past the first third
-# of the night. PROVISIONAL, same calibration run.
+# of the night. Measured in the same run: 5 of 16 folders produced a late
+# cluster (IC 1396A_sub, M 33_sub, NGC 6888_sub, NGC 6995_sub, NGC281_sub) and
+# each read right against what the numbers show; Sh2-108's rejections were
+# spread through the night rather than late, and it correctly got none.
 CLUSTER_MIN = 3
 CLUSTER_SHARE_PCT = 80
 TREND_MIN_FRAMES = 6       # two a third, at the least
