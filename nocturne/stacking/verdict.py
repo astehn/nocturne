@@ -20,52 +20,79 @@ from .grade import MIN_MEANINGFUL_EXCESS, FrameStats
 
 # Headline: the share of measurable frames the grader kept.
 #
-# Measured 2026-09-27, read-only over /Volumes/Work/Astro (60 frames a folder,
-# evenly spaced; Sh2-108 in full). kept% is usable frames kept; thirds are
-# last-third/first-third, FWHM then background (blank = below TREND_MIN_FRAMES
-# or no change worth a ratio):
-#   folder                      kept  headline                                  fwhm   bg
-#   IC 1396A_sub                 78%  Good night, but trailing after 00:15.    +22%   +2%
-#   M 17_sub                     93%  Good night.                               -4%   -1%
-#   M 27_sub                     92%  Good night.                                0%    0%
-#   M 31_mosaic_sub               73%  Good night.                              -2%    0%
-#   M 31_sub                    100%  Good night.                               +3%    0%
-#   M 33_sub                      90%  Good night, but cloud after 04:18.       +7%   +1%
-#   M 45_sub                      97%  Good night.                              -2%    0%
-#   M 8_sub                       85%  Good night.                              -1%    0%
-#   M16_sub                       88%  Good night.                              -1%   -1%
-#   MilkyWay_sub                  57%  Mixed night.                             +1%  +25%
-#   MilkyWay_timelapse_sub       100%  Good night.                               0%    0%
-#   NGC 6888_sub                  85%  Good night, but trailing after 22:48.    +5%    0%
-#   NGC 6992_sub                  95%  Good night.                              +2%    0%
-#   NGC 6995_sub                  89%  Good night, but trailing after 00:22.    -2%    0%
-#   NGC281_sub                    75%  Good night, but soft stars after 03:02.  +4%   -2%
-#   Sh2-108 (full, 253 usable)    75%  Good night.                             -11%   +4%
-# Sh2-108, the folder the thresholds are argued from, kept 190 of 253 (75%),
-# reads "Good night" — the spec's own example — so GOOD_SHARE must sit at or
-# below 0.75; 0.70 leaves it a margin. FAIR_SHARE still has no folder that
-# crossed it (MilkyWay_sub at 57% is the closest, and its "Mixed night" reads
-# right — heavy tree/roof obstruction most of the night, moon rising at the
-# end). The values above change only on his word; full run output is in
+# Measured 2026-09-27, re-run 2026-09-27 fix round 1 (review Ruling R1): the
+# first pass pooled every sub in a folder into one grade, but Sh2-108,
+# IC 1396A_sub and MilkyWay_sub each span more than one real night, so that
+# run's "trailing after 00:15" and "softer towards the end" were NIGHT
+# BOUNDARIES bleeding into one grade, not a real within-night pattern — that
+# pooled table is retracted, not merely superseded. This is per real capture
+# night (noon-to-noon local time; 60 frames a night, evenly spaced; MULTI
+# marks a folder that split into more than one night):
+#   folder                    night        kept  headline                                fwhm    bg
+#   IC 1396A_sub   MULTI      2026-08-11    91%  Good night, but trailing after 21:55.    -1%     0%
+#   IC 1396A_sub   "          2026-08-24    78%  Good night, but trailing after 00:13.    -6%    -1%
+#   IC 1396A_sub   "          2026-08-25    77%  Good night, but trailing after 00:17.    +9%    -2%
+#   M 17_sub                  2026-08-07    93%  Good night.                              -4%    -1%
+#   M 27_sub                  2026-08-09    92%  Good night.                              +1%     0%
+#   M 31_mosaic_sub           2026-08-09    73%  Good night.                              -1%     0%
+#   M 31_sub                  2026-08-09   100%  Good night.                              +3%     0%
+#   M 33_sub                  2026-08-09    90%  Good night, but clouds after 04:18.      +7%    +1%
+#   M 45_sub                  2026-08-09    97%  Good night.                              -2%     0%
+#   M 8_sub        MULTI      2026-08-07    88%  Good night.                              +1%     0%
+#   M 8_sub        "          2026-08-08    88%  Good night.                              +3%    -2%
+#   M16_sub                   2026-08-09    87%  Good night.                              -3%    -1%
+#   MilkyWay_sub   MULTI      2026-08-07   100%  Good night.                              +1%     0%
+#   MilkyWay_sub   "          2026-08-09    88%  Good night.                              +1%     0%
+#   MilkyWay_sub   "          2026-08-11     —   Too few frames to judge the night.        —      —
+#   MilkyWay_sub   "          2026-08-24    97%  Good night.                              +0%    -2%
+#   MilkyWay_timelapse_sub    2026-08-07   100%  Good night.                              -0%    +0%
+#   NGC 6888_sub              2026-08-11    85%  Good night, but trailing after 22:48.    +5%     0%
+#   NGC 6992_sub              2026-08-09    95%  Good night.                              +2%     0%
+#   NGC 6995_sub              2026-08-12    89%  Good night, but trailing after 00:22.    -2%     0%
+#   NGC281_sub                2026-08-26    77%  Good night, but trailing after 00:40.    +4%    -2%
+#   Sh2-108        MULTI      2026-09-21    90%  Good night.                              +6%    +0%
+#   Sh2-108        "          2026-09-26    88%  Good night.                              +1%    +1%
+# Full output (including the 08-11 MilkyWay night's own numbers: 59 of 60
+# sampled subs could not be measured — sep's pixel buffer overflow on a very
+# bright frame, the same real-world case Ruling R1's wording fix names) is in
 # task-1-report.md.
+#
+# Every one of these 22 real nights reads "Good night" (or "too few to
+# judge" — never "Mixed" or "Poor"), including the spec's own example night,
+# Sh2-108 2026-09-21 (38 of 42 kept, 90%). The lowest real share is
+# M 31_mosaic_sub at 73%, still comfortably above GOOD_SHARE; nothing here
+# contradicts 0.70, so it is UNCHANGED. FAIR_SHARE (0.40) still has no real
+# night anywhere near it — the earlier run's one candidate, MilkyWay_sub's
+# pooled 57%, is exactly the pooling artifact this re-run exists to catch:
+# split by night, MilkyWay_sub reads 100%, 88%, too-few, and 97%. FAIR_SHARE
+# stays UNCHANGED because nothing contradicts it either — it simply remains
+# unvalidated, and needs his eye rather than more of this data.
 GOOD_SHARE = 0.70
 FAIR_SHARE = 0.40
 # Trends, first third against last third. FWHM uses grading's own floor for
 # "meaningfully softer" (grade.py, measured on M 45 / M 16 / NGC 6992): a
 # change smaller than that is one grading itself would not act on.
 FWHM_TREND = MIN_MEANINGFUL_EXCESS
-# Measured in the same run (table above): every real folder's background
-# thirds ratio sits under 5% except MilkyWay_sub's +25% (moon/twilight, and
-# the headline text calls it out correctly) — 10% clears the noise floor from
-# `background` being sep's globalback on RAW counts, pedestal included, so a
-# relative change reads smaller than the sky's own.
+# Re-measured per night (table above, fix round 1): the pooled run's one
+# "positive" example for both trends — IC 1396A_sub "softer towards the end"
+# and MilkyWay_sub's background "+25%" — do NOT appear once the same subs are
+# split by real night; both were comparing across a night boundary, not
+# within one. Split correctly, EVERY real night's background thirds ratio
+# stays under 3% (worst: MilkyWay_sub 2026-08-24 at -2.5%) and every FWHM
+# ratio stays under 10% (worst: IC 1396A_sub 2026-08-25 at +9.4%) — neither
+# trend has fired once on real per-night data. That leaves BG_TREND and
+# FWHM_TREND UNCHANGED (nothing contradicts them) but genuinely untested by a
+# real positive case; they are conservative defaults, not measured floors.
 BG_TREND = 0.10
 # A reason "starts late and stays" when at least CLUSTER_MIN frames carry it
 # and CLUSTER_SHARE_PCT of them come at or after a point past the first third
-# of the night. Measured in the same run: 5 of 16 folders produced a late
-# cluster (IC 1396A_sub, M 33_sub, NGC 6888_sub, NGC 6995_sub, NGC281_sub) and
-# each read right against what the numbers show; Sh2-108's rejections were
-# spread through the night rather than late, and it correctly got none.
+# of the night. Re-measured per night (fix round 1): 7 of the 22 real nights
+# produced a late cluster (all three IC 1396A_sub nights, M 33_sub,
+# NGC 6888_sub, NGC 6995_sub, NGC281_sub) and every one reads right against
+# its own rejection counts and times — a stronger, more numerous set of real
+# examples than the pooled run's 5-of-16, since IC 1396A_sub alone now
+# contributes three genuine single-night clusters instead of one misleading
+# composite. UNCHANGED.
 CLUSTER_MIN = 3
 CLUSTER_SHARE_PCT = 80
 TREND_MIN_FRAMES = 6       # two a third, at the least
