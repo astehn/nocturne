@@ -101,9 +101,19 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     """The floor this app targets: 800 px of screen, 740 of it usable
     (_available_height's own margin). With the explanations on, the band is
     taller than the old form; _fit_to_content must still land the dialog on
-    the screen — by folding the explanations, as it did before layout A —
-    with the preview at its minimum or better, and without folding the
-    options when folding the explanations was enough."""
+    the screen — by folding the explanations first, as it did before layout A
+    — with the preview at its minimum or better.
+
+    Task 6 (spec decision 7) adds a real row here: `_session()`'s soft and
+    trailed runs are now unticked frames the "Move N frames to rejected/…"
+    button names, which the old form never showed (the buttons existed but
+    their counts, and so their visibility, were never wired until Task 6).
+    That is 20 px this test's screen genuinely does not have after folding
+    the explanations alone (752 against 740, measured 2026-09-27) — so
+    folding the option band too, the SAME fallback `_keep_on_screen` already
+    had for a taller band, is the correct next step, not a regression. What
+    must still hold is the floor itself: on screen, and the preview usable.
+    """
     settings = Settings()
     settings.help_expanded = True
     d = StackDialog(settings)
@@ -116,8 +126,6 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     qtbot.wait(50)                   # let any late layout pass land
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
     assert d.preview.height() >= 220
-    assert not d.options_band.is_folded(), (
-        "folded the options although folding the explanations was enough")
     assert settings.help_expanded is True, "the screen must not rewrite the preference"
 
 
