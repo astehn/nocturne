@@ -2,7 +2,6 @@
 §9.7): each frame into ITS OWN folder's rejected/, with every §5 safety rule
 per folder. His original subs are what this moves: every folder here is
 built under tmp_path, and bytes and mtimes are checked, not just names."""
-import json
 import os
 import time
 
@@ -107,15 +106,21 @@ def test_one_folder_asks_exactly_as_before(qtbot, tmp_path):
 def test_the_same_names_in_two_folders_never_collide(qtbot, tmp_path):
     a = _generic(tmp_path / "first", ["2026-09-21T20:30:00", "2026-09-21T20:31:00"] * 3)
     b = _generic(tmp_path / "second", ["2026-09-26T20:30:00", "2026-09-26T20:31:00"] * 3)
+    before = tree(tmp_path)
     d, _asked = _dialog(qtbot, a, b)
     assert len(d._stats) == 12
     d.verdict_strip.move_btn.click()
     assert _rejected(a) == ["Light_001.fit"] and _rejected(b) == ["Light_001.fit"]
-    assert (a / "rejected" / "Light_001.fit").read_bytes() != b"" \
-        and not (a / "Light_001.fit").exists() and not (b / "Light_001.fit").exists()
+    after_move = tree(tmp_path)
+    for folder in (a, b):
+        rel_old = os.path.relpath(folder / "Light_001.fit", tmp_path)
+        rel_new = os.path.relpath(folder / "rejected" / "Light_001.fit", tmp_path)
+        assert after_move[rel_new] == before[rel_old], "bytes or mtime changed on the way in"
     d.verdict_strip.back_btn.click()
     assert _rejected(a) == [] and _rejected(b) == []
-    assert (a / "Light_001.fit").exists() and (b / "Light_001.fit").exists()
+    after_back = tree(tmp_path)
+    assert {k: v for k, v in after_back.items() if "rejected" not in k} == before, \
+        "bytes or mtime changed on the way back"
     assert d.status.text().startswith("Moved 2 frames back.")
 
 
@@ -193,6 +198,60 @@ def test_a_damaged_record_in_one_folder_still_lets_the_other_move_back(qtbot, tm
     assert "damaged" in d.status.text()
 
 
+def test_a_damaged_record_does_not_swallow_another_folders_taken_report(qtbot, tmp_path):
+    """Fix round 1, m4: a damaged folder used to blank out a second folder's
+    OWN report whenever that report was only taken/refused/failed, with
+    nothing in restored/already_back/missing to keep the combined message
+    alive. EVERY one of b's rejected names is taken here — none restored —
+    so a guard that only widens on restored/already_back/missing still
+    drops b's report entirely."""
+    a, b = _two(tmp_path)
+    d, _asked = _dialog(qtbot, a, b)
+    d.verdict_strip.move_btn.click()
+    (a / "rejected" / MANIFEST_NAME).write_text("{not json")
+    taken_names = _rejected(b)
+    assert taken_names        # b actually has something in rejected/ to test
+    # A file with the same name is back in b already, by hand — move_back
+    # must leave every one of them in rejected/ rather than overwrite it,
+    # and report all of it.
+    for name in taken_names:
+        (b / name).write_bytes(b"already back by hand")
+    d.verdict_strip.back_btn.click()
+    text = d.status.text()
+    assert "damaged" in text
+    assert "stayed in rejected" in text
+    assert _rejected(b) == taken_names
+
+
+def test_colliding_basenames_are_told_apart(qtbot, tmp_path):
+    """Fix round 1, I1: two capture folders sharing a basename under
+    different parents read as the same folder unless the label carries the
+    parent component too."""
+    (tmp_path / "d1").mkdir()
+    (tmp_path / "d2").mkdir()
+    a = _seestar_folder(tmp_path / "d1", "M 31_sub", "20260921")
+    b = _seestar_folder(tmp_path / "d2", "M 31_sub", "20260926")
+    d, asked = _dialog(qtbot, a, b)
+    d.verdict_strip.move_btn.click()
+    assert asked == ["Move 4 rejected frames — 2 into d1/M 31_sub/rejected, 2 into "
+                     "d2/M 31_sub/rejected? Nothing is deleted; you can move them back."]
+    assert d.status.text() == ("Moved 2 frames into d1/M 31_sub/rejected and 2 frames "
+                               "into d2/M 31_sub/rejected. Nothing was deleted.")
+
+
+def test_colliding_basenames_are_told_apart_in_a_refusal(qtbot, tmp_path):
+    (tmp_path / "d1").mkdir()
+    (tmp_path / "d2").mkdir()
+    a = _seestar_folder(tmp_path / "d1", "M 31_sub", "20260921")
+    b = _seestar_folder(tmp_path / "d2", "M 31_sub", "20260926")
+    (b / "rejected").mkdir()
+    (b / "rejected" / "Light_SH2-108_10.0s_LP_20260926-223100.fit").write_bytes(b"his")
+    d, _asked = _dialog(qtbot, a, b)
+    d.verdict_strip.move_btn.click()
+    assert d.status.text().startswith(
+        "Moved 2 frames into d1/M 31_sub/rejected. Nothing was deleted. d2/M 31_sub: ")
+
+
 def test_a_refusal_in_the_first_folder_stops_before_the_next_is_touched(qtbot, tmp_path):
     """One failure is one thing to read: nothing after it is attempted, so
     he is never left with a half he did not see coming."""
@@ -205,3 +264,24 @@ def test_a_refusal_in_the_first_folder_stops_before_the_next_is_touched(qtbot, t
     assert tree(tmp_path) == before
     assert d.status.text().startswith("Sh2-108: ") and "nothing was moved" in d.status.text()
     assert not any(s.moved for s in d._stats)
+    # Fix round 1, m3: night 2 was never attempted, and silence there used to
+    # read as "nothing wrong", not "nothing tried".
+    assert d.status.text().endswith("night 2 was not tried.")
+
+
+def test_a_refusal_in_the_middle_names_every_folder_never_tried(qtbot, tmp_path):
+    a, b = _two(tmp_path)
+    c = _seestar_folder(tmp_path, "night 3", "20261001")
+    (b / "rejected").mkdir()
+    (b / "rejected" / "Light_SH2-108_10.0s_LP_20260926-223100.fit").write_bytes(b"his")
+    d, _asked = _dialog(qtbot, a, b, c)
+    snap_c = tree(c)
+    d.verdict_strip.move_btn.click()
+    assert _rejected(a) == [f"Light_SH2-108_10.0s_LP_20260921-{t}.fit" for t in SOFT]
+    assert tree(c) == snap_c, "night 3 was touched"
+    text = d.status.text()
+    assert text.startswith("Moved 2 frames into Sh2-108/rejected. Nothing was deleted. "
+                           "night 2: ")
+    assert "nothing was moved" in text
+    assert text.endswith("night 3 was not tried.")
+    assert sum(1 for s in d._stats if s.moved) == 2

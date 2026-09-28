@@ -33,8 +33,27 @@ from .verdict_strip import VerdictStrip
 from .worker import run_async
 
 
-def _label(folder: str) -> str:
-    return os.path.basename(os.path.normpath(folder))
+def _label(folder: str, siblings=()) -> str:
+    """The folder's name for a message — its basename, unless another folder
+    among `siblings` shares that basename (fix round 1, I1): two capture
+    folders both called "M 31_sub" under different parents (d1, d2) read as
+    the same folder in a question or a refusal naming only the basename, so
+    the parent component is added too ("d1/M 31_sub")."""
+    norm = os.path.normpath(folder)
+    name = os.path.basename(norm)
+    others = {os.path.basename(os.path.normpath(f)) for f in siblings
+             if os.path.normpath(f) != norm}
+    if name in others:
+        parent = os.path.basename(os.path.dirname(norm))
+        return f"{parent}/{name}" if parent else name
+    return name
+
+
+def _and_join(names: list[str]) -> str:
+    """"a", "a and b", "a, b and c" — for a sentence naming several folders."""
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def _in_rejected(folder: str) -> bool:
@@ -1391,29 +1410,39 @@ class StackDialog(QDialog):
                         f"{_label(next(iter(by_folder)))}/rejected? Nothing is deleted; "
                         "you can move them back.")
         else:
-            parts = [f"{len(fs)} into {_label(f)}/rejected" for f, fs in by_folder.items()]
+            parts = [f"{len(fs)} into {_label(f, by_folder)}/rejected"
+                     for f, fs in by_folder.items()]
             question = (f"Move {n} rejected frames — {', '.join(parts)}? Nothing is "
                         "deleted; you can move them back.")
         if not self._confirm("Move rejected frames", question):
             return
         graded = [s.path for s in self._stats]
+        items = list(by_folder.items())
         done: list[str] = []
         failed = ""
-        for folder, group in by_folder.items():
+        for i, (folder, group) in enumerate(items):
             try:
                 moved = move_to_rejected(folder, [s.path for s in group], graded)
             except RejectMoveError as exc:
                 # Every §5 rule holds per folder: this one moved nothing, or
                 # put back what it moved, and says so. A folder done before
                 # it stays done — recorded, and offered by Move them back.
-                failed = str(exc) if len(by_folder) == 1 else f"{_label(folder)}: {exc}"
+                failed = (str(exc) if len(by_folder) == 1
+                          else f"{_label(folder, by_folder)}: {exc}")
+                # Folders after this one were never attempted (fix round 1,
+                # m3): silence there used to read as "nothing else was
+                # wrong", not "nothing else was tried".
+                untried = [_label(f, by_folder) for f, _g in items[i + 1:]]
+                if untried:
+                    failed += f" {_and_join(untried)} {'was' if len(untried) == 1 else 'were'} not tried."
                 break
             for s in group:
                 new = moved.get(os.path.abspath(s.path))
                 if new:
                     s.path, s.moved, s.included = new, True, False
             k = len(moved)
-            done.append(f"{k} {'frame' if k == 1 else 'frames'} into {_label(folder)}/rejected")
+            done.append(f"{k} {'frame' if k == 1 else 'frames'} into "
+                       f"{_label(folder, by_folder)}/rejected")
         if done:
             self.browser.frames_moved()
             self._update_verdict()
@@ -1454,7 +1483,13 @@ class StackDialog(QDialog):
             for name in ("restored", "already_back", "taken", "refused", "missing"):
                 getattr(result, name).extend(getattr(r, name))
             result.failed = " ".join(x for x in (result.failed, r.failed) if x)
-        if refused and not (result.restored or result.already_back or result.missing):
+        # A damaged record in one folder must not swallow another folder's
+        # real report (fix round 1, m4): `taken`/`refused`/`failed` are just
+        # as much a report as `restored`/`already_back`/`missing` — leaving
+        # any of the three out of this check dropped that folder's outcome
+        # whenever the only other folder touched was the damaged one.
+        if refused and not (result.restored or result.already_back or result.missing
+                            or result.taken or result.refused or result.failed):
             self._say(" ".join(refused))
             return
         listed = {os.path.abspath(s.path) for s in self._stats}
