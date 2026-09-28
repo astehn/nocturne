@@ -40,12 +40,12 @@ SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 # a list you cannot tick from is a list you have to widen again to use.
 DETAIL_COLUMNS = (COL_STARS, COL_FWHM)
 
-# What a stacked master, or a frame that could not be measured, shows "—" in:
-# their zeros are not measurements, and a master's DATE-OBS is when it was
-# STACKED — a fake 21:21 at the top of his IC 1805 list (spec 2026-09-28 §3;
-# Ruling R1 extends this to measure_failed frames, whose zeros are just as
-# fake).
-MEASURED_COLUMNS = (COL_TIME, COL_STARS, COL_FWHM)
+# What a stacked master, or a frame that could not be measured, shows "—" in
+# for Stars and FWHM: neither's zero is a measurement (spec 2026-09-28 §3;
+# Ruling R1). Time is NOT here: only a master's Time is fake — its DATE-OBS
+# is when it was STACKED, a fake 21:21 at the top of his IC 1805 list — while
+# an unmeasured frame's capture time is real and stays on screen (Ruling R4).
+MEASURED_COLUMNS = (COL_STARS, COL_FWHM)
 
 # Was "Back to the verdicts", which made no sense until pressed (Andreas,
 # 2026-09-28; spec §4).
@@ -106,8 +106,11 @@ def _locked(s) -> bool:
 
 
 def _tint(s) -> str:
-    if is_rejected(s):
-        return theme.TEXT_FAINT        # rejected or moved: dimmed
+    # A left-out row (a master or one that could not be measured) is never
+    # stacked, whatever `is_rejected` says about it — Ruling R4: a bright row
+    # would read as "kept".
+    if is_rejected(s) or is_left_out(s):
+        return theme.TEXT_FAINT        # rejected, moved, or left out: dimmed
     if s.warning:
         return theme.WARNING           # kept with a warning: amber
     return theme.TEXT
@@ -117,6 +120,11 @@ def _display(s, col: int) -> str:
     if is_left_out(s) and col in MEASURED_COLUMNS:
         return "—"
     if col == COL_TIME:
+        # A master's stamp is a fake — when it was STACKED, not a sub's
+        # capture time — so it dashes too; an unmeasured frame's is real and
+        # stays (Ruling R4).
+        if is_master(s):
+            return "—"
         return time_label(getattr(s, "captured", None))
     if col == COL_STARS:
         return str(s.star_count)

@@ -8,18 +8,27 @@ Ruling R1 (Andreas, 2026-09-28) extends the same treatment to a frame that
 could not be measured (reason_code measure_failed): out of every count, sorts
 last (after any masters), shows "—" not zeros — but the verdict still names
 it apart from a master ("N could not be measured.").
+
+Ruling R4 (Andreas, 2026-09-28) covers two things Ruling R1 left out: a
+left-out row (either kind) must still be DIMMED — it is never stacked, and a
+bright row would read as kept — and an unmeasured frame's Time is a REAL
+capture time, not a fake stamp like a master's, so it does not dash; it still
+sorts to the very end.
 """
 import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 
 from nocturne.settings import Settings
+from nocturne.stacking.capture_time import time_label
 from nocturne.stacking.grade import (ONLY_MASTERS, REASON_MEASURE, REASON_NOT_RAW,
                                      FrameStats, is_left_out, is_master, judge)
 from nocturne.stacking.verdict import ONLY_MASTERS_HEADLINE
 from nocturne.ui import frame_browser as fb
+from nocturne.ui import theme
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui.stack_dialog import StackDialog
 
@@ -172,17 +181,56 @@ def test_a_master_shows_dashes_not_zeros_and_says_why(qtbot, tmp_path):
         f"IC1805_master_0.fit\n{REASON_NOT_RAW}")
 
 
-def test_an_unmeasured_frame_shows_dashes_too_and_its_own_reason(qtbot, tmp_path):
-    """Ruling R1: the same dash treatment, but the tooltip and Verdict cell
-    still say "couldn't measure", never the master's wording."""
+def test_an_unmeasured_frame_keeps_its_real_time_but_dashes_its_measurements(qtbot, tmp_path):
+    """Ruling R1 dashes its Stars/FWHM zeros, same as a master. Ruling R4:
+    unlike a master, its Time is a REAL capture time, not a fake stacked-on
+    stamp, so it stays on screen — only a master's Time dashes. The tooltip
+    and Verdict cell still say "couldn't measure", never the master's
+    wording."""
     stats = _night_with_masters_and_unmeasured(tmp_path)
     d = _stack(qtbot, stats)
     u = next(i for i, s in enumerate(stats) if is_left_out(s) and not is_master(s))
-    for col in (fb.COL_TIME, fb.COL_STARS, fb.COL_FWHM):
+    assert stats[u].captured is not None, "fixture: a real capture time"
+    assert d.browser.cell_text(u, fb.COL_TIME) == time_label(stats[u].captured)
+    assert d.browser.cell_text(u, fb.COL_TIME) != "—"
+    for col in (fb.COL_STARS, fb.COL_FWHM):
         assert d.browser.cell_text(u, col) == "—", fb.HEADERS[col]
     assert d.browser.cell_text(u, fb.COL_VERDICT) == REASON_MEASURE
     assert d.browser.cell_tooltip(u, fb.COL_STARS) == (
         f"IC1805_broken_0.fit\n{REASON_MEASURE}")
+
+
+def test_only_a_masters_time_is_faked_not_an_unmeasured_frames(qtbot, tmp_path):
+    """Ruling R4, the two cases side by side: a master's Time is fake (when
+    it was STACKED) and dashes; an unmeasured frame's is real and does not —
+    yet both still sort to the very end of the list."""
+    stats = _night_with_masters_and_unmeasured(tmp_path)
+    d = _stack(qtbot, stats)
+    m = next(i for i, s in enumerate(stats) if is_master(s))
+    u = next(i for i, s in enumerate(stats) if is_left_out(s) and not is_master(s))
+    assert d.browser.cell_text(m, fb.COL_TIME) == "—"
+    assert d.browser.cell_text(u, fb.COL_TIME) == time_label(stats[u].captured)
+    d.browser.view.sortByColumn(fb.COL_TIME, Qt.SortOrder.AscendingOrder)
+    rows = d.browser.view_rows()
+    assert set(rows[-5:-2]) == {i for i, s in enumerate(stats) if is_master(s)}
+    assert set(rows[-2:]) == {u2 for u2, s in enumerate(stats)
+                              if is_left_out(s) and not is_master(s)}
+
+
+def test_left_out_rows_are_dimmed_never_read_as_kept(qtbot, tmp_path):
+    """Ruling R4: a master or an unmeasured frame is never stacked, whatever
+    its cells show, so it must never LOOK kept — both get the same dim
+    foreground a rejected row does, and a genuinely kept row does not."""
+    stats = _night_with_masters_and_unmeasured(tmp_path)
+    d = _stack(qtbot, stats)
+    faint = QColor(theme.TEXT_FAINT).name()
+    m = next(i for i, s in enumerate(stats) if is_master(s))
+    u = next(i for i, s in enumerate(stats) if is_left_out(s) and not is_master(s))
+    kept = next(i for i, s in enumerate(stats)
+                if not is_left_out(s) and not s.reason and s.included)
+    assert d.browser.cell_colour(m, fb.COL_TIME) == faint, "a master must be dimmed"
+    assert d.browser.cell_colour(u, fb.COL_TIME) == faint, "unmeasured must be dimmed"
+    assert d.browser.cell_colour(kept, fb.COL_TIME) != faint, "a kept row must not be"
 
 
 def test_masters_show_only_under_all(qtbot, tmp_path):
