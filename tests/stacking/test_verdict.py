@@ -377,3 +377,119 @@ def test_with_line_adds_a_sentence_and_its_fact():
     assert more.details[-1].startswith("2 more frames") and more.details[:-1] == v.details
     assert more.facts[-1] == ("Not counted", "2 more in rejected/")
     assert more.facts[:-1] == v.facts and more.headline == v.headline
+
+
+# --- several nights (spec 2026-09-28 §9.2-9.3) ---------------------------------
+
+from nocturne.stacking.verdict import (NIGHT_GOOD, NIGHT_MIXED, NIGHT_NONE,  # noqa: E402
+                                       NIGHT_POOR, NIGHT_SHORT, NIGHT_SOFT,
+                                       build_session_verdict, night_chip_text,
+                                       night_classes, session_headline)
+
+EVE_2 = T0 + timedelta(days=5)
+
+
+def _n(count, fwhm=2.5, rejected=0, start=T0, code="soft_stars", exposure=10.0):
+    """A night of `count` frames from `start`, the last `rejected` of them
+    rejected by the grader with `code`."""
+    out = []
+    for i in range(count):
+        s = _f(i, fwhm=fwhm, code=code if i >= count - rejected else "",
+               exposure=exposure)
+        s.path = f"/x/{start:%d}_{i:03d}.fit"
+        s.captured = start + timedelta(minutes=5 * i)
+        out.append(s)
+    return out
+
+
+def test_two_alike_nights_read_as_two_good_nights():
+    assert session_headline([_n(42), _n(60, start=EVE_2)]) == "Two good nights."
+
+
+def test_his_sh2_108_reads_one_good_night_one_soft_one():
+    """The 21st kept 38 of 42 at 2.94 px, the 26th 58 of 60 at 2.31 px
+    (measured 2026-09-28): both kept well, one plainly softer."""
+    soft = _n(42, fwhm=2.94, rejected=4)
+    sharp = _n(60, fwhm=2.31, rejected=2, start=EVE_2)
+    assert night_classes([soft, sharp]) == [NIGHT_SOFT, NIGHT_GOOD]
+    assert session_headline([soft, sharp]) == "One good night, one soft one."
+
+
+def test_soft_starts_at_the_grading_floor_not_before():
+    base = _n(20, fwhm=2.0)
+    assert night_classes([base, _n(20, fwhm=2.28, start=EVE_2)])[1] == NIGHT_GOOD
+    assert night_classes([base, _n(20, fwhm=2.30, start=EVE_2)])[1] == NIGHT_SOFT
+
+
+@pytest.mark.parametrize("nights, headline", [
+    ([(20, 0), (20, 10), (20, 15)], "One good night, one mixed one, one poor one."),
+    ([(20, 0), (20, 0), (20, 15)], "Two good nights, one poor one."),
+    ([(20, 0), (20, 0), (20, 0), (1, 0)], "Three good nights, one too short to judge."),
+    ([(3, 0), (4, 0)], "Two nights too short to judge."),
+    ([(20, 15), (20, 15)], "Two poor nights."),
+])
+def test_the_headline_counts_each_kind_of_night(nights, headline):
+    built = [_n(n, rejected=r, start=T0 + timedelta(days=2 * i))
+             for i, (n, r) in enumerate(nights)]
+    assert session_headline(built) == headline
+
+
+def test_a_night_nothing_could_be_measured_in():
+    lost = [_error(i) for i in range(4)]
+    for s in lost:
+        s.captured = EVE_2
+    assert night_classes([_n(20), lost]) == [NIGHT_GOOD, NIGHT_NONE]
+    assert session_headline([_n(20), lost]) == "One good night, one not measured."
+
+
+def test_a_soft_night_is_only_ever_a_good_one_gone_soft():
+    """Mixed and poor already say worse; softness is not added on top, and a
+    night too short to judge sets no standard for the others."""
+    classes = night_classes([_n(20, fwhm=2.0), _n(20, fwhm=3.0, rejected=10, start=EVE_2),
+                             _n(3, fwhm=1.0, start=EVE_2 + timedelta(days=2))])
+    assert classes == [NIGHT_GOOD, NIGHT_MIXED, NIGHT_SHORT]
+
+
+def test_eleven_nights_are_counted_in_figures():
+    built = [_n(10, start=T0 + timedelta(days=2 * i)) for i in range(11)]
+    assert session_headline(built) == "11 good nights."
+
+
+def test_the_chip_reads_as_the_mockup_draws_it():
+    night = _n(42, fwhm=2.94, rejected=4)
+    assert night_chip_text("21 Sep", night, NIGHT_SOFT, S30) == "21 Sep Soft · 38 of 42 · stars 11″"
+    assert night_chip_text("21 Sep", night, NIGHT_SOFT) == "21 Sep Soft · 38 of 42 · FWHM 2.9 px"
+    assert night_chip_text("11 Aug", [_error(1)], NIGHT_NONE) == "11 Aug Not measured"
+    assert night_chip_text("3 Oct", _n(3), NIGHT_SHORT) == "3 Oct Too few to judge · 3 of 3 · FWHM 2.5 px"
+
+
+def test_one_ticked_night_reads_exactly_as_a_single_night_folder():
+    night = _spec_night()
+    assert build_session_verdict(night, [night], S30, UTC) == build_verdict(night, S30, UTC)
+    assert (build_session_verdict(night, [night], S30, UTC).facts
+            == build_verdict(night, S30, UTC).facts)
+
+
+def test_several_nights_sum_their_counts_and_drop_the_trends():
+    """A trend or an "after 23:20" across two nights compares two shoots
+    (the pooled calibration run of 2026-09-27 was retracted for exactly
+    that): the session line has neither; each night's chip tooltip has its
+    own. The second night is softer, brighter and ends in soft frames, so
+    pooled as ONE night the same frames do produce both."""
+    a = _spec_night()
+    b = [_f(i, fwhm=3.0, bg=1500.0, code="soft_stars" if i >= 6 else "")
+         for i in range(10)]
+    for s in b:
+        s.captured += timedelta(days=5)
+    as_one = build_verdict(a + b, S30, UTC)
+    assert any("towards the end" in d for d in as_one.details)
+    assert "Trailing after 23:20." in as_one.details
+    v = build_session_verdict(a + b, [a[:-1], b], S30, UTC)
+    assert v.headline == "One good night, one mixed one."
+    assert v.details[0] == "24 of 34 frames kept (4 of 6 minutes)."
+    assert [label for label, _ in v.facts] == ["Kept", "Rejected", "Unmeasured", "Stars"]
+    assert not any("towards the end" in d or " after " in d for d in v.details)
+
+
+def test_nothing_counted_has_no_session_verdict():
+    assert build_session_verdict([], [], S30, UTC) is None

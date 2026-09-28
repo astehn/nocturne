@@ -319,15 +319,20 @@ def _headline(usable, kept, clusters, tz) -> str:
 # --- the verdict ---------------------------------------------------------------
 
 def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
-                  tz: tzinfo | None = None) -> Verdict | None:
+                  tz: tzinfo | None = None, *, one_night: bool = True) -> Verdict | None:
     """The verdict on `stats` — any subset of a grade. Counts the GRADER's
     decisions (`reason`), not the user's ticks: it describes the night.
-    Error frames are counted apart and never enter a number."""
+    Error frames are counted apart and never enter a number.
+
+    `one_night=False` for frames pooled from several nights: no trends and no
+    "after 00:13", which across a night boundary compare two shoots (the
+    pooled calibration run of 2026-09-27 was retracted for exactly that)."""
     if not stats:
         return None
     usable = [s for s in stats if not s.error]
     kept = [s for s in usable if not s.reason]
-    clusters = late_clusters(usable) if len(usable) >= JUDGE_MIN else []
+    clusters = (late_clusters(usable) if one_night and len(usable) >= JUDGE_MIN
+                else [])
     details: list[str] = []
     facts: list[tuple[str, str]] = []
 
@@ -360,7 +365,7 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
         if f is not None:
             line(_star_size_line(f, pixel_scale), LABEL_STARS,
                  _star_size_fact(f, pixel_scale))
-        for trend in _trend_lines(usable):
+        for trend in (_trend_lines(usable) if one_night else ()):
             line(trend, LABEL_TREND, trend.rstrip("."))
         for code, when, _n in clusters[1:]:
             words = CLUSTER_WORDS[code]
@@ -369,3 +374,125 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
     headline = (ONLY_MASTERS_HEADLINE if masters and not usable and not unmeasured
                 else _headline(usable, kept, clusters, tz))
     return Verdict(headline, tuple(details), tuple(facts))
+
+
+# --- several nights (spec 2026-09-28 §9.2-9.3) ----------------------------------
+
+# A night whose kept stars are this much bigger than the sharpest night's is
+# "soft" — grading's own floor for "meaningfully softer" (FWHM_TREND), the
+# line a frame must cross before judge() rejects it for softness. Measured
+# 2026-09-28 on his four multi-night folders, eleven nights, 60 subs a night
+# at most, each night judged on its own:
+#   folder         night    kept          median FWHM   over the sharpest
+#   Sh2-108        21 Sep   38 of 42      2.94 px        +27%   soft
+#   Sh2-108        26 Sep   58 of 60      2.31 px          0
+#   IC 1396A_sub   11 Aug   55 of 60      2.29 px          0
+#   IC 1396A_sub   24 Aug   46 of 60      2.32 px         +1%
+#   IC 1396A_sub   25 Aug   49 of 60      2.83 px        +24%   soft
+#   MilkyWay_sub    7 Aug   17 of 17      2.43 px        +11%
+#   MilkyWay_sub    9 Aug   52 of 60      2.20 px          0
+#   MilkyWay_sub   11 Aug    1 of 1       (59 of 60 could not be measured)
+#   MilkyWay_sub   24 Aug   58 of 60      2.22 px         +1%
+#   M 8_sub         7 Aug   49 of 60      2.29 px         +1%
+#   M 8_sub         8 Aug   53 of 60      2.26 px          0
+# The two soft nights sit at +24% and +27%, everything else at +11% or less:
+# 0.15 falls in the gap. Judged as one set, as before, those two nights kept
+# 0 of 42 and 8 of 60 of their frames.
+SOFT_NIGHT = FWHM_TREND
+
+NIGHT_GOOD, NIGHT_SOFT, NIGHT_MIXED, NIGHT_POOR = "good", "soft", "mixed", "poor"
+NIGHT_SHORT, NIGHT_NONE = "short", "none"
+# The chip's word for each class, and the session headline's.
+NIGHT_WORDS = {NIGHT_GOOD: "Good", NIGHT_SOFT: "Soft", NIGHT_MIXED: "Mixed",
+               NIGHT_POOR: "Poor", NIGHT_SHORT: "Too few to judge",
+               NIGHT_NONE: "Not measured"}
+_CLASS_ORDER = (NIGHT_GOOD, NIGHT_SOFT, NIGHT_MIXED, NIGHT_POOR, NIGHT_SHORT, NIGHT_NONE)
+_COUNT_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven",
+                "eight", "nine", "ten")
+# Every night unticked: nothing is counted, so there is nothing to judge.
+NO_NIGHT_HEADLINE = "No night ticked — tick one under Nights to stack it."
+
+
+def _count_word(n: int) -> str:
+    return _COUNT_WORDS[n] if n < len(_COUNT_WORDS) else str(n)
+
+
+def _kept_share(frames) -> tuple[list, list]:
+    usable = [s for s in frames if not s.error]
+    return usable, [s for s in usable if not s.reason]
+
+
+def night_classes(nights: Sequence[Sequence[FrameStats]]) -> list[str]:
+    """One class per night, in order: its share kept (the single-night
+    headline's thresholds), and "soft" for a good night whose stars are
+    SOFT_NIGHT bigger than the sharpest judged night's."""
+    base, fwhm = [], []
+    for frames in nights:
+        usable, kept = _kept_share(frames)
+        if not usable:
+            base.append(NIGHT_NONE)
+        elif len(usable) < JUDGE_MIN:
+            base.append(NIGHT_SHORT)
+        else:
+            share = len(kept) / len(usable)
+            base.append(NIGHT_GOOD if share >= GOOD_SHARE
+                        else NIGHT_MIXED if share >= FAIR_SHARE else NIGHT_POOR)
+        fwhm.append(_star_fwhm(kept or usable)
+                    if base[-1] not in (NIGHT_NONE, NIGHT_SHORT) else None)
+    judged = [f for f in fwhm if f is not None]
+    best = min(judged) if judged else None
+    return [NIGHT_SOFT if c == NIGHT_GOOD and best and f is not None
+            and f >= best * (1 + SOFT_NIGHT) else c
+            for c, f in zip(base, fwhm)]
+
+
+def _phrase(cls: str, n: int, first: bool) -> str:
+    """"two good nights" first, "one soft one" after it."""
+    count = _count_word(n)
+    plural = n != 1
+    if cls in (NIGHT_SHORT, NIGHT_NONE):
+        tail = "too short to judge" if cls == NIGHT_SHORT else "not measured"
+        return (f"{count} night{'s' if plural else ''} {tail}" if first
+                else f"{count} {tail}")
+    word = NIGHT_WORDS[cls].lower()
+    return (f"{count} {word} night{'s' if plural else ''}" if first
+            else f"{count} {word} {'ones' if plural else 'one'}")
+
+
+def session_headline(nights: Sequence[Sequence[FrameStats]]) -> str:
+    """"Two good nights." — or, when they differ, plainly how: "One good
+    night, one soft one." Classes in a fixed order, best first."""
+    classes = night_classes(nights)
+    counts = [(c, classes.count(c)) for c in _CLASS_ORDER if c in classes]
+    parts = [_phrase(c, n, i == 0) for i, (c, n) in enumerate(counts)]
+    text = ", ".join(parts)
+    return text[0].upper() + text[1:] + "."
+
+
+def night_chip_text(label: str, frames: Sequence[FrameStats], cls: str,
+                    pixel_scale: float | None = None) -> str:
+    """"21 Sep Good · 38 of 42 · stars 11″" — the mockup's chip."""
+    usable, kept = _kept_share(frames)
+    if not usable:
+        return f"{label} {NIGHT_WORDS[NIGHT_NONE]}"
+    text = f"{label} {NIGHT_WORDS[cls]} · {len(kept)} of {len(usable)}"
+    f = _star_fwhm(kept or usable)
+    if f is not None:
+        text += (f" · stars {f * pixel_scale:.0f}″" if pixel_scale and pixel_scale > 0
+                 else f" · FWHM {f:.1f} px")
+    return text
+
+
+def build_session_verdict(counted: Sequence[FrameStats],
+                          nights: Sequence[Sequence[FrameStats]],
+                          pixel_scale: float | None = None,
+                          tz: tzinfo | None = None) -> Verdict | None:
+    """The verdict band over several nights: `counted` is every frame in the
+    count (the ticked nights' frames, and any stacked masters), `nights` the
+    ticked nights' own frames. One night reads exactly as it always has.
+    Several: the counts summed, no trends, and the headline says how the
+    nights compare."""
+    if len(nights) <= 1:
+        return build_verdict(counted, pixel_scale, tz)
+    pooled = build_verdict(counted, pixel_scale, tz, one_night=False)
+    return Verdict(session_headline(nights), pooled.details, pooled.facts)
