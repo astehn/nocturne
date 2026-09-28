@@ -37,6 +37,14 @@ def fact_html(label: str, value: str) -> str:
             f"{html.escape(value)}")
 
 
+# Ruling R7 (fix round 1, 2026-09-28): measured at 1920, FlowLayout's own
+# default (14, rendering at 15px) between facts against ~4px between a
+# fact's label and its value (one space character) — at that ratio the row
+# read as one blob, not five facts. 26px, about 6.5x the intra-fact gap,
+# reads as separate facts.
+_FACT_H_SPACING = 26
+
+
 class VerdictStrip(QFrame):
     move_requested = Signal()
     back_requested = Signal()
@@ -56,7 +64,7 @@ class VerdictStrip(QFrame):
         self.more_btn.setFlat(True)
         self.more_btn.setToolTip("Show the whole verdict")
         self.more_btn.clicked.connect(self._on_more)
-        self.facts_box = FlowBox()
+        self.facts_box = FlowBox(h_spacing=_FACT_H_SPACING)
         self.facts_box.flow.addWidget(self.headline)
         self.facts_box.flow.addWidget(self.more_btn)
         self.fact_labels: list[QLabel] = []

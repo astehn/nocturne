@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import pytest
 from astropy.io import fits
+from PySide6.QtGui import QFontMetrics
 
 from nocturne.settings import Settings
 from nocturne.stacking.grade import FrameStats, judge
@@ -300,3 +301,33 @@ def test_in_the_dialog_the_facts_wrap_into_labelled_lines(qtbot, tmp_path, width
     s = d.verdict_strip
     qtbot.waitUntil(lambda: len(_lines(s)) >= 2, timeout=2000)
     _whole_and_labelled(s, qtbot)
+
+
+# --- inter-fact spacing dwarfs the intra-fact gap (Ruling R7, fix round 1) ----
+
+def test_the_gap_between_facts_dwarfs_the_gap_inside_one(qtbot):
+    """26px between facts against ~4px (one space character) between a
+    fact's label and its value — real geometry on both sides, not the
+    literal 26, so either a shrunk between-gap or a misjudged inside-gap
+    fails this."""
+    s = _strip(qtbot, 2400)
+    qtbot.waitUntil(lambda: len(_lines(s)) == 1, timeout=2000)
+    a, b = s.fact_labels[0], s.fact_labels[1]
+    between = (b.mapTo(s, b.rect().topLeft()).x()
+              - a.mapTo(s, a.rect().topRight()).x())
+    inside = QFontMetrics(a.font()).horizontalAdvance(" ")
+    assert between >= 4 * inside, (between, inside)
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+def test_facts_stay_whole_and_move_is_never_clipped(qtbot, width):
+    """Ruling R7's wider inter-fact gap must not cost a fact its wholeness or
+    push Move / Move back off the strip's right edge, at any width."""
+    s = _strip(qtbot, width)
+    s.set_back_count(3)
+    qtbot.waitUntil(lambda: s.facts_box.height()
+                    >= s.facts_box.flow.heightForWidth(s.facts_box.width()),
+                    timeout=2000)
+    _whole_and_labelled(s, qtbot)
+    assert s.move_btn.mapTo(s, s.move_btn.rect().topRight()).x() <= s.width()
+    assert s.back_btn.mapTo(s, s.back_btn.rect().topRight()).x() <= s.width()

@@ -85,9 +85,10 @@ class FlowBox(QWidget):
     """A widget holding a FlowLayout that tells its parent layout when its
     width — and so its wrapped height — changed, as WrappedNote does."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, h_spacing: int = 14,
+                 v_spacing: int = 2) -> None:
         super().__init__(parent)
-        self.flow = FlowLayout(self)
+        self.flow = FlowLayout(self, h_spacing=h_spacing, v_spacing=v_spacing)
         self._last_width = -1
 
     def resizeEvent(self, event) -> None:
