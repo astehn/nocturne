@@ -4,6 +4,7 @@ list-preview mockup). Shared by Stack and Ha/OIII through FrameBrowser.
 Mouse and tooltip events are built and sent directly (never qtbot.mouseMove).
 """
 from datetime import datetime, timedelta, timezone
+from statistics import median
 
 import numpy as np
 import pytest
@@ -20,9 +21,10 @@ from nocturne.ui.frame_browser import (COL_FWHM, SHOW_ALL, SHOW_KEPT,
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui import quality_chart as qc
 from nocturne.ui.quality_chart import (CHART_HEIGHT, CHART_ROOM_MIN, HIDE_TEXT,
-                                       KEPT_COLOUR, NOTE_NO_TIME, NOTE_TIME,
-                                       REJECTED_COLOUR, RING_RADIUS, SHOW_TEXT,
-                                       ChartPanel, QualityChart)
+                                       KEPT_COLOUR, MIN_FWHM_SPAN, NOTE_NO_TIME,
+                                       NOTE_TIME, REJECTED_COLOUR, RING_RADIUS,
+                                       SHOW_TEXT, ChartPanel, QualityChart,
+                                       trend_values)
 from nocturne.ui.stack_dialog import StackDialog
 from nocturne.ui.theme import build_stylesheet
 
@@ -72,6 +74,28 @@ def _close(a: QColor, hex_colour: str, tol=40) -> bool:
     b = QColor(hex_colour)
     return all(abs(x - y) <= tol for x, y in
                ((a.red(), b.red()), (a.green(), b.green()), (a.blue(), b.blue())))
+
+
+def _column_band(img, x: float, r: QRectF) -> list:
+    """Every pixel in the columns straddling `x`, top to bottom of `r`. A 1 px
+    line antialiased at an exact integer x (his fixed-pixel night gap, Ruling
+    R11, lands there often — a proportional gap rarely did) can split its
+    opacity across the column either side of it, so neither alone need read
+    as fully AXIS_COLOUR; the neighbours together still show it."""
+    xs = {max(0, int(x) - 1), int(x), int(x) + 1}
+    return [QColor(img.pixel(px, y)) for px in xs
+            for y in range(int(r.top()), int(r.bottom()))]
+
+
+def _painted_over_background(band: list, bg_hex: str, min_diff: int = 15) -> bool:
+    """True when some pixel in `band` is measurably tinted away from the pure
+    background colour — true of AXIS_COLOUR painted there at any opacity,
+    including the ~50% either side of an antialiased line's exact pixel
+    boundary, where no single pixel alone is close enough to AXIS_COLOUR
+    itself to pass a direct colour-match tolerance."""
+    bg = QColor(bg_hex)
+    return any(abs(c.red() - bg.red()) + abs(c.green() - bg.green())
+              + abs(c.blue() - bg.blue()) >= min_diff for c in band)
 
 
 # --- where it lives -----------------------------------------------------------
@@ -149,16 +173,35 @@ def test_no_capture_time_falls_back_to_file_name_order_with_a_note(qtbot):
     assert not b.chart.isHidden()
 
 
-def test_a_gap_between_nights_is_drawn_short(qtbot):
-    """His Sh2-108 folder: nights on the 21st, 26th and 27th. On a true time
-    axis each night would be a sliver; any gap is drawn as at most 20 min."""
-    later = 5 * 24 * 60
-    stats = [_frame(0, 0), _frame(1, 5), _frame(2, 10),
-             _frame(3, later), _frame(4, later + 5), _frame(5, later + 10)]
+def test_a_gap_between_nights_is_drawn_a_fixed_number_of_pixels(qtbot):
+    """His own request (Ruling R11, 2026-09-28): a night boundary is a FIXED
+    pixel width (NIGHT_GAP_PX), not GAP_CAP minutes sharing the same budget as
+    every other gap — so its on-screen width never depends on how many real
+    minutes, hours or days actually separate the two nights. Within a night,
+    the existing GAP_CAP-in-minutes rule is unchanged (5 min steps here, well
+    under the 20 min cap, so untouched by it either way)."""
+    def _boundary_px(days_between):
+        later = days_between * 24 * 60
+        stats = [_frame(0, 0), _frame(1, 5), _frame(2, 10),
+                 _frame(3, later), _frame(4, later + 5), _frame(5, later + 10)]
+        b = _shown(qtbot, stats)
+        return b.chart.point_pos(3).x() - b.chart.point_pos(2).x()
+    a_day_apart = _boundary_px(1)
+    months_apart = _boundary_px(200)
+    assert a_day_apart == pytest.approx(months_apart)
+    assert a_day_apart == pytest.approx(qc.NIGHT_GAP_PX)
+
+
+def test_within_a_night_the_gap_still_follows_gap_cap(qtbot):
+    """The other half of Ruling R11: only the BETWEEN-night gap became a
+    fixed pixel width — within one night, a long gap is still capped at
+    GAP_CAP minutes, sharing the ordinary time-proportional budget."""
+    stats = [_frame(0, 0), _frame(1, 10), _frame(2, 10 + 180)]   # one night, a 3 h gap
     b = _shown(qtbot, stats)
+    assert not b.chart._night_starts, "fixture drifted onto two nights"
     xs = [x for _row, x in b.chart.plotted()]
-    # steps 5, 5, 20 (capped), 5, 5 minutes: 40 in all
-    assert xs == pytest.approx([0.0, 0.125, 0.25, 0.75, 0.875, 1.0])
+    # steps 10, capped to 20: 30 min in all -> 10/30, 20/30
+    assert xs == pytest.approx([0.0, 1 / 3, 1.0])
 
 
 # --- how it looks -----------------------------------------------------------------
@@ -429,7 +472,11 @@ def test_the_axes_name_clock_times_and_two_fwhm_values(qtbot):
     first_by_time = min(stats, key=lambda s: s.captured)
     last_by_time = max(stats, key=lambda s: s.captured)
     assert times[0][1] == _clock(first_by_time) and times[-1][1] == _clock(last_by_time)
-    assert [t for _r, t in b.chart.fwhm_labels()] == ["3.0", "2.5"]
+    # Ruling R12: the labels are the scale's own top and bottom, not the
+    # rawest frame's FWHM — this night's only variety (one soft frame among
+    # five alike) is a single outlier, smoothed away, so the range floors
+    # out at MIN_FWHM_SPAN centred on 2.5, padded 5%.
+    assert [t for _r, t in b.chart.fwhm_labels()] == ["2.8", "2.2"]
 
 
 def test_axis_labels_meet_the_apps_readability_floor(qtbot):
@@ -520,3 +567,326 @@ def test_2500_frames_paint_quickly(qtbot):
     # Measured 6 ms offscreen (2026-09-28, M-series); eight times that is
     # still a fraction of a frame at the pointer's pace.
     assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"
+
+
+# --- where one night ends and the next begins (spec 2026-09-28 §9.5) ----------
+
+import time as _time  # noqa: E402
+
+from nocturne.stacking.nights import night_key  # noqa: E402
+
+
+@pytest.fixture
+def stockholm(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Stockholm")
+    _time.tzset()
+    yield
+    monkeypatch.undo()
+    _time.tzset()
+
+
+def _nights(first=6, second=6, later=5 * 24 * 60):
+    """His Sh2-108 in miniature: a night from 22:00 on the 21st, and one from
+    22:00 on the 26th running past midnight."""
+    a = [_frame(i, 10 * i) for i in range(first)]
+    b = [_frame(first + i, later + 20 * i) for i in range(second)]
+    return a + b
+
+
+def test_a_dashed_line_marks_where_the_next_night_starts(qtbot, stockholm):
+    b = _shown(qtbot, _nights())
+    (line,) = b.chart.night_lines()
+    last_of_first = b.chart.point_pos(5).x()
+    first_of_second = b.chart.point_pos(6).x()
+    assert last_of_first < line < first_of_second
+    assert line == pytest.approx((last_of_first + first_of_second) / 2)
+    img = b.chart.grab().toImage()
+    r = b.chart._plot_rect()
+    assert _painted_over_background(_column_band(img, line, r), theme.BG_2), \
+        "no dashed line painted there"
+
+
+def test_each_night_is_named_by_its_evening(qtbot, stockholm):
+    b = _shown(qtbot, _nights())
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep", "26 Sep"]
+    (line,) = b.chart.night_lines()
+    assert dates[0][0].left() <= b.chart._plot_rect().left() + 3
+    assert dates[1][0].left() >= line
+
+
+def test_a_night_past_midnight_gets_no_line(qtbot, stockholm):
+    # 22:00 to 02:00 local: one night.
+    stats = [_frame(i, 20 * i) for i in range(13)]
+    b = _shown(qtbot, stats)
+    assert len({night_key(s) for s in stats}) == 1
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+    assert b.chart.time_labels()[0][1] == _clock(stats[0])
+
+
+def test_without_capture_times_there_are_no_nights_to_mark(qtbot):
+    stats = _nights()
+    stats[3].captured = None
+    b = _shown(qtbot, stats)
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+
+
+def test_an_unticked_night_takes_its_line_and_date_with_it(qtbot, stockholm):
+    stats = _nights() + [_frame(20, 10 * 24 * 60 + 10 * i) for i in range(3)]
+    b = _shown(qtbot, stats)
+    assert len(b.chart.night_lines()) == 2
+    b.set_night_on(night_key(stats[6]), False)
+    assert len(b.chart.night_lines()) == 1
+    assert [t for _r, t in b.chart.date_labels()] == ["21 Sep", "1 Oct"]
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+@pytest.mark.parametrize("second", [1, 2, 60])
+def test_dates_and_times_never_collide_or_leave_the_chart(qtbot, stockholm, width, second):
+    """A night of one or two frames squeezed against the right edge, or a
+    long one: every date and clock time on the chart, none touching."""
+    b = _shown(qtbot, _nights(first=60, second=second), width=width)
+    rects = [r for r, _t in b.chart.date_labels() + b.chart.time_labels()
+             + b.chart.fwhm_labels()]
+    assert b.chart.date_labels(), "the fixture must draw dates"
+    for i, r in enumerate(rects):
+        assert r.left() >= 0 and r.right() <= b.chart.width(), (width, r)
+        for other in rects[i + 1:]:
+            assert not r.intersects(other), (width, r, other)
+
+
+def test_haoiii_gets_the_night_lines_too(qtbot, stockholm):
+    """Spec §9.6: the chart is shared, so Ha/OIII draws the lines."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = lambda p: np.zeros((8, 8, 3), np.float32)
+    d._on_graded(_nights())
+    assert len(d.browser.chart.night_lines()) == 1
+    assert [t for _r, t in d.browser.chart.date_labels()] == ["21 Sep", "26 Sep"]
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+def test_a_one_frame_night_between_two_long_ones_drops_its_date_not_overlaps(
+        qtbot, stockholm, width):
+    """Between two long nights, a night of one frame is two capped gaps wide
+    — a few pixels. Its line is drawn; its date would sit on the next one's,
+    so it is left out."""
+    stats = (_nights(first=60, second=1)
+             + [_frame(100 + i, 10 * 24 * 60 + 10 * i) for i in range(60)])
+    b = _shown(qtbot, stats, width=width)
+    assert len(b.chart.night_lines()) == 2
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep", "1 Oct"]
+    rects = [r for r, _t in dates]
+    assert not rects[0].intersects(rects[1])
+
+
+def test_the_night_the_clocks_go_back_is_one_night_on_the_chart(qtbot, stockholm):
+    """2026-10-25: 03:00 CEST becomes 02:00 CET, so the local clock runs
+    02:00-03:00 twice. Placed by UTC, every step is forward; one night, no
+    line; the clock labels still read local time."""
+    start = datetime(2026, 10, 24, 20, 0, tzinfo=timezone.utc)      # 22:00 CEST
+    stats = []
+    for i in range(49):                                             # to 04:00 UTC
+        s = _frame(i, None)
+        s.captured = start + timedelta(minutes=10 * i)
+        stats.append(s)
+    b = _shown(qtbot, stats)
+    xs = [x for _row, x in b.chart.plotted()]
+    assert all(later > earlier for earlier, later in zip(xs, xs[1:]))
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+    assert b.chart.time_labels()[-1][1] == "05:00"
+
+
+# --- fix round 1 (Ruling R5): the FWHM line does not cross a night boundary --
+
+def test_the_fwhm_line_does_not_cross_the_night_boundary(qtbot, stockholm):
+    """A continuous polyline from the last frame of one night to the first
+    of the next would read as a trend between two nights judged separately
+    (Decision 9). The dashed boundary's own column must carry no KEPT_COLOUR
+    pixel: the line breaks there, it doesn't just get drawn under the dash."""
+    b = _shown(qtbot, _nights())
+    (line,) = b.chart.night_lines()
+    img = b.chart.grab().toImage()
+    r = b.chart._plot_rect()
+    column = [QColor(img.pixel(int(line), y)) for y in range(int(r.top()), int(r.bottom()))]
+    assert not any(_close(c, KEPT_COLOUR, tol=50) for c in column), \
+        "the FWHM line is drawn straight through the night boundary"
+
+
+# --- fix round 1 (Ruling R5): several nights, not just his two -------------
+
+def _many_nights(n, per_night=8):
+    """`n` nights of `per_night` frames each, 5 days apart, past his own
+    two-night Sh2-108 folder -- enough to stress the date/time/FWHM
+    collision guards with several dashed boundaries at once."""
+    stats = []
+    idx = 0
+    for night in range(n):
+        base = night * 5 * 24 * 60
+        for j in range(per_night):
+            stats.append(_frame(idx, base + 10 * j))
+            idx += 1
+    return stats
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+@pytest.mark.parametrize("n", [4, 6])
+def test_several_nights_dates_times_and_fwhm_never_collide(qtbot, stockholm, width, n):
+    """4 and 6 nights on one chart: every date, clock time and FWHM label
+    stays inside the chart and none touches another."""
+    b = _shown(qtbot, _many_nights(n), width=width)
+    assert len(b.chart.night_lines()) == n - 1
+    rects = [r for r, _t in b.chart.date_labels() + b.chart.time_labels()
+             + b.chart.fwhm_labels()]
+    assert b.chart.date_labels(), "the fixture must draw dates"
+    for i, r in enumerate(rects):
+        assert r.left() >= 0 and r.right() <= b.chart.width(), (width, n, r)
+        assert r.top() >= 0 and r.bottom() <= b.chart.height(), (width, n, r)
+        for other in rects[i + 1:]:
+            assert not r.intersects(other), (width, n, r, other)
+
+
+def _big_several_nights(n=2500, nights=6):
+    """2,500 frames (his biggest session) split across 6 nights, so the
+    night lines and the now-segmented FWHM polyline are on the same chart
+    the paint-cost measurement uses."""
+    counts = [n // nights] * nights
+    counts[0] += n - sum(counts)
+    stats = []
+    idx = 0
+    for night, count in enumerate(counts):
+        base = night * 5 * 24 * 60 * 60
+        for j in range(count):
+            s = FrameStats(f"/x/L_{idx:05d}.fit", 800,
+                           2.4 + 0.3 * (j % 7 == 0) + 0.001 * (j % 13),
+                           0.02, 0.5, True, exposure=10.0)
+            s.captured = T0 + timedelta(seconds=base + 10 * j)
+            stats.append(s)
+            idx += 1
+    judge(stats, "normal")
+    return stats
+
+
+def test_2500_frames_over_6_nights_paint_quickly(qtbot, stockholm):
+    """The night lines and the segmented FWHM polyline must not turn his
+    biggest session into a slow paint."""
+    import time
+    b = _shown(qtbot, _big_several_nights(), width=1920)
+    assert len(b.chart.night_lines()) == 5
+    b.chart.grab()                              # warm up fonts and caches
+    t0 = time.perf_counter()
+    for _ in range(5):
+        b.chart.grab()
+    per_paint = (time.perf_counter() - t0) / 5
+    assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"
+
+
+# --- the smoothed trend line (his own request, Ruling R11; retuned R12, 2026-09-28) --
+
+def test_a_single_outlier_stays_invisible_in_the_line():
+    """Ruling R12: his real-window try on NGC 6995/IC 1805 found the line
+    dead straight even through a visible cluster — round 1's single
+    9-frame median could swallow a cluster of up to 4. A lone odd frame,
+    though, must still vanish: it is always a minority of the 5-frame
+    median stage."""
+    baseline = 2.3
+    values = [baseline] * 20
+    values[10] = baseline + 1.0          # one wildly soft frame
+    trend = trend_values(values)
+    assert all(abs(v - baseline) <= 0.02 for v in trend), \
+        f"a single outlier swung the line: {trend}"
+
+
+def test_a_cluster_of_four_shows_a_gentle_rise():
+    """Ruling R12: unlike a single outlier, a real cluster of several
+    frames must read as a visible rise — the whole point of the retune."""
+    baseline = 2.2
+    n = 30
+    values = [baseline] * n
+    values[13:17] = [baseline + 0.3] * 4     # a 4-frame cluster
+    trend = trend_values(values)
+    peak = max(trend[10:20]) - baseline
+    assert peak >= 0.1, f"the cluster's rise was only {peak:.3f} px"
+    assert trend[0] == pytest.approx(baseline, abs=1e-9), "undisturbed far from the cluster"
+    assert trend[-1] == pytest.approx(baseline, abs=1e-9)
+
+
+def test_the_trend_never_crosses_a_night_boundary(qtbot, stockholm):
+    """A long, uniformly elevated first night followed by a short, normal
+    second night: made deliberately lopsided so that IF either smoothing
+    stage's window reached across the boundary, the first night's elevated
+    values (a clear majority of any window that included them) would swamp
+    the second night's own few frames — being fewer, they must not."""
+    stats = _nights(first=10, second=2)
+    for s in stats[:10]:
+        s.fwhm = 50.0
+    b = _shown(qtbot, stats)
+    pts = b.chart._positions()
+    trend = b.chart._trend_line(pts)
+    plain_y = b.chart._y(2.5, b.chart._plot_rect(), *b.chart._value_range())
+    # index 10 is the first frame of the second, short night.
+    assert trend[10].y() == pytest.approx(plain_y, abs=1.0), \
+        "the first night's elevated values leaked into the second night's trend"
+
+
+def test_hover_and_click_still_land_on_the_real_dot(qtbot):
+    """Only the connecting line is smoothed — the dots, and everything that
+    reads from them (hover, click), stay at the frame's own real FWHM."""
+    stats = _night()
+    b = _shown(qtbot, stats)
+    pos = b.chart.point_pos(2)                # the soft frame, fwhm 3.0
+    assert b.chart.row_at(pos) == 2
+    assert "FWHM 3.00" in b.chart.tooltip_at(pos)
+    assert b.chart.point_pos(2).y() == pytest.approx(
+        b.chart._y(3.0, b.chart._plot_rect(), *b.chart._value_range()))
+
+
+# --- the Y range fits the kept dots, not a rejected outlier (Ruling R12) ------
+
+def test_a_steady_night_gets_at_least_the_minimum_span(qtbot):
+    """A perfectly steady night must not be blown up edge to edge by its
+    own quantisation noise — the range is centred on the data with a floor
+    of MIN_FWHM_SPAN, before the 5% pad."""
+    stats = [_frame(i, 5 * i, fwhm=2.30) for i in range(20)]
+    b = _shown(qtbot, stats)
+    lo, hi = b.chart._value_range()
+    span = hi - lo
+    pad = span / 1.10 * 0.05            # the 5% pad added on top of the floor
+    assert span - 2 * pad == pytest.approx(MIN_FWHM_SPAN, abs=1e-6)
+    assert (lo + hi) / 2 == pytest.approx(2.30, abs=1e-6)
+
+
+def test_a_badly_rejected_outlier_is_clamped_inside_the_plot(qtbot):
+    """His real-window bug: a handful of rejected outliers, included in the
+    old min/max, squeezed every kept dot into a sliver at the bottom. Now
+    the outlier's dot is pinned at the plot's own edge instead — shown, not
+    dropped, and the scale is not stretched to fit it."""
+    stats = _night()
+    for s in stats:
+        if not s.reason:
+            s.fwhm = 2.5
+    stats[2].fwhm = 50.0                # the already-rejected frame, now a wild outlier
+    b = _shown(qtbot, stats)
+    r = b.chart._plot_rect()
+    pos = b.chart.point_pos(2)
+    assert r.top() <= pos.y() <= r.bottom()
+    assert pos.y() == pytest.approx(r.top()), "a far-softer outlier clamps to the plot's top"
+
+
+def test_the_min_span_and_clamp_do_not_touch_a_normal_night(qtbot):
+    """A night with real, moderate spread — among the KEPT frames alone, so
+    it survives the trend's own smoothing — needs neither the floor nor a
+    clamp: the range and every dot's position are exactly what the plain
+    formula gives."""
+    stats = [_frame(i, 5 * i, fwhm=2.0 + 0.1 * i) for i in range(10)]
+    b = _shown(qtbot, stats)
+    lo, hi = b.chart._value_range()
+    kept = [s.fwhm for s in stats if not s.reason]
+    trend = b.chart._trend_fwhm()
+    values = kept + trend
+    span = max(values) - min(values)
+    assert span >= MIN_FWHM_SPAN, "fixture drifted below the floor this test means to avoid"
+    expected_lo = min(values) - span * 0.05
+    expected_hi = max(values) + span * 0.05
+    assert (lo, hi) == pytest.approx((expected_lo, expected_hi))

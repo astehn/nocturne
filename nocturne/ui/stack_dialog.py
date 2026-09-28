@@ -11,22 +11,89 @@ from PySide6.QtWidgets import (
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
 from ..stacking.drizzle_gate import SUITS_SUMMARY
+from ..stacking.capture_time import read_capture_time
 from ..stacking.frames import discover_subs
 from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
-                              is_left_out, judge, order_best_first)
+                              is_left_out, is_master, judge, order_best_first)
+from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
-from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
+from ..stacking.reject_move import (REJECTED_DIR, MoveBackResult, RejectMoveError,
+                                    describe_names, home_folder, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from ..stacking.verdict import (LABEL_NOT_COUNTED, _minutes, build_verdict,
-                                read_pixel_scale)
+from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
+                                _minutes, build_session_verdict, build_verdict,
+                                night_chip_text, night_classes, read_pixel_scale)
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .quality_chart import CHART_ROOM_MIN
 from .verdict_strip import VerdictStrip
 from .worker import run_async
+
+
+def _label(folder: str, siblings=()) -> str:
+    """The folder's name for a message — its basename, unless another folder
+    among `siblings` shares that basename (fix round 1, I1): two capture
+    folders both called "M 31_sub" under different parents (d1, d2) read as
+    the same folder in a question or a refusal naming only the basename, so
+    the parent component is added too ("d1/M 31_sub")."""
+    norm = os.path.normpath(folder)
+    name = os.path.basename(norm)
+    others = {os.path.basename(os.path.normpath(f)) for f in siblings
+             if os.path.normpath(f) != norm}
+    if name in others:
+        parent = os.path.basename(os.path.dirname(norm))
+        return f"{parent}/{name}" if parent else name
+    return name
+
+
+def _and_join(names: list[str]) -> str:
+    """"a", "a and b", "a, b and c" — for a sentence naming several folders."""
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _rejected_ancestor(folder: str) -> str | None:
+    """The rejected/ folder `folder` sits in or under — after resolving any
+    link — at any depth: a link straight to one, or a folder nested inside
+    one, both re-enter frames Move them back exists to keep parked (review
+    I1: the typed-name check alone missed both). None when there is no such
+    ancestor. Returns the rejected/ folder's OWN path, not `folder` itself
+    (final review I2/T7): a folder merely sitting inside an unrelated
+    "rejected" does not itself hold anything, and the message must say which
+    folder does."""
+    cur = os.path.realpath(folder)
+    while True:
+        parent, base = os.path.split(cur)
+        if base == REJECTED_DIR:
+            return cur
+        if not parent or parent == cur:
+            return None
+        cur = parent
+
+
+def _same_folder(a: str, b: str) -> bool:
+    """True when `a` and `b` are the same folder, including a case variant
+    on a case-insensitive filesystem (APFS's default) — a plain string
+    compare of realpath, which preserves case, would miss that (review m2)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _file_key(path: str):
+    """(st_dev, st_ino): the identity reject_move already dedups a move by,
+    so a hard link under another name resolves to the file it already is,
+    not a second one — realpath does not collapse a hard link (review m2)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
 
 
 class _Hint(WrappedNote):
@@ -53,13 +120,16 @@ def _line(*widgets, stretch_last: bool = True) -> QHBoxLayout:
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 _OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
+# The status line with every night unticked (spec 2026-09-28 §9.2).
+NO_NIGHT_STATUS = "No night is ticked — tick one under Nights to stack it."
+ADD_FOLDER_TEXT = "Add folder…"
 
 
 class _Signals(QObject):
     progress = Signal(int, int, str)
 
 
-def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
+def _picker_row(edit: QLineEdit, on_browse, *more: QWidget) -> QWidget:
     """The field and its Browse… in one widget, so both can be disabled."""
     row = QWidget()
     lay = QHBoxLayout(row)
@@ -68,6 +138,8 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
     btn = QPushButton("Browse…")
     btn.clicked.connect(on_browse)
     lay.addWidget(btn)
+    for w in more:
+        lay.addWidget(w)
     return row
 
 
@@ -199,12 +271,24 @@ class StackDialog(QDialog):
         self.browser.add_above_chart(self.verdict_strip)
         self.verdict_strip.expanded.connect(
             lambda: self._keep_on_screen() if self._fitted else None)
+        # A night's chip ticks it in or out (spec 2026-09-28 §9.2). The
+        # browser holds which are off; the verdict and its chips follow, and
+        # selection_changed brings the status, Move count, name and drizzle.
+        self.verdict_strip.night_toggled.connect(self.browser.set_night_on)
+        self.browser.nights_changed.connect(self._update_verdict)
         self._pixel_scale: float | None = None
         # The folder the LISTED frames came from — not whatever the Folder
         # field says now: it can be retyped after grading, and anything that
         # acts on the frames' files must act on their own folder.
         self._grading_folder = ""
         self._graded_folder = ""
+        # Folders added with "Add folder…" (spec 2026-09-28 §9.7), in the order
+        # added; the graded folder is never among them. A new grade forgets
+        # them with the list they were part of.
+        self._added_folders: list[str] = []
+        self._adding_folder: str | None = None      # being measured now
+        self._adding_copies = 0                      # its subs left out as copies
+        self._adding_linked = 0                       # its subs left out as links/hard links
 
         # Moving the unticked frames into <folder>/rejected/ and back (spec
         # decision 7, §5). Never automatic: only these two buttons, and the
@@ -355,7 +439,17 @@ class StackDialog(QDialog):
         # cocoa) whatever the dialog's width, which cut an automatic name like
         # "SH2-108_204x10s_34min.fits" at the left even at 1920. Fill the row.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
+        # Subs that live elsewhere — the uncommon case: the Seestar keeps a
+        # target's nights in one folder (spec 2026-09-27 decision 8).
+        self.add_folder_btn = QPushButton(ADD_FOLDER_TEXT)
+        self.add_folder_btn.setToolTip(
+            "Add the subs of another folder — another night of the same target. "
+            "They are listed and stacked with these, and each folder keeps its "
+            "own rejected/.")
+        self.add_folder_btn.clicked.connect(self._browse_add_folder)
+        self.add_folder_btn.setEnabled(False)
+        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder,
+                                                  self.add_folder_btn))
         form.addRow(self.options_band)
         form.addRow(self._help_link)
         self._save_to_row = _picker_row(self.save_to_edit, self._browse_save_to)
@@ -461,7 +555,7 @@ class StackDialog(QDialog):
             self.options_band.refresh_summary()
             self._sync_folded_note()
             return
-        plain = plain_advice(drizzle_advice(self._stats))
+        plain = plain_advice(drizzle_advice(self._ticked()))
         self._drizzle_suits = plain.suits
 
         # What it will cost THIS stack, before the button is pressed — Andreas
@@ -469,7 +563,7 @@ class StackDialog(QDialog):
         # its worth it prior to actually pressing the button". A generic "10x
         # longer" does not answer "do I have time for this tonight". One hover
         # away now, with the other numbers (spec §5).
-        kept = [x for x in self._stats if x.included]
+        kept = self._ticked()
         numbers = plain.numbers
         if kept:
             mins = estimate_seconds(len(kept), self._frame_shape) / 60.0
@@ -494,6 +588,175 @@ class StackDialog(QDialog):
         if path:
             self.folder_edit.setText(path)
             self.grade()
+
+    # --- "Add folder…" (spec 2026-09-28 §9.7) ---
+    def _browse_add_folder(self) -> None:
+        start = self._graded_folder or start_dir(self._settings.base_dir)
+        path = file_dialogs.choose_folder(self, "Add the subs of another folder", start)
+        if path:
+            self.add_folder(path)
+
+    def listed_folders(self) -> list[str]:
+        """Every folder whose subs are listed: the graded one, then the added."""
+        return [f for f in [self._graded_folder, *self._added_folders] if f]
+
+    def add_folder(self, folder: str) -> None:
+        """Measure the subs of `folder` and list them with these, without
+        touching a row already listed (his ticks stay, as in Move them back).
+
+        A sub already listed is never listed twice: not by its own path, a
+        symlink to it, a hard link under another name, or a copy — the same
+        name AND the same capture time. The Seestar names a sub by the
+        second it was taken, so two different subs cannot share both, and a
+        copy stacked twice would count twice. A rejected/ folder is refused
+        — by typed name, or by a link to one, or a folder nested inside
+        one: its frames go back with Move them back, never into a stack
+        from there (spec §5)."""
+        if self._busy or not self._stats:
+            return
+        folder = os.path.abspath(os.path.expanduser(folder.strip()))
+        name = os.path.basename(os.path.normpath(folder))
+        rejected_at = _rejected_ancestor(folder)
+        if rejected_at is not None:
+            capture = os.path.basename(os.path.dirname(rejected_at))
+            where = f"{capture}/{REJECTED_DIR}" if capture else REJECTED_DIR
+            if os.path.normpath(rejected_at) == os.path.normpath(os.path.realpath(folder)):
+                self.status.setText(
+                    f"{where}/ holds frames moved out of a stack — Move them back "
+                    "returns them to their folder; they are not added from there.")
+            else:
+                # `folder` merely sits inside `where`/ — it is not itself
+                # what holds anything, and saying so was false (final review
+                # I2/T7: a capture folder named old_M8_sub, nested under an
+                # unrelated top-level "rejected", used to be told it "holds
+                # frames moved out of a stack").
+                self.status.setText(
+                    f"{name}/ sits inside {where}/, which holds frames moved out "
+                    "of a stack — Move them back returns them to their folder; "
+                    "they are not added from there.")
+            return
+        if any(_same_folder(folder, f) for f in self.listed_folders()):
+            self.status.setText(f"The subs in {name} are already listed.")
+            return
+        subs = discover_subs(folder)
+        if not subs:
+            # Every sub of this folder could be sitting in its OWN
+            # rejected/, parked by an earlier "Move rejected frames" — never
+            # nothing (review R9): list the folder anyway, with no rows, so
+            # the combined Nights/back-count picture and Move them back both
+            # see it. Otherwise a fully-moved-out folder looked like it had
+            # simply lost its frames.
+            try:
+                pending = pending_back(folder)
+            except RejectMoveError as exc:
+                # A damaged record (review T7/m7): "No .fit subs found" would
+                # have hidden exactly the thing R9 exists to prevent — frames
+                # that look lost. Show the record's own message instead.
+                self.status.setText(str(exc))
+                return
+            except OSError:
+                pending = []
+            if pending:
+                self._added_folders.append(folder)
+                self._update_verdict()
+                self._sync_reject_buttons(check_disk=True)
+                n = len(pending)
+                self.status.setText(
+                    f"{name} has no subs left — {n} {'frame is' if n == 1 else 'frames are'} "
+                    f"in {name}/rejected; Move them back returns "
+                    f"{'it' if n == 1 else 'them'}.")
+                return
+            self.status.setText(f"No .fit subs found in {name}.")
+            return
+        listed_keys = {k for k in (_file_key(s.path) for s in self._stats) if k is not None}
+        listed_names = {(os.path.basename(s.path), s.captured) for s in self._stats
+                        if s.captured is not None}
+        listed_basenames = {n for n, _t in listed_names}
+        paths, copies, linked = [], 0, 0
+        for p in subs:
+            key = _file_key(p)
+            if key is not None and key in listed_keys:
+                # The identical file under another name — a symlink's target
+                # or a hard link (review m2) — not a copy: counted apart so
+                # a folder of nothing else still reads as "already listed",
+                # not "No .fit subs found" (T7).
+                linked += 1
+                continue
+            pname = os.path.basename(p)
+            # read_capture_time opens the FITS header (review m3): worth it
+            # only when the name is one a copy could actually collide with —
+            # most added-folder subs share no basename with what is listed.
+            if pname in listed_basenames and (pname, read_capture_time(p)) in listed_names:
+                copies += 1
+                continue
+            paths.append(p)
+        if not paths:
+            if not (copies or linked):
+                self.status.setText(f"No .fit subs found in {name}.")
+            elif linked and not copies:
+                self.status.setText(
+                    f"Every sub in {name} is already listed — the same file, "
+                    "under another name, as one here.")
+            elif copies and not linked:
+                self.status.setText(
+                    f"Every sub in {name} is already listed — the same name and "
+                    "capture time as one here.")
+            else:
+                self.status.setText(f"Every sub in {name} is already listed.")
+            return
+        self._adding_folder = folder
+        self._adding_copies = copies
+        self._adding_linked = linked
+        runner = self._grade_runner
+        strictness = self.strictness_box.currentText().lower()
+
+        def work():
+            return runner(paths, on_progress=lambda i, n, _name:
+                          self._signals.progress.emit(i, n, "grading"),
+                          strictness=strictness)
+
+        self._start(work, self._on_added_graded, f"Measuring the subs in {name}…")
+
+    def _on_added_graded(self, new_stats) -> None:
+        folder, self._adding_folder = self._adding_folder, None
+        self._added_folders.append(folder)
+        self._active_token = None
+        self._set_busy(False)
+        self.browser.add_frames(new_stats)
+        self._stats = self.browser.frames()    # keep in sync — see _move_back
+        # Nights are judged each on their own, so a night the added folder
+        # brings is judged within itself; judge() runs on the merged list
+        # all the same, and refresh_verdicts() restores every hand tick.
+        judge(self._stats, self.strictness_box.currentText().lower())
+        self.browser.refresh_verdicts()
+        if self._pixel_scale is None:
+            self._pixel_scale = read_pixel_scale([s.path for s in new_stats if not s.error])
+        if self._frame_shape is None:
+            self._frame_shape = self._read_frame_shape(new_stats)
+        self.scan_pointings(paths=[s.path for s in self._stats
+                                   if not s.error and not s.moved])
+        self._update_verdict()
+        self._sync_reject_buttons(check_disk=True)
+        self._update_drizzle_note()
+        self._auto_output_path()
+        text = self._selection_summary()
+        copies, linked = self._adding_copies, self._adding_linked
+        if copies or linked:
+            n = copies + linked
+            why = []
+            if copies:
+                why.append("the same name and capture time")
+            if linked:
+                why.append("the same file, under another name")
+            text += (f" {n} {'sub' if n == 1 else 'subs'} in "
+                     f"{os.path.basename(folder)} {'was' if n == 1 else 'were'} "
+                     f"left out: already listed ({' or '.join(why)}).")
+        self.status.setText(text)
+        if self._fitted:
+            # Now, not a frame later from resizeEvent — and, as for Move them
+            # back's merge, never by folding the verdict: he asked for this
+            # (I1). The frame list gives up the height the Nights line takes.
+            self._keep_on_screen(allow_verdict_squeeze=False)
 
     def _browse_save_to(self) -> None:
         """A folder only. The name is left exactly as it was — automatic stays
@@ -521,6 +784,7 @@ class StackDialog(QDialog):
         # made mid-stack would record a path the file is not at.
         self._save_to_row.setEnabled(not busy)
         self._name_field.setEnabled(not busy)
+        self.add_folder_btn.setEnabled(not busy and bool(self._stats))
         self.verdict_strip.set_actions_enabled(not busy)
         self._sync_background_availability()
 
@@ -545,7 +809,8 @@ class StackDialog(QDialog):
         if tok is not None:
             tok.cancel()
 
-    def scan_pointings(self, folder: str | None = None) -> None:
+    def scan_pointings(self, folder: str | None = None,
+                       paths: list[str] | None = None) -> None:
         """Notice a mosaic and say so.
 
         Nothing in this dialog distinguished 400 subs of one field from 400
@@ -558,9 +823,10 @@ class StackDialog(QDialog):
         silently reads the Folder field's CURRENT text when that has nothing
         to do with the frames actually being graded.
         """
-        if folder is None:
-            folder = self.folder_edit.text().strip()
-        paths = discover_subs(folder) if folder else []
+        if paths is None:
+            if folder is None:
+                folder = self.folder_edit.text().strip()
+            paths = discover_subs(folder) if folder else []
         panels = discover_panels(read_pointings(paths), 0.56) if paths else []
 
         if len(panels) < 2:
@@ -934,6 +1200,8 @@ class StackDialog(QDialog):
             # folder A's master into B under A's name.
             self._restoring_names = None    # same reason as the busy branch above
             self._stats = []
+            self._added_folders = []
+            self.add_folder_btn.setEnabled(False)
             self._frame_shape = None
             if folder != self._graded_folder:
                 self.verdict_strip.set_message("")      # the last folder's move report
@@ -974,8 +1242,9 @@ class StackDialog(QDialog):
         # re-judge against the knob's current value before painting anything.
         judge(stats, self.strictness_box.currentText().lower())
         self._active_token = None
-        self._set_busy(False)
         self._stats = stats
+        self._added_folders = []            # a new list: its added folders went with the old
+        self._set_busy(False)
         self._frame_shape = self._read_frame_shape(stats)
         folder = self._grading_folder or self.folder_edit.text().strip()
         if folder != self._graded_folder:
@@ -1044,20 +1313,56 @@ class StackDialog(QDialog):
         from, says how many are missing from the count; it updates itself
         away once those frames are back, the next time this runs.
 
+        Several nights (spec 2026-09-28 §9.2-9.3): the verdict counts the
+        TICKED nights only, and its headline says how they compare; each
+        night gets a chip with its own verdict. Rebuilt when a night is
+        ticked in or out — that changes what is counted, which a hand tick
+        on one frame does not.
+
         A name the manifest lists is not necessarily missing from the
         count — a frame moved THIS session is still a row in `self._stats`
         (moved=True) and build_verdict counts it, since it counts the
         grader's decision, not the move. Only a pending name with no such row
         is actually uncounted; without this filter the line claimed frames
-        "kept" one line above were also "not counted here"."""
-        verdict = build_verdict(self._stats, self._pixel_scale) if self._stats else None
+        "kept" one line above were also "not counted here".
+
+        Nights are built from `not is_left_out(s)` (m3, final review
+        2026-09-28), not `not is_master(s)` alone: a frame that could not be
+        measured is in no count either (is_left_out is the wider test), so it
+        must not conjure a night — or, worse, a whole "No date" chip — of its
+        own out of a single unreadable, unstamped file."""
+        nights = split_nights([s for s in self._stats if not is_left_out(s)])
+        off = self.browser.nights_off()
+        # Classes over ALL nights, once — the chips' own view (below) — so a
+        # ticked night's class can never disagree with its chip (I1, final
+        # review 2026-09-28): a slice of THIS, not a fresh night_classes over
+        # the ticked subset, which re-picks "the sharpest" among fewer nights.
+        classes = night_classes([list(n.frames) for n in nights])
+        ticked, ticked_classes = [], []
+        for n, cls in zip(nights, classes):
+            if n.key not in off:
+                ticked.append(list(n.frames))
+                ticked_classes.append(cls)
+        counted = [s for s in self._stats if self.browser.night_on(s)]
+        if len(nights) >= 2 and not ticked:
+            verdict = Verdict(NO_NIGHT_HEADLINE)
+        else:
+            verdict = (build_session_verdict(counted, ticked, self._pixel_scale,
+                                             classes=ticked_classes)
+                       if counted else None)
         if verdict is not None and self._graded_folder:
-            try:
-                pending = pending_back(self._graded_folder)
-            except (RejectMoveError, OSError):
-                pending = []
-            listed_moved = {os.path.basename(s.path) for s in self._stats if s.moved}
-            back = len([n for n in pending if n not in listed_moved])
+            # Per folder, by full path: two added folders can hold the same
+            # names (spec 2026-09-28 §9.7).
+            listed_moved = {os.path.abspath(s.path) for s in self._stats if s.moved}
+            back = 0
+            for folder in self.listed_folders():
+                try:
+                    pending = pending_back(folder)
+                except (RejectMoveError, OSError):
+                    pending = []
+                rej = os.path.join(os.path.abspath(folder), REJECTED_DIR)
+                back += len([n for n in pending
+                             if os.path.join(rej, n) not in listed_moved])
             if back:
                 note = (f"{back} more frame is in rejected/ and is not counted here."
                         if back == 1 else
@@ -1065,6 +1370,10 @@ class StackDialog(QDialog):
                 verdict = verdict.with_line(note, LABEL_NOT_COUNTED,
                                             f"{back} more in rejected/")
         self.verdict_strip.set_verdict(verdict)
+        self.verdict_strip.set_nights([
+            (n.key, night_chip_text(n.label, n.frames, cls, self._pixel_scale),
+             build_verdict(list(n.frames), self._pixel_scale).text(), n.key not in off)
+            for n, cls in zip(nights, classes)])
 
     # --- the rejected folder (spec decision 7, §5) ---
     def _frames_to_move(self) -> list:
@@ -1072,7 +1381,8 @@ class StackDialog(QDialog):
         ticked back in stays; a kept frame he unticked goes. Error frames stay
         put: an unreadable file or a stacked master has no verdict to act on."""
         return [s for s in self._stats
-                if not s.included and not s.error and not s.moved]
+                if not s.included and not s.error and not s.moved
+                and self.browser.night_on(s)]
 
     def _sync_reject_buttons(self, check_disk: bool = False) -> None:
         """The move count follows the ticks. The back count reads the folder,
@@ -1088,19 +1398,20 @@ class StackDialog(QDialog):
         self.verdict_strip.set_move_count(len(self._frames_to_move()))
         if not check_disk:
             return
-        back = 0
-        if self._graded_folder:
+        back, damaged = 0, None
+        for folder in self.listed_folders():
             try:
-                back = len(pending_back(self._graded_folder))
+                back += len(pending_back(folder))
             except RejectMoveError as exc:
-                self.verdict_strip.set_message(str(exc))
-                self._damaged_folder = True
+                damaged = damaged or str(exc)
             except OSError:
-                back = 0            # an unreadable folder: nothing to offer
-            else:
-                if self._damaged_folder:
-                    self.verdict_strip.set_message("")
-                self._damaged_folder = False
+                pass                # an unreadable folder: nothing to offer
+        if damaged is not None:
+            self.verdict_strip.set_message(damaged)
+            self._damaged_folder = True
+        elif self._damaged_folder:
+            self.verdict_strip.set_message("")
+            self._damaged_folder = False
         self.verdict_strip.set_back_count(back)
 
     def _ask_yes_no(self, title: str, text: str) -> bool:
@@ -1138,41 +1449,72 @@ class StackDialog(QDialog):
             self._say("A background stack is running and may be reading these "
                       "frames — move them once it has finished.")
             return
-        try:
-            pending_back(self._graded_folder)
-        except RejectMoveError as exc:
-            # A known-damaged record: refuse before asking, not after he has
-            # already said yes to a move that cannot happen.
-            self._say(str(exc))
-            self._damaged_folder = True
-            return
-        except OSError:
-            pass
         frames = self._frames_to_move()
+        # Each frame into ITS OWN folder's rejected/ (spec 2026-09-28 §9.7):
+        # the frames' own folders, never the Folder field.
+        # (Not home_folder(): none of these is in rejected/ yet, and a
+        # capture folder may itself be called "rejected".)
+        by_folder: dict[str, list] = {}
+        for s in frames:
+            by_folder.setdefault(os.path.dirname(os.path.abspath(s.path)), []).append(s)
+        for folder in by_folder:
+            try:
+                pending_back(folder)
+            except RejectMoveError as exc:
+                # A known-damaged record: refuse before asking, not after he
+                # has already said yes to a move that cannot happen.
+                self._say(str(exc))
+                self._damaged_folder = True
+                return
+            except OSError:
+                pass
         if not frames:
             return
-        folder = self._graded_folder            # the frames' own folder, not the field
         n = len(frames)
-        where = os.path.basename(os.path.normpath(folder))
-        question = (f"Move {n} rejected {'frame' if n == 1 else 'frames'} into "
-                    f"{where}/rejected? Nothing is deleted; you can move them back.")
+        if len(by_folder) == 1:
+            question = (f"Move {n} rejected {'frame' if n == 1 else 'frames'} into "
+                        f"{_label(next(iter(by_folder)))}/rejected? Nothing is deleted; "
+                        "you can move them back.")
+        else:
+            parts = [f"{len(fs)} into {_label(f, by_folder)}/rejected"
+                     for f, fs in by_folder.items()]
+            question = (f"Move {n} rejected frames — {', '.join(parts)}? Nothing is "
+                        "deleted; you can move them back.")
         if not self._confirm("Move rejected frames", question):
             return
-        try:
-            moved = move_to_rejected(folder, [s.path for s in frames],
-                                     [s.path for s in self._stats])
-        except RejectMoveError as exc:
-            self._say(str(exc))
-            return
-        for s in frames:
-            new = moved.get(os.path.abspath(s.path))
-            if new:
-                s.path, s.moved, s.included = new, True, False
-        self.browser.frames_moved()
+        graded = [s.path for s in self._stats]
+        items = list(by_folder.items())
+        done: list[str] = []
+        failed = ""
+        for i, (folder, group) in enumerate(items):
+            try:
+                moved = move_to_rejected(folder, [s.path for s in group], graded)
+            except RejectMoveError as exc:
+                # Every §5 rule holds per folder: this one moved nothing, or
+                # put back what it moved, and says so. A folder done before
+                # it stays done — recorded, and offered by Move them back.
+                failed = (str(exc) if len(by_folder) == 1
+                          else f"{_label(folder, by_folder)}: {exc}")
+                # Folders after this one were never attempted (fix round 1,
+                # m3): silence there used to read as "nothing else was
+                # wrong", not "nothing else was tried".
+                untried = [_label(f, by_folder) for f, _g in items[i + 1:]]
+                if untried:
+                    failed += f" {_and_join(untried)} {'was' if len(untried) == 1 else 'were'} not tried."
+                break
+            for s in group:
+                new = moved.get(os.path.abspath(s.path))
+                if new:
+                    s.path, s.moved, s.included = new, True, False
+            k = len(moved)
+            done.append(f"{k} {'frame' if k == 1 else 'frames'} into "
+                       f"{_label(folder, by_folder)}/rejected")
+        if done:
+            self.browser.frames_moved()
+            self._update_verdict()
         self._sync_reject_buttons(check_disk=True)
-        k = len(moved)
-        self._say(f"Moved {k} {'frame' if k == 1 else 'frames'} into {where}/rejected. "
-                  "Nothing was deleted.")
+        said = [f"Moved {' and '.join(done)}. Nothing was deleted."] if done else []
+        self._say(" ".join(said + ([failed] if failed else [])))
 
     def _move_back(self) -> None:
         # See the comment in _move_rejected: the same "one move at a time"
@@ -1187,32 +1529,54 @@ class StackDialog(QDialog):
         # Nothing listed yet means nothing to lose. Captured BEFORE the
         # bookkeeping below touches self._stats.
         was_empty = not self._stats
-        try:
-            result = move_back(folder)
-        except RejectMoveError as exc:
-            self._say(str(exc))
+        # Every listed folder's own rejected/, each on its own: a damaged
+        # record in one stops that one only (spec 2026-09-28 §9.7).
+        result, refused = MoveBackResult(), []
+        restored_paths: list[str] = []          # restored here, by full path
+        home: set[str] = set()                  # full paths back where they belong
+        missing: set[str] = set()               # full rejected/ paths gone for good
+        for f in self.listed_folders():
+            try:
+                r = move_back(f)
+            except RejectMoveError as exc:
+                refused.append(str(exc))
+                continue
+            top = os.path.abspath(f)
+            rej = os.path.join(top, REJECTED_DIR)
+            restored_paths += [os.path.join(top, n) for n in r.restored]
+            home |= {os.path.join(rej, n) for n in r.restored + r.already_back}
+            missing |= {os.path.join(rej, n) for n in r.missing}
+            for name in ("restored", "already_back", "taken", "refused", "missing"):
+                getattr(result, name).extend(getattr(r, name))
+            result.failed = " ".join(x for x in (result.failed, r.failed) if x)
+        # A damaged record in one folder must not swallow another folder's
+        # real report (fix round 1, m4): `taken`/`refused`/`failed` are just
+        # as much a report as `restored`/`already_back`/`missing` — leaving
+        # any of the three out of this check dropped that folder's outcome
+        # whenever the only other folder touched was the damaged one.
+        if refused and not (result.restored or result.already_back or result.missing
+                            or result.taken or result.refused or result.failed):
+            self._say(" ".join(refused))
             return
-        home = set(result.restored) | set(result.already_back)
-        missing = set(result.missing)
-        listed = set()
+        listed = {os.path.abspath(s.path) for s in self._stats}
         for s in self._stats:
-            name = os.path.basename(s.path)
-            listed.add(name)
-            if s.moved and name in home:
-                s.path, s.moved = os.path.join(folder, name), False
+            if s.moved and os.path.abspath(s.path) in home:
+                s.path, s.moved = os.path.join(home_folder(s.path),
+                                               os.path.basename(s.path)), False
+        listed_home = {os.path.join(home_folder(p), os.path.basename(p)) for p in listed}
         # A name move_back could not find anywhere — not in rejected/, not
         # at home, deleted by hand — must stop being listed as a moved frame
         # pointing at a file that no longer exists anywhere.
-        self.browser.remove_frames(lambda s: s.moved and os.path.basename(s.path) in missing)
+        self.browser.remove_frames(lambda s: s.moved and os.path.abspath(s.path) in missing)
         self.browser.frames_moved()
         self._stats = self.browser.frames()   # keep in sync — see grade()'s no-paths branch
         # A frame remove_frames just dropped (deleted from rejected/ by
         # hand) can no longer be counted anywhere — the strip must forget it
         # along with the row.
         self._update_verdict()
-        unlisted = [n for n in result.restored if n not in listed]
+        unlisted = [p for p in restored_paths if p not in listed_home]
         self._sync_reject_buttons(check_disk=True)
-        self._say(self._back_message(result, unlisted))
+        self._say(" ".join([self._back_message(result, unlisted), *refused]))
         if not unlisted:
             return
         # Whichever path re-measures the restored frames, "Measuring…"
@@ -1235,7 +1599,7 @@ class StackDialog(QDialog):
             # _grade_restored sets for the partial path, so a failure here
             # gets the same "still back in the folder" message instead of a
             # generic "Failed: …".
-            self._restoring_names = unlisted
+            self._restoring_names = [os.path.basename(p) for p in unlisted]
             self.grade(folder)
             return
         # Frames restored from an earlier session: never graded in THIS
@@ -1245,14 +1609,14 @@ class StackDialog(QDialog):
         # was already listed. Grade only the names that are actually new,
         # off-thread like any other grade, and merge them in without
         # touching an existing row.
-        self._grade_restored(folder, unlisted)
+        self._grade_restored(unlisted)
 
-    def _grade_restored(self, folder: str, names: list[str]) -> None:
+    def _grade_restored(self, paths: list[str]) -> None:
         """Off-thread, exactly like grade(), but for just the frames
         `_move_back` found restored and not already listed — see the comment
-        there for why this replaced a full self.grade()."""
-        self._restoring_names = names       # read by _on_error if this fails
-        paths = [os.path.join(folder, n) for n in names]
+        there for why this replaced a full self.grade(). Full paths: they
+        can come back into more than one listed folder."""
+        self._restoring_names = [os.path.basename(p) for p in paths]   # for _on_error
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
@@ -1337,7 +1701,7 @@ class StackDialog(QDialog):
     def _auto_output_path(self) -> None:
         if self._name_is_manual or not self._stats:
             return
-        kept = [s for s in self._stats if s.included]
+        kept = self._ticked()
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
         target = next((s.target for s in kept if s.target), "")
@@ -1351,8 +1715,11 @@ class StackDialog(QDialog):
     def _selection_summary(self) -> str:
         # Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
         # Ruling R1): the same total as Show All and the verdict.
-        counted = [s for s in self._stats if not is_left_out(s)]
+        counted = [s for s in self._stats
+                   if not is_left_out(s) and self.browser.night_on(s)]
         if not counted:
+            if any(not is_left_out(s) for s in self._stats):
+                return NO_NIGHT_STATUS          # there are subs; no night is ticked
             return ONLY_MASTERS
         total = len(counted)
         kept = [s for s in counted if s.included]
@@ -1370,6 +1737,11 @@ class StackDialog(QDialog):
         if total < JUDGE_MIN:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
+
+    def _ticked(self) -> list:
+        """Ticked, in a ticked night: what the name, the drizzle advice and
+        the status line count (spec 2026-09-28 §9.2)."""
+        return [s for s in self._stats if s.included and self.browser.night_on(s)]
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
@@ -1392,8 +1764,7 @@ class StackDialog(QDialog):
     def _target_label(self) -> str:
         """The same name _auto_output_path already derives for the output
         filename, so the log and the file agree on what this was."""
-        target = next((s.target for s in self._stats
-                       if s.included and s.target), "")
+        target = next((s.target for s in self._ticked() if s.target), "")
         return target or "stacked master"
 
     def _validate_ready_to_run(self) -> bool:
@@ -1541,8 +1912,8 @@ class StackDialog(QDialog):
         """
         if self._name_is_manual or not self._stats:
             return
-        target = next((s.target for s in self._stats if s.included and s.target), "")
-        kept = [s for s in self._stats if s.included]
+        kept = self._ticked()
+        target = next((s.target for s in kept if s.target), "")
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
         want = master_filename(target, result.frame_count, exposure,
@@ -1578,6 +1949,16 @@ class StackDialog(QDialog):
         self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        if self._adding_folder is not None:
+            # Nothing from it was listed; the folder is not one of ours.
+            name = os.path.basename(os.path.normpath(self._adding_folder))
+            self._adding_folder = None
+            self._active_token = None
+            self._set_busy(False)
+            self.status.setText(
+                f"Cancelled — nothing from {name} was added." if isinstance(exc, Cancelled)
+                else f"Could not add {name}: {exc}")
+            return
         if self._restoring_names is not None:
             # A re-grade started by "Move them back" — partial
             # (_grade_restored) or the full grade an all-moved reopen falls

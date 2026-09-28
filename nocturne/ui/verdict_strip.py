@@ -10,14 +10,19 @@ onto a second line, each still labelled (FlowLayout).
 
 It also carries the rejected-folder buttons (spec 2026-09-27 decision 7):
 they act on what the verdict just counted, so they sit where it is read.
+
+A folder of two nights or more gets a "Nights" line under the facts: one
+chip per night, each with its own verdict (spec 2026-09-28 §9.2; the nights
+mockup, option A). The chips are controls, so the screen's fold never hides
+them — it folds only the facts.
 """
 from __future__ import annotations
 
 import html
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
-                               QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
+                               QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
 from . import theme
 from .flow_layout import FlowBox
@@ -25,6 +30,8 @@ from .option_band import WrappedNote
 
 MORE_TEXT = "details ▸"
 BACK_TEXT = "Move them back"
+NIGHTS_TEXT = "Nights"
+NIGHT_CHIP = "nightChip"          # the chips' objectName, for the stylesheet
 
 
 def move_label(n: int) -> str:
@@ -49,13 +56,19 @@ class VerdictStrip(QFrame):
     move_requested = Signal()
     back_requested = Signal()
     expanded = Signal()          # the user opened the details the screen folded
+    night_toggled = Signal(object, bool)     # a night's key, and ticked or not
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         # The option groups' panel: one look for "a box of facts about this set".
         self.setObjectName("optionGroup")
-        # Never widens the dialog: the facts wrap instead.
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+        # Never widens the dialog: the facts wrap instead. Vertically, the
+        # height its facts and chips take at the width it HAS: with
+        # Minimum, Qt reserved the sizeHint, which for a wrapping row is its
+        # height at its narrowest — 86 px for 48 of one night's facts, 138
+        # for 73 with the Nights line (measured offscreen 2026-09-28), and
+        # that surplus alone folded the verdict at 740.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.headline = QLabel("")
         self.headline.setObjectName("verdictHeadline")
         self.headline.setStyleSheet("font-weight: bold;")
@@ -91,10 +104,23 @@ class VerdictStrip(QFrame):
         row.addWidget(self.facts_box, 1)
         row.addWidget(self.move_btn, 0, Qt.AlignmentFlag.AlignTop)
         row.addWidget(self.back_btn, 0, Qt.AlignmentFlag.AlignTop)
+        # The Nights line: its own widget for the reason the row is one.
+        self.nights_row = QWidget()
+        nights = QHBoxLayout(self.nights_row)
+        nights.setContentsMargins(0, 0, 0, 0)
+        self.nights_label = QLabel(NIGHTS_TEXT)
+        self.nights_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.chips_box = FlowBox(h_spacing=8, v_spacing=4)
+        nights.addWidget(self.nights_label, 0, Qt.AlignmentFlag.AlignTop)
+        nights.addWidget(self.chips_box, 1)
+        self.chips: list[QCheckBox] = []
+        self._night_keys: list = []      # keys of self.chips, same order
+        self.nights_row.hide()
         col = QVBoxLayout(self)
         col.setContentsMargins(9, 6, 9, 6)
         col.setSpacing(4)
         col.addWidget(self.row)
+        col.addWidget(self.nights_row)
         col.addWidget(self.message)
 
         self._verdict = None
@@ -121,6 +147,47 @@ class VerdictStrip(QFrame):
     def details_shown(self) -> bool:
         """The facts are on screen — not folded to the headline."""
         return bool(self.fact_labels) and not any(l.isHidden() for l in self.fact_labels)
+
+    def set_nights(self, nights) -> None:
+        """One chip per night: (key, text, tooltip, ticked) each. Fewer than
+        two nights, no line at all — a one-night folder looks as it always
+        has. Rebuilt quietly: only his click emits night_toggled.
+
+        Ruling R7 (Task 6 fix round 1): when the set of nights itself hasn't
+        changed — a tick, a strictness re-judge, the same folder repainted —
+        the existing chips are updated in place (text, tooltip, checked,
+        signals blocked) instead of being torn down and rebuilt. A keyboard
+        user's focus lives on a specific QCheckBox; deleteLater()ing it on
+        every toggle dropped focus to None and made Tab start over from the
+        top after every Space press. Rebuilt only when the nights themselves
+        differ — added, removed, or reordered."""
+        keys = [n[0] for n in nights]
+        if len(nights) >= 2 and keys == self._night_keys:
+            for chip, (_key, text, tip, ticked) in zip(self.chips, nights):
+                chip.setText(text)
+                chip.setToolTip(tip)
+                chip.blockSignals(True)
+                chip.setChecked(ticked)
+                chip.blockSignals(False)
+            self._sync()
+            return
+        flow = self.chips_box.flow
+        for chip in self.chips:
+            flow.removeWidget(chip)
+            chip.deleteLater()
+        self.chips = []
+        if len(nights) >= 2:
+            for key, text, tip, ticked in nights:
+                chip = QCheckBox(text)
+                chip.setObjectName(NIGHT_CHIP)
+                chip.setToolTip(tip)
+                chip.setChecked(ticked)
+                chip.toggled.connect(lambda on, k=key: self.night_toggled.emit(k, on))
+                flow.addWidget(chip)
+                self.chips.append(chip)
+        self._night_keys = keys if len(nights) >= 2 else []
+        self.nights_row.setVisible(bool(self.chips))
+        self._sync()
 
     def set_move_count(self, n: int) -> None:
         self._move_n = n
@@ -185,4 +252,4 @@ class VerdictStrip(QFrame):
         self.back_btn.setText(f"{BACK_TEXT} ({self._back_n})")
         self.back_btn.setVisible(self._back_n > 0)
         self.setVisible(bool(v) or self._move_n > 0 or self._back_n > 0
-                        or bool(self.message.text()))
+                        or bool(self.message.text()) or bool(self.chips))

@@ -1755,7 +1755,18 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
     # the chart
     assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
     assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME
-    assert "drawn short" in b and "GAP_CAP" in _src("nocturne/ui/quality_chart.py")
+    # Ruling R11 (his own request, final fix wave, 2026-09-28): a smoothed
+    # trend line, and a narrow FIXED-pixel gap between nights (GAP_CAP still
+    # governs the gap WITHIN a night, unchanged). Ruling R12 (round 2): the
+    # line is two-stage (median then mean, not a single median), and the
+    # FWHM scale settles around the kept frames, not every raw value.
+    assert "smoothed trend line" in b and "running median" in b and "running average" in b
+    assert "narrow fixed width" in b
+    assert "settles around the kept frames" in b and "pinned at the top or bottom" in b
+    qc_src = _src("nocturne/ui/quality_chart.py")
+    assert "GAP_CAP" in qc_src and "NIGHT_GAP_PX" in qc_src
+    assert "TREND_MEDIAN_WINDOW" in qc_src and "TREND_MEAN_WINDOW" in qc_src
+    assert "MIN_FWHM_SPAN" in qc_src
     for words in (quality_chart.HIDE_TEXT, quality_chart.SHOW_TEXT):
         assert f"<b>{words}</b>" in b, words
     assert "Under the list" not in b and "above the list" in b
@@ -1797,3 +1808,34 @@ def test_both_topics_say_what_an_unmeasured_frame_shows():
         b = _body(topic)
         assert f"<b>{REASON_MEASURE}</b>" in b, topic
         assert "none of the counts" in b, topic
+
+
+# --- several nights (spec 2026-09-28 §9) ---------------------------------------
+
+def test_stacking_help_describes_nights_as_they_are_built():
+    b = _body("stacking")
+    nights = _src("nocturne/stacking/nights.py")
+    strip = _src("nocturne/ui/verdict_strip.py")
+    assert "noon to noon" in b and "NIGHT_TURNS_AT = 12" in nights
+    assert "<b>Nights</b>" in b and 'NIGHTS_TEXT = "Nights"' in strip
+    assert "<b>No date</b>" in b and 'NO_DATE_LABEL = "No date"' in nights
+    assert "<b>Soft</b>" in b and '"Soft"' in _src("nocturne/stacking/verdict.py")
+    assert "fewer than five frames" in b and "JUDGE_MIN = 5" in _src("nocturne/stacking/grade.py")
+
+
+def test_stacking_help_names_add_folder():
+    b = _body("stacking")
+    assert "<b>Add folder…</b>" in b
+    assert 'ADD_FOLDER_TEXT = "Add folder…"' in _src("nocturne/ui/stack_dialog.py")
+
+
+def test_stacking_help_no_longer_says_a_folder_of_nights_is_judged_as_one():
+    """True until 2026-09-28; each night is graded on its own since."""
+    b = _body("stacking")
+    assert "combined as though it were one — and a night" not in b
+    assert "a whole bad session is not an outlier" not in b
+
+
+def test_haoiii_help_mentions_the_night_lines():
+    b = _body("haoiii")
+    assert "dashed line" in b and "no night chips" in b
