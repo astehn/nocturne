@@ -827,18 +827,26 @@ class FrameBrowser(QWidget):
             self.preview_name.setText("")
             self.preview_name.setToolTip("")
             self.preview_facts.setText("")
+            self.preview_facts.setToolTip("")
             return
         s = stats[row]
         self.preview_name.setText(os.path.basename(s.path))
         self.preview_name.setToolTip(s.path)
         if is_left_out(s):
             # A left-out frame's star/FWHM facts are not measurements — do
-            # not print its fake zeros (spec 2026-09-28 §3; Ruling R1).
-            self.preview_facts.setText(s.reason)
+            # not print its fake zeros (spec 2026-09-28 §3; Ruling R1). A
+            # master's Time is a fake stacked-on stamp (Ruling R4), so only a
+            # frame that could not be MEASURED still has a real one worth
+            # showing here (M5, final fix wave, 2026-09-28).
+            when = full_label(getattr(s, "captured", None)) if not is_master(s) else ""
+            text = f"{when} · {s.reason}" if when else s.reason
+            self.preview_facts.setText(text)
+            self.preview_facts.setToolTip(text)
             return
         facts = [full_label(getattr(s, "captured", None)),
                  f"{s.star_count} stars", f"FWHM {s.fwhm:.1f}"]
         self.preview_facts.setText(" · ".join(f for f in facts if f))
+        self.preview_facts.setToolTip("")
 
     def _toggle_current(self) -> None:
         row = self.current_row()

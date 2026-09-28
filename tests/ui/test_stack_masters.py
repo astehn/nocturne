@@ -200,6 +200,28 @@ def test_an_unmeasured_frame_keeps_its_real_time_but_dashes_its_measurements(qtb
         f"IC1805_broken_0.fit\n{REASON_MEASURE}")
 
 
+def test_the_preview_shows_an_unmeasured_frames_real_time_but_not_a_masters(
+        qtbot, tmp_path):
+    """M5 (final fix wave, 2026-09-28): Ruling R4's real-time treatment held
+    in the Time cell but not in the preview header (`preview_facts`) or its
+    tooltip — both showed only the bare reason for ANY left-out frame,
+    master or not, dropping the one fact that makes an unmeasured frame
+    different from a master."""
+    from nocturne.stacking.capture_time import full_label
+    stats = _night_with_masters_and_unmeasured(tmp_path)
+    d = _stack(qtbot, stats)
+    u = next(i for i, s in enumerate(stats) if is_left_out(s) and not is_master(s))
+    m = next(i for i, s in enumerate(stats) if is_master(s))
+    d.browser.set_current_row(u)
+    when = full_label(stats[u].captured)
+    assert when and when in d.browser.preview_facts.text()
+    assert REASON_MEASURE in d.browser.preview_facts.text()
+    assert d.browser.preview_facts.toolTip() == d.browser.preview_facts.text()
+    d.browser.set_current_row(m)
+    assert d.browser.preview_facts.text() == REASON_NOT_RAW, (
+        "a master's fake stacked-on stamp leaked into the preview")
+
+
 def test_only_a_masters_time_is_faked_not_an_unmeasured_frames(qtbot, tmp_path):
     """Ruling R4, the two cases side by side: a master's Time is fake (when
     it was STACKED) and dashes; an unmeasured frame's is real and does not —

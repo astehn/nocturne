@@ -1785,3 +1785,15 @@ def test_both_topics_say_what_a_stacked_master_shows():
         b = _body(topic)
         assert f"<b>{REASON_NOT_RAW}</b>" in b, topic
         assert "none of the counts" in b, topic
+
+
+def test_both_topics_say_what_an_unmeasured_frame_shows():
+    """M4 (final fix wave, 2026-09-28): Ruling R1 gave a frame that could not
+    be measured the same treatment as a stacked master — sorts last, shows
+    its real reason, counted nowhere — but the help never said so, leaving a
+    user who sees "Unmeasured N frames" with no explanation."""
+    from nocturne.stacking.grade import REASON_MEASURE
+    for topic in ("stacking", "haoiii"):
+        b = _body(topic)
+        assert f"<b>{REASON_MEASURE}</b>" in b, topic
+        assert "none of the counts" in b, topic
