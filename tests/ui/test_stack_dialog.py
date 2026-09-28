@@ -977,12 +977,15 @@ def test_no_option_row_is_squeezed_below_the_space_its_text_needs(qtbot):
     check covers each form row AND each group inside the band.
     """
     from PySide6.QtWidgets import QFormLayout
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000     # a short screen would fold the hints away
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
+    assert not d.options_band.is_folded(), "the band must be open for this to check anything"
+    assert all(g.isVisible() for g in d.options_band.groups), (
+        "a hidden group is skipped below, not squeezed")
     form = d.findChild(QFormLayout)
     boxes = [form.itemAt(r, role).widget()
              for r in range(form.rowCount())

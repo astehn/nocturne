@@ -74,16 +74,19 @@ class StackDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
-        # explanations expanded -- which was then the DEFAULT (help_expanded;
-        # Stack has had its own stack_help_expanded, off, since 2026-09-28)
-        # -- this dialog's own minimumSizeHint is 844px, and it
-        # opened at 700 with a floor of 500. Qt then squeezed the QFormLayout's
-        # rows onto a 46px stride while the rows are 54-72px tall, and because
-        # _Hint refuses to shrink (it must, or the text clips) the explanations
-        # painted straight over the controls beneath them: 11 overlaps measured
-        # under cocoa, the worst 158x18px across "Trim the ragged edges".
-        # Andreas never saw it because his help_expanded is False -- collapsed
-        # the dialog needs 658px and fits.
+        # explanations expanded -- which was then the DEFAULT, help_expanded
+        # -- this dialog's own minimumSizeHint is 844px, and it opened at 700
+        # with a floor of 500. Qt then squeezed the QFormLayout's rows onto a
+        # 46px stride while the rows are 54-72px tall, and because _Hint
+        # refuses to shrink (it must, or the text clips) the explanations
+        # painted straight over the controls beneath them: 11 overlaps
+        # measured under cocoa, the worst 158x18px across "Trim the ragged
+        # edges". Andreas never saw it because his help_expanded was False at
+        # the time -- collapsed the dialog needs 658px and fits.
+        #
+        # Stack has had its own stack_help_expanded, off by default, since
+        # 2026-09-28 (spec §6a); the main window's help_expanded above is a
+        # separate setting, untouched by anything in this dialog.
         self.setMinimumWidth(800)
         self.resize(1100, _OPEN_HEIGHT)
         self._settings = settings

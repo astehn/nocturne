@@ -366,7 +366,7 @@ def test_opened_folded_with_the_help_on_the_link_says_nothing_is_shown(qtbot):
     """Final review I1: the band folded and help on read "▾" over no
     explanation at all, and the first click saved help OFF and changed
     nothing on screen. The arrow says what is visible; "▸" means show."""
-    settings = Settings(frame_options_folded=False)
+    settings = Settings()
     settings.frame_options_folded = True
     settings.stack_help_expanded = True
     saves = []
