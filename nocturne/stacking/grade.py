@@ -11,6 +11,7 @@ from ..core.fits_io import is_stacked_master
 from ..core.tasks import current
 from .capture_time import read_capture_time
 from .frames import load_sub, luminance
+from .nights import split_nights
 
 
 def _check_cancel() -> None:
@@ -336,7 +337,23 @@ def reject_limit(values, k: float, floor: float = MIN_MEANINGFUL_EXCESS):
 
 
 def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
-    """Apply verdicts in place. Cheap — re-run freely when strictness changes."""
+    """Apply verdicts in place, each night against limits of its own (spec
+    2026-09-27 §3, §9.3). Cheap — re-run freely when strictness changes.
+
+    Two nights are two shoots. Judged together, his Sh2-108 folder lost
+    every "Soft stars" frame from the 21st (FWHM 3.0-3.1 against the 26th's
+    2.5-2.7), because one limit was computed across both. A folder that is
+    one night is one group, so its verdicts are exactly what they were. So
+    are frames with no capture time at all: they are a group of their own
+    (nights.NO_DATE_LABEL). A night under JUDGE_MIN keeps every frame, as a
+    folder that small always has.
+    """
+    for night in split_nights(stats):
+        _judge_night(list(night.frames), strictness)
+
+
+def _judge_night(stats: list[FrameStats], strictness: str) -> None:
+    """One night's verdicts, from limits computed within it."""
     k = STRICTNESS_K[strictness]
     floor = STRICTNESS_FLOOR[strictness]
     usable = [s for s in stats if not s.error]

@@ -769,3 +769,99 @@ def test_grading_records_when_each_frame_was_taken(tmp_path):
     assert grade_frame(str(good)).captured == from_date_obs("2026-09-21T20:19:21")
     failed = grade_frame(str(broken))
     assert failed.error and failed.captured == from_filename(str(broken))
+
+
+# --- each night against its own limits (spec 2026-09-27 §3; §9.3) -----------
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_EVE_21 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
+_EVE_26 = datetime(2026, 9, 26, 20, 0, tzinfo=timezone.utc)
+
+
+def _timed(fwhms, start, name, elong=1.05):
+    out = []
+    for i, f in enumerate(fwhms):
+        s = _fs(f"{name}{i:02d}.fit", fwhm=f, elongation=elong)
+        s.captured = start + timedelta(minutes=2 * i)
+        out.append(s)
+    return out
+
+
+def _sh2_108_shaped():
+    """The 21st: a windy night, stars 3.0-3.1 px, one frame at 4.0. The 26th:
+    calm, 2.5-2.7 px, most at 2.6. The shape of his real folder (spec §1)."""
+    soft = [3.0, 3.05, 3.1] * 6 + [4.0]
+    sharp = [2.5, 2.6, 2.6, 2.6, 2.7] * 8
+    return _timed(soft, _EVE_21, "a"), _timed(sharp, _EVE_26, "b")
+
+
+def test_a_softer_night_keeps_its_best_frames():
+    soft, sharp = _sh2_108_shaped()
+    judge(soft + sharp, "normal")
+    assert [s.fwhm for s in soft if not s.included] == [4.0], \
+        "the 21st was judged against the 26th's stars"
+    assert all(s.included for s in sharp)
+
+
+def test_judged_together_the_same_frames_lose_the_soft_night():
+    """What per-night judging changes: the same frames with no capture time
+    are one group, as every folder was before, and most of the 21st goes."""
+    soft, sharp = _sh2_108_shaped()
+    for s in soft + sharp:
+        s.captured = None
+    judge(soft + sharp, "normal")
+    assert sum(1 for s in soft if s.included) <= len(soft) // 3
+    assert all(s.included for s in sharp)
+
+
+def _verdicts(stats):
+    return [(s.included, s.reason_code, s.reason, s.reason_detail, s.warning)
+            for s in stats]
+
+
+@pytest.mark.parametrize("strictness", ["relaxed", "normal", "strict"])
+def test_a_one_night_folder_is_judged_exactly_as_before(strictness):
+    """One night is one group: the verdicts equal those of the same frames
+    judged as a single set, which is what judge() did before nights."""
+    fwhms = [2.5, 2.6, 2.4, 2.55, 3.3, 2.5, 2.45, 2.6, 2.9, 2.5, 2.52, 2.48]
+    elongs = [1.05, 1.06, 1.04, 1.3, 1.05, 1.05, 1.07, 1.05, 1.06, 1.05, 1.04, 1.05]
+    # 20:00 UTC to 00:24 UTC the next day: across midnight, still one night.
+    timed = [_fs(f"t{i}.fit", fwhm=f, elongation=e, stars=800 if i != 7 else 200)
+             for i, (f, e) in enumerate(zip(fwhms, elongs))]
+    for i, s in enumerate(timed):
+        s.captured = _EVE_21 + timedelta(minutes=24 * i)
+    plain = [_fs(f"t{i}.fit", fwhm=f, elongation=e, stars=800 if i != 7 else 200)
+             for i, (f, e) in enumerate(zip(fwhms, elongs))]
+    judge(timed, strictness)
+    judge(plain, strictness)
+    assert _verdicts(timed) == _verdicts(plain)
+    assert any(not s.included for s in timed), "the fixture must reject something"
+
+
+def test_a_night_too_small_to_judge_keeps_every_frame():
+    """Four frames are too few to set a limit from, as in a folder of four:
+    kept whole — while the night beside it is judged as usual."""
+    tiny = _timed([2.5, 2.5, 2.5, 6.0], _EVE_21, "t")
+    night = _timed([2.5, 2.6, 2.4] * 4 + [4.0], _EVE_26, "n")
+    judge(tiny + night, "normal")
+    assert all(s.included and not s.reason for s in tiny)
+    assert [s.fwhm for s in night if not s.included] == [4.0]
+
+
+def test_frames_without_a_capture_time_are_judged_as_a_group_of_their_own():
+    dated = _timed([2.5, 2.6, 2.7] * 4, _EVE_26, "d")
+    undated = [_fs(f"u{i}.fit", fwhm=f) for i, f in enumerate([3.0, 3.05, 3.1, 3.0, 3.05])]
+    judge(dated + undated, "normal")
+    assert all(s.included for s in undated), "judged against the dated night's limit"
+    assert all(s.included for s in dated)
+
+
+def test_error_frames_stay_out_whichever_night_they_fall_in():
+    soft, sharp = _sh2_108_shaped()
+    broken = _fs("broken.fit")
+    broken.error, broken.included = True, False
+    broken.reason_code, broken.reason = "measure_failed", REASON_MEASURE
+    broken.captured = _EVE_21
+    judge([broken] + soft + sharp, "normal")
+    assert broken.included is False and broken.reason == REASON_MEASURE
