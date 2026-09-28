@@ -37,6 +37,36 @@ def _label(folder: str) -> str:
     return os.path.basename(os.path.normpath(folder))
 
 
+def _in_rejected(folder: str) -> bool:
+    """True when `folder` — after resolving any link — sits inside a
+    rejected/ folder at any depth: a link straight to one, or a folder
+    nested inside one, both re-enter frames Move them back exists to keep
+    parked (review I1: the typed-name check alone missed both)."""
+    parts = os.path.realpath(folder).split(os.sep)
+    return REJECTED_DIR in parts
+
+
+def _same_folder(a: str, b: str) -> bool:
+    """True when `a` and `b` are the same folder, including a case variant
+    on a case-insensitive filesystem (APFS's default) — a plain string
+    compare of realpath, which preserves case, would miss that (review m2)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _file_key(path: str):
+    """(st_dev, st_ino): the identity reject_move already dedups a move by,
+    so a hard link under another name resolves to the file it already is,
+    not a second one — realpath does not collapse a hard link (review m2)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
 class _Hint(WrappedNote):
     """A note in this dialog — mostly explanations "How this works" hides.
 
@@ -544,33 +574,64 @@ class StackDialog(QDialog):
         """Measure the subs of `folder` and list them with these, without
         touching a row already listed (his ticks stay, as in Move them back).
 
-        A sub already listed is never listed twice: not by its own path, by
-        a link to it, or as a copy — the same name AND the same capture
-        time. The Seestar names a sub by the second it was taken, so two
-        different subs cannot share both, and a copy stacked twice would
-        count twice. A rejected/ folder is refused: its frames go back with
-        Move them back, never into a stack from there (spec §5)."""
+        A sub already listed is never listed twice: not by its own path, a
+        symlink to it, a hard link under another name, or a copy — the same
+        name AND the same capture time. The Seestar names a sub by the
+        second it was taken, so two different subs cannot share both, and a
+        copy stacked twice would count twice. A rejected/ folder is refused
+        — by typed name, or by a link to one, or a folder nested inside
+        one: its frames go back with Move them back, never into a stack
+        from there (spec §5)."""
         if self._busy or not self._stats:
             return
         folder = os.path.abspath(os.path.expanduser(folder.strip()))
         name = os.path.basename(os.path.normpath(folder))
-        if name == REJECTED_DIR:
+        if name == REJECTED_DIR or _in_rejected(folder):
             self.status.setText(
                 f"{name}/ holds frames moved out of a stack — Move them back "
                 "returns them to their folder; they are not added from there.")
             return
-        real = os.path.realpath(folder)
-        if real in {os.path.realpath(f) for f in self.listed_folders()}:
+        if any(_same_folder(folder, f) for f in self.listed_folders()):
             self.status.setText(f"The subs in {name} are already listed.")
             return
-        listed_paths = {os.path.realpath(s.path) for s in self._stats}
+        subs = discover_subs(folder)
+        if not subs:
+            # Every sub of this folder could be sitting in its OWN
+            # rejected/, parked by an earlier "Move rejected frames" — never
+            # nothing (review R9): list the folder anyway, with no rows, so
+            # the combined Nights/back-count picture and Move them back both
+            # see it. Otherwise a fully-moved-out folder looked like it had
+            # simply lost its frames.
+            try:
+                pending = pending_back(folder)
+            except (RejectMoveError, OSError):
+                pending = []
+            if pending:
+                self._added_folders.append(folder)
+                self._update_verdict()
+                self._sync_reject_buttons(check_disk=True)
+                n = len(pending)
+                self.status.setText(
+                    f"{name} has no subs left — {n} {'frame is' if n == 1 else 'frames are'} "
+                    f"in {name}/rejected; Move them back returns "
+                    f"{'it' if n == 1 else 'them'}.")
+                return
+            self.status.setText(f"No .fit subs found in {name}.")
+            return
+        listed_keys = {k for k in (_file_key(s.path) for s in self._stats) if k is not None}
         listed_names = {(os.path.basename(s.path), s.captured) for s in self._stats
                         if s.captured is not None}
+        listed_basenames = {n for n, _t in listed_names}
         paths, copies = [], 0
-        for p in discover_subs(folder):
-            if os.path.realpath(p) in listed_paths:
+        for p in subs:
+            key = _file_key(p)
+            if key is not None and key in listed_keys:
                 continue
-            if (os.path.basename(p), read_capture_time(p)) in listed_names:
+            pname = os.path.basename(p)
+            # read_capture_time opens the FITS header (review m3): worth it
+            # only when the name is one a copy could actually collide with —
+            # most added-folder subs share no basename with what is listed.
+            if pname in listed_basenames and (pname, read_capture_time(p)) in listed_names:
                 copies += 1
                 continue
             paths.append(p)

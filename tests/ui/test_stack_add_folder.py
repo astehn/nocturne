@@ -12,6 +12,7 @@ from nocturne.core.tasks import Cancelled
 from nocturne.settings import Settings
 from nocturne.stacking.capture_time import from_filename, read_capture_time
 from nocturne.stacking.grade import FrameStats
+from nocturne.stacking.reject_move import move_to_rejected
 from nocturne.ui import file_dialogs
 from nocturne.ui.stack_dialog import ADD_FOLDER_TEXT, StackDialog
 
@@ -198,6 +199,35 @@ def test_a_rejected_folder_is_not_added(qtbot, tmp_path):
     assert "Move them back" in d.status.text()
 
 
+def test_a_symlink_to_a_rejected_folder_is_refused(qtbot, tmp_path):
+    """Review I1: the typed-name check alone missed a link pointing AT
+    rejected/ — its realpath resolves through the link to one."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    rej = _seestar_folder(a, "rejected", "20260921", n=2, start=10)
+    link = tmp_path / "link-to-rejected"
+    link.symlink_to(rej)
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(str(link))
+    assert not d._busy, "a grade started"
+    assert len(calls) == 1 and len(d._stats) == 6
+    assert "Move them back" in d.status.text()
+
+
+def test_a_folder_nested_inside_rejected_is_refused(qtbot, tmp_path):
+    """Review I1: a folder ANYWHERE inside rejected/ is refused, not only
+    one typed as rejected/ itself."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    rej = _seestar_folder(a, "rejected", "20260921", n=2, start=10)
+    nested = _seestar_folder(rej, "nested", "20260921", n=1, start=20)
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(str(nested))
+    assert not d._busy, "a grade started"
+    assert len(calls) == 1 and len(d._stats) == 6
+    assert "Move them back" in d.status.text()
+
+
 def test_a_folder_without_subs_says_so(qtbot, tmp_path):
     a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
     empty = tmp_path / "nothing here"
@@ -206,6 +236,35 @@ def test_a_folder_without_subs_says_so(qtbot, tmp_path):
     d.add_folder(str(empty))
     assert d.status.text() == "No .fit subs found in nothing here."
     assert d.listed_folders() == [str(a)]
+
+
+def test_a_folder_whose_subs_are_all_already_rejected_is_still_listed(qtbot, tmp_path):
+    """Ruling R9: a folder fully moved out in an earlier session has nothing
+    for discover_subs to find directly inside it. It must not vanish from
+    the combined view — it is listed with no rows, its back count counts,
+    and Move them back still returns its frames, byte-identical."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = _seestar_folder(tmp_path, "b", "20260926")
+    b_paths = sorted(str(p) for p in b.iterdir())
+    move_to_rejected(str(b), b_paths, b_paths)      # simulates an earlier session
+    before = {os.path.basename(p): (b / "rejected" / os.path.basename(p)).read_bytes()
+              for p in b_paths}
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(str(b))
+    assert not d._busy, "nothing to grade"
+    assert len(calls) == 1                          # no new grade was started
+    assert d.listed_folders() == [str(a), str(b)]
+    assert d.status.text() == ("b has no subs left — 6 frames are in b/rejected; "
+                               "Move them back returns them.")
+    assert d.verdict_strip.back_btn.text() == "Move them back (6)"
+    d.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    for name, content in before.items():
+        assert (b / name).read_bytes() == content
+    assert len(d._stats) == 12
+    assert sorted(os.path.basename(s.path) for s in d._stats
+                 if os.path.dirname(s.path) == str(b)) == sorted(before)
 
 
 @pytest.mark.parametrize("exc, said", [(Cancelled(), "Cancelled — nothing from b was added."),
@@ -250,6 +309,38 @@ def test_a_link_to_a_listed_sub_is_not_added_under_another_name(qtbot, tmp_path)
     d.add_folder(str(b))
     assert not d._busy, "a grade started"
     assert len(calls) == 1 and len(d._stats) == 2
+
+
+def test_a_hard_link_under_another_name_is_not_listed_twice(qtbot, tmp_path):
+    """Review m2: a hard link is the SAME file under a second name — not a
+    copy, and not something realpath resolves away the way a symlink does."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = tmp_path / "hardlinks"
+    b.mkdir()
+    target = sorted(a.iterdir())[0]
+    os.link(target, b / "same_frame.fit")
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(str(b))
+    assert not d._busy, "a grade started"
+    assert len(calls) == 1 and len(d._stats) == 6
+
+
+def test_a_case_variant_folder_path_is_refused(qtbot, tmp_path):
+    """Review m2: on a case-insensitive filesystem (APFS's default) Sh2-108
+    and SH2-108 are the same directory entry — a realpath string compare
+    misses that; samefile does not. Skipped where the filesystem is
+    case-sensitive (real filesystem, not synthetic — detected here)."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    variant = os.path.join(os.path.dirname(str(a)), "SH2-108")
+    if not (os.path.exists(variant) and os.path.samefile(variant, a)):
+        pytest.skip("filesystem is case-sensitive")
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(variant)
+    assert not d._busy and len(calls) == 1
+    assert d.status.text().endswith("are already listed.")
+    assert len(d._stats) == 6
 
 
 def test_a_cancelled_first_grade_leaves_nothing_to_add_to(qtbot, tmp_path):
@@ -299,6 +390,28 @@ def test_a_second_night_added_at_the_floor_stays_on_screen(qtbot, tmp_path):
         assert d.preview.height() >= 220
     finally:
         app.setStyleSheet(before)
+
+
+def test_added_subs_with_no_name_overlap_never_read_their_header(qtbot, tmp_path, monkeypatch):
+    """Review m3: read_capture_time opens the FITS header, on the GUI
+    thread. It must run only for a basename that could actually collide
+    with one already listed — the ordinary case (a different night, a
+    different target) shares no name with what's here and needs no read."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = _seestar_folder(tmp_path, "b", "20260926")
+    from nocturne.ui import stack_dialog
+    reads = []
+    real = stack_dialog.read_capture_time
+
+    def spy(p):
+        reads.append(p)
+        return real(p)
+
+    monkeypatch.setattr(stack_dialog, "read_capture_time", spy)
+    d = _graded(qtbot, a)
+    _add(qtbot, d, b)
+    assert reads == []
+    assert len(d._stats) == 12
 
 
 def test_the_pointings_are_read_across_every_listed_folder(qtbot, tmp_path):
