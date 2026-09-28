@@ -1756,12 +1756,17 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
     assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
     assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME
     # Ruling R11 (his own request, final fix wave, 2026-09-28): a smoothed
-    # running-median trend line, and a narrow FIXED-pixel gap between nights
-    # (GAP_CAP still governs the gap WITHIN a night, unchanged).
-    assert "smoothed trend line" in b and "running median" in b
+    # trend line, and a narrow FIXED-pixel gap between nights (GAP_CAP still
+    # governs the gap WITHIN a night, unchanged). Ruling R12 (round 2): the
+    # line is two-stage (median then mean, not a single median), and the
+    # FWHM scale settles around the kept frames, not every raw value.
+    assert "smoothed trend line" in b and "running median" in b and "running average" in b
     assert "narrow fixed width" in b
+    assert "settles around the kept frames" in b and "pinned at the top or bottom" in b
     qc_src = _src("nocturne/ui/quality_chart.py")
-    assert "GAP_CAP" in qc_src and "NIGHT_GAP_PX" in qc_src and "TREND_WINDOW" in qc_src
+    assert "GAP_CAP" in qc_src and "NIGHT_GAP_PX" in qc_src
+    assert "TREND_MEDIAN_WINDOW" in qc_src and "TREND_MEAN_WINDOW" in qc_src
+    assert "MIN_FWHM_SPAN" in qc_src
     for words in (quality_chart.HIDE_TEXT, quality_chart.SHOW_TEXT):
         assert f"<b>{words}</b>" in b, words
     assert "Under the list" not in b and "above the list" in b

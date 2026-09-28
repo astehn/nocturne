@@ -21,9 +21,9 @@ from nocturne.ui.frame_browser import (COL_FWHM, SHOW_ALL, SHOW_KEPT,
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui import quality_chart as qc
 from nocturne.ui.quality_chart import (CHART_HEIGHT, CHART_ROOM_MIN, HIDE_TEXT,
-                                       KEPT_COLOUR, NOTE_NO_TIME, NOTE_TIME,
-                                       REJECTED_COLOUR, RING_RADIUS, SHOW_TEXT,
-                                       TREND_WINDOW, ChartPanel, QualityChart,
+                                       KEPT_COLOUR, MIN_FWHM_SPAN, NOTE_NO_TIME,
+                                       NOTE_TIME, REJECTED_COLOUR, RING_RADIUS,
+                                       SHOW_TEXT, ChartPanel, QualityChart,
                                        trend_values)
 from nocturne.ui.stack_dialog import StackDialog
 from nocturne.ui.theme import build_stylesheet
@@ -472,7 +472,11 @@ def test_the_axes_name_clock_times_and_two_fwhm_values(qtbot):
     first_by_time = min(stats, key=lambda s: s.captured)
     last_by_time = max(stats, key=lambda s: s.captured)
     assert times[0][1] == _clock(first_by_time) and times[-1][1] == _clock(last_by_time)
-    assert [t for _r, t in b.chart.fwhm_labels()] == ["3.0", "2.5"]
+    # Ruling R12: the labels are the scale's own top and bottom, not the
+    # rawest frame's FWHM — this night's only variety (one soft frame among
+    # five alike) is a single outlier, smoothed away, so the range floors
+    # out at MIN_FWHM_SPAN centred on 2.5, padded 5%.
+    assert [t for _r, t in b.chart.fwhm_labels()] == ["2.8", "2.2"]
 
 
 def test_axis_labels_meet_the_apps_readability_floor(qtbot):
@@ -778,48 +782,42 @@ def test_2500_frames_over_6_nights_paint_quickly(qtbot, stockholm):
     assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"
 
 
-# --- the smoothed trend line (his own request, Ruling R11, 2026-09-28) --------
+# --- the smoothed trend line (his own request, Ruling R11; retuned R12, 2026-09-28) --
 
-def test_the_trend_is_flat_on_a_noisy_but_flat_night():
-    """A night short enough that every point's window (half the frames
-    either side, TREND_WINDOW // 2) reaches both its own ends covers the
-    WHOLE night for every point alike, so the running median is the SAME
-    value throughout — trivially monotone (constant) — however noisy the
-    raw FWHM values are."""
-    values = [2.3, 2.7, 2.4, 2.65, 2.5]      # 5 frames, noisy, no real trend
-    half = TREND_WINDOW // 2
-    assert len(values) <= half + 1, "fixture must fit inside every point's own window"
+def test_a_single_outlier_stays_invisible_in_the_line():
+    """Ruling R12: his real-window try on NGC 6995/IC 1805 found the line
+    dead straight even through a visible cluster — round 1's single
+    9-frame median could swallow a cluster of up to 4. A lone odd frame,
+    though, must still vanish: it is always a minority of the 5-frame
+    median stage."""
+    baseline = 2.3
+    values = [baseline] * 20
+    values[10] = baseline + 1.0          # one wildly soft frame
     trend = trend_values(values)
-    expected = median(values)
-    assert trend == pytest.approx([expected] * len(values))
-    assert all(a <= b for a, b in zip(trend, trend[1:]))    # non-decreasing
-    assert all(a >= b for a, b in zip(trend, trend[1:]))    # non-increasing: constant
+    assert all(abs(v - baseline) <= 0.02 for v in trend), \
+        f"a single outlier swung the line: {trend}"
 
 
-def test_the_trend_window_is_about_nine_frames_and_narrows_at_the_ends():
-    """A plateau of elevated frames pulls the median up only where a
-    point's own window (TREND_WINDOW wide, centred on it) overlaps enough of
-    it to outnumber the rest — and not at all far away, where the window
-    never reaches it."""
+def test_a_cluster_of_four_shows_a_gentle_rise():
+    """Ruling R12: unlike a single outlier, a real cluster of several
+    frames must read as a visible rise — the whole point of the retune."""
+    baseline = 2.2
     n = 30
-    values = [2.0] * n
-    values[13:18] = [20.0] * 5               # a 5-wide plateau, majority of a 9-window
+    values = [baseline] * n
+    values[13:17] = [baseline + 0.3] * 4     # a 4-frame cluster
     trend = trend_values(values)
-    assert trend[15] == pytest.approx(20.0), "centred on the plateau, the median should follow it"
-    assert trend[0] == pytest.approx(2.0), "far from the plateau, the window never reaches it"
-    assert trend[-1] == pytest.approx(2.0)
-    # The window shrinks, rather than borrowing values, at a short array's
-    # own start: every point's window here is the WHOLE array (4 <= half+1),
-    # so one outlier at the end still only weighs into an even-sized median.
-    assert trend_values([1.0] * 3 + [100.0])[:3] == pytest.approx([1.0, 1.0, 1.0])
+    peak = max(trend[10:20]) - baseline
+    assert peak >= 0.1, f"the cluster's rise was only {peak:.3f} px"
+    assert trend[0] == pytest.approx(baseline, abs=1e-9), "undisturbed far from the cluster"
+    assert trend[-1] == pytest.approx(baseline, abs=1e-9)
 
 
 def test_the_trend_never_crosses_a_night_boundary(qtbot, stockholm):
     """A long, uniformly elevated first night followed by a short, normal
-    second night: made deliberately lopsided so that IF the median's window
-    reached across the boundary, the first night's elevated values (a clear
-    majority of any window that included them) would swamp the second
-    night's own few frames — being fewer, they must not."""
+    second night: made deliberately lopsided so that IF either smoothing
+    stage's window reached across the boundary, the first night's elevated
+    values (a clear majority of any window that included them) would swamp
+    the second night's own few frames — being fewer, they must not."""
     stats = _nights(first=10, second=2)
     for s in stats[:10]:
         s.fwhm = 50.0
@@ -842,3 +840,53 @@ def test_hover_and_click_still_land_on_the_real_dot(qtbot):
     assert "FWHM 3.00" in b.chart.tooltip_at(pos)
     assert b.chart.point_pos(2).y() == pytest.approx(
         b.chart._y(3.0, b.chart._plot_rect(), *b.chart._value_range()))
+
+
+# --- the Y range fits the kept dots, not a rejected outlier (Ruling R12) ------
+
+def test_a_steady_night_gets_at_least_the_minimum_span(qtbot):
+    """A perfectly steady night must not be blown up edge to edge by its
+    own quantisation noise — the range is centred on the data with a floor
+    of MIN_FWHM_SPAN, before the 5% pad."""
+    stats = [_frame(i, 5 * i, fwhm=2.30) for i in range(20)]
+    b = _shown(qtbot, stats)
+    lo, hi = b.chart._value_range()
+    span = hi - lo
+    pad = span / 1.10 * 0.05            # the 5% pad added on top of the floor
+    assert span - 2 * pad == pytest.approx(MIN_FWHM_SPAN, abs=1e-6)
+    assert (lo + hi) / 2 == pytest.approx(2.30, abs=1e-6)
+
+
+def test_a_badly_rejected_outlier_is_clamped_inside_the_plot(qtbot):
+    """His real-window bug: a handful of rejected outliers, included in the
+    old min/max, squeezed every kept dot into a sliver at the bottom. Now
+    the outlier's dot is pinned at the plot's own edge instead — shown, not
+    dropped, and the scale is not stretched to fit it."""
+    stats = _night()
+    for s in stats:
+        if not s.reason:
+            s.fwhm = 2.5
+    stats[2].fwhm = 50.0                # the already-rejected frame, now a wild outlier
+    b = _shown(qtbot, stats)
+    r = b.chart._plot_rect()
+    pos = b.chart.point_pos(2)
+    assert r.top() <= pos.y() <= r.bottom()
+    assert pos.y() == pytest.approx(r.top()), "a far-softer outlier clamps to the plot's top"
+
+
+def test_the_min_span_and_clamp_do_not_touch_a_normal_night(qtbot):
+    """A night with real, moderate spread — among the KEPT frames alone, so
+    it survives the trend's own smoothing — needs neither the floor nor a
+    clamp: the range and every dot's position are exactly what the plain
+    formula gives."""
+    stats = [_frame(i, 5 * i, fwhm=2.0 + 0.1 * i) for i in range(10)]
+    b = _shown(qtbot, stats)
+    lo, hi = b.chart._value_range()
+    kept = [s.fwhm for s in stats if not s.reason]
+    trend = b.chart._trend_fwhm()
+    values = kept + trend
+    span = max(values) - min(values)
+    assert span >= MIN_FWHM_SPAN, "fixture drifted below the floor this test means to avoid"
+    expected_lo = min(values) - span * 0.05
+    expected_hi = max(values) + span * 0.05
+    assert (lo, hi) == pytest.approx((expected_lo, expected_hi))

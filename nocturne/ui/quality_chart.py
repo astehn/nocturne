@@ -45,11 +45,35 @@ GAP_CAP = timedelta(minutes=20)
 # within-night, time-proportional part is laid out (see `_avail`/`_px`), so
 # resizing the window changes every night's own width but never the gap's.
 NIGHT_GAP_PX = 24.0
-# The trend line's running-median window, in frames — his own request
-# (Ruling R11, 2026-09-28): "about 9", smaller at a night's own ends (never
-# reaching past it: the line already breaks there). The dots stay exact;
-# only the line connecting them is smoothed.
-TREND_WINDOW = 9
+# The trend line's two smoothing windows, in frames (Ruling R12, 2026-09-28,
+# his own real-window try on NGC 6995 and IC 1805): a single running median
+# over 9 (round 1) read as dead straight even through a visible cluster of
+# rejected frames — a value only needs to be a MINORITY of its window to be
+# swallowed by a median, and a cluster of up to 4 frames still is one in a
+# window that wide. Two stages fix it: a MEDIAN of 5 first (so a cluster of
+# 3 is already a majority, 3 of 5, and survives, while any lone frame, 1 of
+# 5, cannot), then a MEAN of the median's own output, which turns its sharp
+# plateau into a genuinely gentle rise.
+#
+# The mean window was tuned on synthetic nights shaped like his real
+# sessions (scratchpad/finalC/tune_trend.py; renders saved as
+# chart_steady.png — 60 frames at 2.2-2.4 px with two single outliers — and
+# chart_clusters.png — an IC 1805-like 400 frames/2 h at 2.2 px with 9
+# clusters of 2-5 frames at 2.5-2.6 px). All of 5, 7 and 9 left a single
+# outlier at exactly zero effect on the line either way (the median stage
+# alone already erases it); a fixed +0.3 px, 4-frame cluster's peak rise was
+# 0.24 px at mean=5, 0.17 px at mean=7, 0.13 px at mean=9. At mean=5 the
+# render shows a sharp triangular spike, barely gentler than round 1's
+# plateau; at mean=9 the rise flattens enough to start blurring his smaller
+# 2-3 frame clusters into the noise floor. 7 is the middle ground the
+# renders back: still a visibly rounded, gentle bump, comfortably clear of
+# the 0.1 px floor a genuine cluster must clear.
+TREND_MEDIAN_WINDOW = 5
+TREND_MEAN_WINDOW = 7
+# The FWHM scale's minimum height (Ruling R12): centred on the data, so a
+# steady night — his common case — is not blown up edge-to-edge by its own
+# quantisation noise. 0.5 px is his own figure (final-fix.md, round 2).
+MIN_FWHM_SPAN = 0.5
 KEPT_COLOUR = theme.ACCENT
 # Amber, as the mockup draws it. The list DIMS a rejected row; a dimmed dot on
 # a dark strip would vanish, which is the opposite of the point.
@@ -91,16 +115,13 @@ def plottable(s) -> bool:
     return not s.error and s.star_count > 0 and s.fwhm > 0
 
 
-def trend_values(values: Sequence[float], breaks: Sequence[int] = (),
-                 window: int = TREND_WINDOW) -> list[float]:
-    """A running median of `values`, one per value, in order — his own
-    request (Ruling R11, 2026-09-28): a fair trend on a noisy night without
-    following every wobble, which a raw point-to-point line does.
-
-    `breaks` are the indices where a new night starts (never 0): the window
-    never reaches across one — the polyline already breaks there — so it
-    narrows near a night's own ends instead of borrowing another night's
-    values. Pure (no Qt), so it is tested directly, without a widget."""
+def _running(values: Sequence[float], breaks: Sequence[int], window: int,
+            agg: Callable[[Sequence[float]], float]) -> list[float]:
+    """A running `agg` (median or mean) over `values`, one per value, in
+    order. `breaks` are the indices where a new night starts (never 0): the
+    window never reaches across one — the polyline already breaks there —
+    so it narrows near a night's own ends instead of borrowing another
+    night's values."""
     if not values:
         return []
     bounds = [0, *sorted(breaks), len(values)]
@@ -108,8 +129,34 @@ def trend_values(values: Sequence[float], breaks: Sequence[int] = (),
     out: list[float] = []
     for s, e in zip(bounds, bounds[1:]):
         for idx in range(s, e):
-            out.append(median(values[max(s, idx - half):min(e, idx + half + 1)]))
+            out.append(agg(values[max(s, idx - half):min(e, idx + half + 1)]))
     return out
+
+
+def _mean(xs: Sequence[float]) -> float:
+    return sum(xs) / len(xs)
+
+
+def trend_values(values: Sequence[float], breaks: Sequence[int] = (),
+                 median_window: int = TREND_MEDIAN_WINDOW,
+                 mean_window: int = TREND_MEAN_WINDOW) -> list[float]:
+    """The trend line's own FWHM at each plotted point (Ruling R12,
+    2026-09-28): a fair trend on a noisy night without following every
+    wobble, which a raw point-to-point line does — but without erasing a
+    real CLUSTER of several rejected frames either, which a single wide
+    median (round 1's TREND_WINDOW = 9) did: a value only needs to be a
+    minority of its window to be swallowed by a median, and a wide enough
+    window makes a real cluster of several a minority too.
+
+    Two stages: a narrow running MEDIAN (drops a lone odd frame outright,
+    since one frame is always a minority of 5 or more) followed by a
+    running MEAN of the median's own output (turns its sharp plateau at a
+    surviving cluster into the "gentle rise" he asked for). Both stages
+    share the same per-night `breaks` and the same edge-narrowing window,
+    so neither ever reaches across a night boundary. Pure (no Qt), so it is
+    tested directly, without a widget."""
+    med = _running(values, breaks, median_window, median)
+    return _running(med, breaks, mean_window, _mean)
 
 
 def note_html(note: str) -> str:
@@ -242,16 +289,46 @@ class QualityChart(QWidget):
         return QRectF(_LEFT, _TOP, max(1.0, self.width() - _LEFT - _RIGHT),
                       max(1.0, self.height() - _TOP - _BOTTOM))
 
-    def _value_range(self) -> tuple[float, float]:
-        """The FWHM scale, padded 5% so no dot sits on the edge."""
+    def _trend_fwhm(self) -> list[float]:
+        """The smoothed FWHM at each plotted point, in `_rows` order — pure
+        values, no pixel geometry. Feeds both the scale (`_value_range`,
+        Ruling R12: the line's own excursions must fit) and the line itself
+        (`_trend_line`)."""
+        if not self._rows:
+            return []
+        breaks = [k for k, _label in self._night_starts if k > 0]
         values = [self._stats[i].fwhm for i in self._rows]
+        return trend_values(values, breaks)
+
+    def _value_range(self) -> tuple[float, float]:
+        """The FWHM scale: the KEPT dots plus wherever the trend line
+        reaches, padded 5%, never narrower than MIN_FWHM_SPAN (Ruling R12,
+        2026-09-28) — his real-window try on NGC 6995 read the trend as
+        dead flat partly because a handful of REJECTED outliers, included in
+        the old min/max, squeezed every kept dot into a sliver at the
+        bottom. A rejected dot outside this range is drawn pinned at the
+        plot's edge instead (`_y`), never dropped and never allowed to
+        stretch the scale."""
+        kept = [self._stats[i].fwhm for i in self._rows
+               if not self._is_rejected(self._stats[i])]
+        base = kept or [self._stats[i].fwhm for i in self._rows]
+        values = base + self._trend_fwhm()
         lo, hi = min(values), max(values)
-        pad = (hi - lo) * 0.05 if hi > lo else 0.5
+        span = hi - lo
+        if span < MIN_FWHM_SPAN:
+            mid = (lo + hi) / 2.0
+            lo, hi = mid - MIN_FWHM_SPAN / 2.0, mid + MIN_FWHM_SPAN / 2.0
+            span = MIN_FWHM_SPAN
+        pad = span * 0.05
         return lo - pad, hi + pad
 
     def _y(self, value: float, r: QRectF, lo: float, hi: float) -> float:
         # Softer is HIGHER, as the mockup draws the soft night: worse is up.
-        return r.bottom() - (value - lo) / (hi - lo) * r.height()
+        # Clamped to the plot rect (Ruling R12): a rejected outlier outside
+        # the range is pinned at the edge, not dropped and not allowed to
+        # drag the range back out to fit it.
+        y = r.bottom() - (value - lo) / (hi - lo) * r.height()
+        return min(max(y, r.top()), r.bottom())
 
     def _positions(self) -> list[tuple[int, QPointF]]:
         if not self._rows:
@@ -286,17 +363,15 @@ class QualityChart(QWidget):
         return f"{when}\nFWHM {s.fwhm:.2f} px · {self._describe(s)}"
 
     def _trend_line(self, pts: list[tuple[int, QPointF]]) -> list[QPointF]:
-        """The line's own y at each dot's x: a running median of FWHM (his
-        own request, Ruling R11, 2026-09-28) — the dots (`pts`) keep their
-        real values and real x; only what connects them is smoothed."""
+        """The line's own y at each dot's x: two-stage smoothed FWHM (Ruling
+        R12, 2026-09-28) — the dots (`pts`) keep their real values and real
+        x; only what connects them is smoothed."""
         if not pts:
             return []
         r = self._plot_rect()
         lo, hi = self._value_range()
-        breaks = [k for k, _label in self._night_starts if k > 0]
-        values = [self._stats[i].fwhm for i, _q in pts]
         return [QPointF(q.x(), self._y(m, r, lo, hi))
-                for (_i, q), m in zip(pts, trend_values(values, breaks))]
+                for (_i, q), m in zip(pts, self._trend_fwhm())]
 
     # --- the axes ---
     def _axis_font(self) -> QFont:
@@ -305,15 +380,18 @@ class QualityChart(QWidget):
         return font
 
     def fwhm_labels(self) -> list[tuple[QRectF, str]]:
-        """The softest and the sharpest frame's FWHM, left of the plot and
-        level with where they are drawn. One value when every frame is alike."""
+        """The plot's own top and bottom FWHM, left of the plot and level
+        with where they are drawn — the scale's own ends (Ruling R12,
+        2026-09-28), not necessarily the rawest kept or rejected frame:
+        since the range no longer simply spans every plotted value, a label
+        must say what the AXIS reads there, not what one extreme frame
+        happened to measure. One value when the range rounds to one."""
         if not self._rows:
             return []
         r = self._plot_rect()
         lo, hi = self._value_range()
-        values = [self._stats[i].fwhm for i in self._rows]
         out, seen = [], set()
-        for v in (max(values), min(values)):
+        for v in (hi, lo):
             text = f"{v:.1f}"
             if text in seen:
                 continue
