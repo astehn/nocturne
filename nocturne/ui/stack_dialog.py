@@ -1283,7 +1283,15 @@ class StackDialog(QDialog):
         self.status.setText(self._selection_summary())
         self._auto_output_path()
         if self._fitted:
-            self._keep_on_screen()
+            # R8/I1's second path (final fix wave, round 2): this merge adds
+            # rows, which cost the list no height, and the verdict gets
+            # SHORTER ("Not counted N more in rejected/" leaves) — the only
+            # thing growing the dialog here is the still-lingering "Moved N
+            # frames back." report line, exactly I1's trigger, just reached
+            # through this grade-time door instead of _refit. The full
+            # re-grade below (_on_graded, including the all-moved reopen
+            # fallback) is genuinely new content and keeps the default.
+            self._keep_on_screen(allow_verdict_squeeze=False)
 
     def _clear_restoring_message(self) -> None:
         """The "Measuring N frames that came back…" message is a promise;

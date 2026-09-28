@@ -817,6 +817,73 @@ def test_move_back_does_not_compact_the_verdict_at_the_1280_floor(qtbot, tmp_pat
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
 
 
+def _reopened_with_zero_slack(qtbot, folder):
+    """A folder reopened with the dialog pinned EXACTLY to its own natural
+    minimum (chart folded, no message yet) — the same boundary condition
+    I1's own repro needed. A spacious re-open first measures that natural
+    minimum; the real dialog is then built pinned to it from the start, so
+    the very next byte of growth is what I1/R8 are about, not a fixture
+    that merely happens to be big enough."""
+    probe = StackDialog(Settings())
+    qtbot.addWidget(probe)
+    probe._available_height = lambda: 4000
+    probe.browser.preview_controller.loader = _blank
+    probe._grade_runner = _runner()
+    probe.folder_edit.setText(str(folder))
+    probe.show()
+    qtbot.waitExposed(probe)
+    probe.grade()
+    qtbot.waitUntil(lambda: not probe._busy, timeout=3000)
+    qtbot.wait(50)
+    panel = probe.browser.chart_panel
+    panel.blockSignals(True)
+    panel.set_folded(True)
+    panel.blockSignals(False)
+    room = probe._natural_minimum_height()
+    probe.close()
+
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = _blank
+    d._grade_runner = _runner()
+    d._available_height = lambda: room
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d.folder_edit.setText(str(folder))
+    d.grade()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    qtbot.wait(50)
+    return d, room
+
+
+def test_move_back_after_a_reopen_does_not_compact_the_verdict_at_the_1280_floor(
+        qtbot, tmp_path, styled):
+    """R8: the same bug as I1, reached through a different door.
+    Reopening a folder with frames still parked in rejected/ from an
+    earlier session, then pressing "Move them back", merges the restored
+    names in through `_on_restored_graded` -- a grade-time fit, not
+    `_refit`, so it kept `allow_verdict_squeeze`'s default. But this merge
+    is not "genuinely new content": the list gains rows for free (no extra
+    height) and the verdict gets SHORTER ("Not counted N more in
+    rejected/" leaves) -- the only thing that grew the dialog here is the
+    same lingering "Moved N frames back." report line I1 already covers,
+    just reached through this door instead."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()          # Light_01, Light_03 -> rejected/
+    d1.close()
+    d2, room = _reopened_with_zero_slack(qtbot, folder)   # reopen: 4 listed, 2 parked
+    assert d2.verdict_strip.back_btn.isVisible(), "fixture: nothing parked in rejected/"
+    assert d2.verdict_strip.details_shown() and not d2.verdict_strip.is_compact()
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    qtbot.wait(50)
+    assert d2.verdict_strip.details_shown(), "the merge collapsed the verdict to its headline"
+    assert not d2.verdict_strip.is_compact()
+    assert d2.height() <= room, f"{d2.height()} px on a {room} px screen"
+
+
 def test_showing_the_chart_at_740_may_compact_the_verdict_but_details_recovers_it(
         qtbot, tmp_path, styled):
     """M8: "▸ Show chart" is his own click, not a resize the code sprung on
