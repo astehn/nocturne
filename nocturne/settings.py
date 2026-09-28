@@ -48,11 +48,20 @@ class Settings:
     # quality match". See docs/superpowers/specs/2026-09-18-starnet2-integration.md.
     starnet_path: str = ""
     help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
+    # Stack's own "How this works", apart from the main window's step help
+    # and folded by default (spec 2026-09-28 §6a): Andreas found the dialog
+    # "way too busy" for a new user. help_expanded keeps its novice-first
+    # default for the main window, where the step help is the lesson.
+    stack_help_expanded: bool = False
     # Stack and Ha/OIII fold their option groups to one summary line; the
     # choice is remembered (spec 2026-09-27 §2.2). One setting for both: the
     # two bands are the same control, and folding one is a statement about
-    # how much of the dialog you want to see, not about Ha/OIII.
-    frame_options_folded: bool = False
+    # how much of the dialog you want to see, not about Ha/OIII. Folded for a
+    # new user (spec 2026-09-28 §6b); a saved choice is kept.
+    frame_options_folded: bool = True
+    # The quality chart's "▾ Hide chart", shared by Stack and Ha/OIII for the
+    # reason the band's fold is: it is one chart, in the same place in both.
+    quality_chart_folded: bool = False
     window_geometry: str = ""       # Qt saveGeometry(), hex; "" = size from the screen
     # Nocturne asks GitHub for the latest release on every launch, which means
     # every start sends the user's IP to github.com tagged as a Nocturne user.
@@ -115,7 +124,9 @@ def load_settings(path: str) -> Settings:
         astap_path=data.get("astap_path", ""),
         starnet_path=data.get("starnet_path", ""),
         help_expanded=data.get("help_expanded", True),
-        frame_options_folded=data.get("frame_options_folded", False),
+        stack_help_expanded=data.get("stack_help_expanded", False),
+        frame_options_folded=data.get("frame_options_folded", True),
+        quality_chart_folded=data.get("quality_chart_folded", False),
         window_geometry=data.get("window_geometry", ""),
         # Explicit, like every line here — which means A NEW FIELD MUST BE ADDED
         # TO THIS LIST or it is written by save_settings and never read back.

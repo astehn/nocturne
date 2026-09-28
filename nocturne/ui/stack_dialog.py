@@ -74,8 +74,9 @@ class StackDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
-        # explanations expanded -- which is the DEFAULT, help_expanded=True,
-        # settings.py:43 -- this dialog's own minimumSizeHint is 844px, and it
+        # explanations expanded -- which was then the DEFAULT (help_expanded;
+        # Stack has had its own stack_help_expanded, off, since 2026-09-28)
+        # -- this dialog's own minimumSizeHint is 844px, and it
         # opened at 700 with a floor of 500. Qt then squeezed the QFormLayout's
         # rows onto a 46px stride while the rows are 54-72px tall, and because
         # _Hint refuses to shrink (it must, or the text clips) the explanations
@@ -261,7 +262,7 @@ class StackDialog(QDialog):
                     self.drizzle_check.toggled):
             sig.connect(lambda *_: self.options_band.refresh_summary())
         self.drizzle_check.toggled.connect(lambda *_: self._sync_folded_note())
-        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         # The Save panel used to say "already exists — replace?"; choosing a
@@ -316,9 +317,12 @@ class StackDialog(QDialog):
         buttons_col.addLayout(buttons_row)
         buttons_col.addWidget(self.background_note)
 
-        # The same collapsible help the main window uses, bound to the same
-        # sticky setting — so turning it off here turns it off there, and a
-        # novice still gets it by default (help_expanded starts True).
+        # The same collapsible help the main window uses, with a sticky
+        # setting of its own, stack_help_expanded, folded until asked for:
+        # Andreas, 2026-09-28, the dialog "reads as way too busy; for a new
+        # user it might be quite overwhelming" (spec 2026-09-28 §6a). The
+        # main window's help_expanded, and its novice-first default, are
+        # untouched by anything here.
         #
         # Not icons-with-popups: that optimises for the person who already
         # knows, at the cost of the person who does not. An explanation you
@@ -562,7 +566,7 @@ class StackDialog(QDialog):
         The preference alone is not that — the screen may have folded them
         (_keep_on_screen), and every one lives inside the option band, so a
         folded band shows none of them whatever the preference says."""
-        return (bool(getattr(self._settings, "help_expanded", True))
+        return (bool(getattr(self._settings, "stack_help_expanded", False))
                 and not self._hints_forced_closed
                 and not self.options_band.is_folded())
 
@@ -574,11 +578,11 @@ class StackDialog(QDialog):
         # never its EDGE: the frame list gives up the height (_clamp_to_screen).
         self._user_laid_out = True
         if self._hints_showing():
-            self._settings.help_expanded = False
+            self._settings.stack_help_expanded = False
             self._persist_settings()
         else:
             self._hints_forced_closed = False
-            self._settings.help_expanded = True
+            self._settings.stack_help_expanded = True
             if self.options_band.is_folded():
                 # Through the band's own signal, so it is saved like any
                 # unfold the user makes — once, help included
@@ -644,7 +648,7 @@ class StackDialog(QDialog):
         # Per hint, the preference: a hint inside a folded band is invisible
         # anyway, and _natural_minimum_height needs it counted once the band
         # opens. The link says what is actually on screen.
-        shown = (bool(getattr(self._settings, "help_expanded", True))
+        shown = (bool(getattr(self._settings, "stack_help_expanded", False))
                  and not self._hints_forced_closed)
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
         # "this will take N hours and write M MB" estimate, `exclusive_note`
@@ -705,7 +709,7 @@ class StackDialog(QDialog):
         if not self._user_laid_out:
             room = self._available_height()
             needed = self._natural_minimum_height()
-            if (needed > room and getattr(self._settings, "help_expanded", True)
+            if (needed > room and getattr(self._settings, "stack_help_expanded", False)
                     and not self._hints_forced_closed):
                 self._hints_forced_closed = True
                 self._apply_hints_visible()

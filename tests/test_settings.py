@@ -572,17 +572,33 @@ def test_update_notified_version_round_trips(tmp_path):
     assert load_settings(p).update_notified_version == "v0.41.0"
 
 
-def test_frame_options_folded_defaults_open_and_round_trips(tmp_path):
-    """load_settings lists every field by hand; a field missing from that list
-    is written and never read back (check_updates, 2026-09-17)."""
-    assert Settings().frame_options_folded is False
+def test_frame_options_folded_defaults_folded_and_round_trips(tmp_path):
+    """Folded for a new user (spec 2026-09-28 §6b). load_settings lists every
+    field by hand; a field missing from that list is written and never read
+    back (check_updates, 2026-09-17)."""
+    assert Settings().frame_options_folded is True
     p = tmp_path / "s.json"
-    save_settings(Settings(frame_options_folded=True), str(p))
-    assert load_settings(str(p)).frame_options_folded is True
+    save_settings(Settings(frame_options_folded=False), str(p))
+    assert load_settings(str(p)).frame_options_folded is False
 
 
-def test_frame_options_folded_absent_in_old_file_is_open(tmp_path):
+def test_frame_options_folded_absent_in_old_file_is_folded(tmp_path):
     import json
     p = tmp_path / "s.json"
     p.write_text(json.dumps({"graxpert_path": "/x"}))
-    assert load_settings(str(p)).frame_options_folded is False
+    assert load_settings(str(p)).frame_options_folded is True
+
+
+def test_the_calmer_stack_fields_round_trip_and_default_off(tmp_path):
+    """stack_help_expanded and quality_chart_folded (spec 2026-09-28 §6a,
+    §2.4): off for a new user and for a file written before they existed,
+    and read back once saved — which fails if load_settings misses one."""
+    import json
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"graxpert_path": "/x"}))
+    for field in ("stack_help_expanded", "quality_chart_folded"):
+        assert getattr(Settings(), field) is False, field
+        assert getattr(load_settings(str(old)), field) is False, field
+        p = tmp_path / f"{field}.json"
+        save_settings(Settings(**{field: True}), str(p))
+        assert getattr(load_settings(str(p)), field) is True, field

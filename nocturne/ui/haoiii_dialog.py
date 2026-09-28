@@ -166,7 +166,7 @@ class HaOIIIDialog(QDialog):
                     self.kappa_box.currentTextChanged, self.sigma_radio.toggled,
                     self.crop_check.toggled, self.channels_check.toggled):
             sig.connect(lambda *_: self.options_band.refresh_summary())
-        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         form = QFormLayout()

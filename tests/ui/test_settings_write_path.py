@@ -25,12 +25,14 @@ def test_toggling_the_stack_hints_writes_where_the_app_was_told_to(qtbot, tmp_pa
     from nocturne.ui.stack_dialog import StackDialog
     dlg = StackDialog(win.settings, win, on_settings_changed=win._save_settings)
     qtbot.addWidget(dlg)
-    before = win.settings.help_expanded
+    before = win.settings.stack_help_expanded
+    main_help = win.settings.help_expanded
     dlg._toggle_hints()
 
     assert os.path.exists(path), "the preference was not written to the app's own file"
     saved = load_settings(path)
-    assert saved.help_expanded != before, "the preference did not persist"
+    assert saved.stack_help_expanded != before, "the preference did not persist"
+    assert saved.help_expanded == main_help, "Stack's toggle wrote the main window's help"
     assert saved.graxpert_path == "/somewhere/GraXpert.app", (
         "the write clobbered the rest of the settings")
 

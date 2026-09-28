@@ -152,7 +152,7 @@ def test_haoiii_has_no_verdict(qtbot):
 # --- a short screen: the headline only, until asked ---------------------------
 
 def _minimum_all_folded_graded(qtbot, folder) -> int:
-    d, _ = _dialog(qtbot, help_expanded=False, frame_options_folded=True)
+    d, _ = _dialog(qtbot, stack_help_expanded=False, frame_options_folded=True)
     d.resize(1280, 700)
     d.show()
     qtbot.waitExposed(d)
@@ -164,7 +164,7 @@ def _minimum_all_folded_graded(qtbot, folder) -> int:
 
 def test_a_screen_too_short_even_folded_keeps_only_the_headline(qtbot, tmp_path):
     room = _minimum_all_folded_graded(qtbot, tmp_path) - 1
-    d, settings = _dialog(qtbot, room=room, help_expanded=True)
+    d, settings = _dialog(qtbot, room=room, stack_help_expanded=True)
     d.resize(1280, 700)
     d.show()
     qtbot.waitExposed(d)
@@ -175,12 +175,12 @@ def test_a_screen_too_short_even_folded_keeps_only_the_headline(qtbot, tmp_path)
     assert s.more_btn.text() == MORE_TEXT
     assert s.headline.toolTip().startswith("Good night. 10 of 12 frames kept")
     assert d.height() <= room, f"{d.height()} px on a {room} px screen"
-    assert settings.help_expanded is True, "the screen must not rewrite the preference"
+    assert settings.stack_help_expanded is True, "the screen must not rewrite the preference"
 
 
 def test_details_asked_for_stay_open_and_the_window_stays_on_screen(qtbot, tmp_path):
     room = _minimum_all_folded_graded(qtbot, tmp_path) - 1
-    d, _ = _dialog(qtbot, room=room, help_expanded=True)
+    d, _ = _dialog(qtbot, room=room, stack_help_expanded=True)
     d.resize(1280, 700)
     d.show()
     qtbot.waitExposed(d)

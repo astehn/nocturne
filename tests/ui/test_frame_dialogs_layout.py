@@ -68,7 +68,7 @@ def _session(n=254):
 
 
 def _open(qtbot, cls, size):
-    d = cls(Settings())
+    d = cls(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     if cls is StackDialog:
         d._available_height = lambda: 4000
@@ -133,8 +133,8 @@ def _uniform_session(n=254):
 
 
 def _fit_at_740(qtbot, session):
-    settings = Settings()
-    settings.help_expanded = True
+    settings = Settings(frame_options_folded=False)
+    settings.stack_help_expanded = True
     d = StackDialog(settings)
     qtbot.addWidget(d)
     d._available_height = lambda: 740
@@ -167,7 +167,7 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
     assert d.preview.height() >= 220
     assert d.verdict_strip.move_btn.isVisible(), "fixture lost its rejects"
-    assert settings.help_expanded is True, "the screen must not rewrite the preference"
+    assert settings.stack_help_expanded is True, "the screen must not rewrite the preference"
 
     # Fix round 1, m5 — rewritten in fix round 2 for accuracy. Two things the
     # first version of this comment got wrong:
@@ -229,8 +229,8 @@ def _minimum_with_the_help_folded(qtbot, graded=False) -> int:
     """What the dialog needs with the explanations folded and the options
     open — measured, not hard-coded: it is 643 px offscreen and 688 under
     cocoa (766 graded), so any fixed screen height tests one font only."""
-    settings = Settings()
-    settings.help_expanded = False
+    settings = Settings(frame_options_folded=False)
+    settings.stack_help_expanded = False
     d = StackDialog(settings)
     qtbot.addWidget(d)
     d._available_height = lambda: 4000
@@ -245,8 +245,8 @@ def _minimum_with_the_help_folded(qtbot, graded=False) -> int:
 
 
 def _short_stack(qtbot, room):
-    settings = Settings()
-    settings.help_expanded = True
+    settings = Settings(frame_options_folded=False)
+    settings.stack_help_expanded = True
     d = StackDialog(settings)
     qtbot.addWidget(d)
     d._available_height = lambda: room
@@ -264,7 +264,7 @@ def test_a_shorter_screen_folds_the_options_too_without_saving_it(qtbot):
     assert d.options_band.is_folded()
     assert d.height() <= room, f"{d.height()} px on a {room} px screen"
     assert settings.frame_options_folded is False, "the screen rewrote the preference"
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
 
 
 def test_the_grade_that_outgrows_the_screen_folds_the_options(qtbot):
@@ -313,7 +313,7 @@ def test_the_users_own_toggle_outranks_the_screen(qtbot):
     assert not d.options_band.is_folded(), "▾ lit on a folded band"
     assert d.mosaic_hint.isVisible(), "the click showed no explanation"
     assert "▾" in d._help_link.text()
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
     qtbot.wait(50)
     assert not d.options_band.is_folded(), "re-folded behind the user's back"
     assert d.mosaic_hint.isVisible(), "folded away again behind the user's back"
@@ -326,8 +326,8 @@ def test_the_users_own_toggle_outranks_the_screen(qtbot):
 
 def test_showing_the_help_opens_a_band_the_user_folded(qtbot):
     """The same for a fold the user made: the help is inside the band."""
-    settings = Settings()
-    settings.help_expanded = False
+    settings = Settings(frame_options_folded=False)
+    settings.stack_help_expanded = False
     d = StackDialog(settings)
     qtbot.addWidget(d)
     d._available_height = lambda: 4000
@@ -340,7 +340,7 @@ def test_showing_the_help_opens_a_band_the_user_folded(qtbot):
     qtbot.wait(20)
     assert not d.options_band.is_folded()
     assert d.mosaic_hint.isVisible()
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
     assert settings.frame_options_folded is False, "saved like the user's own unfold"
 
 
@@ -353,7 +353,7 @@ def _arrow(d) -> str:
 def _roomy_stack(qtbot, settings, saves=None):
     d = StackDialog(settings, on_settings_changed=(
         None if saves is None else
-        lambda: saves.append((settings.frame_options_folded, settings.help_expanded))))
+        lambda: saves.append((settings.frame_options_folded, settings.stack_help_expanded))))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000
     d.resize(1280, 700)
@@ -366,9 +366,9 @@ def test_opened_folded_with_the_help_on_the_link_says_nothing_is_shown(qtbot):
     """Final review I1: the band folded and help on read "▾" over no
     explanation at all, and the first click saved help OFF and changed
     nothing on screen. The arrow says what is visible; "▸" means show."""
-    settings = Settings()
+    settings = Settings(frame_options_folded=False)
     settings.frame_options_folded = True
-    settings.help_expanded = True
+    settings.stack_help_expanded = True
     saves = []
     d = _roomy_stack(qtbot, settings, saves)
     assert d.options_band.is_folded()
@@ -378,21 +378,21 @@ def test_opened_folded_with_the_help_on_the_link_says_nothing_is_shown(qtbot):
     assert not d.options_band.is_folded(), "the click did not open the band"
     assert d.mosaic_hint.isVisible(), "the click showed no explanation"
     assert _arrow(d) == "▾"
-    assert settings.help_expanded is True, "the click saved help off"
+    assert settings.stack_help_expanded is True, "the click saved help off"
     assert saves == [(False, True)], f"saved {saves}, not once with both"
 
 
 def test_folding_the_band_with_the_help_on_turns_the_arrow(qtbot):
     """Folding by hand hides every explanation with the band; the link
     follows, and "Change…" brings both back with ▾."""
-    settings = Settings()
-    settings.help_expanded = True
+    settings = Settings(frame_options_folded=False)
+    settings.stack_help_expanded = True
     d = _roomy_stack(qtbot, settings)
     assert _arrow(d) == "▾" and d.mosaic_hint.isVisible()
     d.options_band.fold_btn.click()
     qtbot.wait(20)
     assert _arrow(d) == "▸", "▾ kept over a folded band"
-    assert settings.help_expanded is True, "folding must not rewrite the help preference"
+    assert settings.stack_help_expanded is True, "folding must not rewrite the help preference"
     d.options_band.change_btn.click()
     qtbot.wait(20)
     assert _arrow(d) == "▾" and d.mosaic_hint.isVisible()
@@ -400,7 +400,7 @@ def test_folding_the_band_with_the_help_on_turns_the_arrow(qtbot):
     d._toggle_hints()                      # ▸ on the folded band: show
     qtbot.wait(20)
     assert not d.options_band.is_folded() and _arrow(d) == "▾"
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
 
 
 def test_the_screens_fold_turns_the_arrow_too(qtbot):
@@ -409,7 +409,7 @@ def test_the_screens_fold_turns_the_arrow_too(qtbot):
     d, settings = _short_stack(qtbot, room)
     assert d.options_band.is_folded()
     assert _arrow(d) == "▸"
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
 
 
 def test_the_users_change_outranks_the_screens_fold(qtbot):
@@ -504,7 +504,7 @@ def test_every_column_is_on_screen_verdict_included(qtbot, cls, size):
 def test_every_column_is_on_screen_at_the_width_it_opens(qtbot, cls):
     """What he actually sees on the laptop: the dialog's own opening width,
     not a resize a test chose."""
-    d = cls(Settings())
+    d = cls(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     if cls is StackDialog:
         d._available_height = lambda: 4000
@@ -565,7 +565,7 @@ def test_haoiii_fits_the_1280x800_laptop_with_the_options_open(qtbot):
     """Ha/OIII has no explanations to fold and no screen fit of its own: it
     relies on needing less than the floor (633 px offscreen, 688 cocoa,
     against 740). If it ever outgrows that, it needs Stack's fit."""
-    d = HaOIIIDialog(Settings())
+    d = HaOIIIDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d.show()
     qtbot.waitExposed(d)
@@ -591,7 +591,7 @@ class _FieldsStayAtSizeHint(QProxyStyle):
 
 
 def _open_mac_form(qtbot, cls, size):
-    d = cls(Settings())
+    d = cls(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d._mac_style = _FieldsStayAtSizeHint(QStyleFactory.create("Fusion"))
     d.setStyle(d._mac_style)

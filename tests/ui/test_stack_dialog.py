@@ -497,7 +497,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     from nocturne.ui.stack_dialog import _Hint
 
     settings = Settings()
-    settings.help_expanded = True
+    settings.stack_help_expanded = True
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg._available_height = lambda: 400         # a very short screen
@@ -505,7 +505,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     qtbot.waitExposed(dlg)
 
     assert dlg.mosaic_hint.isVisible() is False
-    assert settings.help_expanded is True, (
+    assert settings.stack_help_expanded is True, (
         "the screen is not the user: a forced collapse must not rewrite "
         "the saved preference")
 
@@ -514,7 +514,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     # the option band, which the screen folded too, so the band opens with them.
     dlg._toggle_hints()
     assert dlg.mosaic_hint.isVisible() is True
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
 
 
 def test_cancel_button_stops_a_grade(qtbot, tmp_path):
@@ -853,7 +853,7 @@ def no_modal(monkeypatch):
 
 
 def _dialog(qtbot, _tmp_path):
-    dlg = StackDialog(Settings())
+    dlg = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(dlg)
     return dlg
 
@@ -1009,10 +1009,10 @@ def test_every_hint_starts_at_the_same_left_edge(qtbot):
     In layout A the rule holds per group: every explanation in a group starts
     at the group's own left edge, level with the controls it explains."""
     from nocturne.ui.stack_dialog import _Hint
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000     # a short screen would fold the hints away
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.resize(1150, 900)
     d.show()
@@ -1208,7 +1208,7 @@ def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
     from nocturne.ui.stack_dialog import _Hint
     d = _dialog(qtbot, tmp_path)
     d._available_height = lambda: 4000     # this is about the toggle, not the screen
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.show(); qtbot.waitExposed(d)
     assert d.mosaic_hint.isVisible() is True
@@ -1217,7 +1217,7 @@ def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
     d._toggle_hints()
     assert d.mosaic_hint.isVisible() is False
     assert "▸" in d._help_link.text()
-    assert d._settings.help_expanded is False, "the choice is not sticky"
+    assert d._settings.stack_help_expanded is False, "the choice is not sticky"
 
 
 def test_collapsing_the_help_does_not_hide_what_you_decide_on(qtbot, tmp_path):
@@ -1229,7 +1229,7 @@ def test_collapsing_the_help_does_not_hide_what_you_decide_on(qtbot, tmp_path):
     d.drizzle_note.setText("About 5 h, and a 380 MB master.")
     d.exclusive_note.setText("Mosaic and Drizzle cannot be combined.")
     d.show(); qtbot.waitExposed(d)
-    d._settings.help_expanded = False
+    d._settings.stack_help_expanded = False
     d._apply_hints_visible()
     assert d.drizzle_note.isVisible() is True, "the time and size estimate went with the help"
     assert d.exclusive_note.isVisible() is True, "the gate's reason went with the help"
@@ -1259,7 +1259,7 @@ def test_no_explanation_is_ever_cut_off(qtbot, tmp_path, size):
     """
     from nocturne.ui.stack_dialog import _Hint
     d = _dialog(qtbot, tmp_path)
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.resize(*size)
     d.show()
@@ -1391,7 +1391,7 @@ def test_mosaic_gate_still_wins_after_set_busy_false(qtbot):
 def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
     """A disabled control must never be left with its reason nowhere on screen.
 
-    `help_expanded` persists between sessions, so a user who collapsed the
+    `stack_help_expanded` persists between sessions, so a user who collapsed the
     explanations months ago meets a dead "Stack in background" button and no
     explanation at all — the button's own tooltip is static and describes what
     it does when it works, which in this state contradicts what they see.
@@ -1403,7 +1403,7 @@ def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
     d = StackDialog(Settings(), on_background=lambda opts, label: None)
     qtbot.addWidget(d)
     d.mosaic_check.setChecked(True)
-    d._settings.help_expanded = False
+    d._settings.stack_help_expanded = False
     d._apply_hints_visible()
     d.show()
     qtbot.waitExposed(d)
@@ -1799,7 +1799,7 @@ def test_layout_a_runs_folder_options_output_then_the_list(qtbot):
 
 def test_the_fold_is_remembered(qtbot):
     saved = []
-    settings = Settings()
+    settings = Settings(frame_options_folded=False)
     d = StackDialog(settings, on_settings_changed=lambda: saved.append(
         settings.frame_options_folded))
     qtbot.addWidget(d)
@@ -1860,7 +1860,7 @@ def test_folding_never_hides_a_cost_you_are_about_to_pay(qtbot):
 def test_blank_decision_notes_leave_no_gap(qtbot):
     """Fix round 1: with exclusive_note blank, "Stack as mosaic"'s hint and the
     Drizzle box sit one spacing apart, as the checkbox rows above them do."""
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False, stack_help_expanded=True))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000
     d.resize(1280, 900); d.show(); qtbot.waitExposed(d)
@@ -1891,3 +1891,44 @@ def test_the_folded_line_names_a_mosaic(qtbot):
     assert d.options_band.summary_label.text().endswith("· mosaic · Drizzle ×2")
     d.mosaic_check.setChecked(False)
     assert "mosaic" not in d.options_band.summary_label.text()
+
+
+# --- a calmer Stack: its own help, the options folded (spec 2026-09-28 §6) ---
+
+def test_a_new_user_opens_stack_with_the_help_and_the_options_folded(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000      # the screen folds nothing here
+    d.show()
+    qtbot.waitExposed(d)
+    assert d.options_band.is_folded()
+    assert not d._hints_showing() and "▸" in d._help_link.text()
+    assert d.mosaic_hint.isHidden()
+
+
+def test_stacks_help_toggle_never_touches_the_main_windows(qtbot):
+    """Two settings now. Stack's click must leave help_expanded exactly as it
+    was — from either starting value, in both directions."""
+    for main_help in (True, False):
+        settings = Settings(help_expanded=main_help, frame_options_folded=False)
+        d = StackDialog(settings)
+        qtbot.addWidget(d)
+        d._available_height = lambda: 4000
+        d.show()
+        qtbot.waitExposed(d)
+        before = settings.help_expanded
+        d._toggle_hints()
+        assert settings.stack_help_expanded is True and d.mosaic_hint.isVisible()
+        assert settings.help_expanded == before
+        d._toggle_hints()
+        assert settings.stack_help_expanded is False and not d.mosaic_hint.isVisible()
+        assert settings.help_expanded == before
+
+
+def test_the_main_windows_help_does_not_open_stacks(qtbot):
+    d = StackDialog(Settings(help_expanded=True, frame_options_folded=False))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.show()
+    qtbot.waitExposed(d)
+    assert not d.mosaic_hint.isVisible() and "▸" in d._help_link.text()

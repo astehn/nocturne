@@ -506,7 +506,7 @@ def test_folding_in_haoiii_is_saved_and_folds_stack(qtbot):
     """The other direction: Ha/OIII writes the shared setting and asks the app
     to save it, so Stack opens folded too — and on the next launch."""
     from nocturne.ui.stack_dialog import StackDialog
-    settings = Settings()
+    settings = Settings(frame_options_folded=False)
     saves = []
     d = HaOIIIDialog(settings, on_settings_changed=lambda: saves.append(
         settings.frame_options_folded))
@@ -540,3 +540,13 @@ def test_a_folder_with_no_subs_forgets_the_last_grade(qtbot, tmp_path, monkeypat
     dlg.run()
     assert ran == [] and not dlg._busy, "extracted A's frames"
     assert os.listdir(b) == []
+
+
+def test_a_new_user_opens_haoiii_with_the_options_folded(qtbot):
+    """Spec 2026-09-28 §6b: the band starts folded; a saved choice is kept."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    assert d.options_band.is_folded()
+    kept = HaOIIIDialog(Settings(frame_options_folded=False))
+    qtbot.addWidget(kept)
+    assert not kept.options_band.is_folded()
