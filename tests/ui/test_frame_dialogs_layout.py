@@ -23,6 +23,25 @@ SIZES = [(1280, 800), (1920, 1080)]
 T0 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
 
 
+def _chart_within_dialog(dialog, chart) -> bool:
+    """The chart's own rect, mapped into the dialog, lies inside the dialog
+    and inside its immediate parent.
+
+    Final review, T7: `chart.height() == CHART_HEIGHT` is true whatever the
+    layout does — `QualityChart.setFixedHeight(CHART_HEIGHT)` guarantees the
+    WIDGET's own height, so a squeezed layout that pushes the chart past its
+    parent's edge (clipped, not shortened) still passed. This checks the
+    thing that can actually go wrong: the chart's geometry sitting fully
+    inside both its parent and the dialog.
+    """
+    parent_rect = chart.parentWidget().rect()
+    if chart.geometry().bottom() > parent_rect.bottom():
+        return False
+    top_left = chart.mapTo(dialog, chart.rect().topLeft())
+    bottom_right = chart.mapTo(dialog, chart.rect().bottomRight())
+    return dialog.rect().contains(top_left) and dialog.rect().contains(bottom_right)
+
+
 @pytest.fixture(autouse=True)
 def styled():
     app = QApplication.instance()
@@ -97,13 +116,23 @@ def test_folding_gives_the_list_the_height(qtbot, cls):
     qtbot.waitUntil(lambda: d.browser.height() > before + 40, timeout=2000)
 
 
-def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
-    """The floor this app targets: 800 px of screen, 740 of it usable
-    (_available_height's own margin). With the explanations on, the band is
-    taller than the old form; _fit_to_content must still land the dialog on
-    the screen — by folding the explanations, as it did before layout A —
-    with the preview at its minimum or better, and without folding the
-    options when folding the explanations was enough."""
+def _uniform_session(n=254):
+    """The same shape as `_session()` — count, exposure, target, capture
+    times — but with NOTHING for judge() to reject: uniform FWHM and
+    elongation, no soft or trailed run. Used only to isolate whether a
+    layout decision follows from the "Move N frames to rejected/…" row
+    specifically, by comparing against a session that never shows it."""
+    stats = []
+    for i in range(n):
+        s = FrameStats(f"/x/Light_SH2-108_10.0s_LP_{i:04d}.fit", 1200 - i % 50,
+                       2.5, 0.02, 0.5, True, elongation=1.10, exposure=10.0,
+                       target="SH2-108")
+        s.captured = T0 + timedelta(seconds=11 * i)
+        stats.append(s)
+    return stats
+
+
+def _fit_at_740(qtbot, session):
     settings = Settings()
     settings.help_expanded = True
     d = StackDialog(settings)
@@ -112,13 +141,88 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     d.resize(1280, 700)
     d.show()
     qtbot.waitExposed(d)
-    d._on_graded(_session())
+    d._on_graded(session)
     qtbot.wait(50)                   # let any late layout pass land
+    return d, settings
+
+
+def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
+    """The floor this app targets: 800 px of screen, 740 of it usable
+    (_available_height's own margin). With the explanations on, the band is
+    taller than the old form; _fit_to_content must still land the dialog on
+    the screen — by folding the explanations first, as it did before layout A
+    — with the preview at its minimum or better.
+
+    Task 6 (spec decision 7) adds a real row here: `_session()`'s soft and
+    trailed runs are now unticked frames the "Move N frames to rejected/…"
+    button names, which the old form never showed (the buttons existed but
+    their counts, and so their visibility, were never wired until Task 6).
+    That is 20 px this test's screen genuinely does not have after folding
+    the explanations alone (752 against 740, measured 2026-09-27) — so
+    folding the option band too, the SAME fallback `_keep_on_screen` already
+    had for a taller band, is the correct next step, not a regression. What
+    must still hold is the floor itself: on screen, and the preview usable.
+    """
+    d, settings = _fit_at_740(qtbot, _session())
     assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
     assert d.preview.height() >= 220
-    assert not d.options_band.is_folded(), (
-        "folded the options although folding the explanations was enough")
+    assert d.verdict_strip.move_btn.isVisible(), "fixture lost its rejects"
     assert settings.help_expanded is True, "the screen must not rewrite the preference"
+
+    # Fix round 1, m5 — rewritten in fix round 2 for accuracy. Two things the
+    # first version of this comment got wrong:
+    #
+    # It framed `kept` below as isolating JUST the move-button row. It does
+    # not: `_uniform_session()` also has no soft or trailed frames, so the
+    # Verdict column and the strip's own detail line are shorter too ("OK"
+    # against "Soft stars (FWHM …)" / "Stars trailed (…)"). This is a
+    # comparison of "a session with something to report" against "one with
+    # nothing to report" — several differences at once, not a controlled
+    # isolation of the row alone.
+    #
+    # It also claimed "732 to 766 px measured... across runs" as this test's
+    # own finding. 766 is `_minimum_with_the_help_folded`'s own docstring
+    # figure for COCOA (not offscreen), quoted from elsewhere and presented
+    # here as if independently reproduced. What IS true, and is why neither
+    # `_minimum_with_the_help_folded` nor a same-dialog before/after toggle
+    # works as a check here: the latter is thrown off by `_clamp_to_screen`
+    # already having shrunk THIS dialog's own list floor once a fallback made
+    # it fit — recomputing after toggling folds back only replays that
+    # already-baked-in shrink — and the former builds a SEPARATE widget tree,
+    # which this codebase's own rule already warns against comparing by pixel
+    # count (CLAUDE.md: offscreen fonts differ; assert RELATIONS, never pixel
+    # values).
+    #
+    # The relation that survives both problems is comparative, not absolute:
+    # build a SECOND dialog, same settings and room, from a session with
+    # nothing to report at all. It must fit without needing either fallback
+    # `_keep_on_screen` offers. The first dialog, with something to report,
+    # must have needed at least one of them.
+    kept, _ = _fit_at_740(qtbot, _uniform_session())
+    assert not kept.verdict_strip.move_btn.isVisible(), "fixture rejected a frame"
+    assert kept.height() <= 740
+    assert not kept.options_band.is_folded() and not kept.verdict_strip.is_compact(), (
+        "folded or compacted something although nothing needed the row Task 6 added")
+    # The row itself costs real height (spec decision 7 gave it a full
+    # button, not a footnote), so fitting the SAME screen alongside it must
+    # have cost something the reject-free dialog above never needed to pay.
+    assert d.options_band.is_folded() or d.verdict_strip.is_compact(), (
+        "fit the taller strip for free — the row Task 6 added should have "
+        "forced some fallback, the same way a taller Verdict column already did"
+    )
+
+    # Delivery B: the verdict and the chart are both on screen, the verdict
+    # whole, and the list the chart took its height from still shows rows.
+    assert not d.verdict_strip.isHidden() and not d.verdict_strip.is_compact()
+    assert d.browser.chart.isVisible() and _chart_within_dialog(d, d.browser.chart)
+    v = d.browser.view
+    assert v.viewport().height() >= 3 * v.rowHeight(0), "the list gave up every row"
+
+    def clipped():
+        return [n.text()[:30] for n in d.findChildren(WrappedNote)
+                if n.isVisible() and n.height() < n.heightForWidth(n.width()) - 1]
+
+    qtbot.waitUntil(lambda: not clipped(), timeout=2000)
 
 
 def _minimum_with_the_help_folded(qtbot, graded=False) -> int:
@@ -412,6 +516,18 @@ def test_every_column_is_on_screen_at_the_width_it_opens(qtbot, cls):
     assert pv > lst
 
 
+@pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
+@pytest.mark.parametrize("size", SIZES)
+def test_the_chart_sits_under_the_list_at_every_size(qtbot, cls, size):
+    d = _open(qtbot, cls, size)
+    b = d.browser
+    assert b.chart.isVisible() and _chart_within_dialog(d, b.chart)
+    view_bottom = b.view.mapTo(d, b.view.rect().bottomLeft()).y()
+    assert b.chart.mapTo(d, b.chart.rect().topLeft()).y() > view_bottom
+    lst, pv = b.splitter.sizes()
+    assert pv > lst, "the chart widened the list"
+
+
 def test_the_sorted_column_gets_room_for_its_arrow(qtbot):
     """Only the sorted column reserves the arrow — so sorting by another
     column must hand the room over, or its header would be cut."""
@@ -458,6 +574,7 @@ def test_haoiii_fits_the_1280x800_laptop_with_the_options_open(qtbot):
     assert not d.options_band.is_folded()
     assert d.minimumSizeHint().height() <= 740
     assert d.height() <= 740, f"opens {d.height()} px tall"
+    assert d.browser.chart.isVisible(), "Ha/OIII lost the shared chart"
 
 
 # --- the output fields fill their row (Ruling R5) ---

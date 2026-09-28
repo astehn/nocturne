@@ -374,3 +374,127 @@ def test_space_does_not_tick_an_error_frame(qtbot):
     b.view.setFocus()
     _key(b.view, Qt.Key.Key_Space, " ")
     assert stats[6].included is False, "Space ticked an error frame in"
+
+
+# --- frames moved into rejected/ (delivery B, spec decision 7) ----------------
+
+from PySide6.QtWidgets import QLabel  # noqa: E402
+
+from nocturne.ui import theme  # noqa: E402
+from nocturne.ui.frame_browser import MOVED_TEXT  # noqa: E402
+
+
+def _moved(stats, row):
+    s = stats[row]
+    s.path = f"/x/rejected/{s.path.rsplit('/', 1)[1]}"
+    s.moved = True
+    s.included = False
+    return s
+
+
+def test_a_frame_is_not_moved_until_the_host_says_so():
+    assert _frame(0).moved is False
+
+
+def test_a_moved_frame_reads_in_rejected_and_is_dimmed(qtbot):
+    stats = _session()
+    b = _browser(qtbot, stats)
+    _moved(stats, 2)
+    b.frames_moved()
+    assert b.cell_text(2, fb.COL_VERDICT) == MOVED_TEXT
+    assert "rejected folder" in b.cell_tooltip(2, fb.COL_VERDICT)
+    assert b.cell_colour(2, fb.COL_TIME) == QColor(theme.TEXT_FAINT).name()
+    flags = b.model.flags(b.model.index(2, fb.COL_USE))
+    assert not flags & Qt.ItemFlag.ItemIsUserCheckable
+
+
+def test_no_route_ticks_a_moved_frame_back_in(qtbot):
+    """Review Focus 5: box, Space, Select All, Back to the verdicts."""
+    stats = _session()
+    stats[0].included = False                 # he unticked a KEPT frame…
+    b = _shown(qtbot, stats)
+    _moved(stats, 0)                          # …and moved it
+    b.frames_moved()
+    b.set_checked(0, True)
+    assert not b.is_checked(0)
+    b.set_current_row(0)
+    _key(b.view, Qt.Key.Key_Space, " ")
+    assert not b.is_checked(0)
+    b.select_all()
+    assert not b.is_checked(0)
+    b.back_to_verdicts()                      # its grader verdict is OK — still not in
+    assert not b.is_checked(0)
+    assert stats[0] not in b.checked_frames()
+
+
+def test_a_strictness_change_does_not_tick_a_moved_frame(qtbot):
+    """A frame the GRADER kept (f0), unticked and moved: judge() puts
+    included=True back on every usable frame, and only the lock takes it out
+    again. (f2 would not do — it is cloud at every strictness, so judge
+    itself would leave it out and the test would pass without the lock.)"""
+    stats = _session()
+    stats[0].included = False
+    b = _browser(qtbot, stats)
+    _moved(stats, 0)
+    b.frames_moved()
+    judge(stats, "relaxed")
+    assert stats[0].included is True, "fixture: judge no longer re-includes it"
+    b.refresh_verdicts()
+    assert not b.is_checked(0)
+    assert stats[0] not in b.checked_frames()
+
+
+def test_checked_frames_never_returns_a_moved_one_even_if_included_is_forced(qtbot):
+    stats = _session()
+    b = _browser(qtbot, stats)
+    _moved(stats, 1)
+    stats[1].included = True                  # a caller bypassing the model
+    assert stats[1] not in b.checked_frames()
+
+
+def test_a_moved_frame_shows_under_rejected_and_is_counted_there(qtbot):
+    stats = _session()
+    stats[0].included = False
+    b = _shown(qtbot, stats)
+    _moved(stats, 0)                          # grader said OK; moved all the same
+    b.frames_moved()
+    b.set_show(fb.SHOW_REJECTED)
+    assert sorted(b.view_rows()) == [0, 2]
+    b.set_show(fb.SHOW_KEPT)
+    assert 0 not in b.view_rows()
+    assert b._show_buttons[fb.SHOW_REJECTED].text() == "Rejected 2"
+    assert b.chart.point_colour(0) != b.chart.point_colour(1)
+
+
+def test_the_preview_follows_a_moved_frame_to_its_new_path(qtbot):
+    stats = _session()
+    loads = []
+    b = _shown(qtbot, stats, loads=loads)
+    b.set_current_row(2)
+    qtbot.waitUntil(lambda: bool(loads) and loads[-1] == "/x/f2.fit", timeout=2000)
+    _moved(stats, 2)
+    b.frames_moved()
+    qtbot.waitUntil(lambda: loads[-1] == "/x/rejected/f2.fit", timeout=2000)
+    assert b.preview_name.text() == "f2.fit"
+    assert b.preview_name.toolTip() == "/x/rejected/f2.fit"
+
+
+def test_moved_back_it_can_be_ticked_again(qtbot):
+    stats = _session()
+    b = _browser(qtbot, stats)
+    _moved(stats, 2)
+    b.frames_moved()
+    stats[2].path, stats[2].moved = "/x/f2.fit", False
+    b.frames_moved()
+    assert b.cell_text(2, fb.COL_VERDICT) != MOVED_TEXT
+    b.set_checked(2, True)
+    assert b.is_checked(2)
+
+
+def test_a_host_can_put_its_own_strip_above_the_list(qtbot):
+    b = _shown(qtbot, _session())
+    strip = QLabel("verdict")
+    b.add_above_list(strip)
+    assert b.list_layout.indexOf(strip) == 0
+    qtbot.waitUntil(lambda: strip.mapTo(b, strip.rect().topLeft()).y()
+                    < b.view.mapTo(b, b.view.rect().topLeft()).y(), timeout=2000)

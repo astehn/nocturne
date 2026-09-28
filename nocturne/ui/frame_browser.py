@@ -25,6 +25,7 @@ from ..stacking.capture_time import full_label, time_label
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
+from .quality_chart import QualityChart
 
 COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_ROUND, COL_BG, COL_VERDICT = range(7)
 HEADERS = ("Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict")
@@ -34,6 +35,9 @@ SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 # What "bigger preview" hides: the measurements. Use stays — it IS the tick, and
 # a list you cannot tick from is a list you have to widen again to use.
 DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
+
+# The Verdict cell of a frame moved into <folder>/rejected/.
+MOVED_TEXT = "In rejected/"
 
 # The divider's hit area. Qt's default on macOS is 1 px of visible line inside a
 # few px of target — Andreas, 2026-09-27: "very hard to grab". The spec's floor
@@ -49,7 +53,13 @@ GRIP_WIDTH = 12
 LIST_MAX_SHARE = 0.45
 
 
+def is_moved(s) -> bool:
+    return bool(getattr(s, "moved", False))
+
+
 def verdict_text(s) -> str:
+    if is_moved(s):
+        return MOVED_TEXT
     if s.reason:
         return s.reason
     if s.warning:
@@ -59,12 +69,29 @@ def verdict_text(s) -> str:
 
 def verdict_tooltip(s) -> str:
     """The unabbreviated verdict: the cell holds the short form."""
+    if is_moved(s):
+        why = s.reason_detail or s.reason or "unticked by hand"
+        return (f"Moved into the rejected folder ({why}). Move them back to "
+                "stack it again.")
     return s.reason_detail or verdict_text(s)
 
 
+def is_rejected(s) -> bool:
+    """What Show Rejected, the Rejected count and the chart's amber all mean —
+    one definition, so the three cannot disagree. A frame in rejected/ counts,
+    whatever its grader verdict was."""
+    return bool(s.reason) or is_moved(s)
+
+
+def _locked(s) -> bool:
+    """Never tickable in: an error frame (nothing downstream filters it back
+    out) or a frame in rejected/ (nothing may stack from there)."""
+    return bool(s.error) or is_moved(s)
+
+
 def _tint(s) -> str:
-    if s.reason:
-        return theme.TEXT_FAINT        # rejected: dimmed
+    if is_rejected(s):
+        return theme.TEXT_FAINT        # rejected or moved: dimmed
     if s.warning:
         return theme.WARNING           # kept with a warning: amber
     return theme.TEXT
@@ -149,14 +176,46 @@ class FrameTableModel(QAbstractTableModel):
     def touched(self) -> set[int]:
         return set(self._overrides)
 
+    def add_frames(self, new_stats: list) -> None:
+        """Append frames graded AFTER the fact — Stack's "Move them back"
+        merging in subs restored from an earlier session — without
+        disturbing a single existing row. `set_frames` would
+        clear `_overrides` and re-measure everything already listed, which is
+        exactly the bug: a hand tick on an existing frame lived only in
+        `_overrides`, so a full reset silently threw it away. Existing rows
+        keep their index here, so `_overrides` still points at the same
+        frames afterward."""
+        if not new_stats:
+            return
+        first = len(self._stats)
+        self.beginInsertRows(QModelIndex(), first, first + len(new_stats) - 1)
+        self._stats.extend(new_stats)
+        self.endInsertRows()
+
+    def remove_frames(self, predicate) -> None:
+        """Drop every frame `predicate(stat)` accepts: a name `move_back`
+        could not find anywhere (deleted from rejected/ by hand) must stop
+        describing a frame that is nowhere, not go on reading `moved=True`
+        against a path that no longer exists.
+        Removed highest index first so the row numbers of everything else —
+        and so `_overrides`, keyed by row — stay valid throughout."""
+        rows = sorted((i for i, s in enumerate(self._stats) if predicate(s)), reverse=True)
+        for row in rows:
+            self.beginRemoveRows(QModelIndex(), row, row)
+            del self._stats[row]
+            self._overrides = {(r - 1 if r > row else r): v
+                               for r, v in self._overrides.items() if r != row}
+            self.endRemoveRows()
+
     # --- ticks ---
     def set_ticked(self, rows, checked: bool) -> None:
         """A tick the USER made. It is remembered, so a re-judge (Strictness
         moved) does not undo it — the old tables' `_user_touched`.
 
-        An error frame can never be ticked IN (see `flags`) — Select All must
-        respect the same rule the checkbox itself does, or "All" would still
-        smuggle a non-raw/unreadable file past it.
+        An error frame, or one moved into rejected/, can never be ticked IN
+        (see `flags`) — Select All must respect the same rule the checkbox
+        itself does, or "All" would still smuggle a non-raw/unreadable file
+        past it.
         """
         rows = list(rows)
         if not rows:
@@ -164,7 +223,7 @@ class FrameTableModel(QAbstractTableModel):
         changed = False
         for row in rows:
             s = self._stats[row]
-            if checked and s.error:
+            if checked and _locked(s):
                 continue
             self._overrides[row] = checked
             if bool(s.included) != checked:
@@ -180,7 +239,7 @@ class FrameTableModel(QAbstractTableModel):
         self._overrides.clear()
         changed = False
         for s in self._stats:
-            want = not s.reason
+            want = not s.reason and not is_moved(s)
             if bool(s.included) != want:
                 s.included = want
                 changed = True
@@ -191,9 +250,13 @@ class FrameTableModel(QAbstractTableModel):
 
     def reapply_ticks(self) -> None:
         """After the host re-ran judge(): the fresh verdict stands except where
-        the user ticked by hand."""
+        the user ticked by hand. judge() sets `included` on every usable frame
+        — moved ones too — so a locked frame is put back out here, always."""
         for row, checked in self._overrides.items():
             self._stats[row].included = checked
+        for s in self._stats:
+            if _locked(s):
+                s.included = False
         if self._stats:
             self._emit_rows(0, len(self._stats) - 1)
 
@@ -220,7 +283,7 @@ class FrameTableModel(QAbstractTableModel):
         # is never checkable: nothing downstream filters it back out, so a
         # tick reaching one would hand a non-raw or unreadable file straight
         # to the stack.
-        if index.column() == COL_USE and not self._stats[index.row()].error:
+        if index.column() == COL_USE and not _locked(self._stats[index.row()]):
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         return flags
 
@@ -279,9 +342,9 @@ class FrameFilterProxy(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
         s = self.sourceModel().frame(source_row)
-        if self._show == SHOW_KEPT and s.reason:
+        if self._show == SHOW_KEPT and is_rejected(s):
             return False
-        if self._show == SHOW_REJECTED and not s.reason:
+        if self._show == SHOW_REJECTED and not is_rejected(s):
             return False
         return self._extra is None or bool(self._extra(s))
 
@@ -468,6 +531,14 @@ class FrameBrowser(QWidget):
         self.list_layout = QVBoxLayout(list_side)   # delivery B adds its chart here
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.addWidget(self.view, 1)
+        # FWHM over the session (spec decision 4.6), under the list in both
+        # dialogs. Fixed height: the list is the stretch and gives it up. The
+        # list column's floor stays far under the preview's (56 + 60 against
+        # 250 px, measured offscreen 2026-09-27), so neither dialog's minimum
+        # height moves and the 1280×800 floor holds.
+        self.chart = QualityChart(verdict_text, is_rejected)
+        self.chart.point_clicked.connect(self.select_from_chart)
+        self.list_layout.addWidget(self.chart)
         preview_side = QWidget()
         pv = QVBoxLayout(preview_side)
         pv.setContentsMargins(0, 0, 0, 0)
@@ -507,6 +578,7 @@ class FrameBrowser(QWidget):
         # rather than going on showing one from the previous folder.
         place = self.view.currentIndex().row()
         self.model.set_frames(stats)
+        self.chart.set_frames(stats)
         self._update_show_counts()
         self.fit_list()
         if 0 <= place < self.proxy.rowCount():
@@ -514,6 +586,7 @@ class FrameBrowser(QWidget):
         else:
             self.preview_controller.clear()
             self._update_preview_header(-1)
+            self.chart.set_current(-1)
             if not stats:
                 # An empty list has no neighbour for Qt's selection model to
                 # land the cursor on, so nothing else fires this signal.
@@ -523,6 +596,54 @@ class FrameBrowser(QWidget):
         """Call after judge() re-ran on the same list."""
         self.model.reapply_ticks()
         self._update_show_counts()
+        self.chart.refresh()
+
+    def frames_moved(self) -> None:
+        """After the host moved frames into rejected/ or back (their `path`
+        and `moved` changed): rows, Show, counts and chart follow, and the
+        preview re-reads the current frame from where it now is."""
+        self.model.reapply_ticks()
+        self.proxy.set_show(self.proxy.show_mode())     # Kept/Rejected read `moved`
+        self._update_show_counts()
+        self.chart.refresh()
+        row = self.current_row()
+        # A preceding remove_frames() can shift the current row (Qt moves
+        # the selection when rows above it vanish), and the
+        # chart's own idea of "current" is separate state the row alone
+        # doesn't carry — left stale, the highlight kept pointing at the OLD
+        # row's x-position, which after a removal can belong to a different
+        # frame entirely, or none.
+        self.chart.set_current(row)
+        self._update_preview_header(row)
+        if row >= 0:
+            self.preview_controller.show_row(row)
+
+    def add_frames(self, new_stats: list) -> None:
+        """Merge newly graded frames in without touching what is already
+        listed — Show, counts and chart pick up the addition; the preview and
+        current row are untouched since nothing about the EXISTING rows
+        moved."""
+        if not new_stats:
+            return
+        self.model.add_frames(new_stats)
+        self._update_show_counts()
+        self.chart.refresh()
+
+    def remove_frames(self, predicate) -> None:
+        """Drop rows `predicate(stat)` accepts. MUST be followed by
+        `frames_moved()` in the same pass — that call is what re-settles the
+        chart's own "current" index, which a removal can shift or
+        invalidate; without it the chart highlight is left pointing at
+        whatever the OLD row index now means, which can be a different frame
+        entirely, or none."""
+        self.model.remove_frames(predicate)
+        self._update_show_counts()
+        self.chart.refresh()
+
+    def add_above_list(self, widget: QWidget) -> None:
+        """A host's own strip over the list, in the list's column: Stack's
+        night verdict (spec decision 6). Not built in: Ha/OIII has none."""
+        self.list_layout.insertWidget(0, widget)
 
     def frames(self) -> list:
         return self.model.frames()
@@ -532,7 +653,9 @@ class FrameBrowser(QWidget):
         return list(HEADERS)
 
     def checked_frames(self) -> list:
-        return [s for s in self.model.frames() if s.included]
+        """What the stack reads. A locked frame is left out even if something
+        set `included` on it behind the model's back."""
+        return [s for s in self.model.frames() if s.included and not _locked(s)]
 
     @property
     def user_touched(self) -> set[int]:
@@ -560,7 +683,7 @@ class FrameBrowser(QWidget):
 
     def _update_show_counts(self) -> None:
         stats = self.model.frames()
-        rejected = sum(1 for s in stats if s.reason)
+        rejected = sum(1 for s in stats if is_rejected(s))
         counts = {SHOW_ALL: len(stats), SHOW_KEPT: len(stats) - rejected,
                   SHOW_REJECTED: rejected}
         names = {SHOW_ALL: "All", SHOW_KEPT: "Kept", SHOW_REJECTED: "Rejected"}
@@ -608,6 +731,18 @@ class FrameBrowser(QWidget):
         if idx.isValid():
             self.view.setCurrentIndex(idx)
 
+    def select_from_chart(self, row: int) -> None:
+        """A click on the chart: that frame, in the list. If Show hides it,
+        Show goes to All first — a click that selected nothing would read as
+        a broken chart. (Delivery C's night toggles hide through the extra
+        filter; C must lift that too.)"""
+        if not self.proxy.mapFromSource(self.model.index(row, COL_TIME)).isValid():
+            self.set_show(SHOW_ALL)
+        self.set_current_row(row)
+        idx = self.view.currentIndex()
+        if idx.isValid():
+            self.view.scrollTo(idx)
+
     # --- internals ---
     def _path_for_row(self, row: int):
         stats = self.model.frames()
@@ -621,6 +756,7 @@ class FrameBrowser(QWidget):
         else:
             self.preview_controller.clear()
         self._update_preview_header(row)
+        self.chart.set_current(row)
         self.current_changed.emit(row)
 
     def _update_preview_header(self, row: int) -> None:

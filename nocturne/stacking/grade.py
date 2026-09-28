@@ -84,6 +84,9 @@ class FrameStats:
     # When the sub was taken (aware datetime), for the frame list's Time column
     # and its default sort. None when neither DATE-OBS nor the file name says.
     captured: datetime | None = None
+    # In <folder>/rejected/ now (stacking/reject_move.py): `path` points there,
+    # and the frame can never be ticked in — nothing may stack from rejected/.
+    moved: bool = False
 
 
 def _measure(lum: np.ndarray) -> tuple[int, float, float, float, float]:
@@ -287,6 +290,14 @@ _SPREAD_MIN_EDGE = 384
 STRICTNESS_FLOOR_ROUND = {"relaxed": 0.10, "normal": 0.05, "strict": 0.02}
 MIN_MEANINGFUL_EXCESS = STRICTNESS_FLOOR["normal"]
 
+# The single source for two numbers that used to be copied by hand into
+# verdict.py and both dialogs, and drifted apart when only some of the
+# copies got updated: judge() itself, the verdict's own "too few to judge",
+# and stack_dialog's "too few frames to grade reliably" all mean the same 5;
+# both dialogs' "select at least N frames to stack" mean the same 3.
+JUDGE_MIN = 5              # judge() keeps every frame below this many, untouched
+STACK_MIN = 3              # a stack (or an extraction) needs at least this many
+
 
 def reject_limit(values, k: float, floor: float = MIN_MEANINGFUL_EXCESS):
     """The k-sigma gate, but never tighter than `floor` above the median.
@@ -307,7 +318,7 @@ def judge(stats: list[FrameStats], strictness: str = "normal") -> None:
     for s in usable:
         s.included, s.reason_code, s.reason, s.warning = True, "", "", ""
         s.reason_detail = ""
-    if len(usable) < 5:
+    if len(usable) < JUDGE_MIN:
         return  # too few frames to grade reliably — keep everything
 
     star_median = float(np.median([s.star_count for s in usable]))
