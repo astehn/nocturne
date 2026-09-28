@@ -556,3 +556,36 @@ def test_an_empty_or_error_only_list_previews_nothing(qtbot):
     assert b.current_row() == -1 and b.preview_controller.wanted == ""
     b.set_frames([])
     assert b.current_row() == -1
+
+
+# --- fix round 1: R3 (a re-grade must not preview through a stale filter) ----
+
+def test_a_regrade_resets_show_to_all_before_choosing_the_preview(qtbot):
+    """Ruling R3: _first_to_preview reads through the CURRENT filter, so a
+    re-grade taken while Show=Rejected previewed the first REJECTED frame
+    instead of the first kept one. A fresh grade must reset Show to All
+    first."""
+    stats = _session()
+    b = _browser(qtbot, stats)
+    b.set_show(fb.SHOW_REJECTED)
+    other = [_frame(i, i) for i in range(3)]
+    other[0].reason, other[0].included = "Soft stars (test)", False   # not KEPT
+    b.set_frames(other)
+    assert b.proxy.show_mode() == fb.SHOW_ALL
+    assert b._show_buttons[fb.SHOW_ALL].isChecked()
+    assert b.current_row() == 1
+    assert b.preview_controller.wanted == "/x/f1.fit"
+
+
+def test_a_rejudge_does_not_move_show_or_the_cursor(qtbot):
+    """Strictness moving is a rejudge, not a fresh grade — refresh_verdicts
+    must leave Show and the current row exactly where the user left them."""
+    stats = _session()
+    b = _browser(qtbot, stats)
+    b.set_show(fb.SHOW_KEPT)
+    b.set_current_row(4)
+    show_before, row_before = b.proxy.show_mode(), b.current_row()
+    judge(stats, "strict")
+    b.refresh_verdicts()
+    assert b.proxy.show_mode() == show_before
+    assert b.current_row() == row_before

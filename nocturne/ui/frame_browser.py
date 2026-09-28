@@ -581,9 +581,16 @@ class FrameBrowser(QWidget):
         """Show a freshly graded list with its first kept frame previewed, so
         the preview is never an empty panel after a grade (spec 2026-09-28
         §2.6). Hand-made ticks are forgotten: they belonged to the previous
-        list."""
+        list.
+
+        Show resets to All first (fix round 1, Ruling R3): `_first_to_preview`
+        reads through the CURRENT filter, so a re-grade taken while Show was
+        Rejected would preview the first REJECTED frame instead of the first
+        kept one. `refresh_verdicts` (a rejudge, e.g. Strictness) must NOT do
+        this — it leaves Show and the cursor exactly where the user left them."""
         self.model.set_frames(stats)
         self.chart.set_frames(stats)
+        self.set_show(SHOW_ALL)
         self._update_show_counts()
         self.fit_list()
         first = self._first_to_preview()
