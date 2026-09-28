@@ -154,6 +154,7 @@ class ShareDialog(QDialog):
         for _i, (label, aspect) in enumerate(ASPECTS):
             btn = QPushButton(label)
             btn.setCheckable(True)
+            btn.setObjectName("choice")   # the theme lights the chosen one
             btn.setChecked(label == self._aspect_label)
             btn.clicked.connect(lambda _checked=False, a=aspect, lbl=label: self._select_aspect(a, lbl))
             self._aspect_group.addButton(btn)
@@ -244,6 +245,7 @@ class ShareDialog(QDialog):
             # looks like the beginning has been lost.
             edit.setCursorPosition(0)
         reset_btn = QPushButton("↺")
+        reset_btn.setObjectName("glyph")   # the theme's 14 px side padding hid the ↺
         reset_btn.setFixedWidth(30)
         reset_btn.setToolTip("Restore the three lines this image's data gives")
         reset_btn.clicked.connect(self._reset_slots)

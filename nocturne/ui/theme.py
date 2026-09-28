@@ -137,6 +137,13 @@ QTableView::item:hover {{ background: {BG_3}; }}
 QPushButton#segment {{ padding: 3px 10px; border-radius: 6px; }}
 QPushButton#segment:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
     border: none; }}
+/* A checkable button that is one of a set of choices (Share's Post as). Plain
+   QPushButton:checked is left unstyled on purpose: other checkable buttons
+   carry their own look, and a default would restyle all of them. */
+QPushButton#choice:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
+    border: 1px solid {ACCENT}; }}
+/* A one-glyph button in a narrow fixed width (Share's ↺). */
+QPushButton#glyph {{ padding: 8px 0; }}
 QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT};
     padding: 3px 4px; }}
 QPushButton#linkButton:hover {{ color: {ACCENT_HI}; }}
