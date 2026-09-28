@@ -15,7 +15,8 @@ from nocturne.settings import Settings
 from nocturne.stacking.capture_time import full_label
 from nocturne.stacking.grade import REASON_MEASURE, FrameStats, judge
 from nocturne.ui import theme
-from nocturne.ui.frame_browser import SHOW_ALL, SHOW_KEPT, FrameBrowser, verdict_text
+from nocturne.ui.frame_browser import (COL_FWHM, SHOW_ALL, SHOW_KEPT,
+                                       FrameBrowser, verdict_text)
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui import quality_chart as qc
 from nocturne.ui.quality_chart import (CHART_HEIGHT, CHART_ROOM_MIN, HIDE_TEXT,
@@ -233,6 +234,24 @@ def test_clicking_a_point_the_filter_hides_switches_show_to_all(qtbot):
     assert b.current_row() == 2
 
 
+def test_a_click_after_sort_and_filter_still_finds_the_source_row(qtbot):
+    """A chart click carries a SOURCE row (spec 2026-09-28 §2.4): sorting the
+    list by FWHM descending, on top of filtering to Kept, must not throw it
+    off. f2 (source row 2) is _night()'s one rejected frame — hidden under
+    Kept — so the click must also bring Show back to All to land on it, and
+    the preview must follow to that same frame."""
+    stats = _night()
+    b = _shown(qtbot, stats)
+    b.view.sortByColumn(COL_FWHM, Qt.SortOrder.DescendingOrder)
+    b.set_show(SHOW_KEPT)
+    assert 2 not in b.view_rows()
+    _press(b.chart, b.chart.point_pos(2))
+    assert b.proxy.show_mode() == SHOW_ALL
+    assert b._show_buttons[SHOW_ALL].isChecked()
+    assert b.current_row() == 2
+    assert b.preview_controller.wanted == stats[2].path
+
+
 def test_clicking_between_points_changes_nothing(qtbot):
     b = _shown(qtbot, _night())
     b.set_current_row(1)
@@ -395,6 +414,24 @@ def test_the_axes_name_clock_times_and_two_fwhm_values(qtbot):
     last_by_time = max(stats, key=lambda s: s.captured)
     assert times[0][1] == _clock(first_by_time) and times[-1][1] == _clock(last_by_time)
     assert [t for _r, t in b.chart.fwhm_labels()] == ["3.0", "2.5"]
+
+
+def test_axis_labels_meet_the_apps_readability_floor(qtbot):
+    """Fix round 1 (Ruling R5): TEXT_FAINT at 9 px measured a 2.44:1 contrast
+    on BG_2 — dimmer and smaller than any other secondary text in the app.
+    Pinned to TEXT_DIM at >= 11 px, the app's own floor for secondary text
+    (QLabel#optionGroupTitle and friends, theme.py), so a quiet regression
+    back to the old values cannot pass unnoticed."""
+    assert qc.AXIS_COLOUR == theme.TEXT_DIM
+    assert qc._AXIS_PX >= 11
+    b = _shown(qtbot, _night())
+    assert b.chart._axis_font().pixelSize() == qc._AXIS_PX
+    img = b.chart.grab().toImage()
+    rect, _text = b.chart.fwhm_labels()[0]
+    found = any(_close(QColor(img.pixel(x, y)), theme.TEXT_DIM, tol=40)
+                for y in range(max(0, int(rect.top())), int(rect.bottom()) + 1)
+                for x in range(max(0, int(rect.left())), int(rect.right()) + 1))
+    assert found, "no pixel in the FWHM label's own rect painted TEXT_DIM"
 
 
 def test_without_capture_times_there_is_no_time_axis(qtbot):

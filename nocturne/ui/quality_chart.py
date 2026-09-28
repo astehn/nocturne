@@ -36,7 +36,11 @@ KEPT_COLOUR = theme.ACCENT
 # a dark strip would vanish, which is the opposite of the point.
 REJECTED_COLOUR = theme.WARNING
 CURRENT_COLOUR = theme.TEXT
-AXIS_COLOUR = theme.TEXT_FAINT
+# Fix round 1 (Ruling R5): TEXT_FAINT at 9 px measured 2.44:1 on BG_2 — dimmer
+# and smaller than any other secondary text in the app. TEXT_DIM at 11 px
+# matches the app's own floor for secondary text (QLabel#optionGroupTitle and
+# friends, theme.py).
+AXIS_COLOUR = theme.TEXT_DIM
 RING_RADIUS = 5.0
 NOTE_TIME = "FWHM over the session — ● rejected"
 NOTE_NO_TIME = "FWHM in file-name order (some frames have no capture time) — ● rejected"
@@ -48,9 +52,12 @@ SHOW_TEXT = "▸ Show chart"
 # is the spec's, not a measurement: 800 also folds it on a 1440×900 screen
 # with the Dock showing (about 745) and leaves it open on anything taller.
 CHART_ROOM_MIN = 800
-# _LEFT holds the FWHM values, _BOTTOM the clock times.
-_LEFT, _RIGHT, _TOP, _BOTTOM = 30.0, 8.0, 6.0, 14.0
-_AXIS_PX = 9
+# _LEFT holds the FWHM values, _BOTTOM the clock times. _BOTTOM grew with the
+# 11 px axis font (fix round 1): its line height is 13 px against 9 px's 11,
+# and the old 14 px band clipped descenders.
+_LEFT, _RIGHT, _TOP, _BOTTOM = 30.0, 8.0, 6.0, 16.0
+_AXIS_PX = 11
+_AXIS_LABEL_H = 14.0                                    # the FWHM label box's own height
 _DOT = 2.5
 _HIT = 6.0                                              # a click this close picks the dot
 # Clock times sit at least this far apart, so labels never touch; a narrow
@@ -208,8 +215,9 @@ class QualityChart(QWidget):
             if text in seen:
                 continue
             seen.add(text)
-            y = min(max(self._y(v, r, lo, hi) - 6.0, 0.0), self.height() - _BOTTOM - 12.0)
-            out.append((QRectF(0.0, y, _LEFT - 4.0, 12.0), text))
+            y = min(max(self._y(v, r, lo, hi) - _AXIS_LABEL_H / 2, 0.0),
+                    self.height() - _BOTTOM - _AXIS_LABEL_H)
+            out.append((QRectF(0.0, y, _LEFT - 4.0, _AXIS_LABEL_H), text))
         return out
 
     def time_labels(self) -> list[tuple[QRectF, str]]:
