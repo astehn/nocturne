@@ -135,11 +135,10 @@ class HaOIIIDialog(QDialog):
         # The same list + preview Stack hosts (spec 2026-09-27 §2.5).
         self.browser = FrameBrowser(self._pool)
         self.browser.view.setToolTip(
-            "One row per sub: when it was taken, how many stars it showed, how "
-            "sharp they were (FWHM, lower is better), how round (1.00 is "
-            "circular, higher is trailed) and how bright the sky was. Verdict "
-            "says why a frame was left out. Untick a frame to leave it out "
-            "yourself.")
+            "One row per sub: when it was taken, how many stars it showed and "
+            "how sharp they were (FWHM, lower is better). Verdict says why a "
+            "frame was left out; hover a row for how round its stars are and "
+            "how bright its sky was. Untick a frame to leave it out yourself.")
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
 

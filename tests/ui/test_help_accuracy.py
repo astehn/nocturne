@@ -1451,9 +1451,14 @@ def test_the_haoiii_help_describes_every_column_the_table_shows():
     b = _body("haoiii")
     d = HaOIIIDialog(Settings())
     headers = d.browser.headers()
-    assert headers == ["Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict"]
-    for col in ("Time", "Stars", "FWHM", "Round", "Bg", "Verdict"):
+    assert headers == ["Use", "Time", "Stars", "FWHM", "Verdict"]
+    for col in ("Time", "Stars", "FWHM", "Verdict"):
         assert f"<b>{col}</b>" in b, f"the {col} column is not explained"
+    # Round and Bg left the list for its tooltip (spec 2026-09-28 §2.6); the
+    # help still explains both, and the tooltip still carries both.
+    fb = _src("nocturne/ui/frame_browser.py")
+    for word in ("Round", "Bg"):
+        assert f"<b>{word}</b>" in b and f"{word} {{s." in fb, word
 
 
 def test_the_haoiii_help_mentions_the_frame_preview():
@@ -1699,9 +1704,10 @@ def test_the_stacking_help_describes_the_frame_list_and_output_it_has():
     fb = _src("nocturne/ui/frame_browser.py")
     sd = _src("nocturne/ui/stack_dialog.py")
     assert "<b>Time</b>" in b and "Time" in FrameBrowser.headers()
-    for words in ("Back to the verdicts", "⇤ bigger preview"):
+    for words in ("Reset to suggested", "⇤ bigger preview"):
         assert f"<b>{words}</b>" in b, f"{words!r} is not in the help"
         assert f'"{words}"' in fb, f"{words!r} is no longer a control"
+    assert "Back to the verdicts" not in b
     for mode in ("Kept", "Rejected"):
         assert f"<b>{mode}</b>" in b and f'"{mode}"' in fb
     assert "arrow keys" in b and "space bar" in b

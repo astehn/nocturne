@@ -187,9 +187,12 @@ def test_selecting_a_row_previews_that_frame(qtbot):
     d._preview_ctl.loader = lambda p: (asked.append(p),
                                        np.zeros((8, 8, 3), np.float32))[1]
     d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(3)])
+    # The grade itself previews the first kept frame (spec 2026-09-28 §2.6).
+    assert d.browser.current_row() == 0 and d._preview_ctl.wanted == "/x/0.fit"
     d.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
-    assert asked == ["/x/1.fit"], f"previewed {asked}, wanted the selected row"
+    qtbot.waitUntil(lambda: d.preview.has_image()
+                    and d._preview_ctl.wanted == "/x/1.fit", timeout=2000)
+    assert "/x/1.fit" in asked, f"previewed {asked}, wanted the selected row"
 
 
 def test_the_preview_sits_beside_the_table_in_a_splitter(qtbot):

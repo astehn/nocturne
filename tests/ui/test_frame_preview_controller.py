@@ -68,3 +68,15 @@ def test_the_cache_is_capped_and_evicts_least_recently_used(qtbot):
     ctl._on_loaded((paths[PREVIEW_CACHE_LIMIT], np.zeros((8, 8, 3), np.float32)))
     assert paths[0] in ctl.cache, "the touched entry must survive — LRU, not FIFO"
     assert paths[1] not in ctl.cache, "the genuinely least-recent one goes"
+
+
+def test_a_load_that_lands_after_the_preview_is_gone_is_dropped(qtbot):
+    """Every grade now previews a frame, so closing the dialog mid-load is
+    ordinary. The result must be dropped, not painted into a deleted widget
+    (RuntimeError: Internal C++ object already deleted)."""
+    from shiboken6 import delete
+    ctl = _ctl(qtbot, ["/a.fit"])
+    ctl.wanted = "/a.fit"
+    delete(ctl.preview)
+    ctl._on_loaded(("/a.fit", np.zeros((8, 8, 3), np.float32)))
+    ctl._on_error("/a.fit", OSError("gone"))

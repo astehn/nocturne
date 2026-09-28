@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QLabel, QWidget  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats, judge  # noqa: E402
 from nocturne.ui.frame_browser import (  # noqa: E402
-    COL_BG, COL_ROUND, COL_VERDICT, FrameBrowser,
+    COL_STARS, COL_VERDICT, FrameBrowser,
 )
 from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
 
@@ -155,7 +155,7 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
-    assert len(dlg.browser.headers()) == 7
+    assert len(dlg.browser.headers()) == 5
     assert "Soft" in dlg.browser.cell_text(0, COL_VERDICT)
     assert "softer" in dlg.browser.cell_tooltip(0, COL_VERDICT)   # the long form is one hover away
     assert "Brighter sky" in dlg.browser.cell_text(1, COL_VERDICT)
@@ -329,11 +329,11 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
     dlg.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: len(loads) == 1, timeout=2000)
-    assert loads == [str(tmp_path / "f1.fit")]
+    qtbot.waitUntil(lambda: str(tmp_path / "f1.fit") in loads, timeout=2000)
 
-    # grade a different folder — same row count, different paths, current cell
-    # index (row 1) stays put, so currentCellChanged never fires.
+    # grade a different folder — same row count, different paths. The
+    # preview must move to the NEW folder's first kept frame (spec 2026-09-28
+    # §2.6), never go on showing the old folder's.
     other_dir = tmp_path / "other"
     other_dir.mkdir()
     for i in range(2):
@@ -343,10 +343,9 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(other_dir))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
-    # preview must resync to the new row 1's file, not keep showing the old one
-    qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
-    assert loads[-1] == str(other_dir / "g1.fit")
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2
+                    and dlg._preview_wanted == str(other_dir / "g0.fit"), timeout=2000)
+    qtbot.waitUntil(lambda: str(other_dir / "g0.fit") in loads, timeout=2000)
 
 
 def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
@@ -554,14 +553,14 @@ def test_cells_carry_tooltips(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
-    assert dlg.browser.cell_tooltip(0, COL_BG) == dlg.browser.cell_text(0, COL_BG) != ""
+    assert "Bg 0.020" in dlg.browser.cell_tooltip(0, COL_STARS)
+    assert "Round 1.00" in dlg.browser.cell_tooltip(0, COL_VERDICT)
 
 
-def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
-    """A "stars trailed" verdict is unreadable without the number behind it, so
-    elongation gets its own column. It also guards the off-by-one that adding
-    that column created: _rejudge rewrites the verdict cell by index, and with a
-    literal 5 it would now overwrite Bg instead."""
+def test_roundness_is_one_hover_away_and_survives_a_rejudge(qtbot, tmp_path):
+    """A "stars trailed" verdict is unreadable without the number behind it.
+    It left the list for the tooltip (spec 2026-09-28 §2.6); the verdict must
+    still land in the Verdict column after a rejudge."""
     from nocturne.stacking.grade import FrameStats
     from nocturne.ui.stack_dialog import StackDialog
 
@@ -579,12 +578,12 @@ def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
     qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
 
     trailed = next(r for r in range(len(dlg.browser.frames()))
-                   if dlg.browser.cell_text(r, COL_ROUND) == "1.90")
+                   if "Round 1.90" in dlg.browser.cell_tooltip(r, COL_STARS))
     assert "trailed" in dlg.browser.cell_text(trailed, COL_VERDICT).lower()
-    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", "Bg column was overwritten"
+    assert "Bg 0.020" in dlg.browser.cell_tooltip(trailed, COL_STARS)
 
     dlg.strictness_box.setCurrentText("Relaxed")
-    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", \
+    assert dlg.browser.cell_text(trailed, COL_STARS) == "800", \
         "_rejudge wrote the verdict into the wrong column"
 
 
@@ -1935,3 +1934,25 @@ def test_the_main_windows_help_does_not_open_stacks(qtbot):
     d.show()
     qtbot.waitExposed(d)
     assert not d.mosaic_hint.isVisible() and "▸" in d._help_link.text()
+
+
+def test_stack_previews_the_first_kept_frame_after_grading(qtbot):
+    """Spec 2026-09-28 §2.6, §8: the preview is never empty after a grade.
+    The earliest frame is soft, so the first KEPT one is the second."""
+    from datetime import datetime, timedelta, timezone
+    import numpy as np
+    t0 = datetime(2026, 9, 26, 21, 0, tzinfo=timezone.utc)
+    stats = []
+    for i in range(10):
+        s = FrameStats(f"/x/f{i}.fit", 800, 9.0 if i == 0 else 2.5, 0.02, 0.5, True,
+                       exposure=10.0)
+        s.captured = t0 + timedelta(minutes=i)
+        stats.append(s)
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._preview_loader = lambda p: np.zeros((8, 8, 3), np.float32)
+    d._on_graded(stats)
+    assert stats[0].reason, "fixture: the earliest frame must be rejected"
+    assert d.browser.current_row() == 1
+    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
+    assert d._preview_wanted == "/x/f1.fit"

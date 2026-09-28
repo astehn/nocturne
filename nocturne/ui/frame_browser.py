@@ -27,14 +27,21 @@ from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
 from .quality_chart import QualityChart
 
-COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_ROUND, COL_BG, COL_VERDICT = range(7)
-HEADERS = ("Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict")
+# Round and Bg left the list (spec 2026-09-28 §2.6): they repeated what the
+# Verdict already says, and Bg read to three decimals. Both are in every
+# cell's tooltip (measures_line).
+COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_VERDICT = range(5)
+HEADERS = ("Use", "Time", "Stars", "FWHM", "Verdict")
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 
 # What "bigger preview" hides: the measurements. Use stays — it IS the tick, and
 # a list you cannot tick from is a list you have to widen again to use.
-DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
+DETAIL_COLUMNS = (COL_STARS, COL_FWHM)
+
+# Was "Back to the verdicts", which made no sense until pressed (Andreas,
+# 2026-09-28; spec §4).
+RESET_TEXT = "Reset to suggested"
 
 # The Verdict cell of a frame moved into <folder>/rejected/.
 MOVED_TEXT = "In rejected/"
@@ -104,24 +111,28 @@ def _display(s, col: int) -> str:
         return str(s.star_count)
     if col == COL_FWHM:
         return f"{s.fwhm:.1f}"
-    if col == COL_ROUND:
-        # "Round" is elongation: 1.00 is circular, higher is trailed.
-        return f"{s.elongation:.2f}"
-    if col == COL_BG:
-        return f"{s.background:.3f}"
     if col == COL_VERDICT:
         return verdict_text(s)
     return ""
 
 
+def measures_line(s) -> str:
+    """Every measurement of a frame on one line — the two the list shows and
+    the two it no longer does. "Round" is elongation: 1.00 is circular."""
+    return (f"Stars {s.star_count} · FWHM {s.fwhm:.2f} px · "
+            f"Round {s.elongation:.2f} · Bg {s.background:.3f}")
+
+
 def _tooltip(s, col: int) -> str:
+    if col == COL_USE:
+        return ""
     if col == COL_TIME:
         when = full_label(getattr(s, "captured", None))
         name = os.path.basename(s.path)
-        return f"{name}\n{when}" if when else name
+        return "\n".join(t for t in (name, when, measures_line(s)) if t)
     if col == COL_VERDICT:
-        return verdict_tooltip(s)
-    return _display(s, col)
+        return f"{verdict_tooltip(s)}\n{measures_line(s)}"
+    return measures_line(s)
 
 
 def _sort_key(s, col: int):
@@ -137,10 +148,6 @@ def _sort_key(s, col: int):
         return (0, s.star_count)
     if col == COL_FWHM:
         return (0, s.fwhm)
-    if col == COL_ROUND:
-        return (0, s.elongation)
-    if col == COL_BG:
-        return (0, s.background)
     return (0, verdict_text(s))
 
 
@@ -503,10 +510,10 @@ class FrameBrowser(QWidget):
         show_row.addWidget(QLabel("Select:"))
         self.select_all_btn = self._link("All", self.select_all)
         self.select_none_btn = self._link("None", self.select_none)
-        self.back_to_verdicts_btn = self._link("Back to the verdicts",
-                                               self.back_to_verdicts)
-        for b in (self.select_all_btn, self.select_none_btn,
-                  self.back_to_verdicts_btn):
+        self.reset_btn = self._link(RESET_TEXT, self.reset_to_suggested)
+        self.reset_btn.setToolTip("Undo every tick you made yourself: the "
+                                  "grader's suggestion decides again")
+        for b in (self.select_all_btn, self.select_none_btn, self.reset_btn):
             show_row.addWidget(b)
         show_row.addStretch(1)
 
@@ -571,26 +578,35 @@ class FrameBrowser(QWidget):
 
     # --- the host's side ---
     def set_frames(self, stats: list) -> None:
-        """Show a freshly graded list. Hand-made ticks are forgotten: they
-        belonged to the previous list."""
-        # The cursor keeps its PLACE in the list, as the old table's current
-        # cell did, so the preview moves to whatever frame now sits there
-        # rather than going on showing one from the previous folder.
-        place = self.view.currentIndex().row()
+        """Show a freshly graded list with its first kept frame previewed, so
+        the preview is never an empty panel after a grade (spec 2026-09-28
+        §2.6). Hand-made ticks are forgotten: they belonged to the previous
+        list."""
         self.model.set_frames(stats)
         self.chart.set_frames(stats)
         self._update_show_counts()
         self.fit_list()
-        if 0 <= place < self.proxy.rowCount():
-            self.view.setCurrentIndex(self.proxy.index(place, COL_TIME))
+        first = self._first_to_preview()
+        if first >= 0:
+            # The reset left no current row, so this always moves the cursor
+            # and _on_current does the rest: preview, header, chart ring.
+            self.set_current_row(first)
         else:
             self.preview_controller.clear()
             self._update_preview_header(-1)
             self.chart.set_current(-1)
-            if not stats:
-                # An empty list has no neighbour for Qt's selection model to
-                # land the cursor on, so nothing else fires this signal.
-                self.current_changed.emit(-1)
+            # No row for Qt's selection model to land the cursor on, so
+            # nothing else fires this signal.
+            self.current_changed.emit(-1)
+
+    def _first_to_preview(self) -> int:
+        """The first kept frame in the list's own order; failing that the
+        first frame that is not an error (every frame rejected: show one of
+        them, which is the next thing he will want to see); else -1."""
+        stats = self.model.frames()
+        rows = [r for r in self._visible_rows() if not stats[r].error]
+        kept = [r for r in rows if not is_rejected(stats[r])]
+        return (kept or rows or [-1])[0]
 
     def refresh_verdicts(self) -> None:
         """Call after judge() re-ran on the same list."""
@@ -674,7 +690,7 @@ class FrameBrowser(QWidget):
     def select_none(self) -> None:
         self.model.set_ticked(self._visible_rows(), False)
 
-    def back_to_verdicts(self) -> None:
+    def reset_to_suggested(self) -> None:
         self.model.revert_to_verdicts()
 
     def set_show(self, mode: str) -> None:
