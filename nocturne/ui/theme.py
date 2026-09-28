@@ -137,6 +137,11 @@ QTableView::item:hover {{ background: {BG_3}; }}
 QPushButton#segment {{ padding: 3px 10px; border-radius: 6px; }}
 QPushButton#segment:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
     border: none; }}
+/* A night's chip in Stack's verdict (verdict_strip.py): a pill, outlined in
+   the accent while the night is ticked in. */
+QCheckBox#nightChip {{ background: {BG_3}; border: 1px solid {BORDER};
+    border-radius: 10px; padding: 1px 8px; }}
+QCheckBox#nightChip:checked {{ border-color: {ACCENT}; }}
 /* A checkable button that is one of a set of choices (Share's Post as). Plain
    QPushButton:checked is left unstyled on purpose: other checkable buttons
    carry their own look, and a default would restyle all of them. */

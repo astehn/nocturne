@@ -13,14 +13,16 @@ from ..settings import astap_valid, start_dir
 from ..stacking.drizzle_gate import SUITS_SUMMARY
 from ..stacking.frames import discover_subs
 from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
-                              is_left_out, judge, order_best_first)
+                              is_left_out, is_master, judge, order_best_first)
+from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from ..stacking.verdict import (LABEL_NOT_COUNTED, _minutes, build_verdict,
-                                read_pixel_scale)
+from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
+                                _minutes, build_session_verdict, build_verdict,
+                                night_chip_text, night_classes, read_pixel_scale)
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
@@ -53,6 +55,8 @@ def _line(*widgets, stretch_last: bool = True) -> QHBoxLayout:
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 _OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
+# The status line with every night unticked (spec 2026-09-28 §9.2).
+NO_NIGHT_STATUS = "No night is ticked — tick one under Nights to stack it."
 
 
 class _Signals(QObject):
@@ -199,6 +203,11 @@ class StackDialog(QDialog):
         self.browser.add_above_chart(self.verdict_strip)
         self.verdict_strip.expanded.connect(
             lambda: self._keep_on_screen() if self._fitted else None)
+        # A night's chip ticks it in or out (spec 2026-09-28 §9.2). The
+        # browser holds which are off; the verdict and its chips follow, and
+        # selection_changed brings the status, Move count, name and drizzle.
+        self.verdict_strip.night_toggled.connect(self.browser.set_night_on)
+        self.browser.nights_changed.connect(self._update_verdict)
         self._pixel_scale: float | None = None
         # The folder the LISTED frames came from — not whatever the Folder
         # field says now: it can be retyped after grading, and anything that
@@ -461,7 +470,7 @@ class StackDialog(QDialog):
             self.options_band.refresh_summary()
             self._sync_folded_note()
             return
-        plain = plain_advice(drizzle_advice(self._stats))
+        plain = plain_advice(drizzle_advice(self._ticked()))
         self._drizzle_suits = plain.suits
 
         # What it will cost THIS stack, before the button is pressed — Andreas
@@ -469,7 +478,7 @@ class StackDialog(QDialog):
         # its worth it prior to actually pressing the button". A generic "10x
         # longer" does not answer "do I have time for this tonight". One hover
         # away now, with the other numbers (spec §5).
-        kept = [x for x in self._stats if x.included]
+        kept = self._ticked()
         numbers = plain.numbers
         if kept:
             mins = estimate_seconds(len(kept), self._frame_shape) / 60.0
@@ -1044,13 +1053,27 @@ class StackDialog(QDialog):
         from, says how many are missing from the count; it updates itself
         away once those frames are back, the next time this runs.
 
+        Several nights (spec 2026-09-28 §9.2-9.3): the verdict counts the
+        TICKED nights only, and its headline says how they compare; each
+        night gets a chip with its own verdict. Rebuilt when a night is
+        ticked in or out — that changes what is counted, which a hand tick
+        on one frame does not.
+
         A name the manifest lists is not necessarily missing from the
         count — a frame moved THIS session is still a row in `self._stats`
         (moved=True) and build_verdict counts it, since it counts the
         grader's decision, not the move. Only a pending name with no such row
         is actually uncounted; without this filter the line claimed frames
         "kept" one line above were also "not counted here"."""
-        verdict = build_verdict(self._stats, self._pixel_scale) if self._stats else None
+        nights = split_nights([s for s in self._stats if not is_master(s)])
+        off = self.browser.nights_off()
+        ticked = [list(n.frames) for n in nights if n.key not in off]
+        counted = [s for s in self._stats if self.browser.night_on(s)]
+        if len(nights) >= 2 and not ticked:
+            verdict = Verdict(NO_NIGHT_HEADLINE)
+        else:
+            verdict = (build_session_verdict(counted, ticked, self._pixel_scale)
+                       if counted else None)
         if verdict is not None and self._graded_folder:
             try:
                 pending = pending_back(self._graded_folder)
@@ -1065,6 +1088,11 @@ class StackDialog(QDialog):
                 verdict = verdict.with_line(note, LABEL_NOT_COUNTED,
                                             f"{back} more in rejected/")
         self.verdict_strip.set_verdict(verdict)
+        classes = night_classes([list(n.frames) for n in nights])
+        self.verdict_strip.set_nights([
+            (n.key, night_chip_text(n.label, n.frames, cls, self._pixel_scale),
+             build_verdict(list(n.frames), self._pixel_scale).text(), n.key not in off)
+            for n, cls in zip(nights, classes)])
 
     # --- the rejected folder (spec decision 7, §5) ---
     def _frames_to_move(self) -> list:
@@ -1072,7 +1100,8 @@ class StackDialog(QDialog):
         ticked back in stays; a kept frame he unticked goes. Error frames stay
         put: an unreadable file or a stacked master has no verdict to act on."""
         return [s for s in self._stats
-                if not s.included and not s.error and not s.moved]
+                if not s.included and not s.error and not s.moved
+                and self.browser.night_on(s)]
 
     def _sync_reject_buttons(self, check_disk: bool = False) -> None:
         """The move count follows the ticks. The back count reads the folder,
@@ -1337,7 +1366,7 @@ class StackDialog(QDialog):
     def _auto_output_path(self) -> None:
         if self._name_is_manual or not self._stats:
             return
-        kept = [s for s in self._stats if s.included]
+        kept = self._ticked()
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
         target = next((s.target for s in kept if s.target), "")
@@ -1351,8 +1380,11 @@ class StackDialog(QDialog):
     def _selection_summary(self) -> str:
         # Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
         # Ruling R1): the same total as Show All and the verdict.
-        counted = [s for s in self._stats if not is_left_out(s)]
+        counted = [s for s in self._stats
+                   if not is_left_out(s) and self.browser.night_on(s)]
         if not counted:
+            if any(not is_left_out(s) for s in self._stats):
+                return NO_NIGHT_STATUS          # there are subs; no night is ticked
             return ONLY_MASTERS
         total = len(counted)
         kept = [s for s in counted if s.included]
@@ -1370,6 +1402,11 @@ class StackDialog(QDialog):
         if total < JUDGE_MIN:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
+
+    def _ticked(self) -> list:
+        """Ticked, in a ticked night: what the name, the drizzle advice and
+        the status line count (spec 2026-09-28 §9.2)."""
+        return [s for s in self._stats if s.included and self.browser.night_on(s)]
 
     # --- run ---
     def _included_paths_best_first(self) -> list:
@@ -1392,8 +1429,7 @@ class StackDialog(QDialog):
     def _target_label(self) -> str:
         """The same name _auto_output_path already derives for the output
         filename, so the log and the file agree on what this was."""
-        target = next((s.target for s in self._stats
-                       if s.included and s.target), "")
+        target = next((s.target for s in self._ticked() if s.target), "")
         return target or "stacked master"
 
     def _validate_ready_to_run(self) -> bool:
@@ -1541,8 +1577,8 @@ class StackDialog(QDialog):
         """
         if self._name_is_manual or not self._stats:
             return
-        target = next((s.target for s in self._stats if s.included and s.target), "")
-        kept = [s for s in self._stats if s.included]
+        kept = self._ticked()
+        target = next((s.target for s in kept if s.target), "")
         exposures = [s.exposure for s in kept if s.exposure > 0]
         exposure = exposures[0] if exposures and max(exposures) == min(exposures) else 0.0
         want = master_filename(target, result.frame_count, exposure,
