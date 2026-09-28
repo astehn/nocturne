@@ -18,8 +18,9 @@ from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
 from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
-from ..stacking.reject_move import (REJECTED_DIR, RejectMoveError, describe_names,
-                                    move_back, move_to_rejected, pending_back)
+from ..stacking.reject_move import (REJECTED_DIR, MoveBackResult, RejectMoveError,
+                                    describe_names, home_folder, move_back,
+                                    move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
                                 _minutes, build_session_verdict, build_verdict,
@@ -30,6 +31,10 @@ from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .quality_chart import CHART_ROOM_MIN
 from .verdict_strip import VerdictStrip
 from .worker import run_async
+
+
+def _label(folder: str) -> str:
+    return os.path.basename(os.path.normpath(folder))
 
 
 class _Hint(WrappedNote):
@@ -1199,12 +1204,18 @@ class StackDialog(QDialog):
             verdict = (build_session_verdict(counted, ticked, self._pixel_scale)
                        if counted else None)
         if verdict is not None and self._graded_folder:
-            try:
-                pending = pending_back(self._graded_folder)
-            except (RejectMoveError, OSError):
-                pending = []
-            listed_moved = {os.path.basename(s.path) for s in self._stats if s.moved}
-            back = len([n for n in pending if n not in listed_moved])
+            # Per folder, by full path: two added folders can hold the same
+            # names (spec 2026-09-28 §9.7).
+            listed_moved = {os.path.abspath(s.path) for s in self._stats if s.moved}
+            back = 0
+            for folder in self.listed_folders():
+                try:
+                    pending = pending_back(folder)
+                except (RejectMoveError, OSError):
+                    pending = []
+                rej = os.path.join(os.path.abspath(folder), REJECTED_DIR)
+                back += len([n for n in pending
+                             if os.path.join(rej, n) not in listed_moved])
             if back:
                 note = (f"{back} more frame is in rejected/ and is not counted here."
                         if back == 1 else
@@ -1241,19 +1252,20 @@ class StackDialog(QDialog):
         self.verdict_strip.set_move_count(len(self._frames_to_move()))
         if not check_disk:
             return
-        back = 0
-        if self._graded_folder:
+        back, damaged = 0, None
+        for folder in self.listed_folders():
             try:
-                back = len(pending_back(self._graded_folder))
+                back += len(pending_back(folder))
             except RejectMoveError as exc:
-                self.verdict_strip.set_message(str(exc))
-                self._damaged_folder = True
+                damaged = damaged or str(exc)
             except OSError:
-                back = 0            # an unreadable folder: nothing to offer
-            else:
-                if self._damaged_folder:
-                    self.verdict_strip.set_message("")
-                self._damaged_folder = False
+                pass                # an unreadable folder: nothing to offer
+        if damaged is not None:
+            self.verdict_strip.set_message(damaged)
+            self._damaged_folder = True
+        elif self._damaged_folder:
+            self.verdict_strip.set_message("")
+            self._damaged_folder = False
         self.verdict_strip.set_back_count(back)
 
     def _ask_yes_no(self, title: str, text: str) -> bool:
@@ -1291,41 +1303,62 @@ class StackDialog(QDialog):
             self._say("A background stack is running and may be reading these "
                       "frames — move them once it has finished.")
             return
-        try:
-            pending_back(self._graded_folder)
-        except RejectMoveError as exc:
-            # A known-damaged record: refuse before asking, not after he has
-            # already said yes to a move that cannot happen.
-            self._say(str(exc))
-            self._damaged_folder = True
-            return
-        except OSError:
-            pass
         frames = self._frames_to_move()
+        # Each frame into ITS OWN folder's rejected/ (spec 2026-09-28 §9.7):
+        # the frames' own folders, never the Folder field.
+        # (Not home_folder(): none of these is in rejected/ yet, and a
+        # capture folder may itself be called "rejected".)
+        by_folder: dict[str, list] = {}
+        for s in frames:
+            by_folder.setdefault(os.path.dirname(os.path.abspath(s.path)), []).append(s)
+        for folder in by_folder:
+            try:
+                pending_back(folder)
+            except RejectMoveError as exc:
+                # A known-damaged record: refuse before asking, not after he
+                # has already said yes to a move that cannot happen.
+                self._say(str(exc))
+                self._damaged_folder = True
+                return
+            except OSError:
+                pass
         if not frames:
             return
-        folder = self._graded_folder            # the frames' own folder, not the field
         n = len(frames)
-        where = os.path.basename(os.path.normpath(folder))
-        question = (f"Move {n} rejected {'frame' if n == 1 else 'frames'} into "
-                    f"{where}/rejected? Nothing is deleted; you can move them back.")
+        if len(by_folder) == 1:
+            question = (f"Move {n} rejected {'frame' if n == 1 else 'frames'} into "
+                        f"{_label(next(iter(by_folder)))}/rejected? Nothing is deleted; "
+                        "you can move them back.")
+        else:
+            parts = [f"{len(fs)} into {_label(f)}/rejected" for f, fs in by_folder.items()]
+            question = (f"Move {n} rejected frames — {', '.join(parts)}? Nothing is "
+                        "deleted; you can move them back.")
         if not self._confirm("Move rejected frames", question):
             return
-        try:
-            moved = move_to_rejected(folder, [s.path for s in frames],
-                                     [s.path for s in self._stats])
-        except RejectMoveError as exc:
-            self._say(str(exc))
-            return
-        for s in frames:
-            new = moved.get(os.path.abspath(s.path))
-            if new:
-                s.path, s.moved, s.included = new, True, False
-        self.browser.frames_moved()
+        graded = [s.path for s in self._stats]
+        done: list[str] = []
+        failed = ""
+        for folder, group in by_folder.items():
+            try:
+                moved = move_to_rejected(folder, [s.path for s in group], graded)
+            except RejectMoveError as exc:
+                # Every §5 rule holds per folder: this one moved nothing, or
+                # put back what it moved, and says so. A folder done before
+                # it stays done — recorded, and offered by Move them back.
+                failed = str(exc) if len(by_folder) == 1 else f"{_label(folder)}: {exc}"
+                break
+            for s in group:
+                new = moved.get(os.path.abspath(s.path))
+                if new:
+                    s.path, s.moved, s.included = new, True, False
+            k = len(moved)
+            done.append(f"{k} {'frame' if k == 1 else 'frames'} into {_label(folder)}/rejected")
+        if done:
+            self.browser.frames_moved()
+            self._update_verdict()
         self._sync_reject_buttons(check_disk=True)
-        k = len(moved)
-        self._say(f"Moved {k} {'frame' if k == 1 else 'frames'} into {where}/rejected. "
-                  "Nothing was deleted.")
+        said = [f"Moved {' and '.join(done)}. Nothing was deleted."] if done else []
+        self._say(" ".join(said + ([failed] if failed else [])))
 
     def _move_back(self) -> None:
         # See the comment in _move_rejected: the same "one move at a time"
@@ -1340,32 +1373,48 @@ class StackDialog(QDialog):
         # Nothing listed yet means nothing to lose. Captured BEFORE the
         # bookkeeping below touches self._stats.
         was_empty = not self._stats
-        try:
-            result = move_back(folder)
-        except RejectMoveError as exc:
-            self._say(str(exc))
+        # Every listed folder's own rejected/, each on its own: a damaged
+        # record in one stops that one only (spec 2026-09-28 §9.7).
+        result, refused = MoveBackResult(), []
+        restored_paths: list[str] = []          # restored here, by full path
+        home: set[str] = set()                  # full paths back where they belong
+        missing: set[str] = set()               # full rejected/ paths gone for good
+        for f in self.listed_folders():
+            try:
+                r = move_back(f)
+            except RejectMoveError as exc:
+                refused.append(str(exc))
+                continue
+            top = os.path.abspath(f)
+            rej = os.path.join(top, REJECTED_DIR)
+            restored_paths += [os.path.join(top, n) for n in r.restored]
+            home |= {os.path.join(rej, n) for n in r.restored + r.already_back}
+            missing |= {os.path.join(rej, n) for n in r.missing}
+            for name in ("restored", "already_back", "taken", "refused", "missing"):
+                getattr(result, name).extend(getattr(r, name))
+            result.failed = " ".join(x for x in (result.failed, r.failed) if x)
+        if refused and not (result.restored or result.already_back or result.missing):
+            self._say(" ".join(refused))
             return
-        home = set(result.restored) | set(result.already_back)
-        missing = set(result.missing)
-        listed = set()
+        listed = {os.path.abspath(s.path) for s in self._stats}
         for s in self._stats:
-            name = os.path.basename(s.path)
-            listed.add(name)
-            if s.moved and name in home:
-                s.path, s.moved = os.path.join(folder, name), False
+            if s.moved and os.path.abspath(s.path) in home:
+                s.path, s.moved = os.path.join(home_folder(s.path),
+                                               os.path.basename(s.path)), False
+        listed_home = {os.path.join(home_folder(p), os.path.basename(p)) for p in listed}
         # A name move_back could not find anywhere — not in rejected/, not
         # at home, deleted by hand — must stop being listed as a moved frame
         # pointing at a file that no longer exists anywhere.
-        self.browser.remove_frames(lambda s: s.moved and os.path.basename(s.path) in missing)
+        self.browser.remove_frames(lambda s: s.moved and os.path.abspath(s.path) in missing)
         self.browser.frames_moved()
         self._stats = self.browser.frames()   # keep in sync — see grade()'s no-paths branch
         # A frame remove_frames just dropped (deleted from rejected/ by
         # hand) can no longer be counted anywhere — the strip must forget it
         # along with the row.
         self._update_verdict()
-        unlisted = [n for n in result.restored if n not in listed]
+        unlisted = [p for p in restored_paths if p not in listed_home]
         self._sync_reject_buttons(check_disk=True)
-        self._say(self._back_message(result, unlisted))
+        self._say(" ".join([self._back_message(result, unlisted), *refused]))
         if not unlisted:
             return
         # Whichever path re-measures the restored frames, "Measuring…"
@@ -1388,7 +1437,7 @@ class StackDialog(QDialog):
             # _grade_restored sets for the partial path, so a failure here
             # gets the same "still back in the folder" message instead of a
             # generic "Failed: …".
-            self._restoring_names = unlisted
+            self._restoring_names = [os.path.basename(p) for p in unlisted]
             self.grade(folder)
             return
         # Frames restored from an earlier session: never graded in THIS
@@ -1398,14 +1447,14 @@ class StackDialog(QDialog):
         # was already listed. Grade only the names that are actually new,
         # off-thread like any other grade, and merge them in without
         # touching an existing row.
-        self._grade_restored(folder, unlisted)
+        self._grade_restored(unlisted)
 
-    def _grade_restored(self, folder: str, names: list[str]) -> None:
+    def _grade_restored(self, paths: list[str]) -> None:
         """Off-thread, exactly like grade(), but for just the frames
         `_move_back` found restored and not already listed — see the comment
-        there for why this replaced a full self.grade()."""
-        self._restoring_names = names       # read by _on_error if this fails
-        paths = [os.path.join(folder, n) for n in names]
+        there for why this replaced a full self.grade(). Full paths: they
+        can come back into more than one listed folder."""
+        self._restoring_names = [os.path.basename(p) for p in paths]   # for _on_error
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
