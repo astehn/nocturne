@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QTableView, QToolButton, QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label, time_label
+from ..stacking.grade import is_left_out, is_master
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
@@ -38,6 +39,13 @@ SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 # What "bigger preview" hides: the measurements. Use stays — it IS the tick, and
 # a list you cannot tick from is a list you have to widen again to use.
 DETAIL_COLUMNS = (COL_STARS, COL_FWHM)
+
+# What a stacked master, or a frame that could not be measured, shows "—" in:
+# their zeros are not measurements, and a master's DATE-OBS is when it was
+# STACKED — a fake 21:21 at the top of his IC 1805 list (spec 2026-09-28 §3;
+# Ruling R1 extends this to measure_failed frames, whose zeros are just as
+# fake).
+MEASURED_COLUMNS = (COL_TIME, COL_STARS, COL_FWHM)
 
 # Was "Back to the verdicts", which made no sense until pressed (Andreas,
 # 2026-09-28; spec §4).
@@ -86,8 +94,9 @@ def verdict_tooltip(s) -> str:
 def is_rejected(s) -> bool:
     """What Show Rejected, the Rejected count and the chart's amber all mean —
     one definition, so the three cannot disagree. A frame in rejected/ counts,
-    whatever its grader verdict was."""
-    return bool(s.reason) or is_moved(s)
+    whatever its grader verdict was. A stacked master, or a frame that could
+    not be measured, is in no count at all (spec 2026-09-28 §3; Ruling R1)."""
+    return (bool(s.reason) or is_moved(s)) and not is_left_out(s)
 
 
 def _locked(s) -> bool:
@@ -105,6 +114,8 @@ def _tint(s) -> str:
 
 
 def _display(s, col: int) -> str:
+    if is_left_out(s) and col in MEASURED_COLUMNS:
+        return "—"
     if col == COL_TIME:
         return time_label(getattr(s, "captured", None))
     if col == COL_STARS:
@@ -126,6 +137,11 @@ def measures_line(s) -> str:
 def _tooltip(s, col: int) -> str:
     if col == COL_USE:
         return ""
+    if is_left_out(s):
+        # `s.reason` already reads REASON_NOT_RAW for a master and
+        # REASON_MEASURE for one that could not be measured — one line
+        # covers both without hard-coding the master-specific wording here.
+        return f"{os.path.basename(s.path)}\n{s.reason}"
     if col == COL_TIME:
         when = full_label(getattr(s, "captured", None))
         name = os.path.basename(s.path)
@@ -136,9 +152,18 @@ def _tooltip(s, col: int) -> str:
 
 
 def _sort_key(s, col: int):
-    """A key every row of one column can compare against. Frames with no
-    capture time sort after the dated ones; the sort is stable, so among
-    themselves they keep the grader's order."""
+    """A key every row of one column can compare against. The first element
+    is a tag that FrameFilterProxy.lessThan keeps ascending in both sort
+    directions: 0 an ordinary row, 1 a frame with no capture time (Time
+    only), 2 a stacked master, 3 a frame that could not be measured — always
+    at the very end, in that order, whatever is sorted (spec 2026-09-28 §3;
+    Ruling R1 gives measure_failed frames the master's own trailing
+    treatment, one step further back). The sort is stable, so equal keys
+    keep the grader's order."""
+    if is_master(s):
+        return (2, os.path.basename(s.path))
+    if is_left_out(s):          # measure_failed: sorts after masters
+        return (3, os.path.basename(s.path))
     if col == COL_USE:
         return (0, int(bool(s.included)))
     if col == COL_TIME:
@@ -349,6 +374,8 @@ class FrameFilterProxy(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
         s = self.sourceModel().frame(source_row)
+        if self._show != SHOW_ALL and is_left_out(s):
+            return False        # in no count, so under no filter but All
         if self._show == SHOW_KEPT and is_rejected(s):
             return False
         if self._show == SHOW_REJECTED and not is_rejected(s):
@@ -358,14 +385,15 @@ class FrameFilterProxy(QSortFilterProxyModel):
     def lessThan(self, left, right) -> bool:
         lk, rk = left.data(SORT_ROLE), right.data(SORT_ROLE)
         if lk[0] != rk[0]:
-            # A timeless row's key is tagged 1, a dated one's 0, precisely so
-            # it sorts last when ASCENDING. Qt reverses the whole comparison
-            # for a descending column by swapping the arguments it hands us,
-            # which would otherwise put the timeless row FIRST; invert just
-            # this tag comparison to cancel that out, so it stays last either
-            # way. Same-tag rows are left to Qt's own reversal, which is what
-            # makes every other column behave the way clicking the header
-            # twice is supposed to.
+            # A timeless row's key is tagged 1, a dated one's 0, a master's 2
+            # and an unmeasured frame's 3 (_sort_key), precisely so they sort
+            # last when ASCENDING, in that order. Qt reverses the whole
+            # comparison for a descending column by swapping the arguments it
+            # hands us, which would otherwise put the timeless/master/
+            # unmeasured rows FIRST; invert just this tag comparison to
+            # cancel that out, so they stay last either way. Same-tag rows are
+            # left to Qt's own reversal, which is what makes every other
+            # column behave the way clicking the header twice is supposed to.
             base = lk < rk
             return not base if self.sortOrder() == Qt.SortOrder.DescendingOrder else base
         return lk < rk
@@ -705,7 +733,7 @@ class FrameBrowser(QWidget):
         self._show_buttons[mode].setChecked(True)
 
     def _update_show_counts(self) -> None:
-        stats = self.model.frames()
+        stats = [s for s in self.model.frames() if not is_left_out(s)]
         rejected = sum(1 for s in stats if is_rejected(s))
         counts = {SHOW_ALL: len(stats), SHOW_KEPT: len(stats) - rejected,
                   SHOW_REJECTED: rejected}
@@ -792,6 +820,11 @@ class FrameBrowser(QWidget):
         s = stats[row]
         self.preview_name.setText(os.path.basename(s.path))
         self.preview_name.setToolTip(s.path)
+        if is_left_out(s):
+            # A left-out frame's star/FWHM facts are not measurements — do
+            # not print its fake zeros (spec 2026-09-28 §3; Ruling R1).
+            self.preview_facts.setText(s.reason)
+            return
         facts = [full_label(getattr(s, "captured", None)),
                  f"{s.star_count} stars", f"FWHM {s.fwhm:.1f}"]
         self.preview_facts.setText(" · ".join(f for f in facts if f))

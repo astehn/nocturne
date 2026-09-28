@@ -302,3 +302,23 @@ def test_a_real_s30_pro_sub_reads_3_74(tmp_path):
     before = os.stat(REAL_SUB).st_mtime_ns
     assert read_pixel_scale([REAL_SUB]) == pytest.approx(3.7385, abs=1e-3)
     assert os.stat(REAL_SUB).st_mtime_ns == before
+
+
+def test_a_folder_of_only_masters_says_so():
+    """"No frame could be measured" would be false: every one was read, and
+    recognised as a master (spec 2026-09-28 §3)."""
+    v = build_verdict([_error(0, "not_raw"), _error(1, "not_raw")], tz=UTC)
+    assert v == Verdict("Only stacked masters here.",
+                        ("2 are already stacked masters, left out.",))
+    assert vd.ONLY_MASTERS_HEADLINE == "Only stacked masters here."
+
+
+def test_a_folder_of_masters_and_unmeasured_still_names_both_apart():
+    """Ruling R1: an unmeasured frame gets exactly a master's treatment out of
+    every count, but the verdict must still say which is which — "N could not
+    be measured" is not true of a master, and the reverse."""
+    v = build_verdict([_error(0, "not_raw"), _error(1, "not_raw"),
+                       _error(2, "measure_failed")], tz=UTC)
+    assert v.headline == "No frame could be measured."
+    assert "1 could not be measured." in v.details
+    assert "2 are already stacked masters, left out." in v.details

@@ -199,7 +199,7 @@ def test_grade_frame_excludes_already_stacked_master(tmp_path):
     assert stats.error is True
     assert stats.included is False
     assert stats.reason_code == "not_raw"
-    assert "Already stacked" in stats.reason
+    assert stats.reason == "Stacked master, left out"      # spec 2026-09-28 §3
 
 
 def test_grade_frame_unreadable_returns_error_verdict(tmp_path):

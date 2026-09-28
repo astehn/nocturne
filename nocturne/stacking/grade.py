@@ -50,7 +50,11 @@ DETAIL_TRAILED = "Stars trailed — wind, a nudge, or a tracking slip"
 DETAIL_OBSTRUCTED = "Something large in the frame — a roof, a tree, or cloud"
 WARN_SKY = "Brighter sky (twilight, moon or light pollution) — kept"
 REASON_MEASURE = "Couldn't measure this frame — excluded"
-REASON_NOT_RAW = "Already stacked — not a raw sub"
+# The Verdict cell of a stacked master found among the subs (spec 2026-09-28
+# §3). It used to read "Already stacked — not a raw sub".
+REASON_NOT_RAW = "Stacked master, left out"
+# The status line when a folder holds nothing BUT masters.
+ONLY_MASTERS = "No raw subs here — only stacked masters, which are left out."
 
 
 @dataclass
@@ -87,6 +91,27 @@ class FrameStats:
     # In <folder>/rejected/ now (stacking/reject_move.py): `path` points there,
     # and the frame can never be ticked in — nothing may stack from rejected/.
     moved: bool = False
+
+
+def is_master(s) -> bool:
+    """A stacked master sitting among the subs — grade_frame's not_raw. Listed,
+    so he can see why it was left out, but in NO count: All, Kept, Rejected,
+    the verdict, the status line and the Move count all go through here, so
+    every number on screen agrees (spec 2026-09-28 §3: his IC 1805 folder read
+    420, 425 and 109-against-104 for one set of frames)."""
+    return bool(getattr(s, "error", False)) and getattr(s, "reason_code", "") == "not_raw"
+
+
+def is_left_out(s) -> bool:
+    """A stacked master, or a sub that could not be measured — both read, both
+    in NO count (Ruling R1, 2026-09-28). An unmeasured frame's zeros are exactly
+    as fake as a master's: the same one-set-of-frames-reads-three-totals bug
+    reappears the moment either kind is left in a count while everything else
+    excludes it. Everywhere `is_master` alone decided a count or a sort in the
+    spec, this is the wider test that also catches measure_failed; `is_master`
+    stays for the wording that is specific to a master."""
+    return is_master(s) or (bool(getattr(s, "error", False))
+                            and getattr(s, "reason_code", "") == "measure_failed")
 
 
 def _measure(lum: np.ndarray) -> tuple[int, float, float, float, float]:

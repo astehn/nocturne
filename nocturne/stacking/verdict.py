@@ -16,7 +16,8 @@ from datetime import datetime, tzinfo
 from statistics import median
 from typing import Iterable, Sequence
 
-from .grade import JUDGE_MIN, MIN_MEANINGFUL_EXCESS, STACK_MIN, FrameStats  # noqa: F401
+from .grade import (JUDGE_MIN, MIN_MEANINGFUL_EXCESS, STACK_MIN, FrameStats,  # noqa: F401
+                    is_master)
 # JUDGE_MIN and STACK_MIN are re-exported from here (`verdict.JUDGE_MIN` etc.)
 # for existing callers and tests; grade.py is the one place either is written.
 
@@ -105,6 +106,9 @@ CLUSTER_WORDS = {"trailed": "trailing", "soft_stars": "soft stars",
 _REASON_ORDER = ("trailed", "soft_stars", "clouds", "obstructed")
 _TOO_FEW = ("Too few kept to stack — Stack needs at least 3; you can tick "
             "frames back in by hand.")
+# A folder of nothing but stacked masters: "No frame could be measured" would
+# be false — every one of them was read, and recognised.
+ONLY_MASTERS_HEADLINE = "Only stacked masters here."
 
 
 @dataclass(frozen=True)
@@ -292,8 +296,8 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
     # Not literally unreadable: the MilkyWay cases traced back to sep's pixel
     # buffer overflowing on very bright frames, which load fine — "measured"
     # is the honest word, matching grade.REASON_MEASURE.
-    unmeasured = sum(1 for s in stats if s.error and s.reason_code != "not_raw")
-    masters = sum(1 for s in stats if s.error and s.reason_code == "not_raw")
+    unmeasured = sum(1 for s in stats if s.error and not is_master(s))
+    masters = sum(1 for s in stats if is_master(s))
     if unmeasured:
         details.append(f"{unmeasured} could not be measured.")
     if masters:
@@ -308,4 +312,6 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
         for code, when, _n in clusters[1:]:
             words = CLUSTER_WORDS[code]
             details.append(f"{words[0].upper()}{words[1:]} after {_clock(when, tz)}.")
-    return Verdict(_headline(usable, kept, clusters, tz), tuple(details))
+    headline = (ONLY_MASTERS_HEADLINE if masters and not usable and not unmeasured
+                else _headline(usable, kept, clusters, tz))
+    return Verdict(headline, tuple(details))

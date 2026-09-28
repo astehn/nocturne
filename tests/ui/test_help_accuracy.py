@@ -1767,3 +1767,11 @@ def test_haoiii_help_mentions_the_chart_it_now_has():
     assert "chart under the list" in b and "<b>FWHM</b>" in b
     assert "self.chart = QualityChart(" in _src("nocturne/ui/frame_browser.py")
     assert "FrameBrowser(" in _src("nocturne/ui/haoiii_dialog.py")
+
+
+def test_both_topics_say_what_a_stacked_master_shows():
+    from nocturne.stacking.grade import REASON_NOT_RAW
+    for topic in ("stacking", "haoiii"):
+        b = _body(topic)
+        assert f"<b>{REASON_NOT_RAW}</b>" in b, topic
+        assert "none of the counts" in b, topic

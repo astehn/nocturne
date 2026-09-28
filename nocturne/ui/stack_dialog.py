@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
 from ..stacking.frames import discover_subs
-from ..stacking.grade import JUDGE_MIN, STACK_MIN, grade_frames, judge, order_best_first
+from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
+                              is_left_out, judge, order_best_first)
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
@@ -1283,17 +1284,21 @@ class StackDialog(QDialog):
         self._sync_name_note()
 
     def _selection_summary(self) -> str:
-        total = len(self._stats)
-        kept = [s for s in self._stats if s.included]
+        # Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
+        # Ruling R1): the same total as Show All and the verdict.
+        counted = [s for s in self._stats if not is_left_out(s)]
+        if not counted:
+            return ONLY_MASTERS
+        total = len(counted)
+        kept = [s for s in counted if s.included]
         text = f"Keeping {len(kept)} of {total} frames"
         kept_s = sum(s.exposure for s in kept)
-        all_s = sum(s.exposure for s in self._stats)
+        all_s = sum(s.exposure for s in counted)
         if all_s > 0:
             unit = "minute" if round(all_s / 60) == 1 else "minutes"
             text += (f" — {max(1, round(kept_s / 60))} of "
                      f"{max(1, round(all_s / 60))} {unit} of light")
-        usable = sum(1 for s in self._stats if not s.error)
-        if 0 < usable < JUDGE_MIN:
+        if total < JUDGE_MIN:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
 

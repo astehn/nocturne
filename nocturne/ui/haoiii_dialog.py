@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
-from ..stacking.grade import grade_frames, judge, order_best_first
+from ..stacking.grade import ONLY_MASTERS, grade_frames, is_left_out, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
@@ -297,8 +297,7 @@ class HaOIIIDialog(QDialog):
         # was being measured, the box is what the user meant.
         judge(stats, self.strictness_box.currentText().lower())
         self.browser.set_frames(stats)
-        kept = sum(1 for s in stats if s.included)
-        self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
+        self.status.setText(self._graded_line())
 
     def _rejudge(self, _text=None) -> None:
         """Strictness is a threshold on statistics already measured, so it costs
@@ -307,8 +306,16 @@ class HaOIIIDialog(QDialog):
             return
         judge(self._stats, self.strictness_box.currentText().lower())
         self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
-        kept = sum(1 for s in self._stats if s.included)
-        self.status.setText(f"Graded {len(self._stats)} frames — {kept} kept.")
+        self.status.setText(self._graded_line())
+
+    def _graded_line(self) -> str:
+        """Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
+        Ruling R1), here as in Stack."""
+        counted = [s for s in self._stats if not is_left_out(s)]
+        if not counted:
+            return ONLY_MASTERS
+        kept = sum(1 for s in counted if s.included)
+        return f"Graded {len(counted)} frames — {kept} kept."
 
     # --- run ---
     def _included_best_first(self) -> list:
