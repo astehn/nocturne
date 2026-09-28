@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 
@@ -772,8 +774,6 @@ def test_grading_records_when_each_frame_was_taken(tmp_path):
 
 
 # --- each night against its own limits (spec 2026-09-27 §3; §9.3) -----------
-
-from datetime import datetime, timedelta, timezone  # noqa: E402
 
 _EVE_21 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
 _EVE_26 = datetime(2026, 9, 26, 20, 0, tzinfo=timezone.utc)

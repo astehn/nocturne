@@ -106,6 +106,30 @@ def test_nothing_is_no_nights():
     assert split_nights([]) == []
 
 
+def test_one_frame_is_one_night_of_one():
+    a = _frame("a.fit", datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc))
+    (night,) = split_nights([a])
+    assert night.key == date(2026, 9, 21) and night.frames == (a,)
+
+
+def test_a_session_crossing_new_year_is_one_night_named_after_the_31st():
+    # 2026-12-31 23:30 into 2027-01-01 00:40: past midnight AND past New
+    # Year's, still one night, named after the evening it started.
+    evening = _frame("a.fit", datetime(2026, 12, 31, 22, 30, tzinfo=timezone.utc))
+    after = _frame("b.fit", datetime(2027, 1, 1, 0, 40, tzinfo=timezone.utc))
+    (night,) = split_nights([evening, after])
+    assert night.key == date(2026, 12, 31) and night.label == "31 Dec"
+
+
+def test_a_dec_31_night_and_a_jan_1_night_both_carry_their_year():
+    # Two distinct nights either side of New Year's — consecutive calendar
+    # dates, different years: with_year's "spans more than one year" must
+    # fire here, not only across a much wider gap.
+    dec31 = _frame("a.fit", datetime(2026, 12, 31, 20, 0, tzinfo=timezone.utc))
+    jan1 = _frame("b.fit", datetime(2027, 1, 1, 20, 0, tzinfo=timezone.utc))
+    assert [n.label for n in split_nights([dec31, jan1])] == ["31 Dec 2026", "1 Jan 2027"]
+
+
 SH2_108 = "/Volumes/Work/Astro/Sh2-108"
 REAL = [f"{SH2_108}/Light_SH2-108_10.0s_LP_{t}.fit"
         for t in ("20260921-221930", "20260926-232829", "20260927-002109")]
