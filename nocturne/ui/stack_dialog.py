@@ -10,17 +10,21 @@ from PySide6.QtWidgets import (
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
+from ..stacking.drizzle_gate import SUITS_SUMMARY
 from ..stacking.frames import discover_subs
-from ..stacking.grade import JUDGE_MIN, STACK_MIN, grade_frames, judge, order_best_first
+from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
+                              is_left_out, judge, order_best_first)
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from ..stacking.verdict import Verdict, build_verdict, read_pixel_scale
+from ..stacking.verdict import (LABEL_NOT_COUNTED, _minutes, build_verdict,
+                                read_pixel_scale)
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .quality_chart import CHART_ROOM_MIN
 from .verdict_strip import VerdictStrip
 from .worker import run_async
 
@@ -74,15 +78,19 @@ class StackDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Stack subframes")
         # Height is NOT hard-coded any more, and 500 was the bug. With the
-        # explanations expanded -- which is the DEFAULT, help_expanded=True,
-        # settings.py:43 -- this dialog's own minimumSizeHint is 844px, and it
-        # opened at 700 with a floor of 500. Qt then squeezed the QFormLayout's
-        # rows onto a 46px stride while the rows are 54-72px tall, and because
-        # _Hint refuses to shrink (it must, or the text clips) the explanations
-        # painted straight over the controls beneath them: 11 overlaps measured
-        # under cocoa, the worst 158x18px across "Trim the ragged edges".
-        # Andreas never saw it because his help_expanded is False -- collapsed
-        # the dialog needs 658px and fits.
+        # explanations expanded -- which was then the DEFAULT, help_expanded
+        # -- this dialog's own minimumSizeHint is 844px, and it opened at 700
+        # with a floor of 500. Qt then squeezed the QFormLayout's rows onto a
+        # 46px stride while the rows are 54-72px tall, and because _Hint
+        # refuses to shrink (it must, or the text clips) the explanations
+        # painted straight over the controls beneath them: 11 overlaps
+        # measured under cocoa, the worst 158x18px across "Trim the ragged
+        # edges". Andreas never saw it because his help_expanded was False at
+        # the time -- collapsed the dialog needs 658px and fits.
+        #
+        # Stack has had its own stack_help_expanded, off by default, since
+        # 2026-09-28 (spec §6a); the main window's help_expanded above is a
+        # separate setting, untouched by anything in this dialog.
         self.setMinimumWidth(800)
         self.resize(1100, _OPEN_HEIGHT)
         self._settings = settings
@@ -101,6 +109,8 @@ class StackDialog(QDialog):
         self._mosaic_runner = run_mosaic    # injectable for tests
         self._stats = []
         self._frame_shape = None
+        # plain_advice's yes, for the folded summary (_options_summary).
+        self._drizzle_suits = False
         self._busy = False
         self._active_token: CancelToken | None = None
         # The output is a folder and a name (spec 2026-09-27 §4). Both follow
@@ -177,10 +187,16 @@ class StackDialog(QDialog):
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
 
-        # The night's verdict, over the list in its column (spec decision 6,
-        # mockup A). Stack only: Ha/OIII has none in delivery B.
+        # The chart's fold: his saved choice (quality_chart_folded, shared
+        # with Ha/OIII), and one more step of _keep_on_screen's.
+        self.browser.chart_panel.set_folded(
+            bool(getattr(settings, "quality_chart_folded", False)))
+        self.browser.chart_panel.folded_changed.connect(self._on_chart_folded)
+
+        # The night's verdict, over the chart across the full width (spec
+        # 2026-09-28 §2.4, layout C). Stack only: Ha/OIII has none.
         self.verdict_strip = VerdictStrip()
-        self.browser.add_above_list(self.verdict_strip)
+        self.browser.add_above_chart(self.verdict_strip)
         self.verdict_strip.expanded.connect(
             lambda: self._keep_on_screen() if self._fitted else None)
         self._pixel_scale: float | None = None
@@ -261,7 +277,7 @@ class StackDialog(QDialog):
                     self.drizzle_check.toggled):
             sig.connect(lambda *_: self.options_band.refresh_summary())
         self.drizzle_check.toggled.connect(lambda *_: self._sync_folded_note())
-        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         # The Save panel used to say "already exists — replace?"; choosing a
@@ -316,9 +332,12 @@ class StackDialog(QDialog):
         buttons_col.addLayout(buttons_row)
         buttons_col.addWidget(self.background_note)
 
-        # The same collapsible help the main window uses, bound to the same
-        # sticky setting — so turning it off here turns it off there, and a
-        # novice still gets it by default (help_expanded starts True).
+        # The same collapsible help the main window uses, with a sticky
+        # setting of its own, stack_help_expanded, folded until asked for:
+        # Andreas, 2026-09-28, the dialog "reads as way too busy; for a new
+        # user it might be quite overwhelming" (spec 2026-09-28 §6a). The
+        # main window's help_expanded, and its novice-first default, are
+        # untouched by anything here.
         #
         # Not icons-with-popups: that optimises for the person who already
         # knows, at the cost of the person who does not. An explanation you
@@ -425,28 +444,33 @@ class StackDialog(QDialog):
         return None
 
     def _update_drizzle_note(self) -> None:
-        """Say whether this particular set of subs would benefit.
+        """Say whether this particular set of subs would benefit — yes or no
+        and one plain reason, the measured numbers in the tooltip (spec
+        2026-09-28 §5). Follows the ticks: the gate reads `included`.
 
         Advice, never a block: the gate shipped in 2026-07 with FWHM_MAX = 2.0
         while the S30 Pro sits at about 2.5 px, so it told every user their own
         camera was unsuitable. It is 3.0 now, and it still only advises.
         """
-        from ..stacking.drizzle_gate import drizzle_advice
+        from ..stacking.drizzle_gate import drizzle_advice, plain_advice
         from ..stacking.drizzle_stack import estimate_megabytes, estimate_seconds
         if not self._stats:
+            self._drizzle_suits = False
             self.drizzle_note.setText("")
+            self.drizzle_note.setToolTip("")
+            self.options_band.refresh_summary()
             self._sync_folded_note()
             return
-        advice = drizzle_advice(self._stats)
-        colour = {"recommended": theme.SUCCESS,
-                  "not_recommended": theme.WARNING}.get(advice.level, theme.TEXT_DIM)
+        plain = plain_advice(drizzle_advice(self._stats))
+        self._drizzle_suits = plain.suits
 
         # What it will cost THIS stack, before the button is pressed — Andreas
         # after a 314-frame run: "the user can actually decide for themselves if
         # its worth it prior to actually pressing the button". A generic "10x
-        # longer" does not answer "do I have time for this tonight".
+        # longer" does not answer "do I have time for this tonight". One hover
+        # away now, with the other numbers (spec §5).
         kept = [x for x in self._stats if x.included]
-        text = advice.reason
+        numbers = plain.numbers
         if kept:
             mins = estimate_seconds(len(kept), self._frame_shape) / 60.0
             # "At least", not "about": the constant is calibrated at 60 frames
@@ -454,11 +478,15 @@ class StackDialog(QDialog):
             # every frame and a large set no longer fits the page cache. An
             # estimate that reads low is worse than one that reads honest.
             when = f"{mins:.0f} minutes" if mins >= 1.5 else "a minute"
-            text += (f"  ·  At least {when} for these {len(kept)} frames, "
-                     f"and a master of roughly "
-                     f"{estimate_megabytes(self._frame_shape):.0f} MB.")
-        self.drizzle_note.setText(text)
+            numbers += (f"\nAt least {when} for these {len(kept)} frames, "
+                        f"and a master of roughly "
+                        f"{estimate_megabytes(self._frame_shape):.0f} MB.")
+        self.drizzle_note.setText(plain.text)
+        self.drizzle_note.setToolTip(numbers)
+        # A "no" is advice, not an alarm: dim, not amber.
+        colour = theme.SUCCESS if plain.suits else theme.TEXT_DIM
         self.drizzle_note.setStyleSheet(f"color: {colour};")
+        self.options_band.refresh_summary()
         self._sync_folded_note()
 
     def _browse_folder(self) -> None:
@@ -562,7 +590,7 @@ class StackDialog(QDialog):
         The preference alone is not that — the screen may have folded them
         (_keep_on_screen), and every one lives inside the option band, so a
         folded band shows none of them whatever the preference says."""
-        return (bool(getattr(self._settings, "help_expanded", True))
+        return (bool(getattr(self._settings, "stack_help_expanded", False))
                 and not self._hints_forced_closed
                 and not self.options_band.is_folded())
 
@@ -574,11 +602,11 @@ class StackDialog(QDialog):
         # never its EDGE: the frame list gives up the height (_clamp_to_screen).
         self._user_laid_out = True
         if self._hints_showing():
-            self._settings.help_expanded = False
+            self._settings.stack_help_expanded = False
             self._persist_settings()
         else:
             self._hints_forced_closed = False
-            self._settings.help_expanded = True
+            self._settings.stack_help_expanded = True
             if self.options_band.is_folded():
                 # Through the band's own signal, so it is saved like any
                 # unfold the user makes — once, help included
@@ -612,9 +640,18 @@ class StackDialog(QDialog):
         if self._fitted:
             self._keep_on_screen()
 
+    # --- the chart's fold ---
+    def _on_chart_folded(self, folded: bool) -> None:
+        # Only his click reaches here; the screen's fold emits nothing.
+        self._settings.quality_chart_folded = folded
+        self._persist_settings()
+        if self._fitted:
+            self._keep_on_screen()
+
     def _options_summary(self) -> str:
         """The folded band in one line, e.g. "Normal selection · Sigma-clipped,
-        medium rejection · full frame · Drizzle ×2"."""
+        medium rejection · full frame · Drizzle ×2". Of the drizzle advice it
+        says only "Drizzle suits this stack", or nothing (spec 2026-09-28 §5)."""
         parts = [f"{self.strictness_box.currentText()} selection",
                  (f"Sigma-clipped, {self.kappa_box.currentText().lower()} rejection"
                   if self.sigma_radio.isChecked() else "Average"),
@@ -623,6 +660,8 @@ class StackDialog(QDialog):
             parts.append("mosaic")
         if self.drizzle_check.isChecked():
             parts.append("Drizzle ×2")
+        elif self._drizzle_suits:
+            parts.append(SUITS_SUMMARY)
         return " · ".join(parts)
 
     def _sync_folded_note(self) -> None:
@@ -644,7 +683,7 @@ class StackDialog(QDialog):
         # Per hint, the preference: a hint inside a folded band is invisible
         # anyway, and _natural_minimum_height needs it counted once the band
         # opens. The link says what is actually on screen.
-        shown = (bool(getattr(self._settings, "help_expanded", True))
+        shown = (bool(getattr(self._settings, "stack_help_expanded", False))
                  and not self._hints_forced_closed)
         # NOT every _Hint. `drizzle_note` carries the gate's advice and the
         # "this will take N hours and write M MB" estimate, `exclusive_note`
@@ -696,16 +735,28 @@ class StackDialog(QDialog):
         if needed > self.height():
             self.resize(self.width(), min(needed, room))
 
-    def _keep_on_screen(self) -> bool:
+    def _keep_on_screen(self, *, allow_verdict_squeeze: bool = True) -> bool:
         """Fold what the screen cannot hold and bring the window back down;
-        True when it folded something. Help first, then the option band —
-        both for THIS window only, never saved, and never once the user has
-        toggled either here. The height clamp after them always runs."""
+        True when it folded something. Help first, then the option band, then
+        the chart, then the verdict's details — each for THIS window only,
+        never saved, and never once the user has toggled it here. The height
+        clamp after them always runs.
+
+        `allow_verdict_squeeze=False` (passed only by `_refit`, I1 fix
+        round 2) keeps the verdict step out of a resize caused by content
+        that grew AFTER the dialog was already fitted — a move's report line,
+        say. `_clamp_to_screen` below still shrinks the frame list for that
+        case: it is the stretch area and, at 740, still has rows to give up
+        before the verdict — what the grade just told him — needs to lose its
+        facts the moment he acts on them. The grade-time fits (`_fit_to_content`,
+        `_on_graded`, `_on_restored_graded`) call this directly and keep the
+        default, since squeezing the verdict for genuinely new content is the
+        intended fold order."""
         squeezed = False
         if not self._user_laid_out:
             room = self._available_height()
             needed = self._natural_minimum_height()
-            if (needed > room and getattr(self._settings, "help_expanded", True)
+            if (needed > room and getattr(self._settings, "stack_help_expanded", False)
                     and not self._hints_forced_closed):
                 self._hints_forced_closed = True
                 self._apply_hints_visible()
@@ -720,10 +771,21 @@ class StackDialog(QDialog):
                 self._apply_hints_visible()    # blocked, so the link is told here
                 needed = self._natural_minimum_height()
                 squeezed = True
+            # Still too tall — or a laptop-height screen, where the list and the
+            # preview need the rows more (CHART_ROOM_MIN; spec 2026-09-28 §8:
+            # it starts folded at 740 px): the chart, for this window only.
+            # "▸ Show chart" brings it back, and then the screen leaves it be.
+            panel = self.browser.chart_panel
+            if ((needed > room or room < CHART_ROOM_MIN)
+                    and not panel.is_folded() and not panel.user_set()):
+                panel.set_folded(True)
+                needed = self._natural_minimum_height()
+                squeezed = True
             # Still too tall: the verdict down to its headline, for this window
             # only. Last, because it is what the grade just told you; "details ▸"
             # brings it straight back, and then the screen leaves it alone.
-            if (needed > room and not self.verdict_strip.isHidden()
+            if (allow_verdict_squeeze and needed > room
+                    and not self.verdict_strip.isHidden()
                     and not self.verdict_strip.is_compact()
                     and not self.verdict_strip.user_expanded()):
                 self.verdict_strip.set_compact(True)
@@ -790,7 +852,7 @@ class StackDialog(QDialog):
 
     def _refit(self) -> None:
         self._refit_pending = False
-        self._keep_on_screen()
+        self._keep_on_screen(allow_verdict_squeeze=False)
 
     def _available_height(self) -> int:
         """Usable screen height. Its own method so a test can shrink the screen —
@@ -955,6 +1017,7 @@ class StackDialog(QDialog):
             self.status.setText(self._selection_summary())
             self._auto_output_path()
             self._sync_reject_buttons()
+            self._update_drizzle_note()        # the gate counts ticked frames
 
     def _rejudge(self, _text=None) -> None:
         if not self._stats:
@@ -963,6 +1026,7 @@ class StackDialog(QDialog):
         self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
         self._update_verdict()
         self._sync_reject_buttons()
+        self._update_drizzle_note()
         self.status.setText(self._selection_summary())
         self._auto_output_path()
 
@@ -998,7 +1062,8 @@ class StackDialog(QDialog):
                 note = (f"{back} more frame is in rejected/ and is not counted here."
                         if back == 1 else
                         f"{back} more frames are in rejected/ and are not counted here.")
-                verdict = Verdict(verdict.headline, verdict.details + (note,))
+                verdict = verdict.with_line(note, LABEL_NOT_COUNTED,
+                                            f"{back} more in rejected/")
         self.verdict_strip.set_verdict(verdict)
 
     # --- the rejected folder (spec decision 7, §5) ---
@@ -1218,7 +1283,15 @@ class StackDialog(QDialog):
         self.status.setText(self._selection_summary())
         self._auto_output_path()
         if self._fitted:
-            self._keep_on_screen()
+            # R8/I1's second path (final fix wave, round 2): this merge adds
+            # rows, which cost the list no height, and the verdict gets
+            # SHORTER ("Not counted N more in rejected/" leaves) — the only
+            # thing growing the dialog here is the still-lingering "Moved N
+            # frames back." report line, exactly I1's trigger, just reached
+            # through this grade-time door instead of _refit. The full
+            # re-grade below (_on_graded, including the all-moved reopen
+            # fallback) is genuinely new content and keeps the default.
+            self._keep_on_screen(allow_verdict_squeeze=False)
 
     def _clear_restoring_message(self) -> None:
         """The "Measuring N frames that came back…" message is a promise;
@@ -1276,17 +1349,25 @@ class StackDialog(QDialog):
         self._sync_name_note()
 
     def _selection_summary(self) -> str:
-        total = len(self._stats)
-        kept = [s for s in self._stats if s.included]
+        # Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
+        # Ruling R1): the same total as Show All and the verdict.
+        counted = [s for s in self._stats if not is_left_out(s)]
+        if not counted:
+            return ONLY_MASTERS
+        total = len(counted)
+        kept = [s for s in counted if s.included]
         text = f"Keeping {len(kept)} of {total} frames"
         kept_s = sum(s.exposure for s in kept)
-        all_s = sum(s.exposure for s in self._stats)
+        all_s = sum(s.exposure for s in counted)
         if all_s > 0:
-            unit = "minute" if round(all_s / 60) == 1 else "minutes"
-            text += (f" — {max(1, round(kept_s / 60))} of "
-                     f"{max(1, round(all_s / 60))} {unit} of light")
-        usable = sum(1 for s in self._stats if not s.error)
-        if 0 < usable < JUDGE_MIN:
+            # M2 (final fix wave, 2026-09-28): the verdict's own _minutes()
+            # already gets this right (0 for 0 s, max(1, …) otherwise) —
+            # this rewritten function had its own max(1, …) on BOTH sides,
+            # so ticking nothing read "Keeping 0 … — 1 of 68 minutes".
+            total_min = _minutes(all_s)
+            unit = "minute" if total_min == 1 else "minutes"
+            text += f" — {_minutes(kept_s)} of {total_min} {unit} of light"
+        if total < JUDGE_MIN:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
 

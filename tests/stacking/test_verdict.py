@@ -302,3 +302,78 @@ def test_a_real_s30_pro_sub_reads_3_74(tmp_path):
     before = os.stat(REAL_SUB).st_mtime_ns
     assert read_pixel_scale([REAL_SUB]) == pytest.approx(3.7385, abs=1e-3)
     assert os.stat(REAL_SUB).st_mtime_ns == before
+
+
+def test_a_folder_of_only_masters_says_so():
+    """"No frame could be measured" would be false: every one was read, and
+    recognised as a master (spec 2026-09-28 §3)."""
+    v = build_verdict([_error(0, "not_raw"), _error(1, "not_raw")], tz=UTC)
+    assert v == Verdict("Only stacked masters here.",
+                        ("2 are already stacked masters, left out.",))
+    assert vd.ONLY_MASTERS_HEADLINE == "Only stacked masters here."
+
+
+def test_a_folder_of_masters_and_unmeasured_still_names_both_apart():
+    """Ruling R1: an unmeasured frame gets exactly a master's treatment out of
+    every count, but the verdict must still say which is which — "N could not
+    be measured" is not true of a master, and the reverse."""
+    v = build_verdict([_error(0, "not_raw"), _error(1, "not_raw"),
+                       _error(2, "measure_failed")], tz=UTC)
+    assert v.headline == "No frame could be measured."
+    assert "1 could not be measured." in v.details
+    assert "2 are already stacked masters, left out." in v.details
+
+
+# --- the labelled facts (spec 2026-09-28 §2.4) --------------------------------
+
+def test_the_spec_shaped_night_as_labelled_facts():
+    v = build_verdict(_spec_night(), pixel_scale=S30, tz=UTC)
+    assert v.facts == (("Kept", "18 of 24 · 3 of 4 min"),
+                       ("Rejected", "4 trailed · 2 soft"),
+                       ("Unmeasured", "1 frame"),
+                       ("Stars", "about 9″ (FWHM 2.5 px)"),
+                       ("Trend", "Background brightened towards the end (moon or twilight?)"))
+
+
+def test_facts_without_optics_minutes_or_a_second_cluster():
+    assert build_verdict(_spec_night(), tz=UTC).facts[3] == ("Stars", "FWHM 2.5 px")
+    stats = [_f(i, exposure=0.0) for i in range(6)]
+    assert build_verdict(stats, tz=UTC).facts[0] == ("Kept", "6 of 6")
+    stats = []
+    for i in range(30):
+        code = ("trailed" if i in (20, 22, 24, 26)
+                else "soft_stars" if i in (21, 23, 25) else "")
+        stats.append(_f(i, fwhm=3.1 if code == "soft_stars" else 2.5, code=code))
+    assert build_verdict(stats, pixel_scale=S30, tz=UTC).facts[-1] == (
+        "Also", "Soft stars after 23:45")
+
+
+def test_error_and_too_few_facts():
+    v = build_verdict([_error(0), _error(1), _error(2, "not_raw")], tz=UTC)
+    assert v.facts == (("Unmeasured", "2 frames"), ("Masters", "1 left out"))
+    v = build_verdict([_f(i, code="clouds") for i in range(6)], pixel_scale=S30, tz=UTC)
+    assert v.facts == (("Kept", "0 of 6 · 0 of 1 min"), ("Rejected", "6 cloudy"),
+                       ("Note", TOO_FEW[:-1]), ("Stars", "about 9″ (FWHM 2.5 px)"))
+
+
+@pytest.mark.parametrize("stats", [
+    _spec_night(), _spec_night(timed=False), [_f(0)], [_error(0)],
+    [_error(0, "not_raw")], [_f(i, code="clouds") for i in range(6)],
+    [_f(i, fwhm=2.5 + 0.4 * i) for i in range(4)],
+])
+def test_every_detail_line_has_exactly_one_labelled_fact(stats):
+    """The strip shows the facts and the tooltip the sentences: they must be
+    the same lines, in the same order, never one without the other."""
+    v = build_verdict(stats, pixel_scale=S30, tz=UTC)
+    assert len(v.facts) == len(v.details)
+    assert all(label and value for label, value in v.facts)
+    assert all(not value.endswith(".") for _label, value in v.facts)
+
+
+def test_with_line_adds_a_sentence_and_its_fact():
+    v = build_verdict(_spec_night(), pixel_scale=S30, tz=UTC)
+    more = v.with_line("2 more frames are in rejected/ and are not counted here.",
+                       vd.LABEL_NOT_COUNTED, "2 more in rejected/")
+    assert more.details[-1].startswith("2 more frames") and more.details[:-1] == v.details
+    assert more.facts[-1] == ("Not counted", "2 more in rejected/")
+    assert more.facts[:-1] == v.facts and more.headline == v.headline

@@ -11,10 +11,11 @@ from PySide6.QtWidgets import (
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
-from ..stacking.grade import grade_frames, judge, order_best_first
+from ..stacking.grade import ONLY_MASTERS, grade_frames, is_left_out, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .quality_chart import CHART_ROOM_MIN
 from .worker import run_async
 from . import file_dialogs
 
@@ -135,13 +136,17 @@ class HaOIIIDialog(QDialog):
         # The same list + preview Stack hosts (spec 2026-09-27 §2.5).
         self.browser = FrameBrowser(self._pool)
         self.browser.view.setToolTip(
-            "One row per sub: when it was taken, how many stars it showed, how "
-            "sharp they were (FWHM, lower is better), how round (1.00 is "
-            "circular, higher is trailed) and how bright the sky was. Verdict "
-            "says why a frame was left out. Untick a frame to leave it out "
-            "yourself.")
+            "One row per sub: when it was taken, how many stars it showed and "
+            "how sharp they were (FWHM, lower is better). Verdict says why a "
+            "frame was left out; hover a row for how round its stars are and "
+            "how bright its sky was. Untick a frame to leave it out yourself.")
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
+
+        # The chart's fold, shared with Stack (quality_chart_folded).
+        self.browser.chart_panel.set_folded(
+            bool(getattr(settings, "quality_chart_folded", False)))
+        self.browser.chart_panel.folded_changed.connect(self._on_chart_folded)
 
         self.progress = QProgressBar()
         self.status = QLabel("")
@@ -166,7 +171,7 @@ class HaOIIIDialog(QDialog):
                     self.kappa_box.currentTextChanged, self.sigma_radio.toggled,
                     self.crop_check.toggled, self.channels_check.toggled):
             sig.connect(lambda *_: self.options_band.refresh_summary())
-        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", False)))
+        self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         form = QFormLayout()
@@ -199,14 +204,48 @@ class HaOIIIDialog(QDialog):
         root.addWidget(self.status)
         root.addLayout(buttons)
 
-    # --- the option band's fold ---
+    # --- the option band's and the chart's folds ---
     def _on_options_folded(self, folded: bool) -> None:
         self._settings.frame_options_folded = folded
+        self._persist_settings()
+
+    def _on_chart_folded(self, folded: bool) -> None:
+        self._settings.quality_chart_folded = folded
+        self._persist_settings()
+
+    def _persist_settings(self) -> None:
         if self._on_settings_changed is not None:
             try:
                 self._on_settings_changed()
             except OSError:
                 pass      # a preference that will not save is not worth a dialog
+
+    # --- the screen ---
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._fit_chart()
+
+    def _fit_chart(self) -> None:
+        """Ha/OIII's one screen fold: the chart, on Stack's terms (spec
+        2026-09-28 §2.4) — below CHART_ROOM_MIN, or when the dialog would not
+        fit, and never once he has clicked the fold here. For this window
+        only: nothing is saved."""
+        panel = self.browser.chart_panel
+        if panel.is_folded() or panel.user_set():
+            return
+        room = self._available_height()
+        if room < CHART_ROOM_MIN or self.minimumSizeHint().height() > room:
+            panel.set_folded(True)
+
+    def _available_height(self) -> int:
+        """Usable screen height, as Stack measures it; its own method so a
+        test can shrink the screen."""
+        from PySide6.QtGui import QGuiApplication
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return 1 << 20
+        return screen.availableGeometry().height() - 60
 
     def _options_summary(self) -> str:
         parts = [f"{self.strictness_box.currentText()} selection",
@@ -298,8 +337,9 @@ class HaOIIIDialog(QDialog):
         # was being measured, the box is what the user meant.
         judge(stats, self.strictness_box.currentText().lower())
         self.browser.set_frames(stats)
-        kept = sum(1 for s in stats if s.included)
-        self.status.setText(f"Graded {len(stats)} frames — {kept} kept.")
+        self.status.setText(self._graded_line())
+        if self.isVisible():
+            self._fit_chart()        # the grade is what makes the chart appear
 
     def _rejudge(self, _text=None) -> None:
         """Strictness is a threshold on statistics already measured, so it costs
@@ -308,8 +348,16 @@ class HaOIIIDialog(QDialog):
             return
         judge(self._stats, self.strictness_box.currentText().lower())
         self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
-        kept = sum(1 for s in self._stats if s.included)
-        self.status.setText(f"Graded {len(self._stats)} frames — {kept} kept.")
+        self.status.setText(self._graded_line())
+
+    def _graded_line(self) -> str:
+        """Masters and unmeasured frames are in no count (spec 2026-09-28 §3;
+        Ruling R1), here as in Stack."""
+        counted = [s for s in self._stats if not is_left_out(s)]
+        if not counted:
+            return ONLY_MASTERS
+        kept = sum(1 for s in counted if s.included)
+        return f"Graded {len(counted)} frames — {kept} kept."
 
     # --- run ---
     def _included_best_first(self) -> list:

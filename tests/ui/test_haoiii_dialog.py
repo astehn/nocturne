@@ -187,9 +187,12 @@ def test_selecting_a_row_previews_that_frame(qtbot):
     d._preview_ctl.loader = lambda p: (asked.append(p),
                                        np.zeros((8, 8, 3), np.float32))[1]
     d._on_graded([_stats(f"/x/{i}.fit", 1.0) for i in range(3)])
+    # The grade itself previews the first kept frame (spec 2026-09-28 §2.6).
+    assert d.browser.current_row() == 0 and d._preview_ctl.wanted == "/x/0.fit"
     d.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
-    assert asked == ["/x/1.fit"], f"previewed {asked}, wanted the selected row"
+    qtbot.waitUntil(lambda: d.preview.has_image()
+                    and d._preview_ctl.wanted == "/x/1.fit", timeout=2000)
+    assert "/x/1.fit" in asked, f"previewed {asked}, wanted the selected row"
 
 
 def test_the_preview_sits_beside_the_table_in_a_splitter(qtbot):
@@ -506,7 +509,7 @@ def test_folding_in_haoiii_is_saved_and_folds_stack(qtbot):
     """The other direction: Ha/OIII writes the shared setting and asks the app
     to save it, so Stack opens folded too — and on the next launch."""
     from nocturne.ui.stack_dialog import StackDialog
-    settings = Settings()
+    settings = Settings(frame_options_folded=False)
     saves = []
     d = HaOIIIDialog(settings, on_settings_changed=lambda: saves.append(
         settings.frame_options_folded))
@@ -540,3 +543,13 @@ def test_a_folder_with_no_subs_forgets_the_last_grade(qtbot, tmp_path, monkeypat
     dlg.run()
     assert ran == [] and not dlg._busy, "extracted A's frames"
     assert os.listdir(b) == []
+
+
+def test_a_new_user_opens_haoiii_with_the_options_folded(qtbot):
+    """Spec 2026-09-28 §6b: the band starts folded; a saved choice is kept."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    assert d.options_band.is_folded()
+    kept = HaOIIIDialog(Settings(frame_options_folded=False))
+    qtbot.addWidget(kept)
+    assert not kept.options_band.is_folded()

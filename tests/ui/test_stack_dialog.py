@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QLabel, QWidget  # noqa: E402
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.stacking.grade import FrameStats, judge  # noqa: E402
 from nocturne.ui.frame_browser import (  # noqa: E402
-    COL_BG, COL_ROUND, COL_VERDICT, FrameBrowser,
+    COL_STARS, COL_VERDICT, FrameBrowser,
 )
 from nocturne.ui.stack_dialog import StackDialog  # noqa: E402
 
@@ -155,7 +155,7 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
-    assert len(dlg.browser.headers()) == 7
+    assert len(dlg.browser.headers()) == 5
     assert "Soft" in dlg.browser.cell_text(0, COL_VERDICT)
     assert "softer" in dlg.browser.cell_tooltip(0, COL_VERDICT)   # the long form is one hover away
     assert "Brighter sky" in dlg.browser.cell_text(1, COL_VERDICT)
@@ -180,6 +180,27 @@ def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
     # 4 of 5 kept x 20s = 1 of 2 minutes
     assert "Keeping 4 of 5 frames" in dlg.status.text()
     assert "minute" in dlg.status.text()
+
+
+def test_ticking_nothing_reads_zero_minutes_not_one(qtbot, tmp_path):
+    """M2 (final fix wave, 2026-09-28): _selection_summary's own max(1, …)
+    on the KEPT side, not just the total, read "Keeping 0 of 5 frames — 1 of
+    2 minutes of light" once every row was unticked. Zero kept seconds must
+    read as zero minutes, exactly as the verdict's own _minutes() already
+    does."""
+    for i in range(5):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.5, True, exposure=20.0)
+             for i in range(5)]
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 5, timeout=2000)
+    dlg.browser.select_none()
+    assert "Keeping 0 of 5 frames" in dlg._selection_summary()
+    assert "0 of 2 minutes" in dlg._selection_summary(), dlg._selection_summary()
 
 
 def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
@@ -329,11 +350,11 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
     dlg.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: len(loads) == 1, timeout=2000)
-    assert loads == [str(tmp_path / "f1.fit")]
+    qtbot.waitUntil(lambda: str(tmp_path / "f1.fit") in loads, timeout=2000)
 
-    # grade a different folder — same row count, different paths, current cell
-    # index (row 1) stays put, so currentCellChanged never fires.
+    # grade a different folder — same row count, different paths. The
+    # preview must move to the NEW folder's first kept frame (spec 2026-09-28
+    # §2.6), never go on showing the old folder's.
     other_dir = tmp_path / "other"
     other_dir.mkdir()
     for i in range(2):
@@ -343,10 +364,9 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     ]
     dlg.folder_edit.setText(str(other_dir))
     dlg.grade()
-    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2, timeout=2000)
-    # preview must resync to the new row 1's file, not keep showing the old one
-    qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
-    assert loads[-1] == str(other_dir / "g1.fit")
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 2
+                    and dlg._preview_wanted == str(other_dir / "g0.fit"), timeout=2000)
+    qtbot.waitUntil(lambda: str(other_dir / "g0.fit") in loads, timeout=2000)
 
 
 def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
@@ -497,7 +517,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     from nocturne.ui.stack_dialog import _Hint
 
     settings = Settings()
-    settings.help_expanded = True
+    settings.stack_help_expanded = True
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg._available_height = lambda: 400         # a very short screen
@@ -505,7 +525,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     qtbot.waitExposed(dlg)
 
     assert dlg.mosaic_hint.isVisible() is False
-    assert settings.help_expanded is True, (
+    assert settings.stack_help_expanded is True, (
         "the screen is not the user: a forced collapse must not rewrite "
         "the saved preference")
 
@@ -514,7 +534,7 @@ def test_a_screen_too_short_collapses_the_help_instead_of_overlapping_it(qtbot):
     # the option band, which the screen folded too, so the band opens with them.
     dlg._toggle_hints()
     assert dlg.mosaic_hint.isVisible() is True
-    assert settings.help_expanded is True
+    assert settings.stack_help_expanded is True
 
 
 def test_cancel_button_stops_a_grade(qtbot, tmp_path):
@@ -554,14 +574,14 @@ def test_cells_carry_tooltips(qtbot, tmp_path):
     dlg.folder_edit.setText(str(tmp_path))
     dlg.grade()
     qtbot.waitUntil(lambda: dlg.browser.row_count() == 3, timeout=2000)
-    assert dlg.browser.cell_tooltip(0, COL_BG) == dlg.browser.cell_text(0, COL_BG) != ""
+    assert "Bg 0.020" in dlg.browser.cell_tooltip(0, COL_STARS)
+    assert "Round 1.00" in dlg.browser.cell_tooltip(0, COL_VERDICT)
 
 
-def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
-    """A "stars trailed" verdict is unreadable without the number behind it, so
-    elongation gets its own column. It also guards the off-by-one that adding
-    that column created: _rejudge rewrites the verdict cell by index, and with a
-    literal 5 it would now overwrite Bg instead."""
+def test_roundness_is_one_hover_away_and_survives_a_rejudge(qtbot, tmp_path):
+    """A "stars trailed" verdict is unreadable without the number behind it.
+    It left the list for the tooltip (spec 2026-09-28 §2.6); the verdict must
+    still land in the Verdict column after a rejudge."""
     from nocturne.stacking.grade import FrameStats
     from nocturne.ui.stack_dialog import StackDialog
 
@@ -579,12 +599,12 @@ def test_round_column_shows_elongation_and_survives_a_rejudge(qtbot, tmp_path):
     qtbot.waitUntil(lambda: dlg.browser.row_count() == len(stats), timeout=2000)
 
     trailed = next(r for r in range(len(dlg.browser.frames()))
-                   if dlg.browser.cell_text(r, COL_ROUND) == "1.90")
+                   if "Round 1.90" in dlg.browser.cell_tooltip(r, COL_STARS))
     assert "trailed" in dlg.browser.cell_text(trailed, COL_VERDICT).lower()
-    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", "Bg column was overwritten"
+    assert "Bg 0.020" in dlg.browser.cell_tooltip(trailed, COL_STARS)
 
     dlg.strictness_box.setCurrentText("Relaxed")
-    assert dlg.browser.cell_text(trailed, COL_BG) == "0.020", \
+    assert dlg.browser.cell_text(trailed, COL_STARS) == "800", \
         "_rejudge wrote the verdict into the wrong column"
 
 
@@ -853,7 +873,7 @@ def no_modal(monkeypatch):
 
 
 def _dialog(qtbot, _tmp_path):
-    dlg = StackDialog(Settings())
+    dlg = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(dlg)
     return dlg
 
@@ -977,12 +997,15 @@ def test_no_option_row_is_squeezed_below_the_space_its_text_needs(qtbot):
     check covers each form row AND each group inside the band.
     """
     from PySide6.QtWidgets import QFormLayout
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000     # a short screen would fold the hints away
     d.resize(1150, 900)
     d.show()
     qtbot.waitExposed(d)
+    assert not d.options_band.is_folded(), "the band must be open for this to check anything"
+    assert all(g.isVisible() for g in d.options_band.groups), (
+        "a hidden group is skipped below, not squeezed")
     form = d.findChild(QFormLayout)
     boxes = [form.itemAt(r, role).widget()
              for r in range(form.rowCount())
@@ -1009,10 +1032,10 @@ def test_every_hint_starts_at_the_same_left_edge(qtbot):
     In layout A the rule holds per group: every explanation in a group starts
     at the group's own left edge, level with the controls it explains."""
     from nocturne.ui.stack_dialog import _Hint
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000     # a short screen would fold the hints away
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.resize(1150, 900)
     d.show()
@@ -1208,7 +1231,7 @@ def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
     from nocturne.ui.stack_dialog import _Hint
     d = _dialog(qtbot, tmp_path)
     d._available_height = lambda: 4000     # this is about the toggle, not the screen
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.show(); qtbot.waitExposed(d)
     assert d.mosaic_hint.isVisible() is True
@@ -1217,7 +1240,7 @@ def test_the_explanations_collapse_behind_the_apps_own_toggle(qtbot, tmp_path):
     d._toggle_hints()
     assert d.mosaic_hint.isVisible() is False
     assert "▸" in d._help_link.text()
-    assert d._settings.help_expanded is False, "the choice is not sticky"
+    assert d._settings.stack_help_expanded is False, "the choice is not sticky"
 
 
 def test_collapsing_the_help_does_not_hide_what_you_decide_on(qtbot, tmp_path):
@@ -1229,7 +1252,7 @@ def test_collapsing_the_help_does_not_hide_what_you_decide_on(qtbot, tmp_path):
     d.drizzle_note.setText("About 5 h, and a 380 MB master.")
     d.exclusive_note.setText("Mosaic and Drizzle cannot be combined.")
     d.show(); qtbot.waitExposed(d)
-    d._settings.help_expanded = False
+    d._settings.stack_help_expanded = False
     d._apply_hints_visible()
     assert d.drizzle_note.isVisible() is True, "the time and size estimate went with the help"
     assert d.exclusive_note.isVisible() is True, "the gate's reason went with the help"
@@ -1259,7 +1282,7 @@ def test_no_explanation_is_ever_cut_off(qtbot, tmp_path, size):
     """
     from nocturne.ui.stack_dialog import _Hint
     d = _dialog(qtbot, tmp_path)
-    d._settings.help_expanded = True
+    d._settings.stack_help_expanded = True
     d._apply_hints_visible()
     d.resize(*size)
     d.show()
@@ -1391,7 +1414,7 @@ def test_mosaic_gate_still_wins_after_set_busy_false(qtbot):
 def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
     """A disabled control must never be left with its reason nowhere on screen.
 
-    `help_expanded` persists between sessions, so a user who collapsed the
+    `stack_help_expanded` persists between sessions, so a user who collapsed the
     explanations months ago meets a dead "Stack in background" button and no
     explanation at all — the button's own tooltip is static and describes what
     it does when it works, which in this state contradicts what they see.
@@ -1403,7 +1426,7 @@ def test_the_mosaic_reason_survives_collapsing_the_help(qtbot):
     d = StackDialog(Settings(), on_background=lambda opts, label: None)
     qtbot.addWidget(d)
     d.mosaic_check.setChecked(True)
-    d._settings.help_expanded = False
+    d._settings.stack_help_expanded = False
     d._apply_hints_visible()
     d.show()
     qtbot.waitExposed(d)
@@ -1799,7 +1822,7 @@ def test_layout_a_runs_folder_options_output_then_the_list(qtbot):
 
 def test_the_fold_is_remembered(qtbot):
     saved = []
-    settings = Settings()
+    settings = Settings(frame_options_folded=False)
     d = StackDialog(settings, on_settings_changed=lambda: saved.append(
         settings.frame_options_folded))
     qtbot.addWidget(d)
@@ -1860,7 +1883,7 @@ def test_folding_never_hides_a_cost_you_are_about_to_pay(qtbot):
 def test_blank_decision_notes_leave_no_gap(qtbot):
     """Fix round 1: with exclusive_note blank, "Stack as mosaic"'s hint and the
     Drizzle box sit one spacing apart, as the checkbox rows above them do."""
-    d = StackDialog(Settings())
+    d = StackDialog(Settings(frame_options_folded=False, stack_help_expanded=True))
     qtbot.addWidget(d)
     d._available_height = lambda: 4000
     d.resize(1280, 900); d.show(); qtbot.waitExposed(d)
@@ -1891,3 +1914,131 @@ def test_the_folded_line_names_a_mosaic(qtbot):
     assert d.options_band.summary_label.text().endswith("· mosaic · Drizzle ×2")
     d.mosaic_check.setChecked(False)
     assert "mosaic" not in d.options_band.summary_label.text()
+
+
+# --- a calmer Stack: its own help, the options folded (spec 2026-09-28 §6) ---
+
+def test_a_new_user_opens_stack_with_the_help_and_the_options_folded(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000      # the screen folds nothing here
+    d.show()
+    qtbot.waitExposed(d)
+    assert d.options_band.is_folded()
+    assert not d._hints_showing() and "▸" in d._help_link.text()
+    assert d.mosaic_hint.isHidden()
+
+
+def test_stacks_help_toggle_never_touches_the_main_windows(qtbot):
+    """Two settings now. Stack's click must leave help_expanded exactly as it
+    was — from either starting value, in both directions."""
+    for main_help in (True, False):
+        settings = Settings(help_expanded=main_help, frame_options_folded=False)
+        d = StackDialog(settings)
+        qtbot.addWidget(d)
+        d._available_height = lambda: 4000
+        d.show()
+        qtbot.waitExposed(d)
+        before = settings.help_expanded
+        d._toggle_hints()
+        assert settings.stack_help_expanded is True and d.mosaic_hint.isVisible()
+        assert settings.help_expanded == before
+        d._toggle_hints()
+        assert settings.stack_help_expanded is False and not d.mosaic_hint.isVisible()
+        assert settings.help_expanded == before
+
+
+def test_the_main_windows_help_does_not_open_stacks(qtbot):
+    d = StackDialog(Settings(help_expanded=True, frame_options_folded=False))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.show()
+    qtbot.waitExposed(d)
+    assert not d.mosaic_hint.isVisible() and "▸" in d._help_link.text()
+
+
+def test_stack_previews_the_first_kept_frame_after_grading(qtbot):
+    """Spec 2026-09-28 §2.6, §8: the preview is never empty after a grade.
+    The earliest frame is soft, so the first KEPT one is the second."""
+    from datetime import datetime, timedelta, timezone
+    import numpy as np
+    t0 = datetime(2026, 9, 26, 21, 0, tzinfo=timezone.utc)
+    stats = []
+    for i in range(10):
+        s = FrameStats(f"/x/f{i}.fit", 800, 9.0 if i == 0 else 2.5, 0.02, 0.5, True,
+                       exposure=10.0)
+        s.captured = t0 + timedelta(minutes=i)
+        stats.append(s)
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._preview_loader = lambda p: np.zeros((8, 8, 3), np.float32)
+    d._on_graded(stats)
+    assert stats[0].reason, "fixture: the earliest frame must be rejected"
+    assert d.browser.current_row() == 1
+    qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
+    assert d._preview_wanted == "/x/f1.fit"
+
+
+# --- drizzle in plain words (spec 2026-09-28 §5) ------------------------------
+
+def _graded_n(qtbot, n, fwhm=2.5):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    stats = [FrameStats(f"/x/f{i}.fit", 800, fwhm, 0.02, 0.5, True, exposure=10.0)
+             for i in range(n)]
+    d._on_graded(stats)
+    return d, stats
+
+
+def test_the_drizzle_line_is_plain_and_its_numbers_are_a_hover_away(qtbot):
+    from nocturne.stacking.drizzle_gate import PLAIN_OK
+    d, _ = _graded_n(qtbot, 60)
+    assert d.drizzle_note.text() == PLAIN_OK
+    tip = d.drizzle_note.toolTip()
+    for words in ("FWHM 2.5 px", "60 frames ticked", "At least", "for these 60 frames", "MB"):
+        assert words in tip, words
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text().endswith(" · full frame · Drizzle suits this stack")
+    d.drizzle_check.setChecked(True)
+    assert d.options_band.summary_label.text().endswith(" · full frame · Drizzle ×2")
+
+
+def test_too_few_frames_says_no_and_the_summary_says_nothing(qtbot):
+    d, _ = _graded_n(qtbot, 12)
+    assert d.drizzle_note.text() == (
+        "Not suitable for Drizzle: too few frames (12; it needs at least 20).")
+    d.options_band.set_folded(True)
+    assert "Drizzle" not in d.options_band.summary_label.text()
+
+
+def test_the_drizzle_line_follows_the_ticks(qtbot):
+    d, _ = _graded_n(qtbot, 21)
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text().endswith("Drizzle suits this stack")
+    d.browser.set_checked(0, False)
+    d.browser.set_checked(1, False)
+    assert d.drizzle_note.text() == (
+        "Not suitable for Drizzle: too few frames (19; it needs at least 20).")
+    assert "Drizzle" not in d.options_band.summary_label.text()
+
+
+def test_a_yes_does_not_repeat_the_hints_own_numbers(qtbot):
+    """M6 (final fix wave, 2026-09-28): with help on, drizzle_note used to
+    say word-for-word what drizzle_hint, right above it, already explains
+    ("…10× longer…four times the size" twice). A "yes" needs no reason of
+    its own; only a "no" gets one, because each "no" is a DIFFERENT reason."""
+    d = StackDialog(Settings(frame_options_folded=False))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d._settings.stack_help_expanded = True
+    d._apply_hints_visible()
+    d.show()
+    qtbot.waitExposed(d)
+    stats = [FrameStats(f"/x/f{i}.fit", 800, 2.5, 0.02, 0.5, True, exposure=10.0)
+             for i in range(60)]
+    d._on_graded(stats)
+    assert d.drizzle_hint.isVisible() and d.drizzle_note.isVisible()
+    assert "10×" in d.drizzle_hint.text() and "four times the size" in d.drizzle_hint.text()
+    assert d.drizzle_note.text() == "Suitable for Drizzle."
+    assert "10×" not in d.drizzle_note.text()
+    assert "four times the size" not in d.drizzle_note.text()

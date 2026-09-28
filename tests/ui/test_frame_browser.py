@@ -83,7 +83,7 @@ def _shown(qtbot, stats, width=1280, loads=None):
 
 def test_the_list_shows_time_not_the_file_name(qtbot):
     b = _browser(qtbot, _session())
-    assert b.headers() == ["Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict"]
+    assert b.headers() == ["Use", "Time", "Stars", "FWHM", "Verdict"]
     text = b.cell_text(3, fb.COL_TIME)
     assert text.endswith(":00") and "·" in text, text
     assert "f3.fit" not in text
@@ -142,13 +142,14 @@ def test_select_all_and_none_touch_only_the_rows_shown(qtbot):
         "Select All under Rejected reached the kept frames"
 
 
-def test_back_to_the_verdicts_undoes_every_hand_tick(qtbot):
+def test_reset_to_suggested_undoes_every_hand_tick(qtbot):
     stats = _session()
     b = _browser(qtbot, stats)
+    assert b.reset_btn.text() == fb.RESET_TEXT == "Reset to suggested"
     verdicts = [s.included for s in stats]
     b.set_checked(2, True)
     b.set_checked(0, False)
-    b.back_to_verdicts()
+    b.reset_to_suggested()
     assert [s.included for s in stats] == verdicts
     assert b.user_touched == set()
 
@@ -191,21 +192,27 @@ def test_the_preview_follows_the_frame_and_names_it(qtbot):
     stats = _session()
     b = _browser(qtbot, stats, loads)
     b.set_current_row(4)
-    qtbot.waitUntil(lambda: b.preview.has_image(), timeout=2000)
-    assert loads == ["/x/f4.fit"]
+    qtbot.waitUntil(lambda: b.preview.has_image()
+                    and b.preview_controller.wanted == "/x/f4.fit", timeout=2000)
+    assert "/x/f4.fit" in loads
     assert b.preview_name.text() == "f4.fit"
     assert "800 stars" in b.preview_facts.text() and "FWHM 2.5" in b.preview_facts.text()
 
 
-def test_regrading_keeps_the_place_and_previews_the_new_frame(qtbot):
+def test_a_regrade_previews_the_new_lists_first_kept_frame(qtbot):
+    """Spec 2026-09-28 §2.6: never an empty preview after a grade — and never
+    the previous folder's frame either."""
     loads = []
     b = _browser(qtbot, [_frame(i) for i in range(3)], loads)
-    b.set_current_row(1)
-    qtbot.waitUntil(lambda: loads == ["/x/f1.fit"], timeout=2000)
+    b.set_current_row(2)
+    qtbot.waitUntil(lambda: "/x/f2.fit" in loads, timeout=2000)
     other = [FrameStats(f"/y/g{i}.fit", 800, 2.5, 0.02, 0.5, True) for i in range(3)]
+    other[0].reason, other[0].included = "Soft stars (test)", False   # not KEPT
     b.set_frames(other)
-    qtbot.waitUntil(lambda: len(loads) == 2, timeout=2000)
-    assert loads[-1] == "/y/g1.fit", "the preview kept showing the old folder"
+    assert b.current_row() == 1
+    assert b.preview_controller.wanted == "/y/g1.fit", "the preview kept the old folder"
+    qtbot.waitUntil(lambda: "/y/g1.fit" in loads, timeout=2000)
+    assert b.preview_name.text() == "g1.fit"
 
 
 def test_the_preview_never_shows_a_frame_the_list_has_hidden(qtbot):
@@ -278,7 +285,7 @@ def test_error_frames_cannot_be_ticked_in(qtbot):
     b.set_checked(7, True)
     assert stats[6].included is False and stats[7].included is False
     b.set_checked(2, True)              # a real tick elsewhere still works
-    b.back_to_verdicts()
+    b.reset_to_suggested()
     assert stats[6].included is False and stats[7].included is False
 
 
@@ -409,7 +416,7 @@ def test_a_moved_frame_reads_in_rejected_and_is_dimmed(qtbot):
 
 
 def test_no_route_ticks_a_moved_frame_back_in(qtbot):
-    """Review Focus 5: box, Space, Select All, Back to the verdicts."""
+    """Review Focus 5: box, Space, Select All, Reset to suggested."""
     stats = _session()
     stats[0].included = False                 # he unticked a KEPT frame…
     b = _shown(qtbot, stats)
@@ -422,7 +429,7 @@ def test_no_route_ticks_a_moved_frame_back_in(qtbot):
     assert not b.is_checked(0)
     b.select_all()
     assert not b.is_checked(0)
-    b.back_to_verdicts()                      # its grader verdict is OK — still not in
+    b.reset_to_suggested()                    # its grader verdict is OK — still not in
     assert not b.is_checked(0)
     assert stats[0] not in b.checked_frames()
 
@@ -471,10 +478,10 @@ def test_the_preview_follows_a_moved_frame_to_its_new_path(qtbot):
     loads = []
     b = _shown(qtbot, stats, loads=loads)
     b.set_current_row(2)
-    qtbot.waitUntil(lambda: bool(loads) and loads[-1] == "/x/f2.fit", timeout=2000)
+    qtbot.waitUntil(lambda: "/x/f2.fit" in loads, timeout=2000)
     _moved(stats, 2)
     b.frames_moved()
-    qtbot.waitUntil(lambda: loads[-1] == "/x/rejected/f2.fit", timeout=2000)
+    qtbot.waitUntil(lambda: "/x/rejected/f2.fit" in loads, timeout=2000)
     assert b.preview_name.text() == "f2.fit"
     assert b.preview_name.toolTip() == "/x/rejected/f2.fit"
 
@@ -491,10 +498,95 @@ def test_moved_back_it_can_be_ticked_again(qtbot):
     assert b.is_checked(2)
 
 
-def test_a_host_can_put_its_own_strip_above_the_list(qtbot):
+def test_a_host_can_put_its_own_row_above_the_chart(qtbot):
     b = _shown(qtbot, _session())
     strip = QLabel("verdict")
-    b.add_above_list(strip)
-    assert b.list_layout.indexOf(strip) == 0
+    b.add_above_chart(strip)
+    assert b.layout().indexOf(strip) == 0
     qtbot.waitUntil(lambda: strip.mapTo(b, strip.rect().topLeft()).y()
-                    < b.view.mapTo(b, b.view.rect().topLeft()).y(), timeout=2000)
+                    < b.chart_panel.mapTo(b, b.chart_panel.rect().topLeft()).y(),
+                    timeout=2000)
+
+
+# --- a calmer list (spec 2026-09-28 §2.6) -------------------------------------
+
+def test_round_and_bg_moved_into_every_cells_tooltip(qtbot):
+    stats = _session()
+    stats[4].elongation, stats[4].background = 1.37, 0.0215
+    b = _browser(qtbot, stats)
+    want = "Stars 800 · FWHM 2.50 px · Round 1.37 · Bg 0.021"
+    for col in (fb.COL_TIME, fb.COL_STARS, fb.COL_FWHM, fb.COL_VERDICT):
+        assert want in b.cell_tooltip(4, col), (col, b.cell_tooltip(4, col))
+    assert "f4.fit" in b.cell_tooltip(4, fb.COL_TIME)
+    assert b.cell_tooltip(4, fb.COL_VERDICT).startswith("OK\n")
+    assert b.cell_tooltip(4, fb.COL_USE) == ""
+
+
+def test_a_grade_previews_the_first_kept_frame_in_time_order(qtbot):
+    """_session's first frame by time is f3 (minute 0); make it a reject, and
+    the first KEPT one is f1 (minute 10)."""
+    stats = _session()
+    stats[3].fwhm = 9.0
+    judge(stats, "normal")
+    assert stats[3].reason and not stats[1].reason, "fixture: f3 must be the reject"
+    loads = []
+    b = _browser(qtbot, stats, loads)
+    assert b.view_rows()[0] == 3
+    assert b.current_row() == 1
+    qtbot.waitUntil(lambda: b.preview.has_image(), timeout=2000)
+    assert b.preview_controller.wanted == "/x/f1.fit"
+    assert b.chart.current_row() == 1
+
+
+def test_every_frame_rejected_previews_the_first_one(qtbot):
+    """Review Focus 4: nothing kept — show the first frame, which is the next
+    thing he will want to look at, and keep the counts and the chart honest."""
+    stats = [_frame(i, i) for i in range(3)]
+    for s in stats:
+        s.reason, s.included = "Soft stars (test)", False
+    b = _browser(qtbot, stats, [])
+    assert b.current_row() == b.view_rows()[0] == 0
+    labels = {m: btn.text() for m, btn in b._show_buttons.items()}
+    assert labels == {"all": "All 3", "kept": "Kept 0", "rejected": "Rejected 3"}
+    from nocturne.ui.quality_chart import REJECTED_COLOUR
+    assert all(b.chart.point_colour(i) == REJECTED_COLOUR for i in range(3))
+
+
+def test_an_empty_or_error_only_list_previews_nothing(qtbot):
+    b = _browser(qtbot, [_error_frame(0, "not_raw"), _error_frame(1, "measure_failed")], [])
+    assert b.current_row() == -1 and b.preview_controller.wanted == ""
+    b.set_frames([])
+    assert b.current_row() == -1
+
+
+# --- fix round 1: R3 (a re-grade must not preview through a stale filter) ----
+
+def test_a_regrade_resets_show_to_all_before_choosing_the_preview(qtbot):
+    """Ruling R3: _first_to_preview reads through the CURRENT filter, so a
+    re-grade taken while Show=Rejected previewed the first REJECTED frame
+    instead of the first kept one. A fresh grade must reset Show to All
+    first."""
+    stats = _session()
+    b = _browser(qtbot, stats)
+    b.set_show(fb.SHOW_REJECTED)
+    other = [_frame(i, i) for i in range(3)]
+    other[0].reason, other[0].included = "Soft stars (test)", False   # not KEPT
+    b.set_frames(other)
+    assert b.proxy.show_mode() == fb.SHOW_ALL
+    assert b._show_buttons[fb.SHOW_ALL].isChecked()
+    assert b.current_row() == 1
+    assert b.preview_controller.wanted == "/x/f1.fit"
+
+
+def test_a_rejudge_does_not_move_show_or_the_cursor(qtbot):
+    """Strictness moving is a rejudge, not a fresh grade — refresh_verdicts
+    must leave Show and the current row exactly where the user left them."""
+    stats = _session()
+    b = _browser(qtbot, stats)
+    b.set_show(fb.SHOW_KEPT)
+    b.set_current_row(4)
+    show_before, row_before = b.proxy.show_mode(), b.current_row()
+    judge(stats, "strict")
+    b.refresh_verdicts()
+    assert b.proxy.show_mode() == show_before
+    assert b.current_row() == row_before

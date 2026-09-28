@@ -1451,9 +1451,14 @@ def test_the_haoiii_help_describes_every_column_the_table_shows():
     b = _body("haoiii")
     d = HaOIIIDialog(Settings())
     headers = d.browser.headers()
-    assert headers == ["Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict"]
-    for col in ("Time", "Stars", "FWHM", "Round", "Bg", "Verdict"):
+    assert headers == ["Use", "Time", "Stars", "FWHM", "Verdict"]
+    for col in ("Time", "Stars", "FWHM", "Verdict"):
         assert f"<b>{col}</b>" in b, f"the {col} column is not explained"
+    # Round and Bg left the list for its tooltip (spec 2026-09-28 §2.6); the
+    # help still explains both, and the tooltip still carries both.
+    fb = _src("nocturne/ui/frame_browser.py")
+    for word in ("Round", "Bg"):
+        assert f"<b>{word}</b>" in b and f"{word} {{s." in fb, word
 
 
 def test_the_haoiii_help_mentions_the_frame_preview():
@@ -1615,6 +1620,10 @@ def test_the_stacking_topic_documents_drizzle():
     assert str(g.GOOD_FRAMES) in text, "the comfortable frame count is not stated"
     # And the cost, which is the whole reason it is a choice.
     assert "four times" in text.lower()
+    # The plain-words line and its summary (spec 2026-09-28 §5), by the
+    # words the dialog uses.
+    assert f"<b>{g.SUITS_SUMMARY}</b>" in body
+    assert "green line" not in body
 
 
 def test_no_step_topic_offers_options_its_step_does_not_have():
@@ -1699,9 +1708,10 @@ def test_the_stacking_help_describes_the_frame_list_and_output_it_has():
     fb = _src("nocturne/ui/frame_browser.py")
     sd = _src("nocturne/ui/stack_dialog.py")
     assert "<b>Time</b>" in b and "Time" in FrameBrowser.headers()
-    for words in ("Back to the verdicts", "⇤ bigger preview"):
+    for words in ("Reset to suggested", "⇤ bigger preview"):
         assert f"<b>{words}</b>" in b, f"{words!r} is not in the help"
         assert f'"{words}"' in fb, f"{words!r} is no longer a control"
+    assert "Back to the verdicts" not in b
     for mode in ("Kept", "Rejected"):
         assert f"<b>{mode}</b>" in b and f'"{mode}"' in fb
     assert "arrow keys" in b and "space bar" in b
@@ -1739,10 +1749,16 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
         assert f"<b>{word}</b>" in b and f'"{word}"' in v, word
     assert "not a measure of the seeing" in b
     assert f"<b>{verdict_strip.MORE_TEXT}</b>" in b
+    from nocturne.stacking import verdict as vd
+    for label in (vd.LABEL_KEPT, vd.LABEL_REJECTED, vd.LABEL_STARS):
+        assert f"<b>{label}</b>" in b, label
     # the chart
     assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
     assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME
     assert "drawn short" in b and "GAP_CAP" in _src("nocturne/ui/quality_chart.py")
+    for words in (quality_chart.HIDE_TEXT, quality_chart.SHOW_TEXT):
+        assert f"<b>{words}</b>" in b, words
+    assert "Under the list" not in b and "above the list" in b
     # the rejected folder
     assert f"<b>{verdict_strip.move_label(7).replace('7', 'N')}</b>" in b
     assert f"<b>{verdict_strip.BACK_TEXT}</b>" in b
@@ -1758,6 +1774,26 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
 
 def test_haoiii_help_mentions_the_chart_it_now_has():
     b = _body("haoiii")
-    assert "chart under the list" in b and "<b>FWHM</b>" in b
+    assert "chart above the list" in b and "<b>FWHM</b>" in b
     assert "self.chart = QualityChart(" in _src("nocturne/ui/frame_browser.py")
     assert "FrameBrowser(" in _src("nocturne/ui/haoiii_dialog.py")
+
+
+def test_both_topics_say_what_a_stacked_master_shows():
+    from nocturne.stacking.grade import REASON_NOT_RAW
+    for topic in ("stacking", "haoiii"):
+        b = _body(topic)
+        assert f"<b>{REASON_NOT_RAW}</b>" in b, topic
+        assert "none of the counts" in b, topic
+
+
+def test_both_topics_say_what_an_unmeasured_frame_shows():
+    """M4 (final fix wave, 2026-09-28): Ruling R1 gave a frame that could not
+    be measured the same treatment as a stacked master — sorts last, shows
+    its real reason, counted nowhere — but the help never said so, leaving a
+    user who sees "Unmeasured N frames" with no explanation."""
+    from nocturne.stacking.grade import REASON_MEASURE
+    for topic in ("stacking", "haoiii"):
+        b = _body(topic)
+        assert f"<b>{REASON_MEASURE}</b>" in b, topic
+        assert "none of the counts" in b, topic

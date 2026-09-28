@@ -22,19 +22,34 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QTableView, QToolButton, QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label, time_label
+from ..stacking.grade import is_left_out, is_master
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
-from .quality_chart import QualityChart
+from .quality_chart import ChartPanel, QualityChart
 
-COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_ROUND, COL_BG, COL_VERDICT = range(7)
-HEADERS = ("Use", "Time", "Stars", "FWHM", "Round", "Bg", "Verdict")
+# Round and Bg left the list (spec 2026-09-28 §2.6): they repeated what the
+# Verdict already says, and Bg read to three decimals. Both are in every
+# cell's tooltip (measures_line).
+COL_USE, COL_TIME, COL_STARS, COL_FWHM, COL_VERDICT = range(5)
+HEADERS = ("Use", "Time", "Stars", "FWHM", "Verdict")
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 SHOW_ALL, SHOW_KEPT, SHOW_REJECTED = "all", "kept", "rejected"
 
 # What "bigger preview" hides: the measurements. Use stays — it IS the tick, and
 # a list you cannot tick from is a list you have to widen again to use.
-DETAIL_COLUMNS = (COL_STARS, COL_FWHM, COL_ROUND, COL_BG)
+DETAIL_COLUMNS = (COL_STARS, COL_FWHM)
+
+# What a stacked master, or a frame that could not be measured, shows "—" in
+# for Stars and FWHM: neither's zero is a measurement (spec 2026-09-28 §3;
+# Ruling R1). Time is NOT here: only a master's Time is fake — its DATE-OBS
+# is when it was STACKED, a fake 21:21 at the top of his IC 1805 list — while
+# an unmeasured frame's capture time is real and stays on screen (Ruling R4).
+MEASURED_COLUMNS = (COL_STARS, COL_FWHM)
+
+# Was "Back to the verdicts", which made no sense until pressed (Andreas,
+# 2026-09-28; spec §4).
+RESET_TEXT = "Reset to suggested"
 
 # The Verdict cell of a frame moved into <folder>/rejected/.
 MOVED_TEXT = "In rejected/"
@@ -79,8 +94,9 @@ def verdict_tooltip(s) -> str:
 def is_rejected(s) -> bool:
     """What Show Rejected, the Rejected count and the chart's amber all mean —
     one definition, so the three cannot disagree. A frame in rejected/ counts,
-    whatever its grader verdict was."""
-    return bool(s.reason) or is_moved(s)
+    whatever its grader verdict was. A stacked master, or a frame that could
+    not be measured, is in no count at all (spec 2026-09-28 §3; Ruling R1)."""
+    return (bool(s.reason) or is_moved(s)) and not is_left_out(s)
 
 
 def _locked(s) -> bool:
@@ -90,44 +106,72 @@ def _locked(s) -> bool:
 
 
 def _tint(s) -> str:
-    if is_rejected(s):
-        return theme.TEXT_FAINT        # rejected or moved: dimmed
+    # A left-out row (a master or one that could not be measured) is never
+    # stacked, whatever `is_rejected` says about it — Ruling R4: a bright row
+    # would read as "kept".
+    if is_rejected(s) or is_left_out(s):
+        return theme.TEXT_FAINT        # rejected, moved, or left out: dimmed
     if s.warning:
         return theme.WARNING           # kept with a warning: amber
     return theme.TEXT
 
 
 def _display(s, col: int) -> str:
+    if is_left_out(s) and col in MEASURED_COLUMNS:
+        return "—"
     if col == COL_TIME:
+        # A master's stamp is a fake — when it was STACKED, not a sub's
+        # capture time — so it dashes too; an unmeasured frame's is real and
+        # stays (Ruling R4).
+        if is_master(s):
+            return "—"
         return time_label(getattr(s, "captured", None))
     if col == COL_STARS:
         return str(s.star_count)
     if col == COL_FWHM:
         return f"{s.fwhm:.1f}"
-    if col == COL_ROUND:
-        # "Round" is elongation: 1.00 is circular, higher is trailed.
-        return f"{s.elongation:.2f}"
-    if col == COL_BG:
-        return f"{s.background:.3f}"
     if col == COL_VERDICT:
         return verdict_text(s)
     return ""
 
 
+def measures_line(s) -> str:
+    """Every measurement of a frame on one line — the two the list shows and
+    the two it no longer does. "Round" is elongation: 1.00 is circular."""
+    return (f"Stars {s.star_count} · FWHM {s.fwhm:.2f} px · "
+            f"Round {s.elongation:.2f} · Bg {s.background:.3f}")
+
+
 def _tooltip(s, col: int) -> str:
+    if col == COL_USE:
+        return ""
+    if is_left_out(s):
+        # `s.reason` already reads REASON_NOT_RAW for a master and
+        # REASON_MEASURE for one that could not be measured — one line
+        # covers both without hard-coding the master-specific wording here.
+        return f"{os.path.basename(s.path)}\n{s.reason}"
     if col == COL_TIME:
         when = full_label(getattr(s, "captured", None))
         name = os.path.basename(s.path)
-        return f"{name}\n{when}" if when else name
+        return "\n".join(t for t in (name, when, measures_line(s)) if t)
     if col == COL_VERDICT:
-        return verdict_tooltip(s)
-    return _display(s, col)
+        return f"{verdict_tooltip(s)}\n{measures_line(s)}"
+    return measures_line(s)
 
 
 def _sort_key(s, col: int):
-    """A key every row of one column can compare against. Frames with no
-    capture time sort after the dated ones; the sort is stable, so among
-    themselves they keep the grader's order."""
+    """A key every row of one column can compare against. The first element
+    is a tag that FrameFilterProxy.lessThan keeps ascending in both sort
+    directions: 0 an ordinary row, 1 a frame with no capture time (Time
+    only), 2 a stacked master, 3 a frame that could not be measured — always
+    at the very end, in that order, whatever is sorted (spec 2026-09-28 §3;
+    Ruling R1 gives measure_failed frames the master's own trailing
+    treatment, one step further back). The sort is stable, so equal keys
+    keep the grader's order."""
+    if is_master(s):
+        return (2, os.path.basename(s.path))
+    if is_left_out(s):          # measure_failed: sorts after masters
+        return (3, os.path.basename(s.path))
     if col == COL_USE:
         return (0, int(bool(s.included)))
     if col == COL_TIME:
@@ -137,10 +181,6 @@ def _sort_key(s, col: int):
         return (0, s.star_count)
     if col == COL_FWHM:
         return (0, s.fwhm)
-    if col == COL_ROUND:
-        return (0, s.elongation)
-    if col == COL_BG:
-        return (0, s.background)
     return (0, verdict_text(s))
 
 
@@ -342,6 +382,8 @@ class FrameFilterProxy(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent) -> bool:
         s = self.sourceModel().frame(source_row)
+        if self._show != SHOW_ALL and is_left_out(s):
+            return False        # in no count, so under no filter but All
         if self._show == SHOW_KEPT and is_rejected(s):
             return False
         if self._show == SHOW_REJECTED and not is_rejected(s):
@@ -351,14 +393,15 @@ class FrameFilterProxy(QSortFilterProxyModel):
     def lessThan(self, left, right) -> bool:
         lk, rk = left.data(SORT_ROLE), right.data(SORT_ROLE)
         if lk[0] != rk[0]:
-            # A timeless row's key is tagged 1, a dated one's 0, precisely so
-            # it sorts last when ASCENDING. Qt reverses the whole comparison
-            # for a descending column by swapping the arguments it hands us,
-            # which would otherwise put the timeless row FIRST; invert just
-            # this tag comparison to cancel that out, so it stays last either
-            # way. Same-tag rows are left to Qt's own reversal, which is what
-            # makes every other column behave the way clicking the header
-            # twice is supposed to.
+            # A timeless row's key is tagged 1, a dated one's 0, a master's 2
+            # and an unmeasured frame's 3 (_sort_key), precisely so they sort
+            # last when ASCENDING, in that order. Qt reverses the whole
+            # comparison for a descending column by swapping the arguments it
+            # hands us, which would otherwise put the timeless/master/
+            # unmeasured rows FIRST; invert just this tag comparison to
+            # cancel that out, so they stay last either way. Same-tag rows are
+            # left to Qt's own reversal, which is what makes every other
+            # column behave the way clicking the header twice is supposed to.
             base = lk < rk
             return not base if self.sortOrder() == Qt.SortOrder.DescendingOrder else base
         return lk < rk
@@ -444,7 +487,8 @@ class GripSplitter(QSplitter):
 
 
 class FrameBrowser(QWidget):
-    """List (left) + preview (right) behind one grip, with Show/Select/sort.
+    """The chart across the full width, then Show/Select, then the list (left)
+    and the preview (right) behind one grip (spec 2026-09-28 §2.4-2.6).
 
     Rows in this class's API are SOURCE rows — indices into the host's list —
     whatever the view's current sort or filter.
@@ -503,10 +547,10 @@ class FrameBrowser(QWidget):
         show_row.addWidget(QLabel("Select:"))
         self.select_all_btn = self._link("All", self.select_all)
         self.select_none_btn = self._link("None", self.select_none)
-        self.back_to_verdicts_btn = self._link("Back to the verdicts",
-                                               self.back_to_verdicts)
-        for b in (self.select_all_btn, self.select_none_btn,
-                  self.back_to_verdicts_btn):
+        self.reset_btn = self._link(RESET_TEXT, self.reset_to_suggested)
+        self.reset_btn.setToolTip("Undo every tick you made yourself: the "
+                                  "grader's suggestion decides again")
+        for b in (self.select_all_btn, self.select_none_btn, self.reset_btn):
             show_row.addWidget(b)
         show_row.addStretch(1)
 
@@ -528,17 +572,18 @@ class FrameBrowser(QWidget):
         head.addWidget(self.bigger_btn)
 
         list_side = QWidget()
-        self.list_layout = QVBoxLayout(list_side)   # delivery B adds its chart here
+        self.list_layout = QVBoxLayout(list_side)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.addWidget(self.view, 1)
-        # FWHM over the session (spec decision 4.6), under the list in both
-        # dialogs. Fixed height: the list is the stretch and gives it up. The
-        # list column's floor stays far under the preview's (56 + 60 against
-        # 250 px, measured offscreen 2026-09-27), so neither dialog's minimum
-        # height moves and the 1280×800 floor holds.
+        # FWHM over the session, across the whole width above Show/Select, in
+        # both dialogs (spec 2026-09-28 §2.4: at 730 × 60 px under the list it
+        # was "too small to be useful"). ONE chart class; this browser owns
+        # the instance, so a click on a point drives the list directly. It now
+        # adds its height to the dialog's (the list column no longer hides it),
+        # which is why it folds on a short screen: see CHART_ROOM_MIN.
         self.chart = QualityChart(verdict_text, is_rejected)
         self.chart.point_clicked.connect(self.select_from_chart)
-        self.list_layout.addWidget(self.chart)
+        self.chart_panel = ChartPanel(self.chart)
         preview_side = QWidget()
         pv = QVBoxLayout(preview_side)
         pv.setContentsMargins(0, 0, 0, 0)
@@ -557,6 +602,7 @@ class FrameBrowser(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.chart_panel)
         root.addLayout(show_row)
         root.addWidget(self.splitter, 1)
         self._sizes_before_bigger: list[int] | None = None
@@ -571,26 +617,42 @@ class FrameBrowser(QWidget):
 
     # --- the host's side ---
     def set_frames(self, stats: list) -> None:
-        """Show a freshly graded list. Hand-made ticks are forgotten: they
-        belonged to the previous list."""
-        # The cursor keeps its PLACE in the list, as the old table's current
-        # cell did, so the preview moves to whatever frame now sits there
-        # rather than going on showing one from the previous folder.
-        place = self.view.currentIndex().row()
+        """Show a freshly graded list with its first kept frame previewed, so
+        the preview is never an empty panel after a grade (spec 2026-09-28
+        §2.6). Hand-made ticks are forgotten: they belonged to the previous
+        list.
+
+        Show resets to All first (fix round 1, Ruling R3): `_first_to_preview`
+        reads through the CURRENT filter, so a re-grade taken while Show was
+        Rejected would preview the first REJECTED frame instead of the first
+        kept one. `refresh_verdicts` (a rejudge, e.g. Strictness) must NOT do
+        this — it leaves Show and the cursor exactly where the user left them."""
         self.model.set_frames(stats)
         self.chart.set_frames(stats)
+        self.set_show(SHOW_ALL)
         self._update_show_counts()
         self.fit_list()
-        if 0 <= place < self.proxy.rowCount():
-            self.view.setCurrentIndex(self.proxy.index(place, COL_TIME))
+        first = self._first_to_preview()
+        if first >= 0:
+            # The reset left no current row, so this always moves the cursor
+            # and _on_current does the rest: preview, header, chart ring.
+            self.set_current_row(first)
         else:
             self.preview_controller.clear()
             self._update_preview_header(-1)
             self.chart.set_current(-1)
-            if not stats:
-                # An empty list has no neighbour for Qt's selection model to
-                # land the cursor on, so nothing else fires this signal.
-                self.current_changed.emit(-1)
+            # No row for Qt's selection model to land the cursor on, so
+            # nothing else fires this signal.
+            self.current_changed.emit(-1)
+
+    def _first_to_preview(self) -> int:
+        """The first kept frame in the list's own order; failing that the
+        first frame that is not an error (every frame rejected: show one of
+        them, which is the next thing he will want to see); else -1."""
+        stats = self.model.frames()
+        rows = [r for r in self._visible_rows() if not stats[r].error]
+        kept = [r for r in rows if not is_rejected(stats[r])]
+        return (kept or rows or [-1])[0]
 
     def refresh_verdicts(self) -> None:
         """Call after judge() re-ran on the same list."""
@@ -640,10 +702,10 @@ class FrameBrowser(QWidget):
         self._update_show_counts()
         self.chart.refresh()
 
-    def add_above_list(self, widget: QWidget) -> None:
-        """A host's own strip over the list, in the list's column: Stack's
-        night verdict (spec decision 6). Not built in: Ha/OIII has none."""
-        self.list_layout.insertWidget(0, widget)
+    def add_above_chart(self, widget: QWidget) -> None:
+        """A host's own row over the chart, across the full width: Stack's
+        night verdict (spec 2026-09-28 §2.4). Not built in: Ha/OIII has none."""
+        self.layout().insertWidget(0, widget)
 
     def frames(self) -> list:
         return self.model.frames()
@@ -674,7 +736,7 @@ class FrameBrowser(QWidget):
     def select_none(self) -> None:
         self.model.set_ticked(self._visible_rows(), False)
 
-    def back_to_verdicts(self) -> None:
+    def reset_to_suggested(self) -> None:
         self.model.revert_to_verdicts()
 
     def set_show(self, mode: str) -> None:
@@ -682,7 +744,7 @@ class FrameBrowser(QWidget):
         self._show_buttons[mode].setChecked(True)
 
     def _update_show_counts(self) -> None:
-        stats = self.model.frames()
+        stats = [s for s in self.model.frames() if not is_left_out(s)]
         rejected = sum(1 for s in stats if is_rejected(s))
         counts = {SHOW_ALL: len(stats), SHOW_KEPT: len(stats) - rejected,
                   SHOW_REJECTED: rejected}
@@ -765,13 +827,26 @@ class FrameBrowser(QWidget):
             self.preview_name.setText("")
             self.preview_name.setToolTip("")
             self.preview_facts.setText("")
+            self.preview_facts.setToolTip("")
             return
         s = stats[row]
         self.preview_name.setText(os.path.basename(s.path))
         self.preview_name.setToolTip(s.path)
+        if is_left_out(s):
+            # A left-out frame's star/FWHM facts are not measurements — do
+            # not print its fake zeros (spec 2026-09-28 §3; Ruling R1). A
+            # master's Time is a fake stacked-on stamp (Ruling R4), so only a
+            # frame that could not be MEASURED still has a real one worth
+            # showing here (M5, final fix wave, 2026-09-28).
+            when = full_label(getattr(s, "captured", None)) if not is_master(s) else ""
+            text = f"{when} · {s.reason}" if when else s.reason
+            self.preview_facts.setText(text)
+            self.preview_facts.setToolTip(text)
+            return
         facts = [full_label(getattr(s, "captured", None)),
                  f"{s.star_count} stars", f"FWHM {s.fwhm:.1f}"]
         self.preview_facts.setText(" · ".join(f for f in facts if f))
+        self.preview_facts.setToolTip("")
 
     def _toggle_current(self) -> None:
         row = self.current_row()

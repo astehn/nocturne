@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections import OrderedDict
 
 import numpy as np
+from shiboken6 import isValid
+
 from .preview import rgb_to_qimage
 
 from ..core.autostretch import unlinked_stretch
@@ -81,6 +83,11 @@ class FramePreviewController:
         self.preview.clear()
 
     def _on_loaded(self, result) -> None:
+        # A load outlives its dialog: every grade now previews a frame, so a
+        # window closed mid-load is ordinary, and the preview it was for is
+        # gone (RuntimeError: Internal C++ object already deleted).
+        if not isValid(self.preview):
+            return
         path, arr = result
         image = to_qimage(arr)
         self.cache[path] = image
@@ -91,5 +98,7 @@ class FramePreviewController:
             self.preview.show_image(image)
 
     def _on_error(self, path, exc) -> None:
+        if not isValid(self.preview):
+            return
         if path == self.wanted:
             self.preview.show_message("Preview failed:\ncould not read frame")

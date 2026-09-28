@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 
-from nocturne.stacking.drizzle_gate import drizzle_advice
+from nocturne.stacking.drizzle_gate import (PLAIN_OK, SUITS_SUMMARY, drizzle_advice,
+                                            plain_advice)
 
 
 class _S:  # minimal stand-in for FrameStats
@@ -56,3 +58,51 @@ def test_genuinely_soft_data_is_still_discouraged():
     length that oversamples — drizzle has nothing to recover there."""
     adv = drizzle_advice([_S(6.0) for _ in range(120)], _dithered(120))
     assert adv.level == "not_recommended", adv.reason
+
+
+# --- plain words (spec 2026-09-28 §5): yes or no, and one plain reason -------
+
+def _still(n):  # transforms with no sub-pixel scatter at all
+    return [np.array([[1, 0, 3.0], [0, 1, -2.0], [0, 0, 1]]) for _ in range(n)]
+
+
+@pytest.mark.parametrize("stats, transforms, suits, text", [
+    ([_S(2.5)] * 120, None, True, PLAIN_OK),
+    ([_S(2.5)] * 25, None, True, PLAIN_OK),          # the gate's "marginal", enough frames
+    ([_S(2.5)] * 20, None, True, PLAIN_OK),          # MIN_FRAMES is inclusive
+    ([_S(2.5)] * 19, None, False,
+     "Not suitable for Drizzle: too few frames (19; it needs at least 20)."),
+    ([_S(2.5)] * 6, None, False,
+     "Not suitable for Drizzle: too few frames (6; it needs at least 20)."),
+    ([_S(3.2)] * 40, None, False,
+     "Not suitable for Drizzle: your stars are too soft for it to add detail."),
+    ([_S(2.5, included=False)] * 30, None, False,
+     "Not suitable for Drizzle: no frames are ticked."),
+    ([_S(2.5)] * 40, _still(40), False,
+     "Not suitable for Drizzle: the frames barely moved between exposures, so there "
+     "is nothing to fill the finer grid."),
+    ([_S(2.5)] * 40, _dithered(40), True, PLAIN_OK),
+])
+def test_every_reason_reads_in_plain_words(stats, transforms, suits, text):
+    plain = plain_advice(drizzle_advice(stats, transforms))
+    assert plain.suits is suits
+    assert plain.text == text
+    assert "px" not in plain.text and "FWHM" not in plain.text, "a number crept in"
+
+
+def test_the_numbers_go_to_the_tooltip():
+    plain = plain_advice(drizzle_advice([_S(2.5)] * 120))
+    assert plain.numbers == (
+        "Median star size FWHM 2.5 px — Drizzle helps below 3.0 px. 120 frames "
+        "ticked — it needs at least 20, and 40 or more is where it pays off.")
+    assert plain_advice(drizzle_advice([_S(2.5, included=False)] * 3)).numbers == (
+        "No frames are ticked.")
+    assert SUITS_SUMMARY == "Drizzle suits this stack"
+
+
+def test_the_gates_own_reason_is_unchanged():
+    """reason is still the engineer's sentence; only the dialog changed words."""
+    adv = drizzle_advice([_S(2.5)] * 120)
+    assert adv.reason == ("Undersampled stars (FWHM 2.5px) and enough frames (120) — "
+                          "recommended based on sharpness and frame count")
+    assert (adv.code, adv.fwhm, adv.frames) == ("ok", 2.5, 120)

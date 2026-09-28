@@ -8,11 +8,13 @@ import os
 
 import numpy as np
 import pytest
+from PySide6.QtWidgets import QApplication
 
 from nocturne.settings import Settings
 from nocturne.stacking.frames import discover_subs
 from nocturne.stacking.grade import REASON_NOT_RAW, FrameStats
 from nocturne.stacking.reject_move import MANIFEST_NAME, read_manifest
+from nocturne.ui import theme
 from nocturne.ui.frame_browser import COL_VERDICT, MOVED_TEXT
 from nocturne.ui.stack_dialog import StackDialog
 
@@ -192,10 +194,10 @@ def test_the_preview_reads_a_moved_frame_from_its_new_home(qtbot, tmp_path):
     d, _ = _graded(qtbot, folder)
     d.browser.preview_controller.loader = lambda p: (loads.append(p), _blank(p))[1]
     d.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: bool(loads) and loads[-1] == str(folder / "Light_01.fit"),
+    qtbot.waitUntil(lambda: str(folder / "Light_01.fit") in loads,
                     timeout=2000)
     d.verdict_strip.move_btn.click()
-    qtbot.waitUntil(lambda: loads[-1] == str(folder / "rejected" / "Light_01.fit"),
+    qtbot.waitUntil(lambda: str(folder / "rejected" / "Light_01.fit") in loads,
                     timeout=2000)
 
 
@@ -494,10 +496,10 @@ def test_m2_a_frame_deleted_from_rejected_by_hand_updates_the_verdict(qtbot, tmp
     folder, _paths = _folder(tmp_path)
     d, _ = _graded(qtbot, folder)
     d.verdict_strip.move_btn.click()
-    assert "4 of 6" in d.verdict_strip.details.text()
+    assert "4 of 6" in d.verdict_strip.details_text()
     os.unlink(folder / "rejected" / "Light_01.fit")     # gone, not just moved back
     d.verdict_strip.back_btn.click()
-    assert "4 of 5" in d.verdict_strip.details.text(), (
+    assert "4 of 5" in d.verdict_strip.details_text(), (
         "the verdict kept counting the frame remove_frames dropped")
 
 
@@ -512,10 +514,10 @@ def test_i1_reopened_verdict_says_how_many_are_still_in_rejected(qtbot, tmp_path
     d1.close()
     d2, _ = _graded(qtbot, folder)                   # reopen: 4 listed at top
     assert ("2 more frames are in rejected/ and are not counted here."
-            in d2.verdict_strip.details.text())
+            in d2.verdict_strip.details_text())
     d2.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
-    assert "more frame" not in d2.verdict_strip.details.text()
+    assert "more frame" not in d2.verdict_strip.details_text()
 
 
 def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
@@ -530,7 +532,7 @@ def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
     d1.close()
     d2, _ = _graded(qtbot, folder)
     assert ("1 more frame is in rejected/ and is not counted here."
-            in d2.verdict_strip.details.text())
+            in d2.verdict_strip.details_text())
 
 
 def test_new1_same_session_move_does_not_claim_listed_frames_are_uncounted(
@@ -547,7 +549,7 @@ def test_new1_same_session_move_does_not_claim_listed_frames_are_uncounted(
     d, _ = _graded(qtbot, folder)
     d.verdict_strip.move_btn.click()          # Light_01, Light_03 -> rejected/
     d.strictness_box.setCurrentText("Strict")
-    details = d.verdict_strip.details.text()
+    details = d.verdict_strip.details_text()
     assert "Rejected: 2 soft" in details, "fixture lost its moved, listed rejects"
     assert "more frame" not in details, (
         "claimed frames it just counted as rejected were also not counted")
@@ -738,3 +740,168 @@ def test_full_grade_success_after_all_moved_reopen_clears_the_measuring_message(
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
     assert d2.verdict_strip.message.text() == "Moved 6 frames back."
     assert len(d2._stats) == 6
+
+
+# --- I1 (final fix wave, 2026-09-28): the verdict must not pay for a move's
+# report line, at the 1280x800 floor -------------------------------------------------
+
+@pytest.fixture
+def styled():
+    """The real stylesheet, not the bare offscreen default. Its padding is
+    part of what tips a move's report line over the 740 px floor at all --
+    unstyled, `_folder`'s six frames never reach the fold chain's verdict
+    step, and the guard below would pass whether or not the fix is there
+    (measured 2026-09-28 while building the mutation proof)."""
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(theme.build_stylesheet())
+    yield
+    app.setStyleSheet(before)
+
+
+def _graded_at_740(qtbot, folder, runner=None, answer=True):
+    """Like `_graded`, but shown at the 1280x800 floor (740 px of room)
+    BEFORE grading -- the order a real open takes, and the one that
+    reproduces I1: it is grading AFTER the show that grows the dialog
+    through its settled minimum, the same path a move's report later
+    grows it through again."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = _blank
+    d._grade_runner = runner or _runner()
+    asked = []
+    d._confirm = lambda title, text: (asked.append(text), answer)[1]
+    d._available_height = lambda: 740
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d.folder_edit.setText(str(folder))
+    d.grade()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    qtbot.wait(50)          # let the settled fit land
+    return d, asked
+
+
+def test_move_does_not_compact_the_verdict_at_the_1280_floor(qtbot, tmp_path, styled):
+    """I1: at 740 px of room, the move's report line used to tip the dialog
+    a few pixels past the floor, and _refit recovered the height by
+    compacting the verdict to its headline -- so the facts he just asked to
+    see vanish at the exact moment he acts on them. Fixed by keeping the
+    verdict step out of `_refit`'s squeeze (`allow_verdict_squeeze=False`):
+    the frame list gives up the height instead, and the grade-time fit
+    (`_on_graded`, unaffected here) keeps its own right to compact the
+    verdict for genuinely new content."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    assert not d.verdict_strip.is_compact(), "fixture already needed the fold -- not testing the move"
+    assert d.verdict_strip.details_shown()
+    d.verdict_strip.move_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown(), "the move collapsed the verdict to its headline"
+    assert not d.verdict_strip.is_compact()
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+
+
+def test_move_back_does_not_compact_the_verdict_at_the_1280_floor(qtbot, tmp_path, styled):
+    """I1, the same for Move back: its own report line must not cost the
+    verdict its facts either."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown() and not d.verdict_strip.is_compact()
+    d.verdict_strip.back_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown(), "move back collapsed the verdict to its headline"
+    assert not d.verdict_strip.is_compact()
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+
+
+def _reopened_with_zero_slack(qtbot, folder):
+    """A folder reopened with the dialog pinned EXACTLY to its own natural
+    minimum (chart folded, no message yet) — the same boundary condition
+    I1's own repro needed. A spacious re-open first measures that natural
+    minimum; the real dialog is then built pinned to it from the start, so
+    the very next byte of growth is what I1/R8 are about, not a fixture
+    that merely happens to be big enough."""
+    probe = StackDialog(Settings())
+    qtbot.addWidget(probe)
+    probe._available_height = lambda: 4000
+    probe.browser.preview_controller.loader = _blank
+    probe._grade_runner = _runner()
+    probe.folder_edit.setText(str(folder))
+    probe.show()
+    qtbot.waitExposed(probe)
+    probe.grade()
+    qtbot.waitUntil(lambda: not probe._busy, timeout=3000)
+    qtbot.wait(50)
+    panel = probe.browser.chart_panel
+    panel.blockSignals(True)
+    panel.set_folded(True)
+    panel.blockSignals(False)
+    room = probe._natural_minimum_height()
+    probe.close()
+
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = _blank
+    d._grade_runner = _runner()
+    d._available_height = lambda: room
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d.folder_edit.setText(str(folder))
+    d.grade()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    qtbot.wait(50)
+    return d, room
+
+
+def test_move_back_after_a_reopen_does_not_compact_the_verdict_at_the_1280_floor(
+        qtbot, tmp_path, styled):
+    """R8: the same bug as I1, reached through a different door.
+    Reopening a folder with frames still parked in rejected/ from an
+    earlier session, then pressing "Move them back", merges the restored
+    names in through `_on_restored_graded` -- a grade-time fit, not
+    `_refit`, so it kept `allow_verdict_squeeze`'s default. But this merge
+    is not "genuinely new content": the list gains rows for free (no extra
+    height) and the verdict gets SHORTER ("Not counted N more in
+    rejected/" leaves) -- the only thing that grew the dialog here is the
+    same lingering "Moved N frames back." report line I1 already covers,
+    just reached through this door instead."""
+    folder, _paths = _folder(tmp_path)
+    d1, _ = _graded(qtbot, folder)
+    d1.verdict_strip.move_btn.click()          # Light_01, Light_03 -> rejected/
+    d1.close()
+    d2, room = _reopened_with_zero_slack(qtbot, folder)   # reopen: 4 listed, 2 parked
+    assert d2.verdict_strip.back_btn.isVisible(), "fixture: nothing parked in rejected/"
+    assert d2.verdict_strip.details_shown() and not d2.verdict_strip.is_compact()
+    d2.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
+    qtbot.wait(50)
+    assert d2.verdict_strip.details_shown(), "the merge collapsed the verdict to its headline"
+    assert not d2.verdict_strip.is_compact()
+    assert d2.height() <= room, f"{d2.height()} px on a {room} px screen"
+
+
+def test_showing_the_chart_at_740_may_compact_the_verdict_but_details_recovers_it(
+        qtbot, tmp_path, styled):
+    """M8: "▸ Show chart" is his own click, not a resize the code sprung on
+    him behind his back (I1 above) -- so it is allowed to run the same fold
+    chain a grade does (help -> options -> chart -> verdict), verdict
+    included, if the chart alone does not leave enough room. What must
+    still hold either way: the dialog stays on screen, and "details ▸" --
+    his very next click -- gets the facts straight back."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    panel = d.browser.chart_panel
+    assert panel.is_folded()
+    panel.fold_btn.click()
+    qtbot.wait(50)
+    assert not panel.is_folded(), "folded again behind his back"
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+    if d.verdict_strip.is_compact():
+        d.verdict_strip.more_btn.click()
+        qtbot.wait(50)
+        assert d.verdict_strip.details_shown(), "'details ▸' did not bring the facts back"
+        assert d.height() <= 740
