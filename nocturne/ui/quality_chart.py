@@ -14,7 +14,8 @@ import bisect
 import html
 import os
 from datetime import timedelta
-from typing import Callable
+from statistics import median
+from typing import Callable, Sequence
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygonF
@@ -27,12 +28,28 @@ from . import theme
 
 # The plot alone; the caption line above it is ChartPanel's.
 CHART_HEIGHT = 70
-# Any gap between two subs is drawn as at most this. His Sh2-108 folder holds
-# two nights — the 21st, and the 26th into the 27th; on a true time axis each
-# night would be a sliver a few pixels wide between days of nothing. A dashed
-# line in the middle of that squeezed gap says where one night ends and the
-# next begins, with the new night's date beside it (spec 2026-09-28 §9.5).
+# Any gap WITHIN a night is drawn as at most this — unchanged, and it still
+# applies there (his own request, Ruling R11, kept the within-night rule).
+# Between two nights the axis instead reserves a FIXED PIXEL width
+# (NIGHT_GAP_PX, below): on a true time axis his Sh2-108 folder's two nights
+# — the 21st, and the 26th into the 27th — would put a night days of nothing
+# on the same axis as ten-minute frames, so GAP_CAP alone used to leave the
+# boundary's on-screen width wandering with however many minutes the real
+# gap happened to be capped to, relative to whatever else was on the chart.
+# A dashed line in the middle says where one night ends and the next begins,
+# with the new night's date beside it (spec 2026-09-28 §9.5).
 GAP_CAP = timedelta(minutes=20)
+# The width of a night boundary, in real pixels, whatever the actual time
+# gap was — his own request, Ruling R11 (2026-09-28): "enough for the dashed
+# line", not measured further. Reserved out of the plot's width before the
+# within-night, time-proportional part is laid out (see `_avail`/`_px`), so
+# resizing the window changes every night's own width but never the gap's.
+NIGHT_GAP_PX = 24.0
+# The trend line's running-median window, in frames — his own request
+# (Ruling R11, 2026-09-28): "about 9", smaller at a night's own ends (never
+# reaching past it: the line already breaks there). The dots stay exact;
+# only the line connecting them is smoothed.
+TREND_WINDOW = 9
 KEPT_COLOUR = theme.ACCENT
 # Amber, as the mockup draws it. The list DIMS a rejected row; a dimmed dot on
 # a dark strip would vanish, which is the opposite of the point.
@@ -74,6 +91,27 @@ def plottable(s) -> bool:
     return not s.error and s.star_count > 0 and s.fwhm > 0
 
 
+def trend_values(values: Sequence[float], breaks: Sequence[int] = (),
+                 window: int = TREND_WINDOW) -> list[float]:
+    """A running median of `values`, one per value, in order — his own
+    request (Ruling R11, 2026-09-28): a fair trend on a noisy night without
+    following every wobble, which a raw point-to-point line does.
+
+    `breaks` are the indices where a new night starts (never 0): the window
+    never reaches across one — the polyline already breaks there — so it
+    narrows near a night's own ends instead of borrowing another night's
+    values. Pure (no Qt), so it is tested directly, without a widget."""
+    if not values:
+        return []
+    bounds = [0, *sorted(breaks), len(values)]
+    half = window // 2
+    out: list[float] = []
+    for s, e in zip(bounds, bounds[1:]):
+        for idx in range(s, e):
+            out.append(median(values[max(s, idx - half):min(e, idx + half + 1)]))
+    return out
+
+
 def note_html(note: str) -> str:
     """The caption with its "●" in REJECTED_COLOUR — the legend must be the
     colour of the dots the chart paints, not the caption's grey."""
@@ -100,6 +138,10 @@ class QualityChart(QWidget):
         self._stats: list = []
         self._rows: list[int] = []
         self._x: list[float] = []
+        # Which night-segment each row of `_rows`/`_x` belongs to, 0-based in
+        # plot order — how many fixed-pixel night gaps (NIGHT_GAP_PX) sit to
+        # its left. Parallel to `_rows`/`_x`.
+        self._seg: list[int] = []
         self._timed = True
         self._current = -1
         # Where each night starts, as (index into _rows, its date) — empty
@@ -122,27 +164,56 @@ class QualityChart(QWidget):
         self._timed = all(self._stats[i].captured is not None for i in rows)
         if self._timed:
             rows.sort(key=lambda i: self._stats[i].captured)
-            xs = [0.0]
-            for a, b in zip(rows, rows[1:]):
-                gap = self._stats[b].captured - self._stats[a].captured
-                xs.append(xs[-1] + min(gap, GAP_CAP).total_seconds())
+            keys = [night_key(self._stats[i]) for i in rows]
+            breaks = [k for k in range(1, len(rows)) if keys[k] != keys[k - 1]]
+            xs, seg = [0.0], [0]
+            for k in range(1, len(rows)):
+                if k in breaks:
+                    # A night boundary carries no virtual time (Ruling R11,
+                    # 2026-09-28): its own fixed pixel width is reserved at
+                    # paint/geometry time instead (`_avail`/`_px`), so it
+                    # never competes with GAP_CAP for the same budget.
+                    xs.append(xs[-1])
+                    seg.append(seg[-1] + 1)
+                else:
+                    a, b = rows[k - 1], rows[k]
+                    gap = self._stats[b].captured - self._stats[a].captured
+                    xs.append(xs[-1] + min(gap, GAP_CAP).total_seconds())
+                    seg.append(seg[-1])
+            self._night_starts = self._label_starts(keys, breaks)
         else:
             rows.sort(key=lambda i: os.path.basename(self._stats[i].path))
             xs = [float(k) for k in range(len(rows))]
+            seg = [0] * len(rows)
+            self._night_starts = []
         span = xs[-1] if len(xs) > 1 and xs[-1] > 0 else 1.0
         self._rows = rows
         self._x = [x / span for x in xs] if rows else []
-        self._night_starts = self._find_night_starts() if self._timed else []
+        self._seg = seg
         self.update()
         self.points_changed.emit()
 
-    def _find_night_starts(self) -> list[tuple[int, str]]:
-        keys = [night_key(self._stats[i]) for i in self._rows]
-        starts = [k for k in range(len(keys)) if k == 0 or keys[k] != keys[k - 1]]
+    @staticmethod
+    def _label_starts(keys: list, breaks: list[int]) -> list[tuple[int, str]]:
+        starts = [0, *breaks]
         if len(starts) < 2:
             return []
         with_year = len({keys[k].year for k in starts}) > 1
         return [(k, night_label(keys[k], with_year)) for k in starts]
+
+    def _gap_px_total(self) -> float:
+        """How much of the plot's width the night boundaries reserve, before
+        the time-proportional part is laid out."""
+        return max(0, len(self._night_starts) - 1) * NIGHT_GAP_PX if self._night_starts else 0.0
+
+    def _avail(self, r: QRectF) -> float:
+        return max(1.0, r.width() - self._gap_px_total())
+
+    def _px(self, idx: int, r: QRectF, avail: float) -> float:
+        """The pixel x of the idx-th plotted point (an index into `_rows`/
+        `_x`/`_seg`): its within-night share of `avail`, plus one
+        NIGHT_GAP_PX for every night boundary to its left."""
+        return r.left() + self._x[idx] * avail + self._seg[idx] * NIGHT_GAP_PX
 
     def point_count(self) -> int:
         return len(self._rows)
@@ -186,10 +257,11 @@ class QualityChart(QWidget):
         if not self._rows:
             return []
         r = self._plot_rect()
+        avail = self._avail(r)
         lo, hi = self._value_range()
-        return [(i, QPointF(r.left() + x * r.width(),
+        return [(i, QPointF(self._px(idx, r, avail),
                             self._y(self._stats[i].fwhm, r, lo, hi)))
-                for i, x in zip(self._rows, self._x)]
+                for idx, i in enumerate(self._rows)]
 
     def point_pos(self, row: int) -> QPointF | None:
         for i, p in self._positions():
@@ -212,6 +284,19 @@ class QualityChart(QWidget):
         s = self._stats[row]
         when = full_label(s.captured) or os.path.basename(s.path)
         return f"{when}\nFWHM {s.fwhm:.2f} px · {self._describe(s)}"
+
+    def _trend_line(self, pts: list[tuple[int, QPointF]]) -> list[QPointF]:
+        """The line's own y at each dot's x: a running median of FWHM (his
+        own request, Ruling R11, 2026-09-28) — the dots (`pts`) keep their
+        real values and real x; only what connects them is smoothed."""
+        if not pts:
+            return []
+        r = self._plot_rect()
+        lo, hi = self._value_range()
+        breaks = [k for k, _label in self._night_starts if k > 0]
+        values = [self._stats[i].fwhm for i, _q in pts]
+        return [QPointF(q.x(), self._y(m, r, lo, hi))
+                for (_i, q), m in zip(pts, trend_values(values, breaks))]
 
     # --- the axes ---
     def _axis_font(self) -> QFont:
@@ -244,10 +329,14 @@ class QualityChart(QWidget):
         return out
 
     def night_lines(self) -> list[float]:
-        """The x of each dashed line: halfway across the (squeezed) gap
-        between one night's last frame and the next night's first."""
+        """The x of each dashed line: halfway across the fixed-pixel gap
+        (NIGHT_GAP_PX) between one night's last frame and the next night's
+        first."""
+        if not self._night_starts:
+            return []
         r = self._plot_rect()
-        return [r.left() + (self._x[k - 1] + self._x[k]) / 2 * r.width()
+        avail = self._avail(r)
+        return [(self._px(k - 1, r, avail) + self._px(k, r, avail)) / 2
                 for k, _label in self._night_starts if k > 0]
 
     def date_labels(self) -> list[tuple[QRectF, str]]:
@@ -283,6 +372,7 @@ class QualityChart(QWidget):
         if not self._timed or len(self._rows) < 2:
             return []
         r = self._plot_rect()
+        avail = self._avail(r)
         fm = QFontMetrics(self._axis_font())
         dates = [rect for rect, _t in self.date_labels()]
         want = max(2, min(_TIME_LABELS_MAX, int(r.width() // TIME_LABEL_SPACING) + 1))
@@ -295,7 +385,7 @@ class QualityChart(QWidget):
                 i -= 1
             text = f"{self._stats[self._rows[i]].captured.astimezone():%H:%M}"
             w = fm.horizontalAdvance(text) + 4.0
-            cx = r.left() + self._x[i] * r.width()
+            cx = self._px(i, r, avail)
             left = min(max(cx - w / 2, 0.0), self.width() - w)
             if left < last_right + _LABEL_GAP:
                 continue
@@ -346,12 +436,13 @@ class QualityChart(QWidget):
         pts = self._positions()
         if len(pts) >= 2:
             p.setPen(QPen(QColor(KEPT_COLOUR), 1.0))
+            trend = self._trend_line(pts)
             breaks = {k for k, _label in self._night_starts if k > 0}
             seg_start = 0
             for k in range(1, len(pts) + 1):
                 if k == len(pts) or k in breaks:
                     if k - seg_start >= 2:
-                        p.drawPolyline(QPolygonF([q for _i, q in pts[seg_start:k]]))
+                        p.drawPolyline(QPolygonF(trend[seg_start:k]))
                     seg_start = k
         p.setPen(Qt.PenStyle.NoPen)
         # Rejected last, so a reject is never hidden under a kept neighbour.
