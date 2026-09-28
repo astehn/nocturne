@@ -8,11 +8,13 @@ import os
 
 import numpy as np
 import pytest
+from PySide6.QtWidgets import QApplication
 
 from nocturne.settings import Settings
 from nocturne.stacking.frames import discover_subs
 from nocturne.stacking.grade import REASON_NOT_RAW, FrameStats
 from nocturne.stacking.reject_move import MANIFEST_NAME, read_manifest
+from nocturne.ui import theme
 from nocturne.ui.frame_browser import COL_VERDICT, MOVED_TEXT
 from nocturne.ui.stack_dialog import StackDialog
 
@@ -738,3 +740,101 @@ def test_full_grade_success_after_all_moved_reopen_clears_the_measuring_message(
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
     assert d2.verdict_strip.message.text() == "Moved 6 frames back."
     assert len(d2._stats) == 6
+
+
+# --- I1 (final fix wave, 2026-09-28): the verdict must not pay for a move's
+# report line, at the 1280x800 floor -------------------------------------------------
+
+@pytest.fixture
+def styled():
+    """The real stylesheet, not the bare offscreen default. Its padding is
+    part of what tips a move's report line over the 740 px floor at all --
+    unstyled, `_folder`'s six frames never reach the fold chain's verdict
+    step, and the guard below would pass whether or not the fix is there
+    (measured 2026-09-28 while building the mutation proof)."""
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(theme.build_stylesheet())
+    yield
+    app.setStyleSheet(before)
+
+
+def _graded_at_740(qtbot, folder, runner=None, answer=True):
+    """Like `_graded`, but shown at the 1280x800 floor (740 px of room)
+    BEFORE grading -- the order a real open takes, and the one that
+    reproduces I1: it is grading AFTER the show that grows the dialog
+    through its settled minimum, the same path a move's report later
+    grows it through again."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = _blank
+    d._grade_runner = runner or _runner()
+    asked = []
+    d._confirm = lambda title, text: (asked.append(text), answer)[1]
+    d._available_height = lambda: 740
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d.folder_edit.setText(str(folder))
+    d.grade()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    qtbot.wait(50)          # let the settled fit land
+    return d, asked
+
+
+def test_move_does_not_compact_the_verdict_at_the_1280_floor(qtbot, tmp_path, styled):
+    """I1: at 740 px of room, the move's report line used to tip the dialog
+    a few pixels past the floor, and _refit recovered the height by
+    compacting the verdict to its headline -- so the facts he just asked to
+    see vanish at the exact moment he acts on them. Fixed by keeping the
+    verdict step out of `_refit`'s squeeze (`allow_verdict_squeeze=False`):
+    the frame list gives up the height instead, and the grade-time fit
+    (`_on_graded`, unaffected here) keeps its own right to compact the
+    verdict for genuinely new content."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    assert not d.verdict_strip.is_compact(), "fixture already needed the fold -- not testing the move"
+    assert d.verdict_strip.details_shown()
+    d.verdict_strip.move_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown(), "the move collapsed the verdict to its headline"
+    assert not d.verdict_strip.is_compact()
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+
+
+def test_move_back_does_not_compact_the_verdict_at_the_1280_floor(qtbot, tmp_path, styled):
+    """I1, the same for Move back: its own report line must not cost the
+    verdict its facts either."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    d.verdict_strip.move_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown() and not d.verdict_strip.is_compact()
+    d.verdict_strip.back_btn.click()
+    qtbot.wait(50)
+    assert d.verdict_strip.details_shown(), "move back collapsed the verdict to its headline"
+    assert not d.verdict_strip.is_compact()
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+
+
+def test_showing_the_chart_at_740_may_compact_the_verdict_but_details_recovers_it(
+        qtbot, tmp_path, styled):
+    """M8: "▸ Show chart" is his own click, not a resize the code sprung on
+    him behind his back (I1 above) -- so it is allowed to run the same fold
+    chain a grade does (help -> options -> chart -> verdict), verdict
+    included, if the chart alone does not leave enough room. What must
+    still hold either way: the dialog stays on screen, and "details ▸" --
+    his very next click -- gets the facts straight back."""
+    folder, _paths = _folder(tmp_path)
+    d, _ = _graded_at_740(qtbot, folder)
+    panel = d.browser.chart_panel
+    assert panel.is_folded()
+    panel.fold_btn.click()
+    qtbot.wait(50)
+    assert not panel.is_folded(), "folded again behind his back"
+    assert d.height() <= 740, f"{d.height()} px on a 740 px screen"
+    if d.verdict_strip.is_compact():
+        d.verdict_strip.more_btn.click()
+        qtbot.wait(50)
+        assert d.verdict_strip.details_shown(), "'details ▸' did not bring the facts back"
+        assert d.height() <= 740

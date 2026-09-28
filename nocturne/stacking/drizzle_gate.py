@@ -72,8 +72,11 @@ class DrizzleAdvice:
 # (316) — recommended based on…": not written for the audience. The numbers
 # go in the tooltip (PlainAdvice.numbers).
 SUITS_SUMMARY = "Drizzle suits this stack"
-PLAIN_OK = ("Suitable for Drizzle: expect about 10× longer stacking and a file "
-            "four times the size.")
+# M6 (final fix wave, 2026-09-28): a "yes" needs no reason of its own — the
+# cost it used to repeat here (10x longer, four times the size) is already
+# said once, right above, by drizzle_hint's own explanation. Only a "no"
+# needs its own sentence, because each is a DIFFERENT reason.
+PLAIN_OK = "Suitable for Drizzle."
 PLAIN_NO_FRAMES = "Not suitable for Drizzle: no frames are ticked."
 PLAIN_SOFT = "Not suitable for Drizzle: your stars are too soft for it to add detail."
 PLAIN_FEW = "Not suitable for Drizzle: too few frames ({n}; it needs at least {need})."

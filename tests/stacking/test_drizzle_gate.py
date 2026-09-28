@@ -67,8 +67,7 @@ def _still(n):  # transforms with no sub-pixel scatter at all
 
 
 @pytest.mark.parametrize("stats, transforms, suits, text", [
-    ([_S(2.5)] * 120, None, True,
-     "Suitable for Drizzle: expect about 10× longer stacking and a file four times the size."),
+    ([_S(2.5)] * 120, None, True, PLAIN_OK),
     ([_S(2.5)] * 25, None, True, PLAIN_OK),          # the gate's "marginal", enough frames
     ([_S(2.5)] * 20, None, True, PLAIN_OK),          # MIN_FRAMES is inclusive
     ([_S(2.5)] * 19, None, False,

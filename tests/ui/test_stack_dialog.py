@@ -182,6 +182,27 @@ def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
     assert "minute" in dlg.status.text()
 
 
+def test_ticking_nothing_reads_zero_minutes_not_one(qtbot, tmp_path):
+    """M2 (final fix wave, 2026-09-28): _selection_summary's own max(1, …)
+    on the KEPT side, not just the total, read "Keeping 0 of 5 frames — 1 of
+    2 minutes of light" once every row was unticked. Zero kept seconds must
+    read as zero minutes, exactly as the verdict's own _minutes() already
+    does."""
+    for i in range(5):
+        (tmp_path / f"f{i}.fit").write_text("x")
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    stats = [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.5, True, exposure=20.0)
+             for i in range(5)]
+    dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": stats
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    qtbot.waitUntil(lambda: dlg.browser.row_count() == 5, timeout=2000)
+    dlg.browser.select_none()
+    assert "Keeping 0 of 5 frames" in dlg._selection_summary()
+    assert "0 of 2 minutes" in dlg._selection_summary(), dlg._selection_summary()
+
+
 def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
     for i in range(6):
         (tmp_path / f"f{i}.fit").write_text("x")
@@ -1999,3 +2020,25 @@ def test_the_drizzle_line_follows_the_ticks(qtbot):
     assert d.drizzle_note.text() == (
         "Not suitable for Drizzle: too few frames (19; it needs at least 20).")
     assert "Drizzle" not in d.options_band.summary_label.text()
+
+
+def test_a_yes_does_not_repeat_the_hints_own_numbers(qtbot):
+    """M6 (final fix wave, 2026-09-28): with help on, drizzle_note used to
+    say word-for-word what drizzle_hint, right above it, already explains
+    ("…10× longer…four times the size" twice). A "yes" needs no reason of
+    its own; only a "no" gets one, because each "no" is a DIFFERENT reason."""
+    d = StackDialog(Settings(frame_options_folded=False))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d._settings.stack_help_expanded = True
+    d._apply_hints_visible()
+    d.show()
+    qtbot.waitExposed(d)
+    stats = [FrameStats(f"/x/f{i}.fit", 800, 2.5, 0.02, 0.5, True, exposure=10.0)
+             for i in range(60)]
+    d._on_graded(stats)
+    assert d.drizzle_hint.isVisible() and d.drizzle_note.isVisible()
+    assert "10×" in d.drizzle_hint.text() and "four times the size" in d.drizzle_hint.text()
+    assert d.drizzle_note.text() == "Suitable for Drizzle."
+    assert "10×" not in d.drizzle_note.text()
+    assert "four times the size" not in d.drizzle_note.text()

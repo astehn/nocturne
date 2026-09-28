@@ -19,7 +19,8 @@ from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
 from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from ..stacking.verdict import LABEL_NOT_COUNTED, build_verdict, read_pixel_scale
+from ..stacking.verdict import (LABEL_NOT_COUNTED, _minutes, build_verdict,
+                                read_pixel_scale)
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
@@ -734,12 +735,23 @@ class StackDialog(QDialog):
         if needed > self.height():
             self.resize(self.width(), min(needed, room))
 
-    def _keep_on_screen(self) -> bool:
+    def _keep_on_screen(self, *, allow_verdict_squeeze: bool = True) -> bool:
         """Fold what the screen cannot hold and bring the window back down;
         True when it folded something. Help first, then the option band, then
         the chart, then the verdict's details — each for THIS window only,
         never saved, and never once the user has toggled it here. The height
-        clamp after them always runs."""
+        clamp after them always runs.
+
+        `allow_verdict_squeeze=False` (passed only by `_refit`, I1 fix
+        round 2) keeps the verdict step out of a resize caused by content
+        that grew AFTER the dialog was already fitted — a move's report line,
+        say. `_clamp_to_screen` below still shrinks the frame list for that
+        case: it is the stretch area and, at 740, still has rows to give up
+        before the verdict — what the grade just told him — needs to lose its
+        facts the moment he acts on them. The grade-time fits (`_fit_to_content`,
+        `_on_graded`, `_on_restored_graded`) call this directly and keep the
+        default, since squeezing the verdict for genuinely new content is the
+        intended fold order."""
         squeezed = False
         if not self._user_laid_out:
             room = self._available_height()
@@ -772,7 +784,8 @@ class StackDialog(QDialog):
             # Still too tall: the verdict down to its headline, for this window
             # only. Last, because it is what the grade just told you; "details ▸"
             # brings it straight back, and then the screen leaves it alone.
-            if (needed > room and not self.verdict_strip.isHidden()
+            if (allow_verdict_squeeze and needed > room
+                    and not self.verdict_strip.isHidden()
                     and not self.verdict_strip.is_compact()
                     and not self.verdict_strip.user_expanded()):
                 self.verdict_strip.set_compact(True)
@@ -839,7 +852,7 @@ class StackDialog(QDialog):
 
     def _refit(self) -> None:
         self._refit_pending = False
-        self._keep_on_screen()
+        self._keep_on_screen(allow_verdict_squeeze=False)
 
     def _available_height(self) -> int:
         """Usable screen height. Its own method so a test can shrink the screen —
@@ -1339,9 +1352,13 @@ class StackDialog(QDialog):
         kept_s = sum(s.exposure for s in kept)
         all_s = sum(s.exposure for s in counted)
         if all_s > 0:
-            unit = "minute" if round(all_s / 60) == 1 else "minutes"
-            text += (f" — {max(1, round(kept_s / 60))} of "
-                     f"{max(1, round(all_s / 60))} {unit} of light")
+            # M2 (final fix wave, 2026-09-28): the verdict's own _minutes()
+            # already gets this right (0 for 0 s, max(1, …) otherwise) —
+            # this rewritten function had its own max(1, …) on BOTH sides,
+            # so ticking nothing read "Keeping 0 … — 1 of 68 minutes".
+            total_min = _minutes(all_s)
+            unit = "minute" if total_min == 1 else "minutes"
+            text += f" — {_minutes(kept_s)} of {total_min} {unit} of light"
         if total < JUDGE_MIN:
             text += " (too few frames to grade reliably — keeping all)"
         return text + "."
