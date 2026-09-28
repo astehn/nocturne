@@ -15,7 +15,7 @@ from typing import Callable
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QSize,
                             QSortFilterProxyModel, Qt, Signal)
-from PySide6.QtGui import QColor, QFontMetrics, QPainter
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QHeaderView, QLabel, QPushButton, QSplitter,
                                QSplitterHandle, QStyle, QStyleOptionHeader,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
 
 from ..stacking.capture_time import full_label, time_label
 from ..stacking.grade import is_left_out, is_master
+from ..stacking.nights import night_key
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
@@ -66,6 +67,16 @@ GRIP_WIDTH = 12
 # test_every_column_is_on_screen_at_the_width_it_opens). At 1280 the narrower
 # columns now fit under half without it.
 LIST_MAX_SHARE = 0.45
+
+# Ruling R1 (2026-09-28): his real-window screenshot under cocoa read "/erdic"
+# in the Verdict header and "Soft …" in a cell — the list was fitted narrow
+# enough that the Stretch column (Verdict) had less than these need. Offscreen
+# fonts run narrower than cocoa's (LIST_MAX_SHARE's own 606-vs-622 px), so the
+# floor is measured live with fontMetrics rather than trusted from whatever
+# font happens to be active, plus a margin for what raw text-advance doesn't
+# count: cell/header insets and the room Qt reserves before it elides.
+VERDICT_MIN_WORDS = ("Soft stars", "Trailed", "Few stars", "OK")
+VERDICT_WIDTH_MARGIN = 24
 
 
 def is_moved(s) -> bool:
@@ -273,12 +284,16 @@ class FrameTableModel(QAbstractTableModel):
         if changed:
             self.ticks_changed.emit()
 
-    def revert_to_verdicts(self) -> None:
+    def revert_to_verdicts(self, where: Callable[[object], bool] | None = None) -> None:
         """Forget every hand-made tick: the grader's verdict decides again.
-        `reason` is non-empty exactly when judge() excluded a frame."""
-        self._overrides.clear()
+        `reason` is non-empty exactly when judge() excluded a frame. With
+        `where`, only on the frames it accepts: an unticked night keeps the
+        ticks he made inside it (spec 2026-09-28 §9.2)."""
         changed = False
-        for s in self._stats:
+        for row, s in enumerate(self._stats):
+            if where is not None and not where(s):
+                continue
+            self._overrides.pop(row, None)
             want = not s.reason and not is_moved(s)
             if bool(s.included) != want:
                 s.included = want
@@ -496,13 +511,20 @@ class FrameBrowser(QWidget):
 
     selection_changed = Signal()      # the set of ticked frames changed
     current_changed = Signal(int)     # source row now previewed, -1 for none
+    nights_changed = Signal()         # a night was ticked in or out
 
     def __init__(self, pool, parent=None) -> None:
         super().__init__(parent)
         self._fitted = False       # fit_list runs once, on first show
+        # The nights he has unticked (spec 2026-09-28 §9.2), by night key.
+        # A night is a view on the list, never a tick: `included` on its
+        # frames — his own ticks inside it — is left exactly as it was, so
+        # ticking the night back returns them as he left them.
+        self._nights_off: set = set()
         self.model = FrameTableModel(self)
         self.proxy = FrameFilterProxy(self)
         self.proxy.setSourceModel(self.model)
+        self.proxy.set_extra_filter(self.night_on)
         self.model.ticks_changed.connect(self._on_ticks_changed)
 
         self.view = _FrameTable()
@@ -581,7 +603,7 @@ class FrameBrowser(QWidget):
         # the instance, so a click on a point drives the list directly. It now
         # adds its height to the dialog's (the list column no longer hides it),
         # which is why it folds on a short screen: see CHART_ROOM_MIN.
-        self.chart = QualityChart(verdict_text, is_rejected)
+        self.chart = QualityChart(verdict_text, is_rejected, shown=self.night_on)
         self.chart.point_clicked.connect(self.select_from_chart)
         self.chart_panel = ChartPanel(self.chart)
         preview_side = QWidget()
@@ -620,13 +642,14 @@ class FrameBrowser(QWidget):
         """Show a freshly graded list with its first kept frame previewed, so
         the preview is never an empty panel after a grade (spec 2026-09-28
         §2.6). Hand-made ticks are forgotten: they belonged to the previous
-        list.
+        list. Every night starts ticked: the unticked ones belonged to it too.
 
         Show resets to All first (fix round 1, Ruling R3): `_first_to_preview`
         reads through the CURRENT filter, so a re-grade taken while Show was
         Rejected would preview the first REJECTED frame instead of the first
         kept one. `refresh_verdicts` (a rejudge, e.g. Strictness) must NOT do
         this — it leaves Show and the cursor exactly where the user left them."""
+        self._nights_off = set()
         self.model.set_frames(stats)
         self.chart.set_frames(stats)
         self.set_show(SHOW_ALL)
@@ -716,8 +739,43 @@ class FrameBrowser(QWidget):
 
     def checked_frames(self) -> list:
         """What the stack reads. A locked frame is left out even if something
-        set `included` on it behind the model's back."""
-        return [s for s in self.model.frames() if s.included and not _locked(s)]
+        set `included` on it behind the model's back, and so is every frame
+        of a night he has unticked."""
+        return [s for s in self.model.frames()
+                if s.included and not _locked(s) and self.night_on(s)]
+
+    # --- nights (spec 2026-09-28 §9.2) ---
+    def night_on(self, s) -> bool:
+        """In a ticked night. A stacked master belongs to no night — its
+        DATE-OBS is when it was stacked — and is in no count anyway."""
+        return is_master(s) or night_key(s) not in self._nights_off
+
+    def nights_off(self) -> set:
+        return set(self._nights_off)
+
+    def set_night_on(self, key, on: bool) -> None:
+        """Tick a night in or out: its rows, its counts, its points on the
+        chart and its frames in the stack go or come back together. Nothing
+        is written to its frames."""
+        if (key not in self._nights_off) == on:
+            return
+        if on:
+            self._nights_off.discard(key)
+        else:
+            self._nights_off.add(key)
+        self.proxy.set_extra_filter(self.night_on)
+        self._update_show_counts()
+        self.chart.refresh()
+        if self.current_row() < 0:
+            # Nothing previewed — every night was off, and one is back: its
+            # first kept frame, as after a grade, not an empty panel. (A
+            # night going takes the cursor with it only to a neighbour: Qt
+            # moves the current row to one still listed.)
+            first = self._first_to_preview()
+            if first >= 0:
+                self.set_current_row(first)
+        self.nights_changed.emit()
+        self.selection_changed.emit()
 
     @property
     def user_touched(self) -> set[int]:
@@ -737,14 +795,17 @@ class FrameBrowser(QWidget):
         self.model.set_ticked(self._visible_rows(), False)
 
     def reset_to_suggested(self) -> None:
-        self.model.revert_to_verdicts()
+        """Only the ticked nights: an unticked night is out of sight, and
+        his ticks inside it wait for it to come back."""
+        self.model.revert_to_verdicts(self.night_on)
 
     def set_show(self, mode: str) -> None:
         self.proxy.set_show(mode)
         self._show_buttons[mode].setChecked(True)
 
     def _update_show_counts(self) -> None:
-        stats = [s for s in self.model.frames() if not is_left_out(s)]
+        stats = [s for s in self.model.frames()
+                 if not is_left_out(s) and self.night_on(s)]
         rejected = sum(1 for s in stats if is_rejected(s))
         counts = {SHOW_ALL: len(stats), SHOW_KEPT: len(stats) - rejected,
                   SHOW_REJECTED: rejected}
@@ -796,8 +857,8 @@ class FrameBrowser(QWidget):
     def select_from_chart(self, row: int) -> None:
         """A click on the chart: that frame, in the list. If Show hides it,
         Show goes to All first — a click that selected nothing would read as
-        a broken chart. (Delivery C's night toggles hide through the extra
-        filter; C must lift that too.)"""
+        a broken chart. An unticked night hides its rows too, but its points
+        are not drawn (QualityChart's `shown`), so no click can land on one."""
         if not self.proxy.mapFromSource(self.model.index(row, COL_TIME)).isValid():
             self.set_show(SHOW_ALL)
         self.set_current_row(row)
@@ -857,23 +918,57 @@ class FrameBrowser(QWidget):
         self.selection_changed.emit()
 
     # --- width ---
-    def list_natural_width(self) -> int:
-        """What the visible columns need, plus the frame and a scrollbar."""
+    def _verdict_min_width(self) -> int:
+        """The narrowest Verdict may ever be (Ruling R1): its own header, bold,
+        and the shortest live verdicts, in the actual current font — not the
+        font a headless test happens to run under — plus VERDICT_WIDTH_MARGIN."""
+        header_font = QFont(self.view.horizontalHeader().font())
+        header_font.setBold(True)
+        header_w = QFontMetrics(header_font).horizontalAdvance(HEADERS[COL_VERDICT])
+        cell_fm = self.view.fontMetrics()
+        words_w = max(cell_fm.horizontalAdvance(w) for w in VERDICT_MIN_WORDS)
+        return max(header_w, words_w) + VERDICT_WIDTH_MARGIN
+
+    def _other_columns_width(self) -> int:
+        """Every visible column except Verdict, at what it needs — the same
+        measure `list_natural_width` uses for them."""
         hdr = self.view.horizontalHeader()
         total = 0
         for col in range(len(HEADERS)):
-            if self.view.isColumnHidden(col):
+            if col == COL_VERDICT or self.view.isColumnHidden(col):
                 continue
             total += max(self.view.sizeHintForColumn(col), hdr.sectionSizeHint(col))
+        return total
+
+    def list_natural_width(self) -> int:
+        """What the visible columns need, plus the frame and a scrollbar."""
+        total = self._other_columns_width()
+        if not self.view.isColumnHidden(COL_VERDICT):
+            total += max(self.view.sizeHintForColumn(COL_VERDICT),
+                        self.view.horizontalHeader().sectionSizeHint(COL_VERDICT))
         return (total + self.view.verticalScrollBar().sizeHint().width()
                 + 2 * self.view.frameWidth())
 
+    def _list_floor_width(self) -> int:
+        """The least the list may be given, whatever LIST_MAX_SHARE caps it
+        to: every other column at its own need, plus Verdict's floor. Below
+        this, Qt's Stretch column absorbs the shortfall and Verdict is what
+        gives (Ruling R1) — this is what stops that, at the cost of the cap
+        when the two disagree."""
+        return (self._other_columns_width() + self._verdict_min_width()
+                + self.view.verticalScrollBar().sizeHint().width()
+                + 2 * self.view.frameWidth())
+
     def fit_list(self) -> None:
-        """Give the list what its columns need, capped, and the preview the rest."""
+        """Give the list what its columns need, capped, and the preview the
+        rest — except never less than `_list_floor_width` (Ruling R1): the cap
+        exists to keep the preview the larger half, not to starve Verdict
+        below what its header and shortest verdicts need."""
         total = sum(self.splitter.sizes()) or self.splitter.width()
         if total <= 0:
             return
         want = min(self.list_natural_width(), int(total * LIST_MAX_SHARE))
+        want = max(want, self._list_floor_width())
         self.splitter.setSizes([want, total - want])
 
     def set_bigger_preview(self, on: bool) -> None:

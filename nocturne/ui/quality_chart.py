@@ -87,10 +87,14 @@ class QualityChart(QWidget):
     points_changed = Signal()            # after every refresh: ChartPanel shows or hides
 
     def __init__(self, describe: Callable[[object], str],
-                 is_rejected: Callable[[object], bool], parent=None) -> None:
+                 is_rejected: Callable[[object], bool],
+                 shown: Callable[[object], bool] | None = None, parent=None) -> None:
         super().__init__(parent)
         self._describe = describe
         self._is_rejected = is_rejected
+        # Which frames are drawn at all: an unticked night is left out
+        # (spec 2026-09-28 §9.2, §9.5), and the axis closes up behind it.
+        self._shown = shown or (lambda _s: True)
         self._stats: list = []
         self._rows: list[int] = []
         self._x: list[float] = []
@@ -107,7 +111,7 @@ class QualityChart(QWidget):
 
     def refresh(self) -> None:
         """Re-read the list: after a grade, a re-judge, or frames moved."""
-        rows = [i for i, s in enumerate(self._stats) if plottable(s)]
+        rows = [i for i, s in enumerate(self._stats) if plottable(s) and self._shown(s)]
         # One frame without a time and the whole axis is file-name order: a
         # half-timed axis would put the timeless frames somewhere false.
         self._timed = all(self._stats[i].captured is not None for i in rows)

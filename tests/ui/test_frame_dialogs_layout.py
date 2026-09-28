@@ -9,10 +9,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication, QFormLayout, QProxyStyle, QStyle, QStyleFactory
 
 from nocturne.settings import Settings
 from nocturne.stacking.grade import FrameStats
+from nocturne.ui import frame_browser as fb
 from nocturne.ui.frame_browser import COL_VERDICT
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui.option_band import WrappedNote
@@ -470,6 +472,44 @@ def test_every_column_is_on_screen_verdict_included(qtbot, cls, size):
     qtbot.waitUntil(lambda: _verdict_on_screen(d), timeout=2000)
     lst, pv = d.browser.splitter.sizes()
     assert pv > lst
+
+
+def _verdict_floor(d) -> int:
+    """The width Ruling R1 (2026-09-28) requires: Verdict's own header, bold,
+    and the shortest live verdicts, in the CURRENT font — never a value
+    trusted from whatever font a test happens to run under (offscreen's runs
+    narrower than cocoa's, which is what let this ship: his real-window
+    screenshot read "/erdic" in the header and "Soft …" in a cell) — plus the
+    same margin the fix itself budgets (VERDICT_WIDTH_MARGIN) for what raw
+    text-advance doesn't count: cell/header insets and the room Qt reserves
+    before it elides. Without the margin, Qt's own untouched sizeHintForColumn
+    already clears the bare fontMetrics number most of the time — this is
+    the width the FIX promises, not the width that happens to survive by
+    accident."""
+    hdr = d.browser.view.horizontalHeader()
+    header_font = QFont(hdr.font())
+    header_font.setBold(True)
+    needed_header = QFontMetrics(header_font).horizontalAdvance("Verdict")
+    cell_fm = d.browser.view.fontMetrics()
+    needed_words = max(cell_fm.horizontalAdvance(w)
+                       for w in ("Soft stars", "Trailed", "Few stars", "OK"))
+    return max(needed_header, needed_words) + fb.VERDICT_WIDTH_MARGIN
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (800, 800)])
+def test_the_verdict_column_fits_its_header_and_the_short_reasons(qtbot, size):
+    """Ruling R1 (2026-09-28). At 1280 the cap never bites (this is the size
+    the other layout tests in this file use); 800 is the dialog's own
+    `minimumWidth` (test_stack_dialog.py) — the narrowest a real window
+    reaches, and where a session with nothing to say but "OK" already showed
+    the squeeze: 58 px offscreen against the 82 this floor requires,
+    unmutated, before the fix (Ruling R1's real screenshot was that gap's
+    cocoa equivalent, only worse)."""
+    d = _open(qtbot, StackDialog, size)
+    d._on_graded(_uniform_session())
+    qtbot.wait(20)
+    hdr = d.browser.view.horizontalHeader()
+    assert hdr.sectionSize(COL_VERDICT) >= _verdict_floor(d)
 
 
 @pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
