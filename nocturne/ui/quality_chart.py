@@ -217,7 +217,12 @@ class QualityChart(QWidget):
             seen.add(text)
             y = min(max(self._y(v, r, lo, hi) - _AXIS_LABEL_H / 2, 0.0),
                     self.height() - _BOTTOM - _AXIS_LABEL_H)
-            out.append((QRectF(0.0, y, _LEFT - 4.0, _AXIS_LABEL_H), text))
+            # M1 (final fix wave, 2026-09-28): the first kept frame sits at
+            # the plot's own left edge (_LEFT), and Task 2's auto-preview
+            # rings it after every grade -- so a label box reaching all the
+            # way to _LEFT - 4 put the ring's own radius through the text.
+            # End short of the ring instead.
+            out.append((QRectF(0.0, y, _LEFT - RING_RADIUS - 2.0, _AXIS_LABEL_H), text))
         return out
 
     def time_labels(self) -> list[tuple[QRectF, str]]:
@@ -351,4 +356,10 @@ class ChartPanel(QWidget):
         self.setVisible(has)
         self.chart.setVisible(has and not self._folded)
         self.fold_btn.setText(SHOW_TEXT if self._folded else HIDE_TEXT)
-        self.caption.setText(note_html(self.chart.note()))
+        note = self.chart.note()
+        if self._folded:
+            # M7 (final fix wave, 2026-09-28): folded, the dots themselves
+            # are not drawn — the "● rejected" legend describing them was
+            # left dangling with nothing on screen to point at.
+            note = note.split(" — ")[0]
+        self.caption.setText(note_html(note))

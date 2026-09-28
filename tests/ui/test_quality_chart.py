@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt, QThreadPool
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThreadPool
 from PySide6.QtGui import QColor, QHelpEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QToolTip
 
@@ -192,6 +192,22 @@ def test_the_caption_bullet_is_amber_not_grey(qtbot):
         assert found
     finally:
         app.setStyleSheet(before)
+
+
+def test_folding_the_chart_drops_the_dangling_rejected_legend(qtbot):
+    """M7 (final fix wave, 2026-09-28): folded, the dots are not drawn at
+    all — "— ● rejected" then describes nothing on screen. Unfolding must
+    bring it straight back."""
+    b = _shown(qtbot, _night())
+    panel = b.chart_panel
+    assert "●" in panel.caption.text() and "rejected" in panel.caption.text()
+    panel.fold_btn.click()
+    assert panel.is_folded()
+    assert "●" not in panel.caption.text() and "rejected" not in panel.caption.text()
+    assert "FWHM" in panel.caption.text(), "folded away the whole caption, not just the legend"
+    panel.fold_btn.click()
+    assert not panel.is_folded()
+    assert "●" in panel.caption.text() and "rejected" in panel.caption.text()
 
 
 def test_the_current_frame_is_ringed(qtbot):
@@ -469,6 +485,26 @@ def test_labels_never_collide_or_leave_the_chart(qtbot, width, n):
         assert r.top() >= 0 and r.bottom() <= b.chart.height(), (width, r)
         for other in rects[i + 1:]:
             assert not r.intersects(other), (width, r, other)
+
+
+def test_the_current_frame_ring_does_not_cover_its_own_fwhm_label(qtbot):
+    """M1: the first kept frame sits at the plot's own left edge, and Task
+    2's auto-preview rings the current frame after every grade -- so if that
+    first frame is also the softest or sharpest (drawing a label), the ring
+    drawn on top of it must not strike through the label."""
+    stats = [_frame(0, 0, fwhm=3.5), _frame(1, 10), _frame(2, 20), _frame(3, 30)]
+    b = _shown(qtbot, stats)
+    b.set_current_row(0)
+    chart = b.chart
+    pos = chart.point_pos(0)
+    assert pos is not None
+    assert pos.x() == pytest.approx(chart._plot_rect().left()), "fixture drifted off the left edge"
+    ring = QRectF(pos.x() - RING_RADIUS, pos.y() - RING_RADIUS,
+                 2 * RING_RADIUS, 2 * RING_RADIUS)
+    labels = chart.fwhm_labels()
+    assert labels, "fixture lost its FWHM label"
+    for rect, text in labels:
+        assert not rect.intersects(ring), (rect, text, ring)
 
 
 def test_2500_frames_paint_quickly(qtbot):
