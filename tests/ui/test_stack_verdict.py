@@ -1,5 +1,6 @@
-"""The night's verdict over Stack's frame list (spec 2026-09-27 decision 6;
-stack-layout mockup A: above the list, in its column). Stack only."""
+"""The night's verdict (spec 2026-09-27 decision 6), as one row of labelled
+facts across the dialog over the chart (spec 2026-09-28 §2.4, layout C).
+Stack only."""
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -11,7 +12,8 @@ from nocturne.settings import Settings
 from nocturne.stacking.grade import FrameStats, judge
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
 from nocturne.ui.stack_dialog import StackDialog
-from nocturne.ui.verdict_strip import MORE_TEXT, VerdictStrip, move_label
+from nocturne.stacking.verdict import Verdict
+from nocturne.ui.verdict_strip import MORE_TEXT, VerdictStrip, fact_html, move_label
 
 T0 = datetime(2026, 9, 21, 20, 0, tzinfo=timezone.utc)
 S30_CARDS = {"FOCALLEN": 160.0, "XPIXSZ": 2.9, "XBINNING": 1}
@@ -83,26 +85,32 @@ def test_hidden_until_graded(qtbot, tmp_path):
     d._on_graded(_night(tmp_path))
     assert not d.verdict_strip.isHidden()
     assert d.verdict_strip.headline.text() == "Good night."
-    assert d.verdict_strip.details.text() == (
+    assert d.verdict_strip.details_text() == (
         "10 of 12 frames kept (2 of 2 minutes). Rejected: 2 soft. "
         "Stars: FWHM 2.5 px.")
+    assert d.verdict_strip.fact_pairs() == [("Kept", "10 of 12 · 2 of 2 min"),
+                                            ("Rejected", "2 soft"),
+                                            ("Stars", "FWHM 2.5 px")]
+    assert [l.text() for l in d.verdict_strip.fact_labels] == [
+        fact_html(*pair) for pair in d.verdict_strip.fact_pairs()]
+    assert d.verdict_strip.fact_labels[0].toolTip() == "10 of 12 frames kept (2 of 2 minutes)."
 
 
 def test_the_star_size_comes_from_the_subs_own_header(qtbot, tmp_path):
     d, _ = _dialog(qtbot)
     d._on_graded(_night(tmp_path, cards=S30_CARDS))
     assert d._pixel_scale == pytest.approx(3.7385, abs=1e-3)
-    assert "Stars about 9″ across (FWHM 2.5 px)." in d.verdict_strip.details.text()
+    assert "Stars about 9″ across (FWHM 2.5 px)." in d.verdict_strip.details_text()
 
 
 def test_strictness_rewrites_the_verdict_but_a_tick_does_not(qtbot, tmp_path):
     d, _ = _dialog(qtbot)
     d._on_graded(_night(tmp_path))
     d.strictness_box.setCurrentText("Relaxed")
-    assert d.verdict_strip.details.text().startswith("12 of 12 frames kept")
-    before = d.verdict_strip.details.text()
+    assert d.verdict_strip.details_text().startswith("12 of 12 frames kept")
+    before = d.verdict_strip.details_text()
     d.browser.set_checked(0, False)
-    assert d.verdict_strip.details.text() == before, "a hand tick changed the night's verdict"
+    assert d.verdict_strip.details_text() == before, "a hand tick changed the night's verdict"
     assert d.status.text().startswith("Keeping 11 of 12")
 
 
@@ -178,7 +186,7 @@ def test_a_screen_too_short_even_folded_keeps_only_the_headline(qtbot, tmp_path)
     d._on_graded(_night(tmp_path))
     qtbot.wait(50)
     s = d.verdict_strip
-    assert s.is_compact() and not s.details.isVisible() and s.more_btn.isVisible()
+    assert s.is_compact() and not s.details_shown() and s.more_btn.isVisible()
     assert s.more_btn.text() == MORE_TEXT
     assert s.headline.toolTip().startswith("Good night. 10 of 12 frames kept")
     assert d.height() <= room, f"{d.height()} px on a {room} px screen"
@@ -194,7 +202,7 @@ def test_details_asked_for_stay_open_and_the_window_stays_on_screen(qtbot, tmp_p
     d._on_graded(_night(tmp_path))
     d.verdict_strip.more_btn.click()
     qtbot.wait(50)
-    assert not d.verdict_strip.is_compact() and d.verdict_strip.details.isVisible()
+    assert not d.verdict_strip.is_compact() and d.verdict_strip.details_shown()
     d._keep_on_screen()
     qtbot.wait(50)
     assert not d.verdict_strip.is_compact(), "folded again behind the user's back"
@@ -208,4 +216,87 @@ def test_a_roomy_screen_shows_the_whole_verdict(qtbot, tmp_path):
     qtbot.waitExposed(d)
     d._on_graded(_night(tmp_path))
     assert not d.verdict_strip.is_compact()
-    assert d.verdict_strip.details.isVisible() and not d.verdict_strip.more_btn.isVisible()
+    assert d.verdict_strip.details_shown() and not d.verdict_strip.more_btn.isVisible()
+
+# --- labelled facts in one row, wrapping into labelled lines (spec §2.4, §8) ---
+
+LONG = Verdict(
+    "Good night, but trailing after 00:13.",
+    ("316 of 420 frames kept (53 of 70 minutes).", "Rejected: 87 trailed · 17 soft.",
+     "5 are already stacked masters, left out.", "Stars about 9″ across (FWHM 2.3 px).",
+     "Background brightened towards the end (moon or twilight?)."),
+    (("Kept", "316 of 420 · 53 of 70 min"), ("Rejected", "87 trailed · 17 soft"),
+     ("Masters", "5 left out"), ("Stars", "about 9″ (FWHM 2.3 px)"),
+     ("Trend", "Background brightened towards the end (moon or twilight?)")))
+
+
+def _strip(qtbot, width):
+    s = VerdictStrip()
+    qtbot.addWidget(s)
+    s.set_verdict(LONG)
+    s.set_move_count(104)
+    s.resize(width, 200)
+    s.show()
+    qtbot.waitExposed(s)
+    return s
+
+
+def _lines(s):
+    return sorted({w.mapTo(s, w.rect().topLeft()).y()
+                   for w in [s.headline] + s.fact_labels if not w.isHidden()})
+
+
+def _whole_and_labelled(s, qtbot):
+    """Every fact is one labelled unit on one line; the box shows all lines."""
+    line = s.fontMetrics().height()
+    for label, pair in zip(s.fact_labels, LONG.facts):
+        assert label.text() == fact_html(*pair)
+        assert not label.wordWrap() and label.height() < 2 * line, "a fact broke in two"
+    box = s.facts_box
+    qtbot.waitUntil(lambda: box.height() >= box.flow.heightForWidth(box.width()),
+                    timeout=2000)
+
+
+def test_a_wide_strip_is_one_row_with_move_at_its_right_end(qtbot):
+    s = _strip(qtbot, 2400)
+    qtbot.waitUntil(lambda: len(_lines(s)) == 1, timeout=2000)
+    move_left = s.move_btn.mapTo(s, s.move_btn.rect().topLeft()).x()
+    assert s.move_btn.mapTo(s, s.move_btn.rect().topRight()).x() >= s.width() - 12
+    assert all(l.mapTo(s, l.rect().topRight()).x() < move_left for l in s.fact_labels)
+    _whole_and_labelled(s, qtbot)
+
+
+def test_a_narrow_strip_wraps_whole_facts_never_a_paragraph(qtbot):
+    wide = _strip(qtbot, 2400)
+    qtbot.waitUntil(lambda: len(_lines(wide)) == 1, timeout=2000)
+    one_line = wide.minimumSizeHint().height()
+    s = _strip(qtbot, 600)
+    qtbot.waitUntil(lambda: len(_lines(s)) >= 2, timeout=2000)
+    _whole_and_labelled(s, qtbot)
+    # What StackDialog._settled_minimum_height reads: the wrapped lines count.
+    qtbot.waitUntil(lambda: s.minimumSizeHint().height() > one_line, timeout=2000)
+
+
+def test_folded_to_its_headline_the_strip_is_one_line(qtbot):
+    s = _strip(qtbot, 600)
+    s.set_compact(True)
+    assert not s.details_shown() and s.more_btn.isVisible()
+    qtbot.waitUntil(lambda: len(_lines(s)) == 1, timeout=2000)
+    s.more_btn.click()
+    assert s.details_shown() and not s.is_compact()
+
+
+@pytest.mark.parametrize("width", [800, 1280])
+def test_in_the_dialog_the_facts_wrap_into_labelled_lines(qtbot, tmp_path, width):
+    """Spec §8, at 1280 and at the dialog's narrowest: with both buttons and
+    his longest kind of verdict, the facts wrap whole and nothing is clipped."""
+    d, _ = _dialog(qtbot)
+    d.resize(width, 800)
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_graded(_night(tmp_path))
+    d.verdict_strip.set_verdict(LONG)
+    d.verdict_strip.set_back_count(3)
+    s = d.verdict_strip
+    qtbot.waitUntil(lambda: len(_lines(s)) >= 2, timeout=2000)
+    _whole_and_labelled(s, qtbot)

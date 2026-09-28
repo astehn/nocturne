@@ -175,7 +175,8 @@ def test_stack_fits_the_1280x800_laptop_with_the_help_on(qtbot):
     panel = d.browser.chart_panel
     assert panel.is_folded() and panel.isVisible() and not d.browser.chart.isVisible()
     assert _chart_within_dialog(d, panel)
-    assert not d.verdict_strip.isHidden()
+    # The one-row strip (spec 2026-09-28 §2.4) fits whole at the floor.
+    assert not d.verdict_strip.isHidden() and not d.verdict_strip.is_compact()
 
     kept, _ = _fit_at_740(qtbot, _uniform_session())
     assert not kept.verdict_strip.move_btn.isVisible(), "fixture rejected a frame"

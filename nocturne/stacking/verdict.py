@@ -11,7 +11,7 @@ is about 9″ — set by the pixels and the optics, not the atmosphere.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, tzinfo
 from statistics import median
 from typing import Iterable, Sequence
@@ -111,13 +111,36 @@ _TOO_FEW = ("Too few kept to stack — Stack needs at least 3; you can tick "
 ONLY_MASTERS_HEADLINE = "Only stacked masters here."
 
 
+# The labels of the strip's facts (spec 2026-09-28 §2.4: "the verdict as one
+# row of labelled facts"). One per kind of detail line.
+LABEL_KEPT = "Kept"
+LABEL_REJECTED = "Rejected"
+LABEL_STARS = "Stars"
+LABEL_NOTE = "Note"                # too few kept to stack
+LABEL_UNMEASURED = "Unmeasured"
+LABEL_MASTERS = "Masters"
+LABEL_TREND = "Trend"
+LABEL_ALSO = "Also"                # a second late cluster
+LABEL_NOT_COUNTED = "Not counted"  # stack_dialog's frames still in rejected/
+
+
 @dataclass(frozen=True)
 class Verdict:
     headline: str
     details: tuple[str, ...] = ()
+    # The same lines as `details`, one (label, value) pair each and in the
+    # same order, for the strip's labelled row. Built beside each sentence,
+    # never split out of it. Left out of ==, so the golden sentences keep
+    # testing exactly what they tested.
+    facts: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
     def text(self) -> str:
         return " ".join((self.headline, *self.details))
+
+    def with_line(self, detail: str, label: str, value: str) -> "Verdict":
+        """One more line, as a sentence and as a fact."""
+        return Verdict(self.headline, self.details + (detail,),
+                       self.facts + ((label, value),))
 
 
 # --- the pixel scale -----------------------------------------------------------
@@ -206,6 +229,15 @@ def late_clusters(stats) -> list[tuple[str, datetime, int]]:
     return found
 
 
+def _kept_fact(usable, kept) -> str:
+    """"316 of 420 · 53 of 70 min" — the mockup's Kept fact."""
+    text = f"{len(kept)} of {len(usable)}"
+    all_s = sum(s.exposure for s in usable)
+    if all_s > 0:
+        text += f" · {_minutes(sum(s.exposure for s in kept))} of {_minutes(all_s)} min"
+    return text
+
+
 def _kept_line(usable, kept) -> str:
     n = len(usable)
     text = f"{len(kept)} of {n} {'frame' if n == 1 else 'frames'} kept"
@@ -217,28 +249,39 @@ def _kept_line(usable, kept) -> str:
     return text + "."
 
 
-def _rejected_line(usable) -> str:
+def _rejected_fact(usable) -> str:
+    """"87 trailed · 17 soft", largest first; "" when nothing was rejected."""
     counts: dict[str, int] = {}
     for s in usable:
         if s.reason:
             key = s.reason_code if s.reason_code in REASON_WORDS else "other"
             counts[key] = counts.get(key, 0) + 1
-    if not counts:
-        return ""
     order = list(_REASON_ORDER) + ["other"]
     parts = sorted(counts.items(), key=lambda kv: (-kv[1], order.index(kv[0])))
-    return ("Rejected: "
-            + " · ".join(f"{n} {REASON_WORDS.get(k, 'other')}" for k, n in parts) + ".")
+    return " · ".join(f"{n} {REASON_WORDS.get(k, 'other')}" for k, n in parts)
 
 
-def _star_size_line(frames, scale) -> str:
+def _rejected_line(usable) -> str:
+    fact = _rejected_fact(usable)
+    return f"Rejected: {fact}." if fact else ""
+
+
+def _star_fwhm(frames) -> float | None:
     fwhms = [s.fwhm for s in frames if s.star_count > 0 and s.fwhm > 0]
-    if not fwhms:
-        return ""
-    f = float(median(fwhms))
+    return float(median(fwhms)) if fwhms else None
+
+
+def _star_size_line(f: float, scale) -> str:
     if scale and scale > 0:
         return f"Stars about {f * scale:.0f}″ across (FWHM {f:.1f} px)."
     return f"Stars: FWHM {f:.1f} px."
+
+
+def _star_size_fact(f: float, scale) -> str:
+    """"about 9″ (FWHM 2.3 px)", or "FWHM 2.3 px" without the optics."""
+    if scale and scale > 0:
+        return f"about {f * scale:.0f}″ (FWHM {f:.1f} px)"
+    return f"FWHM {f:.1f} px"
 
 
 def _trend_lines(stats) -> list[str]:
@@ -286,32 +329,43 @@ def build_verdict(stats: Sequence[FrameStats], pixel_scale: float | None = None,
     kept = [s for s in usable if not s.reason]
     clusters = late_clusters(usable) if len(usable) >= JUDGE_MIN else []
     details: list[str] = []
+    facts: list[tuple[str, str]] = []
+
+    def line(detail: str, label: str, value: str) -> None:
+        details.append(detail)
+        facts.append((label, value))
+
     if usable:
-        details.append(_kept_line(usable, kept))
+        line(_kept_line(usable, kept), LABEL_KEPT, _kept_fact(usable, kept))
         rejected = _rejected_line(usable)
         if rejected:
-            details.append(rejected)
+            line(rejected, LABEL_REJECTED, _rejected_fact(usable))
         if len(kept) < STACK_MIN:
-            details.append(_TOO_FEW)
+            line(_TOO_FEW, LABEL_NOTE, _TOO_FEW.rstrip("."))
     # Not literally unreadable: the MilkyWay cases traced back to sep's pixel
     # buffer overflowing on very bright frames, which load fine — "measured"
     # is the honest word, matching grade.REASON_MEASURE.
     unmeasured = sum(1 for s in stats if s.error and not is_master(s))
     masters = sum(1 for s in stats if is_master(s))
     if unmeasured:
-        details.append(f"{unmeasured} could not be measured.")
+        line(f"{unmeasured} could not be measured.", LABEL_UNMEASURED,
+             f"{unmeasured} {'frame' if unmeasured == 1 else 'frames'}")
     if masters:
-        details.append(f"{masters} "
-                       + ("is an already stacked master" if masters == 1
-                          else "are already stacked masters") + ", left out.")
+        line(f"{masters} "
+             + ("is an already stacked master" if masters == 1
+                else "are already stacked masters") + ", left out.",
+             LABEL_MASTERS, f"{masters} left out")
     if usable:
-        size = _star_size_line(kept or usable, pixel_scale)
-        if size:
-            details.append(size)
-        details.extend(_trend_lines(usable))
+        f = _star_fwhm(kept or usable)
+        if f is not None:
+            line(_star_size_line(f, pixel_scale), LABEL_STARS,
+                 _star_size_fact(f, pixel_scale))
+        for trend in _trend_lines(usable):
+            line(trend, LABEL_TREND, trend.rstrip("."))
         for code, when, _n in clusters[1:]:
             words = CLUSTER_WORDS[code]
-            details.append(f"{words[0].upper()}{words[1:]} after {_clock(when, tz)}.")
+            also = f"{words[0].upper()}{words[1:]} after {_clock(when, tz)}"
+            line(also + ".", LABEL_ALSO, also)
     headline = (ONLY_MASTERS_HEADLINE if masters and not usable and not unmeasured
                 else _headline(usable, kept, clusters, tz))
-    return Verdict(headline, tuple(details))
+    return Verdict(headline, tuple(details), tuple(facts))

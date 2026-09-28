@@ -1745,6 +1745,9 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
         assert f"<b>{word}</b>" in b and f'"{word}"' in v, word
     assert "not a measure of the seeing" in b
     assert f"<b>{verdict_strip.MORE_TEXT}</b>" in b
+    from nocturne.stacking import verdict as vd
+    for label in (vd.LABEL_KEPT, vd.LABEL_REJECTED, vd.LABEL_STARS):
+        assert f"<b>{label}</b>" in b, label
     # the chart
     assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
     assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME

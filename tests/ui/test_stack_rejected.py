@@ -494,10 +494,10 @@ def test_m2_a_frame_deleted_from_rejected_by_hand_updates_the_verdict(qtbot, tmp
     folder, _paths = _folder(tmp_path)
     d, _ = _graded(qtbot, folder)
     d.verdict_strip.move_btn.click()
-    assert "4 of 6" in d.verdict_strip.details.text()
+    assert "4 of 6" in d.verdict_strip.details_text()
     os.unlink(folder / "rejected" / "Light_01.fit")     # gone, not just moved back
     d.verdict_strip.back_btn.click()
-    assert "4 of 5" in d.verdict_strip.details.text(), (
+    assert "4 of 5" in d.verdict_strip.details_text(), (
         "the verdict kept counting the frame remove_frames dropped")
 
 
@@ -512,10 +512,10 @@ def test_i1_reopened_verdict_says_how_many_are_still_in_rejected(qtbot, tmp_path
     d1.close()
     d2, _ = _graded(qtbot, folder)                   # reopen: 4 listed at top
     assert ("2 more frames are in rejected/ and are not counted here."
-            in d2.verdict_strip.details.text())
+            in d2.verdict_strip.details_text())
     d2.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
-    assert "more frame" not in d2.verdict_strip.details.text()
+    assert "more frame" not in d2.verdict_strip.details_text()
 
 
 def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
@@ -530,7 +530,7 @@ def test_i1_singular_wording_for_exactly_one(qtbot, tmp_path):
     d1.close()
     d2, _ = _graded(qtbot, folder)
     assert ("1 more frame is in rejected/ and is not counted here."
-            in d2.verdict_strip.details.text())
+            in d2.verdict_strip.details_text())
 
 
 def test_new1_same_session_move_does_not_claim_listed_frames_are_uncounted(
@@ -547,7 +547,7 @@ def test_new1_same_session_move_does_not_claim_listed_frames_are_uncounted(
     d, _ = _graded(qtbot, folder)
     d.verdict_strip.move_btn.click()          # Light_01, Light_03 -> rejected/
     d.strictness_box.setCurrentText("Strict")
-    details = d.verdict_strip.details.text()
+    details = d.verdict_strip.details_text()
     assert "Rejected: 2 soft" in details, "fixture lost its moved, listed rejects"
     assert "more frame" not in details, (
         "claimed frames it just counted as rejected were also not counted")

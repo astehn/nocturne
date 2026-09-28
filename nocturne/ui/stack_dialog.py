@@ -18,7 +18,7 @@ from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
 from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
-from ..stacking.verdict import Verdict, build_verdict, read_pixel_scale
+from ..stacking.verdict import LABEL_NOT_COUNTED, build_verdict, read_pixel_scale
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
@@ -1032,7 +1032,8 @@ class StackDialog(QDialog):
                 note = (f"{back} more frame is in rejected/ and is not counted here."
                         if back == 1 else
                         f"{back} more frames are in rejected/ and are not counted here.")
-                verdict = Verdict(verdict.headline, verdict.details + (note,))
+                verdict = verdict.with_line(note, LABEL_NOT_COUNTED,
+                                            f"{back} more in rejected/")
         self.verdict_strip.set_verdict(verdict)
 
     # --- the rejected folder (spec decision 7, §5) ---
