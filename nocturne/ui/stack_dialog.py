@@ -22,6 +22,7 @@ from ..stacking.verdict import Verdict, build_verdict, read_pixel_scale
 from . import file_dialogs, theme
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .quality_chart import CHART_ROOM_MIN
 from .verdict_strip import VerdictStrip
 from .worker import run_async
 
@@ -182,10 +183,16 @@ class StackDialog(QDialog):
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
 
-        # The night's verdict, over the list in its column (spec decision 6,
-        # mockup A). Stack only: Ha/OIII has none in delivery B.
+        # The chart's fold: his saved choice (quality_chart_folded, shared
+        # with Ha/OIII), and one more step of _keep_on_screen's.
+        self.browser.chart_panel.set_folded(
+            bool(getattr(settings, "quality_chart_folded", False)))
+        self.browser.chart_panel.folded_changed.connect(self._on_chart_folded)
+
+        # The night's verdict, over the chart across the full width (spec
+        # 2026-09-28 §2.4, layout C). Stack only: Ha/OIII has none.
         self.verdict_strip = VerdictStrip()
-        self.browser.add_above_list(self.verdict_strip)
+        self.browser.add_above_chart(self.verdict_strip)
         self.verdict_strip.expanded.connect(
             lambda: self._keep_on_screen() if self._fitted else None)
         self._pixel_scale: float | None = None
@@ -620,6 +627,14 @@ class StackDialog(QDialog):
         if self._fitted:
             self._keep_on_screen()
 
+    # --- the chart's fold ---
+    def _on_chart_folded(self, folded: bool) -> None:
+        # Only his click reaches here; the screen's fold emits nothing.
+        self._settings.quality_chart_folded = folded
+        self._persist_settings()
+        if self._fitted:
+            self._keep_on_screen()
+
     def _options_summary(self) -> str:
         """The folded band in one line, e.g. "Normal selection · Sigma-clipped,
         medium rejection · full frame · Drizzle ×2"."""
@@ -706,9 +721,10 @@ class StackDialog(QDialog):
 
     def _keep_on_screen(self) -> bool:
         """Fold what the screen cannot hold and bring the window back down;
-        True when it folded something. Help first, then the option band —
-        both for THIS window only, never saved, and never once the user has
-        toggled either here. The height clamp after them always runs."""
+        True when it folded something. Help first, then the option band, then
+        the chart, then the verdict's details — each for THIS window only,
+        never saved, and never once the user has toggled it here. The height
+        clamp after them always runs."""
         squeezed = False
         if not self._user_laid_out:
             room = self._available_height()
@@ -726,6 +742,16 @@ class StackDialog(QDialog):
                 self.options_band.set_folded(True)
                 self.options_band.blockSignals(False)
                 self._apply_hints_visible()    # blocked, so the link is told here
+                needed = self._natural_minimum_height()
+                squeezed = True
+            # Still too tall — or a laptop-height screen, where the list and the
+            # preview need the rows more (CHART_ROOM_MIN; spec 2026-09-28 §8:
+            # it starts folded at 740 px): the chart, for this window only.
+            # "▸ Show chart" brings it back, and then the screen leaves it be.
+            panel = self.browser.chart_panel
+            if ((needed > room or room < CHART_ROOM_MIN)
+                    and not panel.is_folded() and not panel.user_set()):
+                panel.set_folded(True)
                 needed = self._natural_minimum_height()
                 squeezed = True
             # Still too tall: the verdict down to its headline, for this window

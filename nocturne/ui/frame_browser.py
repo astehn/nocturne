@@ -26,7 +26,7 @@ from ..stacking.grade import is_left_out, is_master
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
-from .quality_chart import QualityChart
+from .quality_chart import ChartPanel, QualityChart
 
 # Round and Bg left the list (spec 2026-09-28 §2.6): they repeated what the
 # Verdict already says, and Bg read to three decimals. Both are in every
@@ -487,7 +487,8 @@ class GripSplitter(QSplitter):
 
 
 class FrameBrowser(QWidget):
-    """List (left) + preview (right) behind one grip, with Show/Select/sort.
+    """The chart across the full width, then Show/Select, then the list (left)
+    and the preview (right) behind one grip (spec 2026-09-28 §2.4-2.6).
 
     Rows in this class's API are SOURCE rows — indices into the host's list —
     whatever the view's current sort or filter.
@@ -571,17 +572,18 @@ class FrameBrowser(QWidget):
         head.addWidget(self.bigger_btn)
 
         list_side = QWidget()
-        self.list_layout = QVBoxLayout(list_side)   # delivery B adds its chart here
+        self.list_layout = QVBoxLayout(list_side)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.addWidget(self.view, 1)
-        # FWHM over the session (spec decision 4.6), under the list in both
-        # dialogs. Fixed height: the list is the stretch and gives it up. The
-        # list column's floor stays far under the preview's (56 + 60 against
-        # 250 px, measured offscreen 2026-09-27), so neither dialog's minimum
-        # height moves and the 1280×800 floor holds.
+        # FWHM over the session, across the whole width above Show/Select, in
+        # both dialogs (spec 2026-09-28 §2.4: at 730 × 60 px under the list it
+        # was "too small to be useful"). ONE chart class; this browser owns
+        # the instance, so a click on a point drives the list directly. It now
+        # adds its height to the dialog's (the list column no longer hides it),
+        # which is why it folds on a short screen: see CHART_ROOM_MIN.
         self.chart = QualityChart(verdict_text, is_rejected)
         self.chart.point_clicked.connect(self.select_from_chart)
-        self.list_layout.addWidget(self.chart)
+        self.chart_panel = ChartPanel(self.chart)
         preview_side = QWidget()
         pv = QVBoxLayout(preview_side)
         pv.setContentsMargins(0, 0, 0, 0)
@@ -600,6 +602,7 @@ class FrameBrowser(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.chart_panel)
         root.addLayout(show_row)
         root.addWidget(self.splitter, 1)
         self._sizes_before_bigger: list[int] | None = None
@@ -699,10 +702,10 @@ class FrameBrowser(QWidget):
         self._update_show_counts()
         self.chart.refresh()
 
-    def add_above_list(self, widget: QWidget) -> None:
-        """A host's own strip over the list, in the list's column: Stack's
-        night verdict (spec decision 6). Not built in: Ha/OIII has none."""
-        self.list_layout.insertWidget(0, widget)
+    def add_above_chart(self, widget: QWidget) -> None:
+        """A host's own row over the chart, across the full width: Stack's
+        night verdict (spec 2026-09-28 §2.4). Not built in: Ha/OIII has none."""
+        self.layout().insertWidget(0, widget)
 
     def frames(self) -> list:
         return self.model.frames()

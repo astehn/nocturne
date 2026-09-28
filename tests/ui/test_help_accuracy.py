@@ -1749,6 +1749,9 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
     assert "amber" in b and quality_chart.REJECTED_COLOUR == theme.WARNING
     assert "file-name order" in b and "file-name order" in quality_chart.NOTE_NO_TIME
     assert "drawn short" in b and "GAP_CAP" in _src("nocturne/ui/quality_chart.py")
+    for words in (quality_chart.HIDE_TEXT, quality_chart.SHOW_TEXT):
+        assert f"<b>{words}</b>" in b, words
+    assert "Under the list" not in b and "above the list" in b
     # the rejected folder
     assert f"<b>{verdict_strip.move_label(7).replace('7', 'N')}</b>" in b
     assert f"<b>{verdict_strip.BACK_TEXT}</b>" in b
@@ -1764,7 +1767,7 @@ def test_stacking_help_describes_the_verdict_the_chart_and_the_rejected_folder()
 
 def test_haoiii_help_mentions_the_chart_it_now_has():
     b = _body("haoiii")
-    assert "chart under the list" in b and "<b>FWHM</b>" in b
+    assert "chart above the list" in b and "<b>FWHM</b>" in b
     assert "self.chart = QualityChart(" in _src("nocturne/ui/frame_browser.py")
     assert "FrameBrowser(" in _src("nocturne/ui/haoiii_dialog.py")
 

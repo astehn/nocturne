@@ -116,16 +116,21 @@ def test_a_folder_with_no_subs_hides_the_verdict(qtbot, tmp_path):
     assert d.verdict_strip.isHidden()
 
 
-def test_the_strip_sits_above_the_list_in_its_column(qtbot, tmp_path):
+def test_the_strip_sits_over_the_chart_across_the_dialog(qtbot, tmp_path):
+    """Layout C (spec 2026-09-28 §2.4): the night band — verdict, then chart —
+    across the full width, above Show/Select and the list."""
     d, _ = _dialog(qtbot)
     d.resize(1280, 800)
     d.show()
     qtbot.waitExposed(d)
     d._on_graded(_night(tmp_path))
     b = d.browser
-    assert b.list_layout.indexOf(d.verdict_strip) == 0
-    assert b.splitter.widget(0).isAncestorOf(d.verdict_strip)
-    qtbot.waitUntil(lambda: _top(d, d.verdict_strip) < _top(d, b.view), timeout=2000)
+    assert b.layout().indexOf(d.verdict_strip) == 0
+    assert b.layout().indexOf(b.chart_panel) == 1
+    assert not b.splitter.isAncestorOf(d.verdict_strip)
+    qtbot.waitUntil(lambda: _top(d, d.verdict_strip) < _top(d, b.chart_panel)
+                    < _top(d, b.view), timeout=2000)
+    assert d.verdict_strip.width() >= b.width() - 1
 
 
 def test_the_strip_never_widens_the_list(qtbot, tmp_path):
@@ -157,6 +162,8 @@ def _minimum_all_folded_graded(qtbot, folder) -> int:
     d.show()
     qtbot.waitExposed(d)
     d._on_graded(_night(folder))
+    # These rooms are under CHART_ROOM_MIN, where the chart starts folded.
+    d.browser.chart_panel.set_folded(True)
     need = d._settled_minimum_height()
     d.close()
     return need

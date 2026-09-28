@@ -15,6 +15,7 @@ from ..stacking.grade import ONLY_MASTERS, grade_frames, is_left_out, judge, ord
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
+from .quality_chart import CHART_ROOM_MIN
 from .worker import run_async
 from . import file_dialogs
 
@@ -142,6 +143,11 @@ class HaOIIIDialog(QDialog):
         self.preview = self.browser.preview
         self._preview_ctl = self.browser.preview_controller
 
+        # The chart's fold, shared with Stack (quality_chart_folded).
+        self.browser.chart_panel.set_folded(
+            bool(getattr(settings, "quality_chart_folded", False)))
+        self.browser.chart_panel.folded_changed.connect(self._on_chart_folded)
+
         self.progress = QProgressBar()
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -198,14 +204,48 @@ class HaOIIIDialog(QDialog):
         root.addWidget(self.status)
         root.addLayout(buttons)
 
-    # --- the option band's fold ---
+    # --- the option band's and the chart's folds ---
     def _on_options_folded(self, folded: bool) -> None:
         self._settings.frame_options_folded = folded
+        self._persist_settings()
+
+    def _on_chart_folded(self, folded: bool) -> None:
+        self._settings.quality_chart_folded = folded
+        self._persist_settings()
+
+    def _persist_settings(self) -> None:
         if self._on_settings_changed is not None:
             try:
                 self._on_settings_changed()
             except OSError:
                 pass      # a preference that will not save is not worth a dialog
+
+    # --- the screen ---
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._fit_chart()
+
+    def _fit_chart(self) -> None:
+        """Ha/OIII's one screen fold: the chart, on Stack's terms (spec
+        2026-09-28 §2.4) — below CHART_ROOM_MIN, or when the dialog would not
+        fit, and never once he has clicked the fold here. For this window
+        only: nothing is saved."""
+        panel = self.browser.chart_panel
+        if panel.is_folded() or panel.user_set():
+            return
+        room = self._available_height()
+        if room < CHART_ROOM_MIN or self.minimumSizeHint().height() > room:
+            panel.set_folded(True)
+
+    def _available_height(self) -> int:
+        """Usable screen height, as Stack measures it; its own method so a
+        test can shrink the screen."""
+        from PySide6.QtGui import QGuiApplication
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return 1 << 20
+        return screen.availableGeometry().height() - 60
 
     def _options_summary(self) -> str:
         parts = [f"{self.strictness_box.currentText()} selection",
@@ -298,6 +338,8 @@ class HaOIIIDialog(QDialog):
         judge(stats, self.strictness_box.currentText().lower())
         self.browser.set_frames(stats)
         self.status.setText(self._graded_line())
+        if self.isVisible():
+            self._fit_chart()        # the grade is what makes the chart appear
 
     def _rejudge(self, _text=None) -> None:
         """Strictness is a threshold on statistics already measured, so it costs

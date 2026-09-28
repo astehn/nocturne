@@ -17,9 +17,11 @@ from nocturne.stacking.grade import REASON_MEASURE, FrameStats, judge
 from nocturne.ui import theme
 from nocturne.ui.frame_browser import SHOW_ALL, SHOW_KEPT, FrameBrowser, verdict_text
 from nocturne.ui.haoiii_dialog import HaOIIIDialog
-from nocturne.ui.quality_chart import (CHART_HEIGHT, KEPT_COLOUR, NOTE_NO_TIME,
-                                       NOTE_TIME, REJECTED_COLOUR, RING_RADIUS,
-                                       QualityChart)
+from nocturne.ui import quality_chart as qc
+from nocturne.ui.quality_chart import (CHART_HEIGHT, CHART_ROOM_MIN, HIDE_TEXT,
+                                       KEPT_COLOUR, NOTE_NO_TIME, NOTE_TIME,
+                                       REJECTED_COLOUR, RING_RADIUS, SHOW_TEXT,
+                                       ChartPanel, QualityChart)
 from nocturne.ui.stack_dialog import StackDialog
 from nocturne.ui.theme import build_stylesheet
 
@@ -73,13 +75,17 @@ def _close(a: QColor, hex_colour: str, tol=40) -> bool:
 
 # --- where it lives -----------------------------------------------------------
 
-def test_the_chart_sits_under_the_list(qtbot):
+def test_the_chart_spans_the_browser_above_the_show_bar(qtbot):
+    """Spec 2026-09-28 §2.4: out of the list's column, across the full width,
+    above Show/Select — about 70 px of plot under its caption line."""
     b = _shown(qtbot, _night())
-    lay = b.list_layout
-    assert lay.indexOf(b.chart) > lay.indexOf(b.view)
-    assert b.chart.height() == CHART_HEIGHT
-    view_bottom = b.view.mapTo(b, b.view.rect().bottomLeft()).y()
-    assert b.chart.mapTo(b, b.chart.rect().topLeft()).y() > view_bottom
+    assert isinstance(b.chart_panel, ChartPanel) and b.chart_panel.chart is b.chart
+    assert b.layout().indexOf(b.chart_panel) == 0
+    assert not b.splitter.isAncestorOf(b.chart)
+    assert CHART_HEIGHT == 70 and b.chart.height() == CHART_HEIGHT
+    assert b.chart.width() >= b.width() - 1
+    view_top = b.view.mapTo(b, b.view.rect().topLeft()).y()
+    assert b.chart.mapTo(b, b.chart.rect().bottomLeft()).y() < view_top
 
 
 @pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
@@ -169,18 +175,19 @@ def test_the_caption_bullet_is_amber_not_grey(qtbot):
     """Fix round 1 (Ruling R5): the note reads "...— ● rejected" — the ●
     must be REJECTED_COLOUR, not the caption's own TEXT_DIM grey, or the
     legend describes the wrong colour for the dots the chart actually
-    paints. Rendered under the real stylesheet, as the app would show it."""
+    paints. The caption is ChartPanel's label now (spec 2026-09-28 §2.4);
+    rendered under the real stylesheet, as the app would show it."""
     app = QApplication.instance()
     before = app.styleSheet()
     app.setStyleSheet(build_stylesheet())
     try:
         b = _shown(qtbot, _night())
-        img = b.chart.grab().toImage()
-        # The caption text sits in y 1..15; rows 2..12 are inside its ink but
-        # clear of a softest-frame dot's anti-aliased top edge, which can
-        # bleed up to y~15 when it sits right under the caption.
+        cap = b.chart_panel.caption
+        assert cap.text() == qc.note_html(NOTE_TIME)
+        assert f'color:{REJECTED_COLOUR}">●</span>' in cap.text()
+        img = cap.grab().toImage()
         found = any(_close(QColor(img.pixel(x, y)), theme.WARNING, tol=60)
-                    for y in range(2, 13) for x in range(min(300, img.width())))
+                    for y in range(img.height()) for x in range(img.width()))
         assert found
     finally:
         app.setStyleSheet(before)
@@ -243,3 +250,200 @@ def test_hovering_names_the_time_the_fwhm_and_the_verdict(qtbot):
                                                b.chart.mapToGlobal(p.toPoint())))
     assert QToolTip.text() == want
     assert b.chart.tooltip_at(QPointF(b.chart.width() - 2, 2)) == ""
+
+
+# --- the fold, the axes, and a big night (spec 2026-09-28 §2.4, §8) ---------
+
+def test_the_fold_hides_the_plot_and_keeps_the_caption_line(qtbot):
+    b = _shown(qtbot, _night())
+    panel = b.chart_panel
+    assert panel.fold_btn.text() == HIDE_TEXT == "▾ Hide chart"
+    seen = []
+    panel.folded_changed.connect(seen.append)
+    panel.fold_btn.click()
+    assert panel.is_folded() and panel.user_set() and seen == [True]
+    assert not b.chart.isVisible() and panel.caption.isVisible()
+    assert panel.fold_btn.text() == SHOW_TEXT == "▸ Show chart"
+    panel.fold_btn.click()
+    assert not panel.is_folded() and b.chart.isVisible() and seen == [True, False]
+
+
+def test_the_dialogs_own_fold_is_not_his(qtbot):
+    b = _shown(qtbot, _night())
+    seen = []
+    b.chart_panel.folded_changed.connect(seen.append)
+    b.chart_panel.set_folded(True)
+    assert b.chart_panel.is_folded() and not b.chart_panel.user_set() and seen == []
+
+
+def test_a_folded_chart_with_no_points_stays_hidden(qtbot):
+    b = _shown(qtbot, [_frame(0, 0)])
+    b.chart_panel.set_folded(True)
+    assert b.chart_panel.isHidden() and b.chart.isHidden()
+
+
+@pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
+def test_his_fold_is_saved_and_the_next_dialog_opens_folded(qtbot, cls):
+    settings = Settings()
+    saves = []
+    d = cls(settings, on_settings_changed=lambda: saves.append(settings.quality_chart_folded))
+    qtbot.addWidget(d)
+    d._available_height = lambda: 4000
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_graded(_night())
+    d.browser.chart_panel.fold_btn.click()
+    assert settings.quality_chart_folded is True and saves[-1] is True
+    other = (HaOIIIDialog if cls is StackDialog else StackDialog)(settings)
+    qtbot.addWidget(other)
+    assert other.browser.chart_panel.is_folded(), "the other dialog forgot the fold"
+
+
+def test_the_chart_fold_reaches_the_apps_settings_file(qtbot, tmp_path):
+    from nocturne.settings import load_settings
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    d = StackDialog(win.settings, win, on_settings_changed=win._save_settings)
+    qtbot.addWidget(d)
+    d._on_graded(_night())
+    d.browser.chart_panel.fold_btn.click()
+    assert load_settings(win._settings_path).quality_chart_folded is True
+
+
+@pytest.mark.parametrize("cls", [StackDialog, HaOIIIDialog])
+def test_the_chart_starts_folded_at_740_and_open_on_a_tall_screen(qtbot, cls):
+    """Spec §8: folded at 740 px of available height — for that window only,
+    the saved choice untouched."""
+    assert CHART_ROOM_MIN > 740
+    for room, folded in ((740, True), (4000, False)):
+        settings = Settings()
+        d = cls(settings)
+        qtbot.addWidget(d)
+        d._available_height = lambda r=room: r
+        d.resize(1280, 700)
+        d.show()
+        qtbot.waitExposed(d)
+        d._on_graded(_night())
+        qtbot.wait(20)
+        assert d.browser.chart_panel.is_folded() is folded, (cls.__name__, room)
+        assert d.browser.chart_panel.isVisible()
+        assert settings.quality_chart_folded is False, "the screen rewrote the preference"
+
+
+def test_show_chart_at_740_stays_open_and_on_screen(qtbot):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: 740
+    d.resize(1280, 700)
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_graded(_night())
+    panel = d.browser.chart_panel
+    assert panel.is_folded()
+    panel.fold_btn.click()
+    qtbot.wait(50)
+    d._keep_on_screen()
+    assert not panel.is_folded(), "folded again behind his back"
+    assert d.height() <= 740
+
+
+def test_on_a_short_screen_the_chart_folds_before_the_verdict(qtbot, monkeypatch):
+    """The fold order (spec §2.4): help → options → chart → verdict details.
+    CHART_ROOM_MIN off, so only the chain decides."""
+    from nocturne.ui import stack_dialog
+    monkeypatch.setattr(stack_dialog, "CHART_ROOM_MIN", 0)
+
+    def need(fold_chart):
+        d = StackDialog(Settings())
+        qtbot.addWidget(d)
+        d._available_height = lambda: 4000
+        d.resize(1280, 700)
+        d.show()
+        qtbot.waitExposed(d)
+        d._on_graded(_night())
+        d.browser.chart_panel.set_folded(fold_chart)
+        n = d._settled_minimum_height()
+        d.close()
+        return n
+
+    open_need, folded_need = need(False), need(True)
+    assert open_need > folded_need + 40, "the chart costs no height?"
+    for room, chart, compact in ((open_need - 1, True, False),
+                                 (folded_need - 1, True, True)):
+        d = StackDialog(Settings())
+        qtbot.addWidget(d)
+        d._available_height = lambda r=room: r
+        d.resize(1280, 700)
+        d.show()
+        qtbot.waitExposed(d)
+        d._on_graded(_night())
+        qtbot.wait(20)
+        assert d.browser.chart_panel.is_folded() is chart, room
+        assert d.verdict_strip.is_compact() is compact, room
+
+
+def _clock(s):
+    return f"{s.captured.astimezone():%H:%M}"
+
+
+def test_the_axes_name_clock_times_and_two_fwhm_values(qtbot):
+    stats = _night()
+    b = _shown(qtbot, stats)
+    times = b.chart.time_labels()
+    assert len(times) >= 2
+    first_by_time = min(stats, key=lambda s: s.captured)
+    last_by_time = max(stats, key=lambda s: s.captured)
+    assert times[0][1] == _clock(first_by_time) and times[-1][1] == _clock(last_by_time)
+    assert [t for _r, t in b.chart.fwhm_labels()] == ["3.0", "2.5"]
+
+
+def test_without_capture_times_there_is_no_time_axis(qtbot):
+    stats = _night()
+    stats[3].captured = None
+    b = _shown(qtbot, stats)
+    assert b.chart.time_labels() == []
+    assert len(b.chart.fwhm_labels()) == 2
+
+
+def _big_night(n=2500):
+    """His IC 1396A session is 2,535 frames; ten seconds apart, a soft one in
+    seven, so a quarter of the points are amber."""
+    stats = []
+    for i in range(n):
+        s = FrameStats(f"/x/L_{i:05d}.fit", 800, 2.4 + 0.3 * (i % 7 == 0) + 0.001 * (i % 13),
+                       0.02, 0.5, True, exposure=10.0)
+        s.captured = T0 + timedelta(seconds=10 * i)
+        stats.append(s)
+    judge(stats, "normal")
+    return stats
+
+
+@pytest.mark.parametrize("n", [3, 2500])
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+def test_labels_never_collide_or_leave_the_chart(qtbot, width, n):
+    """2,500 frames (his biggest session), and 3 — where six evenly spaced
+    targets snap onto the same few frames and would stack on each other."""
+    b = _shown(qtbot, _big_night(n), width=width)
+    labels = b.chart.time_labels() + b.chart.fwhm_labels()
+    rects = [r for r, _t in labels]
+    assert len(b.chart.time_labels()) >= 2
+    for i, r in enumerate(rects):
+        assert r.left() >= 0 and r.right() <= b.chart.width(), (width, r)
+        assert r.top() >= 0 and r.bottom() <= b.chart.height(), (width, r)
+        for other in rects[i + 1:]:
+            assert not r.intersects(other), (width, r, other)
+
+
+def test_2500_frames_paint_quickly(qtbot):
+    """Paint cost at his biggest session: the whole strip, every dot, well
+    under a frame's worth of interaction."""
+    import time
+    b = _shown(qtbot, _big_night(), width=1920)
+    b.chart.grab()                              # warm up fonts and caches
+    t0 = time.perf_counter()
+    for _ in range(5):
+        b.chart.grab()
+    per_paint = (time.perf_counter() - t0) / 5
+    # Measured 6 ms offscreen (2026-09-28, M-series); eight times that is
+    # still a fraction of a frame at the pointer's pace.
+    assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"

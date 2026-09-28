@@ -498,13 +498,14 @@ def test_moved_back_it_can_be_ticked_again(qtbot):
     assert b.is_checked(2)
 
 
-def test_a_host_can_put_its_own_strip_above_the_list(qtbot):
+def test_a_host_can_put_its_own_row_above_the_chart(qtbot):
     b = _shown(qtbot, _session())
     strip = QLabel("verdict")
-    b.add_above_list(strip)
-    assert b.list_layout.indexOf(strip) == 0
+    b.add_above_chart(strip)
+    assert b.layout().indexOf(strip) == 0
     qtbot.waitUntil(lambda: strip.mapTo(b, strip.rect().topLeft()).y()
-                    < b.view.mapTo(b, b.view.rect().topLeft()).y(), timeout=2000)
+                    < b.chart_panel.mapTo(b, b.chart_panel.rect().topLeft()).y(),
+                    timeout=2000)
 
 
 # --- a calmer list (spec 2026-09-28 §2.6) -------------------------------------
