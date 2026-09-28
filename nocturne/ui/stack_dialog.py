@@ -11,14 +11,15 @@ from PySide6.QtWidgets import (
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
 from ..stacking.drizzle_gate import SUITS_SUMMARY
+from ..stacking.capture_time import read_capture_time
 from ..stacking.frames import discover_subs
 from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
                               is_left_out, is_master, judge, order_best_first)
 from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
-from ..stacking.reject_move import (RejectMoveError, describe_names, move_back,
-                                    move_to_rejected, pending_back)
+from ..stacking.reject_move import (REJECTED_DIR, RejectMoveError, describe_names,
+                                    move_back, move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
                                 _minutes, build_session_verdict, build_verdict,
@@ -57,13 +58,14 @@ KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 _OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
 # The status line with every night unticked (spec 2026-09-28 §9.2).
 NO_NIGHT_STATUS = "No night is ticked — tick one under Nights to stack it."
+ADD_FOLDER_TEXT = "Add folder…"
 
 
 class _Signals(QObject):
     progress = Signal(int, int, str)
 
 
-def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
+def _picker_row(edit: QLineEdit, on_browse, *more: QWidget) -> QWidget:
     """The field and its Browse… in one widget, so both can be disabled."""
     row = QWidget()
     lay = QHBoxLayout(row)
@@ -72,6 +74,8 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
     btn = QPushButton("Browse…")
     btn.clicked.connect(on_browse)
     lay.addWidget(btn)
+    for w in more:
+        lay.addWidget(w)
     return row
 
 
@@ -214,6 +218,12 @@ class StackDialog(QDialog):
         # acts on the frames' files must act on their own folder.
         self._grading_folder = ""
         self._graded_folder = ""
+        # Folders added with "Add folder…" (spec 2026-09-28 §9.7), in the order
+        # added; the graded folder is never among them. A new grade forgets
+        # them with the list they were part of.
+        self._added_folders: list[str] = []
+        self._adding_folder: str | None = None      # being measured now
+        self._adding_copies = 0                      # its subs left out as copies
 
         # Moving the unticked frames into <folder>/rejected/ and back (spec
         # decision 7, §5). Never automatic: only these two buttons, and the
@@ -364,7 +374,17 @@ class StackDialog(QDialog):
         # cocoa) whatever the dialog's width, which cut an automatic name like
         # "SH2-108_204x10s_34min.fits" at the left even at 1920. Fill the row.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder))
+        # Subs that live elsewhere — the uncommon case: the Seestar keeps a
+        # target's nights in one folder (spec 2026-09-27 decision 8).
+        self.add_folder_btn = QPushButton(ADD_FOLDER_TEXT)
+        self.add_folder_btn.setToolTip(
+            "Add the subs of another folder — another night of the same target. "
+            "They are listed and stacked with these, and each folder keeps its "
+            "own rejected/.")
+        self.add_folder_btn.clicked.connect(self._browse_add_folder)
+        self.add_folder_btn.setEnabled(False)
+        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder,
+                                                  self.add_folder_btn))
         form.addRow(self.options_band)
         form.addRow(self._help_link)
         self._save_to_row = _picker_row(self.save_to_edit, self._browse_save_to)
@@ -504,6 +524,104 @@ class StackDialog(QDialog):
             self.folder_edit.setText(path)
             self.grade()
 
+    # --- "Add folder…" (spec 2026-09-28 §9.7) ---
+    def _browse_add_folder(self) -> None:
+        start = self._graded_folder or start_dir(self._settings.base_dir)
+        path = file_dialogs.choose_folder(self, "Add the subs of another folder", start)
+        if path:
+            self.add_folder(path)
+
+    def listed_folders(self) -> list[str]:
+        """Every folder whose subs are listed: the graded one, then the added."""
+        return [f for f in [self._graded_folder, *self._added_folders] if f]
+
+    def add_folder(self, folder: str) -> None:
+        """Measure the subs of `folder` and list them with these, without
+        touching a row already listed (his ticks stay, as in Move them back).
+
+        A sub already listed is never listed twice: not by its own path, by
+        a link to it, or as a copy — the same name AND the same capture
+        time. The Seestar names a sub by the second it was taken, so two
+        different subs cannot share both, and a copy stacked twice would
+        count twice. A rejected/ folder is refused: its frames go back with
+        Move them back, never into a stack from there (spec §5)."""
+        if self._busy or not self._stats:
+            return
+        folder = os.path.abspath(os.path.expanduser(folder.strip()))
+        name = os.path.basename(os.path.normpath(folder))
+        if name == REJECTED_DIR:
+            self.status.setText(
+                f"{name}/ holds frames moved out of a stack — Move them back "
+                "returns them to their folder; they are not added from there.")
+            return
+        real = os.path.realpath(folder)
+        if real in {os.path.realpath(f) for f in self.listed_folders()}:
+            self.status.setText(f"The subs in {name} are already listed.")
+            return
+        listed_paths = {os.path.realpath(s.path) for s in self._stats}
+        listed_names = {(os.path.basename(s.path), s.captured) for s in self._stats
+                        if s.captured is not None}
+        paths, copies = [], 0
+        for p in discover_subs(folder):
+            if os.path.realpath(p) in listed_paths:
+                continue
+            if (os.path.basename(p), read_capture_time(p)) in listed_names:
+                copies += 1
+                continue
+            paths.append(p)
+        if not paths:
+            self.status.setText(
+                f"No .fit subs found in {name}." if not copies else
+                f"Every sub in {name} is already listed — the same name and "
+                "capture time as one here.")
+            return
+        self._adding_folder = folder
+        self._adding_copies = copies
+        runner = self._grade_runner
+        strictness = self.strictness_box.currentText().lower()
+
+        def work():
+            return runner(paths, on_progress=lambda i, n, _name:
+                          self._signals.progress.emit(i, n, "grading"),
+                          strictness=strictness)
+
+        self._start(work, self._on_added_graded, f"Measuring the subs in {name}…")
+
+    def _on_added_graded(self, new_stats) -> None:
+        folder, self._adding_folder = self._adding_folder, None
+        self._added_folders.append(folder)
+        self._active_token = None
+        self._set_busy(False)
+        self.browser.add_frames(new_stats)
+        self._stats = self.browser.frames()    # keep in sync — see _move_back
+        # Nights are judged each on their own, so a night the added folder
+        # brings is judged within itself; judge() runs on the merged list
+        # all the same, and refresh_verdicts() restores every hand tick.
+        judge(self._stats, self.strictness_box.currentText().lower())
+        self.browser.refresh_verdicts()
+        if self._pixel_scale is None:
+            self._pixel_scale = read_pixel_scale([s.path for s in new_stats if not s.error])
+        if self._frame_shape is None:
+            self._frame_shape = self._read_frame_shape(new_stats)
+        self.scan_pointings(paths=[s.path for s in self._stats
+                                   if not s.error and not s.moved])
+        self._update_verdict()
+        self._sync_reject_buttons(check_disk=True)
+        self._update_drizzle_note()
+        self._auto_output_path()
+        text = self._selection_summary()
+        copies = self._adding_copies
+        if copies:
+            text += (f" {copies} {'sub' if copies == 1 else 'subs'} in "
+                     f"{os.path.basename(folder)} {'was' if copies == 1 else 'were'} "
+                     "left out: already listed (the same name and capture time).")
+        self.status.setText(text)
+        if self._fitted:
+            # Now, not a frame later from resizeEvent — and, as for Move them
+            # back's merge, never by folding the verdict: he asked for this
+            # (I1). The frame list gives up the height the Nights line takes.
+            self._keep_on_screen(allow_verdict_squeeze=False)
+
     def _browse_save_to(self) -> None:
         """A folder only. The name is left exactly as it was — automatic stays
         automatic — which is the bug this replaced: Browse… used to hand back a
@@ -530,6 +648,7 @@ class StackDialog(QDialog):
         # made mid-stack would record a path the file is not at.
         self._save_to_row.setEnabled(not busy)
         self._name_field.setEnabled(not busy)
+        self.add_folder_btn.setEnabled(not busy and bool(self._stats))
         self.verdict_strip.set_actions_enabled(not busy)
         self._sync_background_availability()
 
@@ -554,7 +673,8 @@ class StackDialog(QDialog):
         if tok is not None:
             tok.cancel()
 
-    def scan_pointings(self, folder: str | None = None) -> None:
+    def scan_pointings(self, folder: str | None = None,
+                       paths: list[str] | None = None) -> None:
         """Notice a mosaic and say so.
 
         Nothing in this dialog distinguished 400 subs of one field from 400
@@ -567,9 +687,10 @@ class StackDialog(QDialog):
         silently reads the Folder field's CURRENT text when that has nothing
         to do with the frames actually being graded.
         """
-        if folder is None:
-            folder = self.folder_edit.text().strip()
-        paths = discover_subs(folder) if folder else []
+        if paths is None:
+            if folder is None:
+                folder = self.folder_edit.text().strip()
+            paths = discover_subs(folder) if folder else []
         panels = discover_panels(read_pointings(paths), 0.56) if paths else []
 
         if len(panels) < 2:
@@ -943,6 +1064,8 @@ class StackDialog(QDialog):
             # folder A's master into B under A's name.
             self._restoring_names = None    # same reason as the busy branch above
             self._stats = []
+            self._added_folders = []
+            self.add_folder_btn.setEnabled(False)
             self._frame_shape = None
             if folder != self._graded_folder:
                 self.verdict_strip.set_message("")      # the last folder's move report
@@ -983,8 +1106,9 @@ class StackDialog(QDialog):
         # re-judge against the knob's current value before painting anything.
         judge(stats, self.strictness_box.currentText().lower())
         self._active_token = None
-        self._set_busy(False)
         self._stats = stats
+        self._added_folders = []            # a new list: its added folders went with the old
+        self._set_busy(False)
         self._frame_shape = self._read_frame_shape(stats)
         folder = self._grading_folder or self.folder_edit.text().strip()
         if folder != self._graded_folder:
@@ -1614,6 +1738,16 @@ class StackDialog(QDialog):
         self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        if self._adding_folder is not None:
+            # Nothing from it was listed; the folder is not one of ours.
+            name = os.path.basename(os.path.normpath(self._adding_folder))
+            self._adding_folder = None
+            self._active_token = None
+            self._set_busy(False)
+            self.status.setText(
+                f"Cancelled — nothing from {name} was added." if isinstance(exc, Cancelled)
+                else f"Could not add {name}: {exc}")
+            return
         if self._restoring_names is not None:
             # A re-grade started by "Move them back" — partial
             # (_grade_restored) or the full grade an all-moved reopen falls

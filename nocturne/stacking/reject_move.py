@@ -85,6 +85,15 @@ class MoveBackResult:
     failed: str = ""                                         # an OSError stopped it part-way
 
 
+def home_folder(path: str) -> str:
+    """The capture folder a sub belongs to: its own folder, or — for one
+    moved into <folder>/rejected/ — the folder rejected/ sits in."""
+    parent = os.path.dirname(os.path.abspath(path))
+    if os.path.basename(parent) == REJECTED_DIR:
+        return os.path.dirname(parent)
+    return parent
+
+
 def describe_names(names, limit: int = 3) -> str:
     names = list(names)
     if len(names) <= limit:

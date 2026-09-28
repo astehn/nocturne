@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
 from ..stacking.capture_time import full_label, time_label
 from ..stacking.grade import is_left_out, is_master
 from ..stacking.nights import night_key
+from ..stacking.reject_move import home_folder
 from . import theme
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
@@ -891,7 +892,12 @@ class FrameBrowser(QWidget):
             self.preview_facts.setToolTip("")
             return
         s = stats[row]
-        self.preview_name.setText(os.path.basename(s.path))
+        name = os.path.basename(s.path)
+        if len({home_folder(x.path) for x in stats}) > 1:
+            # Frames from several folders (Stack's "Add folder…") can share a
+            # name: say whose this one is.
+            name = f"{os.path.basename(home_folder(s.path))}/{name}"
+        self.preview_name.setText(name)
         self.preview_name.setToolTip(s.path)
         if is_left_out(s):
             # A left-out frame's star/FWHM facts are not measurements — do
