@@ -346,7 +346,13 @@ class QualityChart(QWidget):
         pts = self._positions()
         if len(pts) >= 2:
             p.setPen(QPen(QColor(KEPT_COLOUR), 1.0))
-            p.drawPolyline(QPolygonF([q for _i, q in pts]))
+            breaks = {k for k, _label in self._night_starts if k > 0}
+            seg_start = 0
+            for k in range(1, len(pts) + 1):
+                if k == len(pts) or k in breaks:
+                    if k - seg_start >= 2:
+                        p.drawPolyline(QPolygonF([q for _i, q in pts[seg_start:k]]))
+                    seg_start = k
         p.setPen(Qt.PenStyle.NoPen)
         # Rejected last, so a reject is never hidden under a kept neighbour.
         for i, q in sorted(pts, key=lambda t: self._is_rejected(self._stats[t[0]])):

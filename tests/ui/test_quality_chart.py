@@ -650,3 +650,87 @@ def test_the_night_the_clocks_go_back_is_one_night_on_the_chart(qtbot, stockholm
     assert all(later > earlier for earlier, later in zip(xs, xs[1:]))
     assert b.chart.night_lines() == [] and b.chart.date_labels() == []
     assert b.chart.time_labels()[-1][1] == "05:00"
+
+
+# --- fix round 1 (Ruling R5): the FWHM line does not cross a night boundary --
+
+def test_the_fwhm_line_does_not_cross_the_night_boundary(qtbot, stockholm):
+    """A continuous polyline from the last frame of one night to the first
+    of the next would read as a trend between two nights judged separately
+    (Decision 9). The dashed boundary's own column must carry no KEPT_COLOUR
+    pixel: the line breaks there, it doesn't just get drawn under the dash."""
+    b = _shown(qtbot, _nights())
+    (line,) = b.chart.night_lines()
+    img = b.chart.grab().toImage()
+    r = b.chart._plot_rect()
+    column = [QColor(img.pixel(int(line), y)) for y in range(int(r.top()), int(r.bottom()))]
+    assert not any(_close(c, KEPT_COLOUR, tol=50) for c in column), \
+        "the FWHM line is drawn straight through the night boundary"
+
+
+# --- fix round 1 (Ruling R5): several nights, not just his two -------------
+
+def _many_nights(n, per_night=8):
+    """`n` nights of `per_night` frames each, 5 days apart, past his own
+    two-night Sh2-108 folder -- enough to stress the date/time/FWHM
+    collision guards with several dashed boundaries at once."""
+    stats = []
+    idx = 0
+    for night in range(n):
+        base = night * 5 * 24 * 60
+        for j in range(per_night):
+            stats.append(_frame(idx, base + 10 * j))
+            idx += 1
+    return stats
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+@pytest.mark.parametrize("n", [4, 6])
+def test_several_nights_dates_times_and_fwhm_never_collide(qtbot, stockholm, width, n):
+    """4 and 6 nights on one chart: every date, clock time and FWHM label
+    stays inside the chart and none touches another."""
+    b = _shown(qtbot, _many_nights(n), width=width)
+    assert len(b.chart.night_lines()) == n - 1
+    rects = [r for r, _t in b.chart.date_labels() + b.chart.time_labels()
+             + b.chart.fwhm_labels()]
+    assert b.chart.date_labels(), "the fixture must draw dates"
+    for i, r in enumerate(rects):
+        assert r.left() >= 0 and r.right() <= b.chart.width(), (width, n, r)
+        assert r.top() >= 0 and r.bottom() <= b.chart.height(), (width, n, r)
+        for other in rects[i + 1:]:
+            assert not r.intersects(other), (width, n, r, other)
+
+
+def _big_several_nights(n=2500, nights=6):
+    """2,500 frames (his biggest session) split across 6 nights, so the
+    night lines and the now-segmented FWHM polyline are on the same chart
+    the paint-cost measurement uses."""
+    counts = [n // nights] * nights
+    counts[0] += n - sum(counts)
+    stats = []
+    idx = 0
+    for night, count in enumerate(counts):
+        base = night * 5 * 24 * 60 * 60
+        for j in range(count):
+            s = FrameStats(f"/x/L_{idx:05d}.fit", 800,
+                           2.4 + 0.3 * (j % 7 == 0) + 0.001 * (j % 13),
+                           0.02, 0.5, True, exposure=10.0)
+            s.captured = T0 + timedelta(seconds=base + 10 * j)
+            stats.append(s)
+            idx += 1
+    judge(stats, "normal")
+    return stats
+
+
+def test_2500_frames_over_6_nights_paint_quickly(qtbot, stockholm):
+    """The night lines and the segmented FWHM polyline must not turn his
+    biggest session into a slow paint."""
+    import time
+    b = _shown(qtbot, _big_several_nights(), width=1920)
+    assert len(b.chart.night_lines()) == 5
+    b.chart.grab()                              # warm up fonts and caches
+    t0 = time.perf_counter()
+    for _ in range(5):
+        b.chart.grab()
+    per_paint = (time.perf_counter() - t0) / 5
+    assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"
