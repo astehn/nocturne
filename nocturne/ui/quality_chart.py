@@ -22,14 +22,16 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                                QToolTip, QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label
+from ..stacking.nights import night_key, night_label
 from . import theme
 
 # The plot alone; the caption line above it is ChartPanel's.
 CHART_HEIGHT = 70
 # Any gap between two subs is drawn as at most this. His Sh2-108 folder holds
 # two nights — the 21st, and the 26th into the 27th; on a true time axis each
-# night would be a sliver a few pixels wide between days of nothing. Delivery C
-# draws a dashed line where two nights meet.
+# night would be a sliver a few pixels wide between days of nothing. A dashed
+# line in the middle of that squeezed gap says where one night ends and the
+# next begins, with the new night's date beside it (spec 2026-09-28 §9.5).
 GAP_CAP = timedelta(minutes=20)
 KEPT_COLOUR = theme.ACCENT
 # Amber, as the mockup draws it. The list DIMS a rejected row; a dimmed dot on
@@ -100,6 +102,9 @@ class QualityChart(QWidget):
         self._x: list[float] = []
         self._timed = True
         self._current = -1
+        # Where each night starts, as (index into _rows, its date) — empty
+        # unless the plotted frames span two nights or more.
+        self._night_starts: list[tuple[int, str]] = []
         self.setFixedHeight(CHART_HEIGHT)
         # Never widens the dialog: its width is whatever the dialog has.
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -127,8 +132,17 @@ class QualityChart(QWidget):
         span = xs[-1] if len(xs) > 1 and xs[-1] > 0 else 1.0
         self._rows = rows
         self._x = [x / span for x in xs] if rows else []
+        self._night_starts = self._find_night_starts() if self._timed else []
         self.update()
         self.points_changed.emit()
+
+    def _find_night_starts(self) -> list[tuple[int, str]]:
+        keys = [night_key(self._stats[i]) for i in self._rows]
+        starts = [k for k in range(len(keys)) if k == 0 or keys[k] != keys[k - 1]]
+        if len(starts) < 2:
+            return []
+        with_year = len({keys[k].year for k in starts}) > 1
+        return [(k, night_label(keys[k], with_year)) for k in starts]
 
     def point_count(self) -> int:
         return len(self._rows)
@@ -229,15 +243,48 @@ class QualityChart(QWidget):
             out.append((QRectF(0.0, y, _LEFT - RING_RADIUS - 2.0, _AXIS_LABEL_H), text))
         return out
 
+    def night_lines(self) -> list[float]:
+        """The x of each dashed line: halfway across the (squeezed) gap
+        between one night's last frame and the next night's first."""
+        r = self._plot_rect()
+        return [r.left() + (self._x[k - 1] + self._x[k]) / 2 * r.width()
+                for k, _label in self._night_starts if k > 0]
+
+    def date_labels(self) -> list[tuple[QRectF, str]]:
+        """Each night's date in the band under the plot: the first at the
+        plot's left edge, the others just right of their dashed line. They
+        outrank the clock times there (time_labels steps around them). Two
+        that would touch — a night of a few frames is a few pixels wide —
+        keep the date of the wider night, never one drawn over the other."""
+        if not self._night_starts:
+            return []
+        r = self._plot_rect()
+        fm = QFontMetrics(self._axis_font())
+        anchors = [r.left()] + self.night_lines()
+        ends = self.night_lines() + [r.right()]
+        kept: list[tuple[QRectF, str, float]] = []
+        for anchor, end, (_k, text) in zip(anchors, ends, self._night_starts):
+            w = fm.horizontalAdvance(text) + 4.0
+            left = min(anchor + 2.0, self.width() - w)
+            rect = QRectF(left, self.height() - _BOTTOM + 1.0, w, _BOTTOM - 1.0)
+            if kept and left < kept[-1][0].right() + _LABEL_GAP:
+                if end - anchor <= kept[-1][2]:
+                    continue
+                kept.pop()      # the wider night's date wins the place
+            kept.append((rect, text, end - anchor))
+        return [(rect, text) for rect, text, _span in kept]
+
     def time_labels(self) -> list[tuple[QRectF, str]]:
         """A few clock times under the plot, each at a real frame's x. Never
         overlapping and never past either edge, however many frames or however
         narrow the chart: a label that would come within _LABEL_GAP of the one
-        before it is left out. None without capture times."""
+        before it, or of a night's date, is left out. None without capture
+        times."""
         if not self._timed or len(self._rows) < 2:
             return []
         r = self._plot_rect()
         fm = QFontMetrics(self._axis_font())
+        dates = [rect for rect, _t in self.date_labels()]
         want = max(2, min(_TIME_LABELS_MAX, int(r.width() // TIME_LABEL_SPACING) + 1))
         out: list[tuple[QRectF, str]] = []
         last_right = -1e9
@@ -251,6 +298,9 @@ class QualityChart(QWidget):
             cx = r.left() + self._x[i] * r.width()
             left = min(max(cx - w / 2, 0.0), self.width() - w)
             if left < last_right + _LABEL_GAP:
+                continue
+            if any(left < d.right() + _LABEL_GAP and left + w + _LABEL_GAP > d.left()
+                   for d in dates):
                 continue
             out.append((QRectF(left, self.height() - _BOTTOM + 1.0, w, _BOTTOM - 1.0), text))
             last_right = left + w
@@ -287,6 +337,12 @@ class QualityChart(QWidget):
             p.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, text)
         for rect, text in self.time_labels():
             p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        for rect, text in self.date_labels():
+            p.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        r = self._plot_rect()
+        p.setPen(QPen(QColor(AXIS_COLOUR), 1.0, Qt.PenStyle.DashLine))
+        for x in self.night_lines():
+            p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()))
         pts = self._positions()
         if len(pts) >= 2:
             p.setPen(QPen(QColor(KEPT_COLOUR), 1.0))

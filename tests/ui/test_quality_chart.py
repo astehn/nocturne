@@ -520,3 +520,133 @@ def test_2500_frames_paint_quickly(qtbot):
     # Measured 6 ms offscreen (2026-09-28, M-series); eight times that is
     # still a fraction of a frame at the pointer's pace.
     assert per_paint < 0.05, f"{per_paint * 1000:.0f} ms a paint"
+
+
+# --- where one night ends and the next begins (spec 2026-09-28 §9.5) ----------
+
+import time as _time  # noqa: E402
+
+from nocturne.stacking.nights import night_key  # noqa: E402
+
+
+@pytest.fixture
+def stockholm(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Stockholm")
+    _time.tzset()
+    yield
+    monkeypatch.undo()
+    _time.tzset()
+
+
+def _nights(first=6, second=6, later=5 * 24 * 60):
+    """His Sh2-108 in miniature: a night from 22:00 on the 21st, and one from
+    22:00 on the 26th running past midnight."""
+    a = [_frame(i, 10 * i) for i in range(first)]
+    b = [_frame(first + i, later + 20 * i) for i in range(second)]
+    return a + b
+
+
+def test_a_dashed_line_marks_where_the_next_night_starts(qtbot, stockholm):
+    b = _shown(qtbot, _nights())
+    (line,) = b.chart.night_lines()
+    last_of_first = b.chart.point_pos(5).x()
+    first_of_second = b.chart.point_pos(6).x()
+    assert last_of_first < line < first_of_second
+    assert line == pytest.approx((last_of_first + first_of_second) / 2)
+    img = b.chart.grab().toImage()
+    r = b.chart._plot_rect()
+    column = [QColor(img.pixel(int(line), y)) for y in range(int(r.top()), int(r.bottom()))]
+    drawn = sum(1 for c in column if _close(c, qc.AXIS_COLOUR, tol=50))
+    assert drawn >= len(column) // 3, "no dashed line painted there"
+
+
+def test_each_night_is_named_by_its_evening(qtbot, stockholm):
+    b = _shown(qtbot, _nights())
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep", "26 Sep"]
+    (line,) = b.chart.night_lines()
+    assert dates[0][0].left() <= b.chart._plot_rect().left() + 3
+    assert dates[1][0].left() >= line
+
+
+def test_a_night_past_midnight_gets_no_line(qtbot, stockholm):
+    # 22:00 to 02:00 local: one night.
+    stats = [_frame(i, 20 * i) for i in range(13)]
+    b = _shown(qtbot, stats)
+    assert len({night_key(s) for s in stats}) == 1
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+    assert b.chart.time_labels()[0][1] == _clock(stats[0])
+
+
+def test_without_capture_times_there_are_no_nights_to_mark(qtbot):
+    stats = _nights()
+    stats[3].captured = None
+    b = _shown(qtbot, stats)
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+
+
+def test_an_unticked_night_takes_its_line_and_date_with_it(qtbot, stockholm):
+    stats = _nights() + [_frame(20, 10 * 24 * 60 + 10 * i) for i in range(3)]
+    b = _shown(qtbot, stats)
+    assert len(b.chart.night_lines()) == 2
+    b.set_night_on(night_key(stats[6]), False)
+    assert len(b.chart.night_lines()) == 1
+    assert [t for _r, t in b.chart.date_labels()] == ["21 Sep", "1 Oct"]
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+@pytest.mark.parametrize("second", [1, 2, 60])
+def test_dates_and_times_never_collide_or_leave_the_chart(qtbot, stockholm, width, second):
+    """A night of one or two frames squeezed against the right edge, or a
+    long one: every date and clock time on the chart, none touching."""
+    b = _shown(qtbot, _nights(first=60, second=second), width=width)
+    rects = [r for r, _t in b.chart.date_labels() + b.chart.time_labels()
+             + b.chart.fwhm_labels()]
+    assert b.chart.date_labels(), "the fixture must draw dates"
+    for i, r in enumerate(rects):
+        assert r.left() >= 0 and r.right() <= b.chart.width(), (width, r)
+        for other in rects[i + 1:]:
+            assert not r.intersects(other), (width, r, other)
+
+
+def test_haoiii_gets_the_night_lines_too(qtbot, stockholm):
+    """Spec §9.6: the chart is shared, so Ha/OIII draws the lines."""
+    d = HaOIIIDialog(Settings())
+    qtbot.addWidget(d)
+    d.browser.preview_controller.loader = lambda p: np.zeros((8, 8, 3), np.float32)
+    d._on_graded(_nights())
+    assert len(d.browser.chart.night_lines()) == 1
+    assert [t for _r, t in d.browser.chart.date_labels()] == ["21 Sep", "26 Sep"]
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+def test_a_one_frame_night_between_two_long_ones_drops_its_date_not_overlaps(
+        qtbot, stockholm, width):
+    """Between two long nights, a night of one frame is two capped gaps wide
+    — a few pixels. Its line is drawn; its date would sit on the next one's,
+    so it is left out."""
+    stats = (_nights(first=60, second=1)
+             + [_frame(100 + i, 10 * 24 * 60 + 10 * i) for i in range(60)])
+    b = _shown(qtbot, stats, width=width)
+    assert len(b.chart.night_lines()) == 2
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep", "1 Oct"]
+    rects = [r for r, _t in dates]
+    assert not rects[0].intersects(rects[1])
+
+
+def test_the_night_the_clocks_go_back_is_one_night_on_the_chart(qtbot, stockholm):
+    """2026-10-25: 03:00 CEST becomes 02:00 CET, so the local clock runs
+    02:00-03:00 twice. Placed by UTC, every step is forward; one night, no
+    line; the clock labels still read local time."""
+    start = datetime(2026, 10, 24, 20, 0, tzinfo=timezone.utc)      # 22:00 CEST
+    stats = []
+    for i in range(49):                                             # to 04:00 UTC
+        s = _frame(i, None)
+        s.captured = start + timedelta(minutes=10 * i)
+        stats.append(s)
+    b = _shown(qtbot, stats)
+    xs = [x for _row, x in b.chart.plotted()]
+    assert all(later > earlier for earlier, later in zip(xs, xs[1:]))
+    assert b.chart.night_lines() == [] and b.chart.date_labels() == []
+    assert b.chart.time_labels()[-1][1] == "05:00"
