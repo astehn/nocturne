@@ -1797,3 +1797,34 @@ def test_both_topics_say_what_an_unmeasured_frame_shows():
         b = _body(topic)
         assert f"<b>{REASON_MEASURE}</b>" in b, topic
         assert "none of the counts" in b, topic
+
+
+# --- several nights (spec 2026-09-28 §9) ---------------------------------------
+
+def test_stacking_help_describes_nights_as_they_are_built():
+    b = _body("stacking")
+    nights = _src("nocturne/stacking/nights.py")
+    strip = _src("nocturne/ui/verdict_strip.py")
+    assert "noon to noon" in b and "NIGHT_TURNS_AT = 12" in nights
+    assert "<b>Nights</b>" in b and 'NIGHTS_TEXT = "Nights"' in strip
+    assert "<b>No date</b>" in b and 'NO_DATE_LABEL = "No date"' in nights
+    assert "<b>Soft</b>" in b and '"Soft"' in _src("nocturne/stacking/verdict.py")
+    assert "fewer than five frames" in b and "JUDGE_MIN = 5" in _src("nocturne/stacking/grade.py")
+
+
+def test_stacking_help_names_add_folder():
+    b = _body("stacking")
+    assert "<b>Add folder…</b>" in b
+    assert 'ADD_FOLDER_TEXT = "Add folder…"' in _src("nocturne/ui/stack_dialog.py")
+
+
+def test_stacking_help_no_longer_says_a_folder_of_nights_is_judged_as_one():
+    """True until 2026-09-28; each night is graded on its own since."""
+    b = _body("stacking")
+    assert "combined as though it were one — and a night" not in b
+    assert "a whole bad session is not an outlier" not in b
+
+
+def test_haoiii_help_mentions_the_night_lines():
+    b = _body("haoiii")
+    assert "dashed line" in b and "no night chips" in b
