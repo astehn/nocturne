@@ -114,6 +114,7 @@ class VerdictStrip(QFrame):
         nights.addWidget(self.nights_label, 0, Qt.AlignmentFlag.AlignTop)
         nights.addWidget(self.chips_box, 1)
         self.chips: list[QCheckBox] = []
+        self._night_keys: list = []      # keys of self.chips, same order
         self.nights_row.hide()
         col = QVBoxLayout(self)
         col.setContentsMargins(9, 6, 9, 6)
@@ -150,7 +151,26 @@ class VerdictStrip(QFrame):
     def set_nights(self, nights) -> None:
         """One chip per night: (key, text, tooltip, ticked) each. Fewer than
         two nights, no line at all — a one-night folder looks as it always
-        has. Rebuilt quietly: only his click emits night_toggled."""
+        has. Rebuilt quietly: only his click emits night_toggled.
+
+        Ruling R7 (Task 6 fix round 1): when the set of nights itself hasn't
+        changed — a tick, a strictness re-judge, the same folder repainted —
+        the existing chips are updated in place (text, tooltip, checked,
+        signals blocked) instead of being torn down and rebuilt. A keyboard
+        user's focus lives on a specific QCheckBox; deleteLater()ing it on
+        every toggle dropped focus to None and made Tab start over from the
+        top after every Space press. Rebuilt only when the nights themselves
+        differ — added, removed, or reordered."""
+        keys = [n[0] for n in nights]
+        if len(nights) >= 2 and keys == self._night_keys:
+            for chip, (_key, text, tip, ticked) in zip(self.chips, nights):
+                chip.setText(text)
+                chip.setToolTip(tip)
+                chip.blockSignals(True)
+                chip.setChecked(ticked)
+                chip.blockSignals(False)
+            self._sync()
+            return
         flow = self.chips_box.flow
         for chip in self.chips:
             flow.removeWidget(chip)
@@ -165,6 +185,7 @@ class VerdictStrip(QFrame):
                 chip.toggled.connect(lambda on, k=key: self.night_toggled.emit(k, on))
                 flow.addWidget(chip)
                 self.chips.append(chip)
+        self._night_keys = keys if len(nights) >= 2 else []
         self.nights_row.setVisible(bool(self.chips))
         self._sync()
 

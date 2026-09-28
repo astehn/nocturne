@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QCheckBox
 
 from nocturne.settings import Settings
@@ -124,6 +126,45 @@ def test_ticking_it_back_returns_the_night_exactly_as_it_was(qtbot):
     d.verdict_strip.chips[0].click()
     assert _everything(d) == before
     assert [s.included for s in stats] == included
+
+
+def test_space_on_a_focused_chip_toggles_it_without_losing_focus(qtbot):
+    """Ruling R7 (Task 6 fix round 1): set_nights() rebuilt every chip on
+    every call, so a Space press deleteLater()'d the very chip that had
+    focus — a keyboard user had to Tab from the top of the dialog again
+    after every toggle. The set of nights is unchanged here, so the fix
+    updates the existing QCheckBox objects in place instead."""
+    d = _dialog(qtbot, _sh2_108())
+    d.show()
+    qtbot.waitExposed(d)
+    # `activateWindow()`/`raise_()` are no-ops under the offscreen platform
+    # (it implements neither), so `isActiveWindow()` never turns true and
+    # focus never lands — `setActiveWindow` bypasses the platform's window
+    # manager and sets Qt's own notion of the active window directly, which
+    # is what focus tracking actually reads. Deprecated in favour of the
+    # instance method that does not work here; still the documented way to
+    # drive focus under a platform with no real window manager.
+    QApplication.setActiveWindow(d)
+    chip = d.verdict_strip.chips[0]
+    chip.setFocus(Qt.FocusReason.OtherFocusReason)
+    assert QApplication.focusWidget() is chip
+
+    def press_space():
+        down = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space,
+                         Qt.KeyboardModifier.NoModifier)
+        up = QKeyEvent(QEvent.Type.KeyRelease, Qt.Key.Key_Space,
+                       Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(chip, down)
+        QApplication.sendEvent(chip, up)
+
+    press_space()
+    assert not chip.isChecked()
+    assert d.verdict_strip.chips[0] is chip, "the chip was rebuilt, not updated in place"
+    assert QApplication.focusWidget() is chip, "focus was lost after the toggle"
+
+    press_space()
+    assert chip.isChecked()
+    assert QApplication.focusWidget() is chip
 
 
 def test_every_night_unticked_leaves_nothing_to_stack(qtbot, tmp_path):
