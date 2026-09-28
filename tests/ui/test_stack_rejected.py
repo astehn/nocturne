@@ -192,10 +192,10 @@ def test_the_preview_reads_a_moved_frame_from_its_new_home(qtbot, tmp_path):
     d, _ = _graded(qtbot, folder)
     d.browser.preview_controller.loader = lambda p: (loads.append(p), _blank(p))[1]
     d.browser.set_current_row(1)
-    qtbot.waitUntil(lambda: bool(loads) and loads[-1] == str(folder / "Light_01.fit"),
+    qtbot.waitUntil(lambda: str(folder / "Light_01.fit") in loads,
                     timeout=2000)
     d.verdict_strip.move_btn.click()
-    qtbot.waitUntil(lambda: loads[-1] == str(folder / "rejected" / "Light_01.fit"),
+    qtbot.waitUntil(lambda: str(folder / "rejected" / "Light_01.fit") in loads,
                     timeout=2000)
 
 

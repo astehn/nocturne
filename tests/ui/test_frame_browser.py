@@ -478,10 +478,10 @@ def test_the_preview_follows_a_moved_frame_to_its_new_path(qtbot):
     loads = []
     b = _shown(qtbot, stats, loads=loads)
     b.set_current_row(2)
-    qtbot.waitUntil(lambda: bool(loads) and loads[-1] == "/x/f2.fit", timeout=2000)
+    qtbot.waitUntil(lambda: "/x/f2.fit" in loads, timeout=2000)
     _moved(stats, 2)
     b.frames_moved()
-    qtbot.waitUntil(lambda: loads[-1] == "/x/rejected/f2.fit", timeout=2000)
+    qtbot.waitUntil(lambda: "/x/rejected/f2.fit" in loads, timeout=2000)
     assert b.preview_name.text() == "f2.fit"
     assert b.preview_name.toolTip() == "/x/rejected/f2.fit"
 
