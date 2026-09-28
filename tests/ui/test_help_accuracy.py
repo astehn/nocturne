@@ -1620,6 +1620,10 @@ def test_the_stacking_topic_documents_drizzle():
     assert str(g.GOOD_FRAMES) in text, "the comfortable frame count is not stated"
     # And the cost, which is the whole reason it is a choice.
     assert "four times" in text.lower()
+    # The plain-words line and its summary (spec 2026-09-28 §5), by the
+    # words the dialog uses.
+    assert f"<b>{g.SUITS_SUMMARY}</b>" in body
+    assert "green line" not in body
 
 
 def test_no_step_topic_offers_options_its_step_does_not_have():

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
+from ..stacking.drizzle_gate import SUITS_SUMMARY
 from ..stacking.frames import discover_subs
 from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
                               is_left_out, judge, order_best_first)
@@ -107,6 +108,8 @@ class StackDialog(QDialog):
         self._mosaic_runner = run_mosaic    # injectable for tests
         self._stats = []
         self._frame_shape = None
+        # plain_advice's yes, for the folded summary (_options_summary).
+        self._drizzle_suits = False
         self._busy = False
         self._active_token: CancelToken | None = None
         # The output is a folder and a name (spec 2026-09-27 §4). Both follow
@@ -440,28 +443,33 @@ class StackDialog(QDialog):
         return None
 
     def _update_drizzle_note(self) -> None:
-        """Say whether this particular set of subs would benefit.
+        """Say whether this particular set of subs would benefit — yes or no
+        and one plain reason, the measured numbers in the tooltip (spec
+        2026-09-28 §5). Follows the ticks: the gate reads `included`.
 
         Advice, never a block: the gate shipped in 2026-07 with FWHM_MAX = 2.0
         while the S30 Pro sits at about 2.5 px, so it told every user their own
         camera was unsuitable. It is 3.0 now, and it still only advises.
         """
-        from ..stacking.drizzle_gate import drizzle_advice
+        from ..stacking.drizzle_gate import drizzle_advice, plain_advice
         from ..stacking.drizzle_stack import estimate_megabytes, estimate_seconds
         if not self._stats:
+            self._drizzle_suits = False
             self.drizzle_note.setText("")
+            self.drizzle_note.setToolTip("")
+            self.options_band.refresh_summary()
             self._sync_folded_note()
             return
-        advice = drizzle_advice(self._stats)
-        colour = {"recommended": theme.SUCCESS,
-                  "not_recommended": theme.WARNING}.get(advice.level, theme.TEXT_DIM)
+        plain = plain_advice(drizzle_advice(self._stats))
+        self._drizzle_suits = plain.suits
 
         # What it will cost THIS stack, before the button is pressed — Andreas
         # after a 314-frame run: "the user can actually decide for themselves if
         # its worth it prior to actually pressing the button". A generic "10x
-        # longer" does not answer "do I have time for this tonight".
+        # longer" does not answer "do I have time for this tonight". One hover
+        # away now, with the other numbers (spec §5).
         kept = [x for x in self._stats if x.included]
-        text = advice.reason
+        numbers = plain.numbers
         if kept:
             mins = estimate_seconds(len(kept), self._frame_shape) / 60.0
             # "At least", not "about": the constant is calibrated at 60 frames
@@ -469,11 +477,15 @@ class StackDialog(QDialog):
             # every frame and a large set no longer fits the page cache. An
             # estimate that reads low is worse than one that reads honest.
             when = f"{mins:.0f} minutes" if mins >= 1.5 else "a minute"
-            text += (f"  ·  At least {when} for these {len(kept)} frames, "
-                     f"and a master of roughly "
-                     f"{estimate_megabytes(self._frame_shape):.0f} MB.")
-        self.drizzle_note.setText(text)
+            numbers += (f"\nAt least {when} for these {len(kept)} frames, "
+                        f"and a master of roughly "
+                        f"{estimate_megabytes(self._frame_shape):.0f} MB.")
+        self.drizzle_note.setText(plain.text)
+        self.drizzle_note.setToolTip(numbers)
+        # A "no" is advice, not an alarm: dim, not amber.
+        colour = theme.SUCCESS if plain.suits else theme.TEXT_DIM
         self.drizzle_note.setStyleSheet(f"color: {colour};")
+        self.options_band.refresh_summary()
         self._sync_folded_note()
 
     def _browse_folder(self) -> None:
@@ -637,7 +649,8 @@ class StackDialog(QDialog):
 
     def _options_summary(self) -> str:
         """The folded band in one line, e.g. "Normal selection · Sigma-clipped,
-        medium rejection · full frame · Drizzle ×2"."""
+        medium rejection · full frame · Drizzle ×2". Of the drizzle advice it
+        says only "Drizzle suits this stack", or nothing (spec 2026-09-28 §5)."""
         parts = [f"{self.strictness_box.currentText()} selection",
                  (f"Sigma-clipped, {self.kappa_box.currentText().lower()} rejection"
                   if self.sigma_radio.isChecked() else "Average"),
@@ -646,6 +659,8 @@ class StackDialog(QDialog):
             parts.append("mosaic")
         if self.drizzle_check.isChecked():
             parts.append("Drizzle ×2")
+        elif self._drizzle_suits:
+            parts.append(SUITS_SUMMARY)
         return " · ".join(parts)
 
     def _sync_folded_note(self) -> None:
@@ -989,6 +1004,7 @@ class StackDialog(QDialog):
             self.status.setText(self._selection_summary())
             self._auto_output_path()
             self._sync_reject_buttons()
+            self._update_drizzle_note()        # the gate counts ticked frames
 
     def _rejudge(self, _text=None) -> None:
         if not self._stats:
@@ -997,6 +1013,7 @@ class StackDialog(QDialog):
         self.browser.refresh_verdicts()      # a frame ticked by hand keeps its tick
         self._update_verdict()
         self._sync_reject_buttons()
+        self._update_drizzle_note()
         self.status.setText(self._selection_summary())
         self._auto_output_path()
 

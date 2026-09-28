@@ -1956,3 +1956,46 @@ def test_stack_previews_the_first_kept_frame_after_grading(qtbot):
     assert d.browser.current_row() == 1
     qtbot.waitUntil(lambda: d.preview.has_image(), timeout=2000)
     assert d._preview_wanted == "/x/f1.fit"
+
+
+# --- drizzle in plain words (spec 2026-09-28 §5) ------------------------------
+
+def _graded_n(qtbot, n, fwhm=2.5):
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    stats = [FrameStats(f"/x/f{i}.fit", 800, fwhm, 0.02, 0.5, True, exposure=10.0)
+             for i in range(n)]
+    d._on_graded(stats)
+    return d, stats
+
+
+def test_the_drizzle_line_is_plain_and_its_numbers_are_a_hover_away(qtbot):
+    from nocturne.stacking.drizzle_gate import PLAIN_OK
+    d, _ = _graded_n(qtbot, 60)
+    assert d.drizzle_note.text() == PLAIN_OK
+    tip = d.drizzle_note.toolTip()
+    for words in ("FWHM 2.5 px", "60 frames ticked", "At least", "for these 60 frames", "MB"):
+        assert words in tip, words
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text().endswith(" · full frame · Drizzle suits this stack")
+    d.drizzle_check.setChecked(True)
+    assert d.options_band.summary_label.text().endswith(" · full frame · Drizzle ×2")
+
+
+def test_too_few_frames_says_no_and_the_summary_says_nothing(qtbot):
+    d, _ = _graded_n(qtbot, 12)
+    assert d.drizzle_note.text() == (
+        "Not suitable for Drizzle: too few frames (12; it needs at least 20).")
+    d.options_band.set_folded(True)
+    assert "Drizzle" not in d.options_band.summary_label.text()
+
+
+def test_the_drizzle_line_follows_the_ticks(qtbot):
+    d, _ = _graded_n(qtbot, 21)
+    d.options_band.set_folded(True)
+    assert d.options_band.summary_label.text().endswith("Drizzle suits this stack")
+    d.browser.set_checked(0, False)
+    d.browser.set_checked(1, False)
+    assert d.drizzle_note.text() == (
+        "Not suitable for Drizzle: too few frames (19; it needs at least 20).")
+    assert "Drizzle" not in d.options_band.summary_label.text()
