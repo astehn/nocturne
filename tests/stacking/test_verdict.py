@@ -415,6 +415,38 @@ def test_his_sh2_108_reads_one_good_night_one_soft_one():
     assert session_headline([soft, sharp]) == "One good night, one soft one."
 
 
+def test_two_soft_nights_against_a_third_sharp_one():
+    """T3: the reviewer's own repro (edges.py #2), pinned on its own — not
+    only as the setup for the untick regression below."""
+    sharp = _n(20, fwhm=2.0)
+    soft_a = _n(20, fwhm=2.6, start=EVE_2)
+    soft_b = _n(20, fwhm=2.7, start=EVE_2 + timedelta(days=2))
+    assert night_classes([sharp, soft_a, soft_b]) == [NIGHT_GOOD, NIGHT_SOFT, NIGHT_SOFT]
+    assert session_headline([sharp, soft_a, soft_b]) == "One good night, two soft ones."
+
+
+def test_the_headline_cannot_contradict_the_chips_after_unticking_the_sharpest():
+    """I1 (final review, 2026-09-28): a chip is judged against ALL nights
+    (plan decision 7), so it never changes its word when another night is
+    unticked. The headline must agree: passed the ticked nights' classes,
+    already judged against the fuller set, it may not re-pick "the
+    sharpest" from what is left and call two Soft nights Good."""
+    sharp = _n(20, fwhm=2.0)
+    soft_a = _n(20, fwhm=2.6, start=EVE_2)
+    soft_b = _n(20, fwhm=2.7, start=EVE_2 + timedelta(days=2))
+    all_nights = [sharp, soft_a, soft_b]
+    classes = night_classes(all_nights)
+    ticked, ticked_classes = all_nights[1:], classes[1:]
+    assert ticked_classes == [NIGHT_SOFT, NIGHT_SOFT]          # the chips' own words
+    counted = [s for night in ticked for s in night]
+    v = build_session_verdict(counted, ticked, classes=ticked_classes)
+    assert v.headline == "Two soft nights."
+    # The bug this guards: recomputing from only the ticked nights re-picks
+    # 2.6 px as "the sharpest" and calls both nights Good — contradicting the
+    # chips, which still say Soft.
+    assert session_headline(ticked) == "Two good nights."
+
+
 def test_soft_starts_at_the_grading_floor_not_before():
     base = _n(20, fwhm=2.0)
     assert night_classes([base, _n(20, fwhm=2.28, start=EVE_2)])[1] == NIGHT_GOOD

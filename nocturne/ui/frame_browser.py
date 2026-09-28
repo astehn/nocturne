@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout,
                                QTableView, QToolButton, QVBoxLayout, QWidget)
 
 from ..stacking.capture_time import full_label, time_label
-from ..stacking.grade import is_left_out, is_master
+from ..stacking.grade import (REASON_CLOUDS, REASON_SOFT, REASON_TRAILED,
+                              is_left_out, is_master)
 from ..stacking.nights import night_key
 from ..stacking.reject_move import home_folder
 from . import theme
@@ -76,7 +77,18 @@ LIST_MAX_SHARE = 0.45
 # floor is measured live with fontMetrics rather than trusted from whatever
 # font happens to be active, plus a margin for what raw text-advance doesn't
 # count: cell/header insets and the room Qt reserves before it elides.
-VERDICT_MIN_WORDS = ("Soft stars", "Trailed", "Few stars", "OK")
+#
+# Ruling R4 (final review, 2026-09-28) was not applied first time: these must
+# be the real prefixes the Verdict cell shows, taken from grade.py's own
+# REASON_* strings rather than hand-typed — a hand-typed "Trailed" does not
+# occur anywhere in the cell (the real text is "Stars trailed"), so at the
+# floor it used to read "Stars trail…", mid-word. REASON_CLOUDS carries its
+# clause after an em dash ("Few stars — clouds or trailing"); only the part
+# before it is a word boundary worth guaranteeing. "OK" has no REASON_*
+# constant of its own — it is verdict_text()'s own fallback literal.
+VERDICT_MIN_WORDS = (REASON_SOFT, REASON_TRAILED,
+                     REASON_CLOUDS.split(" — ")[0], "OK")
+# 24 px, not measured; to be checked in Andreas's real window (Ruling R4).
 VERDICT_WIDTH_MARGIN = 24
 
 
@@ -708,12 +720,19 @@ class FrameBrowser(QWidget):
         """Merge newly graded frames in without touching what is already
         listed — Show, counts and chart pick up the addition; the preview and
         current row are untouched since nothing about the EXISTING rows
-        moved."""
+        moved.
+
+        The header IS refreshed (m1, final review 2026-09-28): once a second
+        folder is listed, the preview name gains a "folder/" prefix
+        (`_display`'s multi-folder check), but that only ran the next time
+        the current row changed — the current frame's own name sat bare
+        until he happened to move the cursor."""
         if not new_stats:
             return
         self.model.add_frames(new_stats)
         self._update_show_counts()
         self.chart.refresh()
+        self._update_preview_header(self.current_row())
 
     def remove_frames(self, predicate) -> None:
         """Drop rows `predicate(stat)` accepts. MUST be followed by
@@ -775,6 +794,13 @@ class FrameBrowser(QWidget):
             first = self._first_to_preview()
             if first >= 0:
                 self.set_current_row(first)
+        # m2 (final review, 2026-09-28): the row above moves the CURSOR, but
+        # Qt leaves the scroll offset where it was — unticking the night the
+        # cursor was in could leave the previewed frame off-screen, above or
+        # below the visible rows. Follow it, whichever path moved it.
+        idx = self.view.currentIndex()
+        if idx.isValid():
+            self.view.scrollTo(idx)
         self.nights_changed.emit()
         self.selection_changed.emit()
 

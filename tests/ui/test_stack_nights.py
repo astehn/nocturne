@@ -13,7 +13,7 @@ from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QCheckBox
 
 from nocturne.settings import Settings
-from nocturne.stacking.grade import FrameStats, judge
+from nocturne.stacking.grade import REASON_NOT_RAW, FrameStats, judge
 from nocturne.stacking.verdict import NO_NIGHT_HEADLINE
 from nocturne.ui import theme
 from nocturne.ui.frame_browser import SHOW_ALL, SHOW_KEPT, SHOW_REJECTED
@@ -98,6 +98,28 @@ def test_two_nights_get_a_chip_each_and_a_headline_that_compares_them(qtbot):
     assert s.fact_pairs()[0] == ("Kept", "58 of 59 · 10 of 10 min")
 
 
+def test_the_headline_agrees_with_the_chips_after_unticking_the_sharpest_night(qtbot):
+    """I1 (final review, 2026-09-28): a chip's word never changes when
+    another night is unticked — it is judged against ALL nights (plan
+    decision 7) — so the headline must agree with it rather than re-picking
+    "the sharpest" from only what is left ticked."""
+    sharp = _frames([2.0] * 20, EVE_21, "a")
+    soft_a = _frames([2.6] * 20, EVE_26, "b")
+    soft_b = _frames([2.7] * 20, datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc), "c")
+    stats = sharp + soft_a + soft_b
+    judge(stats, "normal")
+    d = _dialog(qtbot, stats)
+    s = d.verdict_strip
+    words = lambda: [c.text().split(" · ")[0] for c in s.chips]
+    assert words() == ["21 Sep Good", "26 Sep Soft", "1 Oct Soft"]
+    assert s.headline.text() == "One good night, two soft ones."
+    s.chips[0].click()                       # untick the sharpest (21 Sep)
+    assert words() == ["21 Sep Good", "26 Sep Soft", "1 Oct Soft"], \
+        "a chip must not change its word when another night is unticked"
+    assert s.headline.text() == "Two soft nights.", \
+        "the headline must not re-pick a new 'sharpest' from what's left ticked"
+
+
 def test_unticking_a_night_takes_it_out_of_every_count(qtbot):
     stats = _sh2_108()
     d = _dialog(qtbot, stats)
@@ -167,6 +189,32 @@ def test_space_on_a_focused_chip_toggles_it_without_losing_focus(qtbot):
     assert QApplication.focusWidget() is chip
 
 
+def _master(captured):
+    m = FrameStats("/x/master.fits", 0, 0.0, 0.0, 0.0, False, reason_code="not_raw",
+                   reason=REASON_NOT_RAW, error=True)
+    m.captured = captured
+    return m
+
+
+def test_a_master_among_two_nights_gets_no_third_chip_and_is_never_counted(qtbot):
+    """T6 (final review, 2026-09-28): `_update_verdict` builds its nights from
+    `not is_master(s)`, so a master belongs to no night. Its capture stamp
+    (1 Oct, a date neither real night touches) would conjure an obvious third
+    chip if that filter ever slipped."""
+    stats = _sh2_108() + [_master(datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc))]
+    d = _dialog(qtbot, stats)
+    s = d.verdict_strip
+    assert len(s.chips) == 2, "a master must not form a third night chip"
+    assert [c.text().split(" · ")[0] for c in s.chips] == ["21 Sep Soft", "26 Sep Good"]
+    assert ("Masters", "1 left out") in s.fact_pairs()
+    # Always shown, never counted: it is on screen whichever nights are ticked...
+    assert d.browser.row_count() == len(stats)
+    # ...but unticking every real night still leaves nothing countable.
+    s.chips[0].click()
+    s.chips[1].click()
+    assert s.headline.text() == NO_NIGHT_HEADLINE
+
+
 def test_every_night_unticked_leaves_nothing_to_stack(qtbot, tmp_path):
     d = _dialog(qtbot, _sh2_108())
     for chip in list(d.verdict_strip.chips):
@@ -181,6 +229,27 @@ def test_every_night_unticked_leaves_nothing_to_stack(qtbot, tmp_path):
     d.name_edit.setText("x.fits")
     assert not d._validate_ready_to_run()
     assert d.status.text() == "Select at least 3 frames to stack."
+
+
+def test_unticking_the_current_frames_night_keeps_it_in_view(qtbot):
+    """m2 (final review, 2026-09-28): a night going takes the cursor with it
+    to a neighbour still listed (Qt's own proxy-filter behaviour), but the
+    scroll offset used to stay put — the preview could show a frame the
+    visible list did not. The list must follow the cursor."""
+    stats = _sh2_108()
+    d = _dialog(qtbot, stats)
+    d.resize(900, 500)
+    d.show()
+    qtbot.waitExposed(d)
+    view = d.browser.view
+    d.browser.set_current_row(5)                  # a frame in the 21st
+    view.scrollToBottom()
+    assert view.verticalScrollBar().value() == view.verticalScrollBar().maximum()
+    d.verdict_strip.chips[0].click()               # untick the 21st — the cursor's night
+    idx = view.currentIndex()
+    assert idx.isValid(), "Qt must have moved the cursor to a neighbour still listed"
+    assert view.viewport().rect().intersects(view.visualRect(idx)), \
+        "the frame the cursor jumped to must be scrolled into view"
 
 
 def test_a_strictness_change_keeps_an_unticked_night_unticked(qtbot):
@@ -208,6 +277,24 @@ def test_frames_without_a_capture_time_get_a_chip_of_their_own(qtbot):
     d = _dialog(qtbot, stats)
     assert [c.text().split(" · ")[0] for c in d.verdict_strip.chips] == ["26 Sep Good",
                                                                          "No date Soft"]
+
+
+def test_an_unreadable_unstamped_frame_does_not_conjure_a_no_date_night(qtbot):
+    """m3 (final review, 2026-09-28): a frame that could not be measured is
+    in no count (is_left_out, the wider test than is_master alone) — it must
+    not conjure a night of its own out of one unreadable, unstamped file, or
+    a single-night folder gains a spurious Nights line and "No date" chip
+    for a frame that appears in no count anyway."""
+    stats = _sh2_108()[19:]                 # the 26th alone: a one-night folder
+    bad = FrameStats("/x/junk.fit", 0, 0.0, 0.0, 0.0, False,
+                     reason_code="measure_failed", reason="Could not be measured",
+                     error=True)
+    bad.captured = None
+    d = _dialog(qtbot, stats + [bad])
+    s = d.verdict_strip
+    assert s.chips == [] and s.nights_row.isHidden(), "§9.2: a one-night folder looks as it did"
+    assert s.headline.text() == "Good night."
+    assert ("Unmeasured", "1 frame") in s.fact_pairs()
 
 
 def test_the_chips_stay_when_the_screen_folds_the_facts(qtbot):

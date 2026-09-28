@@ -74,6 +74,9 @@ FAIR_SHARE = 0.40
 # Trends, first third against last third. FWHM uses grading's own floor for
 # "meaningfully softer" (grade.py, measured on M 45 / M 16 / NGC 6992): a
 # change smaller than that is one grading itself would not act on.
+# SOFT_NIGHT, below, is this same value under a second name — a future tune
+# of FWHM_TREND moves the soft-night line too, silently, unless both are
+# checked.
 FWHM_TREND = MIN_MEANINGFUL_EXCESS
 # Re-measured per night (table above): the pooled run's one
 # "positive" example for both trends — IC 1396A_sub "softer towards the end"
@@ -459,10 +462,18 @@ def _phrase(cls: str, n: int, first: bool) -> str:
             else f"{count} {word} {'ones' if plural else 'one'}")
 
 
-def session_headline(nights: Sequence[Sequence[FrameStats]]) -> str:
+def session_headline(nights: Sequence[Sequence[FrameStats]],
+                     classes: Sequence[str] | None = None) -> str:
     """"Two good nights." — or, when they differ, plainly how: "One good
-    night, one soft one." Classes in a fixed order, best first."""
-    classes = night_classes(nights)
+    night, one soft one." Classes in a fixed order, best first.
+
+    `classes`, when given, are the caller's own — computed once over ALL
+    nights and sliced to just these (I1, final review 2026-09-28): recomputing
+    here from only the nights passed in re-picks "the sharpest" among them,
+    which can call a night Good that a chip — judged against the fuller
+    set — still calls Soft. Omitted for existing single-set callers."""
+    if classes is None:
+        classes = night_classes(nights)
     counts = [(c, classes.count(c)) for c in _CLASS_ORDER if c in classes]
     parts = [_phrase(c, n, i == 0) for i, (c, n) in enumerate(counts)]
     text = ", ".join(parts)
@@ -486,13 +497,19 @@ def night_chip_text(label: str, frames: Sequence[FrameStats], cls: str,
 def build_session_verdict(counted: Sequence[FrameStats],
                           nights: Sequence[Sequence[FrameStats]],
                           pixel_scale: float | None = None,
-                          tz: tzinfo | None = None) -> Verdict | None:
+                          tz: tzinfo | None = None, *,
+                          classes: Sequence[str] | None = None) -> Verdict | None:
     """The verdict band over several nights: `counted` is every frame in the
     count (the ticked nights' frames, and any stacked masters), `nights` the
     ticked nights' own frames. One night reads exactly as it always has.
     Several: the counts summed, no trends, and the headline says how the
-    nights compare."""
+    nights compare.
+
+    `classes` (I1): the ticked nights' classes, already judged by the caller
+    against ALL nights (as the chips are), so the headline can never call a
+    night Good that its own chip calls Soft. Recomputed from just `nights`
+    when omitted."""
     if len(nights) <= 1:
         return build_verdict(counted, pixel_scale, tz)
     pooled = build_verdict(counted, pixel_scale, tz, one_night=False)
-    return Verdict(session_headline(nights), pooled.details, pooled.facts)
+    return Verdict(session_headline(nights, classes), pooled.details, pooled.facts)

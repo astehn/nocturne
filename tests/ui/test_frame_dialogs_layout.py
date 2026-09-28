@@ -491,8 +491,7 @@ def _verdict_floor(d) -> int:
     header_font.setBold(True)
     needed_header = QFontMetrics(header_font).horizontalAdvance("Verdict")
     cell_fm = d.browser.view.fontMetrics()
-    needed_words = max(cell_fm.horizontalAdvance(w)
-                       for w in ("Soft stars", "Trailed", "Few stars", "OK"))
+    needed_words = max(cell_fm.horizontalAdvance(w) for w in fb.VERDICT_MIN_WORDS)
     return max(needed_header, needed_words) + fb.VERDICT_WIDTH_MARGIN
 
 

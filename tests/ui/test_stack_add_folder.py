@@ -182,6 +182,19 @@ def test_two_folders_with_the_same_names_list_both_and_say_whose(qtbot, tmp_path
     assert d.browser.preview_name.text() == f"second/{os.path.basename(d._stats[row].path)}"
 
 
+def test_the_preview_header_gains_its_folder_prefix_right_after_add_folder(qtbot, tmp_path):
+    """m1 (final review, 2026-09-28): the currently previewed frame's header
+    used to keep its bare name until the cursor next moved — it must gain
+    the "folder/" prefix the moment a second folder makes names ambiguous,
+    with no cursor move at all."""
+    a = _generic(tmp_path / "first", ["2026-09-21T20:30:00", "2026-09-21T20:31:00"])
+    b = _generic(tmp_path / "second", ["2026-09-26T20:30:00", "2026-09-26T20:31:00"])
+    d = _graded(qtbot, a)
+    assert d.browser.preview_name.text() == "Light_000.fit"
+    _add(qtbot, d, b)
+    assert d.browser.preview_name.text() == "first/Light_000.fit"
+
+
 def test_one_folder_names_its_frames_as_before(qtbot, tmp_path):
     a = _generic(tmp_path / "first", ["2026-09-21T20:30:00", "2026-09-21T20:31:00"])
     d = _graded(qtbot, a)
@@ -226,6 +239,61 @@ def test_a_folder_nested_inside_rejected_is_refused(qtbot, tmp_path):
     assert not d._busy, "a grade started"
     assert len(calls) == 1 and len(d._stats) == 6
     assert "Move them back" in d.status.text()
+
+
+def test_a_capture_folder_under_an_unrelated_rejected_names_the_real_ancestor(qtbot, tmp_path):
+    """T7/edges.py #5 (final review, 2026-09-28): a capture folder that
+    merely SITS INSIDE a folder called "rejected" (nothing to do with any
+    stack's Move them back) used to be told it itself "holds frames moved
+    out of a stack" — false. It must name the actual rejected/ ancestor and
+    say the capture folder only sits inside it."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    up = tmp_path / "rejected" / "old_M8_sub"
+    up.mkdir(parents=True)
+    (up / "Light_X_10.0s_LP_20260801-223000.fit").write_bytes(b"x")
+    d = _graded(qtbot, a)
+    d.add_folder(str(up))
+    assert not d._busy, "a grade started"
+    assert len(d._stats) == 6
+    text = d.status.text()
+    assert text.startswith(f"old_M8_sub/ sits inside {tmp_path.name}/rejected/")
+    assert "old_M8_sub/ holds" not in text, "must not claim old_M8_sub itself holds anything"
+    assert "Move them back" in text
+
+
+def test_a_damaged_rejected_record_is_shown_not_hidden_as_no_subs(qtbot, tmp_path):
+    """T7/m7 (final review, 2026-09-28): a folder whose every sub is already
+    in its own rejected/ AND whose manifest is damaged used to read "No .fit
+    subs found" — hiding exactly the case R9 exists to surface. It must show
+    the record's own damaged-record message."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = _seestar_folder(tmp_path, "b", "20260926")
+    b_paths = sorted(str(p) for p in b.iterdir())
+    move_to_rejected(str(b), b_paths, b_paths)
+    (b / "rejected" / ".nocturne-moved.json").write_text("{not json")
+    d = _graded(qtbot, a)
+    d.add_folder(str(b))
+    assert not d._busy
+    assert "damaged" in d.status.text() and "b/rejected" in d.status.text()
+    assert d.listed_folders() == [str(a)], "a damaged folder is not silently listed either"
+
+
+def test_a_folder_of_only_hard_links_says_already_listed(qtbot, tmp_path):
+    """T7 (final review, 2026-09-28): every sub in the added folder resolving
+    (by inode) to one already listed used to read "No .fit subs found" —
+    they were found, just already here under another name."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = tmp_path / "hardlinks"
+    b.mkdir()
+    for p in a.iterdir():
+        os.link(p, b / f"copy_{p.name}")
+    calls = []
+    d = _graded(qtbot, a, calls)
+    d.add_folder(str(b))
+    assert not d._busy, "a grade started"
+    assert len(calls) == 1 and len(d._stats) == 6
+    assert d.status.text() == ("Every sub in hardlinks is already listed — the same "
+                               "file, under another name, as one here.")
 
 
 def test_a_folder_without_subs_says_so(qtbot, tmp_path):

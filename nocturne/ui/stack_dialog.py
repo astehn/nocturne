@@ -56,13 +56,23 @@ def _and_join(names: list[str]) -> str:
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _in_rejected(folder: str) -> bool:
-    """True when `folder` — after resolving any link — sits inside a
-    rejected/ folder at any depth: a link straight to one, or a folder
-    nested inside one, both re-enter frames Move them back exists to keep
-    parked (review I1: the typed-name check alone missed both)."""
-    parts = os.path.realpath(folder).split(os.sep)
-    return REJECTED_DIR in parts
+def _rejected_ancestor(folder: str) -> str | None:
+    """The rejected/ folder `folder` sits in or under — after resolving any
+    link — at any depth: a link straight to one, or a folder nested inside
+    one, both re-enter frames Move them back exists to keep parked (review
+    I1: the typed-name check alone missed both). None when there is no such
+    ancestor. Returns the rejected/ folder's OWN path, not `folder` itself
+    (final review I2/T7): a folder merely sitting inside an unrelated
+    "rejected" does not itself hold anything, and the message must say which
+    folder does."""
+    cur = os.path.realpath(folder)
+    while True:
+        parent, base = os.path.split(cur)
+        if base == REJECTED_DIR:
+            return cur
+        if not parent or parent == cur:
+            return None
+        cur = parent
 
 
 def _same_folder(a: str, b: str) -> bool:
@@ -278,6 +288,7 @@ class StackDialog(QDialog):
         self._added_folders: list[str] = []
         self._adding_folder: str | None = None      # being measured now
         self._adding_copies = 0                      # its subs left out as copies
+        self._adding_linked = 0                       # its subs left out as links/hard links
 
         # Moving the unticked frames into <folder>/rejected/ and back (spec
         # decision 7, §5). Never automatic: only these two buttons, and the
@@ -605,10 +616,24 @@ class StackDialog(QDialog):
             return
         folder = os.path.abspath(os.path.expanduser(folder.strip()))
         name = os.path.basename(os.path.normpath(folder))
-        if name == REJECTED_DIR or _in_rejected(folder):
-            self.status.setText(
-                f"{name}/ holds frames moved out of a stack — Move them back "
-                "returns them to their folder; they are not added from there.")
+        rejected_at = _rejected_ancestor(folder)
+        if rejected_at is not None:
+            capture = os.path.basename(os.path.dirname(rejected_at))
+            where = f"{capture}/{REJECTED_DIR}" if capture else REJECTED_DIR
+            if os.path.normpath(rejected_at) == os.path.normpath(os.path.realpath(folder)):
+                self.status.setText(
+                    f"{where}/ holds frames moved out of a stack — Move them back "
+                    "returns them to their folder; they are not added from there.")
+            else:
+                # `folder` merely sits inside `where`/ — it is not itself
+                # what holds anything, and saying so was false (final review
+                # I2/T7: a capture folder named old_M8_sub, nested under an
+                # unrelated top-level "rejected", used to be told it "holds
+                # frames moved out of a stack").
+                self.status.setText(
+                    f"{name}/ sits inside {where}/, which holds frames moved out "
+                    "of a stack — Move them back returns them to their folder; "
+                    "they are not added from there.")
             return
         if any(_same_folder(folder, f) for f in self.listed_folders()):
             self.status.setText(f"The subs in {name} are already listed.")
@@ -623,7 +648,13 @@ class StackDialog(QDialog):
             # simply lost its frames.
             try:
                 pending = pending_back(folder)
-            except (RejectMoveError, OSError):
+            except RejectMoveError as exc:
+                # A damaged record (review T7/m7): "No .fit subs found" would
+                # have hidden exactly the thing R9 exists to prevent — frames
+                # that look lost. Show the record's own message instead.
+                self.status.setText(str(exc))
+                return
+            except OSError:
                 pending = []
             if pending:
                 self._added_folders.append(folder)
@@ -641,10 +672,15 @@ class StackDialog(QDialog):
         listed_names = {(os.path.basename(s.path), s.captured) for s in self._stats
                         if s.captured is not None}
         listed_basenames = {n for n, _t in listed_names}
-        paths, copies = [], 0
+        paths, copies, linked = [], 0, 0
         for p in subs:
             key = _file_key(p)
             if key is not None and key in listed_keys:
+                # The identical file under another name — a symlink's target
+                # or a hard link (review m2) — not a copy: counted apart so
+                # a folder of nothing else still reads as "already listed",
+                # not "No .fit subs found" (T7).
+                linked += 1
                 continue
             pname = os.path.basename(p)
             # read_capture_time opens the FITS header (review m3): worth it
@@ -655,13 +691,22 @@ class StackDialog(QDialog):
                 continue
             paths.append(p)
         if not paths:
-            self.status.setText(
-                f"No .fit subs found in {name}." if not copies else
-                f"Every sub in {name} is already listed — the same name and "
-                "capture time as one here.")
+            if not (copies or linked):
+                self.status.setText(f"No .fit subs found in {name}.")
+            elif linked and not copies:
+                self.status.setText(
+                    f"Every sub in {name} is already listed — the same file, "
+                    "under another name, as one here.")
+            elif copies and not linked:
+                self.status.setText(
+                    f"Every sub in {name} is already listed — the same name and "
+                    "capture time as one here.")
+            else:
+                self.status.setText(f"Every sub in {name} is already listed.")
             return
         self._adding_folder = folder
         self._adding_copies = copies
+        self._adding_linked = linked
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
 
@@ -695,11 +740,17 @@ class StackDialog(QDialog):
         self._update_drizzle_note()
         self._auto_output_path()
         text = self._selection_summary()
-        copies = self._adding_copies
-        if copies:
-            text += (f" {copies} {'sub' if copies == 1 else 'subs'} in "
-                     f"{os.path.basename(folder)} {'was' if copies == 1 else 'were'} "
-                     "left out: already listed (the same name and capture time).")
+        copies, linked = self._adding_copies, self._adding_linked
+        if copies or linked:
+            n = copies + linked
+            why = []
+            if copies:
+                why.append("the same name and capture time")
+            if linked:
+                why.append("the same file, under another name")
+            text += (f" {n} {'sub' if n == 1 else 'subs'} in "
+                     f"{os.path.basename(folder)} {'was' if n == 1 else 'were'} "
+                     f"left out: already listed ({' or '.join(why)}).")
         self.status.setText(text)
         if self._fitted:
             # Now, not a frame later from resizeEvent — and, as for Move them
@@ -1273,15 +1324,31 @@ class StackDialog(QDialog):
         (moved=True) and build_verdict counts it, since it counts the
         grader's decision, not the move. Only a pending name with no such row
         is actually uncounted; without this filter the line claimed frames
-        "kept" one line above were also "not counted here"."""
-        nights = split_nights([s for s in self._stats if not is_master(s)])
+        "kept" one line above were also "not counted here".
+
+        Nights are built from `not is_left_out(s)` (m3, final review
+        2026-09-28), not `not is_master(s)` alone: a frame that could not be
+        measured is in no count either (is_left_out is the wider test), so it
+        must not conjure a night — or, worse, a whole "No date" chip — of its
+        own out of a single unreadable, unstamped file."""
+        nights = split_nights([s for s in self._stats if not is_left_out(s)])
         off = self.browser.nights_off()
-        ticked = [list(n.frames) for n in nights if n.key not in off]
+        # Classes over ALL nights, once — the chips' own view (below) — so a
+        # ticked night's class can never disagree with its chip (I1, final
+        # review 2026-09-28): a slice of THIS, not a fresh night_classes over
+        # the ticked subset, which re-picks "the sharpest" among fewer nights.
+        classes = night_classes([list(n.frames) for n in nights])
+        ticked, ticked_classes = [], []
+        for n, cls in zip(nights, classes):
+            if n.key not in off:
+                ticked.append(list(n.frames))
+                ticked_classes.append(cls)
         counted = [s for s in self._stats if self.browser.night_on(s)]
         if len(nights) >= 2 and not ticked:
             verdict = Verdict(NO_NIGHT_HEADLINE)
         else:
-            verdict = (build_session_verdict(counted, ticked, self._pixel_scale)
+            verdict = (build_session_verdict(counted, ticked, self._pixel_scale,
+                                             classes=ticked_classes)
                        if counted else None)
         if verdict is not None and self._graded_folder:
             # Per folder, by full path: two added folders can hold the same
@@ -1303,7 +1370,6 @@ class StackDialog(QDialog):
                 verdict = verdict.with_line(note, LABEL_NOT_COUNTED,
                                             f"{back} more in rejected/")
         self.verdict_strip.set_verdict(verdict)
-        classes = night_classes([list(n.frames) for n in nights])
         self.verdict_strip.set_nights([
             (n.key, night_chip_text(n.label, n.frames, cls, self._pixel_scale),
              build_verdict(list(n.frames), self._pixel_scale).text(), n.key not in off)
