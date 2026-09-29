@@ -120,6 +120,12 @@ def _line(*widgets, stretch_last: bool = True) -> QHBoxLayout:
 
 KAPPA = {"Low": 3.0, "Medium": 2.5, "High": 2.0}
 _OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
+# Grown to on a screen with room. At its content minimum (803 px) on his 16"
+# MacBook Pro (1728x1117) the preview was 747x218, and a portrait Seestar sub
+# fitted at 4-6% (2026-09-28). The frame list and preview are the stretch area,
+# so every pixel added here goes to them; capped so a big monitor gets a
+# window, not a wall.
+_ROOMY_HEIGHT = 1000
 # The status line with every night unticked (spec 2026-09-28 §9.2).
 NO_NIGHT_STATUS = "No night is ticked — tick one under Nights to stack it."
 ADD_FOLDER_TEXT = "Add folder…"
@@ -287,6 +293,7 @@ class StackDialog(QDialog):
         # them with the list they were part of.
         self._added_folders: list[str] = []
         self._adding_folder: str | None = None      # being measured now
+        self._progress_in_preview = False           # a first grade's count, in the empty preview
         self._adding_copies = 0                      # its subs left out as copies
         self._adding_linked = 0                       # its subs left out as links/hard links
 
@@ -709,15 +716,23 @@ class StackDialog(QDialog):
         self._adding_linked = linked
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
+        listed = [s.path for s in self._stats if not s.error and not s.moved]
 
         def work():
-            return runner(paths, on_progress=lambda i, n, _name:
-                          self._signals.progress.emit(i, n, "grading"),
-                          strictness=strictness)
+            new_stats = runner(paths, on_progress=lambda i, n, _name:
+                               self._signals.progress.emit(i, n, "Measuring"),
+                               strictness=strictness)
+            # The merged list, read here and not in _on_added_graded: see
+            # _find_panels. The busy guard keeps `listed` from changing meanwhile.
+            return new_stats, self._find_panels(
+                listed + [s.path for s in new_stats if not s.error],
+                on_progress=lambda i, n: self._signals.progress.emit(
+                    i, n, "Checking the pointings"))
 
-        self._start(work, self._on_added_graded, f"Measuring the subs in {name}…")
+        self._start(work, lambda r: self._on_added_graded(*r),
+                    f"Measuring the subs in {name}…")
 
-    def _on_added_graded(self, new_stats) -> None:
+    def _on_added_graded(self, new_stats, panels) -> None:
         folder, self._adding_folder = self._adding_folder, None
         self._added_folders.append(folder)
         self._active_token = None
@@ -733,8 +748,7 @@ class StackDialog(QDialog):
             self._pixel_scale = read_pixel_scale([s.path for s in new_stats if not s.error])
         if self._frame_shape is None:
             self._frame_shape = self._read_frame_shape(new_stats)
-        self.scan_pointings(paths=[s.path for s in self._stats
-                                   if not s.error and not s.moved])
+        self._show_panels(panels)
         self._update_verdict()
         self._sync_reject_buttons(check_disk=True)
         self._update_drizzle_note()
@@ -827,8 +841,18 @@ class StackDialog(QDialog):
             if folder is None:
                 folder = self.folder_edit.text().strip()
             paths = discover_subs(folder) if folder else []
-        panels = discover_panels(read_pointings(paths), 0.56) if paths else []
+        self._show_panels(self._find_panels(paths))
 
+    @staticmethod
+    def _find_panels(paths: list[str], on_progress=None) -> list:
+        """Off the GUI thread when grading: every header is read, 15 ms a sub
+        on his NAS — 39 s for the 2554 subs of IC 1396A (2026-09-29) — and on
+        the GUI thread that was a frozen dialog before "Measuring…" appeared."""
+        if not paths:
+            return []
+        return discover_panels(read_pointings(paths, on_progress=on_progress), 0.56)
+
+    def _show_panels(self, panels: list) -> None:
         if len(panels) < 2:
             self.mosaic_check.setChecked(False)
             self.mosaic_check.setEnabled(False)
@@ -997,9 +1021,25 @@ class StackDialog(QDialog):
         room = self._available_height()
         if self._keep_on_screen():
             return
-        needed = self._settled_minimum_height()
+        needed = max(self._settled_minimum_height(), min(room, _ROOMY_HEIGHT))
         if needed > self.height():
             self.resize(self.width(), min(needed, room))
+            self._lift_onto_screen()
+
+    def _lift_onto_screen(self) -> None:
+        """Qt places the dialog before showEvent grows it, and a window grows
+        downwards: at 1000 px on a 1728x1117 screen the Stack button landed
+        40 px below the bottom edge (review, 2026-09-29)."""
+        from PySide6.QtGui import QGuiApplication
+
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        frame = self.frameGeometry()
+        over = frame.bottom() - avail.bottom()
+        if over > 0:
+            self.move(self.x(), max(avail.top(), self.y() - over))
 
     def _keep_on_screen(self, *, allow_verdict_squeeze: bool = True) -> bool:
         """Fold what the screen cannot hold and bring the window back down;
@@ -1224,18 +1264,32 @@ class StackDialog(QDialog):
             self.status.setText("No .fit subs found in that folder.")
             return
         self._grading_folder = folder
-        self.scan_pointings(folder)
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
+        emit = self._signals.progress.emit
 
         def work():
-            return runner(paths, on_progress=lambda i, n, name:
-                          self._signals.progress.emit(i, n, "grading"),
-                          strictness=strictness)
+            panels = self._find_panels(
+                paths, on_progress=lambda i, n: emit(i, n, "Preparing"))
+            stats = runner(paths, on_progress=lambda i, n, name:
+                           emit(i, n, "Measuring"),
+                           strictness=strictness)
+            return stats, panels
 
-        self._start(work, self._on_graded,
-                    "Measuring every frame — this is the slow part, and your "
-                    "Frames and Combine choices apply instantly afterwards.")
+        def done(result):
+            stats, panels = result
+            self._end_progress_in_preview()      # the first kept frame loads next
+            self._show_panels(panels)
+            self._on_graded(stats)
+
+        self._start(work, done, f"Preparing — reading {len(paths)} frames…")
+        # Moving from the first instant, before any count exists: 0.42.0 sat
+        # 30-45 s on 304 subs on his MacBook Pro's internal drive before
+        # anything moved (2026-09-28). A still window reads as hung.
+        self.progress.setRange(0, 0)
+        if not self.preview.has_image():
+            self._progress_in_preview = True
+            self.preview.show_message(self.status.text())
 
     def _on_graded(self, stats) -> None:
         # Strictness may have changed while the async measure was running —
@@ -1622,7 +1676,7 @@ class StackDialog(QDialog):
 
         def work():
             return runner(paths, on_progress=lambda i, n, name:
-                          self._signals.progress.emit(i, n, "grading"),
+                          self._signals.progress.emit(i, n, "Measuring"),
                           strictness=strictness)
 
         self._start(work, self._on_restored_graded,
@@ -1857,13 +1911,24 @@ class StackDialog(QDialog):
         self.accept()
 
     def _on_progress(self, i: int, n: int, label: str) -> None:
-        self.progress.setMaximum(max(1, n))
+        self.progress.setRange(0, max(1, n))
         self.progress.setValue(i)
         # The bar refills once per phase; the label carries "Step N of M" so a
         # restart reads as progress rather than as a hang. A mosaic's phases
         # count panels, and saying "frames" there is just wrong.
         noun = "panels" if "panel" in label else "frames"
         self.status.setText(f"{label} — {i}/{n} {noun}")
+        if self._progress_in_preview:
+            self.preview.show_message(self.status.text())    # the first grade: nothing to show yet
+
+    def _end_progress_in_preview(self) -> None:
+        """Only ever clears the progress text this dialog put there, never
+        "Preview failed" or a frame. Stops a busy bar no count ever reached."""
+        if self.progress.maximum() == 0:
+            self.progress.setRange(0, 1)
+        if self._progress_in_preview:
+            self._progress_in_preview = False
+            self._preview_ctl.clear()
 
     @staticmethod
     def _stack_report(result) -> str:
@@ -1949,6 +2014,7 @@ class StackDialog(QDialog):
         self.accept()  # hand off done — close the dialog (master is now in the editor)
 
     def _on_error(self, exc) -> None:
+        self._end_progress_in_preview()
         if self._adding_folder is not None:
             # Nothing from it was listed; the folder is not one of ours.
             name = os.path.basename(os.path.normpath(self._adding_folder))

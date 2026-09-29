@@ -650,3 +650,32 @@ def test_the_output_field_fills_its_row(qtbot, cls, field):
                 f"{field} {edit.width()} px cuts {edit.text()!r} at 1280")
         d.close()
     assert widths[1920] > widths[1280], widths
+
+
+@pytest.mark.parametrize("room, expected", [(1032, 1000), (870, 870)])
+def test_stack_opens_into_the_room_a_tall_screen_has(qtbot, room, expected):
+    """At its content minimum (803 px) on his 16" MacBook Pro the preview was
+    747x218 and a portrait sub fitted at 4-6% (2026-09-28). A screen with room
+    gives it to the list and preview — up to _ROOMY_HEIGHT, and never past
+    the screen (the MacBook Air's 1470x956 leaves about 870)."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d._available_height = lambda: room
+    d.show()
+    qtbot.waitExposed(d)
+    assert d.height() == expected, f"room {room}: opened {d.height()} px tall"
+
+
+def test_the_grown_stack_dialog_stays_on_the_screen(qtbot):
+    """Qt places the dialog before it grows, and it grows downwards: the Stack
+    button went 40 px below a 1728x1117 screen (review 2026-09-29)."""
+    d = StackDialog(Settings())
+    qtbot.addWidget(d)
+    d.show()
+    qtbot.waitExposed(d)
+    avail = d.screen().availableGeometry()
+    d.resize(d.width(), avail.height() // 2)
+    d.move(avail.left(), avail.bottom() - avail.height() // 4)
+    assert d.frameGeometry().bottom() > avail.bottom()      # the precondition
+    d._lift_onto_screen()
+    assert d.frameGeometry().bottom() <= avail.bottom()

@@ -2042,3 +2042,66 @@ def test_a_yes_does_not_repeat_the_hints_own_numbers(qtbot):
     assert d.drizzle_note.text() == "Suitable for Drizzle."
     assert "10×" not in d.drizzle_note.text()
     assert "four times the size" not in d.drizzle_note.text()
+
+
+def test_the_pointing_scan_runs_off_the_gui_thread(qtbot, tmp_path, monkeypatch):
+    """Choosing a folder froze the dialog before grading began: every header
+    was read on the GUI thread for the mosaic check — 39 s for 2554 subs on
+    his NAS (2026-09-29). The dialog must say "Preparing" at once, read the
+    headers in the worker, and still offer the mosaic when it lands."""
+    import threading
+    import nocturne.ui.stack_dialog as sd
+
+    paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
+    paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
+    settings = Settings()
+    settings.astap_path = str(tmp_path / "astap")
+    (tmp_path / "astap").write_text("#!/bin/sh\n")
+    (tmp_path / "astap").chmod(0o755)
+
+    threads = []
+    real = sd.read_pointings
+
+    def spy(ps, on_progress=None):
+        threads.append(threading.current_thread() is threading.main_thread())
+        return real(ps, on_progress=on_progress)
+
+    monkeypatch.setattr(sd, "read_pointings", spy)
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = lambda ps, on_progress=None, strictness="normal": [
+        _stats2(p, 0.9) for p in ps]
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    assert dlg.status.text() == "Preparing — reading 6 frames…"
+    assert dlg.preview.message_text() == "Preparing — reading 6 frames…"
+    qtbot.waitUntil(lambda: not dlg._busy, timeout=5000)
+    assert threads == [False], "the headers were read on the GUI thread"
+    assert dlg.mosaic_check.isEnabled()
+    assert "2 pointings" in dlg.mosaic_check.text(), dlg.mosaic_check.text()
+    assert "Preparing" not in dlg.preview.message_text()
+
+
+def test_the_bar_moves_before_the_first_count(qtbot, tmp_path):
+    """0.42.0 sat 30-45 s with nothing moving before the first count (304
+    subs, his MacBook Pro, 2026-09-28). A busy bar runs until a count
+    arrives, and stops when the grade ends even if none ever did."""
+    import threading
+    for i in range(3):
+        _sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0)
+    gate = threading.Event()
+
+    def runner(ps, on_progress=None, strictness="normal"):
+        gate.wait(5)
+        return [_stats2(p, 0.9) for p in ps]
+
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    dlg._grade_runner = runner
+    dlg._find_panels = lambda paths, on_progress=None: []     # no count at all
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.grade()
+    assert (dlg.progress.minimum(), dlg.progress.maximum()) == (0, 0), "no busy bar"
+    gate.set()
+    qtbot.waitUntil(lambda: not dlg._busy, timeout=5000)
+    assert dlg.progress.maximum() > 0, "the busy bar ran on after the grade"

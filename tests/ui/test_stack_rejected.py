@@ -616,16 +616,20 @@ def test_moving_everything_back_from_empty_runs_a_full_grade(qtbot, tmp_path):
     assert d2._stats == [] and d2._pixel_scale is None
     calls = []
 
-    def fake_scan(scan_folder=None):
-        calls.append(scan_folder)
-        d2.mosaic_check.setEnabled(True)
-        d2.mosaic_check.setText("Stack as mosaic — 2 pointings")
+    def fake_find(paths, on_progress=None):
+        calls.append(sorted(paths))
+        return ["panel A", "panel B"]
 
-    d2.scan_pointings = fake_scan
+    def fake_show(panels):
+        d2.mosaic_check.setEnabled(True)
+        d2.mosaic_check.setText(f"Stack as mosaic — {len(panels)} pointings")
+
+    d2._find_panels = fake_find
+    d2._show_panels = fake_show
     d2.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
-    assert calls == [str(folder)], (
-        "scan_pointings must run once, on the FULL re-grade of the graded folder")
+    assert calls == [sorted(str(p) for p in _paths)], (
+        "the pointing scan must run once, on the FULL re-grade of the graded folder")
     assert d2.mosaic_check.isEnabled(), "Mosaic stayed disabled after the full re-grade"
     assert d2._pixel_scale is not None, "the pixel scale went missing"
     assert len(d2._stats) == 6
@@ -641,7 +645,7 @@ def test_moving_some_back_when_something_is_already_listed_stays_partial(qtbot, 
     d2, _ = _graded(qtbot, folder)                # 4 frames listed at top
     assert d2._stats != []
     calls = []
-    d2.scan_pointings = lambda scan_folder=None: calls.append(scan_folder)
+    d2._find_panels = lambda paths, on_progress=None: calls.append(paths) or []
     d2.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: not d2._busy, timeout=3000)
     assert calls == [], "ran a full grade (and so scan_pointings) although frames were already listed"

@@ -330,3 +330,23 @@ def test_the_saved_mosaic_records_what_went_into_it(tmp_path):
     assert h.get("STACKCNT") == 10, "the frame count must survive"
     assert float(h.get("EXPTIME")) == 100.0, "the integration must survive"
     assert "CRVAL1" in h, "and the WCS must still be there"
+
+
+def test_read_pointings_counts_to_the_end_and_can_be_cancelled(tmp_path):
+    """It runs before grading on thousands of NAS subs (39 s for 2554): the
+    count must reach N/N, and Cancel must stop it rather than wait it out."""
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+
+    paths = [str(tmp_path / f"s{i}.fit") for i in range(30)]     # unreadable: skipped
+    seen = []
+    read_pointings(paths, on_progress=lambda i, n: seen.append((i, n)))
+    assert seen[0] == (1, 30) and seen[-1] == (30, 30)
+
+    token = CancelToken()
+    token.cancel()
+    set_ambient(token)
+    try:
+        with pytest.raises(Cancelled):
+            read_pointings(paths)
+    finally:
+        clear_ambient()
