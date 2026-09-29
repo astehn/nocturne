@@ -126,3 +126,75 @@ def test_a_tiny_crop_does_not_break_the_panel(qtbot):
     d.picker.show_crop_box()
     d._sync_size()
     assert d.size_label.text() == "3 × 1 → 6 × 2"
+
+
+def test_upscale_shows_a_linked_pair_at_100_percent(qtbot):
+    d = _dlg(qtbot)
+    d.resize(900, 600); d.show()
+    d._run_upscale()
+    assert d.pages.currentIndex() == 1
+    assert d.plain_view.zoom() == pytest.approx(1.0) and d.result_view.zoom() == pytest.approx(1.0)
+    d.result_view.zoom_in()
+    assert d.plain_view.zoom() == pytest.approx(d.result_view.zoom())
+
+
+def test_wipe_keeps_the_zoom_and_back(qtbot):
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    d.result_view.zoom_in()
+    z = d.result_view.zoom()
+    d.mode_wipe.click()
+    assert d.wipe_view.zoom() == pytest.approx(z) and d.wipe_view.compare_active()
+    d.wipe_view.zoom_in()
+    d.mode_side.click()
+    assert d.result_view.zoom() == pytest.approx(d.wipe_view.zoom())
+
+
+def test_change_crop_goes_back_and_a_new_upscale_relinks_once(qtbot):
+    """[RF 4]"""
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    d.change_crop_btn.click()
+    assert d.pages.currentIndex() == 0 and d._result is None and d._layers is None
+    d._run_upscale()
+    for _ in range(8):
+        d.result_view.zoom_in()             # a 120 px result has no scroll range at 100%
+    bar = d.result_view.horizontalScrollBar()
+    assert bar.maximum() > bar.value() + 5
+    moves = []
+    d.plain_view.viewChanged.connect(lambda: moves.append(1))
+    bar.setValue(bar.value() + 5)
+    assert 1 <= len(moves) <= 2             # followed, and by ONE link not two
+
+
+def test_cancel_returns_to_the_picker_untouched(qtbot, monkeypatch):
+    """[RF 2]"""
+    import threading
+    import nocturne.ui.upscale_dialog as ud
+    from nocturne.core.tasks import current
+    started = threading.Event()
+
+    def slow(*a, **k):
+        started.set()
+        while True:
+            current().check()
+    monkeypatch.setattr(ud, "prepare_upscale", slow)
+    d = _dlg(qtbot); d.show()
+    d.picker.set_crop_overlay(True, content_bounds=(10, 40, 5, 25)); d.picker.show_crop_box()
+    crop = d.picker.crop_bounds()
+    d.upscale_btn.click()
+    assert started.wait(5) and d.cancel_btn.isVisible()
+    d.cancel_btn.click()
+    qtbot.waitUntil(lambda: not d._busy, timeout=5000)
+    assert d.pages.currentIndex() == 0 and d._result is None
+    assert d.picker.crop_bounds() == crop and d.upscale_btn.isEnabled()
+    assert d.status.text() == "Cancelled."
+
+
+def test_the_navigator_moves_both_views(qtbot):
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    d.navigator.centreRequested.emit(10.0, 10.0)
+    c1 = d.result_view.mapToScene(d.result_view.viewport().rect().center())
+    c2 = d.plain_view.mapToScene(d.plain_view.viewport().rect().center())
+    assert c1.x() == pytest.approx(c2.x(), abs=1) and c1.y() == pytest.approx(c2.y(), abs=1)

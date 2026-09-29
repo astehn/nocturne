@@ -13,12 +13,15 @@ from PySide6.QtWidgets import (
 
 from ..core.export import save_jpeg, save_png, save_tiff
 from ..core.share import ASPECTS
+from ..core.tasks import CancelToken, Cancelled
 from ..core.upscale import (
-    UPSCALE_MAX_MP, LanczosEngine, megapixels, output_size, upscale_crop,
-    upscale_filename, upscale_provenance_text,
+    TIGHTEN_DEFAULT, UPSCALE_MAX_MP, LanczosEngine, finish_upscale, megapixels,
+    output_size, prepare_upscale, upscale_filename, upscale_provenance_text,
 )
 from ..settings import start_dir
 from .image_view import ImageView
+from .linked_views import copy_view, link_views
+from .upscale_navigator import UpscaleNavigator
 from .worker import run_async
 from . import file_dialogs, theme
 
@@ -38,6 +41,12 @@ def _qimage_from_float(data: np.ndarray) -> QImage:
     arr8 = np.ascontiguousarray(arr8)
     h, w = arr8.shape[:2]
     return QImage(arr8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+
+
+def _labelled(text: str, view) -> QWidget:
+    w = QWidget(); lay = QVBoxLayout(w); lay.setContentsMargins(0, 0, 0, 0)
+    lay.addWidget(QLabel(text)); lay.addWidget(view, 1)
+    return w
 
 
 def _dispatch_save(img, path: str) -> None:
@@ -66,6 +75,9 @@ class UpscaleDialog(QDialog):
         self._scale = SCALE
         self._engine = LanczosEngine()
         self._result = None
+        self._layers = None
+        self._tighten = TIGHTEN_DEFAULT
+        self._token = None
         self._busy = False
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
@@ -115,7 +127,43 @@ class UpscaleDialog(QDialog):
         pick_page.setLayout(pick)
         self.pages = QStackedWidget()
         self.pages.addWidget(pick_page)
-        self.pages.addWidget(QWidget())       # Task 5 replaces this compare page
+
+        self.plain_view, self.result_view, self.wipe_view = ImageView(), ImageView(), ImageView()
+        for v in (self.plain_view, self.result_view, self.wipe_view):
+            v.setMinimumSize(240, 220)
+        self._pair = QWidget(); pl = QHBoxLayout(self._pair); pl.setContentsMargins(0, 0, 0, 0)
+        pl.addWidget(_labelled("Plain resize", self.plain_view), 1)
+        pl.addWidget(_labelled("Nocturne", self.result_view), 1)
+        self.views = QStackedWidget(); self.views.addWidget(self._pair); self.views.addWidget(self.wipe_view)
+
+        self.mode_side, self.mode_wipe = QPushButton("Side by side"), QPushButton("Wipe")
+        mg = QButtonGroup(self)
+        for b in (self.mode_side, self.mode_wipe):
+            b.setCheckable(True); mg.addButton(b)
+        self.mode_side.setChecked(True)
+        self.mode_side.clicked.connect(lambda: self._set_mode(False))
+        self.mode_wipe.clicked.connect(lambda: self._set_mode(True))
+
+        self.navigator = UpscaleNavigator()
+        self.navigator.set_frame(_qimage_from_float(self._img.data))
+        self.navigator.centreRequested.connect(self._centre_views)
+        self.result_size = QLabel("")
+        self.change_crop_btn = QPushButton("◀ Change crop")
+        self.change_crop_btn.clicked.connect(self._change_crop)
+        # (Task 6 inserts the tightening slider into this panel.)
+        self._compare_panel = QVBoxLayout()
+        for w in (QLabel("<b>Navigator</b>"), self.navigator, self.result_size):
+            self._compare_panel.addWidget(w)
+        self._compare_panel.addStretch(1); self._compare_panel.addWidget(self.change_crop_btn)
+        cside = QWidget(); cside.setLayout(self._compare_panel); cside.setFixedWidth(240)
+        modes = QHBoxLayout(); modes.addStretch(1); modes.addWidget(self.mode_side); modes.addWidget(self.mode_wipe)
+        cmp_col = QVBoxLayout(); cmp_col.addLayout(modes); cmp_col.addWidget(self.views, 1)
+        cmp = QHBoxLayout(); cmp.addLayout(cmp_col, 1); cmp.addWidget(cside)
+        page = QWidget(); page.setLayout(cmp)
+        self.pages.addWidget(page)
+        self._unlink = None
+        for v in (self.result_view, self.wipe_view):
+            v.viewChanged.connect(self._sync_navigator)
 
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
@@ -129,6 +177,10 @@ class UpscaleDialog(QDialog):
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._open_copy_btn)
         buttons.addStretch(1)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.hide()
+        self.cancel_btn.clicked.connect(lambda: self._token and self._token.cancel())
+        buttons.addWidget(self.cancel_btn)
         self._close_btn = QPushButton("Close")
         self._close_btn.clicked.connect(self.reject)
         buttons.addWidget(self._close_btn)
@@ -176,53 +228,87 @@ class UpscaleDialog(QDialog):
 
     # --- run (synchronous core; the button routes this off-thread) ---
     def _run_upscale(self) -> None:
-        """Compute the upscale and store `._result`. Directly callable and
-        synchronous (tests rely on this): it does the real work itself rather
-        than merely kicking off a background job. The live "Upscale" button
-        instead runs the same computation via `run_async` + a busy indicator,
-        since the split + resample can take several seconds."""
-        crop = self._current_crop()
-        self._result = upscale_crop(self._img, crop, self._engine, scale=self._scale, rc=self._rc)
+        self._layers = prepare_upscale(self._img, self._current_crop(), self._engine,
+                                       scale=self._scale, rc=self._rc)
         self._show_result()
-        self._export_btn.setEnabled(True)
-        self._open_copy_btn.setEnabled(True)
-        h, w = self._result.data.shape[:2]
-        self.status.setText(f"Upscaled to {w}×{h}.")
-
-    def _set_busy(self, busy: bool) -> None:
-        self._busy = busy
-        self._sync_size()
 
     def _on_upscale_clicked(self) -> None:
         if self._busy:
             return
-        crop = self._current_crop()
-        engine = self._engine
-        scale = self._scale
-        rc = self._rc
+        crop, engine, scale, rc = self._current_crop(), self._engine, self._scale, self._rc
+        self._token = CancelToken()
         self._set_busy(True)
-        self.status.setText("Upscaling…")
+        self.status.setText("Separating stars and enlarging…")
 
-        def work():
-            return upscale_crop(self._img, crop, engine, scale=scale, rc=rc)
-
-        def on_done(result) -> None:
-            self._result = result
+        def done(layers) -> None:
+            self._token = None
             self._set_busy(False)
+            self._layers = layers
             self._show_result()
-            self._export_btn.setEnabled(True)
-            self._open_copy_btn.setEnabled(True)
-            h, w = result.data.shape[:2]
-            self.status.setText(f"Upscaled to {w}×{h}.")
 
-        def on_error(exc) -> None:
+        def failed(exc) -> None:
+            self._token = None
             self._set_busy(False)
-            self.status.setText(f"Failed: {exc}")
+            self.status.setText("Cancelled." if isinstance(exc, Cancelled) else f"Failed: {exc}")
 
-        run_async(self._pool, work, on_done, on_error)
+        run_async(self._pool, lambda: prepare_upscale(self._img, crop, engine, scale=scale, rc=rc),
+                  done, failed, on_progress=self._on_progress, token=self._token)
 
+    def _on_progress(self, done: int, total: int) -> None:
+        self.status.setText(f"Separating stars… {done}%")
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.cancel_btn.setVisible(busy)
+        self._sync_size()
+
+    # --- state 2 ---
     def _show_result(self) -> None:
-        """Stub: Task 5 shows the comparison view here."""
+        self._result = finish_upscale(self._layers, self._tighten)
+        plain = _qimage_from_float(self._layers.plain_up.data)
+        nocturne = _qimage_from_float(self._result.data)
+        if self._unlink is not None:
+            self._unlink()
+        self.plain_view.set_image(plain)
+        self.result_view.set_image(nocturne)
+        self.wipe_view.set_image(nocturne)
+        self.wipe_view.set_compare(plain)          # plain under the divider's left side
+        self._unlink = link_views(self.plain_view, self.result_view)
+        self.pages.setCurrentIndex(1)
+        self._set_mode(self.mode_wipe.isChecked())
+        h, w = self._result.data.shape[:2]
+        self.navigator.set_crop(self._layers.crop, self._scale)
+        self.result_view.actual_size()
+        self._centre_views(w / 2, h / 2)
+        self.result_size.setText(f"{w} × {h}")
+        self.status.setText(f"Upscaled to {w}×{h}.")
+        self._export_btn.setEnabled(True)
+        self._open_copy_btn.setEnabled(True)
+
+    def _set_mode(self, wipe: bool) -> None:
+        src, dst = (self.result_view, self.wipe_view) if wipe else (self.wipe_view, self.result_view)
+        if self.pages.currentIndex() == 1:
+            copy_view(src, dst)
+        self.views.setCurrentIndex(1 if wipe else 0)
+        self._sync_navigator()
+
+    def _centre_views(self, x: float, y: float) -> None:
+        for v in (self.result_view, self.wipe_view):
+            v.centerOn(x, y)
+
+    def _sync_navigator(self) -> None:
+        v = self.wipe_view if self.views.currentIndex() == 1 else self.result_view
+        r = v.mapToScene(v.viewport().rect()).boundingRect()
+        self.navigator.set_visible_rect(r.x(), r.y(), r.width(), r.height())
+
+    def _change_crop(self) -> None:
+        if self._unlink is not None:
+            self._unlink(); self._unlink = None
+        self._layers = self._result = None
+        self._export_btn.setEnabled(False); self._open_copy_btn.setEnabled(False)
+        self.pages.setCurrentIndex(0)
+        self.status.setText("")
+        self._sync_size()
 
     # --- export / open as copy ---
     def _on_export_clicked(self) -> None:
