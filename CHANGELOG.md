@@ -2,6 +2,29 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.43.0] — 2026-09-29
+
+Upscale Crop shows you what it did, and Nocturne knows the Seestar S50 Pro.
+
+### Added
+- A rebuilt Upscale Crop: choose the crop on the full picture, with shapes (1:1, 4:5, 9:16, 3:2, 16:9) and the size it will become. The result opens beside your original at the same size, and the two move together as you zoom and pan. Wipe lays one over the other with a divider, a navigator shows where you are, and Star tightening updates as you move it. Progress and Cancel while it works.
+- Support for the Seestar S50 Pro: Import, plate solving, stacking and the provenance report recognise it and its sensor (OmniVision OS08B10).
+- Import names the telescope, for example "ZWO Seestar S50 Pro", and says "(assumed)" when the file doesn't.
+
+### Changed
+- Upscale Crop's size limit follows your computer's memory: about 21 MP on 8 GB, 42 MP on 16 GB (a whole S30 Pro or S50 Pro frame fits), 100 MP at most. The window shows the limit and explains a refusal beside the button.
+- Upscale Crop reminds you when Noise Reduction hasn't been applied, since enlarging makes noise twice as visible.
+- Import's summary lines its two blocks up and puts a gap between them.
+- The log says when you choose Linked or Unlinked, and Background names GraXpert.
+- The provenance report's Stretch line says "linked" or "unlinked".
+
+### Fixed
+- Add folder… accepted subs from a different camera (an S50 Pro, or the S30 Pro's wide-angle camera) and stacked them together. It now refuses them and says why.
+- Switching the Noise Reduction engine, or Linked/Unlinked, after applying was silently dropped by Next. Next now asks.
+- A reopened exported FITS no longer forgets which camera took it, and an upscaled copy no longer claims its original, larger pixel scale.
+- In the visual stretch picker, going from Unlinked back to Linked showed one amount and applied another.
+- Stack: a night's date could appear under the previous night on the chart. Messages now tell two same-named folders apart, and no longer claim that a folder merely named "rejected" holds moved frames.
+
 ## [0.42.0] — 2026-09-29
 
 The Stack window tells you how your night went, and lets you choose the frames yourself.
