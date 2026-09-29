@@ -2,6 +2,29 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.42.0] — 2026-09-29
+
+The Stack window tells you how your night went, and lets you choose the frames yourself.
+
+### Added
+- A verdict for the night above the frame list: how many frames were kept and how many minutes of light that is, why the others were left out (soft, trailed, cloudy), and how big the stars are in arc-seconds.
+- A chart of star sharpness (FWHM) over the session, full width above the list, with rejected frames marked in amber. Click a dot to see that frame. The chart folds away and remembers.
+- Move to rejected/: the frames you leave out can be moved into a rejected/ folder beside your subs, and moved back again. Nothing is ever deleted.
+- Several nights in one folder: each night (noon to noon) is judged on its own limits, a chip per night ticks a whole night in or out, and the chart marks where each night begins.
+- Add folder… lists subs saved in another folder, such as a second night, in the same stack.
+- A better frame list, shared by Stack and Ha/OIII: a Time column, sorting, Show All / Kept / Rejected, Select All / None / Reset to suggested, a divider you can drag, a bigger preview, and Space ticks a frame from any column.
+- Drizzle advice in plain words: whether this set of subs would benefit, with the measurements in the tooltip.
+
+### Changed
+- A calmer Stack window: the options (Frames · Combine · Result) sit in one band that folds to a one-line summary, and the help starts folded. On a small screen the chart and options fold by themselves.
+- The master is saved to a folder (Save to) under a Name that fills itself in until you type your own.
+- Stacked masters in a subs folder are listed last and left out of every count.
+- The Stack window opens taller on screens with room, so the preview and list get more space.
+- Share now highlights the shape you chose, and Narrowband and Colour Balance have Reset beside Apply and Close.
+
+### Fixed
+- After you chose a folder, the Stack window could sit for half a minute or more with nothing moving before grading began. It now shows progress at once.
+
 ## [0.41.0] — 2026-09-26
 
 Nothing moves any more, and Nocturne fits a laptop screen.
