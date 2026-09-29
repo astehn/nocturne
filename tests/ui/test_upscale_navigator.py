@@ -49,3 +49,16 @@ def test_no_crop_means_the_whole_frame(qtbot):
     n.set_crop(None, 2)                          # [RF 1]
     r = n.crop_rect_on_widget()
     assert (r.width(), r.height()) == pytest.approx((200, 100))
+
+
+def test_a_small_frame_keeps_the_full_frame_geometry(qtbot):
+    """[final 8] The navigator draws a reduced copy; its geometry is the frame's."""
+    n = UpscaleNavigator()
+    qtbot.addWidget(n)
+    n.resize(200, 100)
+    small = QImage(100, 50, QImage.Format.Format_RGB888)
+    small.fill(0)
+    n.set_frame(small, full_size=(400, 200))
+    n.set_crop((50, 150, 100, 300), 2)
+    r = n.crop_rect_on_widget()
+    assert (r.left(), r.top(), r.width(), r.height()) == pytest.approx((50, 25, 100, 50))

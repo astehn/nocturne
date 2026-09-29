@@ -5718,9 +5718,11 @@ class MainWindow(QMainWindow):
         rc = preferred_splitter(self.settings)
         names = {n for n, _o in self.project.entries()}
         denoised = bool(names & {STEP_NAME["noise_sharpen"], STEP_NAME["ai_denoise"]})
-        UpscaleDialog(img, meta, self.settings, rc=rc,
-                      on_open_copy=self._open_upscaled, parent=self,
-                      denoised=denoised).exec()
+        dlg = UpscaleDialog(img, meta, self.settings, rc=rc,
+                            on_open_copy=self._open_upscaled, parent=self,
+                            denoised=denoised)
+        dlg.exec()
+        dlg.deleteLater()      # a parented dialog outlives exec(); each held its pictures
 
     def _open_upscaled(self, result) -> bool:
         """Open the upscaled copy as a new project. Returns False if the user

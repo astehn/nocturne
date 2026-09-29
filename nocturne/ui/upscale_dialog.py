@@ -3,12 +3,13 @@ from __future__ import annotations
 import os
 
 import numpy as np
+import shiboken6
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import QPoint, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QButtonGroup, QDialog, QHBoxLayout, QLabel, QPushButton, QSlider, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from ..core.export import save_jpeg, save_png, save_tiff
@@ -20,7 +21,7 @@ from ..core.upscale import (
 )
 from ..settings import start_dir
 from .image_view import ImageView
-from .linked_views import copy_view, link_views
+from .linked_views import link_views
 from .upscale_navigator import UpscaleNavigator
 from .worker import run_async
 from . import file_dialogs, theme
@@ -31,6 +32,10 @@ from . import file_dialogs, theme
 TIGHTEN_DEBOUNCE_MS = 150
 
 SCALE = 2   # fixed in v1
+
+# The navigator is ~240 px wide, so 600 px stays sharp at 2x. A full-resolution
+# pixmap costs 4 bytes a pixel for a thumbnail: 80 MB for a 20 MP frame.
+NAV_LONG_SIDE = 600
 
 NOISE_NOTE = ("Noise Reduction hasn't been applied — enlarging makes noise twice as "
               "visible. Worth running it first.")
@@ -84,23 +89,28 @@ class UpscaleDialog(QDialog):
         self._tighten = TIGHTEN_DEFAULT
         self._token = None
         self._busy = False
+        self._closed = False
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
 
+        frame = _qimage_from_float(self._img.data)     # once: it is the slow part of opening
         self.picker = ImageView()
         self.picker.setMinimumSize(360, 320)
-        self.picker.set_image(_qimage_from_float(self._img.data))
+        self.picker.set_image(frame)
         self.picker.set_crop_overlay(True, aspect_ratio=None)
         self.picker.cropBoxChanged.connect(lambda *_: self._sync_size())
+        self.picker.cropBoxShown.connect(self._sync_size)
 
+        # Three rows of two: six in one row of the 240 px panel squeezed every
+        # label, and three across still cut "Original" (70 px for an 80 px hint).
         self.shape_buttons, group = {}, QButtonGroup(self)
-        shapes = QHBoxLayout()
-        for label, ratio in ASPECTS:
+        shapes = QGridLayout()
+        for i, (label, ratio) in enumerate(ASPECTS):
             b = QPushButton(label)
             b.setCheckable(True)
             b.clicked.connect(lambda _c=False, r=ratio: self._set_shape(r))
             group.addButton(b)
-            shapes.addWidget(b)
+            shapes.addWidget(b, i // 2, i % 2)
             self.shape_buttons[label] = b
         self.shape_buttons["Original"].setChecked(True)
 
@@ -150,7 +160,11 @@ class UpscaleDialog(QDialog):
         self.mode_wipe.clicked.connect(lambda: self._set_mode(True))
 
         self.navigator = UpscaleNavigator()
-        self.navigator.set_frame(_qimage_from_float(self._img.data))
+        small = frame
+        if max(frame.width(), frame.height()) > NAV_LONG_SIDE:
+            small = frame.scaled(NAV_LONG_SIDE, NAV_LONG_SIDE, Qt.AspectRatioMode.KeepAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+        self.navigator.set_frame(small, full_size=(frame.width(), frame.height()))
         self.navigator.centreRequested.connect(self._centre_views)
         self.result_size = QLabel("")
         self.change_crop_btn = QPushButton("◀ Change crop")
@@ -209,6 +223,10 @@ class UpscaleDialog(QDialog):
 
     # --- shape / size ---
     def _set_shape(self, ratio) -> None:
+        # apply_aspect only reshapes a box that exists; a shape picked first was
+        # stored and then ignored by the whole-frame box the first click drew.
+        if ratio is not None and not self.picker.crop_box_visible():
+            self.picker.show_crop_box()
         self.picker.apply_aspect(ratio)
         self._sync_size()
 
@@ -252,17 +270,24 @@ class UpscaleDialog(QDialog):
         if self._busy:
             return
         crop, engine, scale, rc = self._current_crop(), self._engine, self._scale, self._rc
-        self._token = CancelToken()
+        self._token = token = CancelToken()
         self._set_busy(True)
         self.status.setText("Separating stars and enlarging…")
 
         def done(layers) -> None:
+            if self._gone():
+                return
             self._token = None
             self._set_busy(False)
+            if token.cancelled:        # work that never checks finishes anyway — drop it
+                self.status.setText("Cancelled.")
+                return
             self._layers = layers
             self._show_result()
 
         def failed(exc) -> None:
+            if self._gone():
+                return
             self._token = None
             self._set_busy(False)
             self.status.setText("Cancelled." if isinstance(exc, Cancelled) else f"Failed: {exc}")
@@ -271,6 +296,8 @@ class UpscaleDialog(QDialog):
                   done, failed, on_progress=self._on_progress, token=self._token)
 
     def _on_progress(self, done: int, total: int) -> None:
+        if self._gone():
+            return
         self.status.setText(f"Separating stars… {done}%")
 
     def _set_busy(self, busy: bool) -> None:
@@ -291,12 +318,12 @@ class UpscaleDialog(QDialog):
         self.wipe_view.set_compare(plain)          # plain under the divider's left side
         self._unlink = link_views(self.plain_view, self.result_view)
         self.pages.setCurrentIndex(1)
+        self.views.setCurrentIndex(1 if self.mode_wipe.isChecked() else 0)
         h, w = self._result.data.shape[:2]
         self.navigator.set_crop(self._layers.crop, self._scale)
         self.result_view.actual_size()
         self._centre_views(w / 2, h / 2)
-        copy_view(self.result_view, self.wipe_view)  # a fresh wipe view opens at the same 100%
-        self.views.setCurrentIndex(1 if self.mode_wipe.isChecked() else 0)
+        self._carry_view(self.result_view, self.wipe_view)  # a fresh wipe view opens at the same 100%
         self._sync_navigator()
         self.result_size.setText(f"{w} × {h}")
         self.status.setText(f"Upscaled to {w}×{h}.")
@@ -313,12 +340,24 @@ class UpscaleDialog(QDialog):
         layers, t = self._layers, self._tighten
 
         def done(result) -> None:
+            if self._gone():
+                return
             if layers is self._layers and t == self._tighten:     # latest wins
                 self._result = result
                 q = _qimage_from_float(result.data)
                 self.result_view.set_image(q)      # same size: zoom/pan stay, linked views stay put
                 self.wipe_view.set_image(q)
-        run_async(self._pool, lambda: finish_upscale(layers, t), done)
+                if self.status.text().startswith("Couldn't update"):
+                    h, w = result.data.shape[:2]
+                    self.status.setText(f"Upscaled to {w}×{h}.")
+
+        def failed(exc) -> None:
+            # Near the ceiling this is usually memory. Say so, and leave the
+            # previous picture up rather than a view that silently went stale.
+            if self._gone() or layers is not self._layers:
+                return
+            self.status.setText(f"Couldn't update the preview: {exc}")
+        run_async(self._pool, lambda: finish_upscale(layers, t), done, failed)
 
     def _current_result(self):
         """The result at the slider's value NOW — an export never waits on, or
@@ -330,10 +369,21 @@ class UpscaleDialog(QDialog):
 
     def _set_mode(self, wipe: bool) -> None:
         src, dst = (self.result_view, self.wipe_view) if wipe else (self.wipe_view, self.result_view)
+        self.views.setCurrentIndex(1 if wipe else 0)   # first: dst must have its real size
         if self.pages.currentIndex() == 1:
-            copy_view(src, dst)
-        self.views.setCurrentIndex(1 if wipe else 0)
+            self._carry_view(src, dst)
         self._sync_navigator()
+
+    @staticmethod
+    def _carry_view(src, dst) -> None:
+        """Same zoom, same centre. The wipe view is about twice as wide as one of
+        the pair, so copying scroll values (copy_view) moved the picture."""
+        vp = src.viewport().rect()
+        c = src.mapToScene(QPoint(vp.width() // 2, vp.height() // 2))
+        dst.setTransform(src.transform())
+        dst._fitted = src._fitted
+        dst.centerOn(c)
+        dst._note_zoom()
 
     def _centre_views(self, x: float, y: float) -> None:
         for v in (self.result_view, self.wipe_view):
@@ -345,14 +395,41 @@ class UpscaleDialog(QDialog):
         self.navigator.set_visible_rect(r.x(), r.y(), r.width(), r.height())
 
     def _change_crop(self) -> None:
-        if self._unlink is not None:
-            self._unlink(); self._unlink = None
         self._tighten_timer.stop()
+        self._clear_views()                # ~320 MB of pixmaps at 20 MP, hidden
         self._layers = self._result = None
         self._export_btn.setEnabled(False); self._open_copy_btn.setEnabled(False)
         self.pages.setCurrentIndex(0)
         self.status.setText("")
         self._sync_size()
+
+    def _clear_views(self) -> None:
+        if self._unlink is not None:
+            self._unlink(); self._unlink = None
+        for v in (self.plain_view, self.result_view, self.wipe_view):
+            v.set_compare(None)
+            v.set_image(QImage())
+
+    # --- lifetime ---
+    def _gone(self) -> bool:
+        """A worker's signals outlive the dialog; its callbacks must not build
+        on a closed dialog, or touch one whose C++ side is deleted."""
+        return not shiboken6.isValid(self) or self._closed
+
+    def done(self, r: int) -> None:
+        """Every way out (Close, Esc, the title bar, Open as copy) comes here.
+        Stop the work and let go of the layers, result and pixmaps — the dialog
+        held ~1.3 GB at 20 MP, and closing mid-run left StarNet2 running."""
+        self._closed = True
+        if self._token is not None:
+            self._token.cancel()
+            self._token = None
+        self._busy = False
+        self._tighten_timer.stop()
+        self._clear_views()
+        self.navigator.set_frame(QImage())
+        self._layers = self._result = None
+        super().done(r)
 
     # --- export / open as copy ---
     def _on_export_clicked(self) -> None:

@@ -238,3 +238,195 @@ def test_open_as_copy_uses_the_slider_value(qtbot):
     d.tighten_slider.setValue(10)
     d._do_open_copy()
     assert got["t"] == 0.1
+
+
+# --- final whole-branch review fixes (2026-09-29) ---
+
+def _no_image(view) -> bool:
+    return view._item.pixmap().isNull() and not view.compare_active()
+
+
+def _centre(view):
+    from PySide6.QtCore import QRectF
+    c = view.mapToScene(QRectF(view.viewport().rect()).center().toPoint())
+    return c.x(), c.y()
+
+
+def test_cancel_with_a_splitter_that_never_checks_shows_no_result(qtbot, monkeypatch):
+    """[final 1] The free splitter and the Lanczos steps never look at the
+    token, so the work finishes after Cancel; that result must not be shown."""
+    import threading
+    import nocturne.ui.upscale_dialog as ud
+    from nocturne.core.upscale import LanczosEngine, prepare_upscale as real_prepare
+    started, release = threading.Event(), threading.Event()
+    # Built here, not in the worker: the real prepare now checks the token itself,
+    # and this must prove the dialog drops a result that arrives after Cancel.
+    ready = real_prepare(_img(), None, LanczosEngine())
+
+    def deaf(img, crop, engine, **k):
+        started.set()
+        release.wait(5)                        # never checks the token
+        return ready
+    monkeypatch.setattr(ud, "prepare_upscale", deaf)
+    d = _dlg(qtbot); d.show()
+    d.upscale_btn.click()
+    assert started.wait(5)
+    d.cancel_btn.click()
+    release.set()
+    qtbot.waitUntil(lambda: not d._busy, timeout=5000)
+    assert d.pages.currentIndex() == 0
+    assert d.status.text() == "Cancelled."
+    assert d._result is None and d._layers is None
+    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+
+
+def test_closing_releases_the_layers_result_and_views(qtbot):
+    """[final 2] exec() never deleted the dialog, and it held ~1.3 GB at 20 MP."""
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    assert not d.result_view._item.pixmap().isNull()       # precondition: there was a result
+    d._close_btn.click()
+    assert d._layers is None and d._result is None
+    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    assert d.navigator._frame.isNull()
+
+
+def test_a_late_worker_callback_after_close_builds_nothing(qtbot, monkeypatch):
+    """[final 2] The worker's signals outlive the dialog: its done/failed must
+    be inert once the dialog is closed, and after deleteLater has run."""
+    import nocturne.ui.upscale_dialog as ud
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from nocturne.core.tasks import Cancelled
+    from nocturne.core.upscale import LanczosEngine, finish_upscale, prepare_upscale
+    calls = []
+    monkeypatch.setattr(ud, "run_async", lambda pool, fn, done, failed=None, **k:
+                        calls.append((done, failed)))
+    d = UpscaleDialog(_img(), {}, Settings())
+    d.show()
+    d.upscale_btn.click()
+    d._layers = prepare_upscale(_img(), None, LanczosEngine())    # as if a result were up
+    d._rerender()
+    (up_done, up_failed), (re_done, _re_failed) = calls
+    d.reject()
+    layers = prepare_upscale(_img(), None, LanczosEngine())
+    up_done(layers)
+    re_done(finish_upscale(layers, 0.35))
+    up_failed(RuntimeError("late"))
+    assert d.pages.currentIndex() == 0 and d._result is None and d._layers is None
+    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    d.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    up_done(layers)                                  # C++ side gone: must not raise
+    re_done(finish_upscale(layers, 0.35))
+    up_failed(Cancelled())
+
+
+def test_closing_mid_run_cancels_the_work(qtbot, monkeypatch):
+    """[final 3] Closing left StarNet2 running and built state 2 on a hidden dialog."""
+    import threading
+    import time
+    import nocturne.ui.upscale_dialog as ud
+    from nocturne.core.tasks import Cancelled, current
+    started, stopped = threading.Event(), threading.Event()
+
+    def slow(*a, **k):
+        started.set()
+        deadline = time.monotonic() + 8          # a failure must fail, not hang the run
+        try:
+            while time.monotonic() < deadline:
+                current().check()
+                time.sleep(0.001)
+        except Cancelled:
+            stopped.set()
+            raise
+        raise RuntimeError("never cancelled")
+    monkeypatch.setattr(ud, "prepare_upscale", slow)
+    d = _dlg(qtbot); d.show()
+    d.upscale_btn.click()
+    assert started.wait(5)
+    d.reject()
+    assert stopped.wait(5)                           # the work heard the cancel
+    qtbot.wait(50)                                   # let the error signal land
+    assert d.pages.currentIndex() == 0 and d._result is None
+    assert _no_image(d.result_view)
+
+
+def test_a_shape_picked_before_the_box_shows_the_box_in_that_shape(qtbot):
+    """[final 4] 100x60: a square box is NOT the default whole-frame box."""
+    d = UpscaleDialog(_img(h=60, w=100), {}, Settings()); qtbot.addWidget(d)
+    assert not d.picker.crop_box_visible()
+    d.shape_buttons["1:1"].click()
+    assert d.picker.crop_box_visible()
+    t, b, l, r = d.picker.crop_bounds()
+    assert (b - t) == pytest.approx(r - l, abs=1) and (r - l) < 100
+    assert d.size_label.text() == f"{r - l} × {b - t} → {2 * (r - l)} × {2 * (b - t)}"
+
+
+def test_a_box_shown_by_a_click_updates_the_size(qtbot):
+    """[final 4] cropBoxShown feeds the size label."""
+    d = UpscaleDialog(_img(h=60, w=100), {}, Settings()); qtbot.addWidget(d)
+    d.picker.set_crop_overlay(True, content_bounds=(10, 40, 5, 25))
+    d.size_label.setText("stale")
+    d.picker.show_crop_box()
+    assert d.size_label.text() == "20 × 30 → 40 × 60"
+
+
+def test_switching_to_wipe_keeps_the_same_place_and_back(qtbot):
+    """[final 5] Scroll values copied between viewports of different widths
+    moved the picture; the centre must survive both ways."""
+    d = UpscaleDialog(_img(h=500, w=600), {}, Settings()); qtbot.addWidget(d)
+    d.resize(900, 600); d.show()
+    d._run_upscale()
+    x, y = 520.0, 430.0
+    d._centre_views(x, y)
+    assert _centre(d.result_view) == pytest.approx((x, y), abs=1)    # precondition
+    d.mode_wipe.click()
+    assert d.wipe_view.viewport().width() > d.result_view.viewport().width() + 100
+    assert _centre(d.wipe_view) == pytest.approx((x, y), abs=1)
+    d.mode_side.click()
+    assert _centre(d.result_view) == pytest.approx((x, y), abs=1)
+
+
+def test_every_shape_button_is_wide_enough_to_read(qtbot):
+    """[final 6] Six buttons in one row of a 240 px panel were squeezed."""
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    for label, b in d.shape_buttons.items():
+        assert b.width() >= b.sizeHint().width(), label
+
+
+def test_a_failed_rerender_says_so_and_keeps_the_view(qtbot, monkeypatch):
+    """[final 7]"""
+    import nocturne.ui.upscale_dialog as ud
+    d = _dlg(qtbot); d.show()
+    d._run_upscale()
+    before = d.result_view._item.pixmap().toImage()
+
+    def boom(*a, **k):
+        raise MemoryError("out of memory")
+    monkeypatch.setattr(ud, "finish_upscale", boom)
+    d._rerender()
+    qtbot.waitUntil(lambda: d.status.text().startswith("Couldn't update"), timeout=5000)
+    assert d.status.text() == "Couldn't update the preview: out of memory"
+    assert d.result_view._item.pixmap().toImage() == before
+
+
+def test_the_navigator_gets_a_small_copy_and_the_full_geometry(qtbot, monkeypatch):
+    """[final 8] It held a full-resolution pixmap, and the frame was converted twice."""
+    import nocturne.ui.upscale_dialog as ud
+    n = []
+    real = ud._qimage_from_float
+    monkeypatch.setattr(ud, "_qimage_from_float", lambda a: n.append(1) or real(a))
+    d = UpscaleDialog(_img(h=700, w=1400), {}, Settings()); qtbot.addWidget(d)
+    assert len(n) == 1
+    fr = d.navigator._frame
+    assert max(fr.width(), fr.height()) <= 600 and fr.width() == 2 * fr.height()
+    assert (d.navigator._fw, d.navigator._fh) == (1400, 700)
+
+
+def test_change_crop_lets_go_of_the_pictures(qtbot):
+    """[final 10] ~320 MB at 20 MP stayed in the hidden views."""
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    assert not d.plain_view._item.pixmap().isNull()      # precondition
+    d.change_crop_btn.click()
+    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))

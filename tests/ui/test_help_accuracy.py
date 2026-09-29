@@ -1204,8 +1204,11 @@ def test_upscale_help_describes_the_sidecar_file_that_is_actually_written(qtbot,
     report = (tmp_path / "out.txt").read_text()
 
     assert upscale_filename("m42.fits", 2) == "m42_2x.jpg" and "yourfile_2x.jpg" in b
-    for claim in ("Lanczos", "2×", "m42.fits", "M42"):
+    for claim in ("Lanczos", "2×", "m42.fits", "M42", "Star tightening: 0.35"):
         assert claim in report, f"the sidecar no longer records {claim!r}"
+    assert "the crop and the star tightening" in b
+    assert report.rstrip().endswith("presentation derivative — enlarged, no synthesized detail."), \
+        "the help says the file ENDS on that sentence"
     assert "presentation derivative — enlarged, no synthesized detail" in report
     assert "presentation derivative — enlarged, no synthesized detail" in b
     assert "JPEG (*.jpg);;PNG (*.png);;TIFF (*.tiff)" in _src("nocturne/ui/upscale_dialog.py")
@@ -1841,3 +1844,19 @@ def test_stacking_help_no_longer_says_a_folder_of_nights_is_judged_as_one():
 def test_haoiii_help_mentions_the_night_lines():
     b = _body("haoiii")
     assert "dashed line" in b and "no night chips" in b
+
+
+def test_upscale_help_says_the_navigator_maps_the_whole_frame(qtbot):
+    """[final 9] It draws the whole frame with the crop outlined, not the crop."""
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.upscale_dialog import UpscaleDialog
+    b = _body("upscale")
+    assert "map of the whole crop" not in b
+    assert "a small map of the whole image, with your crop outlined" in b
+    data = np.full((60, 100, 3), 0.1, np.float32)
+    d = UpscaleDialog(AstroImage(data, is_linear=False, metadata={}), {}, Settings())
+    qtbot.addWidget(d)
+    d.picker.set_crop_overlay(True, content_bounds=(10, 40, 20, 60)); d.picker.show_crop_box()
+    d._run_upscale()
+    assert (d.navigator._fw, d.navigator._fh) == (100, 60), "the navigator no longer maps the frame"

@@ -25,9 +25,13 @@ class UpscaleNavigator(QWidget):
         self.setMinimumHeight(80)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def set_frame(self, qimage: QImage) -> None:
+    def set_frame(self, qimage: QImage, full_size=None) -> None:
+        """`qimage` may be a reduced copy — a full-resolution pixmap costs 4 bytes
+        a pixel for a thumbnail. `full_size` (w, h) is then the real frame's,
+        because the crop and the clicks are in full-frame pixels."""
         self._frame = QPixmap.fromImage(qimage)
-        self._fw, self._fh = max(1, qimage.width()), max(1, qimage.height())
+        w, h = full_size if full_size is not None else (qimage.width(), qimage.height())
+        self._fw, self._fh = max(1, w), max(1, h)
         self.update()
 
     def set_crop(self, crop, scale: int) -> None:
@@ -66,6 +70,7 @@ class UpscaleNavigator(QWidget):
     # --- painting / input ---
     def paintEvent(self, _event) -> None:
         p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         p.fillRect(self.rect(), QColor(theme.BG_2))
         if not self._frame.isNull():
             p.drawPixmap(self._frame_rect(), self._frame, QRectF(self._frame.rect()))

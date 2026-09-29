@@ -2745,9 +2745,23 @@ def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
             seen["has_source_label"] = "source_label" in metadata
             seen["is_astroimage"] = hasattr(img, "data")
         def exec(self): seen["shown"] = True
+        def deleteLater(self): pass
     monkeypatch.setattr(mw, "UpscaleDialog", _Fake)
     win._upscale()
     assert seen["shown"] and seen["has_source_label"] and seen["is_astroimage"]
+
+
+def test_the_upscale_dialog_is_deleted_after_it_closes(qtbot, tmp_path, monkeypatch):
+    """[final 2] exec() on a parented dialog never deleted it; each one kept its
+    layers and pixmaps (~1.3 GB at 20 MP) alive as a child of the window."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw.UpscaleDialog, "exec", lambda self: 0)
+    win = _stretched_window(qtbot, tmp_path)
+    win._upscale()
+    win._upscale()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert win.findChildren(mw.UpscaleDialog) == []
 
 
 def test_run_busy_cancel_sets_token_and_is_not_an_error(qtbot, tmp_path):
@@ -6439,6 +6453,8 @@ def test_upscale_is_told_whether_noise_reduction_ran(qtbot, tmp_path, monkeypatc
             seen["denoised"] = denoised
         def exec(self):
             return 0
+        def deleteLater(self):
+            pass
     monkeypatch.setattr(mw, "UpscaleDialog", FakeDialog)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
