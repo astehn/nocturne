@@ -92,16 +92,27 @@ def test_the_size_follows_the_crop_box(qtbot):
     assert d.size_label.text() == "20 × 30 → 40 × 60"
 
 
-def test_above_the_ceiling_upscale_is_refused_with_a_reason(qtbot, monkeypatch):
-    import nocturne.ui.upscale_dialog as ud
-    monkeypatch.setattr(ud, "UPSCALE_MAX_MP", 0.01)     # 0.0144 MP > 0.01
-    d = _dlg(qtbot)
+def test_above_the_limit_upscale_is_refused_with_the_reason_beside_it(qtbot):
+    """The reason sits beside the button it disables, in the panel — in the
+    status line at the foot he did not see it (2026-09-29)."""
+    d = _dlg(qtbot)                                     # 60x60 -> 0.0144 MP out
+    d._limit_mp = 0.01
     d._sync_size()
     assert not d.upscale_btn.isEnabled()
-    assert "Too large to enlarge: 0 MP (limit 0.01 MP). Choose a smaller crop." in d.status.text()
-    monkeypatch.setattr(ud, "UPSCALE_MAX_MP", 60)
+    assert not d.limit_note.isHidden()
+    assert d.limit_note.text() == "Too large to enlarge on this computer: 0 MP. Make the crop smaller."
+    assert "Too large" not in d.status.text()
+    d._limit_mp = 60
     d._sync_size()
-    assert d.upscale_btn.isEnabled() and "Too large" not in d.status.text()
+    assert d.upscale_btn.isEnabled() and d.limit_note.isHidden()
+
+
+def test_the_panel_says_this_computers_limit_and_why(qtbot, monkeypatch):
+    import nocturne.ui.upscale_dialog as ud
+    monkeypatch.setattr(ud, "upscale_limit_mp", lambda: 42)
+    monkeypatch.setattr(ud, "memory_gb", lambda: 16)
+    d = _dlg(qtbot)
+    assert d.limit_label.text() == "Up to 42 MP on this computer (16 GB of memory)"
 
 
 def test_the_noise_note_shows_only_without_noise_reduction(qtbot):

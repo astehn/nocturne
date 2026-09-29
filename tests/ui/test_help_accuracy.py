@@ -1132,7 +1132,8 @@ def test_upscale_help_names_the_controls_the_dialog_shows(qtbot):
     """Every control the topic names is one the dialog has, and every number it
     quotes is formatted from the constant, not copied."""
     from nocturne.core.share import ASPECTS
-    from nocturne.core.upscale import TIGHTEN_DEFAULT, UPSCALE_MAX_MP
+    from nocturne.core.upscale import (MAX_OUTPUT_MP, RAM_SHARE, TIGHTEN_DEFAULT,
+                                       upscale_limit_mp)
     from nocturne.ui.upscale_dialog import SCALE
     b = _body("upscale")
     d = _upscale_dialog(qtbot)
@@ -1149,7 +1150,13 @@ def test_upscale_help_names_the_controls_the_dialog_shows(qtbot):
     for shape, _r in ASPECTS:
         assert shape in d.shape_buttons
         assert shape in b, f"the topic never lists the {shape} shape"
-    assert f"<b>ceiling of {UPSCALE_MAX_MP} megapixels</b>" in b
+    # The limit follows the machine's memory: every figure the help quotes is
+    # the one the code computes for that memory.
+    assert f"<b>{round(RAM_SHARE * 100)}% of the installed memory</b>" in b
+    assert f"<b>{MAX_OUTPUT_MP} megapixels</b> at most" in b
+    for gb in (8, 16, 32):
+        assert f"up to about {upscale_limit_mp(gb * 2**30)}&nbsp;MP" in b, gb
+    assert upscale_limit_mp(16 * 2**30) >= 34, "16 GB must fit a whole S30 Pro frame (33 MP)"
     assert TIGHTEN_DEFAULT == 0.35 and "the default is 0.35" in b
     assert d.tighten_slider.value() == round(TIGHTEN_DEFAULT * 100)
     assert "Enlarging adds <b>no detail</b>" in b

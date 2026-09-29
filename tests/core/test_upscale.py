@@ -206,3 +206,22 @@ def test_provenance_text_records_the_star_tightening():
     """[final 11] The option must be enough to reproduce the picture."""
     out = upscale_crop(_starry(), None, LanczosEngine(), scale=2, tighten=0.62)
     assert "Star tightening: 0.62" in upscale_provenance_text(out.metadata)
+
+
+def test_the_limit_follows_the_computers_memory():
+    """A fixed 20 MP stopped his own full frame on a 64 GB Mac; a fixed 35 MP
+    would swamp an 8 GB laptop. 160 MB per output MP, 40% of memory, 100 MP cap."""
+    from nocturne.core.upscale import FALLBACK_MAX_MP, MAX_OUTPUT_MP, upscale_limit_mp
+    gib = 2**30
+    assert upscale_limit_mp(8 * gib) == 21
+    assert upscale_limit_mp(16 * gib) == 42          # a whole S30 Pro frame (33 MP) fits
+    assert upscale_limit_mp(32 * gib) == 85
+    assert upscale_limit_mp(64 * gib) == MAX_OUTPUT_MP == 100
+    assert upscale_limit_mp(0) == FALLBACK_MAX_MP
+
+
+def test_memory_reads_as_the_number_people_know_their_machine_by():
+    from nocturne.core.upscale import memory_gb, physical_memory
+    assert memory_gb(16 * 2**30) == 16
+    ram = physical_memory()
+    assert ram is None or ram > 2**30                # this machine answers, sensibly

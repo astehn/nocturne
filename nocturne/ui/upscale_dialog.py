@@ -16,7 +16,7 @@ from ..core.export import save_jpeg, save_png, save_tiff
 from ..core.share import ASPECTS
 from ..core.tasks import CancelToken, Cancelled
 from ..core.upscale import (
-    TIGHTEN_DEFAULT, UPSCALE_MAX_MP, LanczosEngine, finish_upscale, megapixels,
+    TIGHTEN_DEFAULT, LanczosEngine, memory_gb, upscale_limit_mp, finish_upscale, megapixels,
     output_size, prepare_upscale, upscale_filename, upscale_provenance_text,
 )
 from ..settings import start_dir
@@ -27,9 +27,11 @@ from .worker import run_async
 from . import file_dialogs, theme
 
 # finish_upscale (reduce_stars + recombine) measured 2026-09-29 on his M31 mosaic
-# crops: 0.2 s at the 20 MP ceiling (0.4 s at 33 MP, 2.0 s at 150 MP). Half of
-# 0.2 s is 100 ms, under the 150 ms floor, so the floor stands.
-TIGHTEN_DEBOUNCE_MS = 150
+# crops: 0.22 s at 20 MP, 0.46 s at 42 MP — the limit on the 16 GB laptops most
+# owners have (the limit now follows memory, core/upscale.upscale_limit_mp).
+# Half the 42 MP time, rounded: re-rendering far more often than a render lasts
+# only queues work the latest-wins guard throws away.
+TIGHTEN_DEBOUNCE_MS = 230
 
 SCALE = 2   # fixed in v1
 
@@ -122,6 +124,21 @@ class UpscaleDialog(QDialog):
         self.shape_buttons["Original"].setChecked(True)
 
         self.size_label = QLabel("")
+        # The limit follows this computer's memory (core/upscale.py), so the
+        # panel says what it is and why, beside the button it disables — in
+        # the status line at the foot of the window it went unseen (his test,
+        # 2026-09-29: "if i select Original im not allowed to press upscale").
+        self._limit_mp = upscale_limit_mp()
+        gb = memory_gb()
+        self.limit_label = QLabel(
+            f"Up to {self._limit_mp} MP on this computer"
+            + (f" ({gb} GB of memory)" if gb else ""))
+        self.limit_label.setObjectName("stepDesc")
+        self.limit_label.setWordWrap(True)
+        self.limit_note = QLabel("")
+        self.limit_note.setWordWrap(True)
+        self.limit_note.setStyleSheet(f"color: {theme.WARNING};")
+        self.limit_note.hide()
         self.noise_note = QLabel(NOISE_NOTE)
         self.noise_note.setWordWrap(True)
         self.noise_note.setStyleSheet(f"color: {theme.WARNING};")
@@ -135,6 +152,8 @@ class UpscaleDialog(QDialog):
         panel.addLayout(shapes)
         panel.addWidget(QLabel("<b>Size</b>"))
         panel.addWidget(self.size_label)
+        panel.addWidget(self.limit_label)
+        panel.addWidget(self.limit_note)
         panel.addWidget(self.noise_note)
         panel.addStretch(1)
         panel.addWidget(self.upscale_btn)
@@ -251,14 +270,13 @@ class UpscaleDialog(QDialog):
         ow, oh = output_size(w, h, self._scale)
         self.size_label.setText(f"{w} × {h} → {ow} × {oh}")
         mp = megapixels(ow, oh)
-        over = mp > UPSCALE_MAX_MP
+        over = mp > self._limit_mp
         self.size_label.setStyleSheet(f"color: {theme.WARNING};" if over else "")
         self.upscale_btn.setEnabled(not over and not self._busy)
-        if over:
-            self.status.setText(f"Too large to enlarge: {mp:.0f} MP (limit {UPSCALE_MAX_MP} MP). "
-                                "Choose a smaller crop.")
-        elif self.status.text().startswith("Too large"):
-            self.status.setText("")
+        self.limit_note.setText(
+            f"Too large to enlarge on this computer: {mp:.0f} MP. "
+            "Make the crop smaller." if over else "")
+        self.limit_note.setVisible(over)
 
     # --- crop ---
     def _current_crop(self):

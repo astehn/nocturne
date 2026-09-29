@@ -63,23 +63,46 @@ from ..tools.base import run_cli
 TIGHTEN_DEFAULT = 0.35
 _SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 
-# The biggest output Upscale will make. MEASURED 2026-09-29 on centre crops of
-# his M31 drizzle mosaic (stretched), free splitter, prepare + finish + three
-# QImages, one fresh process per size, peak RSS (Apple M-series, 64 GB):
-#   output MP   time     peak RSS      output MP   time     peak RSS
-#      8         1.1 s    1.39 GB          50        6.2 s     8.03 GB
-#     16         2.1 s    2.63 GB          80       10.0 s    12.94 GB
-#     20         2.5 s    3.23 GB         120       15.0 s    19.43 GB
-#     25         3.1 s    4.03 GB         150       18.6 s    24.34 GB
-#     30         3.7 s    4.88 GB
-#     33         4.2 s    5.34 GB
-# Memory is the limit, not time: about 160 MB per output MP, four float32
-# layers plus three QImages. (Measured WITH a plain-resize layer, dropped the
-# same day when the comparison became Original vs Nocturne — the figures
-# slightly overstate today's peak.) Rule: largest size under 4 GB peak, rounded down
-# to 10 -> 20 MP. StarNet2 at 20 MP: 7.5 s, 3.05 GB; at 33 MP: 12.0 s, 4.98 GB.
-# The app also holds the project image and its copy, on top of these figures.
-UPSCALE_MAX_MP = 20
+# The biggest output Upscale will make follows THIS computer's memory, not one
+# number for every machine: a fixed 20 MP stopped his own full frame (33 MP out)
+# on a 64 GB Mac, and a fixed 35 MP would push an 8 GB laptop — common among
+# Seestar owners — deep into swap (his call, 2026-09-29).
+#
+# MEASURED 2026-09-29, centre crops of his stretched M31 drizzle mosaic, free
+# splitter, prepare + finish + the dialog's three QImages, one fresh process per
+# size, peak RSS (Apple M-series):
+#   output MP     8      20      33      50      100
+#   peak GB     1.33    3.09    5.07    7.75    15.41
+#   seconds      0.9     2.1     3.5     5.2     10.4
+# About 155 MB per output megapixel, steady from 8 to 100 MP. The peak is the
+# transient float32 copies inside the split, Lanczos and reduce_stars, not the
+# kept layers (float16 layers were tried the same day and bought nothing).
+MB_PER_OUTPUT_MP = 160          # 155 measured, rounded up for margin
+RAM_SHARE = 0.4                 # the rest is macOS/Linux, Nocturne's own image, other apps
+MAX_OUTPUT_MP = 100             # even on a big machine: ~10 s and ~15 GB there
+FALLBACK_MAX_MP = 20            # memory unreadable: assume a small machine
+
+
+def physical_memory() -> int | None:
+    """Installed RAM in bytes, or None where the OS won't say."""
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+def upscale_limit_mp(ram_bytes: int | None = None) -> int:
+    """The largest output, in megapixels, this computer should be asked for."""
+    ram = physical_memory() if ram_bytes is None else ram_bytes
+    if not ram:
+        return FALLBACK_MAX_MP
+    return int(min(MAX_OUTPUT_MP, RAM_SHARE * ram / (MB_PER_OUTPUT_MP * 1e6)))
+
+
+def memory_gb(ram_bytes: int | None = None) -> int | None:
+    """Installed RAM as the whole number of GB a person knows their machine by."""
+    ram = physical_memory() if ram_bytes is None else ram_bytes
+    return round(ram / 2**30) if ram else None
 
 
 def output_size(crop_w: int, crop_h: int, scale: int = 2) -> tuple[int, int]:
