@@ -144,3 +144,73 @@ def test_output_size_and_megapixels():
     assert output_size(1750, 1167) == (3500, 2334)
     assert output_size(1, 3) == (2, 6)                       # [RF 5] tiny crops are fine
     assert megapixels(3840, 2160) == pytest.approx(8.2944)
+
+
+def _deaf_split(monkeypatch, after=None):
+    """A splitter that never checks the token, like the free one."""
+    import nocturne.steps.star_split as ss
+
+    def split(src, rc, runner=None):
+        if after is not None:
+            after()
+        return src, AstroImage(np.zeros_like(src.data), is_linear=src.is_linear, metadata={})
+    monkeypatch.setattr(ss, "resolve_star_split", split)
+
+
+def test_prepare_stops_after_the_split_when_cancelled(monkeypatch):
+    """[final 1] The free splitter never checks: prepare must, once it returns."""
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.core.upscale import prepare_upscale
+    tok = CancelToken()
+    _deaf_split(monkeypatch, after=tok.cancel)       # cancelled while the split ran
+    upscaled = []
+
+    class Engine(LanczosEngine):
+        def upscale(self, img, scale):
+            upscaled.append(1)
+            return super().upscale(img, scale)
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            prepare_upscale(_starry(), None, Engine())
+    finally:
+        clear_ambient()
+    assert upscaled == []                            # nothing enlarged after the cancel
+
+
+def test_prepare_stops_between_the_upscales_when_cancelled(monkeypatch):
+    """[final 1] A cancel during the first enlargement stops before the next."""
+    from nocturne.core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
+    from nocturne.core.upscale import prepare_upscale
+    import nocturne.core.upscale as up
+    tok = CancelToken()
+    _deaf_split(monkeypatch)
+    calls = []
+    real = up._resample_channel_lanczos
+
+    def resample(chan, scale):
+        calls.append(1)
+        tok.cancel()
+        return real(chan, scale)
+    monkeypatch.setattr(up, "_resample_channel_lanczos", resample)
+    set_ambient(tok)
+    try:
+        with pytest.raises(Cancelled):
+            prepare_upscale(_starry(), None, LanczosEngine())
+    finally:
+        clear_ambient()
+    assert len(calls) == 3                           # the starless upscale only (3 channels)
+
+
+def test_prepare_without_a_token_runs_through(monkeypatch):
+    from nocturne.core.tasks import clear_ambient
+    from nocturne.core.upscale import prepare_upscale
+    clear_ambient()
+    _deaf_split(monkeypatch)
+    assert prepare_upscale(_starry(), None, LanczosEngine()).plain_up.data.shape[0] > 0
+
+
+def test_provenance_text_records_the_star_tightening():
+    """[final 11] The option must be enough to reproduce the picture."""
+    out = upscale_crop(_starry(), None, LanczosEngine(), scale=2, tighten=0.62)
+    assert "Star tightening: 0.62" in upscale_provenance_text(out.metadata)

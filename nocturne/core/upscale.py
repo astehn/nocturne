@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from .image import AstroImage
+from .tasks import current
 
 
 class UpscaleEngine(Protocol):
@@ -110,12 +111,24 @@ def prepare_upscale(img, crop, engine, *, scale=2, rc=None, runner=run_cli) -> U
     src = AstroImage(np.ascontiguousarray(data, dtype=np.float32),
                      is_linear=img.is_linear, metadata=dict(img.metadata))
     starless, stars = resolve_star_split(src, rc, runner=runner)
+    # The free splitter and Lanczos never look at the token, so Cancel would
+    # otherwise only land when the whole run had finished (review 2026-09-29).
+    _check_cancel()
+    starless_up = engine.upscale(starless, scale)          # may fabricate later (GAN)
+    _check_cancel()
+    stars_up = LanczosEngine().upscale(stars, scale)       # stars ALWAYS deterministic
+    _check_cancel()
+    plain_up = LanczosEngine().upscale(src, scale)
     return UpscaleLayers(
-        starless_up=engine.upscale(starless, scale),        # may fabricate later (GAN)
-        stars_up=LanczosEngine().upscale(stars, scale),     # stars ALWAYS deterministic
-        plain_up=LanczosEngine().upscale(src, scale),
+        starless_up=starless_up, stars_up=stars_up, plain_up=plain_up,
         source_meta=dict(img.metadata),
         crop=crop, scale=scale, engine_prov=engine.provenance())
+
+
+def _check_cancel() -> None:
+    tok = current()
+    if tok is not None:
+        tok.check()
 
 
 def finish_upscale(layers: UpscaleLayers, tighten: float) -> AstroImage:
@@ -164,6 +177,8 @@ def upscale_provenance_text(metadata: dict) -> str:
         lines.append(f"Target: {metadata['target']}")
     if up.get("crop"):
         lines.append(f"Crop (t,b,l,r): {up['crop']}")
+    if up.get("tighten") is not None:
+        lines.append(f"Star tightening: {up['tighten']}")
     if up.get("fabricates"):
         lines.append("Contains AI-synthesized detail — NOT for measurement or source discovery.")
     else:
