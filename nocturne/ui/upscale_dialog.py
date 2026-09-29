@@ -4,21 +4,28 @@ import os
 
 import numpy as np
 
-from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QThreadPool
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QPushButton,
-    QSplitter, QVBoxLayout, QWidget,
+    QButtonGroup, QDialog, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
 from ..core.export import save_jpeg, save_png, save_tiff
-from ..core.upscale import LanczosEngine, upscale_crop, upscale_filename, upscale_provenance_text
+from ..core.share import ASPECTS
+from ..core.upscale import (
+    UPSCALE_MAX_MP, LanczosEngine, megapixels, output_size, upscale_crop,
+    upscale_filename, upscale_provenance_text,
+)
 from ..settings import start_dir
 from .image_view import ImageView
 from .worker import run_async
-from . import file_dialogs
+from . import file_dialogs, theme
 
-SCALE = 2   # fixed in v1; only the engine choice varies
+SCALE = 2   # fixed in v1
+
+NOISE_NOTE = ("Noise Reduction hasn't been applied — enlarging makes noise twice as "
+              "visible. Worth running it first.")
 
 
 def _qimage_from_float(data: np.ndarray) -> QImage:
@@ -45,9 +52,10 @@ def _dispatch_save(img, path: str) -> None:
 
 
 class UpscaleDialog(QDialog):
-    def __init__(self, img, metadata: dict, settings, rc=None, on_open_copy=None, parent=None) -> None:
+    def __init__(self, img, metadata: dict, settings, rc=None, on_open_copy=None, parent=None,
+                 *, denoised: bool = True) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Upscale crop")
+        self.setWindowTitle("Upscale Crop")
         self.setMinimumSize(800, 500)
         self.resize(1000, 640)
         self._img = img
@@ -56,51 +64,58 @@ class UpscaleDialog(QDialog):
         self._rc = rc
         self._on_open_copy = on_open_copy
         self._scale = SCALE
-        self._engines = [LanczosEngine()]   # v1: Lanczos only; EDSR appends later
-        self._engine = self._engines[0]
+        self._engine = LanczosEngine()
         self._result = None
-        self._compare_on = False
         self._busy = False
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
 
-        self._image_view = ImageView()
-        self._image_view.setMinimumSize(360, 320)
-        self._image_view.set_image(_qimage_from_float(self._img.data))
-        self._image_view.set_crop_overlay(True, aspect_ratio=None)
+        self.picker = ImageView()
+        self.picker.setMinimumSize(360, 320)
+        self.picker.set_image(_qimage_from_float(self._img.data))
+        self.picker.set_crop_overlay(True, aspect_ratio=None)
+        self.picker.cropBoxChanged.connect(lambda *_: self._sync_size())
 
-        self._preview_label = QLabel("Run Upscale to see a preview.")
-        self._preview_label.setMinimumSize(240, 220)
-        self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setWordWrap(True)
+        self.shape_buttons, group = {}, QButtonGroup(self)
+        shapes = QHBoxLayout()
+        for label, ratio in ASPECTS:
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.clicked.connect(lambda _c=False, r=ratio: self._set_shape(r))
+            group.addButton(b)
+            shapes.addWidget(b)
+            self.shape_buttons[label] = b
+        self.shape_buttons["Original"].setChecked(True)
 
-        self._engine_box = QComboBox()
-        self._engine_box.addItems([e.name for e in self._engines])
-        self._engine_box.currentIndexChanged.connect(self._select_engine)
+        self.size_label = QLabel("")
+        self.noise_note = QLabel(NOISE_NOTE)
+        self.noise_note.setWordWrap(True)
+        self.noise_note.setStyleSheet(f"color: {theme.WARNING};")
+        self.noise_note.setVisible(not denoised)
+        self.upscale_btn = QPushButton("Upscale 2×")
+        self.upscale_btn.setObjectName("primary")
+        self.upscale_btn.clicked.connect(self._on_upscale_clicked)
 
-        self._compare_check = QCheckBox("Compare")
-        self._compare_check.toggled.connect(self._set_compare)
+        panel = QVBoxLayout()
+        panel.addWidget(QLabel("<b>Shape</b>"))
+        panel.addLayout(shapes)
+        panel.addWidget(QLabel("<b>Size</b>"))
+        panel.addWidget(self.size_label)
+        panel.addWidget(self.noise_note)
+        panel.addStretch(1)
+        panel.addWidget(self.upscale_btn)
+        side = QWidget()
+        side.setLayout(panel)
+        side.setFixedWidth(240)
 
-        self._upscale_btn = QPushButton("Upscale")
-        self._upscale_btn.setObjectName("primary")
-        self._upscale_btn.clicked.connect(self._on_upscale_clicked)
-
-        controls = QHBoxLayout()
-        # A dropdown offering exactly one choice is a control that does nothing.
-        # It exists because EDSR is meant to join Lanczos later; until it does,
-        # both the label and the box stay out of the way.
-        self._engine_label = QLabel("Engine")
-        controls.addWidget(self._engine_label)
-        controls.addWidget(self._engine_box)
-        if len(self._engines) < 2:
-            self._engine_label.setVisible(False)
-            self._engine_box.setVisible(False)
-        controls.addWidget(QLabel("2×"))
-        controls.addWidget(self._upscale_btn)
-        controls.addStretch(1)
-        controls.addWidget(self._compare_check)
-        controls_wrap = QWidget()
-        controls_wrap.setLayout(controls)
+        pick = QHBoxLayout()
+        pick.addWidget(self.picker, 1)
+        pick.addWidget(side)
+        pick_page = QWidget()
+        pick_page.setLayout(pick)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(pick_page)
+        self.pages.addWidget(QWidget())       # Task 5 replaces this compare page
 
         self._export_btn = QPushButton("Export…")
         self._export_btn.clicked.connect(self._on_export_clicked)
@@ -118,33 +133,43 @@ class UpscaleDialog(QDialog):
         self._close_btn.clicked.connect(self.reject)
         buttons.addWidget(self._close_btn)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.splitter.addWidget(self._image_view)
-        self.splitter.addWidget(self._preview_label)
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([500, 500])
-        self.splitter.setChildrenCollapsible(False)
-
         root = QVBoxLayout(self)
-        root.addWidget(controls_wrap)
-        root.addWidget(self.splitter, 1)
+        root.addWidget(self.pages, 1)
         root.addWidget(self.status)
         root.addLayout(buttons)
+        self._sync_size()
 
-    # --- engine / compare ---
-    def _select_engine(self, index: int) -> None:
-        if 0 <= index < len(self._engines):
-            self._engine = self._engines[index]
+    # --- shape / size ---
+    def _set_shape(self, ratio) -> None:
+        self.picker.apply_aspect(ratio)
+        self._sync_size()
 
-    def _set_compare(self, on) -> None:
-        self._compare_on = bool(on)
-        self._refresh_preview()
+    def _crop_dims(self) -> tuple[int, int]:
+        crop = self._current_crop()
+        if crop is None:
+            h, w = self._img.data.shape[:2]
+            return w, h
+        top, bottom, left, right = crop
+        return right - left, bottom - top
+
+    def _sync_size(self) -> None:
+        w, h = self._crop_dims()
+        ow, oh = output_size(w, h, self._scale)
+        self.size_label.setText(f"{w} × {h} → {ow} × {oh}")
+        mp = megapixels(ow, oh)
+        over = mp > UPSCALE_MAX_MP
+        self.size_label.setStyleSheet(f"color: {theme.WARNING};" if over else "")
+        self.upscale_btn.setEnabled(not over and not self._busy)
+        if over:
+            self.status.setText(f"Too large to enlarge: {mp:.0f} MP (limit {UPSCALE_MAX_MP} MP). "
+                                "Choose a smaller crop.")
+        elif self.status.text().startswith("Too large"):
+            self.status.setText("")
 
     # --- crop ---
     def _current_crop(self):
-        if self._image_view.crop_box_visible():
-            top, bottom, left, right = self._image_view.crop_bounds()
+        if self.picker.crop_box_visible():
+            top, bottom, left, right = self.picker.crop_bounds()
             if bottom - top > 0 and right - left > 0:
                 return (top, bottom, left, right)
         return None
@@ -158,7 +183,7 @@ class UpscaleDialog(QDialog):
         since the split + resample can take several seconds."""
         crop = self._current_crop()
         self._result = upscale_crop(self._img, crop, self._engine, scale=self._scale, rc=self._rc)
-        self._refresh_preview()
+        self._show_result()
         self._export_btn.setEnabled(True)
         self._open_copy_btn.setEnabled(True)
         h, w = self._result.data.shape[:2]
@@ -166,7 +191,7 @@ class UpscaleDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self._upscale_btn.setEnabled(not busy)
+        self._sync_size()
 
     def _on_upscale_clicked(self) -> None:
         if self._busy:
@@ -184,7 +209,7 @@ class UpscaleDialog(QDialog):
         def on_done(result) -> None:
             self._result = result
             self._set_busy(False)
-            self._refresh_preview()
+            self._show_result()
             self._export_btn.setEnabled(True)
             self._open_copy_btn.setEnabled(True)
             h, w = result.data.shape[:2]
@@ -196,24 +221,8 @@ class UpscaleDialog(QDialog):
 
         run_async(self._pool, work, on_done, on_error)
 
-    # --- preview ---
-    def _refresh_preview(self) -> None:
-        if self._result is None:
-            self._preview_label.setText("Run Upscale to see a preview.")
-            return
-        if self._compare_on:
-            crop = self._current_crop()
-            data = self._img.data if crop is None else self._img.data[crop[0]:crop[1], crop[2]:crop[3]]
-            qimage = _qimage_from_float(data)
-            target_h, target_w = self._result.data.shape[:2]
-            qimage = qimage.scaled(target_w, target_h, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation)
-        else:
-            qimage = _qimage_from_float(self._result.data)
-        pix = QPixmap.fromImage(qimage)
-        scaled = pix.scaled(self._preview_label.size(), Qt.AspectRatioMode.KeepAspectRatio,
-                             Qt.TransformationMode.SmoothTransformation)
-        self._preview_label.setPixmap(scaled)
+    def _show_result(self) -> None:
+        """Stub: Task 5 shows the comparison view here."""
 
     # --- export / open as copy ---
     def _on_export_clicked(self) -> None:

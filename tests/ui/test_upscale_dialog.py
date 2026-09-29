@@ -20,6 +20,9 @@ def _dlg(qtbot, **kw):
 
 def test_dialog_builds(qtbot):
     d = _dlg(qtbot)
+    assert d.windowTitle() == "Upscale Crop"
+    assert d.pages.currentIndex() == 0
+    assert not hasattr(d, "_engine_box") and not hasattr(d, "_compare_check")
     assert d._engine.name == "Lanczos"
 
 
@@ -80,16 +83,46 @@ def test_close_button_rejects(qtbot):
     assert d.result() == QDialog.DialogCode.Rejected
 
 
-def test_the_engine_dropdown_is_hidden_while_there_is_only_one_engine(qtbot, tmp_path):
-    """A dropdown offering exactly one choice is a control that does nothing.
-    It exists because EDSR is meant to join Lanczos; until it does, it is noise."""
-    import numpy as np
-    from nocturne.core.image import AstroImage
-    from nocturne.ui.upscale_dialog import UpscaleDialog
-    from nocturne.settings import Settings
-    img = AstroImage((np.random.rand(64, 64, 3) * .5).astype(np.float32))
-    d = UpscaleDialog(img, Settings(), None)
-    qtbot.addWidget(d)
-    assert len(d._engines) == 1, "a second engine arrived — unhide the row"
-    assert not d._engine_box.isVisible()
-    assert not d._engine_label.isVisible()
+def test_the_size_follows_the_crop_box(qtbot):
+    d = _dlg(qtbot)                                     # 60x60 image
+    assert d.size_label.text() == "60 × 60 → 120 × 120"  # no box = whole frame
+    d.picker.set_crop_overlay(True, content_bounds=(10, 40, 5, 25))
+    d.picker.show_crop_box()
+    d._sync_size()
+    assert d.size_label.text() == "20 × 30 → 40 × 60"
+
+
+def test_above_the_ceiling_upscale_is_refused_with_a_reason(qtbot, monkeypatch):
+    import nocturne.ui.upscale_dialog as ud
+    monkeypatch.setattr(ud, "UPSCALE_MAX_MP", 0.01)     # 0.0144 MP > 0.01
+    d = _dlg(qtbot)
+    d._sync_size()
+    assert not d.upscale_btn.isEnabled()
+    assert "Too large to enlarge: 0 MP (limit 0.01 MP). Choose a smaller crop." in d.status.text()
+    monkeypatch.setattr(ud, "UPSCALE_MAX_MP", 60)
+    d._sync_size()
+    assert d.upscale_btn.isEnabled() and "Too large" not in d.status.text()
+
+
+def test_the_noise_note_shows_only_without_noise_reduction(qtbot):
+    msg = ("Noise Reduction hasn't been applied — enlarging makes noise twice as "
+           "visible. Worth running it first.")
+    d = _dlg(qtbot, denoised=False)
+    assert not d.noise_note.isHidden() and d.noise_note.text() == msg
+    assert _dlg(qtbot, denoised=True).noise_note.isHidden()
+
+
+def test_a_shape_constrains_the_crop_box(qtbot):
+    d = _dlg(qtbot)
+    d.shape_buttons["1:1"].click()
+    d.picker.show_crop_box()
+    t, b, l, r = d.picker.crop_bounds()
+    assert (b - t) == pytest.approx(r - l, abs=1)
+
+
+def test_a_tiny_crop_does_not_break_the_panel(qtbot):
+    d = _dlg(qtbot)
+    d.picker.set_crop_overlay(True, content_bounds=(10, 11, 10, 13))   # 3x1
+    d.picker.show_crop_box()
+    d._sync_size()
+    assert d.size_label.text() == "3 × 1 → 6 × 2"
