@@ -135,3 +135,32 @@ def test_spcc_asks_for_the_same_hint_as_the_plate_solve_tool():
 
     assert seen.get("fov") is not None, \
         "SPCC must pass the profile-derived scale, not solve blind"
+
+
+def test_the_s50_pro_is_not_taken_for_an_s50():
+    """'seestar s50' is a prefix of 'seestar s50 pro' — the S30/S30 Pro trap
+    above, real this time: his NGC 7000 subs were identified as an S50 (250 mm,
+    IMX462, 1920x1080) until 2026-09-29. Values from those subs' own headers."""
+    from nocturne.core.instrument import identify, SEESTAR_S50, SEESTAR_S50_PRO
+    assert identify({"creator": "ZWO Seestar S50 Pro"}) is SEESTAR_S50_PRO
+    assert identify({"creator": "ZWO Seestar S50"}) is SEESTAR_S50
+    assert identify({"focal_length": 260.0}) is SEESTAR_S50_PRO
+    assert identify({"focal_length": 250.0}) is SEESTAR_S50
+
+
+def test_the_s50_pro_profile_matches_its_subs():
+    """2.9 µm at 260 mm: 2.30"/px, the scale the grader measured its stars in."""
+    from nocturne.core.instrument import SEESTAR_S50_PRO as p
+    assert p.sensor == "OmniVision OS08B10"
+    assert (p.width, p.height, p.bayer_pattern) == (3840, 2160, "GRBG")
+    assert round(p.pixel_scale_arcsec, 2) == 2.30
+    assert round(p.f_ratio, 1) == 5.0
+
+
+def test_an_s50_pro_file_shows_its_own_sensor_at_import():
+    """What the Import step shows, from a real S50 Pro header's cards."""
+    from nocturne.core.fits_io import import_summary
+    html = import_summary({"creator": "ZWO Seestar S50 Pro", "focal_length": 260.0,
+                           "pixel_size": 2.9})
+    assert "OmniVision OS08B10" in html and "IMX" not in html
+    assert "260 mm" in html

@@ -54,10 +54,28 @@ SEESTAR_S50 = Instrument(
     aliases=("seestar s50", "imx462"),
 )
 
+# Read off real S50 Pro subs (NGC 7000, 2026-09-14/15, firmware 9.31):
+# CREATOR='ZWO Seestar S50 Pro', FOCALLEN=260.0, XPIXSZ=2.9, APERTURE=5.0 (an
+# f-ratio, so 52 mm), BAYERPAT='GRBG', frames 3840x2160. Same frame and pixel
+# pitch as the S30 Pro, but NOT its sensor: an OmniVision OS08B10 (2.9 µm,
+# 3840x2160, per ovt.com/products/os08b10). Its alias must stay longer than
+# "seestar s50" — identify() tries the longest first.
+SEESTAR_S50_PRO = Instrument(
+    name="ZWO Seestar S50 Pro",
+    sensor="OmniVision OS08B10",
+    width=3840,
+    height=2160,
+    pixel_size_um=2.9,
+    focal_length_mm=260.0,
+    aperture_mm=52.0,
+    bayer_pattern="GRBG",
+    aliases=("seestar s50 pro", "os08b10"),
+)
+
 # Nocturne is built for the S30 Pro, so it stays the assumption when nothing in
 # the file says otherwise. Adding a camera is a matter of appending an entry
 # here — deliberately, since more Seestars are expected.
-INSTRUMENTS = (SEESTAR_S30_PRO, SEESTAR_S50)
+INSTRUMENTS = (SEESTAR_S30_PRO, SEESTAR_S50, SEESTAR_S50_PRO)
 DEFAULT_INSTRUMENT = SEESTAR_S30_PRO
 
 

@@ -276,6 +276,16 @@ def test_framing_is_judged_against_the_short_axis_of_the_actual_instrument():
     assert out["s50"] == "needs a mosaic"
 
 
+def test_the_s50_pro_frames_its_own_field():
+    """2.9 µm at 260 mm over 3840x2160: about 147' x 83' — the S50 Pro's
+    real subs (NGC 7000, 2026-09). Its own row, not the S30 Pro's or the S50's."""
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      console.log(JSON.stringify(E.fieldOfViewArcmin(E.INSTRUMENTS.s50pro)));
+    """)
+    assert round(out["long"]) == 147 and round(out["short"]) == 83
+
+
 def test_the_usable_gate_is_one_constant_shared_by_both_callers():
     """F2 was a drift between two copies of the same 45-minute rule.
 
