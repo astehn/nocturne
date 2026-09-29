@@ -107,3 +107,37 @@ def test_picking_unlinked_again_leaves_the_path_UNCHANGED(qtbot, tmp_path):
     win._go_to_id("stretch")
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     assert list(win._stages) == before
+
+
+def test_picking_linked_over_unlinked_puts_the_pick_on_the_new_panel(qtbot, tmp_path):
+    """The rebuild replaced the panel and the pick went on the old one: the
+    preview showed 0.24 while Apply committed the slider's 0.30 default
+    (review 2026-09-29). The preview must be what Apply commits."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._set_view_linked(False)
+    win._go_to_id("stretch")
+    win._apply_picked_stretch({"amount": 0.24, "linked": True})
+    assert win._panel.stretch_slider.value() == 24
+    assert win._panel.commit_option() == {"amount": 0.24, "linked": True}
+
+
+def test_an_unlinked_pick_revisited_is_not_unapplied_work(qtbot, tmp_path):
+    """Import Linked, the picker commits Unlinked, then away and back without
+    touching anything: no prompt — its default answer re-applied it Linked
+    (review 2026-09-29)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    committed = list(win.project.entries())
+    assert committed[-1][1] == {"amount": 0.24, "linked": False}, "fixture"
+    win._go_to_id("levels"); qtbot.wait(20)
+    win._go_to_id("stretch"); qtbot.wait(20)
+    assert win._panel.stretch_linked is False
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "apply"
+    win.go_next()
+    assert not asked
+    assert list(win.project.entries()) == committed

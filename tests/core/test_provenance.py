@@ -136,3 +136,14 @@ def test_star_spikes_records_all_six_of_its_controls():
                      date=datetime.date(2026, 9, 17))
     for k, v in params.items():
         assert f"- {k}: {v}" in r, k
+
+
+def test_the_stretch_headline_says_linked_or_unlinked():
+    """The linkage changes what a stretch does to colour; the summary line
+    says it, as the log does (his ask, 2026-09-27)."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    for linked, word in ((True, "Stretch — 0.12 linked"), (False, "Stretch — 0.12 unlinked")):
+        r = build_report([("Stretch", {"amount": 0.12, "linked": linked})], {},
+                         app_version="0.42.0", date=datetime.date(2026, 9, 29))
+        assert word in r, r

@@ -68,8 +68,12 @@ class BackgroundStep(Step):
         return "strong"
 
     def apply(self, img: AstroImage, option: str) -> AstroImage:
+        # Named in the log like every other external-tool step (his ask,
+        # 2026-09-27): "Background (strong (GraXpert))". Off ran nothing.
+        self.last_engine = None
         if option == "off":
             return img.copy()
+        self.last_engine = "GraXpert"
         amount = _AMOUNT[option]
         corrected = self._gx.background_extraction(img, _SMOOTHING, runner=self._runner)
         if amount >= 1.0:

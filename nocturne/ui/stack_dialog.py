@@ -12,6 +12,8 @@ from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import astap_valid, start_dir
 from ..stacking.drizzle_gate import SUITS_SUMMARY
 from ..stacking.capture_time import read_capture_time
+from ..stacking.camera import first_camera
+from ..stacking.camera import mismatch as camera_mismatch
 from ..stacking.frames import discover_subs
 from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
                               is_left_out, is_master, judge, order_best_first)
@@ -674,6 +676,15 @@ class StackDialog(QDialog):
                     f"{'it' if n == 1 else 'them'}.")
                 return
             self.status.setText(f"No .fit subs found in {name}.")
+            return
+        why = camera_mismatch(
+            first_camera(s.path for s in self._stats if not is_left_out(s)),
+            first_camera(subs, skip_masters=True))
+        if why is not None:
+            # Registered across two image scales the stack is ruined, and
+            # nothing downstream says so — the S50 Pro's subs are even the
+            # same size as the S30 Pro's.
+            self.status.setText(f"{name} can't join this stack: its subs are {why}.")
             return
         listed_keys = {k for k in (_file_key(s.path) for s in self._stats) if k is not None}
         listed_names = {(os.path.basename(s.path), s.captured) for s in self._stats

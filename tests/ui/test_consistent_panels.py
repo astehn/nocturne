@@ -820,7 +820,7 @@ def test_switching_the_engine_after_an_apply_leaves_apply_live(
     assert _off(p.apply_btn), "fixture: an unchanged applied step must be off"
     _other_engine(win); qtbot.wait(20)
     assert p.apply_btn.isEnabled(), "a different engine is a real edit; Apply was off"
-    assert p.apply_btn.state() == "applied"         # colour: nothing pending
+    assert p.apply_btn.state() == "pending"         # and Next asks (see below)
     _apply_and_land(qtbot, win)
     name = "Noise Reduction" if sid == "noise_sharpen" else "Linear Denoise"
     assert commits == [name, name], commits
@@ -1020,3 +1020,85 @@ def test_every_control_that_feeds_a_commit_leaves_an_applied_apply_live(
     controls[control](win); qtbot.wait(30)
     btn = win._panel.apply_btn
     assert btn.isEnabled(), f"{sid}/{control}: a changed control left Apply off"
+
+
+# Next must ask about an engine or linkage switch it would otherwise drop
+# (piece 2 follow-up, fixed 2026-09-29): Apply lit, Next moved on in silence.
+
+def _asks(win):
+    asked = []
+    win._ask_pending = lambda label: asked.append(label) or "cancel"
+    here = win.current_stage_id()
+    win.go_next()
+    return asked, win.current_stage_id() == here
+
+
+@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
+def test_next_asks_about_a_switched_engine(qtbot, tmp_path, monkeypatch, sid):
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=True, models=True)
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    _apply_and_land(qtbot, win)
+    before = list(win.project.entries())
+    _other_engine(win); qtbot.wait(20)
+    asked, stayed = _asks(win)
+    assert asked and stayed, "the engine switch was dropped without a word"
+    assert win.project.entries() == before
+
+
+@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
+def test_a_revisited_engine_is_not_work(qtbot, tmp_path, monkeypatch, sid):
+    """The flip side: the box reopens at the committed engine — nothing to ask."""
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=True, models=True)
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    _other_engine(win); qtbot.wait(20)
+    _apply_and_land(qtbot, win)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    asked, stayed = _asks(win)
+    assert not asked and not stayed
+
+
+def test_next_asks_about_a_linkage_changed_at_import(qtbot, tmp_path):
+    """Stretch committed linked, Unlinked chosen at Import, then past Stretch:
+    the image stays linked while everything says unlinked — ask."""
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert win.project.entries()[-1][1]["linked"] is True, "fixture"
+    asked, _ = _asks(win)
+    assert not asked, "fixture: an unchanged stretch asks nothing"
+    win._go_to_id("load", user_initiated=False); qtbot.wait(20)
+    win._set_view_linked(False)
+    win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
+    asked, stayed = _asks(win)
+    assert asked and stayed, "the linkage switch was dropped without a word"
+
+
+def test_choosing_linked_or_unlinked_is_logged(qtbot, tmp_path):
+    """It decides more than the view — Stretch uses it and Colour steps
+    aside — so the log says which (his ask, 2026-09-27)."""
+    win = _open(qtbot, tmp_path)
+    win._set_view_linked(False)
+    assert win.activity.entries("info")[-1].split(" ", 1)[1].startswith("Unlinked — ")
+    win._set_view_linked(True)
+    assert win.activity.entries("info")[-1].split(" ", 1)[1].startswith("Linked — ")
+
+
+def test_an_engine_switched_during_the_run_is_still_asked_about(qtbot, tmp_path, monkeypatch):
+    """The box stays live through a minutes-long GraXpert run; a switch made
+    meanwhile was read as committed when the run landed, and Next dropped it
+    (review 2026-09-29)."""
+    win = _open(qtbot, tmp_path)
+    _no_tools(win, monkeypatch, engines=True)
+    win._async_enabled = True
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
+    win._panel.apply_btn.click()
+    _other_engine(win)                     # while it runs
+    _land(qtbot, win)
+    committed = win.project.entries()[-1][1]["engine"]
+    assert win._panel.engine_box.currentText() != win._panel.engine_baseline, (
+        f"the switch was absorbed into the baseline (committed {committed})")
+    asked, stayed = _asks(win)
+    assert asked and stayed

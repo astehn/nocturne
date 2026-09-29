@@ -385,6 +385,7 @@ class MainWindow(QMainWindow):
         # the stage list, which asks it which stages to omit.
         self._opened_as_tiff = False
         self._view_linked = True
+        self._view_linked_at_stretch = None   # Import's choice when Stretch last committed
         # Furthest stage index reached with THIS image. It separates a step you
         # walked past and left alone from one you have never been to — the
         # current index alone cannot, because jumping back makes it go down.
@@ -3158,7 +3159,7 @@ class MainWindow(QMainWindow):
     _STAGE_PREVIEWS = {"color": ("tint",)}
 
     def _clear_pending(self, step_id: str, applied_option: str | None = None,
-                       *, panel=None, preview=_UNSET) -> None:
+                       *, panel=None, preview=_UNSET, engine=_UNSET) -> None:
         """Forget what a step's controls were holding, because it just became the
         commit: the preview slot, and the dropdown's baseline when one applies.
 
@@ -3196,6 +3197,16 @@ class MainWindow(QMainWindow):
             setattr(self, slot, None)
         if applied_option is not None and getattr(target, "option_box", None) is not None:
             target.option_baseline = applied_option
+        if getattr(target, "engine_box", None) is not None:
+            # As PRESSED, like `applied_option`: the box stays live during a
+            # minutes-long GraXpert run, and a switch made meanwhile is new
+            # work, not what was committed (review 2026-09-29).
+            target.engine_baseline = (target.engine_box.currentText()
+                                      if engine is _UNSET else engine)
+        if step_id == "stretch":
+            # Which Import choice this stretch was made under — see
+            # _stretch_linked_for_panel.
+            self._view_linked_at_stretch = self._view_linked
         if step_id == "color" and getattr(target, "method_box", None) is not None:
             # Color's method choice has no PENDING_SLOTS entry of its own — the
             # dropdown IS its own baseline, exactly like a compute stage's
@@ -3324,6 +3335,24 @@ class MainWindow(QMainWindow):
             # no option_box to compare, and consulting one would read a
             # neighbour's baseline.
             out.add("option")
+        # Half of what Apply commits on these steps, with no slot or option
+        # box of its own: switched after an apply, Apply lit and Next dropped
+        # the switch without asking (TODO, piece 2 follow-ups).
+        panel = self._panel
+        engine = getattr(panel, "engine_box", None)
+        if (engine is not None and isinstance(getattr(panel, "engine_baseline", None), str)
+                and engine.currentText() != panel.engine_baseline):
+            out.add("engine")
+        if hasattr(panel, "linked_baseline"):
+            # Against what Stretch COMMITTED when it has: the choice is made
+            # on Import, so the panel is often built already holding the new
+            # linkage and "as found" would miss exactly that case.
+            committed = self._committed_option(sid)
+            reference = (committed.get("linked") if isinstance(committed, dict)
+                         else panel.linked_baseline)
+            if (isinstance(reference, bool)
+                    and bool(getattr(panel, "stretch_linked", True)) != reference):
+                out.add("linkage")
         return frozenset(out)
 
     def _slot_is_the_commit(self, step_id: str, value) -> bool:
@@ -3963,6 +3992,8 @@ class MainWindow(QMainWindow):
         applied_panel = self._panel
         slot = self._PENDING_SLOTS.get(stage_id)
         applied_preview = getattr(self, slot, None) if slot is not None else None
+        engine_box = getattr(self._panel, "engine_box", None)
+        applied_engine = engine_box.currentText() if engine_box is not None else _UNSET
 
         def on_result(result):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
@@ -3972,7 +4003,7 @@ class MainWindow(QMainWindow):
             # _rebuild_panel cleared these before (on navigating away), which
             # left a step falsely "pending" right after its own Apply.
             self._clear_pending(stage_id, applied_text, panel=applied_panel,
-                                preview=applied_preview)
+                                preview=applied_preview, engine=applied_engine)
             self._refresh()  # stay on this step; user clicks Next to advance
             msg = getattr(step, "last_message", "")
             if msg:
@@ -4674,6 +4705,19 @@ class MainWindow(QMainWindow):
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
+    def _stretch_linked_for_panel(self) -> bool:
+        """What a rebuilt Stretch panel holds. The committed linkage, unless
+        Import has been changed since that stretch was made: the visual
+        picker can commit Unlinked under a Linked Import, and a revisit (or a
+        reopened project) then read as unapplied work whose default answer
+        re-applied it Linked (review 2026-09-29)."""
+        committed = self._committed_option("stretch")
+        if isinstance(committed, dict) and (
+                self._view_linked_at_stretch is None
+                or self._view_linked_at_stretch == self._view_linked):
+            return bool(committed.get("linked", True))
+        return self._view_linked
+
     def _set_view_linked(self, linked: bool) -> None:
         """Change how linear data is drawn. Touches no pixel and no history.
 
@@ -4685,6 +4729,13 @@ class MainWindow(QMainWindow):
         if linked == self._view_linked:
             return
         self._view_linked = linked
+        # Said in the log, because it decides more than the view: Stretch
+        # uses it, and Colour steps aside under it (his ask, 2026-09-27).
+        self.log_panel.append_info(
+            "Linked — the view and Stretch keep the sky's own colour."
+            if linked else
+            "Unlinked — the view and Stretch even the channels out; Colour is "
+            "skipped, as its corrections do nothing under an unlinked stretch.")
         self._rebuild_stages()
         if self._canvas_img is not None:
             self._set_canvas(self._canvas_img)
@@ -4888,6 +4939,11 @@ class MainWindow(QMainWindow):
             self.log_panel.append_info(
                 "Colour is available again — go back to it if you want "
                 "photometric calibration, which only a linked stretch keeps.")
+            # The rebuild replaced the panel: the pick goes on the NEW one, or
+            # the preview showed the pick while Apply committed the old slider
+            # (review 2026-09-29; the preview must be what Apply commits).
+            panel = self._panel
+            panel.stretch_linked = linked
         panel.stretch_slider.setValue(round(parse_stretch_option(option) * 100))
         # The linkage is half of what Apply commits, and an unchanged amount
         # fires no slider signal: re-read Apply's state here.
@@ -6046,7 +6102,7 @@ class MainWindow(QMainWindow):
             on_visual_stretch=self._open_stretch_picker,
             on_view_linked=self._set_view_linked,
             view_linked=self._view_linked,
-            stretch_linked=self._view_linked,
+            stretch_linked=self._stretch_linked_for_panel(),
             on_opened_as_linear=self._set_opened_as_linear,
             opened_as_linear=(self.project.current().is_linear
                               if (self._opened_as_tiff and self.project is not None)

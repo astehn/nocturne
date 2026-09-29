@@ -402,3 +402,20 @@ def test_green_fringe_free_strength_zero_is_identity():
     img = AstroImage(rng.random((30, 30, 3)).astype(np.float32), is_linear=False)
     out = GreenFringeStep(None).apply(img, 0.0)            # strength 0 -> unchanged
     assert np.allclose(out.data, img.data)
+
+
+
+def test_background_names_graxpert_only_when_it_ran():
+    """The log names the tool like every other external-tool step (his ask,
+    2026-09-27) — and "off" ran nothing, so it names nothing."""
+    img = AstroImage(np.random.default_rng(4).random((8, 8, 3)).astype(np.float32))
+
+    def fake(args, **_kw):
+        write_temp_fits(AstroImage(img.data), args[args.index("-output") + 1])
+
+    step = BackgroundStep(GraXpert("/fake"))
+    step._runner = fake
+    step.apply(img, "strong")
+    assert step.last_engine == "GraXpert"
+    step.apply(img, "off")
+    assert step.last_engine is None
