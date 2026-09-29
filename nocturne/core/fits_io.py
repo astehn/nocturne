@@ -261,12 +261,16 @@ def format_integration(seconds: float) -> str:
     return f"{sec}s"
 
 
-def _summary_section(title: str, pairs: list[tuple[str, str]]) -> str:
+def _summary_section(title: str, pairs: list[tuple[str, str]], *, first: bool = True) -> str:
+    """Rows of the ONE summary table: every section shares its label column,
+    so the values line up (two tables sized their columns apart — Andreas,
+    2026-09-29). A later section opens with a spacer row."""
+    gap = "" if first else "<tr><td colspan='2' style='font-size:6pt'>&nbsp;</td></tr>"
     rows = "".join(
         f"<tr><td style='color:#8a9099'>{k}</td><td>&nbsp;&nbsp;{v}</td></tr>"
         for k, v in pairs
     )
-    return f"<b>{title}</b><table cellspacing='0'>{rows}</table>"
+    return f"{gap}<tr><td colspan='2'><b>{title}</b></td></tr>{rows}"
 
 
 def _target_from_filename(filename: str | None) -> str | None:
@@ -299,10 +303,11 @@ def import_summary(meta: dict, instrument=None,
     whether to assume, and should say that it did" — this is a caller declining
     to.
     """
+    assumed = False
     if instrument is None:
         instrument = identify(meta)
-        if instrument is None:
-            instrument = DEFAULT_INSTRUMENT if assume_instrument else None
+        if instrument is None and assume_instrument:
+            instrument, assumed = DEFAULT_INSTRUMENT, True
     stack: list[tuple[str, str]] = []
     target = meta.get("target") or _target_from_filename(filename)
     if target:
@@ -358,13 +363,16 @@ def import_summary(meta: dict, instrument=None,
         focal = meta.get("focal_length") or instrument.focal_length_mm
         pix = meta.get("pixel_size") or instrument.pixel_size_um
         scale = 206.265 * float(pix) / float(focal)
+        # Which telescope, by name — and never an assumption dressed as a
+        # reading: a file that names no camera gets the default, said so.
         html += _summary_section("Camera &amp; scope", [
+            ("Telescope", instrument.name + (" (assumed)" if assumed else "")),
             ("Sensor", f"{instrument.sensor} (colour)"),
             ("Pixel size", f"{float(pix):g} µm"),
             ("Focal length", f"{float(focal):g} mm · f/{instrument.f_ratio:g}"),
             ("Image scale", f"~{scale:.1f}″ / pixel"),
-        ])
-    return html
+        ], first=False)
+    return f"<table cellspacing='0'>{html}</table>"
 
 
 def image_hdu(hdul):

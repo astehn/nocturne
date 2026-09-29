@@ -240,3 +240,23 @@ def test_normalize_leaves_clean_data_untouched():
     from nocturne.core.fits_io import _normalize
     arr = np.array([[0.0, 30000.0, 65535.0]], np.float32)
     assert np.allclose(_normalize(arr), [[0.0, 30000.0 / 65535.0, 1.0]])
+
+
+def test_the_summary_names_the_telescope_and_says_when_it_assumed():
+    """His ask 2026-09-29: say which instrument — and an assumption must never
+    read like something the file said."""
+    from nocturne.core.fits_io import import_summary
+    named = import_summary({"creator": "ZWO Seestar S50 Pro", "focal_length": 260.0})
+    assert "Telescope" in named and "ZWO Seestar S50 Pro" in named
+    assert "(assumed)" not in named
+    unnamed = import_summary({"width": 10, "height": 10})
+    assert "ZWO Seestar S30 Pro (assumed)" in unnamed
+
+
+def test_both_blocks_share_one_table_so_the_values_line_up():
+    """Two tables sized their label columns apart, so the values started at
+    different places in "Your stack" and "Camera & scope"."""
+    from nocturne.core.fits_io import import_summary
+    html = import_summary({"target": "NGC 7000", "creator": "ZWO Seestar S30 Pro"})
+    assert html.count("<table") == 1
+    assert html.index("Your stack") < html.index("Camera &amp; scope")
