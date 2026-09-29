@@ -70,8 +70,9 @@ def _dispatch_save(img, path: str) -> None:
         save_jpeg(img, path)
 
 
-ORIGINAL_TIP = ("Your crop as it is: each original pixel drawn as a 2×2 block, so "
-                "you can see what the upscale changes and whether anything got worse.")
+ORIGINAL_TIP = ("Your crop as it is, drawn at the upscale's size — at 100% each original "
+                "pixel is a 2×2 block — so you can see what the upscale changes and "
+                "whether anything got worse.")
 # Wide enough for the navigator to be a map rather than a stamp (his note,
 # 2026-09-29: "very very small even though there is plenty of room").
 COMPARE_PANEL_W = 300

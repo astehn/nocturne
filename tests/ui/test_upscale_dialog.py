@@ -460,3 +460,24 @@ def test_the_navigator_fills_the_panel(qtbot):
     assert nav.width() >= 240
     assert nav.height() >= 0.8 * nav.heightForWidth(nav.width())   # square frame -> square map
     assert nav.height() >= 200
+
+
+def test_the_original_is_the_same_crop_the_upscale_used(qtbot):
+    """A wrong crop slice would still fill the view at the right size (it is
+    scaled to fit), so the linked views would show different stars. Non-square
+    frame, odd-sized crop at an offset, a marker inside it (review 2026-09-29)."""
+    from nocturne.core.image import AstroImage
+    d0 = np.zeros((40, 60, 3), np.float32)
+    d0[13, 22] = (0.0, 1.0, 0.0)                        # green marker, frame coords
+    img = AstroImage(d0, is_linear=False, metadata={})
+    d = UpscaleDialog(img, {}, Settings())
+    qtbot.addWidget(d)
+    d.picker.set_crop_overlay(True, content_bounds=(10, 27, 20, 31))   # 11 wide x 17 tall
+    d.picker.show_crop_box()
+    d._run_upscale()
+    assert d._layers.crop == (10, 27, 20, 31)
+    q = d.original_view._item.pixmap().toImage()
+    assert (q.width(), q.height()) == (22, 34)
+    c = q.pixelColor((22 - 20) * 2, (13 - 10) * 2)      # the marker, at 2x, inside the crop
+    assert (c.red(), c.green(), c.blue()) == (0, 255, 0)
+    assert q.pixelColor(0, 0).green() == 0

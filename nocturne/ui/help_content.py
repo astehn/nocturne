@@ -1346,7 +1346,7 @@ _t("upscale", "Upscale Crop",
        "cancelling leaves everything as it was.</p>"
        "<h4>Judging the result</h4>"
        "<p>The result opens at 100%, beside your <b>Original</b> crop drawn at the same "
-       "size — each original pixel as a 2×2 block, so you can see exactly what the upscale "
+       "size — at 100% each original pixel is a 2×2 block — so you can see exactly what the upscale "
        "changed and whether anything got worse. <b>Side by side</b> shows the two "
        "next to each other; <b>Wipe</b> lays them on top of one another with a divider you "
        "drag. In both, the views move together — scroll or zoom one and the other "
