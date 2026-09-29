@@ -62,10 +62,21 @@ from ..tools.base import run_cli
 TIGHTEN_DEFAULT = 0.35
 _SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 
-# The biggest output Upscale will make. PROVISIONAL — Task 7 measures time and
-# memory on real crops (up to his M31 mosaic) and replaces this with the
-# measured value and its numbers.
-UPSCALE_MAX_MP = 60
+# The biggest output Upscale will make. MEASURED 2026-09-29 on centre crops of
+# his M31 drizzle mosaic (stretched), free splitter, prepare + finish + three
+# QImages, one fresh process per size, peak RSS (Apple M-series, 64 GB):
+#   output MP   time     peak RSS      output MP   time     peak RSS
+#      8         1.1 s    1.39 GB          50        6.2 s     8.03 GB
+#     16         2.1 s    2.63 GB          80       10.0 s    12.94 GB
+#     20         2.5 s    3.23 GB         120       15.0 s    19.43 GB
+#     25         3.1 s    4.03 GB         150       18.6 s    24.34 GB
+#     30         3.7 s    4.88 GB
+#     33         4.2 s    5.34 GB
+# Memory is the limit, not time: about 160 MB per output MP, four float32
+# layers plus three QImages. Rule: largest size under 4 GB peak, rounded down
+# to 10 -> 20 MP. StarNet2 at 20 MP: 7.5 s, 3.05 GB; at 33 MP: 12.0 s, 4.98 GB.
+# The app also holds the project image and its copy, on top of these figures.
+UPSCALE_MAX_MP = 20
 
 
 def output_size(crop_w: int, crop_h: int, scale: int = 2) -> tuple[int, int]:

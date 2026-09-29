@@ -2741,7 +2741,7 @@ def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
     seen = {}
     import nocturne.ui.main_window as mw
     class _Fake:
-        def __init__(self, img, metadata, settings, rc=None, on_open_copy=None, parent=None):
+        def __init__(self, img, metadata, settings, rc=None, on_open_copy=None, parent=None, denoised=True):
             seen["has_source_label"] = "source_label" in metadata
             seen["is_astroimage"] = hasattr(img, "data")
         def exec(self): seen["shown"] = True
@@ -6428,3 +6428,24 @@ def test_a_solved_export_carries_both_the_wcs_and_the_camera(qtbot, tmp_path, mo
     h = fits.getheader(str(out))
     assert h["CTYPE1"] == "RA---TAN"
     assert h["INSTRUME"] == "ZWO Seestar S30 Pro" and h["FOCALLEN"] == 160.0
+
+
+def test_upscale_is_told_whether_noise_reduction_ran(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    seen = {}
+
+    class FakeDialog:
+        def __init__(self, *a, denoised=True, **k):
+            seen["denoised"] = denoised
+        def exec(self):
+            return 0
+    monkeypatch.setattr(mw, "UpscaleDialog", FakeDialog)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch"); win._panel.apply_btn.click(); qtbot.wait(50)
+    win._upscale()
+    assert seen["denoised"] is False
+    from nocturne.ui.main_window import _PrecomputedStep
+    win.project.run_step(_PrecomputedStep("Noise Reduction", win.project.current()), "medium")
+    win._upscale()
+    assert seen["denoised"] is True

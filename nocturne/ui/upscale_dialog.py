@@ -25,7 +25,9 @@ from .upscale_navigator import UpscaleNavigator
 from .worker import run_async
 from . import file_dialogs, theme
 
-# PROVISIONAL — Task 7 sets it from reduce_stars' measured time at the ceiling.
+# finish_upscale (reduce_stars + recombine) measured 2026-09-29 on his M31 mosaic
+# crops: 0.2 s at the 20 MP ceiling (0.4 s at 33 MP, 2.0 s at 150 MP). Half of
+# 0.2 s is 100 ms, under the 150 ms floor, so the floor stands.
 TIGHTEN_DEBOUNCE_MS = 150
 
 SCALE = 2   # fixed in v1
