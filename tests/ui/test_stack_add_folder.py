@@ -488,7 +488,28 @@ def test_the_pointings_are_read_across_every_listed_folder(qtbot, tmp_path):
     b = _seestar_folder(tmp_path, "b", "20260926")
     d = _graded(qtbot, a)
     seen = []
-    d.scan_pointings = lambda folder=None, paths=None: seen.append(sorted(paths or []))
+    d._find_panels = lambda paths, on_progress=None: seen.append(sorted(paths)) or []
     _add(qtbot, d, b)
     assert {os.path.dirname(p) for p in seen[-1]} == {str(a), str(b)}
     assert len(seen[-1]) == 12
+
+
+def test_add_folder_leaves_a_failed_preview_message_alone(qtbot, tmp_path):
+    """The first grade counts in the empty preview; nothing later may write
+    progress there, or it stays for good over "Preview failed" (review
+    2026-09-29: 'Measuring — 6/6 frames' left after Add folder)."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    b = _seestar_folder(tmp_path, "b", "20260926")
+    d = _graded(qtbot, a)
+
+    def fail(_p):
+        raise OSError("unreadable")
+
+    d.browser.preview_controller.cache.clear()
+    d.browser.preview_controller.loader = fail
+    d.browser.preview_controller.clear()
+    d.browser.set_current_row(1)
+    qtbot.waitUntil(lambda: "failed" in d.preview.message_text(), timeout=3000)
+    before = d.preview.message_text()
+    _add(qtbot, d, b)
+    assert d.preview.message_text() == before

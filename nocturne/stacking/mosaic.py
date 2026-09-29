@@ -114,7 +114,8 @@ class PanelStack:
     integration_seconds: float
 
 
-def read_pointings(paths: list[str]) -> dict[str, tuple[float, float]]:
+def read_pointings(paths: list[str],
+                   on_progress=None) -> dict[str, tuple[float, float]]:
     """Commanded RA/DEC per frame, in degrees.
 
     Frames without a numeric pointing are omitted rather than guessed at. The
@@ -133,8 +134,15 @@ def read_pointings(paths: list[str]) -> dict[str, tuple[float, float]]:
 
     from ..core.fits_io import _parse_metadata
 
+    from ..core.tasks import current
+
     out = {}
-    for p in paths:
+    token = current()
+    for i, p in enumerate(paths):
+        if token is not None:
+            token.check()       # thousands of subs on a NAS take minutes
+        if on_progress is not None and (i % 25 == 0 or i == len(paths) - 1):
+            on_progress(i + 1, len(paths))
         try:
             header = fits.getheader(p)
         except Exception:
