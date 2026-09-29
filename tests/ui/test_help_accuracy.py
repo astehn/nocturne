@@ -1129,34 +1129,43 @@ def _upscale_dialog(qtbot, **kw):
 
 
 def test_upscale_help_names_the_controls_the_dialog_shows(qtbot):
-    """The topic mentioned three of the seven controls and no numbers. Engine,
-    the fixed scale, the status line and the disabled-until-run pair were all
-    missing."""
+    """Every control the topic names is one the dialog has, and every number it
+    quotes is formatted from the constant, not copied."""
+    from nocturne.core.share import ASPECTS
+    from nocturne.core.upscale import (MAX_OUTPUT_MP, RAM_SHARE, TIGHTEN_DEFAULT,
+                                       upscale_limit_mp)
     from nocturne.ui.upscale_dialog import SCALE
     b = _body("upscale")
-    ud = _src("nocturne/ui/upscale_dialog.py")
     d = _upscale_dialog(qtbot)
 
-    assert SCALE == 2 and "<b>2×</b>" in b
-    assert [d._engine_box.itemText(i) for i in range(d._engine_box.count())] == \
-        [e.name for e in d._engines]
-    assert d._engine_box.count() == 1 and d._engine.name == "Lanczos", \
-        "a second engine shipped; the help says there is nothing to decide"
-    assert "<b>Engine</b> currently offers one choice, <b>Lanczos</b>" in b
-    for label, text in (("<b>Upscale</b>", 'QPushButton("Upscale")'),
-                        ("<b>Compare</b>", 'QCheckBox("Compare")'),
-                        ("<b>Export…</b>", 'QPushButton("Export…")'),
-                        ("<b>Open as copy</b>", 'QPushButton("Open as copy")')):
-        assert label in b, f"the topic never names {label}"
-        assert text in ud, f"{text} is no longer a control"
-    assert "crop box" in b and "aspect_ratio=None" in ud   # free-form box, as the help says
+    assert SCALE == 2 and "<b>twice the size</b>" in b
+    for label, widget in (("Upscale 2\u00d7", d.upscale_btn), ("Side by side", d.mode_side),
+                          ("Wipe", d.mode_wipe), ("Change crop", d.change_crop_btn),
+                          ("Cancel", d.cancel_btn), ("Export\u2026", d._export_btn),
+                          ("Open as copy", d._open_copy_btn)):
+        assert f"<b>{label}</b>" in b, f"the topic never names {label}"
+        assert label in widget.text(), f"{label!r} is no longer a control"
+    for name in ("Shape", "Size", "Navigator", "Star tightening"):
+        assert f"<b>{name}</b>" in b
+    for shape, _r in ASPECTS:
+        assert shape in d.shape_buttons
+        assert shape in b, f"the topic never lists the {shape} shape"
+    # The limit follows the machine's memory: every figure the help quotes is
+    # the one the code computes for that memory.
+    assert f"<b>{round(RAM_SHARE * 100)}% of the installed memory</b>" in b
+    assert f"<b>{MAX_OUTPUT_MP} megapixels</b> at most" in b
+    for gb in (8, 16, 32):
+        assert f"up to about {upscale_limit_mp(gb * 2**30)}&nbsp;MP" in b, gb
+    assert upscale_limit_mp(16 * 2**30) >= 34, "16 GB must fit a whole S30 Pro frame (33 MP)"
+    assert TIGHTEN_DEFAULT == 0.35 and "the default is 0.35" in b
+    assert d.tighten_slider.value() == round(TIGHTEN_DEFAULT * 100)
+    assert "Enlarging adds <b>no detail</b>" in b
 
     assert d._export_btn.isEnabled() is False and d._open_copy_btn.isEnabled() is False
     assert "stay disabled until you have run <b>Upscale</b> once" in b
     d._run_upscale()
     assert d._export_btn.isEnabled() and d._open_copy_btn.isEnabled()
-    assert d._result.data.shape == (120, 120, 3), "the scale is no longer 2×"
-    assert "120×120" in d.status.text() and "reports the new size in pixels" in b
+    assert d._result.data.shape == (120, 120, 3), "the scale is no longer 2x"
     assert "Stretch your image first" in b
     assert "Upscale works on the " in _src("nocturne/ui/main_window.py"), \
         "the stretch gate went; the help still sends people to stretch first"
@@ -1202,8 +1211,11 @@ def test_upscale_help_describes_the_sidecar_file_that_is_actually_written(qtbot,
     report = (tmp_path / "out.txt").read_text()
 
     assert upscale_filename("m42.fits", 2) == "m42_2x.jpg" and "yourfile_2x.jpg" in b
-    for claim in ("Lanczos", "2×", "m42.fits", "M42"):
+    for claim in ("Lanczos", "2×", "m42.fits", "M42", "Star tightening: 0.35"):
         assert claim in report, f"the sidecar no longer records {claim!r}"
+    assert "the crop and the star tightening" in b
+    assert report.rstrip().endswith("presentation derivative — enlarged, no synthesized detail."), \
+        "the help says the file ENDS on that sentence"
     assert "presentation derivative — enlarged, no synthesized detail" in report
     assert "presentation derivative — enlarged, no synthesized detail" in b
     assert "JPEG (*.jpg);;PNG (*.png);;TIFF (*.tiff)" in _src("nocturne/ui/upscale_dialog.py")
@@ -1839,3 +1851,19 @@ def test_stacking_help_no_longer_says_a_folder_of_nights_is_judged_as_one():
 def test_haoiii_help_mentions_the_night_lines():
     b = _body("haoiii")
     assert "dashed line" in b and "no night chips" in b
+
+
+def test_upscale_help_says_the_navigator_maps_the_whole_frame(qtbot):
+    """[final 9] It draws the whole frame with the crop outlined, not the crop."""
+    from nocturne.core.image import AstroImage
+    from nocturne.settings import Settings
+    from nocturne.ui.upscale_dialog import UpscaleDialog
+    b = _body("upscale")
+    assert "map of the whole crop" not in b
+    assert "a small map of the whole image, with your crop outlined" in b
+    data = np.full((60, 100, 3), 0.1, np.float32)
+    d = UpscaleDialog(AstroImage(data, is_linear=False, metadata={}), {}, Settings())
+    qtbot.addWidget(d)
+    d.picker.set_crop_overlay(True, content_bounds=(10, 40, 20, 60)); d.picker.show_crop_box()
+    d._run_upscale()
+    assert (d.navigator._fw, d.navigator._fh) == (100, 60), "the navigator no longer maps the frame"

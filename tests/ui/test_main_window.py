@@ -2741,13 +2741,27 @@ def test_upscale_opens_dialog(qtbot, tmp_path, monkeypatch):
     seen = {}
     import nocturne.ui.main_window as mw
     class _Fake:
-        def __init__(self, img, metadata, settings, rc=None, on_open_copy=None, parent=None):
+        def __init__(self, img, metadata, settings, rc=None, on_open_copy=None, parent=None, denoised=True):
             seen["has_source_label"] = "source_label" in metadata
             seen["is_astroimage"] = hasattr(img, "data")
         def exec(self): seen["shown"] = True
+        def deleteLater(self): pass
     monkeypatch.setattr(mw, "UpscaleDialog", _Fake)
     win._upscale()
     assert seen["shown"] and seen["has_source_label"] and seen["is_astroimage"]
+
+
+def test_the_upscale_dialog_is_deleted_after_it_closes(qtbot, tmp_path, monkeypatch):
+    """[final 2] exec() on a parented dialog never deleted it; each one kept its
+    layers and pixmaps (~1.3 GB at 20 MP) alive as a child of the window."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+    import nocturne.ui.main_window as mw
+    monkeypatch.setattr(mw.UpscaleDialog, "exec", lambda self: 0)
+    win = _stretched_window(qtbot, tmp_path)
+    win._upscale()
+    win._upscale()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert win.findChildren(mw.UpscaleDialog) == []
 
 
 def test_run_busy_cancel_sets_token_and_is_not_an_error(qtbot, tmp_path):
@@ -6428,3 +6442,26 @@ def test_a_solved_export_carries_both_the_wcs_and_the_camera(qtbot, tmp_path, mo
     h = fits.getheader(str(out))
     assert h["CTYPE1"] == "RA---TAN"
     assert h["INSTRUME"] == "ZWO Seestar S30 Pro" and h["FOCALLEN"] == 160.0
+
+
+def test_upscale_is_told_whether_noise_reduction_ran(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+    seen = {}
+
+    class FakeDialog:
+        def __init__(self, *a, denoised=True, **k):
+            seen["denoised"] = denoised
+        def exec(self):
+            return 0
+        def deleteLater(self):
+            pass
+    monkeypatch.setattr(mw, "UpscaleDialog", FakeDialog)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch"); win._panel.apply_btn.click(); qtbot.wait(50)
+    win._upscale()
+    assert seen["denoised"] is False
+    from nocturne.ui.main_window import _PrecomputedStep
+    win.project.run_step(_PrecomputedStep("Noise Reduction", win.project.current()), "medium")
+    win._upscale()
+    assert seen["denoised"] is True
