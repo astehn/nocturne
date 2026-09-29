@@ -1,13 +1,13 @@
 # Nocturne — Testers' Guide
 
-*Guided astrophotography processing for the ZWO Seestar S30 Pro.*
+*Guided astrophotography processing for ZWO Seestar telescopes.*
 
 ## What it is
 
 Nocturne turns the images your Seestar captures into finished, good-looking photos —
 without you needing to learn complicated programs like PixInsight or Siril. It walks you
 through the process one step at a time, shows you a live preview, and lets you undo anything.
-It's made specifically for the Seestar S30 Pro, so a lot of the guesswork is already handled
+It's made specifically for the Seestar (S30 Pro, S50 Pro and S50), so a lot of the guesswork is already handled
 for you.
 
 ## What you can feed it

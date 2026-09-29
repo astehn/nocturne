@@ -66,7 +66,7 @@ _TOPIC_LIST = (
     _t("getting-started", "Getting started",
        "Turn a stacked Seestar image into a finished picture, one guided step at a time.",
        "<h4>What it does</h4>"
-       "<p>Nocturne takes the stacked <b>FITS</b> file your Seestar S30 Pro produces and walks "
+       "<p>Nocturne takes the stacked <b>FITS</b> file your Seestar produces and walks "
        "you through finishing it — crop, remove gradients, colour, stretch, and polish — as a "
        "guided, one-step-at-a-time flow. Nothing is destructive: you can undo, redo, or jump "
        "back to any earlier step at any time, and nothing is written to disk until you export.</p>"
@@ -418,9 +418,9 @@ _TOPIC_LIST = (
        "image's own statistics. Run afterwards, the model meets a picture it "
        "has never seen and can grey the nebula or ring the stars.</p>"
        "<h4>Tips</h4>"
-       "<p>It is trained on the <b>S30 Pro</b>. On other cameras the step does "
-       "nothing rather than guess. It is also new — compare against the "
-       "before/after and trust your eyes over the default.</p>"),
+       "<p>It is trained on the <b>S30 Pro</b>, and runs the same model on any "
+       "camera — on another Seestar, look at the before/after with extra care. "
+       "It is also new: trust your eyes over the default.</p>"),
 
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",

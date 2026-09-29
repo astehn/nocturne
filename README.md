@@ -6,7 +6,7 @@
 
 <p align="center">
   <em>Guided astrophotography processing for smart-telescope stacks.</em><br>
-  A free, native desktop app that turns a stacked <strong>ZWO Seestar S30 Pro</strong> image into a finished picture — one guided step at a time.
+  A free, native desktop app that turns a stacked <strong>ZWO Seestar</strong> image (S30 Pro, S50 Pro or S50) into a finished picture, one guided step at a time.
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 
 ---
 
-Like a lot of Seestar owners, you quickly outgrow the phone-app processing and end up bouncing between Siril, PixInsight, GraXpert and RC-Astro — repeating basically the same steps every single time. **Nocturne turns that repetitive workflow into a guided, one-step-at-a-time process**, dedicated to the S30 Pro, with a live preview and full undo at every step.
+Like a lot of Seestar owners, you quickly outgrow the phone-app processing and end up bouncing between Siril, PixInsight, GraXpert and RC-Astro — repeating basically the same steps every single time. **Nocturne turns that repetitive workflow into a guided, one-step-at-a-time process**, made for the Seestar, with a live preview and full undo at every step.
 
 It's beginner-friendly: it *explains* what each step does and teaches the concepts (linear vs. stretched, dualband/narrowband, why the order matters) as you go — while still driving the same professional tools (GraXpert, RC-Astro) under the hood.
 
@@ -50,7 +50,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - 🧪 **Combine Ha + OIII** — build a two-gas master from separate Ha and OIII files, from Nocturne or from anywhere else. A Balance slider sets how much to lift the oxygen toward the hydrogen — the one adjustment that has to happen before the stretch — with a live preview, and it aligns the two if they do not line up.
 - 🧱 **Smart stacking & frame grading** — point it at a folder of subs; it grades every frame (flagging clouds, soft stars, trailing, and anything large in the way — a roof, a tree, a passing cloud bank), rejects the duds, registers (handles alt-az field rotation), brings every frame to a common sky level and integrates a clean master. Before you stack, a **verdict for the night** says how many frames it kept, how many minutes of light that is and why the rest were left out, over a chart of star sharpness across the session; pick frames by eye, move the rejects into a `rejected/` folder (and back — nothing is deleted), and let several nights, or subs from another folder, be judged each on their own. Keep the full frame or trim the ragged edges, as you prefer. Shot a **mosaic**? It stacks each pointing separately, plate-solves them and assembles one wide picture.
 - ⏳ **Stack in the background** — send a stack to a separate process and carry on working while it runs. Outstanding jobs show their progress in a **Jobs** panel, and a finished master is logged rather than opened, so it never swaps the canvas out from under whatever you're editing. One job runs at a time — two large drizzles at once don't fit in memory — and quitting with jobs running warns, cancels and waits for them to stop.
-- 🔭 **Knows which Seestar you shot with** — the camera is read from the file rather than assumed, so image scale, plate solving and the provenance report are right for an S30 Pro or an S50 alike.
+- 🔭 **Knows which Seestar you shot with** — the camera is read from the file rather than assumed, so image scale, plate solving and the provenance report are right for an S30 Pro, an S50 Pro or an S50 alike.
 - 🔭 **Real deconvolution, denoise & star tools** — drives **GraXpert** (background extraction, AI denoise), **StarNet2** (star separation, free) and **RC-Astro** (BlurX / NoiseX / StarX), each with a free fallback so the app works without them.
 - 🎨 **Colour Balance** — shift the colour of one tonal range at a time, inside a chosen band of brightness. Each of shadows, midtones and highlights keeps its own three sliders, so you can warm the arms of a galaxy and leave its golden core alone in a single adjustment. The band is set with two handles over the histogram, *Show the mask* lights exactly the areas that will change, and your stars are separated out and laid back untouched. It's a finishing tool, so it appends to your history rather than discarding the work done after it.
 - 🌗 **Starless Levels** — set black and white points on the starless layer alone, then screen the untouched stars back. Pulling the white point in is how a stretched image gets its colour, and also how star colour is destroyed — which is why auto Levels will not choose one for you. On a starless layer there are no star cores to clip, so the move is safe there. The endpoints sit as two handles on a full-width histogram of that layer, a clipping view follows Photoshop's polarity and marks only what *your* endpoints add, and a compare control gives a wipe divider or a side-by-side pair locked to one zoom and pan.
