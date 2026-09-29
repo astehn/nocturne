@@ -62,3 +62,13 @@ def test_a_small_frame_keeps_the_full_frame_geometry(qtbot):
     n.set_crop((50, 150, 100, 300), 2)
     r = n.crop_rect_on_widget()
     assert (r.left(), r.top(), r.width(), r.height()) == pytest.approx((50, 25, 100, 50))
+
+
+def test_the_navigator_asks_for_the_frames_proportions(qtbot):
+    from nocturne.ui.upscale_navigator import NAV_MAX_H
+    n = _nav(qtbot)                                  # a 400x200 frame
+    assert n.hasHeightForWidth()
+    assert n.heightForWidth(300) == 150
+    tall = QImage(100, 400, QImage.Format.Format_RGB888)
+    n.set_frame(tall)
+    assert n.heightForWidth(300) == NAV_MAX_H       # capped: a portrait frame can't eat the panel

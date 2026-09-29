@@ -70,6 +70,12 @@ def _dispatch_save(img, path: str) -> None:
         save_jpeg(img, path)
 
 
+ORIGINAL_TIP = ("Your crop as it is: each original pixel drawn as a 2×2 block, so "
+                "you can see what the upscale changes and whether anything got worse.")
+# Wide enough for the navigator to be a map rather than a stamp (his note,
+# 2026-09-29: "very very small even though there is plenty of room").
+COMPARE_PANEL_W = 300
+
 class UpscaleDialog(QDialog):
     def __init__(self, img, metadata: dict, settings, rc=None, on_open_copy=None, parent=None,
                  *, denoised: bool = True) -> None:
@@ -143,11 +149,12 @@ class UpscaleDialog(QDialog):
         self.pages = QStackedWidget()
         self.pages.addWidget(pick_page)
 
-        self.plain_view, self.result_view, self.wipe_view = ImageView(), ImageView(), ImageView()
-        for v in (self.plain_view, self.result_view, self.wipe_view):
+        self.original_view, self.result_view, self.wipe_view = ImageView(), ImageView(), ImageView()
+        for v in (self.original_view, self.result_view, self.wipe_view):
             v.setMinimumSize(240, 220)
         self._pair = QWidget(); pl = QHBoxLayout(self._pair); pl.setContentsMargins(0, 0, 0, 0)
-        pl.addWidget(_labelled("Plain resize", self.plain_view), 1)
+        pl.addWidget(_labelled("Original", self.original_view), 1)
+        self.original_view.setToolTip(ORIGINAL_TIP)
         pl.addWidget(_labelled("Nocturne", self.result_view), 1)
         self.views = QStackedWidget(); self.views.addWidget(self._pair); self.views.addWidget(self.wipe_view)
 
@@ -185,7 +192,7 @@ class UpscaleDialog(QDialog):
         for w in (QLabel("<b>Star tightening</b>"), self.tighten_slider,
                   QLabel("none ··· strong")):
             self._compare_panel.insertWidget(self._compare_panel.count() - 2, w)
-        cside = QWidget(); cside.setLayout(self._compare_panel); cside.setFixedWidth(240)
+        cside = QWidget(); cside.setLayout(self._compare_panel); cside.setFixedWidth(COMPARE_PANEL_W)
         modes = QHBoxLayout(); modes.addStretch(1); modes.addWidget(self.mode_side); modes.addWidget(self.mode_wipe)
         cmp_col = QVBoxLayout(); cmp_col.addLayout(modes); cmp_col.addWidget(self.views, 1)
         cmp = QHBoxLayout(); cmp.addLayout(cmp_col, 1); cmp.addWidget(cside)
@@ -308,18 +315,18 @@ class UpscaleDialog(QDialog):
     # --- state 2 ---
     def _show_result(self) -> None:
         self._result = finish_upscale(self._layers, self._tighten)
-        plain = _qimage_from_float(self._layers.plain_up.data)
+        h, w = self._result.data.shape[:2]
+        original = self._original_enlarged(w, h)
         nocturne = _qimage_from_float(self._result.data)
         if self._unlink is not None:
             self._unlink()
-        self.plain_view.set_image(plain)
+        self.original_view.set_image(original)
         self.result_view.set_image(nocturne)
         self.wipe_view.set_image(nocturne)
-        self.wipe_view.set_compare(plain)          # plain under the divider's left side
-        self._unlink = link_views(self.plain_view, self.result_view)
+        self.wipe_view.set_compare(original)       # the original under the divider's left side
+        self._unlink = link_views(self.original_view, self.result_view)
         self.pages.setCurrentIndex(1)
         self.views.setCurrentIndex(1 if self.mode_wipe.isChecked() else 0)
-        h, w = self._result.data.shape[:2]
         self.navigator.set_crop(self._layers.crop, self._scale)
         self.result_view.actual_size()
         self._centre_views(w / 2, h / 2)
@@ -329,6 +336,18 @@ class UpscaleDialog(QDialog):
         self.status.setText(f"Upscaled to {w}×{h}.")
         self._export_btn.setEnabled(True)
         self._open_copy_btn.setEnabled(True)
+
+    def _original_enlarged(self, w: int, h: int) -> QImage:
+        """The crop as it is, each pixel drawn as a block, at the result's size.
+
+        His question was "does upscaling degrade my picture?" — so the left
+        side is the original, not another resize (2026-09-29). Nearest-
+        neighbour on purpose: any smoothing here would be a resize of our own
+        choosing, and the point is to see the original's real pixels."""
+        crop = self._layers.crop
+        data = self._img.data if crop is None else self._img.data[crop[0]:crop[1], crop[2]:crop[3]]
+        return _qimage_from_float(data).scaled(
+            w, h, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.FastTransformation)
 
     def _on_tighten(self, value: int) -> None:
         self._tighten = value / 100.0
@@ -406,7 +425,7 @@ class UpscaleDialog(QDialog):
     def _clear_views(self) -> None:
         if self._unlink is not None:
             self._unlink(); self._unlink = None
-        for v in (self.plain_view, self.result_view, self.wipe_view):
+        for v in (self.original_view, self.result_view, self.wipe_view):
             v.set_compare(None)
             v.set_image(QImage())
 

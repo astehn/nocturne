@@ -74,7 +74,9 @@ _SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 #     30         3.7 s    4.88 GB
 #     33         4.2 s    5.34 GB
 # Memory is the limit, not time: about 160 MB per output MP, four float32
-# layers plus three QImages. Rule: largest size under 4 GB peak, rounded down
+# layers plus three QImages. (Measured WITH a plain-resize layer, dropped the
+# same day when the comparison became Original vs Nocturne — the figures
+# slightly overstate today's peak.) Rule: largest size under 4 GB peak, rounded down
 # to 10 -> 20 MP. StarNet2 at 20 MP: 7.5 s, 3.05 GB; at 33 MP: 12.0 s, 4.98 GB.
 # The app also holds the project image and its copy, on top of these figures.
 UPSCALE_MAX_MP = 20
@@ -94,7 +96,6 @@ class UpscaleLayers:
     star-tightening slider only re-runs `finish_upscale`."""
     starless_up: AstroImage
     stars_up: AstroImage
-    plain_up: AstroImage          # the crop, plain Lanczos 2x — what resizing alone gives
     source_meta: dict
     crop: tuple | None
     scale: int
@@ -117,10 +118,8 @@ def prepare_upscale(img, crop, engine, *, scale=2, rc=None, runner=run_cli) -> U
     starless_up = engine.upscale(starless, scale)          # may fabricate later (GAN)
     _check_cancel()
     stars_up = LanczosEngine().upscale(stars, scale)       # stars ALWAYS deterministic
-    _check_cancel()
-    plain_up = LanczosEngine().upscale(src, scale)
     return UpscaleLayers(
-        starless_up=starless_up, stars_up=stars_up, plain_up=plain_up,
+        starless_up=starless_up, stars_up=stars_up,
         source_meta=dict(img.metadata),
         crop=crop, scale=scale, engine_prov=engine.provenance())
 

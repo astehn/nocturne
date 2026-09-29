@@ -2,7 +2,7 @@
 views show. Click or drag to move both views there."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -10,6 +10,7 @@ from . import theme
 
 CROP_COLOUR = "#4aa3ff"
 VISIBLE_COLOUR = "#ffd24a"
+NAV_MAX_H = 340
 
 
 class UpscaleNavigator(QWidget):
@@ -32,7 +33,19 @@ class UpscaleNavigator(QWidget):
         self._frame = QPixmap.fromImage(qimage)
         w, h = full_size if full_size is not None else (qimage.width(), qimage.height())
         self._fw, self._fh = max(1, w), max(1, h)
+        self.updateGeometry()
         self.update()
+
+    # As wide as the panel, as tall as the frame's proportions ask — capped so
+    # a tall portrait frame can't push the panel's controls off the window.
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, w: int) -> int:
+        return max(80, min(NAV_MAX_H, round(w * self._fh / self._fw)))
+
+    def sizeHint(self) -> QSize:
+        return QSize(240, self.heightForWidth(240))
 
     def set_crop(self, crop, scale: int) -> None:
         self._crop, self._scale = crop, scale

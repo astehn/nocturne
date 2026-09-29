@@ -133,9 +133,9 @@ def test_upscale_shows_a_linked_pair_at_100_percent(qtbot):
     d.resize(900, 600); d.show()
     d._run_upscale()
     assert d.pages.currentIndex() == 1
-    assert d.plain_view.zoom() == pytest.approx(1.0) and d.result_view.zoom() == pytest.approx(1.0)
+    assert d.original_view.zoom() == pytest.approx(1.0) and d.result_view.zoom() == pytest.approx(1.0)
     d.result_view.zoom_in()
-    assert d.plain_view.zoom() == pytest.approx(d.result_view.zoom())
+    assert d.original_view.zoom() == pytest.approx(d.result_view.zoom())
 
 
 def test_wipe_keeps_the_zoom_and_back(qtbot):
@@ -162,7 +162,7 @@ def test_change_crop_goes_back_and_a_new_upscale_relinks_once(qtbot):
     bar = d.result_view.horizontalScrollBar()
     assert bar.maximum() > bar.value() + 5
     moves = []
-    d.plain_view.viewChanged.connect(lambda: moves.append(1))
+    d.original_view.viewChanged.connect(lambda: moves.append(1))
     bar.setValue(bar.value() + 5)
     assert 1 <= len(moves) <= 2             # followed, and by ONE link not two
 
@@ -196,7 +196,7 @@ def test_the_navigator_moves_both_views(qtbot):
     d._run_upscale()
     d.navigator.centreRequested.emit(10.0, 10.0)
     c1 = d.result_view.mapToScene(d.result_view.viewport().rect().center())
-    c2 = d.plain_view.mapToScene(d.plain_view.viewport().rect().center())
+    c2 = d.original_view.mapToScene(d.original_view.viewport().rect().center())
     assert c1.x() == pytest.approx(c2.x(), abs=1) and c1.y() == pytest.approx(c2.y(), abs=1)
 
 
@@ -214,10 +214,10 @@ def test_a_second_upscale_in_wipe_opens_at_100_percent(qtbot):
 def test_the_slider_changes_the_nocturne_view_only(qtbot):
     d = _dlg(qtbot); d.show()
     d._run_upscale()
-    plain_before = d.plain_view._item.pixmap().toImage()
+    plain_before = d.original_view._item.pixmap().toImage()
     d.tighten_slider.setValue(100)
     qtbot.waitUntil(lambda: d._result.metadata["upscale"]["tighten"] == 1.0, timeout=5000)
-    assert d.plain_view._item.pixmap().toImage() == plain_before
+    assert d.original_view._item.pixmap().toImage() == plain_before
 
 
 def test_export_uses_the_slider_value_even_before_the_view_catches_up(qtbot, tmp_path):
@@ -277,7 +277,7 @@ def test_cancel_with_a_splitter_that_never_checks_shows_no_result(qtbot, monkeyp
     assert d.pages.currentIndex() == 0
     assert d.status.text() == "Cancelled."
     assert d._result is None and d._layers is None
-    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    assert all(_no_image(v) for v in (d.original_view, d.result_view, d.wipe_view))
 
 
 def test_closing_releases_the_layers_result_and_views(qtbot):
@@ -287,7 +287,7 @@ def test_closing_releases_the_layers_result_and_views(qtbot):
     assert not d.result_view._item.pixmap().isNull()       # precondition: there was a result
     d._close_btn.click()
     assert d._layers is None and d._result is None
-    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    assert all(_no_image(v) for v in (d.original_view, d.result_view, d.wipe_view))
     assert d.navigator._frame.isNull()
 
 
@@ -313,7 +313,7 @@ def test_a_late_worker_callback_after_close_builds_nothing(qtbot, monkeypatch):
     re_done(finish_upscale(layers, 0.35))
     up_failed(RuntimeError("late"))
     assert d.pages.currentIndex() == 0 and d._result is None and d._layers is None
-    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    assert all(_no_image(v) for v in (d.original_view, d.result_view, d.wipe_view))
     d.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     up_done(layers)                                  # C++ side gone: must not raise
@@ -427,6 +427,36 @@ def test_change_crop_lets_go_of_the_pictures(qtbot):
     """[final 10] ~320 MB at 20 MP stayed in the hidden views."""
     d = _dlg(qtbot); d.resize(900, 600); d.show()
     d._run_upscale()
-    assert not d.plain_view._item.pixmap().isNull()      # precondition
+    assert not d.original_view._item.pixmap().isNull()      # precondition
     d.change_crop_btn.click()
-    assert all(_no_image(v) for v in (d.plain_view, d.result_view, d.wipe_view))
+    assert all(_no_image(v) for v in (d.original_view, d.result_view, d.wipe_view))
+
+
+def test_the_left_view_is_the_original_pixel_for_pixel(qtbot):
+    """His question: does upscaling degrade the picture? So the left side is the
+    ORIGINAL crop, each pixel a 2x2 block — not another resize (2026-09-29)."""
+    from nocturne.core.image import AstroImage
+    d0 = np.zeros((20, 20, 3), np.float32)
+    d0[5, 7] = (1.0, 0.0, 0.0)                         # one red pixel
+    img = AstroImage(d0, is_linear=False, metadata={})
+    d = UpscaleDialog(img, {}, Settings())
+    qtbot.addWidget(d)
+    d._run_upscale()
+    q = d.original_view._item.pixmap().toImage()
+    assert (q.width(), q.height()) == (40, 40)
+    for x, y in ((14, 10), (15, 10), (14, 11), (15, 11)):   # the 2x2 block
+        c = q.pixelColor(x, y)
+        assert (c.red(), c.green(), c.blue()) == (255, 0, 0), (x, y)
+    assert q.pixelColor(16, 10).red() == 0, "no smoothing bleeds into its neighbour"
+    assert d.wipe_view.compare_active()
+
+
+def test_the_navigator_fills_the_panel(qtbot):
+    """His note: 'very very small even though there is plenty of room'."""
+    d = _dlg(qtbot); d.resize(1000, 700); d.show()
+    d._run_upscale()
+    qtbot.wait(20)
+    nav = d.navigator
+    assert nav.width() >= 240
+    assert nav.height() >= 0.8 * nav.heightForWidth(nav.width())   # square frame -> square map
+    assert nav.height() >= 200

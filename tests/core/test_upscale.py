@@ -122,14 +122,6 @@ def test_finish_does_not_split_again(monkeypatch):
     assert calls == [1]
 
 
-def test_the_plain_resize_is_a_plain_lanczos_of_the_crop():
-    from nocturne.core.upscale import prepare_upscale
-    img = _starry(40, 40)
-    layers = prepare_upscale(img, (10, 30, 10, 30), LanczosEngine(), scale=2)
-    crop = AstroImage(img.data[10:30, 10:30].copy(), is_linear=False)
-    assert np.array_equal(layers.plain_up.data, LanczosEngine().upscale(crop, 2).data)
-
-
 def test_tighten_changes_only_the_stars():
     from nocturne.core.upscale import prepare_upscale, finish_upscale
     layers = prepare_upscale(_starry(40, 40), None, LanczosEngine(), scale=2)
@@ -207,7 +199,7 @@ def test_prepare_without_a_token_runs_through(monkeypatch):
     from nocturne.core.upscale import prepare_upscale
     clear_ambient()
     _deaf_split(monkeypatch)
-    assert prepare_upscale(_starry(), None, LanczosEngine()).plain_up.data.shape[0] > 0
+    assert prepare_upscale(_starry(), None, LanczosEngine()).starless_up.data.shape[0] > 0
 
 
 def test_provenance_text_records_the_star_tightening():
