@@ -127,7 +127,9 @@ def test_the_plain_resize_is_a_plain_lanczos_of_the_crop():
     img = _starry(40, 40)
     layers = prepare_upscale(img, (10, 30, 10, 30), LanczosEngine(), scale=2)
     crop = AstroImage(img.data[10:30, 10:30].copy(), is_linear=False)
-    assert np.array_equal(layers.plain_up.data, LanczosEngine().upscale(crop, 2).data)
+    assert layers.plain_up.dtype == np.uint8
+    from nocturne.core.upscale import to_uint8
+    assert np.array_equal(layers.plain_up, to_uint8(LanczosEngine().upscale(crop, 2).data))
 
 
 def test_tighten_changes_only_the_stars():
@@ -144,3 +146,18 @@ def test_output_size_and_megapixels():
     assert output_size(1750, 1167) == (3500, 2334)
     assert output_size(1, 3) == (2, 6)                       # [RF 5] tiny crops are fine
     assert megapixels(3840, 2160) == pytest.approx(8.2944)
+
+
+def test_finish_is_float32_and_matches_a_full_float32_computation():
+    from nocturne.core.star_reduction import reduce_stars
+    from nocturne.core.upscale import prepare_upscale, finish_upscale
+    from nocturne.steps.star_split import resolve_star_split
+    img = _starry(40, 40)
+    layers = prepare_upscale(img, None, LanczosEngine(), scale=2)
+    assert layers.starless_up.dtype == np.float16 and layers.stars_up.dtype == np.float16
+    out = finish_upscale(layers, 0.35)
+    assert out.data.dtype == np.float32
+    starless, stars = resolve_star_split(img, None)
+    ref = reduce_stars(LanczosEngine().upscale(starless, 2),
+                       LanczosEngine().upscale(stars, 2), 0.35)
+    assert np.abs(out.data - ref.data).max() < 1e-3
