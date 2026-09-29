@@ -275,11 +275,13 @@ class UpscaleDialog(QDialog):
         self.wipe_view.set_compare(plain)          # plain under the divider's left side
         self._unlink = link_views(self.plain_view, self.result_view)
         self.pages.setCurrentIndex(1)
-        self._set_mode(self.mode_wipe.isChecked())
         h, w = self._result.data.shape[:2]
         self.navigator.set_crop(self._layers.crop, self._scale)
         self.result_view.actual_size()
         self._centre_views(w / 2, h / 2)
+        copy_view(self.result_view, self.wipe_view)  # a fresh wipe view opens at the same 100%
+        self.views.setCurrentIndex(1 if self.mode_wipe.isChecked() else 0)
+        self._sync_navigator()
         self.result_size.setText(f"{w} × {h}")
         self.status.setText(f"Upscaled to {w}×{h}.")
         self._export_btn.setEnabled(True)

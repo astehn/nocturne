@@ -198,3 +198,14 @@ def test_the_navigator_moves_both_views(qtbot):
     c1 = d.result_view.mapToScene(d.result_view.viewport().rect().center())
     c2 = d.plain_view.mapToScene(d.plain_view.viewport().rect().center())
     assert c1.x() == pytest.approx(c2.x(), abs=1) and c1.y() == pytest.approx(c2.y(), abs=1)
+
+
+def test_a_second_upscale_in_wipe_opens_at_100_percent(qtbot):
+    d = _dlg(qtbot); d.resize(900, 600); d.show()
+    d._run_upscale()
+    d.mode_wipe.click()
+    d.wipe_view.zoom_in()
+    d.change_crop_btn.click()
+    d._run_upscale()
+    assert d.wipe_view.zoom() == pytest.approx(1.0)
+    assert d.result_view.zoom() == pytest.approx(1.0)
