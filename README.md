@@ -85,7 +85,7 @@ Nocturne drives these as separate installs and does not bundle them.
 
 ### Download
 
-Every release, for both platforms, is on the [downloads page](https://nocturne.stehn.com/download.html) or in [Releases](../../releases).
+Every release, for both platforms, is on the [downloads page](https://nocturneastro.com/download.html) or in [Releases](../../releases).
 
 **macOS** — grab `Nocturne.app` (**Apple Silicon**, M1 or newer), drag it to Applications, and open it.
 
