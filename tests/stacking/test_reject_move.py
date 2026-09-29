@@ -889,3 +889,23 @@ def test_describe_names_keeps_a_long_list_short():
     assert describe_names(["a.fit"]) == "a.fit"
     assert describe_names(["a", "b", "c"]) == "a, b, c"
     assert describe_names(["a", "b", "c", "d", "e"]) == "a, b, c and 2 more"
+
+
+def test_folder_labels_name_the_folder_and_leave_file_names_alone(tmp_path):
+    """Two folders called "M 31" read as one in these messages. A caller's
+    label names the folder; a file whose NAME contains "M 31" is untouched —
+    a text replace after the fact rewrote it (review 2026-09-29)."""
+    folder = tmp_path / "d2" / "M 31"
+    (folder / REJECTED_DIR).mkdir(parents=True)
+    (folder / REJECTED_DIR / MANIFEST_NAME).write_text("not json")    # damaged
+    with pytest.raises(rm.RejectMoveError) as plain:
+        rm.move_back(str(folder))
+    with rm.folder_labels({str(folder): "d2/M 31"}):
+        with pytest.raises(rm.RejectMoveError) as named:
+            rm.move_back(str(folder))
+    assert "M 31/rejected" in str(plain.value) and "d2/M 31" not in str(plain.value)
+    assert "d2/M 31/rejected" in str(named.value)
+    assert rm._label(str(folder)) == "M 31", "the label ends with its block"
+    msg = rm.describe_names(["Light_M 31_10.0s_IRCUT_20260926-223100.fit"])
+    with rm.folder_labels({str(folder): "d2/M 31"}):
+        assert rm.describe_names(["Light_M 31_10.0s_IRCUT_20260926-223100.fit"]) == msg

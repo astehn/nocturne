@@ -6378,3 +6378,53 @@ def test_native_entry_then_f_exit_restores_the_chrome(qtbot, tmp_path, loaded):
     win._toggle_fullscreen()
     qtbot.waitUntil(lambda: not win.isFullScreen())
     assert _chrome(win) == before
+
+
+def test_an_exported_fits_still_knows_its_camera(qtbot, tmp_path, monkeypatch):
+    """An export carried only the WCS; reopened, an S50 Pro file fell back to
+    the S30 Pro profile and its solve hint was 63% too wide (review
+    2026-09-29). The reopened export must name the same camera and optics."""
+    from nocturne.core.fits_io import load_fits
+    from nocturne.core.instrument import SEESTAR_S50_PRO, identify
+    from nocturne.ui import file_dialogs
+    p = tmp_path / "s50pro.fits"
+    hdu = fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16))
+    hdu.header["CREATOR"] = "ZWO Seestar S50 Pro"
+    hdu.header["FOCALLEN"] = 260.0
+    hdu.header["XPIXSZ"] = 2.9
+    hdu.writeto(str(p))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(p))
+    out = tmp_path / "out.fits"
+    monkeypatch.setattr(file_dialogs, "save_file", lambda *a: (str(out), ""))
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix, **k: on_result(work()))
+    win.export_final("FITS")
+    back = load_fits(str(out)).metadata
+    assert identify(back) is SEESTAR_S50_PRO
+    assert float(back["focal_length"]) == 260.0 and float(back["pixel_size"]) == 2.9
+
+
+def test_a_solved_export_carries_both_the_wcs_and_the_camera(qtbot, tmp_path, monkeypatch):
+    """The two halves of the header merge: the solve's WCS AND the camera
+    cards (review 2026-09-29: the solved path was untested)."""
+    from types import SimpleNamespace
+    from nocturne.ui import file_dialogs
+    p = tmp_path / "s30.fits"
+    hdu = fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16))
+    hdu.header["CREATOR"] = "ZWO Seestar S30 Pro"
+    hdu.header["FOCALLEN"] = 160.0
+    hdu.header["XPIXSZ"] = 2.9
+    hdu.writeto(str(p))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(p))
+    wcs = SimpleNamespace(to_header=lambda: {"CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN"})
+    win._solve = (win._solve_sig(), SimpleNamespace(wcs=wcs))
+    out = tmp_path / "out.fits"
+    monkeypatch.setattr(file_dialogs, "save_file", lambda *a: (str(out), ""))
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix, **k: on_result(work()))
+    win.export_final("FITS")
+    h = fits.getheader(str(out))
+    assert h["CTYPE1"] == "RA---TAN"
+    assert h["INSTRUME"] == "ZWO Seestar S30 Pro" and h["FOCALLEN"] == 160.0

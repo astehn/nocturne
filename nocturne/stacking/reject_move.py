@@ -48,6 +48,8 @@ import json
 import os
 import tempfile
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
@@ -101,8 +103,26 @@ def describe_names(names, limit: int = 3) -> str:
     return f"{', '.join(names[:limit])} and {len(names) - limit} more"
 
 
+# A caller listing two folders that share a name ("d1/M 31_sub",
+# "d2/M 31_sub") says how each is to be named in the messages below; left to
+# the basename they read as one folder (delivery C review, item 3).
+_LABELS: ContextVar[dict] = ContextVar("reject_move_labels", default={})
+
+
+@contextmanager
+def folder_labels(labels: dict[str, str]):
+    """Name these folders so in every message written inside the block."""
+    token = _LABELS.set({os.path.normpath(os.path.abspath(k)): v
+                         for k, v in labels.items()})
+    try:
+        yield
+    finally:
+        _LABELS.reset(token)
+
+
 def _label(folder: str) -> str:
-    return os.path.basename(os.path.normpath(os.path.abspath(folder)))
+    key = os.path.normpath(os.path.abspath(folder))
+    return _LABELS.get().get(key) or os.path.basename(key)
 
 
 def _where(folder: str) -> str:

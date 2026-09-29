@@ -83,3 +83,17 @@ def test_provenance_text_mentions_engine_scale_and_honesty():
 def test_upscale_filename():
     assert upscale_filename("NGC7000_182x20s_61min.fits", 2) == "NGC7000_182x20s_61min_2x.jpg"
     assert upscale_filename(None, 2) == "upscale_2x.jpg"
+
+
+def test_an_upscaled_copy_halves_its_pixel_size():
+    """A 2x pixel covers half the sky. Copied unchanged, the copy's solve
+    hint and any FITS export said the field was twice as wide (review
+    2026-09-29), as a drizzled master once did."""
+    img = _starry(20, 20)
+    img.metadata.update({"pixel_size": 2.9, "focal_length": 260.0,
+                         "solve_cards": {"XPIXSZ": 2.9, "FOCALLEN": 260.0, "CD1_1": 0.0006}})
+    out = upscale_crop(img, None, LanczosEngine(), scale=2)
+    assert out.metadata["pixel_size"] == 1.45
+    assert out.metadata["focal_length"] == 260.0
+    assert out.metadata["solve_cards"] == {"XPIXSZ": 1.45, "FOCALLEN": 260.0, "CD1_1": 0.0003}
+    assert img.metadata["pixel_size"] == 2.9, "the source image's metadata is untouched"

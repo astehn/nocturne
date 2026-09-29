@@ -419,7 +419,8 @@ class QualityChart(QWidget):
 
     def date_labels(self) -> list[tuple[QRectF, str]]:
         """Each night's date in the band under the plot: the first at the
-        plot's left edge, the others just right of their dashed line. They
+        plot's left edge, the others just right of their dashed line — where
+        there is room there, never pulled back across it. They
         outrank the clock times there (time_labels steps around them). Two
         that would touch — a night of a few frames is a few pixels wide —
         keep the date of the wider night, never one drawn over the other."""
@@ -430,8 +431,13 @@ class QualityChart(QWidget):
         anchors = [r.left()] + self.night_lines()
         ends = self.night_lines() + [r.right()]
         kept: list[tuple[QRectF, str, float]] = []
-        for anchor, end, (_k, text) in zip(anchors, ends, self._night_starts):
+        for n, (anchor, end, (_k, text)) in enumerate(zip(anchors, ends, self._night_starts)):
             w = fm.horizontalAdvance(text) + 4.0
+            if n and anchor + 2.0 + w > self.width():
+                # Pulled back to fit, a short last night's date sat LEFT of
+                # its own line and read as the night before's. Left out
+                # instead: the chips and a hover still say it.
+                continue
             left = min(anchor + 2.0, self.width() - w)
             rect = QRectF(left, self.height() - _BOTTOM + 1.0, w, _BOTTOM - 1.0)
             if kept and left < kept[-1][0].right() + _LABEL_GAP:

@@ -890,3 +890,20 @@ def test_the_min_span_and_clamp_do_not_touch_a_normal_night(qtbot):
     expected_lo = min(values) - span * 0.05
     expected_hi = max(values) + span * 0.05
     assert (lo, hi) == pytest.approx((expected_lo, expected_hi))
+
+
+@pytest.mark.parametrize("width", [800, 1280, 1920])
+def test_a_date_never_sits_left_of_its_own_line(qtbot, stockholm, width):
+    """Pulled back to fit, a short last night's date was drawn left of its
+    dashed line, under the night before (delivery C review, item 6). Every
+    date after the first starts right of its own line, or is left out."""
+    b = _shown(qtbot, _nights(first=60, second=1), width=width)
+    lines = b.chart.night_lines()
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep"], "no room right of its line: left out"
+    # And where there IS room, the date is kept — right of its own line.
+    b = _shown(qtbot, _nights(first=6, second=20), width=width)
+    (line,) = b.chart.night_lines()
+    dates = b.chart.date_labels()
+    assert [t for _r, t in dates] == ["21 Sep", "26 Sep"]
+    assert dates[1][0].left() > line

@@ -484,7 +484,8 @@ def build_panel(
             # Decision-relevant, so a note rather than "How this works": which
             # strength to pick, and how to read the check above.
             notes.addWidget(_desc_label(
-                "Light suits most images; use Strong when it's heavy. After applying, "
+                "Strong suits most images; use Light when your object fills the frame. "
+                "After applying, "
                 "tick Show what was removed: mid-grey is where nothing was taken, and "
                 "a smooth ramp is sky-glow. If it carries the shape of your object, "
                 "the fit took signal with it — undo and try Light."))
