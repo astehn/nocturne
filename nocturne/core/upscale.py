@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
@@ -61,13 +62,35 @@ from ..tools.base import run_cli
 TIGHTEN_DEFAULT = 0.35
 _SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 
+# The biggest output Upscale will make. PROVISIONAL — Task 7 measures time and
+# memory on real crops (up to his M31 mosaic) and replaces this with the
+# measured value and its numbers.
+UPSCALE_MAX_MP = 60
 
-def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None, runner=run_cli):
-    """Layered 2× upscale of a crop: split → upscale starless + stars → tighten
-    stars + screen-recombine. Non-destructive; returns a new AstroImage. A
-    degenerate split (no stars) reduces to a plain full-frame upscale."""
+
+def output_size(crop_w: int, crop_h: int, scale: int = 2) -> tuple[int, int]:
+    return crop_w * scale, crop_h * scale
+
+
+def megapixels(w: int, h: int) -> float:
+    return w * h / 1_000_000
+
+
+@dataclass
+class UpscaleLayers:
+    """The slow part, kept: split and both upscales run once per Upscale, so the
+    star-tightening slider only re-runs `finish_upscale`."""
+    starless_up: AstroImage
+    stars_up: AstroImage
+    plain_up: AstroImage          # the crop, plain Lanczos 2x — what resizing alone gives
+    source_meta: dict
+    crop: tuple | None
+    scale: int
+    engine_prov: dict
+
+
+def prepare_upscale(img, crop, engine, *, scale=2, rc=None, runner=run_cli) -> UpscaleLayers:
     from ..steps.star_split import resolve_star_split
-    from .star_reduction import reduce_stars
 
     data = img.data
     if crop is not None:
@@ -75,13 +98,21 @@ def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None
         data = data[top:bottom, left:right]
     src = AstroImage(np.ascontiguousarray(data, dtype=np.float32),
                      is_linear=img.is_linear, metadata=dict(img.metadata))
-
     starless, stars = resolve_star_split(src, rc, runner=runner)
-    starless_up = engine.upscale(starless, scale)      # chosen engine (may fabricate later, e.g. GAN)
-    stars_up = LanczosEngine().upscale(stars, scale)   # stars ALWAYS deterministic — no engine ever fabricates a star
-    result = reduce_stars(starless_up, stars_up, tighten)
+    return UpscaleLayers(
+        starless_up=engine.upscale(starless, scale),        # may fabricate later (GAN)
+        stars_up=LanczosEngine().upscale(stars, scale),     # stars ALWAYS deterministic
+        plain_up=LanczosEngine().upscale(src, scale),
+        source_meta=dict(img.metadata),
+        crop=crop, scale=scale, engine_prov=engine.provenance())
 
-    meta = dict(result.metadata)
+
+def finish_upscale(layers: UpscaleLayers, tighten: float) -> AstroImage:
+    from .star_reduction import reduce_stars
+
+    result = reduce_stars(layers.starless_up, layers.stars_up, tighten)
+    meta = dict(layers.source_meta)
+    scale = layers.scale
     # A 2x pixel covers half the sky: the optics must say so, as a drizzled
     # master's do (stacker._rescale_optics). Copied unchanged, the upscaled
     # copy's solve hint was twice too wide, and an export wrote it to disk
@@ -92,9 +123,17 @@ def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None
         meta["solve_cards"] = {
             k: (v / scale if k in _SCALE_CARDS and isinstance(v, (int, float)) else v)
             for k, v in meta["solve_cards"].items()}
-    meta["upscale"] = {**engine.provenance(), "scale": scale, "tighten": tighten,
-                       "crop": list(crop) if crop else None}
+    meta["upscale"] = {**layers.engine_prov, "scale": scale, "tighten": tighten,
+                       "crop": list(layers.crop) if layers.crop else None}
     return AstroImage(result.data, is_linear=result.is_linear, metadata=meta)
+
+
+def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None, runner=run_cli):
+    """Layered 2× upscale of a crop: split → upscale starless + stars → tighten
+    stars + screen-recombine. Non-destructive; returns a new AstroImage. A
+    degenerate split (no stars) reduces to a plain full-frame upscale."""
+    return finish_upscale(prepare_upscale(img, crop, engine, scale=scale, rc=rc,
+                                          runner=runner), tighten)
 
 
 def upscale_filename(source_label, scale: int) -> str:

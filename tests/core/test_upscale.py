@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from nocturne.core.image import AstroImage
 from nocturne.core.upscale import LanczosEngine
 
@@ -97,3 +98,49 @@ def test_an_upscaled_copy_halves_its_pixel_size():
     assert out.metadata["focal_length"] == 260.0
     assert out.metadata["solve_cards"] == {"XPIXSZ": 1.45, "FOCALLEN": 260.0, "CD1_1": 0.0003}
     assert img.metadata["pixel_size"] == 2.9, "the source image's metadata is untouched"
+
+
+def test_prepare_then_finish_equals_upscale_crop():
+    from nocturne.core.upscale import prepare_upscale, finish_upscale
+    img = _starry(40, 40)
+    layers = prepare_upscale(img, (10, 30, 10, 30), LanczosEngine(), scale=2)
+    a = finish_upscale(layers, 0.35).data
+    b = upscale_crop(img, (10, 30, 10, 30), LanczosEngine(), scale=2, tighten=0.35).data
+    assert np.array_equal(a, b)
+
+
+def test_finish_does_not_split_again(monkeypatch):
+    """The slider re-runs only the fast part: the star split happens once."""
+    import nocturne.steps.star_split as ss
+    from nocturne.core.upscale import prepare_upscale, finish_upscale
+    calls = []
+    real = ss.resolve_star_split
+    monkeypatch.setattr(ss, "resolve_star_split", lambda *a, **k: calls.append(1) or real(*a, **k))
+    layers = prepare_upscale(_starry(20, 20), None, LanczosEngine(), scale=2)
+    for t in (0.0, 0.5, 1.0):
+        finish_upscale(layers, t)
+    assert calls == [1]
+
+
+def test_the_plain_resize_is_a_plain_lanczos_of_the_crop():
+    from nocturne.core.upscale import prepare_upscale
+    img = _starry(40, 40)
+    layers = prepare_upscale(img, (10, 30, 10, 30), LanczosEngine(), scale=2)
+    crop = AstroImage(img.data[10:30, 10:30].copy(), is_linear=False)
+    assert np.array_equal(layers.plain_up.data, LanczosEngine().upscale(crop, 2).data)
+
+
+def test_tighten_changes_only_the_stars():
+    from nocturne.core.upscale import prepare_upscale, finish_upscale
+    layers = prepare_upscale(_starry(40, 40), None, LanczosEngine(), scale=2)
+    loose, tight = finish_upscale(layers, 0.0), finish_upscale(layers, 1.0)
+    assert not np.array_equal(loose.data, tight.data)
+    assert loose.metadata["upscale"]["tighten"] == 0.0
+    assert tight.metadata["upscale"]["tighten"] == 1.0
+
+
+def test_output_size_and_megapixels():
+    from nocturne.core.upscale import megapixels, output_size
+    assert output_size(1750, 1167) == (3500, 2334)
+    assert output_size(1, 3) == (2, 6)                       # [RF 5] tiny crops are fine
+    assert megapixels(3840, 2160) == pytest.approx(8.2944)
