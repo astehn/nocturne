@@ -209,3 +209,32 @@ def test_a_second_upscale_in_wipe_opens_at_100_percent(qtbot):
     d._run_upscale()
     assert d.wipe_view.zoom() == pytest.approx(1.0)
     assert d.result_view.zoom() == pytest.approx(1.0)
+
+
+def test_the_slider_changes_the_nocturne_view_only(qtbot):
+    d = _dlg(qtbot); d.show()
+    d._run_upscale()
+    plain_before = d.plain_view._item.pixmap().toImage()
+    d.tighten_slider.setValue(100)
+    qtbot.waitUntil(lambda: d._result.metadata["upscale"]["tighten"] == 1.0, timeout=5000)
+    assert d.plain_view._item.pixmap().toImage() == plain_before
+
+
+def test_export_uses_the_slider_value_even_before_the_view_catches_up(qtbot, tmp_path):
+    """[RF 3] WYSIWYG: the file carries the slider's current value."""
+    d = _dlg(qtbot); d.show()
+    d._run_upscale()
+    d.tighten_slider.setValue(90)                   # debounce has NOT fired yet
+    saved = {}
+    d._save_runner = lambda img, path: saved.update(t=img.metadata["upscale"]["tighten"])
+    d._do_export(str(tmp_path / "o.jpg"))
+    assert saved["t"] == 0.9
+
+
+def test_open_as_copy_uses_the_slider_value(qtbot):
+    got = {}
+    d = _dlg(qtbot, on_open_copy=lambda img: got.update(t=img.metadata["upscale"]["tighten"]))
+    d._run_upscale()
+    d.tighten_slider.setValue(10)
+    d._do_open_copy()
+    assert got["t"] == 0.1
