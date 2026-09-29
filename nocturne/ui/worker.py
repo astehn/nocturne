@@ -12,8 +12,9 @@ class WorkerSignals(QObject):
 
 
 class Worker(QRunnable):
-    def __init__(self, fn, wants_progress: bool = False) -> None:
+    def __init__(self, fn, wants_progress: bool = False, token=None) -> None:
         super().__init__()
+        self._token = token
         self._fn = fn
         self._wants_progress = wants_progress
         self.signals = WorkerSignals()
@@ -24,10 +25,12 @@ class Worker(QRunnable):
         # reporting a percentage — has somewhere to report to. Only when a
         # caller asked: without it `report_progress` finds nobody and costs
         # nothing, which is how every existing caller behaves.
-        token = None
-        if self._wants_progress:
+        token = self._token
+        if token is None and self._wants_progress:
             token = CancelToken()
-            token.on_progress = self.signals.progress.emit
+        if token is not None:
+            if self._wants_progress:
+                token.on_progress = self.signals.progress.emit
             set_ambient(token)
         try:
             result = self._fn()
@@ -47,15 +50,17 @@ class Worker(QRunnable):
 _pending: set = set()
 
 
-def run_async(pool, fn, on_done, on_error=None, on_progress=None) -> None:
+def run_async(pool, fn, on_done, on_error=None, on_progress=None, token=None) -> None:
     """`on_progress(done, total)` opts into progress from inside `fn`.
 
     A dialog that does its own background work — Narrowband's star split, say —
     otherwise has no way to hear a tool's percentage: `_run_busy` publishes the
     ambient token, and `run_async` did not, so the same split reported in one
     place and was silent in the other.
+
+    `token` lets the caller cancel: Upscale Crop's Cancel button holds it.
     """
-    worker = Worker(fn, wants_progress=on_progress is not None)
+    worker = Worker(fn, wants_progress=on_progress is not None, token=token)
     _pending.add(worker)
 
     def _cleanup(*_):

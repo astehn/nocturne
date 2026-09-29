@@ -183,6 +183,10 @@ class ImageView(QGraphicsView):
     # listens: its labels are screen-fixed but its collision avoidance runs in
     # IMAGE coordinates, so the reserved boxes are only correct for one zoom.
     zoomChanged = Signal(float)
+    # Every transform or scroll change, unthrottled: linked views
+    # (ui/linked_views.py) must follow exactly, and zoomChanged's 2% gate
+    # exists for overlay rebuilds, not for this.
+    viewChanged = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -211,6 +215,8 @@ class ImageView(QGraphicsView):
         # widget out: Qt delivers a resizeEvent during construction, and reading
         # this attribute before it existed would raise.
         self._fitted = False
+        self.horizontalScrollBar().valueChanged.connect(lambda _v: self.viewChanged.emit())
+        self.verticalScrollBar().valueChanged.connect(lambda _v: self.viewChanged.emit())
         self._crop_mode = False               # crop stage active (box may still be hidden)
         self._pixel_cursor = False            # crosshair over image pixels (opt-in)
         self._content_bounds = None           # detected content edges for the next show
@@ -413,6 +419,7 @@ class ImageView(QGraphicsView):
         The 2% threshold keeps a drag-resize from firing a rebuild per pixel;
         the overlay rebuild is cheap but not free, and nothing visible changes
         below that."""
+        self.viewChanged.emit()
         z = self.transform().m11()
         # The readout updates UNTHROTTLED, before the 2% gate below. That gate
         # exists to stop a drag-resize rebuilding overlays per pixel; applied to

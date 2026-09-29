@@ -50,3 +50,23 @@ def test_run_async_reports_error(drained):
     run_async(QThreadPool.globalInstance(), boom, lambda r: None, errs.append)
     drained.waitUntil(lambda: len(errs) == 1, timeout=2000)
     assert isinstance(errs[0], ValueError)
+
+
+def test_a_given_token_cancels_the_work(qtbot):
+    from PySide6.QtCore import QThreadPool
+    from nocturne.core.tasks import CancelToken, Cancelled, current
+    from nocturne.ui.worker import run_async
+    import threading
+    token, started, got = CancelToken(), threading.Event(), {}
+
+    def work():
+        started.set()
+        while True:
+            current().check()          # the ambient token is OUR token
+
+    run_async(QThreadPool.globalInstance(), work, lambda r: got.update(done=r),
+              lambda e: got.update(err=e), token=token)
+    assert started.wait(5)
+    token.cancel()
+    qtbot.waitUntil(lambda: "err" in got, timeout=5000)
+    assert isinstance(got["err"], Cancelled)
