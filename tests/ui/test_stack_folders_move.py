@@ -285,3 +285,22 @@ def test_a_refusal_in_the_middle_names_every_folder_never_tried(qtbot, tmp_path)
     assert "nothing was moved" in text
     assert text.endswith("night 3 was not tried.")
     assert sum(1 for s in d._stats if s.moved) == 2
+
+
+def test_colliding_basenames_are_told_apart_on_the_way_back(qtbot, tmp_path):
+    """Delivery C review, item 3: the way in told d1/M 31_sub from
+    d2/M 31_sub; the way back named only "M 31_sub", so a damaged record
+    could be either folder's."""
+    from nocturne.stacking.reject_move import MANIFEST_NAME
+    (tmp_path / "d1").mkdir()
+    (tmp_path / "d2").mkdir()
+    a = _seestar_folder(tmp_path / "d1", "M 31_sub", "20260921")
+    b = _seestar_folder(tmp_path / "d2", "M 31_sub", "20260926")
+    d, _asked = _dialog(qtbot, a, b)
+    d.verdict_strip.move_btn.click()
+    (b / "rejected" / MANIFEST_NAME).write_text("not json")      # damaged
+    d.verdict_strip.back_btn.click()
+    qtbot.waitUntil(lambda: not d._busy, timeout=3000)
+    text = d.status.text()
+    assert "d2/M 31_sub/rejected" in text, text
+    assert "in M 31_sub/rejected" not in text, text

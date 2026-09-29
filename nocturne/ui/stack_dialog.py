@@ -20,8 +20,8 @@ from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
 from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
-from ..stacking.reject_move import (REJECTED_DIR, MoveBackResult, RejectMoveError,
-                                    describe_names, home_folder, move_back,
+from ..stacking.reject_move import (MANIFEST_NAME, REJECTED_DIR, MoveBackResult, RejectMoveError,
+                                    describe_names, folder_labels, home_folder, move_back,
                                     move_to_rejected, pending_back)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
@@ -629,20 +629,28 @@ class StackDialog(QDialog):
         if rejected_at is not None:
             capture = os.path.basename(os.path.dirname(rejected_at))
             where = f"{capture}/{REJECTED_DIR}" if capture else REJECTED_DIR
-            if os.path.normpath(rejected_at) == os.path.normpath(os.path.realpath(folder)):
+            itself = (os.path.normpath(rejected_at)
+                      == os.path.normpath(os.path.realpath(folder)))
+            # Ours when it carries our record, or sits in a listed capture
+            # folder — where Move rejected frames puts them. A folder that
+            # merely has the name holds nothing of ours, and saying it did was
+            # false (final review I2/T7, delivery C review item 7).
+            holds = (os.path.exists(os.path.join(rejected_at, MANIFEST_NAME))
+                     or any(_same_folder(os.path.dirname(rejected_at), f)
+                            for f in self.listed_folders()))
+            if holds:
+                inside = "" if itself else f"{name}/ sits inside {where}/, which "
                 self.status.setText(
-                    f"{where}/ holds frames moved out of a stack — Move them back "
+                    (f"{where}/ " if itself else inside)
+                    + "holds frames moved out of a stack — Move them back "
                     "returns them to their folder; they are not added from there.")
             else:
-                # `folder` merely sits inside `where`/ — it is not itself
-                # what holds anything, and saying so was false (final review
-                # I2/T7: a capture folder named old_M8_sub, nested under an
-                # unrelated top-level "rejected", used to be told it "holds
-                # frames moved out of a stack").
+                subject = (f"{where}/ is" if itself
+                           else f"{name}/ sits inside {where}/, which is")
                 self.status.setText(
-                    f"{name}/ sits inside {where}/, which holds frames moved out "
-                    "of a stack — Move them back returns them to their folder; "
-                    "they are not added from there.")
+                    f"{subject} named {REJECTED_DIR} — the name Nocturne keeps for "
+                    "frames moved out of a stack — so these subs are not added "
+                    f"from there. Rename {where}/ to add them.")
             return
         if any(_same_folder(folder, f) for f in self.listed_folders()):
             self.status.setText(f"The subs in {name} are already listed.")
@@ -1600,9 +1608,12 @@ class StackDialog(QDialog):
         restored_paths: list[str] = []          # restored here, by full path
         home: set[str] = set()                  # full paths back where they belong
         missing: set[str] = set()               # full rejected/ paths gone for good
-        for f in self.listed_folders():
+        folders = self.listed_folders()
+        names = {f: _label(f, folders) for f in folders}
+        for f in folders:
             try:
-                r = move_back(f)
+                with folder_labels(names):
+                    r = move_back(f)
             except RejectMoveError as exc:
                 refused.append(str(exc))
                 continue

@@ -59,6 +59,7 @@ class LanczosEngine:
 from ..tools.base import run_cli
 
 TIGHTEN_DEFAULT = 0.35
+_SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 
 
 def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None, runner=run_cli):
@@ -81,6 +82,16 @@ def upscale_crop(img, crop, engine, *, scale=2, tighten=TIGHTEN_DEFAULT, rc=None
     result = reduce_stars(starless_up, stars_up, tighten)
 
     meta = dict(result.metadata)
+    # A 2x pixel covers half the sky: the optics must say so, as a drizzled
+    # master's do (stacker._rescale_optics). Copied unchanged, the upscaled
+    # copy's solve hint was twice too wide, and an export wrote it to disk
+    # (review 2026-09-29).
+    if isinstance(meta.get("pixel_size"), (int, float)):
+        meta["pixel_size"] = meta["pixel_size"] / scale
+    if meta.get("solve_cards"):
+        meta["solve_cards"] = {
+            k: (v / scale if k in _SCALE_CARDS and isinstance(v, (int, float)) else v)
+            for k, v in meta["solve_cards"].items()}
     meta["upscale"] = {**engine.provenance(), "scale": scale, "tighten": tighten,
                        "crop": list(crop) if crop else None}
     return AstroImage(result.data, is_linear=result.is_linear, metadata=meta)

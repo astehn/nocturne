@@ -100,6 +100,34 @@ def jpeg_bytes(img: AstroImage, longest_edge: int, *, linked: bool = True,
     return buf.getvalue()
 
 
+def camera_cards(meta: dict) -> dict:
+    """The camera and optics a reopened export needs to know what took it.
+
+    An export carried only the solve's WCS, so reopened it named no camera and
+    fell back to the S30 Pro profile: an S50 Pro file got a solve hint 63% too
+    wide (review, 2026-09-29). A camera the file NAMES is written by its full
+    Seestar name (a raw INSTRUME can be shorter: "Seestar S50"); a name that
+    matches no Seestar is kept as written, and none is ever inferred from a
+    focal length — a 250 mm refractor is not an S50.
+    """
+    from .instrument import identify
+    cards = {}
+    raw = meta.get("instrument") or meta.get("creator")
+    if raw:
+        known = identify({"creator": str(raw)})
+        cards["INSTRUME"] = known.name if known else str(raw)
+    for key, card in (("focal_length", "FOCALLEN"), ("pixel_size", "XPIXSZ")):
+        try:
+            value = float(meta.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cards[card] = value
+    if "XPIXSZ" in cards:
+        cards["YPIXSZ"] = cards["XPIXSZ"]
+    return cards
+
+
 def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     # 32-bit float FITS; color stored channels-first (3, H, W).
     data = img.data.astype(np.float32)

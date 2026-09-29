@@ -256,9 +256,43 @@ def test_a_capture_folder_under_an_unrelated_rejected_names_the_real_ancestor(qt
     assert not d._busy, "a grade started"
     assert len(d._stats) == 6
     text = d.status.text()
-    assert text.startswith(f"old_M8_sub/ sits inside {tmp_path.name}/rejected/")
+    assert text.startswith(f"old_M8_sub/ sits inside {tmp_path.name}/rejected/, which is named rejected")
     assert "old_M8_sub/ holds" not in text, "must not claim old_M8_sub itself holds anything"
-    assert "Move them back" in text
+    # Nothing of Nocturne's is in that folder: no claim that it holds moved
+    # frames (delivery C review, item 7) — and it says WHICH folder to rename.
+    assert "holds frames" not in text and "Move them back" not in text
+    assert f"Rename {tmp_path.name}/rejected/ to add them." in text
+
+
+def test_adding_an_unrelated_rejected_folder_itself_claims_nothing(qtbot, tmp_path):
+    """The same false claim on the other branch: the folder added IS a
+    top-level "rejected" holding no record of ours (review 2026-09-29)."""
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    rej = tmp_path / "rejected"
+    rej.mkdir()
+    (rej / "Light_X_10.0s_LP_20260801-223000.fit").write_bytes(b"x")
+    d = _graded(qtbot, a)
+    d.add_folder(str(rej))
+    text = d.status.text()
+    assert len(d._stats) == 6
+    assert text.startswith(f"{tmp_path.name}/rejected/ is named rejected")
+    assert "holds frames" not in text
+
+
+def test_a_capture_folder_under_a_real_rejected_says_what_it_holds(qtbot, tmp_path):
+    """The flip side: a rejected/ that DOES hold moved frames (it carries
+    Nocturne's record) is described as one."""
+    from nocturne.stacking.reject_move import MANIFEST_NAME
+    a = _seestar_folder(tmp_path, "Sh2-108", "20260921")
+    up = tmp_path / "rejected" / "old_M8_sub"
+    up.mkdir(parents=True)
+    (up / "Light_X_10.0s_LP_20260801-223000.fit").write_bytes(b"x")
+    (tmp_path / "rejected" / MANIFEST_NAME).write_text('{"version": 1, "moved": []}')
+    d = _graded(qtbot, a)
+    d.add_folder(str(up))
+    text = d.status.text()
+    assert text.startswith(f"old_M8_sub/ sits inside {tmp_path.name}/rejected/")
+    assert "holds frames moved out of a stack" in text and "Move them back" in text
 
 
 def test_a_damaged_rejected_record_is_shown_not_hidden_as_no_subs(qtbot, tmp_path):

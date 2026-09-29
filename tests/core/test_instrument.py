@@ -164,3 +164,16 @@ def test_an_s50_pro_file_shows_its_own_sensor_at_import():
                            "pixel_size": 2.9})
     assert "OmniVision OS08B10" in html and "IMX" not in html
     assert "260 mm" in html
+
+
+def test_an_export_names_the_camera_the_file_named_never_a_guess():
+    """Only a NAMED Seestar gets its full name; any other name is kept as
+    written, and a focal length alone never names a camera — a 250 mm
+    refractor is not an S50 (review 2026-09-29)."""
+    from nocturne.core.export import camera_cards
+    assert camera_cards({"instrument": "Seestar S50"})["INSTRUME"] == "ZWO Seestar S50"
+    assert camera_cards({"creator": "ZWO Seestar S50 Pro"})["INSTRUME"] == "ZWO Seestar S50 Pro"
+    other = camera_cards({"instrument": "ZWO ASI2600MC Pro", "focal_length": 250.0})
+    assert other["INSTRUME"] == "ZWO ASI2600MC Pro" and other["FOCALLEN"] == 250.0
+    assert "INSTRUME" not in camera_cards({"focal_length": 250.0})
+    assert camera_cards({}) == {}

@@ -1102,3 +1102,14 @@ def test_an_engine_switched_during_the_run_is_still_asked_about(qtbot, tmp_path,
         f"the switch was absorbed into the baseline (committed {committed})")
     asked, stayed = _asks(win)
     assert asked and stayed
+
+
+def test_the_background_note_agrees_with_the_default_and_the_help(qtbot, tmp_path):
+    """The note said "Light suits most images" while Strong is the default and
+    the help calls Strong the ordinary choice (TODO, 2026-09-27)."""
+    from PySide6.QtWidgets import QLabel
+    win = _open(qtbot, tmp_path)
+    win._go_to_id("background", user_initiated=False); qtbot.wait(20)
+    text = " ".join(l.text() for l in win._panel.findChildren(QLabel))
+    assert win._panel.option_box.currentText() == "strong"
+    assert "Strong suits most images" in text and "Light suits most" not in text
