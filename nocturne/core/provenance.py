@@ -41,6 +41,11 @@ def _headline(name: str, ser) -> str:
     if isinstance(ser, (int, float, str)):
         return f"{ser}"
     if isinstance(ser, dict):
+        if name == "Stretch" and "amount" in ser:
+            # The linkage changes what a stretch does to colour: the headline
+            # says it, as the log line does ("0.12 unlinked").
+            linked = "linked" if ser.get("linked", True) else "unlinked"
+            return f"{ser['amount']} {linked}"
         if name == "Colour Balance":
             # Not a single field: which of the three tonal ranges were moved.
             from .color_balance import describe

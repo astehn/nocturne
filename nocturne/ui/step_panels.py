@@ -449,6 +449,9 @@ def build_panel(
             controls.addWidget(QLabel("Engine"))
             controls.addWidget(engine_box)
             w.engine_box = engine_box
+            # "Where you found it", like option_baseline: an engine switched
+            # after an apply lit Apply, yet Next moved on and dropped it.
+            w.engine_baseline = engine_box.currentText()
 
         def _noise_apply_option():
             level = box.currentText()
@@ -675,6 +678,7 @@ def build_panel(
         controls.addWidget(visual_btn)
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
+        w.linked_baseline = w.stretch_linked     # see engine_baseline
         w.stretch_slider = slider
         w.stretch_val = stretch_val
         w.apply_btn = w.primary_action = apply_btn

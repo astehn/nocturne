@@ -513,3 +513,45 @@ def test_add_folder_leaves_a_failed_preview_message_alone(qtbot, tmp_path):
     before = d.preview.message_text()
     _add(qtbot, d, b)
     assert d.preview.message_text() == before
+
+
+def _camera_folder(root, name, day, creator, focal, pixel=2.9, shape=(16, 8), n=3):
+    """Real FITS headers: the camera check reads CREATOR, FOCALLEN, XPIXSZ."""
+    folder = root / name
+    folder.mkdir()
+    for i in range(n):
+        hdu = fits.PrimaryHDU(np.zeros(shape, np.uint16))
+        hdu.header["CREATOR"] = creator
+        hdu.header["FOCALLEN"] = focal
+        hdu.header["XPIXSZ"] = pixel
+        hdu.header["XBINNING"] = 1
+        hdu.writeto(str(folder / f"Light_SH2-108_10.0s_LP_{day}-22{30 + i:02d}00.fit"))
+    return folder
+
+
+@pytest.mark.parametrize("creator, focal, pixel", [
+    ("ZWO Seestar S50 Pro", 260.0, 2.9),     # his NGC 7000 subs: same frame size, 2.3"/px
+    ("ZWO Seestar S30 Pro", 5.96, 1.6),      # the S30 Pro's own wide-angle camera, ~55"/px
+])
+def test_a_folder_from_another_camera_is_refused(qtbot, tmp_path, creator, focal, pixel):
+    """Registered across two image scales the stack is ruined, silently —
+    and an S50 Pro sub is exactly the S30 Pro's size, so size cannot tell."""
+    a = _camera_folder(tmp_path, "a", "20260921", "ZWO Seestar S30 Pro", 160.0)
+    b = _camera_folder(tmp_path, "b", "20260926", creator, focal, pixel)
+    d = _graded(qtbot, a)
+    before = [s.path for s in d._stats]
+    _add(qtbot, d, b)
+    assert [s.path for s in d._stats] == before
+    assert str(b) not in d.listed_folders()
+    assert "can't join this stack" in d.status.text(), d.status.text()
+    assert creator in d.status.text()
+
+
+def test_the_same_camera_turned_on_its_side_is_welcome(qtbot, tmp_path):
+    """Same camera, frames written portrait in one folder and landscape in
+    the other: one camera, one scale — added."""
+    a = _camera_folder(tmp_path, "a", "20260921", "ZWO Seestar S30 Pro", 160.0, shape=(16, 8))
+    b = _camera_folder(tmp_path, "b", "20260926", "ZWO Seestar S30 Pro", 160.0, shape=(8, 16))
+    d = _graded(qtbot, a)
+    _add(qtbot, d, b)
+    assert len(d._stats) == 6
