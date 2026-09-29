@@ -62,30 +62,21 @@ from ..tools.base import run_cli
 TIGHTEN_DEFAULT = 0.35
 _SCALE_CARDS = ("XPIXSZ", "YPIXSZ", "CD1_1", "CD1_2", "CD2_1", "CD2_2")
 
-# The biggest output Upscale will make. MEASURED (first 2026-09-29, re-measured
-# after keeping the plain resize as uint8 and the two layers as float16) on
-# centre crops of his M31 drizzle mosaic (stretched), free splitter, prepare +
-# finish + three QImages, one fresh process per size, peak RSS (64 GB Mac):
+# The biggest output Upscale will make. MEASURED 2026-09-29 on centre crops of
+# his M31 drizzle mosaic (stretched), free splitter, prepare + finish + three
+# QImages, one fresh process per size, peak RSS (Apple M-series, 64 GB):
 #   output MP   time     peak RSS      output MP   time     peak RSS
-#      8         1.1 s    1.47 GB          50        6.2 s     8.14 GB
-#     16         2.1 s    2.82 GB          80        9.9 s    12.79 GB
+#      8         1.1 s    1.39 GB          50        6.2 s     8.03 GB
+#     16         2.1 s    2.63 GB          80       10.0 s    12.94 GB
 #     20         2.5 s    3.23 GB         120       15.0 s    19.43 GB
-#     25         3.1 s    4.32 GB         150       18.6 s    26.13 GB
-#     30         3.8 s    4.88 GB
-#     33         4.1 s    5.70 GB
-# Memory is the limit, not time: about 170 MB per output MP. The float16/uint8
-# layers did NOT lower the peak (before them: 25 MP 4.03 GB, 33 MP 5.34 GB): the
-# peak is transient float32 copies inside prepare (3.7 GB at 33 MP) and finish
-# (5.7 GB at 33 MP), not the layers kept between them. Rule: largest size under
-# 4 GB peak, rounded down to 10 -> 20 MP. Debounce inputs: finish is 0.3 s at 20 MP.
+#     25         3.1 s    4.03 GB         150       18.6 s    24.34 GB
+#     30         3.7 s    4.88 GB
+#     33         4.2 s    5.34 GB
+# Memory is the limit, not time: about 160 MB per output MP, four float32
+# layers plus three QImages. Rule: largest size under 4 GB peak, rounded down
+# to 10 -> 20 MP. StarNet2 at 20 MP: 7.5 s, 3.05 GB; at 33 MP: 12.0 s, 4.98 GB.
 # The app also holds the project image and its copy, on top of these figures.
 UPSCALE_MAX_MP = 20
-
-
-def to_uint8(data: np.ndarray) -> np.ndarray:
-    """The one float [0,1] -> 8-bit conversion, shared by the plain-resize layer
-    and the dialog's previews so the two can never differ."""
-    return (np.clip(data, 0.0, 1.0) * 255).astype(np.uint8)
 
 
 def output_size(crop_w: int, crop_h: int, scale: int = 2) -> tuple[int, int]:
@@ -100,14 +91,9 @@ def megapixels(w: int, h: int) -> float:
 class UpscaleLayers:
     """The slow part, kept: split and both upscales run once per Upscale, so the
     star-tightening slider only re-runs `finish_upscale`."""
-    # Memory: these were four float32 layers, ~160 MB per output MP, which capped
-    # the ceiling at 20 MP. The two inputs to reduce_stars are kept as float16
-    # (finish_upscale casts back, so the exported result is still float32), and
-    # the plain resize, which is only ever displayed, is kept as 8-bit.
-    starless_up: np.ndarray       # float16
-    stars_up: np.ndarray          # float16
-    plain_up: np.ndarray          # uint8: the crop, plain Lanczos 2x — what resizing alone gives
-    is_linear: bool
+    starless_up: AstroImage
+    stars_up: AstroImage
+    plain_up: AstroImage          # the crop, plain Lanczos 2x — what resizing alone gives
     source_meta: dict
     crop: tuple | None
     scale: int
@@ -124,12 +110,10 @@ def prepare_upscale(img, crop, engine, *, scale=2, rc=None, runner=run_cli) -> U
     src = AstroImage(np.ascontiguousarray(data, dtype=np.float32),
                      is_linear=img.is_linear, metadata=dict(img.metadata))
     starless, stars = resolve_star_split(src, rc, runner=runner)
-    starless_up = engine.upscale(starless, scale).data.astype(np.float16)  # may fabricate later (GAN)
-    stars_up = LanczosEngine().upscale(stars, scale).data.astype(np.float16)  # stars ALWAYS deterministic
-    plain_up = to_uint8(LanczosEngine().upscale(src, scale).data)
     return UpscaleLayers(
-        starless_up=starless_up, stars_up=stars_up, plain_up=plain_up,
-        is_linear=img.is_linear,
+        starless_up=engine.upscale(starless, scale),        # may fabricate later (GAN)
+        stars_up=LanczosEngine().upscale(stars, scale),     # stars ALWAYS deterministic
+        plain_up=LanczosEngine().upscale(src, scale),
         source_meta=dict(img.metadata),
         crop=crop, scale=scale, engine_prov=engine.provenance())
 
@@ -137,9 +121,7 @@ def prepare_upscale(img, crop, engine, *, scale=2, rc=None, runner=run_cli) -> U
 def finish_upscale(layers: UpscaleLayers, tighten: float) -> AstroImage:
     from .star_reduction import reduce_stars
 
-    result = reduce_stars(
-        AstroImage(layers.starless_up.astype(np.float32), is_linear=layers.is_linear),
-        AstroImage(layers.stars_up.astype(np.float32), is_linear=layers.is_linear), tighten)
+    result = reduce_stars(layers.starless_up, layers.stars_up, tighten)
     meta = dict(layers.source_meta)
     scale = layers.scale
     # A 2x pixel covers half the sky: the optics must say so, as a drizzled

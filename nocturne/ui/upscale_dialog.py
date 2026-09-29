@@ -16,7 +16,7 @@ from ..core.share import ASPECTS
 from ..core.tasks import CancelToken, Cancelled
 from ..core.upscale import (
     TIGHTEN_DEFAULT, UPSCALE_MAX_MP, LanczosEngine, finish_upscale, megapixels,
-    output_size, prepare_upscale, to_uint8, upscale_filename, upscale_provenance_text,
+    output_size, prepare_upscale, upscale_filename, upscale_provenance_text,
 )
 from ..settings import start_dir
 from .image_view import ImageView
@@ -26,8 +26,8 @@ from .worker import run_async
 from . import file_dialogs, theme
 
 # finish_upscale (reduce_stars + recombine) measured 2026-09-29 on his M31 mosaic
-# crops: 0.3 s at the 20 MP ceiling (0.5 s at 33 MP, 2.1 s at 150 MP). Half of
-# 0.3 s is 150 ms, which is the 150 ms floor.
+# crops: 0.2 s at the 20 MP ceiling (0.4 s at 33 MP, 2.0 s at 150 MP). Half of
+# 0.2 s is 100 ms, under the 150 ms floor, so the floor stands.
 TIGHTEN_DEBOUNCE_MS = 150
 
 SCALE = 2   # fixed in v1
@@ -40,10 +40,7 @@ def _qimage_from_float(data: np.ndarray) -> QImage:
     """8-bit QImage for previewing a float32 [0,1] AstroImage array. Preview
     only — the real upscale + export always operate on the full float data,
     never this 8-bit copy."""
-    return _qimage_from_uint8(to_uint8(data))
-
-
-def _qimage_from_uint8(arr8: np.ndarray) -> QImage:
+    arr8 = (np.clip(data, 0.0, 1.0) * 255).astype(np.uint8)
     if arr8.ndim == 2:
         arr8 = np.stack([arr8] * 3, axis=2)
     arr8 = np.ascontiguousarray(arr8)
@@ -284,7 +281,7 @@ class UpscaleDialog(QDialog):
     # --- state 2 ---
     def _show_result(self) -> None:
         self._result = finish_upscale(self._layers, self._tighten)
-        plain = _qimage_from_uint8(self._layers.plain_up)
+        plain = _qimage_from_float(self._layers.plain_up.data)
         nocturne = _qimage_from_float(self._result.data)
         if self._unlink is not None:
             self._unlink()
