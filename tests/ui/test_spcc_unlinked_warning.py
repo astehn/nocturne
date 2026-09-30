@@ -194,3 +194,21 @@ def test_auto_enhance_records_are_read_too(qtbot, tmp_path, monkeypatch):
         monkeypatch.setattr(win, "_committed_option",
                             lambda sid, rec=rec: rec if sid == "color" else None)
         assert win._spcc_was_applied() is expected, rec
+
+
+def test_a_reopened_colour_record_still_matches_its_dropdown(qtbot, tmp_path):
+    """A saved project restores Colour as a DICT (as Auto Enhance records it);
+    compared with the panel's ColorSettings it could never match, so Apply read
+    'changes not applied' after every reopen (review 2026-09-30)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    img = win.project.current()
+    for rec in ({"neutralize_background": True, "remove_green": False,
+                 "method": "photometric", "fell_back": True},
+                {"neutralize_background": True, "remove_green": False,
+                 "method": "photometric"}):
+        win.project.record_precomputed("Color", rec, img)
+        win._rebuild_panel()
+        win._panel.method_box.setCurrentText("Photometric (SPCC)")
+        assert win._controls_match_commit("color"), rec

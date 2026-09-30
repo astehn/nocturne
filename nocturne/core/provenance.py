@@ -175,6 +175,16 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
     if settings is not None:
         from .receipt import notes_for, render_lines
         engine_lines = render_lines(notes_for([n for n, _ in entries], settings))
+        # Colour is the one step whose history records what RAN (fell_back,
+        # 2026-09-30), so its line comes from the record, not the current
+        # setup: a fallback must not be reported as "ASTAP + Gaia".
+        colour = [ser for n, ser in ser_entries if n == "Color"]
+        if colour and isinstance(colour[-1], dict) and colour[-1].get("fell_back"):
+            engine_lines = [
+                "- Color: **Nocturne (built-in sky balance)** — photometric "
+                "calibration was chosen but could not run"
+                if line.startswith("- Color:") else line
+                for line in engine_lines]
         if engine_lines:
             lines.append("## Engines")
             lines.append("")

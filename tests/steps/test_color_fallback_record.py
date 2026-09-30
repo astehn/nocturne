@@ -95,3 +95,22 @@ def test_auto_enhance_records_the_fallback_too():
     (name, recorded, _img_after), = out
     assert name == "Color"
     assert recorded["method"] == "photometric" and recorded.get("fell_back") is True
+
+
+def _engines_color_line(option):
+    import datetime
+    from nocturne.core.provenance import build_report
+    from nocturne.settings import Settings
+    report = build_report([("Color", option)], {}, app_version="t",
+                          date=datetime.date(2026, 9, 30), settings=Settings())
+    return [l for l in report.splitlines() if l.startswith("- Color:")]
+
+
+def test_the_engines_section_does_not_claim_spcc_after_a_fallback(monkeypatch):
+    import nocturne.core.receipt as receipt
+    # ASTAP configured NOW, which is all the engines section otherwise reads.
+    monkeypatch.setattr(receipt, "astap_valid", lambda s: True)
+    lines = _engines_color_line(ColorSettings(method="photometric", fell_back=True))
+    assert lines and "ASTAP" not in lines[0] and "sky balance" in lines[0], lines
+    lines = _engines_color_line(ColorSettings(method="photometric"))
+    assert lines and "ASTAP" in lines[0], "a real calibration still names its tools"

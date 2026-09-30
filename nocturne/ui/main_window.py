@@ -3535,6 +3535,11 @@ class MainWindow(QMainWindow):
             return False
         at = calibrations[-1]
         committed = tail[at][1]
+        if isinstance(committed, dict):
+            # A reopened project (and Auto Enhance) records the serialized
+            # dict, which never equals the panel's ColorSettings.
+            from ..recipe import deserialize_option
+            committed = deserialize_option("color", committed)
         if isinstance(committed, ColorSettings):
             # The outcome is not a control: a fallen-back calibration still
             # matches the dropdown that asked for it, or Apply would read
