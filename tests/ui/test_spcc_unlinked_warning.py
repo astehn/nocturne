@@ -85,3 +85,38 @@ def test_once_committed_the_note_does_not_still_say_will(qtbot, tmp_path, monkey
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     win._panel.apply_btn.click(); qtbot.wait(50)
     assert not _note(win).isVisibleTo(win._panel)
+
+
+def test_after_a_linked_commit_the_note_points_at_import(qtbot, tmp_path, monkeypatch):
+    """Linked committed, then Import switched to Unlinked: Apply would discard
+    SPCC, but Visual stretch is disabled on a stretched image, so the note must
+    not send people there (review 2026-09-30)."""
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert win.project.entries()[-1][1]["linked"] is True, "fixture"
+    win._set_view_linked(False)
+    win._go_to_id("stretch"); qtbot.wait(20)
+    assert win._panel.stretch_linked is False, "fixture"
+    assert not win._panel.visual_btn.isEnabled(), "fixture"
+    note = _note(win)
+    assert note.isVisibleTo(win._panel)
+    assert "Import" in note.text() and "Visual stretch" not in note.text()
+
+
+def test_the_note_hides_when_it_no_longer_applies(qtbot, tmp_path, monkeypatch):
+    """Toothless without the setVisible(True) first: the panel builds it hidden."""
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    _note(win).setVisible(True)
+    win._sync_step_controls()
+    assert not _note(win).isVisibleTo(win._panel)
+
+
+def test_recommitting_unlinked_does_not_log_the_discard_again(qtbot, tmp_path, monkeypatch):
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    before = win.activity.text()
+    win._panel.stretch_slider.setValue(30)
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert win.project.entries()[-1][1] == {"amount": 0.30, "linked": False}, "fixture"
+    assert "discarded" not in win.activity.text()[len(before):].lower()

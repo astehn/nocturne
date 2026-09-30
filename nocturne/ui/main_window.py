@@ -3578,6 +3578,14 @@ class MainWindow(QMainWindow):
             # Only while Unlinked is still a choice: once committed, the
             # calibration is already gone and the log says so instead.
             committed = self._committed_option("stretch")
+            # Visual stretch is off once the image is stretched — reached by
+            # switching Import after a Linked commit — so name the switch
+            # that still works (review 2026-09-30).
+            fix = ("choose Linked in Visual stretch" if visual is not None
+                   and visual.isEnabled() else "switch Import back to Linked")
+            spcc_note.setText(
+                "Unlinked will discard your photometric colour calibration "
+                f"(SPCC). To keep it, {fix}.")
             spcc_note.setVisible(
                 not getattr(self._panel, "stretch_linked", True)
                 and self._spcc_was_applied()
@@ -3955,6 +3963,9 @@ class MainWindow(QMainWindow):
         stage_id = self._stages[self._stage].id
         if stage_id not in PROCESSING_ORDER:
             return
+        # Before the truncation below removes it: a recommit of an unlinked
+        # stretch must not log the SPCC discard a second time.
+        prior_stretch = self._committed_option("stretch") if stage_id == "stretch" else None
         if stage_id == "levels" and self._levels_auto:
             # Record the DECISION, not this image's measurement. Applying it now
             # re-derives from the very image on screen, so the committed pixels
@@ -4010,7 +4021,9 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
             self._log_step(stage_id, option, base, result, step)
             if (stage_id == "stretch" and isinstance(option, dict)
-                    and option.get("linked") is False and self._spcc_was_applied()):
+                    and option.get("linked") is False and self._spcc_was_applied()
+                    and not (isinstance(prior_stretch, dict)
+                             and prior_stretch.get("linked") is False)):
                 self.log_panel.append_info(
                     "Unlinked stretch: the photometric colour calibration (SPCC) "
                     "was discarded.")
