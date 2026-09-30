@@ -12,6 +12,7 @@ class ColorStep(Step):
         self._astap = astap            # ASTAP instance or None
         self._gaia_query = gaia_query  # tools.gaia.query_field or None
         self.last_message = ""         # fallback reason surfaced by the UI (empty = ok)
+        self.fell_back = False         # photometric asked for, sky balance used
 
     def options(self) -> list[str]:
         return []
@@ -22,14 +23,23 @@ class ColorStep(Step):
     def apply(self, img: AstroImage, option=None) -> AstroImage:
         settings = option or ColorSettings()
         self.last_message = ""
-        if getattr(settings, "method", "sky") == "photometric" and img.is_color:
+        asked = getattr(settings, "method", "sky") == "photometric"
+        self.fell_back = asked          # until the calibration actually lands
+        if asked and img.is_color:
             result = self._photometric(img)
             if result is not None:
+                self.fell_back = False
                 return apply_color(result, ColorSettings(neutralize_background=False,
                                                          remove_green=settings.remove_green))
             # fall through to sky balance (self.last_message already set)
         return apply_color(img, settings if getattr(settings, "method", "sky") == "sky"
                            else ColorSettings(remove_green=settings.remove_green))
+
+    def recorded_option(self, option):
+        if isinstance(option, ColorSettings):
+            import dataclasses
+            return dataclasses.replace(option, fell_back=self.fell_back)
+        return option
 
     def _photometric(self, img: AstroImage):
         """Solve -> query Gaia -> gains -> apply. Returns the calibrated image, or

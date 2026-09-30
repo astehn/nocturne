@@ -163,7 +163,8 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
                 on_progress(i + 1, n, step.name)
             continue
         img = result
-        results.append((step.name, serialize_option(stage_id, option), img))
+        recorded = getattr(step, "recorded_option", lambda o: o)(option)
+        results.append((step.name, serialize_option(stage_id, recorded), img))
         if on_progress is not None:
             on_progress(i + 1, n, step.name)
     return results

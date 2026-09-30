@@ -35,6 +35,12 @@ class Step(ABC):
     # make them readers.
     last_engine: str | None = None
 
+    def recorded_option(self, option):
+        """The option to write into the history for the LAST apply. The option
+        as passed, unless the step learned something only the run could tell
+        (ColorStep: whether photometric fell back)."""
+        return option
+
     @abstractmethod
     def options(self) -> list[str]:
         ...

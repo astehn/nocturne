@@ -12,6 +12,11 @@ class ColorSettings:
     neutralize_background: bool = True
     remove_green: bool = False
     method: str = "sky"           # "sky" (background balance) or "photometric" (SPCC)
+    # What RAN, beside what was chosen: photometric can fall back to sky balance
+    # (no ASTAP, no solve, no catalogue). `method` stays the choice, so a recipe
+    # still tries photometric on the next image; this records the outcome for
+    # the Stretch warning and the provenance report (2026-09-30).
+    fell_back: bool = False
 
 
 # Luminance weights (Rec. 709), used to hold brightness constant while colour

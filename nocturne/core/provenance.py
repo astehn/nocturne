@@ -46,6 +46,8 @@ def _headline(name: str, ser) -> str:
             # says it, as the log line does ("0.12 unlinked").
             linked = "linked" if ser.get("linked", True) else "unlinked"
             return f"{ser['amount']} {linked}"
+        if name == "Color" and ser.get("fell_back"):
+            return f"{ser.get('method', 'photometric')} → fell back to sky balance"
         if name == "Colour Balance":
             # Not a single field: which of the three tonal ranges were moved.
             from .color_balance import describe
