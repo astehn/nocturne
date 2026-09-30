@@ -689,6 +689,7 @@ def build_panel(
         spcc_note.setStyleSheet(f"color: {WARNING};")
         spcc_note.setVisible(False)
         w.spcc_note = spcc_note
+        w.fill_height = True     # SidePanel.set_panel: the card's height is ours
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
         w.linked_baseline = w.stretch_linked     # see engine_baseline

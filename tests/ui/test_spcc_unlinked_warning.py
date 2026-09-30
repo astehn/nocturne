@@ -138,3 +138,23 @@ def test_the_discard_is_an_amber_notice_not_only_a_log_line(qtbot, tmp_path, mon
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     win._panel.apply_btn.click(); qtbot.wait(50)
     assert "discarded" in win._warning.text().lower()
+
+
+def test_on_screen_the_note_is_at_the_bottom_of_the_card(qtbot, tmp_path, monkeypatch):
+    """Measured, not read off the layout order: the order test passed while
+    the note still sat under Visual stretch in his real window, because the
+    side panel gave all the spare height to ITS stretch, below the panel."""
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    win.resize(1440, 900); win.show(); qtbot.wait(50)
+    if win.settings.help_expanded:
+        win._toggle_help()   # folded, as in his window; open help sits below the card
+    assert not win._explainer_scroll.isVisible(), "fixture"
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    qtbot.wait(50)
+    note = _note(win)
+    viewport = win._side.scroll.viewport()
+    bottom = note.mapTo(viewport, note.rect().bottomLeft()).y()
+    visual = win._panel.visual_btn
+    visual_bottom = visual.mapTo(viewport, visual.rect().bottomLeft()).y()
+    assert viewport.height() - bottom < 40, (bottom, viewport.height())
+    assert bottom - visual_bottom > 100, "it must not hug Visual stretch"

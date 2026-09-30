@@ -252,6 +252,15 @@ class SidePanel(QWidget):
         self.panel.setParent(None)
         self.panel.deleteLater()
         self.panel = new
+        # Opt-in, never default: a panel that lays something at its bottom
+        # edge (Stretch's SPCC note, directly above Apply) takes the spare
+        # height itself; every other panel keeps it below, as before.
+        fill = bool(getattr(new, "fill_height", False))
+        # By position, not a fixed index: MainWindow inserts the explainer and
+        # the help link between the panel and the trailing stretch.
+        lay = self.body_layout
+        lay.setStretch(lay.indexOf(new), 1 if fill else 0)
+        lay.setStretch(lay.count() - 1, 0 if fill else 1)
 
     def set_action_height(self, h: int) -> None:
         self.action_slot.setFixedHeight(h)
