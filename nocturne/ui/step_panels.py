@@ -679,15 +679,15 @@ def build_panel(
         controls.addWidget(slider)
         controls.addWidget(visual_btn)
         # Shown by MainWindow._sync_step_controls, which alone knows whether
-        # Colour was photometric. Here, above Apply, because the picker's own
-        # caveat is gone by the time Apply is pressed (Andreas, 2026-09-29).
-        # The panel has no Linked control, so it names where the switch is.
+        # Colour was photometric. The picker's own caveat is gone by the time
+        # Apply is pressed, and he never saw it (Andreas, 2026-09-29). Laid out
+        # at the card's BOTTOM edge, directly above Apply (his call 2026-09-30:
+        # under Visual stretch it was out of the eye's path to the button).
         spcc_note = _desc_label(
             "Unlinked will discard your photometric colour calibration (SPCC). "
             "To keep it, choose Linked in Visual stretch.")
         spcc_note.setStyleSheet(f"color: {WARNING};")
         spcc_note.setVisible(False)
-        controls.addWidget(spcc_note)
         w.spcc_note = spcc_note
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
@@ -1223,4 +1223,6 @@ def build_panel(
             w.reset_step_btn.clicked.connect(lambda: on_reset_step())
 
     lay.addStretch(1)
+    if getattr(w, "spcc_note", None) is not None:
+        lay.addWidget(w.spcc_note)     # after the stretch: the card's bottom edge
     return w

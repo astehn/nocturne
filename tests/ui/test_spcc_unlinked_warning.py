@@ -120,3 +120,21 @@ def test_recommitting_unlinked_does_not_log_the_discard_again(qtbot, tmp_path, m
     win._panel.apply_btn.click(); qtbot.wait(50)
     assert win.project.entries()[-1][1] == {"amount": 0.30, "linked": False}, "fixture"
     assert "discarded" not in win.activity.text()[len(before):].lower()
+
+
+def test_the_note_sits_at_the_bottom_directly_above_apply(qtbot, tmp_path, monkeypatch):
+    """Andreas, 2026-09-30: under Visual stretch it was out of the eye's path
+    to Apply. It is the card's last item, after the stretch that fills it."""
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    lay = win._panel.layout()
+    last = lay.itemAt(lay.count() - 1).widget()
+    assert last is _note(win)
+    assert lay.itemAt(lay.count() - 2).spacerItem() is not None, \
+        "a stretch above it pushes it to the bottom edge"
+
+
+def test_the_discard_is_an_amber_notice_not_only_a_log_line(qtbot, tmp_path, monkeypatch):
+    win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    win._panel.apply_btn.click(); qtbot.wait(50)
+    assert "discarded" in win._warning.text().lower()

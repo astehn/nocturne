@@ -4024,9 +4024,10 @@ class MainWindow(QMainWindow):
                     and option.get("linked") is False and self._spcc_was_applied()
                     and not (isinstance(prior_stretch, dict)
                              and prior_stretch.get("linked") is False)):
-                self.log_panel.append_info(
-                    "Unlinked stretch: the photometric colour calibration (SPCC) "
-                    "was discarded.")
+                spcc_lost = ("Unlinked stretch: the photometric colour calibration "
+                             "(SPCC) was discarded.")
+            else:
+                spcc_lost = None
             # The commit now reflects what the slider/dropdown showed. Only
             # _rebuild_panel cleared these before (on navigating away), which
             # left a step falsely "pending" right after its own Apply.
@@ -4036,6 +4037,10 @@ class MainWindow(QMainWindow):
             msg = getattr(step, "last_message", "")
             if msg:
                 self._show_output(msg)
+            if spcc_lost:
+                # Amber, not a plain log line (his call 2026-09-30): it is the
+                # consequence of a choice, not an error, and must be noticed.
+                self._show_notice(spcc_lost)
 
         self._run_busy(lambda: step.apply(base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
