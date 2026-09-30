@@ -158,3 +158,57 @@ def test_on_screen_the_note_is_at_the_bottom_of_the_card(qtbot, tmp_path, monkey
     visual_bottom = visual.mapTo(viewport, visual.rect().bottomLeft()).y()
     assert viewport.height() - bottom < 40, (bottom, viewport.height())
     assert bottom - visual_bottom > 100, "it must not hug Visual stretch"
+
+
+def test_a_photometric_that_fell_back_raises_no_note(qtbot, tmp_path):
+    """The REAL Colour step: no ASTAP in the test settings, so photometric
+    falls back to sky balance — there is no calibration to lose (2026-09-30)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win.apply_current(ColorSettings(method="photometric")); qtbot.wait(100)
+    rec = win.project.entries()[-1][1]
+    assert rec.method == "photometric" and rec.fell_back is True, "fixture: it fell back"
+    win._go_to_id("stretch")
+    win._apply_picked_stretch({"amount": 0.24, "linked": False})
+    assert not _note(win).isVisibleTo(win._panel)
+
+
+def test_a_fallback_does_not_leave_colour_reading_unapplied(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    win._panel.method_box.setCurrentText("Photometric (SPCC)")
+    win._panel.apply_btn.click(); qtbot.wait(100)
+    assert win.project.entries()[-1][1].fell_back is True, "fixture"
+    assert win._controls_match_commit("color"), \
+        "the dropdown still says what was committed; the outcome is not a control"
+
+
+def test_auto_enhance_records_are_read_too(qtbot, tmp_path, monkeypatch):
+    """Auto Enhance records the serialized dict, which the check never read."""
+    win = _window(qtbot, tmp_path)
+    for rec, expected in (({"method": "photometric"}, True),
+                          ({"method": "photometric", "fell_back": True}, False),
+                          ({"method": "sky"}, False)):
+        monkeypatch.setattr(win, "_committed_option",
+                            lambda sid, rec=rec: rec if sid == "color" else None)
+        assert win._spcc_was_applied() is expected, rec
+
+
+def test_a_reopened_colour_record_still_matches_its_dropdown(qtbot, tmp_path):
+    """A saved project restores Colour as a DICT (as Auto Enhance records it);
+    compared with the panel's ColorSettings it could never match, so Apply read
+    'changes not applied' after every reopen (review 2026-09-30)."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("color")
+    img = win.project.current()
+    for rec in ({"neutralize_background": True, "remove_green": False,
+                 "method": "photometric", "fell_back": True},
+                {"neutralize_background": True, "remove_green": False,
+                 "method": "photometric"}):
+        win.project.record_precomputed("Color", rec, img)
+        win._rebuild_panel()
+        win._panel.method_box.setCurrentText("Photometric (SPCC)")
+        assert win._controls_match_commit("color"), rec

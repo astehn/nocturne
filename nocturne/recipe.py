@@ -54,9 +54,14 @@ def serialize_option(stage_id, option):
         c = option if isinstance(option, ColorSettings) else ColorSettings()
         # Explicit, not a dataclass dump — so a NEW FIELD MUST BE ADDED HERE or
         # it is silently dropped on save and the project reproduces differently.
-        return {"neutralize_background": c.neutralize_background,
-                "remove_green": c.remove_green,
-                "method": c.method}
+        out = {"neutralize_background": c.neutralize_background,
+               "remove_green": c.remove_green,
+               "method": c.method}
+        if c.fell_back:
+            # Only when true: files without a fallback stay byte-identical,
+            # and files written before the field read it as False.
+            out["fell_back"] = True
+        return out
     if stage_id == "tint":
         t, w = option if option else (0.0, 0.0)
         return [float(t), float(w)]

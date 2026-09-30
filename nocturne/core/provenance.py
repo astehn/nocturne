@@ -46,6 +46,8 @@ def _headline(name: str, ser) -> str:
             # says it, as the log line does ("0.12 unlinked").
             linked = "linked" if ser.get("linked", True) else "unlinked"
             return f"{ser['amount']} {linked}"
+        if name == "Color" and ser.get("fell_back"):
+            return f"{ser.get('method', 'photometric')} → fell back to sky balance"
         if name == "Colour Balance":
             # Not a single field: which of the three tonal ranges were moved.
             from .color_balance import describe
@@ -173,6 +175,16 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
     if settings is not None:
         from .receipt import notes_for, render_lines
         engine_lines = render_lines(notes_for([n for n, _ in entries], settings))
+        # Colour is the one step whose history records what RAN (fell_back,
+        # 2026-09-30), so its line comes from the record, not the current
+        # setup: a fallback must not be reported as "ASTAP + Gaia".
+        colour = [ser for n, ser in ser_entries if n == "Color"]
+        if colour and isinstance(colour[-1], dict) and colour[-1].get("fell_back"):
+            engine_lines = [
+                "- Color: **Nocturne (built-in sky balance)** — photometric "
+                "calibration was chosen but could not run"
+                if line.startswith("- Color:") else line
+                for line in engine_lines]
         if engine_lines:
             lines.append("## Engines")
             lines.append("")

@@ -58,7 +58,7 @@ from ..recipe import LEVELS_AUTO
 from ..core.saturation import nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
-from ..core.color import remove_green, remove_green_fringe, remove_green_fringe_masked
+from ..core.color import ColorSettings, remove_green, remove_green_fringe, remove_green_fringe_masked
 from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
 from ..core.star_reduction import reduce_stars
@@ -3534,7 +3534,19 @@ class MainWindow(QMainWindow):
         if not calibrations:
             return False
         at = calibrations[-1]
-        if not _same_option(read(), tail[at][1]):
+        committed = tail[at][1]
+        if isinstance(committed, dict):
+            # A reopened project (and Auto Enhance) records the serialized
+            # dict, which never equals the panel's ColorSettings.
+            from ..recipe import deserialize_option
+            committed = deserialize_option("color", committed)
+        if isinstance(committed, ColorSettings):
+            # The outcome is not a control: a fallen-back calibration still
+            # matches the dropdown that asked for it, or Apply would read
+            # "changes not applied" for ever after one.
+            import dataclasses
+            committed = dataclasses.replace(committed, fell_back=False)
+        if not _same_option(read(), committed):
             return False
         tints = [opt for n, opt in tail[at + 1:] if n == STEP_NAME["tint"]]
         committed_tint = tints[-1] if tints else (0.0, 0.0)
@@ -4017,7 +4029,10 @@ class MainWindow(QMainWindow):
         applied_engine = engine_box.currentText() if engine_box is not None else _UNSET
 
         def on_result(result):
-            self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
+            # What RAN, not only what was chosen (ColorStep: a photometric
+            # calibration that fell back to sky balance says so).
+            recorded = getattr(step, "recorded_option", lambda o: o)(option)
+            self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), recorded)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result, step)
             if (stage_id == "stretch" and isinstance(option, dict)
@@ -4940,7 +4955,10 @@ class MainWindow(QMainWindow):
         the many people who never ran it.
         """
         opt = self._committed_option("color")
-        return getattr(opt, "method", None) == "photometric"
+        # A dict when Auto Enhance recorded it (serialized), a ColorSettings
+        # when Apply did. Either way: chosen AND actually run.
+        get = opt.get if isinstance(opt, dict) else (lambda k, d=None: getattr(opt, k, d))
+        return get("method") == "photometric" and not get("fell_back", False)
 
     def _apply_picked_stretch(self, option) -> None:
         """Put the pick on the slider. It does NOT commit.
