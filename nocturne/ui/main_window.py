@@ -3573,6 +3573,16 @@ class MainWindow(QMainWindow):
         if visual is not None:
             visual.setEnabled(
                 self.project is not None and self.project.current().is_linear)
+        spcc_note = getattr(self._panel, "spcc_note", None)
+        if spcc_note is not None:
+            # Only while Unlinked is still a choice: once committed, the
+            # calibration is already gone and the log says so instead.
+            committed = self._committed_option("stretch")
+            spcc_note.setVisible(
+                not getattr(self._panel, "stretch_linked", True)
+                and self._spcc_was_applied()
+                and not (isinstance(committed, dict)
+                         and committed.get("linked") is False))
         apply_btn = getattr(self._panel, "apply_btn", None)
         if isinstance(apply_btn, ApplyButton):
             state = self._step_state(sid)
@@ -3999,6 +4009,11 @@ class MainWindow(QMainWindow):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), option)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result, step)
+            if (stage_id == "stretch" and isinstance(option, dict)
+                    and option.get("linked") is False and self._spcc_was_applied()):
+                self.log_panel.append_info(
+                    "Unlinked stretch: the photometric colour calibration (SPCC) "
+                    "was discarded.")
             # The commit now reflects what the slider/dropdown showed. Only
             # _rebuild_panel cleared these before (on navigating away), which
             # left a step falsely "pending" right after its own Apply.

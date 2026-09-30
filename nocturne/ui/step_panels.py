@@ -14,6 +14,7 @@ from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
 from .apply_button import ApplyButton
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
+from .theme import WARNING
 
 # Black-point slider resolution. Ten times the other two levels sliders —
 # see the levels panel for why.
@@ -677,6 +678,17 @@ def build_panel(
         controls.addLayout(agg_row)
         controls.addWidget(slider)
         controls.addWidget(visual_btn)
+        # Shown by MainWindow._sync_step_controls, which alone knows whether
+        # Colour was photometric. Here, above Apply, because the picker's own
+        # caveat is gone by the time Apply is pressed (Andreas, 2026-09-29).
+        # The panel has no Linked control, so it names where the switch is.
+        spcc_note = _desc_label(
+            "Unlinked will discard your photometric colour calibration (SPCC). "
+            "To keep it, choose Linked in Visual stretch.")
+        spcc_note.setStyleSheet(f"color: {WARNING};")
+        spcc_note.setVisible(False)
+        controls.addWidget(spcc_note)
+        w.spcc_note = spcc_note
         w.visual_btn = visual_btn
         w.stretch_linked = bool(stretch_linked)
         w.linked_baseline = w.stretch_linked     # see engine_baseline
