@@ -665,6 +665,9 @@ class FrameBrowser(QWidget):
         this — it leaves Show and the cursor exactly where the user left them."""
         self._nights_off = set()
         self.model.set_frames(stats)
+        # The previous list's history belongs to it; the dialog's disk check
+        # after every grade supplies this one's (StackDialog._sync_reject_buttons).
+        self.chart.set_history([])
         self.chart.set_frames(stats)
         self.set_show(SHOW_ALL)
         self._update_show_counts()
@@ -766,6 +769,10 @@ class FrameBrowser(QWidget):
                 if s.included and not _locked(s) and self.night_on(s)]
 
     # --- nights (spec 2026-09-28 §9.2) ---
+    def set_history(self, frames: list) -> None:
+        """Frames moved to rejected/ in an earlier session: on the chart only."""
+        self.chart.set_history(frames)
+
     def night_on(self, s) -> bool:
         """In a ticked night. A stacked master belongs to no night — its
         DATE-OBS is when it was stacked — and is in no count anyway."""

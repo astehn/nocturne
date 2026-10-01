@@ -76,3 +76,58 @@ def test_when_every_reject_is_moved_the_legend_names_only_moved(qtbot):
     b = _shown(qtbot, stats)
     note = b.chart.note()
     assert "● moved" in note and "rejected" not in note
+
+
+# --- a reopened folder: moved frames drawn from the move record -------------
+
+def _ghost(path, minute, fwhm=2.7):
+    from tests.ui.test_quality_chart import _frame
+    g = _frame(99, minute, fwhm=fwhm)
+    g.path, g.reason, g.moved, g.included = path, "Stars trailed", True, False
+    return g
+
+
+def test_history_frames_are_drawn_grey_after_the_list(qtbot):
+    stats = _night()
+    b = _shown(qtbot, stats)
+    b.set_history([_ghost("/x/rejected/late1.fit", 70), _ghost("/x/rejected/late2.fit", 80)])
+    rows = [row for row, _x in b.chart.plotted()]
+    assert len(rows) == len(stats) + 2
+    late = [r for r in rows if r >= len(stats)]
+    assert len(late) == 2 and all(b.chart.point_colour(r) == MOVED_COLOUR for r in late)
+    assert "● moved" in b.chart.note()
+
+
+def test_clicking_a_history_dot_selects_nothing(qtbot):
+    stats = _night()
+    b = _shown(qtbot, stats)
+    b.set_history([_ghost("/x/rejected/late1.fit", 70)])
+    got = []
+    b.chart.point_clicked.connect(got.append)
+    from tests.ui.test_quality_chart import _press
+    _press(b.chart, b.chart.point_pos(len(stats)))
+    assert got == [], "there is no row to jump to"
+
+
+def test_a_frame_in_the_list_is_never_drawn_twice(qtbot):
+    """Moved THIS session: it is a list row (moved=True) and also in the record."""
+    stats = _with_moved()
+    b = _shown(qtbot, stats)
+    b.set_history([_ghost(stats[4].path, 40)])
+    assert len(b.chart.plotted()) == len(stats)
+
+
+def test_a_fresh_list_keeps_the_history_until_replaced(qtbot):
+    stats = _night()
+    b = _shown(qtbot, stats)
+    b.set_history([_ghost("/x/rejected/late1.fit", 70)])
+    b.set_history([])
+    assert len(b.chart.plotted()) == len(stats)
+
+
+def test_a_new_list_drops_the_previous_folders_history(qtbot):
+    stats = _night()
+    b = _shown(qtbot, stats)
+    b.set_history([_ghost("/x/rejected/late1.fit", 70)])
+    b.set_frames(_night())
+    assert len(b.chart.plotted()) == len(stats)

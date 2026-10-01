@@ -191,6 +191,12 @@ class QualityChart(QWidget):
         # (spec 2026-09-28 §9.2, §9.5), and the axis closes up behind it.
         self._shown = shown or (lambda _s: True)
         self._stats: list = []
+        # The list's own frames (rows 0..n-1, which the list and clicks use),
+        # then — drawing only — frames moved to rejected/ in an earlier session,
+        # rebuilt from the move record (set_history). `_stats` is both, in
+        # that order, rebuilt on every refresh.
+        self._list: list = []
+        self._history: list = []
         self._rows: list[int] = []
         self._x: list[float] = []
         # Which night-segment each row of `_rows`/`_x` belongs to, 0-based in
@@ -208,11 +214,27 @@ class QualityChart(QWidget):
 
     # --- data ---
     def set_frames(self, stats: list) -> None:
-        self._stats = stats
+        self._list = stats
         self.refresh()
+
+    def set_history(self, frames: list) -> None:
+        """Frames moved to rejected/ before this session, from the move
+        record: drawn grey, never rows of the list (Andreas, 2026-10-01 — a
+        reopened folder lost the end of its night from the chart)."""
+        self._history = list(frames)
+        self.refresh()
+
+    def _is_history(self, row: int) -> bool:
+        return row >= len(self._list)
 
     def refresh(self) -> None:
         """Re-read the list: after a grade, a re-judge, or frames moved."""
+        # A frame moved THIS session is a list row already; never draw it twice.
+        # By full path: a frame moved this session already points into
+        # rejected/, and two added folders may hold the same names.
+        listed = {os.path.abspath(s.path) for s in self._list}
+        self._stats = list(self._list) + [
+            h for h in self._history if os.path.abspath(h.path) not in listed]
         rows = [i for i, s in enumerate(self._stats) if plottable(s) and self._shown(s)]
         # One frame without a time and the whole axis is file-name order: a
         # half-timed axis would put the timeless frames somewhere false.
@@ -514,7 +536,7 @@ class QualityChart(QWidget):
     def mousePressEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             row = self.row_at(e.position())
-            if row >= 0:
+            if row >= 0 and not self._is_history(row):
                 self.point_clicked.emit(row)
                 e.accept()
                 return
