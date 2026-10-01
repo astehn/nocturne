@@ -179,12 +179,17 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
         # 2026-09-30), so its line comes from the record, not the current
         # setup: a fallback must not be reported as "ASTAP + Gaia".
         colour = [ser for n, ser in ser_entries if n == "Color"]
-        if colour and isinstance(colour[-1], dict) and colour[-1].get("fell_back"):
-            engine_lines = [
-                "- Color: **Nocturne (built-in sky balance)** — photometric "
-                "calibration was chosen but could not run"
-                if line.startswith("- Color:") else line
-                for line in engine_lines]
+        last = colour[-1] if colour and isinstance(colour[-1], dict) else {}
+        sky_line = None
+        if last.get("fell_back"):
+            sky_line = ("- Color: **Nocturne (built-in sky balance)** — photometric "
+                        "calibration was chosen but could not run")
+        elif last.get("method") == "sky":
+            # Sky balance never touches ASTAP or Gaia, whatever is installed.
+            sky_line = "- Color: **Nocturne (built-in sky balance)**"
+        if sky_line:
+            engine_lines = [sky_line if line.startswith("- Color:") else line
+                            for line in engine_lines]
         if engine_lines:
             lines.append("## Engines")
             lines.append("")

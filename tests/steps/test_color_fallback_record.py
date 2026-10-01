@@ -114,3 +114,11 @@ def test_the_engines_section_does_not_claim_spcc_after_a_fallback(monkeypatch):
     assert lines and "ASTAP" not in lines[0] and "sky balance" in lines[0], lines
     lines = _engines_color_line(ColorSettings(method="photometric"))
     assert lines and "ASTAP" in lines[0], "a real calibration still names its tools"
+
+
+def test_plain_sky_balance_is_not_reported_as_astap(monkeypatch):
+    """Sky balance never touches ASTAP or Gaia, whatever is installed."""
+    import nocturne.core.receipt as receipt
+    monkeypatch.setattr(receipt, "astap_valid", lambda s: True)
+    lines = _engines_color_line(ColorSettings(method="sky"))
+    assert lines and "ASTAP" not in lines[0] and "sky balance" in lines[0], lines
