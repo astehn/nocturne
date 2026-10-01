@@ -213,9 +213,10 @@ def _stored_measurements(rej: str) -> dict[str, dict]:
             data = json.load(fh)
         out = {}
         for e in data.get("moved", []):
-            if isinstance(e, dict) and isinstance(e.get("name"), str) \
-                    and isinstance(e.get("measured"), dict):
-                out[e["name"]] = e["measured"]
+            if isinstance(e, dict) and isinstance(e.get("name"), str):
+                clean = _clean_measured(e.get("measured"))
+                if clean is not None:
+                    out[e["name"]] = clean
         return out
     except Exception:
         return {}
@@ -353,22 +354,43 @@ def _already_claimed(dst: str, moved: dict[str, str]) -> bool:
     return False
 
 
-def _measured_entry(m) -> dict | None:
-    """What the chart needs to draw a moved frame, or None. Only finite
-    numbers and plain strings: the record is JSON his other tools may read."""
+def _clean_measured(m) -> dict | None:
+    """One measurement block as the record may hold it — finite numbers and
+    UTF-8-safe text only — or None. Every block goes through here on the way
+    in AND out: one written by hand or by another tool must cost at most its
+    own chart dot, never a move (review 2026-10-01: an unpaired surrogate made
+    every later rewrite fail; 10**400 raised OverflowError)."""
     import math
     if not isinstance(m, dict):
         return None
-    fwhm, stars = m.get("fwhm"), m.get("star_count")
-    if not isinstance(fwhm, (int, float)) or isinstance(fwhm, bool) or not math.isfinite(fwhm):
+    try:
+        fwhm = m.get("fwhm")
+        if not isinstance(fwhm, (int, float)) or isinstance(fwhm, bool):
+            return None
+        fwhm = float(fwhm)
+        if not math.isfinite(fwhm):
+            return None
+        stars = m.get("star_count")
+        stars = (stars if isinstance(stars, int) and not isinstance(stars, bool)
+                 and 0 <= stars < 10 ** 9 else 0)
+        captured = m.get("captured")
+        if isinstance(captured, datetime):
+            captured = captured.isoformat()
+        if isinstance(captured, str):
+            parsed = datetime.fromisoformat(captured)
+            captured = parsed.isoformat() if parsed.tzinfo is not None else None
+        else:
+            captured = None
+        reason = m.get("reason") if isinstance(m.get("reason"), str) else ""
+        reason.encode("utf-8")
+        return {"captured": captured, "fwhm": fwhm, "star_count": stars, "reason": reason}
+    except (ValueError, OverflowError, TypeError, UnicodeError):
         return None
-    out = {"captured": m["captured"].isoformat() if isinstance(m.get("captured"), datetime)
-           else None,
-           "fwhm": float(fwhm),
-           "star_count": int(stars) if isinstance(stars, int) and not isinstance(stars, bool)
-           else 0,
-           "reason": m.get("reason") if isinstance(m.get("reason"), str) else ""}
-    return out
+
+
+def _measured_entry(m) -> dict | None:
+    """A frame's measurements for a NEW record entry, cleaned like any other."""
+    return _clean_measured(m)
 
 
 def read_moved_history(folder: str) -> list[dict]:
@@ -380,7 +402,6 @@ def read_moved_history(folder: str) -> list[dict]:
     anything it cannot use. Each item: path (in rejected/), captured (aware
     datetime or None), fwhm, star_count, reason. (Andreas, 2026-10-01: a
     reopened folder had no dots at all for the frames he moved.)"""
-    import math
     try:
         rej = _safe_rejected_dir(folder, create=False)
         if rej is None:
@@ -397,29 +418,17 @@ def read_moved_history(folder: str) -> list[dict]:
         for e in moved:
             if not isinstance(e, dict) or not _bare_name(e.get("name")):
                 continue
-            m = e.get("measured")
-            if not isinstance(m, dict):
-                continue
-            fwhm = m.get("fwhm")
-            if (not isinstance(fwhm, (int, float)) or isinstance(fwhm, bool)
-                    or not math.isfinite(fwhm)):
+            m = _clean_measured(e.get("measured"))
+            if m is None:
                 continue
             p = os.path.join(rej, e["name"])
             if not os.path.isfile(p) or os.path.islink(p):
                 continue
-            captured = None
-            if isinstance(m.get("captured"), str):
-                try:
-                    captured = datetime.fromisoformat(m["captured"])
-                except ValueError:
-                    captured = None
-                if captured is not None and captured.tzinfo is None:
-                    captured = None
-            stars = m.get("star_count")
-            out.append({"path": p, "captured": captured, "fwhm": float(fwhm),
-                        "star_count": stars if isinstance(stars, int)
-                        and not isinstance(stars, bool) else 0,
-                        "reason": m.get("reason") if isinstance(m.get("reason"), str) else ""})
+            out.append({"path": p,
+                        "captured": (datetime.fromisoformat(m["captured"])
+                                     if m["captured"] else None),
+                        "fwhm": m["fwhm"], "star_count": m["star_count"],
+                        "reason": m["reason"]})
         return out
     except Exception:
         return []

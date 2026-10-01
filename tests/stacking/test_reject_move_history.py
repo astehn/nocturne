@@ -132,3 +132,42 @@ def test_a_partial_move_back_keeps_the_rest_measured(night, monkeypatch):
         pass
     still = [os.path.basename(h["path"]) for h in rm.read_moved_history(folder)]
     assert os.path.basename(paths[1]) in still, "what stayed lost its measurements"
+
+
+def _poison(folder, index, **measured):
+    path = os.path.join(rej(folder), MANIFEST_NAME)
+    with open(path, encoding="utf-8") as fh:
+        rec = json.load(fh)
+    rec["moved"][index]["measured"].update(measured)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec).replace('"POISON"', '"\\ud800"'))
+
+
+def test_a_damaged_stored_block_never_stops_a_later_move(night):
+    """Review 2026-10-01: an unpaired surrogate written by hand used to make
+    every later rewrite fail. A chart dot must never stop a move."""
+    folder, paths = night
+    rm.move_to_rejected(folder, paths[:1], paths, measured=_measured(paths[:1]))
+    _poison(folder, 0, reason="POISON")
+    rm.move_to_rejected(folder, paths[1:2], paths, measured=_measured(paths[1:2]))
+    assert os.path.exists(os.path.join(rej(folder), os.path.basename(paths[1])))
+
+
+def test_a_huge_number_is_skipped_not_raised(night):
+    folder, paths = night
+    big = _measured(paths[:1])
+    big[os.path.abspath(paths[0])]["fwhm"] = 10 ** 400
+    rm.move_to_rejected(folder, paths[:1], paths, measured=big)   # must not raise
+    assert "measured" not in _record(folder)["moved"][0]
+
+
+def test_one_bad_entry_does_not_hide_the_others(night):
+    folder, paths = night
+    rm.move_to_rejected(folder, paths[:2], paths, measured=_measured(paths[:2]))
+    path = os.path.join(rej(folder), MANIFEST_NAME)
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    text = text.replace('"fwhm": 2.6', '"fwhm": 1' + "0" * 400, 1)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    assert len(rm.read_moved_history(folder)) == 1
