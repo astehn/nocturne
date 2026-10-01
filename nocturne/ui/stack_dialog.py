@@ -739,13 +739,13 @@ class StackDialog(QDialog):
 
         def work():
             new_stats = runner(paths, on_progress=lambda i, n, _name:
-                               self._signals.progress.emit(i, n, "Measuring"),
+                               self._progress_reporter()(i, n, "Measuring"),
                                strictness=strictness)
             # The merged list, read here and not in _on_added_graded: see
             # _find_panels. The busy guard keeps `listed` from changing meanwhile.
             return new_stats, self._find_panels(
                 listed + [s.path for s in new_stats if not s.error],
-                on_progress=lambda i, n: self._signals.progress.emit(
+                on_progress=lambda i, n: self._progress_reporter()(
                     i, n, "Checking the pointings"))
 
         self._start(work, lambda r: self._on_added_graded(*r),
@@ -841,6 +841,48 @@ class StackDialog(QDialog):
         tok = self._active_token
         if tok is not None:
             tok.cancel()
+
+    def _progress_reporter(self):
+        """Progress for work on the pool thread. If this window has gone, the
+        emit raises, and the work STOPS rather than grinding on for nobody —
+        it used to die there with a traceback (2026-10-01)."""
+        emit = self._signals.progress.emit
+
+        def report(i, n, label):
+            try:
+                emit(i, n, label)
+            except RuntimeError:
+                raise Cancelled() from None
+        return report
+
+    def reject(self) -> None:
+        """Esc, Close and the title-bar button all land here. While work runs,
+        ask first, with Keep stacking the default: a stray Esc meant for
+        another window ended his 1517-frame grade (Andreas, 2026-10-01), and
+        at 80% of a drizzle it would end an hour's work."""
+        if self._busy:
+            if not self._confirm_stop():
+                return
+            if not self.isVisible():
+                return      # finished while asking: already handed over and closed
+            self._cancel_active()
+        super().reject()
+
+    def _confirm_stop(self) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Stop stacking?")
+        box.setText("Nocturne is still working on this stack.")
+        box.setInformativeText("Closing the window stops it, and the work done "
+                               "so far is lost.")
+        keep = box.addButton("Keep stacking", QMessageBox.ButtonRole.RejectRole)
+        stop = box.addButton("Stop and close", QMessageBox.ButtonRole.DestructiveRole)
+        # Both Enter and Esc keep it running: a second stray key must not be
+        # the one that confirms.
+        box.setDefaultButton(keep)
+        box.setEscapeButton(keep)
+        box.exec()
+        return box.clickedButton() is stop
 
     def scan_pointings(self, folder: str | None = None,
                        paths: list[str] | None = None) -> None:
@@ -1285,7 +1327,7 @@ class StackDialog(QDialog):
         self._grading_folder = folder
         runner = self._grade_runner
         strictness = self.strictness_box.currentText().lower()
-        emit = self._signals.progress.emit
+        emit = self._progress_reporter()
 
         def work():
             panels = self._find_panels(
@@ -1698,7 +1740,7 @@ class StackDialog(QDialog):
 
         def work():
             return runner(paths, on_progress=lambda i, n, name:
-                          self._signals.progress.emit(i, n, "Measuring"),
+                          self._progress_reporter()(i, n, "Measuring"),
                           strictness=strictness)
 
         self._start(work, self._on_restored_graded,
@@ -1902,7 +1944,7 @@ class StackDialog(QDialog):
 
             def mosaic_work():
                 return mosaic_runner(mosaic_opts, on_progress=lambda i, n, label:
-                                     self._signals.progress.emit(i, n, label))
+                                     self._progress_reporter()(i, n, label))
 
             self._start(mosaic_work, self._on_stacked,
                         "Stacking each pointing, then assembling the mosaic — "
@@ -1914,7 +1956,7 @@ class StackDialog(QDialog):
 
         def work():
             return runner(opts, on_progress=lambda i, n, label:
-                          self._signals.progress.emit(i, n, label))
+                          self._progress_reporter()(i, n, label))
 
         self._start(work, self._on_stacked, "Stacking…")
 

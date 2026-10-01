@@ -19,6 +19,15 @@ class Worker(QRunnable):
         self._wants_progress = wants_progress
         self.signals = WorkerSignals()
 
+    def _send(self, name: str, value) -> None:
+        """Report back, unless there is nobody left to tell: a window closed
+        mid-run deletes the objects these signals live on, and the emit then
+        raised out of the pool thread as a traceback (2026-10-01)."""
+        try:
+            getattr(self.signals, name).emit(value)
+        except RuntimeError:
+            pass
+
     @Slot()
     def run(self) -> None:
         # Publish an ambient token so work deep inside — an external tool
@@ -37,9 +46,9 @@ class Worker(QRunnable):
         except (Exception, Cancelled) as exc:  # surfaced to on_error on the main thread
             # Cancelled is a BaseException, so `except Exception` would miss it —
             # catch it here so a user cancel routes to the clean-stop handler.
-            self.signals.error.emit(exc)
+            self._send("error", exc)
         else:
-            self.signals.done.emit(result)
+            self._send("done", result)
         finally:
             if token is not None:
                 clear_ambient()
