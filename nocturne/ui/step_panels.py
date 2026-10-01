@@ -481,6 +481,12 @@ def build_panel(
             # (it sat below Apply while Apply was in the panel).
             controls.addWidget(show_model)
             w.show_model_check = show_model
+            # How much was removed, while the view is on — on the step, not in
+            # the log: the view changes nothing (Andreas, 2026-10-01).
+            model_note = _desc_label("")
+            model_note.setVisible(False)
+            controls.addWidget(model_note)
+            w.show_model_note = model_note
         if stage.id == "background":
             # Decision-relevant, so a note rather than "How this works": which
             # strength to pick, and how to read the check above.
