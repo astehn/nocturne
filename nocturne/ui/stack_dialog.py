@@ -15,14 +15,14 @@ from ..stacking.capture_time import read_capture_time
 from ..stacking.camera import first_camera
 from ..stacking.camera import mismatch as camera_mismatch
 from ..stacking.frames import discover_subs
-from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, grade_frames,
+from ..stacking.grade import (JUDGE_MIN, ONLY_MASTERS, STACK_MIN, FrameStats, grade_frames,
                               is_left_out, is_master, judge, order_best_first)
 from ..stacking.nights import split_nights
 from ..stacking.mosaic import (MosaicOptions, discover_panels, read_pointings,
                                run_mosaic)
 from ..stacking.reject_move import (MANIFEST_NAME, REJECTED_DIR, MoveBackResult, RejectMoveError,
                                     describe_names, folder_labels, home_folder, move_back,
-                                    move_to_rejected, pending_back)
+                                    move_to_rejected, pending_back, read_moved_history)
 from ..stacking.stacker import StackOptions, run_stack, master_filename
 from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
                                 _minutes, build_session_verdict, build_verdict,
@@ -1499,6 +1499,14 @@ class StackDialog(QDialog):
                 if not s.included and not s.error and not s.moved
                 and self.browser.night_on(s)]
 
+    @staticmethod
+    def _history_frame(h: dict) -> FrameStats:
+        """A moved frame rebuilt from the move record — for the chart only:
+        never a row, never counted, never stacked."""
+        s = FrameStats(h["path"], h["star_count"], h["fwhm"], 0.0, 0.0, False)
+        s.captured, s.reason, s.moved = h["captured"], h["reason"] or "Moved", True
+        return s
+
     def _sync_reject_buttons(self, check_disk: bool = False) -> None:
         """The move count follows the ticks. The back count reads the folder,
         so only after a grade or a move — never on every tick. A successful
@@ -1514,6 +1522,7 @@ class StackDialog(QDialog):
         if not check_disk:
             return
         back, damaged = 0, None
+        history = []
         for folder in self.listed_folders():
             try:
                 back += len(pending_back(folder))
@@ -1521,6 +1530,9 @@ class StackDialog(QDialog):
                 damaged = damaged or str(exc)
             except OSError:
                 pass                # an unreadable folder: nothing to offer
+            history += [self._history_frame(h) for h in read_moved_history(folder)]
+        # Frames moved in an earlier session: grey on the chart, never rows.
+        self.browser.set_history(history)
         if damaged is not None:
             self.verdict_strip.set_message(damaged)
             self._damaged_folder = True
@@ -1603,7 +1615,13 @@ class StackDialog(QDialog):
         failed = ""
         for i, (folder, group) in enumerate(items):
             try:
-                moved = move_to_rejected(folder, [s.path for s in group], graded)
+                # Their measurements go into the record too, so a reopened
+                # folder can still draw them on the chart (2026-10-01).
+                measured = {os.path.abspath(s.path): {
+                    "captured": s.captured, "fwhm": s.fwhm,
+                    "star_count": s.star_count, "reason": s.reason} for s in group}
+                moved = move_to_rejected(folder, [s.path for s in group], graded,
+                                         measured=measured)
             except RejectMoveError as exc:
                 # Every §5 rule holds per folder: this one moved nothing, or
                 # put back what it moved, and says so. A folder done before

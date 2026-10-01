@@ -78,6 +78,10 @@ KEPT_COLOUR = theme.ACCENT
 # Amber, as the mockup draws it. The list DIMS a rejected row; a dimmed dot on
 # a dark strip would vanish, which is the opposite of the point.
 REJECTED_COLOUR = theme.WARNING
+# Moved to rejected/: out of this stack and the decision already acted on, so
+# no longer amber's "still your call" — but kept, faint, as the record of the
+# night (Andreas, 2026-10-01: his VdB 141, 347 moved after conditions turned).
+MOVED_COLOUR = theme.TEXT_FAINT
 CURRENT_COLOUR = theme.TEXT
 # Fix round 1 (Ruling R5): TEXT_FAINT at 9 px measured 2.44:1 on BG_2 — dimmer
 # and smaller than any other secondary text in the app. TEXT_DIM at 11 px
@@ -87,6 +91,7 @@ AXIS_COLOUR = theme.TEXT_DIM
 RING_RADIUS = 5.0
 NOTE_TIME = "FWHM over the session — ● rejected"
 NOTE_NO_TIME = "FWHM in file-name order (some frames have no capture time) — ● rejected"
+NOTE_MOVED = "  ● moved"          # appended only while a moved frame is plotted
 HIDE_TEXT = "▾ Hide chart"
 SHOW_TEXT = "▸ Show chart"
 # Below this much usable screen height (the dialogs' _available_height) the
@@ -160,13 +165,14 @@ def trend_values(values: Sequence[float], breaks: Sequence[int] = (),
 
 
 def note_html(note: str) -> str:
-    """The caption with its "●" in REJECTED_COLOUR — the legend must be the
-    colour of the dots the chart paints, not the caption's grey."""
-    before, dot, after = note.partition("●")
-    if not dot:
-        return html.escape(note)
-    return (f'{html.escape(before)}<span style="color:{REJECTED_COLOUR}">●</span>'
-            f"{html.escape(after)}")
+    """The caption with each "●" in the colour of the dots it names — the
+    legend must be the colour the chart paints, not the caption's grey."""
+    parts = note.split("●")
+    out = html.escape(parts[0])
+    for part in parts[1:]:
+        colour = MOVED_COLOUR if part.lstrip().startswith("moved") else REJECTED_COLOUR
+        out += f'<span style="color:{colour}">●</span>{html.escape(part)}'
+    return out
 
 
 class QualityChart(QWidget):
@@ -175,14 +181,22 @@ class QualityChart(QWidget):
 
     def __init__(self, describe: Callable[[object], str],
                  is_rejected: Callable[[object], bool],
-                 shown: Callable[[object], bool] | None = None, parent=None) -> None:
+                 shown: Callable[[object], bool] | None = None, parent=None,
+                 is_moved: Callable[[object], bool] | None = None) -> None:
         super().__init__(parent)
         self._describe = describe
         self._is_rejected = is_rejected
+        self._is_moved = is_moved or (lambda _s: False)
         # Which frames are drawn at all: an unticked night is left out
         # (spec 2026-09-28 §9.2, §9.5), and the axis closes up behind it.
         self._shown = shown or (lambda _s: True)
         self._stats: list = []
+        # The list's own frames (rows 0..n-1, which the list and clicks use),
+        # then — drawing only — frames moved to rejected/ in an earlier session,
+        # rebuilt from the move record (set_history). `_stats` is both, in
+        # that order, rebuilt on every refresh.
+        self._list: list = []
+        self._history: list = []
         self._rows: list[int] = []
         self._x: list[float] = []
         # Which night-segment each row of `_rows`/`_x` belongs to, 0-based in
@@ -200,11 +214,27 @@ class QualityChart(QWidget):
 
     # --- data ---
     def set_frames(self, stats: list) -> None:
-        self._stats = stats
+        self._list = stats
         self.refresh()
+
+    def set_history(self, frames: list) -> None:
+        """Frames moved to rejected/ before this session, from the move
+        record: drawn grey, never rows of the list (Andreas, 2026-10-01 — a
+        reopened folder lost the end of its night from the chart)."""
+        self._history = list(frames)
+        self.refresh()
+
+    def _is_history(self, row: int) -> bool:
+        return row >= len(self._list)
 
     def refresh(self) -> None:
         """Re-read the list: after a grade, a re-judge, or frames moved."""
+        # A frame moved THIS session is a list row already; never draw it twice.
+        # By full path: a frame moved this session already points into
+        # rejected/, and two added folders may hold the same names.
+        listed = {os.path.abspath(s.path) for s in self._list}
+        self._stats = list(self._list) + [
+            h for h in self._history if os.path.abspath(h.path) not in listed]
         rows = [i for i, s in enumerate(self._stats) if plottable(s) and self._shown(s)]
         # One frame without a time and the whole axis is file-name order: a
         # half-timed axis would put the timeless frames somewhere false.
@@ -276,13 +306,24 @@ class QualityChart(QWidget):
         return self._timed
 
     def note(self) -> str:
-        return NOTE_TIME if self._timed else NOTE_NO_TIME
+        note = NOTE_TIME if self._timed else NOTE_NO_TIME
+        stats = [self._stats[i] for i in self._rows]
+        if any(self._is_moved(s) for s in stats):
+            if any(self._is_rejected(s) and not self._is_moved(s) for s in stats):
+                note += NOTE_MOVED
+            else:
+                # Every reject moved: no amber dot left to name.
+                note = note.replace("● rejected", NOTE_MOVED.strip())
+        return note
 
     def plotted(self) -> list[tuple[int, float]]:
         return list(zip(self._rows, self._x))
 
     def point_colour(self, row: int) -> str:
-        return REJECTED_COLOUR if self._is_rejected(self._stats[row]) else KEPT_COLOUR
+        s = self._stats[row]
+        if self._is_moved(s):
+            return MOVED_COLOUR
+        return REJECTED_COLOUR if self._is_rejected(s) else KEPT_COLOUR
 
     # --- geometry ---
     def _plot_rect(self) -> QRectF:
@@ -495,7 +536,7 @@ class QualityChart(QWidget):
     def mousePressEvent(self, e) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             row = self.row_at(e.position())
-            if row >= 0:
+            if row >= 0 and not self._is_history(row):
                 self.point_clicked.emit(row)
                 e.accept()
                 return
@@ -529,8 +570,12 @@ class QualityChart(QWidget):
                         p.drawPolyline(QPolygonF(trend[seg_start:k]))
                     seg_start = k
         p.setPen(Qt.PenStyle.NoPen)
-        # Rejected last, so a reject is never hidden under a kept neighbour.
-        for i, q in sorted(pts, key=lambda t: self._is_rejected(self._stats[t[0]])):
+        # Moved first, faint, underneath everything; rejected last, so a reject
+        # still your call is never hidden under a kept neighbour.
+        def layer(t):
+            s = self._stats[t[0]]
+            return 0 if self._is_moved(s) else (2 if self._is_rejected(s) else 1)
+        for i, q in sorted(pts, key=layer):
             p.setBrush(QColor(self.point_colour(i)))
             p.drawEllipse(q, _DOT, _DOT)
         cur = next((q for i, q in pts if i == self._current), None)

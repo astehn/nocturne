@@ -59,25 +59,10 @@ def test_the_main_window_stays_usable_while_it_is_open(win, qtbot):
     assert win._next_btn.isEnabled()
 
 
-def test_the_next_launch_restores_the_saved_place(qtbot, tmp_path, monkeypatch):
-    """Across launches the place comes from Settings."""
-    import nocturne.ui.main_window as mw
-    monkeypatch.setattr(mw, "astap_valid", lambda s: True)
-    first = _window(qtbot, tmp_path)
-    first.open_fits(_make_fits(tmp_path)); first.show(); qtbot.waitExposed(first)
-    first._open_plate_solve(); qtbot.wait(20)
-    first._solve_window.move(100, 120); qtbot.wait(20)
-    first._open_plate_solve()
-    saved = first.settings.solve_window_geometry
-    assert saved
-    other = tmp_path / "second-launch"
-    other.mkdir()
-    second = _window(qtbot, other)
-    second.settings.solve_window_geometry = saved
-    second.open_fits(_make_fits(other)); second.show(); qtbot.waitExposed(second)
-    second._open_plate_solve(); qtbot.wait(20)
-    assert second._solve_window.pos() == QPoint(100, 120)
-
+# test_the_next_launch_restores_the_saved_place pinned an ABSOLUTE desktop
+# position across launches — the behaviour replaced on 2026-10-01 (it left the
+# window on another monitor). The relative version lives in
+# test_solve_window_follows.py::test_the_offset_survives_a_relaunch.
 
 def test_close_project_closes_the_tool(win, qtbot):
     win._open_plate_solve()

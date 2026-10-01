@@ -204,6 +204,31 @@ def read_manifest(folder: str) -> list[dict]:
     return entries
 
 
+def _stored_measurements(rej: str) -> dict[str, dict]:
+    """{name: measured block} as the record holds it now, so a rewrite keeps
+    the measurements read_manifest (names only, on purpose) leaves out.
+    Never raises: losing a chart dot must never stop a move."""
+    try:
+        with open(os.path.join(rej, MANIFEST_NAME), encoding="utf-8") as fh:
+            data = json.load(fh)
+        out = {}
+        for e in data.get("moved", []):
+            if isinstance(e, dict) and isinstance(e.get("name"), str):
+                clean = _clean_measured(e.get("measured"))
+                if clean is not None:
+                    out[e["name"]] = clean
+        return out
+    except Exception:
+        return {}
+
+
+def _keep_measured(rej: str, entries: list[dict]) -> list[dict]:
+    """Entries from read_manifest, with their stored measurements put back."""
+    stored = _stored_measurements(rej)
+    return [dict(e, measured=stored[e["name"]]) if e["name"] in stored else e
+            for e in entries]
+
+
 def _write_manifest(rej: str, entries: list[dict]) -> None:
     fd, tmp = tempfile.mkstemp(prefix=MANIFEST_NAME + ".", suffix=".tmp", dir=rej)
     try:
@@ -329,9 +354,94 @@ def _already_claimed(dst: str, moved: dict[str, str]) -> bool:
     return False
 
 
+def _clean_measured(m) -> dict | None:
+    """One measurement block as the record may hold it — finite numbers and
+    UTF-8-safe text only — or None. Every block goes through here on the way
+    in AND out: one written by hand or by another tool must cost at most its
+    own chart dot, never a move (review 2026-10-01: an unpaired surrogate made
+    every later rewrite fail; 10**400 raised OverflowError)."""
+    import math
+    if not isinstance(m, dict):
+        return None
+    try:
+        fwhm = m.get("fwhm")
+        if not isinstance(fwhm, (int, float)) or isinstance(fwhm, bool):
+            return None
+        fwhm = float(fwhm)
+        if not math.isfinite(fwhm):
+            return None
+        stars = m.get("star_count")
+        stars = (stars if isinstance(stars, int) and not isinstance(stars, bool)
+                 and 0 <= stars < 10 ** 9 else 0)
+        captured = m.get("captured")
+        if isinstance(captured, datetime):
+            captured = captured.isoformat()
+        if isinstance(captured, str):
+            parsed = datetime.fromisoformat(captured)
+            captured = parsed.isoformat() if parsed.tzinfo is not None else None
+        else:
+            captured = None
+        reason = m.get("reason") if isinstance(m.get("reason"), str) else ""
+        reason.encode("utf-8")
+        return {"captured": captured, "fwhm": fwhm, "star_count": stars, "reason": reason}
+    except (ValueError, OverflowError, TypeError, UnicodeError):
+        return None
+
+
+def _measured_entry(m) -> dict | None:
+    """A frame's measurements for a NEW record entry, cleaned like any other."""
+    return _clean_measured(m)
+
+
+def read_moved_history(folder: str) -> list[dict]:
+    """The measurements of frames still in rejected/, for the chart only.
+
+    Deliberately NOT read_manifest: that one is the safety path (Move them
+    back) and stays strict about names and nothing else. This one never
+    raises — a damaged record is the safety path's to report — and skips
+    anything it cannot use. Each item: path (in rejected/), captured (aware
+    datetime or None), fwhm, star_count, reason. (Andreas, 2026-10-01: a
+    reopened folder had no dots at all for the frames he moved.)"""
+    try:
+        rej = _safe_rejected_dir(folder, create=False)
+        if rej is None:
+            return []
+        path = os.path.join(rej, MANIFEST_NAME)
+        if os.path.islink(path) or not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        moved = data.get("moved") if isinstance(data, dict) else None
+        if not isinstance(moved, list):
+            return []
+        out = []
+        for e in moved:
+            if not isinstance(e, dict) or not _bare_name(e.get("name")):
+                continue
+            m = _clean_measured(e.get("measured"))
+            if m is None:
+                continue
+            p = os.path.join(rej, e["name"])
+            if not os.path.isfile(p) or os.path.islink(p):
+                continue
+            out.append({"path": p,
+                        "captured": (datetime.fromisoformat(m["captured"])
+                                     if m["captured"] else None),
+                        "fwhm": m["fwhm"], "star_count": m["star_count"],
+                        "reason": m["reason"]})
+        return out
+    except Exception:
+        return []
+
+
 def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
-                     now: datetime | None = None) -> dict[str, str]:
+                     now: datetime | None = None,
+                     measured: dict | None = None) -> dict[str, str]:
     """Move `paths` into folder/rejected/. Returns {old path: new path}.
+
+    `measured` ({path: {captured, fwhm, star_count, reason}}) is optional and
+    is only ever READ back by read_moved_history, for the chart; nothing that
+    moves a file depends on it.
 
     `graded` is every path the caller graded; anything else is refused. On any
     refusal or failure nothing stays moved (RejectMoveError) — unless putting
@@ -397,8 +507,14 @@ def move_to_rejected(folder: str, paths: Iterable[str], graded: Iterable[str],
     names = {os.path.basename(p) for p in wanted}
     # An entry for a name that is moving again describes a file that came back
     # by hand: it is not in rejected/, or `taken` would have stopped us.
-    kept_entries = [e for e in earlier if e["name"] not in names]
-    new_entries = [{"name": os.path.basename(p), "moved_at": stamp} for p in wanted]
+    kept_entries = _keep_measured(rej, [e for e in earlier if e["name"] not in names])
+    new_entries = []
+    for p in wanted:
+        entry = {"name": os.path.basename(p), "moved_at": stamp}
+        m = _measured_entry((measured or {}).get(p))
+        if m is not None:
+            entry["measured"] = m
+        new_entries.append(entry)
     try:
         _write_manifest(rej, kept_entries + new_entries)
     except (OSError, ValueError) as exc:
@@ -476,7 +592,7 @@ def move_back(folder: str) -> MoveBackResult:
         keep.append(e)
     if len(keep) != len(entries):
         try:
-            _write_manifest(rej, keep)
+            _write_manifest(rej, _keep_measured(rej, keep))
         except (OSError, ValueError) as exc:
             why = getattr(exc, "strerror", None) or str(exc)
             result.failed = result.failed or (
