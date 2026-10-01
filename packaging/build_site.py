@@ -158,15 +158,19 @@ def nav_html(is_home: bool) -> str:
     # JavaScript at all — nine links behind a control that needs a script is
     # nine links a failed script can hide. The input stays focusable (it is
     # clipped, not `hidden`) so it works from the keyboard on its own too;
-    # main.js only adds aria-expanded and close-on-choose.
+    # main.js only adds close-on-choose and Escape.
+    #
+    # ONE control for assistive tech (audit 2026-10-01): the checkbox carries
+    # the name; the drawn label is aria-hidden. It used to be a checkbox AND a
+    # role=button label, both announced as "Menu".
     return f'''  <header class="nav">
     <a class="brand" href="{brand}">
       <img src="img/icon.png" alt="" width="28" height="28">
       <span>Nocturne</span>
     </a>
-    <input type="checkbox" id="nav-open" class="nav-open">
-    <label class="nav-toggle" for="nav-open" aria-label="Menu" role="button"
-           aria-controls="nav-links" aria-expanded="false">
+    <input type="checkbox" id="nav-open" class="nav-open" aria-label="Menu"
+           aria-controls="nav-links">
+    <label class="nav-toggle" for="nav-open" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" focusable="false">
         <path class="bar-top" d="M3 6h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         <path class="bar-mid" d="M3 12h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -258,18 +262,37 @@ def head_html(name: str, meta: dict) -> str:
     return "\n".join(out)
 
 
+def _main_anchor(body: str) -> tuple[str, str]:
+    """The id of the page's <main>, adding one where it has none — the skip
+    link's target (audit 2026-10-01)."""
+    m = re.search(r"<main\b([^>]*)>", body)
+    if m is None:
+        return body, ""
+    found = re.search(r'\bid="([\w-]+)"', m.group(1))
+    if found:
+        return body, found.group(1)
+    return body[:m.start()] + '<main id="content"' + m.group(1) + ">" + body[m.end():], "content"
+
+
 def render(name: str, meta: dict, body: str) -> str:
     is_home = name == "index.html"
+    body, anchor = _main_anchor(body)
+    skip = (f'  <a class="skip-link" href="#{anchor}">Skip to content</a>\n'
+            if anchor else "")
+    # The 404 is served at whatever path was asked for: without a base, a deep
+    # broken link (/a/b/c) would look for /a/b/styles.css and arrive unstyled.
+    base = '  <base href="/">\n' if name == "404.html" else ""
+    robots = '  <meta name="robots" content="noindex">\n' if name == "404.html" else ""
     scripts = "\n".join(f'  <script src="{asset_url(s)}"></script>'
                         for s in meta["scripts"])
     privacy = f'\n      <p class="fine">{FOOTER_PRIVACY}</p>' if is_home else ""
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
-{head_html(name, meta)}
+{base}{robots}{head_html(name, meta)}
 </head>
 <body>
-  <div class="stars" aria-hidden="true"></div>
+{skip}  <div class="stars" aria-hidden="true"></div>
 
 {nav_html(is_home)}
 

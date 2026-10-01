@@ -16,7 +16,7 @@ SITE = pathlib.Path(__file__).resolve().parent.parent / "site"
 
 # Pages that exist but should not be advertised: no public entry point, or a
 # duplicate of a canonical URL.
-SKIP = {"admin.html"}
+SKIP = {"admin.html", "404.html"}   # 404: served for missing pages, never indexed
 
 def main() -> None:
     pages = sorted(p.name for p in SITE.glob("*.html") if p.name not in SKIP)
