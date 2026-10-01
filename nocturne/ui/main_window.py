@@ -6305,6 +6305,11 @@ class MainWindow(QMainWindow):
             was = check.blockSignals(True)   # the canvas is already repainted
             check.setChecked(False)
             check.blockSignals(was)
+        # Unticked without the signal, so the size note goes here too — it
+        # could otherwise sit under an unticked box, describing an old fit.
+        note = getattr(self._panel, "show_model_note", None)
+        if note is not None and not check.isChecked():
+            note.setVisible(False)
 
     def _background_states(self):
         """The image entering the Background step and the image leaving it.

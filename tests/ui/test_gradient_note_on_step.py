@@ -39,3 +39,14 @@ def test_unticking_hides_it(qtbot, tmp_path, monkeypatch):
     win._panel.show_model_check.setChecked(True)
     win._panel.show_model_check.setChecked(False)
     assert not win._panel.show_model_note.isVisibleTo(win._panel)
+
+
+def test_undo_redo_or_reapply_never_leaves_a_stale_note(qtbot, tmp_path, monkeypatch):
+    """_refresh unticks the box with its signals blocked (review 2026-10-01):
+    the note must go with it, or it describes a fit no longer on screen."""
+    win = _with_background(qtbot, tmp_path, monkeypatch)
+    win._panel.show_model_check.setChecked(True)
+    assert win._panel.show_model_note.isVisibleTo(win._panel), "fixture"
+    win._refresh()                      # what apply, undo and redo all call
+    assert not win._panel.show_model_check.isChecked()
+    assert not win._panel.show_model_note.isVisibleTo(win._panel)
