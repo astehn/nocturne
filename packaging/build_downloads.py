@@ -60,9 +60,15 @@ def refresh() -> list[dict]:
                               "tagName,publishedAt,assets"],
                              capture_output=True, text=True, check=True, cwd=ROOT).stdout
         rel = json.loads(raw)
-        assets = [{"name": a["name"], "size": a["size"], "url": a["url"],
-                   "platform": platform_of(a["name"])}
-                  for a in rel.get("assets", [])]
+        assets = []
+        for a in rel.get("assets", []):
+            entry = {"name": a["name"], "size": a["size"], "url": a["url"],
+                     "platform": platform_of(a["name"])}
+            # GitHub computes a SHA-256 for every asset; shown on the page so a
+            # download can be checked (website audit 2026-10-01).
+            if isinstance(a.get("digest"), str) and a["digest"].startswith("sha256:"):
+                entry["digest"] = a["digest"]
+            assets.append(entry)
         if not assets:
             continue                      # a tag with nothing to download is not a download
         out.append({
@@ -94,7 +100,7 @@ def _rows(releases: list[dict]) -> str:
             links.append(
                 f'<a href="get.php?f={a["name"]}">{label}</a> '
                 f'<span class="dl-size">{human_size(a["size"])}</span>')
-        latest = ' <span class="dl-latest">Latest release</span>' if i == 0 else ""
+        latest = ""                      # the latest has its own block above
         out.append(
             f'          <tr>\n'
             f'            <td class="dl-version">{rel["version"]}{latest}</td>\n'
@@ -104,12 +110,72 @@ def _rows(releases: list[dict]) -> str:
     return "\n".join(out)
 
 
+_BUTTON = {"macos": ("macOS", "Apple Silicon (M1 or newer)"),
+           "linux": ("Linux", "x86-64, glibc 2.39 or newer")}
+
+
+def _latest_block(rel: dict) -> str:
+    """The answer to "which file do I want": the newest build per platform,
+    what it runs on said BEFORE the buttons (website audit 2026-10-01)."""
+    buttons, sums = [], []
+    for plat in ("macos", "linux"):
+        a = next((x for x in rel["assets"] if x["platform"] == plat), None)
+        if a is None:
+            continue
+        name, needs = _BUTTON[plat]
+        buttons.append(
+            f'          <a class="btn btn-primary dl-button" href="get.php?f={a["name"]}">\n'
+            f'            Download for {name}\n'
+            f'            <span class="btn-sub">{needs} &middot; {human_size(a["size"])}</span>\n'
+            f'          </a>')
+        if a.get("digest"):
+            sums.append(f'          <li><code>{a["name"]}</code><br>'
+                        f'<code class="dl-sum">{a["digest"].split(":", 1)[1]}</code></li>')
+    checks = ""
+    if sums:
+        checks = ('        <details class="dl-sums">\n'
+                  '          <summary>SHA-256 checksums</summary>\n'
+                  '          <ul>\n' + "\n".join(sums) + '\n          </ul>\n'
+                  '        </details>\n')
+    return f"""    <section class="section-shot dl-latest-block">
+      <div class="wrap prose">
+        <h2>Nocturne {rel["version"]} <span class="dl-date">released {rel["date"]}</span></h2>
+        <p>Runs on <strong>macOS with Apple Silicon</strong> (M1 or newer) and on
+          <strong>64-bit Linux</strong> with glibc 2.39 or newer, such as Ubuntu 24.04.
+          There is no Windows or Intel Mac build yet.</p>
+        <p class="dl-buttons">
+{chr(10).join(buttons)}
+        </p>
+        <p class="fine"><a href="changelog.html">What&rsquo;s new in {rel["version"]}</a> &middot;
+          No data of your own yet? <a href="sample-data.html">Try the sample data first</a>.</p>
+{checks}      </div>
+    </section>
+"""
+
+
 def page_html(releases: list[dict]) -> str:
     latest = releases[0] if releases else None
     plats = {a["platform"] for a in (latest["assets"] if latest else [])}
+    older = releases[1:]
+    older_html = ""
+    if older:
+        older_html = f"""
+        <details class="dl-older">
+          <summary>Older releases ({len(older)})</summary>
+          <p class="fine">Kept so you can go back to the version you were using.</p>
+          <table class="dl-table">
+            <thead>
+              <tr><th>Version</th><th>Released</th><th>Download</th></tr>
+            </thead>
+            <tbody>
+{_rows(older)}
+            </tbody>
+          </table>
+        </details>
+"""
     return f"""---
 title: Download Nocturne — macOS and Linux
-description: Download Nocturne, the free guided astrophotography app for the ZWO Seestar. Every release, for macOS and Linux, with its own changelog entry.
+description: Download Nocturne, the free guided astrophotography app for Seestar telescopes. The latest build for macOS and Linux, and every earlier release.
 scripts: main.js
 ---
 <main id="top">
@@ -117,36 +183,23 @@ scripts: main.js
       <div class="wrap prose">
         <p class="eyebrow">Download</p>
         <h1>Get Nocturne</h1>
-        <p>Free and open source, under the GPL. Every release is listed here — the
-          newest at the top, older ones kept so you can go back to the version you
-          were using.</p>
+        <p>Free and open source, under the GPL. No account, no licence key.</p>
       </div>
     </section>
 
+{_latest_block(latest) if latest else ""}
     <section class="section-shot">
       <div class="wrap prose">
-        <table class="dl-table">
-          <thead>
-            <tr><th>Version</th><th>Released</th><th>Download</th></tr>
-          </thead>
-          <tbody>
-{_rows(releases)}
-          </tbody>
-        </table>
-
         <h2>Before you run it</h2>
-        <p><strong>macOS</strong> — Apple Silicon (M1 or newer); there is no Intel build.
-          It is not notarized, so on first launch macOS may block it: right-click the app →
-          <b>Open</b> → <b>Open</b>, or allow it under
-          <b>System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security</b>.</p>
-        <p><strong>Linux</strong> — x86-64, built on Ubuntu 24.04, so it needs glibc 2.39
-          or newer. Unpack the tarball anywhere and run <code>Nocturne/Nocturne</code>;
-          there is nothing to install.
+        <p><strong>macOS</strong> — it is not notarized, so on first launch macOS may
+          block it: right-click the app → <b>Open</b> → <b>Open</b>, or allow it under
+          <b>System&nbsp;Settings → Privacy&nbsp;&amp;&nbsp;Security</b>. You only do this once.</p>
+        <p><strong>Linux</strong> — unpack the tarball anywhere and run
+          <code>Nocturne/Nocturne</code>; there is nothing to install.
           {"" if "linux" in plats else "(No Linux build in the newest release yet.)"}</p>
-        <p class="fine">Nothing to process yet? <a href="sample-data.html">Sample data</a> —
-          real Seestar captures, free to download. And see what it produces in the
-          <a href="gallery.html">gallery</a>.</p>
-      </div>
+        <p class="fine">See what it produces in the <a href="gallery.html">gallery</a>, and
+          <a href="setup.html">Install &amp; set up</a> for the free tools worth adding.</p>
+{older_html}      </div>
     </section>
 </main>
 """
