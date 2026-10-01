@@ -285,8 +285,13 @@ class QualityChart(QWidget):
 
     def note(self) -> str:
         note = NOTE_TIME if self._timed else NOTE_NO_TIME
-        if any(self._is_moved(self._stats[i]) for i in self._rows):
-            note += NOTE_MOVED
+        stats = [self._stats[i] for i in self._rows]
+        if any(self._is_moved(s) for s in stats):
+            if any(self._is_rejected(s) and not self._is_moved(s) for s in stats):
+                note += NOTE_MOVED
+            else:
+                # Every reject moved: no amber dot left to name.
+                note = note.replace("● rejected", NOTE_MOVED.strip())
         return note
 
     def plotted(self) -> list[tuple[int, float]]:

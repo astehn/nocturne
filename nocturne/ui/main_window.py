@@ -1884,8 +1884,10 @@ class MainWindow(QMainWindow):
         where it was, and the toolbar button follows."""
         self.settings.solve_window_geometry = bytes(
             self._solve_window.saveGeometry().toHex()).decode()
-        rel = self._solve_window.pos() - self.pos()
-        self.settings.solve_window_offset = [rel.x(), rel.y()]
+        if not self.isFullScreen():
+            # From a fullscreen window the offset means nothing once windowed.
+            rel = self._solve_window.pos() - self.pos()
+            self.settings.solve_window_offset = [rel.x(), rel.y()]
         save_settings(self.settings, self._settings_path)
         self._solve_act.setChecked(False)
 

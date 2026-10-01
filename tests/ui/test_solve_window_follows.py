@@ -77,3 +77,17 @@ def test_the_offset_is_written_to_and_read_from_the_settings_file(tmp_path):
     old = Settings()
     save_settings(old, path)
     assert load_settings(path).solve_window_offset == []
+
+
+def test_closing_it_in_fullscreen_keeps_the_windowed_offset(win, qtbot, monkeypatch):
+    """An offset measured from a fullscreen window means nothing once the
+    window is windowed again (review 2026-10-01)."""
+    win._open_plate_solve(); qtbot.wait(20)
+    win._open_plate_solve()
+    before = list(win.settings.solve_window_offset)
+    assert before, "fixture"
+    win._open_plate_solve(); qtbot.wait(20)
+    win._solve_window.move(win._solve_window.pos() + QPoint(-300, 200))
+    monkeypatch.setattr(win, "isFullScreen", lambda: True)
+    win._open_plate_solve()
+    assert win.settings.solve_window_offset == before

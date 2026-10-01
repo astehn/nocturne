@@ -67,3 +67,12 @@ def test_folded_the_legend_still_drops_cleanly(qtbot):
     b = _shown(qtbot, _with_moved())
     b.chart_panel.fold_btn.click()
     assert "●" not in b.chart_panel.caption.text()
+
+
+def test_when_every_reject_is_moved_the_legend_names_only_moved(qtbot):
+    """No amber dot left, so no amber legend (review 2026-10-01)."""
+    stats = _with_moved()
+    stats[2].moved = True
+    b = _shown(qtbot, stats)
+    note = b.chart.note()
+    assert "● moved" in note and "rejected" not in note
