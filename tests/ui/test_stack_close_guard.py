@@ -98,3 +98,23 @@ def test_progress_to_a_closed_window_stops_the_work(qtbot):
     shiboken6.delete(dlg._signals)
     with pytest.raises(Cancelled):
         report(1, 10, "Measuring")
+
+
+def test_a_stack_that_finishes_while_asking_is_not_closed_twice(qtbot):
+    """The question runs its own event loop; the stack can complete under it,
+    hand the master over and accept(). 'Stop and close' then must not reject
+    a dialog that already finished (review 2026-10-01)."""
+    from PySide6.QtWidgets import QDialog
+    dlg, release = _running(qtbot)
+
+    def finished_meanwhile():
+        dlg._set_busy(False)
+        dlg.accept()
+        return True
+    dlg._confirm_stop = finished_meanwhile
+    rejected = []
+    dlg.rejected.connect(lambda: rejected.append(1))
+    dlg.reject()
+    assert not rejected
+    assert dlg.result() == QDialog.DialogCode.Accepted
+    release.set()

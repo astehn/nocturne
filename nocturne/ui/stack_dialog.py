@@ -863,6 +863,8 @@ class StackDialog(QDialog):
         if self._busy:
             if not self._confirm_stop():
                 return
+            if not self.isVisible():
+                return      # finished while asking: already handed over and closed
             self._cancel_active()
         super().reject()
 
