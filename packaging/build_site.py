@@ -184,7 +184,23 @@ def nav_html(is_home: bool) -> str:
   </header>'''
 
 
-def head_html(name: str, meta: dict) -> str:
+def _faq_ld(body: str) -> dict | None:
+    """FAQPage markup built FROM the visible <details class="qa"> entries, so it
+    can never claim an answer the page does not show (website audit 2026-10-01)."""
+    import html as _html
+    def text(fragment: str) -> str:
+        return " ".join(_html.unescape(re.sub(r"<[^>]+>", " ", fragment)).split())
+    items = re.findall(r'<details class="qa"[^>]*>\s*<summary>(.*?)</summary>\s*'
+                       r'<div class="a">(.*?)</div>\s*</details>', body, re.S)
+    if not items:
+        return None
+    return {"@context": "https://schema.org", "@type": "FAQPage",
+            "mainEntity": [{"@type": "Question", "name": text(q),
+                            "acceptedAnswer": {"@type": "Answer", "text": text(a)}}
+                           for q, a in items]}
+
+
+def head_html(name: str, meta: dict, body: str = "") -> str:
     title = meta["title"]
     desc = meta["description"]
     url = f"{BASE}/" if name == "index.html" else f"{BASE}/{name}"
@@ -232,6 +248,8 @@ def head_html(name: str, meta: dict) -> str:
     ld = None
     if name == "index.html":
         ld = SOFTWARE_APP
+    elif name == "faq.html":
+        ld = _faq_ld(body)
     elif meta.get("article"):
         # No datePublished/dateModified: they can only come from file mtimes here,
         # which change on every checkout. A wrong date is worse than none.
@@ -289,7 +307,7 @@ def render(name: str, meta: dict, body: str) -> str:
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
-{base}{robots}{head_html(name, meta)}
+{base}{robots}{head_html(name, meta, body)}
 </head>
 <body>
 {skip}  <div class="stars" aria-hidden="true"></div>

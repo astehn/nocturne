@@ -61,3 +61,47 @@ def test_in_page_links_move_focus_not_only_the_scroll():
     js = (SITE / "main.js").read_text(encoding="utf-8")
     handler = js.split("Smooth-scroll for in-page anchor links", 1)[1].split("});\n});", 1)[0]
     assert "target.focus(" in handler
+
+
+def test_every_form_field_on_the_home_page_has_a_name():
+    """Placeholders vanish on typing and are not labels (audit 2026-10-01)."""
+    h = (SITE / "index.html").read_text(encoding="utf-8")
+    form = h.split('id="contribute-form"', 1)[1].split("</form>", 1)[0]
+    for field in re.findall(r"<(?:input|textarea)\b[^>]*>", form):
+        if 'type="hidden"' in field or 'class="hp"' in field or 'type="checkbox"' in field:
+            continue
+        fid = re.search(r'\bid="([\w-]+)"', field)
+        labelled = (fid and f'for="{fid.group(1)}"' in form) or "aria-label=" in field
+        assert labelled, field
+
+
+def test_every_tool_page_ends_with_a_next_step():
+    """Audit 2026-10-01: a reader who finishes a tool page gets one clear next
+    action — the Download page (not the old homepage anchor) and sample data."""
+    tools = (SITE / "tools.html").read_text(encoding="utf-8")
+    pages = sorted(set(re.findall(r'href="([\w-]+\.html)"', tools.split("<main", 1)[1]))
+                   - {"tools.html", "download.html", "sample-data.html", "guide.html",
+                      "index.html", "gallery.html", "planner.html", "faq.html",
+                      "setup.html", "changelog.html", "privacy.html", "support.html"})
+    assert len(pages) >= 10, pages
+    for name in pages:
+        h = (SITE / name).read_text(encoding="utf-8")
+        cta = h.split('class="tool-cta"', 1)
+        assert len(cta) == 2, name
+        assert 'href="download.html"' in cta[1][:600] and 'href="sample-data.html"' in cta[1][:600], name
+        assert 'href="/#download"' not in h, name
+
+
+def test_the_faq_carries_faqpage_markup_from_its_visible_entries():
+    """Audit 2026-10-01: machine-readable Q&A — built FROM the page, so it can
+    never say anything the visitor cannot see."""
+    import html as _h
+    import json
+    h = (SITE / "faq.html").read_text(encoding="utf-8")
+    blocks = re.findall(r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>', h, re.S)
+    faq = next(json.loads(b) for b in blocks if '"FAQPage"' in b)
+    visible = [_h.unescape(re.sub(r"<[^>]+>", "", q)).strip()
+               for q in re.findall(r"<summary>(.*?)</summary>", h, re.S)]
+    asked = [q["name"] for q in faq["mainEntity"]]
+    assert asked == visible and len(asked) >= 8
+    assert all(q["acceptedAnswer"]["text"].strip() for q in faq["mainEntity"])
