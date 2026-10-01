@@ -6,7 +6,8 @@ import os
 
 import numpy as np
 import shiboken6
-from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, Qt, QThreadPool, QTimer,
+from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, QPoint, QRect, Qt,
+                            QThreadPool, QTimer,
                             QUrl, Signal)
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -1856,18 +1857,25 @@ class MainWindow(QMainWindow):
             self.solve_panel.set_state("not_solved")
 
     def _show_solve_window(self) -> None:
-        """Where it was last put; the first time, over the top-right of the
-        picture — not over the right column, whose controls stay in reach."""
+        """On top of Nocturne, wherever Nocturne now is: at the place it was
+        last left RELATIVE to the main window, if that is inside the main
+        window; otherwise over the top-right of the picture — not over the
+        right column, whose controls stay in reach. Absolute positions left
+        this small window on another monitor (Andreas, 2026-10-01)."""
         w = self._solve_window
-        if getattr(self, "_solve_window_placed", False):
-            pass                    # hidden, not destroyed: it kept its place
-        elif self.settings.solve_window_geometry:
-            w.restoreGeometry(QByteArray.fromHex(self.settings.solve_window_geometry.encode()))
-        else:
-            w.adjustSize()
-            corner = self.image_view.mapToGlobal(self.image_view.rect().topRight())
-            w.move(corner.x() - w.width() - 16, corner.y() + 16)
+        if not getattr(self, "_solve_window_placed", False):
+            if self.settings.solve_window_geometry:   # its size; the place is set below
+                w.restoreGeometry(QByteArray.fromHex(self.settings.solve_window_geometry.encode()))
+            else:
+                w.adjustSize()
         self._solve_window_placed = True
+        off = self.settings.solve_window_offset
+        target = self.pos() + QPoint(int(off[0]), int(off[1])) if len(off) == 2 else None
+        if target is None or not self.frameGeometry().contains(
+                QRect(target, w.frameGeometry().size())):
+            corner = self.image_view.mapToGlobal(self.image_view.rect().topRight())
+            target = QPoint(corner.x() - w.width() - 16, corner.y() + 16)
+        w.move(target)
         w.show()
         w.raise_()
 
@@ -1876,6 +1884,8 @@ class MainWindow(QMainWindow):
         where it was, and the toolbar button follows."""
         self.settings.solve_window_geometry = bytes(
             self._solve_window.saveGeometry().toHex()).decode()
+        rel = self._solve_window.pos() - self.pos()
+        self.settings.solve_window_offset = [rel.x(), rel.y()]
         save_settings(self.settings, self._settings_path)
         self._solve_act.setChecked(False)
 

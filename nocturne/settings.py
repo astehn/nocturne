@@ -69,7 +69,12 @@ class Settings:
     # page and it can be turned off here. Default on: a beta that cannot tell
     # people a fix exists is worse for them than the request is.
     check_updates: bool = True
-    solve_window_geometry: str = ""  # Plate Solve tool window, Qt saveGeometry() hex
+    solve_window_geometry: str = ""  # Plate Solve tool window, Qt saveGeometry() hex (its SIZE)
+    # Where it sits RELATIVE to the main window, [dx, dy]; [] = default corner.
+    # Relative, so it opens on top of Nocturne on whichever screen Nocturne is
+    # now (Andreas, 2026-10-01: several monitors; an absolute place left it on
+    # another screen). The geometry above still supplies the size.
+    solve_window_offset: list = field(default_factory=list)
     toolbar_style: str = "text"     # "text" (icons and text) or "icons" (icons only, for small screens)
     update_notified_version: str = ""  # the release already announced once — never repeated
     # Usage counting, opt-in and three-valued: "unset" is "not asked yet", which
@@ -137,6 +142,7 @@ def load_settings(path: str) -> Settings:
         update_notified_version=data.get("update_notified_version", ""),
         toolbar_style=data.get("toolbar_style", "text"),
         solve_window_geometry=data.get("solve_window_geometry", ""),
+        solve_window_offset=list(data.get("solve_window_offset", []) or []),
         telemetry=data.get("telemetry", "unset"),
         telemetry_id=data.get("telemetry_id", ""),
         telemetry_id_month=data.get("telemetry_id_month", ""),
