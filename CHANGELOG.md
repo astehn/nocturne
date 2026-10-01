@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.44.0] — 2026-10-01
+
+A stray key can't end a long stack, and Nocturne tells you when Unlinked costs you your colour calibration.
+
+### Added
+- Stack: while it is working, Esc, Close and the window's close button ask "Stop stacking?" first. Keep stacking is the default.
+- Stretch: an amber note above Apply when an Unlinked stretch would discard a photometric colour calibration (SPCC), and an amber notice when it does.
+- Stack's chart draws frames moved to rejected/ in faint grey, also when you open the folder again later.
+
+### Changed
+- The Plate Solve window opens on top of Nocturne, wherever Nocturne is, instead of where it was last left. Useful with several monitors.
+- Background: "Show what was removed" gives the amount removed on the step itself, not in the log.
+
+### Fixed
+- A photometric colour calibration that couldn't run and fell back to sky balance was still recorded as photometric. The Unlinked warning and the provenance report now follow what actually ran.
+- After Auto Enhance calibrated colour photometrically, choosing Unlinked gave no warning.
+- After reopening a project, the Colour step could read "changes not applied" with nothing changed.
+- Closing the Stack window mid-run printed an error.
+
 ## [0.43.0] — 2026-09-29
 
 Upscale Crop shows you what it did, and Nocturne knows the Seestar S50 Pro.
