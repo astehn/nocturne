@@ -616,7 +616,8 @@ class FrameBrowser(QWidget):
         # the instance, so a click on a point drives the list directly. It now
         # adds its height to the dialog's (the list column no longer hides it),
         # which is why it folds on a short screen: see CHART_ROOM_MIN.
-        self.chart = QualityChart(verdict_text, is_rejected, shown=self.night_on)
+        self.chart = QualityChart(verdict_text, is_rejected, shown=self.night_on,
+                                  is_moved=is_moved)
         self.chart.point_clicked.connect(self.select_from_chart)
         self.chart_panel = ChartPanel(self.chart)
         preview_side = QWidget()
