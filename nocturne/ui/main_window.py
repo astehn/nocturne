@@ -6330,7 +6330,10 @@ class MainWindow(QMainWindow):
         """
         if self.project is None:
             return
+        note = getattr(self._panel, "show_model_note", None)
         if not checked:
+            if note is not None:
+                note.setVisible(False)
             self._refresh()
             return
         from ..core.inspect import background_model
@@ -6344,11 +6347,12 @@ class MainWindow(QMainWindow):
                 self._panel.show_model_check.setChecked(False)
             return
         self._set_canvas(model.image)
-        self._show_output(
-            f"Showing the removed gradient — {model.span * 100:.2f}% of the "
-            f"image's range. Mid-grey is where nothing was taken. A smooth ramp "
-            f"is sky-glow; if it carries the shape of your object, the fit took "
-            f"signal with it.")
+        # On the step, not in the log (his call 2026-10-01): a view changes
+        # nothing, and the panel's note already says how to read it.
+        if note is not None:
+            note.setText(f"The removed gradient spans {model.span * 100:.2f}% "
+                         f"of the image's range.")
+            note.setVisible(True)
 
     def _on_show_clipping(self, checked: bool) -> None:
         """Toggle the clipped-pixel overlay. Global, not per-step: clipping is
