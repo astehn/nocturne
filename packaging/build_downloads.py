@@ -147,8 +147,7 @@ def _latest_block(rel: dict) -> str:
 {chr(10).join(buttons)}
         </p>
         <p class="fine"><a href="changelog.html">What&rsquo;s new in {rel["version"]}</a> &middot;
-          First time? <a href="start-here.html">Start here</a> walks you through a first picture
-          with a free <a href="sample-data.html">sample file</a>.</p>
+          No data of your own yet? <a href="sample-data.html">Try the sample data first</a>.</p>
 {checks}      </div>
     </section>
 """
