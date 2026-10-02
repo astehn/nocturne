@@ -84,3 +84,8 @@ def test_refresh_keeps_the_checksum(monkeypatch, tmp_path):
     out = bd.refresh()
     assert out[0]["assets"][0]["digest"] == "sha256:" + "cd" * 32
     # gh's "assets" field already carries each asset's digest; nothing extra to ask for.
+
+
+def test_first_timers_are_pointed_at_start_here():
+    main = _page().split('dl-latest-block"', 1)[1].split("</section>", 1)[0]
+    assert 'href="start-here.html"' in main
