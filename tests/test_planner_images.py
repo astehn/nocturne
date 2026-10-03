@@ -246,7 +246,7 @@ def test_the_promoted_target_is_validated_server_side():
     admin = _code_only((SITE / "admin" / "admin.php").read_text(encoding="utf-8"))
     branch = admin[admin.index("planner_add"):]
     branch = branch[:branch.index("planner_remove")]
-    assert "nocturne_planner_targets" in branch, \
+    assert "nocturne_planner_known_ids" in branch, \
         "planner_add does not consult the target list at all"
     check = branch.index("in_array")
     store = branch.index("nocturne_planner_add(")
