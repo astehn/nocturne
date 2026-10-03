@@ -1026,7 +1026,7 @@ def test_the_curve_draws_every_part_of_the_night():
     assert 'role="img"' in svg
     assert 'aria-label="Altitude through the night: highest 66&deg; at 21:20"' in svg \
         or 'aria-label="Altitude through the night: highest 66° at 21:20"' in svg, svg
-    assert svg.count('class="t-curve-tick"') == 2 and ">22:00<" in svg
+    assert svg.count('class="t-curve-tick"') == 4 and ">22:00<" in svg, "two times + 30° and 90"
     assert "NaN" not in svg and "style=" not in svg
     # Every coordinate rounded to one decimal.
     assert not re.search(r"\d\.\d\d", svg), svg
@@ -1096,8 +1096,9 @@ def test_a_target_below_the_horizon_sits_on_the_ground_line():
 # ---- Direction toggles (spec C2) -------------------------------------------
 
 _SECTORS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-_SECTOR_NAMES = ["North", "North-east", "East", "South-east",
-                 "South", "South-west", "West", "North-west"]
+# The visible letters lead the accessible name (WCAG 2.5.3, label in name).
+_SECTOR_NAMES = ["N, north", "NE, north-east", "E, east", "SE, south-east",
+                 "S, south", "SW, south-west", "W, west", "NW, north-west"]
 
 
 def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
@@ -1106,7 +1107,7 @@ def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
     view = form[form.index('<fieldset class="view">'):form.index('class="prefs"')]
     assert "<legend>Where is your view clear?</legend>" in view
     buttons = re.findall(r'<button type="button" class="dir" data-dir="(\d)" '
-                         r'aria-label="([A-Za-z-]+)" aria-pressed="true">([A-Z]+)</button>', view)
+                         r'aria-label="([A-Za-z, -]+)" aria-pressed="true">([A-Z]+)</button>', view)
     assert buttons == [(str(i), n, s) for i, (n, s) in enumerate(zip(_SECTOR_NAMES, _SECTORS))]
     assert view.count("<button") == 8
     assert form.index('id="sky-desc"') < form.index('<fieldset class="view">')
@@ -1219,16 +1220,19 @@ def test_a_blocked_reveal_is_ranked_not_filtered_out():
     out = _node(f"""
       const E = {_req(ENGINE)};
       const P = {_req(PLANNER)};
-      const mk = (id, open) => ({{id, grade: 'Rewarding', type: 'HII', peakAltitude: 60,
+      const mk = (id, open) => ({{id, grade: 'Rewarding', type: 'HII', peakAltitude: 60, usablePeak: 0,
         moonUp: false, usableMinutes: 0, usableMinutesOpen: open,
         usableStart: null, usableEnd: null, openStart: 1, openEnd: 2}});
-      const list = [mk('short', 90), mk('long', 300)];
+      // Both over the short-window bar, so only the score (minutes x the
+      // peak markHeld swaps in) can put 'long' first.
+      const list = [mk('short', 150), mk('long', 300)];
       const held = P.markHeld(list, 'blocked', E.rank, {{moonLit: 0, windowMinutes: 600}});
       const small = P.markHeld([Object.assign(mk('tiny', 300), {{usableMinutes: 300}})],
                                'small', E.rank, {{moonLit: 0, windowMinutes: 600}});
       console.log(JSON.stringify({{
         ids: held.map(e => e.id), mins: held.map(e => e.usableMinutes),
         why: held.map(e => e.revealed), start: held.map(e => e.usableStart),
+        peak: held.map(e => e.usablePeak),
         untouched: list.map(e => [e.usableMinutes, e.revealed === undefined]),
         small: small.map(e => e.revealed)}}));
     """)
@@ -1236,6 +1240,7 @@ def test_a_blocked_reveal_is_ranked_not_filtered_out():
     assert out["mins"] == [0, 0], "the card still says it is blocked, after ranking"
     assert out["why"] == ["blocked", "blocked"]
     assert out["start"] == [None, None]
+    assert out["peak"] == [0, 0], "and its usable peak is still nothing, after ranking"
     assert out["untouched"] == [[0, True], [0, True]], "copies, not the evaluated objects"
     assert out["small"] == ["small"]
     js = PLANNER.read_text(encoding="utf-8")
@@ -1291,6 +1296,8 @@ def test_the_strip_shades_each_month_by_the_spec_thresholds():
     assert [c[3] for c in cells] == list("JFMAMJJASOND")
     assert sum(1 for c in cells if c[1]) == 1 and cells[9][1] == " now"
     assert cells[4][2] == "May: 3.0 h" and cells[0][2] == "January: none"
+    assert cells[1][2] == "February: 59 min", "not 1.0 h (final review D2)"
+    assert cells[2][2] == "March: 1.0 h"
     assert re.match(r'<div class="t-season" role="img" aria-label="[^"]*October[^"]*">', html), html
     assert "May 3.0 h" in html or "May: 3.0 h" in re.search(r'aria-label="([^"]*)"', html).group(1)
     assert "NaN" not in html and "style=" not in html
@@ -1352,3 +1359,139 @@ def test_the_strip_is_styled_by_class():
     for cls in ("m0", "m1", "m2", "m3", "now"):
         assert re.search(r"\.t-month\." + cls + r"\b[^{]*\{", css), cls
     assert re.search(r"\.t-month\.now[^{]*\{[^}]*--verdict-go", css)
+
+
+# ---- Final review fix wave --------------------------------------------------
+
+def _rect(svg, cls):
+    m = re.search(r'<rect class="%s" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/>' % cls, svg)
+    assert m, svg
+    return [float(v) for v in m.groups()]
+
+
+@needs_node
+def test_the_usable_stretch_is_shaded_only_above_the_floor_with_a_scale():
+    """Final review C1: the green ran down through the grey "too low" band, so
+    the floor was unreadable; and nothing said what height the lines were."""
+    svg = _curve(_NIGHT, _MOON, 0, 600, 120, 480)
+    x, y, w, h = _rect(svg, "t-curve-usable")
+    fy = float(re.search(r'<line class="t-curve-floor" x1="[\d.]+" y1="([\d.]+)"', svg).group(1))
+    assert y + h <= fy + 1e-9, (y, h, fy)
+    assert h > 0
+    lx, ly, lw, lh = _rect(svg, "t-curve-low")
+    assert ly == fy, "the grey band starts where the green stops"
+    scale = re.findall(r'<text class="t-curve-tick" x="([\d.]+)" y="([\d.]+)" '
+                       r'text-anchor="start">([^<]*)</text>', svg)
+    assert [t[2] for t in scale] == ["30°", "90°"], svg
+    assert float(scale[0][0]) == float(scale[1][0]) == lx, "on the left edge"
+    assert float(scale[1][1]) < float(scale[0][1]) <= fy, "90 above 30, 30 at the line"
+
+
+def test_the_curve_floor_is_dashed_and_the_curve_is_capped():
+    """Final review C1/C2: 300 user units stretched to a 900 px card made the
+    ticks 30 px; 520 px holds them near 19 px at 11 units."""
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    curve = re.search(r"\.t-curve \{([^}]*)\}", css).group(1)
+    assert "max-width: 520px" in curve and "width: 100%" in curve
+    floor = re.search(r"\.t-curve-floor \{([^}]*)\}", css).group(1)
+    assert "stroke: var(--muted)" in floor and "stroke-dasharray: 3 3" in floor
+    tick = re.search(r"\.t-curve-tick \{([^}]*)\}", css).group(1)
+    assert "font-size: 11px" in tick
+
+
+@needs_node
+def test_the_open_season_is_worked_out_only_when_the_view_hides_it_all():
+    """Final review I1: the all-clear season costs twelve more nights, so it is
+    asked for only when the view's own season never reaches the usable
+    minimum -- and then the sentence says the view is why."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      let calls = 0;
+      const open = [0, 0, 0, 0, 0, 0, 0, 0, 120, 200, 200, 120];
+      const get = () => {{ calls++; return open; }};
+      const fine = P.seasonText(E, [0, 0, 0, 0, 0, 0, 0, 0, 120, 200, 200, 120], get);
+      const c1 = calls;
+      const held = P.seasonText(E, Array(12).fill(0), get);
+      const c2 = calls;
+      const never = P.seasonText(E, Array(12).fill(0), () => {{ calls++; return Array(12).fill(0); }});
+      console.log(JSON.stringify({{fine, c1, held, c2, never, c3: calls}}));
+    """)
+    assert out["c1"] == 0, "a season the view allows never asks for the open one"
+    assert out["fine"] == "Best Oct–Nov from here."
+    assert out["held"] == "Only in your blocked directions from here." and out["c2"] == 1
+    assert out["never"] == "Never gets high enough from here." and out["c3"] == 2
+    js = PLANNER.read_text(encoding="utf-8")
+    rnd = js[js.index("function fillSeason("):]
+    rnd = rnd[:rnd.index("// Remember which rows are open")]
+    assert "seasonText(E, mins, function" in rnd
+    # The open season shares the cache, under the all-clear view's own key.
+    assert "OPEN_VIEW.join(',')" in rnd
+
+
+def test_a_season_that_throws_cannot_stop_the_rest_of_the_wiring():
+    """Final review D1: fillSeason runs inside render()'s wiring; an exception
+    there would leave every later listener unattached."""
+    js = PLANNER.read_text(encoding="utf-8")
+    body = js[js.index("function fillSeason("):]
+    body = body[:body.index("// Remember which rows are open")]
+    assert re.search(r"function fillSeason\(d\) \{\s*try \{", body), body
+    assert re.search(r"\} catch \(e\) \{[^}]*\}\s*\}\s*$", body.strip() + "\n"), body
+
+
+@needs_node
+def test_a_blocked_card_that_also_needs_a_darker_sky_says_both():
+    """Final review M2: partition() files a target behind the view as blocked
+    whatever its sky, so the card is the only place the second reason shows."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const dark = {{revealed: 'blocked', sky: 'dark'}}, city = {{revealed: 'blocked', sky: 'city'}};
+      console.log(JSON.stringify([
+        P.heldWhy(dark, 'S30 Pro', E.skyOk(dark, 'suburban')),
+        P.heldWhy(city, 'S30 Pro', E.skyOk(city, 'suburban')),
+        P.heldWhy({{revealed: 'darker', sky: 'rural'}}, 'S30 Pro', false),
+        P.heldWhy({{revealed: 'small', sky: 'city'}}, 'S30 <Pro>', true),
+        P.heldWhy({{sky: 'dark'}}, 'S30 Pro', false)]));
+    """)
+    assert out == [" &middot; behind your blocked directions &middot; needs a dark sky",
+                   " &middot; behind your blocked directions",
+                   " &middot; needs a rural sky",
+                   " &middot; too small for your S30 &lt;Pro&gt;",
+                   ""]
+    js = PLANNER.read_text(encoding="utf-8")
+    card = js[js.index("function card(t, i)"):js.index("html += shown.map(card)")]
+    assert "heldWhy(t, inst.label, E.skyOk(t, prefs.sky))" in card
+
+
+@needs_node
+@pytest.mark.parametrize("zone,hour12,first,labels", [
+    # 18:10-06:10 UTC. Stockholm (+02:00 in October): 20:10 -> first whole
+    # hour 21:00, odd, so the ticks are 22, 00, 02, 04, 06, 08.
+    ("Europe/Stockholm", False, None, ["22:00", "00:00", "02:00", "04:00", "06:00", "08:00"]),
+    ("Europe/Stockholm", True, None, ["10:00 pm", "12:00 am", "02:00 am", "04:00 am",
+                                      "06:00 am", "08:00 am"]),
+    # +05:30: 23:40 local -> 00:00 is 18:30 UTC, not on a UTC whole hour.
+    ("Asia/Kolkata", False, "2026-10-03T18:30:00.000Z", ["00:00", "02:00", "04:00", "06:00", "08:00", "10:00"]),
+])
+def test_curve_ticks_land_on_the_pages_own_whole_even_hours(zone, hour12, first, labels):
+    """Final review D3: curveTicks is pure, so it is exercised, not grepped."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const clock = P.makeClock({json.dumps(zone)}, 0, {json.dumps(hour12)});
+      const win = {{kind: 'astronomical', start: new Date(Date.UTC(2026, 9, 3, 18, 10)),
+                   end: new Date(Date.UTC(2026, 9, 4, 6, 10))}};
+      const t = P.curveTicks(win, clock);
+      console.log(JSON.stringify({{labels: t.map(k => k.label), first: t[0].x.toISOString(),
+        none: P.curveTicks({{kind: 'none', start: null, end: null}}, clock)}}));
+    """)
+    assert [l.lower() for l in out["labels"]] == labels
+    if first:
+        assert out["first"] == first
+    assert out["none"] == []
+
+
+def test_detail_joins_the_facts_with_a_single_space():
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "'<dl class=\"t-facts\">'  +" not in js
+    assert "'<dl class=\"t-facts\">' + rows.map(" in js

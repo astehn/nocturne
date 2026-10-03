@@ -423,7 +423,7 @@ def test_a_short_window_costs_a_showpiece_its_lead():
       {id:'pacman', name:'p', ra:13.2, dec:56.63, size:35, type:'HII', grade:'Rewarding', sky:'city'}]""") + """
       const winMins = (w.end - w.start) / 60000;
       // Synthetic pair for the 60%-of-the-dark-window half of the bar.
-      const mk = (id, grade, mins) => ({id, grade, type:'HII', usableMinutes: mins, peakAltitude: 60});
+      const mk = (id, grade, mins) => ({id, grade, type:'HII', usableMinutes: mins, peakAltitude: 60, usablePeak: 60});
       const summer = [mk('show', 'Showpiece', 100), mk('rew', 'Rewarding', 160)];
       console.log(JSON.stringify({
         mins: Object.fromEntries(ev.map(e => [e.id, e.usableMinutes])),
@@ -718,3 +718,53 @@ def test_season_minutes_count_only_open_directions():
     assert all(n <= p <= a for n, p, a in zip(out["none"], out["part"], out["all"]))
     assert any(n < p < a for n, p, a in zip(out["none"], out["part"], out["all"])), out
     assert out["again"] == out["all"], "the cached windows give the same answer"
+
+
+def test_a_season_lost_only_to_the_view_says_so():
+    """Final review I1: a revealed BLOCKED card's strip said "Never gets high
+    enough from here." -- false; it gets high enough, in the wrong direction.
+    The SOUTH fixture stays inside SE+S+SW all year (its 30-degree crossings
+    are fixed by geometry, not the month)."""
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const t = {SOUTH};
+      const noSouth = Array(8).fill(true); noSouth[3] = noSouth[4] = noSouth[5] = false;
+      const held = E.seasonMinutes(t, 56.05, 12.69, 2026, noSouth);
+      const open = E.seasonMinutes(t, 56.05, 12.69, 2026);
+      const never = E.seasonMinutes({{ra: 201.7, dec: -47.48}}, 56.05, 12.69, 2026);
+      console.log(JSON.stringify({{ held, open,
+        both: E.bestMonthsText(held, open), one: E.bestMonthsText(held),
+        never: E.bestMonthsText(never, never),
+        normal: [E.bestMonthsText(open), E.bestMonthsText(open, open)] }}));
+    """)
+    assert max(out["held"]) < 45 <= max(out["open"]), out
+    assert out["both"] == "Only in your blocked directions from here."
+    assert out["one"] == "Never gets high enough from here."
+    assert out["never"] == "Never gets high enough from here."
+    assert out["normal"][0] == out["normal"][1] and out["normal"][0].startswith("Best"), out["normal"]
+
+
+def test_rank_uses_the_peak_inside_the_view_not_the_whole_night():
+    """Final review M1: with SE/S/SW blocked, a target due south peaks behind
+    the block; its usable peak is lower than the night's, and 0 when nothing
+    is usable."""
+    out = _node(_evaluated("[]") + """
+      const noSouth = Array(8).fill(true); noSouth[3] = noSouth[4] = noSouth[5] = false;
+      const t = {id:'s20', name:'s', ra:10, dec:20, size:60, type:'HII', grade:'Rewarding', sky:'city'};
+      const a = E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro);
+      const b = E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noSouth);
+      const c = E.evaluateTarget(""" + SOUTH + """, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noSouth);
+      const inRun = b.samples.filter(s => s.t >= b.usableStart && s.t <= b.usableEnd)
+                             .reduce((m, s) => Math.max(m, s.alt), -90);
+      // Two otherwise-equal targets: the one high only behind the block ranks lower.
+      const hi = Object.assign({}, b, {id: 'hi', usableMinutes: 120, usablePeak: 30, peakAltitude: 80});
+      const lo = Object.assign({}, b, {id: 'lo', usableMinutes: 120, usablePeak: 60, peakAltitude: 60});
+      console.log(JSON.stringify({ a: [a.usablePeak, a.peakAltitude], b: [b.usablePeak, b.peakAltitude],
+        inRun, c: c.usablePeak, order: E.rank([hi, lo], {moonLit: 0}).map(e => e.id) }));
+    """)
+    assert out["a"][0] == out["a"][1], "with the view clear the two are the same"
+    assert out["b"][0] < out["b"][1], out["b"]
+    assert out["b"][1] == out["a"][1], "peakAltitude is still the whole night's"
+    assert out["b"][0] == out["inRun"]
+    assert out["c"] == 0
+    assert out["order"] == ["lo", "hi"]
