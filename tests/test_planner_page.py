@@ -743,3 +743,34 @@ def test_a_target_row_opens_to_show_more():
     assert "t-thumb" in js, "the thumbnail slot must exist even before images do"
     for fact in ("Type", "Size", "Framing", "Highest", "Worth giving it"):
         assert f"'{fact}'" in js or f'"{fact}"' in js, fact
+
+
+def test_place_choices_render_inside_the_form_above_the_telescope():
+    """His report 2026-10-03: on a phone 'Which one?' landed below the telescope
+    and preferences, out of sight. The slot sits right after Use my location."""
+    html = _html()
+    hits, scope = html.find('id="hits"'), html.find('id="scope"')
+    locate = html.find('id="locate-row"')
+    assert -1 < locate < hits < scope, (locate, hits, scope)
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "getElementById('hits')" in js
+
+
+def test_the_sky_choice_is_offered_with_plain_descriptions():
+    html = _html()
+    assert 'id="sky"' in html
+    for value in ("city", "suburban", "rural", "dark"):
+        assert f'value="{value}"' in html, value
+    assert "Milky Way" in html, "skies are described by what you can see"
+
+
+def test_a_preference_saved_before_sky_existed_falls_back_to_suburban():
+    """Review Focus 3: a returning visitor's prefs have no `sky`."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "prefs.sky = SKIES.indexOf(savedPrefs.sky) >= 0 ? savedPrefs.sky : 'suburban'" in js
+
+
+def test_the_factor_rows_fold_behind_details():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert '<details class="conditions"' in js
+    assert "E.lean(" in js
