@@ -1091,3 +1091,166 @@ def test_a_target_below_the_horizon_sits_on_the_ground_line():
     pts = re.search(r'class="t-curve-target" points="([^"]*)"', svg).group(1).split()
     ys = [float(p.split(",")[1]) for p in pts]
     assert ys[0] == ys[2] == max(ys), ys
+
+
+# ---- Direction toggles (spec C2) -------------------------------------------
+
+_SECTORS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
+
+def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
+    html = _html()
+    form = html[html.index('<form id="where"'):html.index("</form>")]
+    view = form[form.index('<fieldset class="view">'):form.index('class="prefs"')]
+    assert "<legend>Where is your view clear?</legend>" in view
+    buttons = re.findall(r'<button type="button" class="dir" data-dir="(\d)" '
+                         r'aria-pressed="true">([A-Z]+)</button>', view)
+    assert buttons == [(str(i), s) for i, s in enumerate(_SECTORS)]
+    assert form.index('id="sky-desc"') < form.index('<fieldset class="view">')
+
+
+def test_the_direction_row_is_one_row_of_eight():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.view \{[^}]*grid-template-columns: repeat\(8, 1fr\)", css)
+    assert re.search(r"\.dir\.off\b[^{]*\{", css)
+
+
+@needs_node
+def test_a_saved_view_is_taken_only_when_it_is_eight_booleans():
+    """Review Focus 2: a preference saved before this release has no `view`,
+    and must come back all OPEN, not all blocked."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const mixed = [true, false, true, true, false, true, true, true];
+      console.log(JSON.stringify([
+        P.validView(undefined), P.validView(null), P.validView([true, true]),
+        P.validView([1, 1, 1, 1, 1, 1, 1, 1]), P.validView('NNNNNNNN'),
+        P.validView(mixed), P.validView(Array(8).fill(false))]));
+    """)
+    open8 = [True] * 8
+    assert out[:5] == [open8] * 5
+    assert out[5] == [True, False, True, True, False, True, True, True]
+    assert out[6] == [False] * 8, "all blocked is a real choice, kept as saved"
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "prefs.view = validView(savedPrefs.view);" in js
+    assert "var prefs = { clock: '24', units: 'c', sky: 'suburban', view: validView(null) };" in js
+
+
+@needs_node
+def test_a_saved_view_is_a_copy_not_the_saved_array():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const saved = [true, false, true, true, true, true, true, true];
+      const v = P.validView(saved); v[0] = false;
+      console.log(JSON.stringify(saved));
+    """)
+    assert out[0] is True
+
+
+def test_every_target_is_evaluated_against_the_view():
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "E.evaluateTarget(t, win, loc.lat, loc.lon, inst, prefs.view)" in js
+    assert js.count("E.evaluateTarget(") == 1
+    assert ("var hidden = parts.darker.length + parts.tooSmall.length + "
+            "parts.blocked.length;") in js
+
+
+@needs_node
+def test_the_blocked_reveal_says_what_pressing_it_will_do():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([P.revealText('blocked', 3, '', false),
+                                  P.revealText('blocked', 3, '', true)]));
+    """)
+    assert out == ["3 more are behind your blocked directions &rarr;",
+                   "Hide the 3 behind your blocked directions"]
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "id=\"rv-blocked\"" in js
+    assert "markRevealed(parts.blocked, 'blocked')" in js
+    assert "['darker', 'small', 'blocked'].forEach" in js
+    assert "reveal = { darker: false, small: false, blocked: false };" in js
+    assert js.count("reveal = { darker: false, small: false, blocked: false };") == 2, \
+        "declared, and reset on a new location"
+    assert "' &middot; behind your blocked directions'" in js
+
+
+@needs_node
+def test_a_revealed_blocked_card_reads_its_window_from_the_open_run():
+    """A blocked card has no usable window; it must never reach clock(null)."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const blocked = {{revealed: 'blocked', usableStart: null, usableEnd: null,
+                       openStart: 100, openEnd: 200, usableMinutes: 0}};
+      const short = {{revealed: 'blocked', usableStart: 120, usableEnd: 130,
+                     openStart: 100, openEnd: 200, usableMinutes: 10}};
+      const plain = {{usableStart: 120, usableEnd: 180, openStart: 100, openEnd: 200}};
+      console.log(JSON.stringify([P.cardWindow(blocked), P.cardWindow(short), P.cardWindow(plain)]));
+    """)
+    assert out == [[100, 200], [100, 200], [120, 180]]
+    js = PLANNER.read_text(encoding="utf-8")
+    card = js[js.index("function card(t, i)"):js.index("html += shown.map(card)")]
+    assert "t.usableStart" not in card and "t.usableEnd" not in card, \
+        "the card reads its times and bar through cardWindow()"
+    assert "cardWindow(t)" in card
+    sugg = js[js.index("function suggestedIntegration("):js.index("function fmtMins(")]
+    assert "t.revealed === 'blocked'" in sugg, "no integration advice for a target you cannot see"
+
+
+@needs_node
+def test_a_blocked_reveal_is_ranked_not_filtered_out():
+    """rank() drops anything under the usable minimum, which every blocked
+    target is by definition: a reveal that ranks through it shows nothing.
+    Held back by the view, they rank on what they would give with it clear."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const mk = (id, open) => ({{id, grade: 'Rewarding', type: 'HII', peakAltitude: 60,
+        moonUp: false, usableMinutes: 0, usableMinutesOpen: open,
+        usableStart: null, usableEnd: null, openStart: 1, openEnd: 2}});
+      const list = [mk('short', 90), mk('long', 300)];
+      const held = P.markHeld(list, 'blocked', E.rank, {{moonLit: 0, windowMinutes: 600}});
+      const small = P.markHeld([Object.assign(mk('tiny', 300), {{usableMinutes: 300}})],
+                               'small', E.rank, {{moonLit: 0, windowMinutes: 600}});
+      console.log(JSON.stringify({{
+        ids: held.map(e => e.id), mins: held.map(e => e.usableMinutes),
+        why: held.map(e => e.revealed), start: held.map(e => e.usableStart),
+        untouched: list.map(e => [e.usableMinutes, e.revealed === undefined]),
+        small: small.map(e => e.revealed)}}));
+    """)
+    assert out["ids"] == ["long", "short"]
+    assert out["mins"] == [0, 0], "the card still says it is blocked, after ranking"
+    assert out["why"] == ["blocked", "blocked"]
+    assert out["start"] == [None, None]
+    assert out["untouched"] == [[0, True], [0, True]], "copies, not the evaluated objects"
+    assert out["small"] == ["small"]
+    js = PLANNER.read_text(encoding="utf-8")
+    mr = js[js.index("function markRevealed("):js.index("function render(")]
+    assert "markHeld(list, why, E.rank" in mr
+
+
+TARGETS_JSON = SITE / "planner-targets.json"
+
+
+@needs_node
+def test_every_direction_blocked_says_nothing_suits_not_nothing_high_enough():
+    """Review Focus 1: all eight blocked empties `shown` into `blocked`, and the
+    verdict takes the `hidden` path -- the same sum render() passes."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const T = {_req(TARGETS_JSON)}.targets;
+      const w = E.darkWindow(new Date("2026-10-03T12:00:00Z"), 56.05, 12.69);
+      const ev = T.map(t => E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro,
+                                             Array(8).fill(false)));
+      const parts = E.partition(ev, 'suburban');
+      const hidden = parts.darker.length + parts.tooSmall.length + parts.blocked.length;
+      const wx = {{ meanCloud: 0, maxCloud: 0, moonIllumination: 0, moonUpMinutes: 0 }};
+      const v = E.verdict(w, wx, parts.shown, null, {{hidden}});
+      console.log(JSON.stringify({{shown: parts.shown.length, blocked: parts.blocked.length,
+                                  darker: parts.darker.length, small: parts.tooSmall.length,
+                                  headline: v.headline, limiting: v.limiting}}));
+    """)
+    assert out["shown"] == 0
+    assert out["blocked"] > 10
+    assert out["darker"] == out["small"] == 0, "blocked wins over darker and too small"
+    assert out["headline"] == "skip"
+    assert out["limiting"] == "nothing suits your sky and telescope tonight"
