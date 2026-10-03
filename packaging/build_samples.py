@@ -124,7 +124,7 @@ def _card(t: dict) -> str:
     name = e(t["target"])
     # The planner links each target's opened card here (sample-data.html#s-m16);
     # the slug comes from the designation, before any common-name dash.
-    slug = re.sub(r"[^a-z0-9]", "", t["target"].split("—")[0].lower())
+    anchor = re.sub(r"[^a-z0-9]", "", t["target"].split("—")[0].lower())
     shot = f"{t['frames']} × {t['per_sub_s']:.0f} s" if t["frames"] and t["per_sub_s"] else ""
     facts = [f for f in (
         f"<strong>{shot}</strong>" if shot else "",
@@ -143,7 +143,7 @@ def _card(t: dict) -> str:
                  width="{t['pw']}" height="{t['ph']}" loading="lazy" decoding="async">
           </figure>
           <div class="sample-body">
-            <h3 id="s-{slug}">{name}</h3>
+            <h3 id="s-{anchor}">{name}</h3>
             <p class="fine">{" · ".join(facts)}</p>
             {about}
             <p>

@@ -816,3 +816,50 @@ def test_the_card_shows_constellation_grade_moons_and_a_bar():
     # ONE inline style exists already (the wind arrow's rotation, planner.js:108,
     # pinned by its own test). No new ones: geometry goes through el.style (CSP).
     assert js.count('style="') == 1, "geometry is set through el.style, not inline"
+
+
+@needs_node
+def test_the_pick_label_follows_the_verdict():
+    """Ruling (Task 5 review): no "Worth it tonight" under a skip verdict."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify(['worth going out', 'marginal', 'skip', "can't say"].map(P.pickLabel)));
+    """)
+    assert out == ["Worth it tonight", "Best tonight", "", ""]
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "var pick = pickLabel(v.headline);" in js
+    assert "!t.revealed && pick" in js, "a revealed card never carries the label"
+
+
+@needs_node
+def test_nothing_worth_pointing_at_only_when_nothing_is_held_back_either():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([
+        P.showNothingLine(0, 0, 'astronomical'),
+        P.showNothingLine(0, 3, 'astronomical'),
+        P.showNothingLine(2, 0, 'astronomical'),
+        P.showNothingLine(0, 0, 'none')]));
+    """)
+    assert out == [True, False, False, False]
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "if (showNothingLine(ranked.length, hidden, win.kind))" in js
+
+
+@needs_node
+def test_a_pressed_reveal_button_offers_to_hide():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([
+        P.revealText('darker', 4, '', false), P.revealText('darker', 4, '', true),
+        P.revealText('small', 2, 'Seestar S50', false), P.revealText('small', 2, 'Seestar S50', true)]));
+    """)
+    assert out == ["4 more under darker skies &rarr;", "Hide the 4 under darker skies",
+                   "2 more are too small for your Seestar S50 &rarr;",
+                   "Hide the 2 too small for your Seestar S50"]
+
+
+def test_show_all_sits_before_the_revealed_cards():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    more, revealed = js.find("id=\"more\""), js.find("html += revealed.map(card)")
+    assert -1 < js.find("html += shown.map(card)") < more < revealed
