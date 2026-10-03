@@ -340,6 +340,43 @@ def test_a_grades_row_for_an_unknown_id_fails():
         apply_grades(_targets(), grades)
 
 
+def _apply_with(rid, also=None, **change):
+    """apply_grades over the real rows with ONE row mutated (`also`: a second)."""
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import apply_grades, read_grades
+    grades = read_grades()
+    grades[rid] = dict(grades[rid], **change)
+    for oid, ochange in (also or {}).items():
+        grades[oid] = dict(grades[oid], **ochange)
+    return apply_grades(_targets(), grades)
+
+
+def test_a_merge_into_a_skip_row_fails():
+    """B86 is a Skip: nothing would carry B143's photos or name."""
+    with pytest.raises(SystemExit, match="B143 merges into B86"):
+        _apply_with("B143", merge_into="B86")
+
+
+def test_a_merge_chain_fails():
+    """IC0349 itself merges into M45, so B143 would vanish twice over. IC0349 is
+    given a grade and sky so ONLY the chain guard can catch it -- with its real
+    blank grade the Skip/blank guard fires first and this test would be hollow."""
+    with pytest.raises(SystemExit, match="B143 merges into IC0349"):
+        _apply_with("B143", merge_into="IC0349",
+                    also={"IC0349": {"grade": "Modest", "sky": "dark"}})
+
+
+def test_an_unknown_grade_fails():
+    with pytest.raises(SystemExit, match="B142 has grade 'Great'"):
+        _apply_with("B142", grade="Great")
+
+
+def test_an_unknown_sky_fails():
+    with pytest.raises(SystemExit, match="B142 has sky 'moonless'"):
+        _apply_with("B142", sky="moonless")
+
+
 def test_skips_and_absorbed_ids_are_not_published():
     ids = {t["id"] for t in _graded()}
     for gone in ("NGC2573", "NGC3172", "NGC1049", "NGC0884", "IC4703", "NGC6995"):

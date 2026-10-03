@@ -406,15 +406,47 @@ def test_grade_outranks_altitude():
       {id:'lo', name:'lo', ra:299.9, dec:22.7, size:30, type:'HII', grade:'Rewarding', sky:'city'}]""") + """
       console.log(JSON.stringify({
         alt: Object.fromEntries(ev.map(e => [e.id, e.peakAltitude])),
+        mins: Object.fromEntries(ev.map(e => [e.id, e.usableMinutes])),
         order: E.rank(ev, {moonLit: 0}).map(e => e.id) }));
     """)
     assert out["alt"]["hi"] > out["alt"]["lo"], "fixture must put the Modest one higher"
+    # Both clear the short-window bar, so this stays a test of grade alone.
+    assert min(out["mins"].values()) > 120, out["mins"]
     assert out["order"] == ["lo", "hi"]
 
 
+def test_a_short_window_costs_a_showpiece_its_lead():
+    """Helsingborg 2026-10-03: the Rosette (Showpiece) had about an hour, low,
+    and ranked above the Pacman (Rewarding) up all night overhead."""
+    out = _node(_evaluated("""[
+      {id:'rosette', name:'r', ra:97.98, dec:4.94, size:80, type:'Cl+N', grade:'Showpiece', sky:'city'},
+      {id:'pacman', name:'p', ra:13.2, dec:56.63, size:35, type:'HII', grade:'Rewarding', sky:'city'}]""") + """
+      const winMins = (w.end - w.start) / 60000;
+      // Synthetic pair for the 60%-of-the-dark-window half of the bar.
+      const mk = (id, grade, mins) => ({id, grade, type:'HII', usableMinutes: mins, peakAltitude: 60});
+      const summer = [mk('show', 'Showpiece', 100), mk('rew', 'Rewarding', 160)];
+      console.log(JSON.stringify({
+        mins: Object.fromEntries(ev.map(e => [e.id, e.usableMinutes])),
+        order: E.rank(ev, {moonLit: 0, windowMinutes: winMins}).map(e => e.id),
+        bare: E.rank(ev, {moonLit: 0}).map(e => e.id),
+        shortNight: E.rank(summer, {moonLit: 0, windowMinutes: 160}).map(e => e.id),
+        longNight: E.rank(summer, {moonLit: 0, windowMinutes: 600}).map(e => e.id),
+        k: E.SHORT_WINDOW_MINUTES }));
+    """)
+    assert out["k"] == 120
+    assert out["mins"]["rosette"] < 120 < out["mins"]["pacman"], out["mins"]
+    assert out["order"] == ["pacman", "rosette"]
+    assert out["bare"] == ["pacman", "rosette"], "without windowMinutes the bar is 120"
+    # A 160-minute night: the bar is 96, so 100 minutes is not short.
+    assert out["shortNight"] == ["show", "rew"]
+    assert out["longNight"] == ["rew", "show"]
+
+
 def test_a_bright_moon_drops_a_galaxy_one_grade_but_not_a_nebula():
-    """Two Showpieces at the same place in the sky: the galaxy falls below an
-    emission nebula under a 90% Moon that is up; with no Moon the tie stays."""
+    """A Showpiece galaxy and a Rewarding emission nebula at the same place in
+    the sky: under a 90% Moon that is up the galaxy drops a grade and falls to
+    the nebula's level, which then leads on score; without a Moon the grade
+    order holds."""
     pair = """[
       {id:'gal', name:'g', ra:10.68, dec:41.27, size:60, type:'G', grade:'Showpiece', sky:'city'},
       {id:'neb', name:'n', ra:10.68, dec:41.27, size:60, type:'HII', grade:'Rewarding', sky:'city'}]"""
