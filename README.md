@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/hero.png" alt="Nocturne" width="640">
+  <img src="docs/img/hero.jpg" alt="Nocturne beta: a smart telescope on a tripod beside the name" width="640">
 </p>
 
 <h1 align="center">Nocturne</h1>
