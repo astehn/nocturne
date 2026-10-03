@@ -486,11 +486,13 @@ def test_the_verdict_does_not_say_nothing_is_up_when_targets_are_only_filtered()
       const wx = {{ meanCloud: 0, maxCloud: 0, moonIllumination: 0, moonUpMinutes: 0 }};
       console.log(JSON.stringify({{
         hidden: E.verdict(w, wx, [], {{}}, {{hidden: 4}}).limiting,
+        viewOnly: E.verdict(w, wx, [], {{}}, {{hidden: 4, viewOnly: true}}).limiting,
         none: E.verdict(w, wx, [], {{}}, {{hidden: 0}}).limiting,
         legacy: E.verdict(w, wx, []).limiting }}));
     """)
     assert out["none"] == out["legacy"] == "nothing gets high enough tonight"
     assert out["hidden"] == "nothing suits your sky and telescope tonight"
+    assert out["viewOnly"] == "nothing is up where your view is clear"
 
 
 def test_lean_names_the_kind_of_night():

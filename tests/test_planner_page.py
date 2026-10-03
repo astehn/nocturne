@@ -1163,8 +1163,10 @@ def test_every_target_is_evaluated_against_the_view():
     js = PLANNER.read_text(encoding="utf-8")
     assert "E.evaluateTarget(t, win, loc.lat, loc.lon, inst, prefs.view)" in js
     assert js.count("E.evaluateTarget(") == 1
-    assert ("var hidden = parts.darker.length + parts.tooSmall.length + "
-            "parts.blocked.length;") in js
+    # The held-back count now comes from verdictOpts(), which also tells the
+    # verdict when the view is the only reason (tested on its own below).
+    assert "var vo = verdictOpts(parts), hidden = vo.hidden;" in js
+    assert "return { hidden: other + parts.blocked.length," in js
 
 
 @needs_node
@@ -1257,14 +1259,14 @@ def test_every_direction_blocked_says_nothing_suits_not_nothing_high_enough():
     verdict takes the `hidden` path -- the same sum render() passes."""
     out = _node(f"""
       const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
       const T = {_req(TARGETS_JSON)}.targets;
       const w = E.darkWindow(new Date("2026-10-03T12:00:00Z"), 56.05, 12.69);
       const ev = T.map(t => E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro,
                                              Array(8).fill(false)));
       const parts = E.partition(ev, 'suburban');
-      const hidden = parts.darker.length + parts.tooSmall.length + parts.blocked.length;
       const wx = {{ meanCloud: 0, maxCloud: 0, moonIllumination: 0, moonUpMinutes: 0 }};
-      const v = E.verdict(w, wx, parts.shown, null, {{hidden}});
+      const v = E.verdict(w, wx, parts.shown, null, P.verdictOpts(parts));
       console.log(JSON.stringify({{shown: parts.shown.length, blocked: parts.blocked.length,
                                   darker: parts.darker.length, small: parts.tooSmall.length,
                                   headline: v.headline, limiting: v.limiting}}));
@@ -1273,7 +1275,37 @@ def test_every_direction_blocked_says_nothing_suits_not_nothing_high_enough():
     assert out["blocked"] > 10
     assert out["darker"] == out["small"] == 0, "blocked wins over darker and too small"
     assert out["headline"] == "skip"
-    assert out["limiting"] == "nothing suits your sky and telescope tonight"
+    # Andreas, 2026-10-03: the view is the only reason here, so it says so.
+    assert out["limiting"] == "nothing is up where your view is clear"
+
+
+@needs_node
+def test_the_verdict_names_the_view_only_when_it_is_the_only_reason():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const p = (b, d, s) => ({{ blocked: Array(b).fill(0), darker: Array(d).fill(0), tooSmall: Array(s).fill(0) }});
+      console.log(JSON.stringify([P.verdictOpts(p(3, 0, 0)), P.verdictOpts(p(3, 2, 0)),
+                                  P.verdictOpts(p(0, 2, 1)), P.verdictOpts(p(0, 0, 0))]));
+    """)
+    assert out[0] == {"hidden": 3, "viewOnly": True}
+    assert out[1] == {"hidden": 5, "viewOnly": False}, "darker skies hide some too: keep the general wording"
+    assert out[2] == {"hidden": 3, "viewOnly": False}
+    assert out[3] == {"hidden": 0, "viewOnly": False}
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "var vo = verdictOpts(parts), hidden = vo.hidden;" in js
+
+
+@needs_node
+def test_one_held_back_target_is_singular():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([P.revealText('small', 1, 'Seestar S30 Pro', false),
+                                  P.revealText('blocked', 1, '', false),
+                                  P.revealText('small', 2, 'Seestar S30 Pro', false)]));
+    """)
+    assert out[0] == "1 more is too small for your Seestar S30 Pro &rarr;"
+    assert out[1] == "1 more is behind your blocked directions &rarr;"
+    assert out[2] == "2 more are too small for your Seestar S30 Pro &rarr;"
 
 
 # ---- Month strip (spec C3) -------------------------------------------------
