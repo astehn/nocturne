@@ -990,3 +990,104 @@ def test_the_data_files_are_revalidated_not_reused_stale():
     assert "fetch('planner-targets.json', REVALIDATE)" in js
     assert "fetch('planner-images.json', REVALIDATE)" in js
     assert "fetch('planner-targets.json')" not in js
+
+
+# ---- The altitude curve in an opened card (C1) -----------------------------
+
+def _curve(samples, moon, ws, we, us, ue, ticks="[]", peak="'21:20'"):
+    """curveSvg under node. Times are minutes after a fixed dusk."""
+    return _node("""
+      const P = %s;
+      const T0 = Date.UTC(2026, 9, 3, 18, 0);
+      const at = m => m == null ? null : new Date(T0 + m * 60000);
+      const pts = a => a.map(p => ({t: at(p[0]), alt: p[1], az: 180}));
+      console.log(JSON.stringify(P.curveSvg(pts(%s), pts(%s), at(%s), at(%s),
+                                            at(%s), at(%s), 30,
+                                            %s.map(k => ({x: at(k[0]), label: k[1]})),
+                                            %s)));
+    """ % (_req(PLANNER), json.dumps(samples), json.dumps(moon),
+           json.dumps(ws), json.dumps(we), json.dumps(us), json.dumps(ue),
+           ticks, peak))
+
+
+_NIGHT = [[0, 20], [300, 66], [600, 25]]
+_MOON = [[0, -5], [300, 10], [600, 40]]
+_PARTS = ("t-curve-low", "t-curve-floor", "t-curve-usable", "t-curve-moon",
+          "t-curve-target", "t-curve-peak")
+
+
+@needs_node
+def test_the_curve_draws_every_part_of_the_night():
+    svg = _curve(_NIGHT, _MOON, 0, 600, 120, 480,
+                 ticks='[[120, "20:00"], [240, "22:00"]]')
+    for cls in _PARTS:
+        assert f'class="{cls}"' in svg, cls
+    assert 'viewBox="0 0 300 120"' in svg and 'class="t-curve"' in svg
+    assert 'role="img"' in svg
+    assert 'aria-label="Altitude through the night: highest 66&deg; at 21:20"' in svg \
+        or 'aria-label="Altitude through the night: highest 66° at 21:20"' in svg, svg
+    assert svg.count('class="t-curve-tick"') == 2 and ">22:00<" in svg
+    assert "NaN" not in svg and "style=" not in svg
+    # Every coordinate rounded to one decimal.
+    assert not re.search(r"\d\.\d\d", svg), svg
+
+
+@needs_node
+def test_the_moon_is_drawn_only_while_it_is_up():
+    svg = _curve(_NIGHT, [[0, -5], [300, -1], [600, -20]], 0, 600, 120, 480)
+    assert "t-curve-moon" not in svg
+    assert "t-curve-target" in svg
+
+
+@needs_node
+def test_no_curve_without_samples_or_without_a_night():
+    """Review Focus 3: midsummer far north has no dark window at all -- the
+    engine returns no samples and the window has no length. Nothing is drawn
+    rather than an SVG full of NaN."""
+    assert _curve([], [], 0, 600, None, None) == ""
+    zero = _curve(_NIGHT, _MOON, 300, 300, None, None)
+    assert "NaN" not in zero and zero == ""
+    assert _curve([], [], None, None, None, None) == ""
+
+
+@needs_node
+def test_the_highlight_follows_the_view_but_the_line_shows_the_whole_night():
+    """Review Focus 5: blocking a direction moves (or removes) the highlighted
+    stretch -- the same usableStart/End the bar uses -- while the plotted line
+    is the whole night either way."""
+    a = _curve(_NIGHT, _MOON, 0, 600, 120, 480)
+    b = _curve(_NIGHT, _MOON, 0, 600, 300, 420)
+    none = _curve(_NIGHT, _MOON, 0, 600, None, None)
+    target = lambda s: re.search(r'<polyline class="t-curve-target"[^>]*>', s).group(0)
+    usable = lambda s: re.search(r'<rect class="t-curve-usable"[^>]*>', s).group(0)
+    assert target(a) == target(b) == target(none)
+    assert usable(a) != usable(b)
+    assert "t-curve-usable" not in none
+    assert "t-curve-peak" in none, "the peak is a fact of the night, not the view"
+
+
+def test_the_card_draws_the_curve_from_the_view_aware_window():
+    js = PLANNER.read_text(encoding="utf-8")
+    det = js[js.index("function detail("):js.index("function suggestedIntegration(")]
+    assert "curveSvg(" in det
+    assert "t.usableStart, t.usableEnd" in det
+    assert "E.moonTrack(win, loc.lat, loc.lon)" in js
+    assert "imageBlock(t) + curve + '<dl class=\"t-facts\">'" in det, "after the image, before the facts"
+    assert js.count('style="') == 1, "the wind arrow stays the only inline style"
+
+
+def test_the_curve_is_styled_by_class():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-curve \{[^}]*width: 100%", css)
+    for cls in _PARTS + ("t-curve-tick",):
+        assert re.search(r"\." + cls + r"\b[^{]*\{", css), cls
+
+
+@needs_node
+def test_a_target_below_the_horizon_sits_on_the_ground_line():
+    """Altitude is clamped to 0-90: a setting target must not draw below the
+    plot into the tick labels."""
+    svg = _curve([[0, -10], [300, 66], [600, -5]], [], 0, 600, None, None)
+    pts = re.search(r'class="t-curve-target" points="([^"]*)"', svg).group(1).split()
+    ys = [float(p.split(",")[1]) for p in pts]
+    assert ys[0] == ys[2] == max(ys), ys
