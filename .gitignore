@@ -15,6 +15,33 @@ site/config.php
 /tests/test_site_links.py
 /tests/test_contribute_page.py
 
+# Website-only tooling and tests (Andreas, 2026-10-03: "If files are specifically
+# for the website then yes they should not be on github at all"). They stay on
+# this machine and in the website backup, like site/ itself.
+/packaging/build_downloads.py
+/packaging/build_gallery.py
+/packaging/build_planner_targets.py
+/packaging/build_samples.py
+/packaging/build_showcase.py
+/packaging/build_site.py
+/packaging/build_site_images.py
+/packaging/make_sitemap.py
+/packaging/planner_extra_targets.csv
+/packaging/planner_grades.csv
+/tests/test_build_downloads.py
+/tests/test_build_gallery.py
+/tests/test_build_samples.py
+/tests/test_download_tally_deploy.py
+/tests/test_gallery_wall.py
+/tests/test_planner_deploy.py
+/tests/test_planner_engine.py
+/tests/test_planner_images.py
+/tests/test_planner_page.py
+/tests/test_planner_targets.py
+/tests/test_site_a11y.py
+/tests/test_site_php_tests.py
+/tests/test_support_page.py
+
 # Pipeline-audit working artifacts (screenshots are large; reports are scratch)
 docs/audit/screenshots/**/*.png
 docs/audit/screenshots/**/*.jpg
