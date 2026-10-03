@@ -809,3 +809,63 @@ def test_the_website_offers_no_way_to_submit_a_picture_to_the_gallery():
     assert allowed <= {".fit", ".fits", ".fts"}, (
         f"the stack donation accepts {sorted(allowed - {'.fit', '.fits', '.fts'})} — it is for "
         f"raw stacks, not finished pictures")
+
+
+# --- the object filter (gallery-filter.js, 2026-10-03) ----------------------
+#
+# Andreas: filter the wall by object, "non intrusive". The caption's object
+# name becomes the filter; nothing is added to the page until it is used.
+
+FILTER_JS = SITE / "gallery-filter.js"
+
+
+def test_spellings_of_one_object_share_a_key():
+    """Real submissions as typed on the live wall, 2026-10-03."""
+    import json
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    names = ["SH 2- 142", "Sh2-142", "sh2-142", "IC 1396a", "IC1396A",
+             "M 42", "M42", "NGC 6992", "NGC 6960", "M 4", "M 45", "", None]
+    r = subprocess.run(
+        ["node", "-e", f"const F = require({json.dumps(str(FILTER_JS))});"
+                       f"console.log(JSON.stringify({json.dumps(names)}.map(F.objectKey)))"],
+        capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    k = json.loads(r.stdout)
+    assert k[0] == k[1] == k[2] == "SH2142"
+    assert k[3] == k[4] == "IC1396A"
+    assert k[5] == k[6] == "M42"
+    assert k[7] != k[8], "the Eastern and Western Veil are different objects"
+    assert len({k[5], k[9], k[10]}) == 3, "M 42, M 4 and M 45 must not collide"
+    assert k[11] == k[12] == "", "no object means nothing to filter on"
+
+
+def test_the_gallery_page_loads_the_filter():
+    built = (SITE / "gallery.html").read_text(encoding="utf-8")
+    assert "gallery-filter.js" in built
+    # build_showcase.py regenerates _src/gallery.html; it must keep the script.
+    src = (ROOT / "packaging" / "build_showcase.py").read_text(encoding="utf-8")
+    assert "scripts: main.js, lightbox.js, gallery-filter.js" in src
+
+
+def test_the_filter_sends_nothing_and_adds_no_bar():
+    js = FILTER_JS.read_text(encoding="utf-8")
+    for call in ("fetch(", "XMLHttpRequest", "sendBeacon", "localStorage"):
+        assert call not in js, call
+    # It reads the caption both renderers write, so it needs no server change.
+    assert "querySelector('.frame-target')" in js
+    assert "popstate" in js
+    # Submitted names and the address only ever reach the page as text.
+    assert "innerHTML" not in js and "new Image" not in js
+    # A live region present from the start, so changes are announced.
+    assert "status.setAttribute('role', 'status')" in js and "status.hidden" not in js
+    # Filtering keeps any other address parameter.
+    assert "new URLSearchParams(location.search);" in js and "q.set('object', key)" in js
+
+
+def test_the_filter_states_are_styled():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    for rule in (".frame-target-link", ".frame[hidden] { display: none; }", ".wall-filter"):
+        assert rule in css, rule

@@ -358,7 +358,7 @@ def page_html(entries: list[dict]) -> str:
     return f"""---
 title: Gallery — images made with Nocturne on a ZWO Seestar
 description: Finished astrophotographs from a ZWO Seestar, stacked and processed in Nocturne. Every picture states its own integration time and frame count.
-scripts: main.js, lightbox.js
+scripts: main.js, lightbox.js, gallery-filter.js
 ---
 <main id="top">
     <section class="page-head">
