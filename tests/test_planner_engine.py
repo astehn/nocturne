@@ -662,3 +662,59 @@ def test_the_old_five_argument_call_is_unchanged():
     """)
     assert out["old"] == 500 == out["open"] == out["all"]
     assert out["sampleKeys"] == ["alt", "az", "t"]
+
+
+def test_too_small_and_blocked_is_blocked_and_never_up_is_nowhere():
+    """Controller ruling, fix round 1: the view is the reason a too-small target
+    is held back when it is blocked; tooSmall is too small AND usable."""
+    out = _node(_evaluated("[]") + """
+      const mk = (id, ra, dec) => ({id, name:id, ra, dec, size:2, type:'HII', grade:'Showpiece', sky:'city'});
+      const noSouth = Array(8).fill(true); noSouth[3] = noSouth[4] = noSouth[5] = false;
+      const ev2 = [
+        E.evaluateTarget(mk('tinyBlocked', 10, 10), w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noSouth),
+        E.evaluateTarget(mk('tinyUsable', 10, 10), w, 56.05, 12.69, E.INSTRUMENTS.s30pro),
+        E.evaluateTarget(mk('tinyNeverUp', 201.7, -47.48), w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noSouth),
+        { id:'tinyLowOpen', tooSmall:true, usableMinutes:0, usableMinutesOpen:30, sky:'city' }];
+      const p = E.partition(ev2, 'suburban');
+      const ids = l => l.map(e => e.id).sort();
+      console.log(JSON.stringify({ tooSmall: ev2[0].tooSmall, never: ev2[2],
+        shown: ids(p.shown), darker: ids(p.darker), small: ids(p.tooSmall), blocked: ids(p.blocked) }));
+    """)
+    assert out["tooSmall"] is True and out["never"] is None
+    assert out["blocked"] == ["tinyBlocked"]
+    assert out["small"] == ["tinyUsable"]
+    assert out["shown"] == [] and out["darker"] == []
+
+
+def test_a_blocked_target_still_says_when_it_would_be_up():
+    out = _node(_evaluated("[" + SOUTH + "]") + """
+      const noSouth = Array(8).fill(true); noSouth[3] = noSouth[4] = noSouth[5] = false;
+      const b = E.evaluateTarget(""" + SOUTH + """, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noSouth);
+      const a = ev[0];
+      console.log(JSON.stringify({
+        a: [a.openStart, a.openEnd, a.usableStart, a.usableEnd],
+        b: [b.openStart, b.openEnd, b.usableStart, b.usableEnd] }));
+    """)
+    assert out["a"][0] == out["a"][2] and out["a"][1] == out["a"][3]
+    assert out["a"][0] is not None
+    assert out["b"][0] == out["a"][0] and out["b"][1] == out["a"][1]
+    assert out["b"][2] is None and out["b"][3] is None
+
+
+def test_season_minutes_count_only_open_directions():
+    """The all-blocked case alone would pass with the view ignored in the
+    counting loop; a partial view must land strictly between."""
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const t = {{ra: 10, dec: 10}};
+      const noS = Array(8).fill(true); noS[4] = false;
+      console.log(JSON.stringify({{
+        all: E.seasonMinutes(t, 56.05, 12.69, 2026),
+        part: E.seasonMinutes(t, 56.05, 12.69, 2026, noS),
+        none: E.seasonMinutes(t, 56.05, 12.69, 2026, Array(8).fill(false)),
+        again: E.seasonMinutes(t, 56.05, 12.69, 2026) }}));
+    """)
+    assert out["none"] == [0] * 12
+    assert all(n <= p <= a for n, p, a in zip(out["none"], out["part"], out["all"]))
+    assert any(n < p < a for n, p, a in zip(out["none"], out["part"], out["all"])), out
+    assert out["again"] == out["all"], "the cached windows give the same answer"
