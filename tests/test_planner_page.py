@@ -949,7 +949,19 @@ def test_sky_options_are_short_and_describe_themselves_below():
 def test_each_reveal_button_sits_on_its_own_line():
     js = (SITE / "planner.js").read_text(encoding="utf-8")
     assert "revealParts.join(' &middot; ')" not in js
-    assert "revealParts.map(function (b) { return '<p class=\"reveal\">' + b + '</p>'; })" in js
+    assert "revealParts.map(function (b) { return '<p class=\"t-reveal\">' + b + '</p>'; })" in js
+
+
+def test_no_planner_markup_borrows_the_scroll_reveal_class():
+    """`.reveal` is main.js's scroll-in animation: opacity 0 until it adds
+    .is-in, and it only ever adds that to blocks it tagged itself. The reveal
+    links were briefly named `reveal`, a hidden-by-default class on markup
+    main.js never watches."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert 'class="reveal"' not in js
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert ".planner .reveal" not in css
+    assert ".planner .t-reveal button { text-align: left; }" in css
 
 
 def test_card_label_bar_and_link_styles():
