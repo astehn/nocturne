@@ -774,3 +774,45 @@ def test_the_factor_rows_fold_behind_details():
     js = (SITE / "planner.js").read_text(encoding="utf-8")
     assert '<details class="conditions"' in js
     assert "E.lean(" in js
+
+
+@needs_node
+def test_photos_promoted_to_a_merged_id_still_show_on_the_parent():
+    """Review Focus 2: live rows exist for NGC6995 and IC4703."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      global.window = {{ PLANNER_IMAGES: {{ NGC6992: [{{thumb:'a'}}], NGC6995: [{{thumb:'b'}}] }} }};
+      console.log(JSON.stringify(P.imagesFor({{id:'NGC6992', also:['NGC6995']}}).map(i => i.thumb)));
+    """)
+    assert out == ["a", "b"]
+
+
+@needs_node
+def test_filter_advice_follows_the_kind_of_light():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify(['HII','SNR','G','RfN','OCl'].map(P.filterAdvice)));
+    """)
+    assert out[0] == out[1] and "LP filter" in out[0]
+    assert "No filter" in out[2] and out[2] == out[3]
+    assert "No filter" in out[4]
+
+
+def test_every_sample_link_points_at_an_anchor_that_exists():
+    import re
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    page = (SITE / "sample-data.html").read_text(encoding="utf-8")
+    anchors = re.findall(r"'sample-data\.html#([a-z0-9-]+)'", js)
+    assert len(anchors) == 6, anchors
+    for a in anchors:
+        assert f'id="{a}"' in page, a
+
+
+def test_the_card_shows_constellation_grade_moons_and_a_bar():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    for needle in ("t-const", "t-grade", "E.moonsText(", "t-bar", "Worth it tonight",
+                   "more under darker skies", "too small for your"):
+        assert needle in js, needle
+    # ONE inline style exists already (the wind arrow's rotation, planner.js:108,
+    # pinned by its own test). No new ones: geometry goes through el.style (CSP).
+    assert js.count('style="') == 1, "geometry is set through el.style, not inline"
