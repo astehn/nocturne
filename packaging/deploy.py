@@ -412,7 +412,12 @@ def site_is_stale() -> list[str]:
     action, so it does not belong on the injectable `run` path — and routing it
     through subprocess made it collide with tests that stub subprocess.run."""
     sys.path.insert(0, str(ROOT / "packaging"))
-    import build_site
+    # The site builder is website-only and kept out of the public repository
+    # (2026-10-03), so a clean clone has no build_site -- and no site/ to go stale.
+    try:
+        import build_site
+    except ModuleNotFoundError:
+        return []
     return build_site.build(check=True)
 
 

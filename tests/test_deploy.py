@@ -847,6 +847,8 @@ def test_a_mac_only_release_is_completely_unchanged(tmp_path):
     assert len(with_flag) == len(plain) + 5
 
 
+@pytest.mark.skipif(not (Path(__file__).resolve().parent.parent / "site" / "index.html").exists(),
+                    reason="needs the website (site/), which is not in the public repository")
 def test_the_downloads_page_is_rebuilt_after_the_release_and_before_the_upload(tmp_path):
     """Ordering IS the guarantee. Refreshed from GitHub after the release exists,
     the page lists what GitHub actually serves — so it can neither advertise a
