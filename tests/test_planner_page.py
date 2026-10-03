@@ -990,3 +990,540 @@ def test_the_data_files_are_revalidated_not_reused_stale():
     assert "fetch('planner-targets.json', REVALIDATE)" in js
     assert "fetch('planner-images.json', REVALIDATE)" in js
     assert "fetch('planner-targets.json')" not in js
+
+
+# ---- The altitude curve in an opened card (C1) -----------------------------
+
+def _curve(samples, moon, ws, we, us, ue, ticks="[]", peak="'21:20'"):
+    """curveSvg under node. Times are minutes after a fixed dusk."""
+    return _node("""
+      const P = %s;
+      const T0 = Date.UTC(2026, 9, 3, 18, 0);
+      const at = m => m == null ? null : new Date(T0 + m * 60000);
+      const pts = a => a.map(p => ({t: at(p[0]), alt: p[1], az: 180}));
+      console.log(JSON.stringify(P.curveSvg(pts(%s), pts(%s), at(%s), at(%s),
+                                            at(%s), at(%s), 30,
+                                            %s.map(k => ({x: at(k[0]), label: k[1]})),
+                                            %s)));
+    """ % (_req(PLANNER), json.dumps(samples), json.dumps(moon),
+           json.dumps(ws), json.dumps(we), json.dumps(us), json.dumps(ue),
+           ticks, peak))
+
+
+_NIGHT = [[0, 20], [300, 66], [600, 25]]
+_MOON = [[0, -5], [300, 10], [600, 40]]
+_PARTS = ("t-curve-low", "t-curve-floor", "t-curve-usable", "t-curve-moon",
+          "t-curve-target", "t-curve-peak")
+
+
+@needs_node
+def test_the_curve_draws_every_part_of_the_night():
+    svg = _curve(_NIGHT, _MOON, 0, 600, 120, 480,
+                 ticks='[[120, "20:00"], [240, "22:00"]]')
+    for cls in _PARTS:
+        assert f'class="{cls}"' in svg, cls
+    assert 'viewBox="0 0 300 120"' in svg and 'class="t-curve"' in svg
+    assert 'role="img"' in svg
+    assert 'aria-label="Altitude through the night: highest 66&deg; at 21:20"' in svg \
+        or 'aria-label="Altitude through the night: highest 66° at 21:20"' in svg, svg
+    assert svg.count('class="t-curve-tick"') == 4 and ">22:00<" in svg, "two times + 30° and 90"
+    assert "NaN" not in svg and "style=" not in svg
+    # Every coordinate rounded to one decimal.
+    assert not re.search(r"\d\.\d\d", svg), svg
+
+
+@needs_node
+def test_the_moon_is_drawn_only_while_it_is_up():
+    svg = _curve(_NIGHT, [[0, -5], [300, -1], [600, -20]], 0, 600, 120, 480)
+    assert "t-curve-moon" not in svg
+    assert "t-curve-target" in svg
+
+
+@needs_node
+def test_no_curve_without_samples_or_without_a_night():
+    """Review Focus 3: midsummer far north has no dark window at all -- the
+    engine returns no samples and the window has no length. Nothing is drawn
+    rather than an SVG full of NaN."""
+    assert _curve([], [], 0, 600, None, None) == ""
+    zero = _curve(_NIGHT, _MOON, 300, 300, None, None)
+    assert "NaN" not in zero and zero == ""
+    assert _curve([], [], None, None, None, None) == ""
+
+
+@needs_node
+def test_the_highlight_follows_the_view_but_the_line_shows_the_whole_night():
+    """Review Focus 5: blocking a direction moves (or removes) the highlighted
+    stretch -- the same usableStart/End the bar uses -- while the plotted line
+    is the whole night either way."""
+    a = _curve(_NIGHT, _MOON, 0, 600, 120, 480)
+    b = _curve(_NIGHT, _MOON, 0, 600, 300, 420)
+    none = _curve(_NIGHT, _MOON, 0, 600, None, None)
+    target = lambda s: re.search(r'<polyline class="t-curve-target"[^>]*>', s).group(0)
+    usable = lambda s: re.search(r'<rect class="t-curve-usable"[^>]*>', s).group(0)
+    assert target(a) == target(b) == target(none)
+    assert usable(a) != usable(b)
+    assert "t-curve-usable" not in none
+    assert "t-curve-peak" in none, "the peak is a fact of the night, not the view"
+
+
+def test_the_card_draws_the_curve_from_the_view_aware_window():
+    js = PLANNER.read_text(encoding="utf-8")
+    det = js[js.index("function detail("):js.index("function suggestedIntegration(")]
+    assert "curveSvg(" in det
+    assert "t.usableStart, t.usableEnd" in det
+    assert "E.moonTrack(win, loc.lat, loc.lon)" in js
+    assert "imageBlock(t) + curve + season + '<dl class=\"t-facts\">'" in det, "after the image, before the facts"
+    assert js.count('style="') == 1, "the wind arrow stays the only inline style"
+
+
+def test_the_curve_is_styled_by_class():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-curve \{[^}]*width: 100%", css)
+    for cls in _PARTS + ("t-curve-tick",):
+        assert re.search(r"\." + cls + r"\b[^{]*\{", css), cls
+
+
+@needs_node
+def test_a_target_below_the_horizon_sits_on_the_ground_line():
+    """Altitude is clamped to 0-90: a setting target must not draw below the
+    plot into the tick labels."""
+    svg = _curve([[0, -10], [300, 66], [600, -5]], [], 0, 600, None, None)
+    pts = re.search(r'class="t-curve-target" points="([^"]*)"', svg).group(1).split()
+    ys = [float(p.split(",")[1]) for p in pts]
+    assert ys[0] == ys[2] == max(ys), ys
+
+
+# ---- Direction toggles (spec C2) -------------------------------------------
+
+_SECTORS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+# The visible letters lead the accessible name (WCAG 2.5.3, label in name).
+_SECTOR_NAMES = ["N, north", "NE, north-east", "E, east", "SE, south-east",
+                 "S, south", "SW, south-west", "W, west", "NW, north-west"]
+
+
+def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
+    html = _html()
+    form = html[html.index('<form id="where"'):html.index("</form>")]
+    view = form[form.index('<fieldset class="view">'):form.index('class="prefs"')]
+    assert "<legend>Where is your view clear?</legend>" in view
+    buttons = re.findall(r'<button type="button" class="dir" data-dir="(\d)" '
+                         r'aria-label="([A-Za-z, -]+)" aria-pressed="true">([A-Z]+)</button>', view)
+    assert buttons == [(str(i), n, s) for i, (n, s) in enumerate(zip(_SECTOR_NAMES, _SECTORS))]
+    assert view.count("<button") == 8
+    assert form.index('id="sky-desc"') < form.index('<fieldset class="view">')
+
+
+def test_the_direction_row_is_one_row_of_eight():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.view \{[^}]*grid-template-columns: repeat\(8, 1fr\)", css)
+    assert re.search(r"\.dir\.off\b[^{]*\{", css)
+    # `.planner-where button { justify-self: start }` (0,1,1) shrank each
+    # button to its letter -- E and S measured 11 px wide at 320 px. The
+    # stretch must out-rank it, and the height must be a real tap target.
+    rule = re.search(r"\.view \.dir \{([^}]*)\}", css)
+    assert rule, "a (0,2,0) rule beats .planner-where button"
+    assert "justify-self: stretch" in rule.group(1)
+    h = re.search(r"min-height: (\d+)px", rule.group(1))
+    assert h and int(h.group(1)) >= 32
+
+
+@needs_node
+def test_a_saved_view_is_taken_only_when_it_is_eight_booleans():
+    """Review Focus 2: a preference saved before this release has no `view`,
+    and must come back all OPEN, not all blocked."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const mixed = [true, false, true, true, false, true, true, true];
+      console.log(JSON.stringify([
+        P.validView(undefined), P.validView(null), P.validView([true, true]),
+        P.validView([1, 1, 1, 1, 1, 1, 1, 1]), P.validView('NNNNNNNN'),
+        P.validView(mixed), P.validView(Array(8).fill(false))]));
+    """)
+    open8 = [True] * 8
+    assert out[:5] == [open8] * 5
+    assert out[5] == [True, False, True, True, False, True, True, True]
+    assert out[6] == [False] * 8, "all blocked is a real choice, kept as saved"
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "prefs.view = validView(savedPrefs.view);" in js
+    assert "var prefs = { clock: '24', units: 'c', sky: 'suburban', view: validView(null) };" in js
+
+
+@needs_node
+def test_a_saved_view_is_a_copy_not_the_saved_array():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const saved = [true, false, true, true, true, true, true, true];
+      const v = P.validView(saved); v[0] = false;
+      console.log(JSON.stringify(saved));
+    """)
+    assert out[0] is True
+
+
+def test_every_target_is_evaluated_against_the_view():
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "E.evaluateTarget(t, win, loc.lat, loc.lon, inst, prefs.view)" in js
+    assert js.count("E.evaluateTarget(") == 1
+    # The held-back count now comes from verdictOpts(), which also tells the
+    # verdict when the view is the only reason (tested on its own below).
+    assert "var vo = verdictOpts(parts), hidden = vo.hidden;" in js
+    assert "return { hidden: other + parts.blocked.length," in js
+
+
+@needs_node
+def test_the_blocked_reveal_says_what_pressing_it_will_do():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([P.revealText('blocked', 3, '', false),
+                                  P.revealText('blocked', 3, '', true)]));
+    """)
+    assert out == ["3 more are behind your blocked directions &rarr;",
+                   "Hide the 3 behind your blocked directions"]
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "id=\"rv-blocked\"" in js
+    assert "markRevealed(parts.blocked, 'blocked')" in js
+    assert "['darker', 'small', 'blocked'].forEach" in js
+    assert "reveal = { darker: false, small: false, blocked: false };" in js
+    assert js.count("reveal = { darker: false, small: false, blocked: false };") == 2, \
+        "declared, and reset on a new location"
+    assert "' &middot; behind your blocked directions'" in js
+
+
+@needs_node
+def test_a_revealed_blocked_card_reads_its_window_from_the_open_run():
+    """A blocked card has no usable window; it must never reach clock(null)."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const blocked = {{revealed: 'blocked', usableStart: null, usableEnd: null,
+                       openStart: 100, openEnd: 200, usableMinutes: 0}};
+      const short = {{revealed: 'blocked', usableStart: 120, usableEnd: 130,
+                     openStart: 100, openEnd: 200, usableMinutes: 10}};
+      const plain = {{usableStart: 120, usableEnd: 180, openStart: 100, openEnd: 200}};
+      console.log(JSON.stringify([P.cardWindow(blocked), P.cardWindow(short), P.cardWindow(plain)]));
+    """)
+    assert out == [[100, 200], [100, 200], [120, 180]]
+    js = PLANNER.read_text(encoding="utf-8")
+    card = js[js.index("function card(t, i)"):js.index("html += shown.map(card)")]
+    assert "t.usableStart" not in card and "t.usableEnd" not in card, \
+        "the card reads its times and bar through cardWindow()"
+    assert "cardWindow(t)" in card
+    assert "(t.revealed === 'blocked' ? ' held' : '')" in card, \
+        "a would-be window must not look like a usable one"
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-bar\.held > span \{[^}]*opacity: \.2", css)
+    sugg = js[js.index("function suggestedIntegration("):js.index("function fmtMins(")]
+    assert "t.revealed === 'blocked'" in sugg, "no integration advice for a target you cannot see"
+
+
+@needs_node
+def test_a_blocked_reveal_is_ranked_not_filtered_out():
+    """rank() drops anything under the usable minimum, which every blocked
+    target is by definition: a reveal that ranks through it shows nothing.
+    Held back by the view, they rank on what they would give with it clear."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const mk = (id, open) => ({{id, grade: 'Rewarding', type: 'HII', peakAltitude: 60, usablePeak: 0,
+        moonUp: false, usableMinutes: 0, usableMinutesOpen: open,
+        usableStart: null, usableEnd: null, openStart: 1, openEnd: 2}});
+      // Both over the short-window bar, so only the score (minutes x the
+      // peak markHeld swaps in) can put 'long' first.
+      const list = [mk('short', 150), mk('long', 300)];
+      const held = P.markHeld(list, 'blocked', E.rank, {{moonLit: 0, windowMinutes: 600}});
+      const small = P.markHeld([Object.assign(mk('tiny', 300), {{usableMinutes: 300}})],
+                               'small', E.rank, {{moonLit: 0, windowMinutes: 600}});
+      console.log(JSON.stringify({{
+        ids: held.map(e => e.id), mins: held.map(e => e.usableMinutes),
+        why: held.map(e => e.revealed), start: held.map(e => e.usableStart),
+        peak: held.map(e => e.usablePeak),
+        untouched: list.map(e => [e.usableMinutes, e.revealed === undefined]),
+        small: small.map(e => e.revealed)}}));
+    """)
+    assert out["ids"] == ["long", "short"]
+    assert out["mins"] == [0, 0], "the card still says it is blocked, after ranking"
+    assert out["why"] == ["blocked", "blocked"]
+    assert out["start"] == [None, None]
+    assert out["peak"] == [0, 0], "and its usable peak is still nothing, after ranking"
+    assert out["untouched"] == [[0, True], [0, True]], "copies, not the evaluated objects"
+    assert out["small"] == ["small"]
+    js = PLANNER.read_text(encoding="utf-8")
+    mr = js[js.index("function markRevealed("):js.index("function render(")]
+    assert "markHeld(list, why, E.rank" in mr
+
+
+TARGETS_JSON = SITE / "planner-targets.json"
+
+
+@needs_node
+def test_every_direction_blocked_says_nothing_suits_not_nothing_high_enough():
+    """Review Focus 1: all eight blocked empties `shown` into `blocked`, and the
+    verdict takes the `hidden` path -- the same sum render() passes."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const T = {_req(TARGETS_JSON)}.targets;
+      const w = E.darkWindow(new Date("2026-10-03T12:00:00Z"), 56.05, 12.69);
+      const ev = T.map(t => E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro,
+                                             Array(8).fill(false)));
+      const parts = E.partition(ev, 'suburban');
+      const wx = {{ meanCloud: 0, maxCloud: 0, moonIllumination: 0, moonUpMinutes: 0 }};
+      const v = E.verdict(w, wx, parts.shown, null, P.verdictOpts(parts));
+      console.log(JSON.stringify({{shown: parts.shown.length, blocked: parts.blocked.length,
+                                  darker: parts.darker.length, small: parts.tooSmall.length,
+                                  headline: v.headline, limiting: v.limiting}}));
+    """)
+    assert out["shown"] == 0
+    assert out["blocked"] > 10
+    assert out["darker"] == out["small"] == 0, "blocked wins over darker and too small"
+    assert out["headline"] == "skip"
+    # Andreas, 2026-10-03: the view is the only reason here, so it says so.
+    assert out["limiting"] == "nothing is up where your view is clear"
+
+
+@needs_node
+def test_the_verdict_names_the_view_only_when_it_is_the_only_reason():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const p = (b, d, s) => ({{ blocked: Array(b).fill(0), darker: Array(d).fill(0), tooSmall: Array(s).fill(0) }});
+      console.log(JSON.stringify([P.verdictOpts(p(3, 0, 0)), P.verdictOpts(p(3, 2, 0)),
+                                  P.verdictOpts(p(0, 2, 1)), P.verdictOpts(p(0, 0, 0))]));
+    """)
+    assert out[0] == {"hidden": 3, "viewOnly": True}
+    assert out[1] == {"hidden": 5, "viewOnly": False}, "darker skies hide some too: keep the general wording"
+    assert out[2] == {"hidden": 3, "viewOnly": False}
+    assert out[3] == {"hidden": 0, "viewOnly": False}
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "var vo = verdictOpts(parts), hidden = vo.hidden;" in js
+
+
+@needs_node
+def test_one_held_back_target_is_singular():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([P.revealText('small', 1, 'Seestar S30 Pro', false),
+                                  P.revealText('blocked', 1, '', false),
+                                  P.revealText('small', 2, 'Seestar S30 Pro', false)]));
+    """)
+    assert out[0] == "1 more is too small for your Seestar S30 Pro &rarr;"
+    assert out[1] == "1 more is behind your blocked directions &rarr;"
+    assert out[2] == "2 more are too small for your Seestar S30 Pro &rarr;"
+
+
+# ---- Month strip (spec C3) -------------------------------------------------
+
+def _strip(minutes, month, text="Best Oct–Jan from here.", no_dark=None):
+    return _node("const P = %s; console.log(JSON.stringify(P.seasonStripHtml(%s, %s, %s, %s)));"
+                 % (_req(PLANNER), json.dumps(minutes), json.dumps(month),
+                    json.dumps(text), json.dumps(no_dark)))
+
+
+_LEVELS = [0, 59, 60, 179, 180, 0, 0, 0, 0, 0, 0, 0]
+
+
+@needs_node
+def test_the_strip_shades_each_month_by_the_spec_thresholds():
+    html = _strip(_LEVELS, 9)
+    cells = re.findall(r'<span class="t-month (m\d)( now)?" title="([^"]*)">([^<]*)</span>', html)
+    assert len(cells) == 12, html
+    assert [c[0] for c in cells[:5]] == ["m0", "m1", "m2", "m2", "m3"]
+    assert [c[3] for c in cells] == list("JFMAMJJASOND")
+    assert sum(1 for c in cells if c[1]) == 1 and cells[9][1] == " now"
+    assert cells[4][2] == "May: 3.0 h" and cells[0][2] == "January: none"
+    assert cells[1][2] == "February: 59 min", "not 1.0 h (final review D2)"
+    assert cells[2][2] == "March: 1.0 h"
+    assert re.match(r'<div class="t-season" role="img" aria-label="[^"]*October[^"]*">', html), html
+    assert "May 3.0 h" in html or "May: 3.0 h" in re.search(r'aria-label="([^"]*)"', html).group(1)
+    assert "NaN" not in html and "style=" not in html
+
+
+@needs_node
+def test_the_strip_sentence_is_escaped():
+    html = _strip(_LEVELS, 0, text="<b>&")
+    assert '<p class="t-season-text">&lt;b&gt;&amp;</p>' in html
+    assert "<b>" not in html
+
+
+@needs_node
+def test_midsummer_far_north_has_no_darkness_and_the_strip_still_renders():
+    """Review Focus 3: at 69 N June has no dark window at all. The engine says
+    0 without throwing, the strip renders, and the month says why it is empty."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const m = E.seasonMinutes({{ra: 10.68, dec: 41.27}}, 69.65, 18.96, 2026,
+                                [true, true, true, true, true, true, true, true]);
+      const nd = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i =>
+        E.darkWindow(new Date(Date.UTC(2026, i, 15, 12)), 69.65, 18.96).kind === 'none');
+      console.log(JSON.stringify({{m, nd,
+        html: P.seasonStripHtml(m, 5, E.bestMonthsText(m), nd)}}));
+    """)
+    assert out["m"][5] == 0 and len(out["m"]) == 12
+    assert out["nd"][5] is True
+    html = out["html"]
+    assert 'title="June: no darkness"' in html
+    assert re.search(r'<div class="t-season"[^>]* title="[^"]*June[^"]*"', html), html
+    assert html.count('class="t-month') == 12 and "NaN" not in html
+
+
+def test_the_card_only_leaves_a_slot_for_the_strip():
+    """Lazy: twelve nights of sampling per target is too much for every card,
+    so detail() emits a slot and the strip is filled when a card opens."""
+    js = PLANNER.read_text(encoding="utf-8")
+    det = js[js.index("function detail("):js.index("function suggestedIntegration(")]
+    assert 't-season-slot' in det and 'data-id="' in det
+    assert "seasonMinutes" not in det and "seasonStripHtml" not in det
+    assert "Through the year" in det
+    assert det.index("curve") < det.index("t-season-slot") < det.index("t-facts")
+    rnd = js[js.index("function render("):]
+    assert "E.seasonMinutes(" in rnd
+    # Keyed by everything the answer depends on, so a view change is fresh
+    # and a sky or telescope re-render is not recomputed.
+    assert "prefs.view.join(',')" in rnd
+    # Filled both for a card rendered already open and for one opened later.
+    tog = rnd[rnd.index("querySelectorAll('details.target')"):]
+    tog = tog[:tog.index("});\n    });") + 12]
+    assert tog.count("if (d.open) fillSeason(d);") == 2, tog
+    assert js.count('style="') == 1
+
+
+def test_the_strip_is_styled_by_class():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-season \{[^}]*grid-template-columns: repeat\(12,", css)
+    for cls in ("m0", "m1", "m2", "m3", "now"):
+        assert re.search(r"\.t-month\." + cls + r"\b[^{]*\{", css), cls
+    assert re.search(r"\.t-month\.now[^{]*\{[^}]*--verdict-go", css)
+
+
+# ---- Final review fix wave --------------------------------------------------
+
+def _rect(svg, cls):
+    m = re.search(r'<rect class="%s" x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/>' % cls, svg)
+    assert m, svg
+    return [float(v) for v in m.groups()]
+
+
+@needs_node
+def test_the_usable_stretch_is_shaded_only_above_the_floor_with_a_scale():
+    """Final review C1: the green ran down through the grey "too low" band, so
+    the floor was unreadable; and nothing said what height the lines were."""
+    svg = _curve(_NIGHT, _MOON, 0, 600, 120, 480)
+    x, y, w, h = _rect(svg, "t-curve-usable")
+    fy = float(re.search(r'<line class="t-curve-floor" x1="[\d.]+" y1="([\d.]+)"', svg).group(1))
+    assert y + h <= fy + 1e-9, (y, h, fy)
+    assert h > 0
+    lx, ly, lw, lh = _rect(svg, "t-curve-low")
+    assert ly == fy, "the grey band starts where the green stops"
+    scale = re.findall(r'<text class="t-curve-tick" x="([\d.]+)" y="([\d.]+)" '
+                       r'text-anchor="start">([^<]*)</text>', svg)
+    assert [t[2] for t in scale] == ["30°", "90°"], svg
+    assert float(scale[0][0]) == float(scale[1][0]) == lx, "on the left edge"
+    assert float(scale[1][1]) < float(scale[0][1]) <= fy, "90 above 30, 30 at the line"
+
+
+def test_the_curve_floor_is_dashed_and_the_curve_is_capped():
+    """Final review C1/C2: 300 user units stretched to a 900 px card made the
+    ticks 30 px; 520 px holds them near 19 px at 11 units."""
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    curve = re.search(r"\.t-curve \{([^}]*)\}", css).group(1)
+    assert "max-width: 520px" in curve and "width: 100%" in curve
+    floor = re.search(r"\.t-curve-floor \{([^}]*)\}", css).group(1)
+    assert "stroke: var(--muted)" in floor and "stroke-dasharray: 3 3" in floor
+    tick = re.search(r"\.t-curve-tick \{([^}]*)\}", css).group(1)
+    assert "font-size: 11px" in tick
+
+
+@needs_node
+def test_the_open_season_is_worked_out_only_when_the_view_hides_it_all():
+    """Final review I1: the all-clear season costs twelve more nights, so it is
+    asked for only when the view's own season never reaches the usable
+    minimum -- and then the sentence says the view is why."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      let calls = 0;
+      const open = [0, 0, 0, 0, 0, 0, 0, 0, 120, 200, 200, 120];
+      const get = () => {{ calls++; return open; }};
+      const fine = P.seasonText(E, [0, 0, 0, 0, 0, 0, 0, 0, 120, 200, 200, 120], get);
+      const c1 = calls;
+      const held = P.seasonText(E, Array(12).fill(0), get);
+      const c2 = calls;
+      const never = P.seasonText(E, Array(12).fill(0), () => {{ calls++; return Array(12).fill(0); }});
+      console.log(JSON.stringify({{fine, c1, held, c2, never, c3: calls}}));
+    """)
+    assert out["c1"] == 0, "a season the view allows never asks for the open one"
+    assert out["fine"] == "Best Oct–Nov from here."
+    assert out["held"] == "Only in your blocked directions from here." and out["c2"] == 1
+    assert out["never"] == "Never gets high enough from here." and out["c3"] == 2
+    js = PLANNER.read_text(encoding="utf-8")
+    rnd = js[js.index("function fillSeason("):]
+    rnd = rnd[:rnd.index("// Remember which rows are open")]
+    assert "seasonText(E, mins, function" in rnd
+    # The open season shares the cache, under the all-clear view's own key.
+    assert "OPEN_VIEW.join(',')" in rnd
+
+
+def test_a_season_that_throws_cannot_stop_the_rest_of_the_wiring():
+    """Final review D1: fillSeason runs inside render()'s wiring; an exception
+    there would leave every later listener unattached."""
+    js = PLANNER.read_text(encoding="utf-8")
+    body = js[js.index("function fillSeason("):]
+    body = body[:body.index("// Remember which rows are open")]
+    assert re.search(r"function fillSeason\(d\) \{\s*try \{", body), body
+    assert re.search(r"\} catch \(e\) \{[^}]*\}\s*\}\s*$", body.strip() + "\n"), body
+
+
+@needs_node
+def test_a_blocked_card_that_also_needs_a_darker_sky_says_both():
+    """Final review M2: partition() files a target behind the view as blocked
+    whatever its sky, so the card is the only place the second reason shows."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const dark = {{revealed: 'blocked', sky: 'dark'}}, city = {{revealed: 'blocked', sky: 'city'}};
+      console.log(JSON.stringify([
+        P.heldWhy(dark, 'S30 Pro', E.skyOk(dark, 'suburban')),
+        P.heldWhy(city, 'S30 Pro', E.skyOk(city, 'suburban')),
+        P.heldWhy({{revealed: 'darker', sky: 'rural'}}, 'S30 Pro', false),
+        P.heldWhy({{revealed: 'small', sky: 'city'}}, 'S30 <Pro>', true),
+        P.heldWhy({{sky: 'dark'}}, 'S30 Pro', false)]));
+    """)
+    assert out == [" &middot; behind your blocked directions &middot; needs a dark sky",
+                   " &middot; behind your blocked directions",
+                   " &middot; needs a rural sky",
+                   " &middot; too small for your S30 &lt;Pro&gt;",
+                   ""]
+    js = PLANNER.read_text(encoding="utf-8")
+    card = js[js.index("function card(t, i)"):js.index("html += shown.map(card)")]
+    assert "heldWhy(t, inst.label, E.skyOk(t, prefs.sky))" in card
+
+
+@needs_node
+@pytest.mark.parametrize("zone,hour12,first,labels", [
+    # 18:10-06:10 UTC. Stockholm (+02:00 in October): 20:10 -> first whole
+    # hour 21:00, odd, so the ticks are 22, 00, 02, 04, 06, 08.
+    ("Europe/Stockholm", False, None, ["22:00", "00:00", "02:00", "04:00", "06:00", "08:00"]),
+    ("Europe/Stockholm", True, None, ["10:00 pm", "12:00 am", "02:00 am", "04:00 am",
+                                      "06:00 am", "08:00 am"]),
+    # +05:30: 23:40 local -> 00:00 is 18:30 UTC, not on a UTC whole hour.
+    ("Asia/Kolkata", False, "2026-10-03T18:30:00.000Z", ["00:00", "02:00", "04:00", "06:00", "08:00", "10:00"]),
+])
+def test_curve_ticks_land_on_the_pages_own_whole_even_hours(zone, hour12, first, labels):
+    """Final review D3: curveTicks is pure, so it is exercised, not grepped."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const clock = P.makeClock({json.dumps(zone)}, 0, {json.dumps(hour12)});
+      const win = {{kind: 'astronomical', start: new Date(Date.UTC(2026, 9, 3, 18, 10)),
+                   end: new Date(Date.UTC(2026, 9, 4, 6, 10))}};
+      const t = P.curveTicks(win, clock);
+      console.log(JSON.stringify({{labels: t.map(k => k.label), first: t[0].x.toISOString(),
+        none: P.curveTicks({{kind: 'none', start: null, end: null}}, clock)}}));
+    """)
+    assert [l.lower() for l in out["labels"]] == labels
+    if first:
+        assert out["first"] == first
+    assert out["none"] == []
+
+
+def test_detail_joins_the_facts_with_a_single_space():
+    js = PLANNER.read_text(encoding="utf-8")
+    assert "'<dl class=\"t-facts\">'  +" not in js
+    assert "'<dl class=\"t-facts\">' + rows.map(" in js
