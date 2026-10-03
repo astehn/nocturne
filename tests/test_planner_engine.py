@@ -364,3 +364,165 @@ def test_no_verdict_string_carries_a_decimal_score():
     """)
     for line in out:
         assert not re.search(r"\d+\.\d", line), f"a decimal reached the copy: {line}"
+
+
+def test_too_small_is_five_percent_of_the_short_side_for_every_scope():
+    """Measured on his vdB 141 stack (S30 Pro, 2026-09-30): the Ghost (5') is
+    3.7% of the 135' short side and read as a smudge; the Iris (10', same frame)
+    at 7.4% read as an object. 5% separates them."""
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const r = {{}};
+      for (const k of ['s30pro', 's50', 's50pro']) {{
+        const s = E.fieldOfViewArcmin(E.INSTRUMENTS[k]).short;
+        r[k] = {{ below: E._framing(s * 0.049, E.INSTRUMENTS[k]),
+                  above: E._framing(s * 0.051, E.INSTRUMENTS[k]) }};
+      }}
+      r.ghost = E._framing(5.0, E.INSTRUMENTS.s30pro);
+      r.iris = E._framing(10.0, E.INSTRUMENTS.s30pro);
+      r.ghostS50 = E._framing(5.0, E.INSTRUMENTS.s50);
+      console.log(JSON.stringify(r));
+    """)
+    for k in ("s30pro", "s50", "s50pro"):
+        assert out[k]["below"] == "too small", out
+        assert out[k]["above"] == "fits easily", out
+    assert out["ghost"] == "too small"
+    assert out["iris"] == "fits easily"
+    assert out["ghostS50"] == "fits easily", "the S50's field is half the S30 Pro's"
+
+
+def _evaluated(js_targets, lat=56.05, lon=12.69, night="2026-10-03T12:00:00Z", scope="s30pro"):
+    return f"""
+      const E = {_require(ENGINE)};
+      const w = E.darkWindow(new Date("{night}"), {lat}, {lon});
+      const ev = {js_targets}.map(t => E.evaluateTarget(t, w, {lat}, {lon}, E.INSTRUMENTS.{scope}));
+    """
+
+
+def test_grade_outranks_altitude():
+    """A Modest target overhead must rank below a Rewarding one lower down."""
+    out = _node(_evaluated("""[
+      {id:'hi', name:'hi', ra:334.7, dec:56.1, size:90, type:'HII', grade:'Modest', sky:'city'},
+      {id:'lo', name:'lo', ra:299.9, dec:22.7, size:30, type:'HII', grade:'Rewarding', sky:'city'}]""") + """
+      console.log(JSON.stringify({
+        alt: Object.fromEntries(ev.map(e => [e.id, e.peakAltitude])),
+        mins: Object.fromEntries(ev.map(e => [e.id, e.usableMinutes])),
+        order: E.rank(ev, {moonLit: 0}).map(e => e.id) }));
+    """)
+    assert out["alt"]["hi"] > out["alt"]["lo"], "fixture must put the Modest one higher"
+    # Both clear the short-window bar, so this stays a test of grade alone.
+    assert min(out["mins"].values()) > 120, out["mins"]
+    assert out["order"] == ["lo", "hi"]
+
+
+def test_a_short_window_costs_a_showpiece_its_lead():
+    """Helsingborg 2026-10-03: the Rosette (Showpiece) had about an hour, low,
+    and ranked above the Pacman (Rewarding) up all night overhead."""
+    out = _node(_evaluated("""[
+      {id:'rosette', name:'r', ra:97.98, dec:4.94, size:80, type:'Cl+N', grade:'Showpiece', sky:'city'},
+      {id:'pacman', name:'p', ra:13.2, dec:56.63, size:35, type:'HII', grade:'Rewarding', sky:'city'}]""") + """
+      const winMins = (w.end - w.start) / 60000;
+      // Synthetic pair for the 60%-of-the-dark-window half of the bar.
+      const mk = (id, grade, mins) => ({id, grade, type:'HII', usableMinutes: mins, peakAltitude: 60});
+      const summer = [mk('show', 'Showpiece', 100), mk('rew', 'Rewarding', 160)];
+      console.log(JSON.stringify({
+        mins: Object.fromEntries(ev.map(e => [e.id, e.usableMinutes])),
+        order: E.rank(ev, {moonLit: 0, windowMinutes: winMins}).map(e => e.id),
+        bare: E.rank(ev, {moonLit: 0}).map(e => e.id),
+        shortNight: E.rank(summer, {moonLit: 0, windowMinutes: 160}).map(e => e.id),
+        longNight: E.rank(summer, {moonLit: 0, windowMinutes: 600}).map(e => e.id),
+        k: E.SHORT_WINDOW_MINUTES }));
+    """)
+    assert out["k"] == 120
+    assert out["mins"]["rosette"] < 120 < out["mins"]["pacman"], out["mins"]
+    assert out["order"] == ["pacman", "rosette"]
+    assert out["bare"] == ["pacman", "rosette"], "without windowMinutes the bar is 120"
+    # A 160-minute night: the bar is 96, so 100 minutes is not short.
+    assert out["shortNight"] == ["show", "rew"]
+    assert out["longNight"] == ["rew", "show"]
+
+
+def test_a_bright_moon_drops_a_galaxy_one_grade_but_not_a_nebula():
+    """A Showpiece galaxy and a Rewarding emission nebula at the same place in
+    the sky: under a 90% Moon that is up the galaxy drops a grade and falls to
+    the nebula's level, which then leads on score; without a Moon the grade
+    order holds."""
+    pair = """[
+      {id:'gal', name:'g', ra:10.68, dec:41.27, size:60, type:'G', grade:'Showpiece', sky:'city'},
+      {id:'neb', name:'n', ra:10.68, dec:41.27, size:60, type:'HII', grade:'Rewarding', sky:'city'}]"""
+    out = _node(_evaluated(pair) + """
+      ev.forEach(e => { e.moonUp = true; e.moonSeparation = 70; });
+      const bright = E.rank(ev, {moonLit: 90}).map(e => e.id);
+      const dark = E.rank(ev, {moonLit: 0}).map(e => e.id);
+      console.log(JSON.stringify({bright, dark}));
+    """)
+    assert out["dark"] == ["gal", "neb"]
+    assert out["bright"] == ["neb", "gal"]
+
+
+def test_partition_by_sky_and_size():
+    out = _node(_evaluated("""[
+      {id:'city', name:'a', ra:334.7, dec:56.1, size:60, type:'HII', grade:'Rewarding', sky:'city'},
+      {id:'dark', name:'b', ra:334.7, dec:56.1, size:60, type:'HII', grade:'Rewarding', sky:'dark'},
+      {id:'tiny', name:'c', ra:334.7, dec:56.1, size:2, type:'HII', grade:'Showpiece', sky:'city'},
+      {id:'old',  name:'d', ra:334.7, dec:56.1, size:60, type:'HII'}]""") + """
+      const p = E.partition(ev, 'suburban');
+      const ids = l => l.map(e => e.id).sort();
+      console.log(JSON.stringify({shown: ids(p.shown), darker: ids(p.darker), small: ids(p.tooSmall),
+        dark: ids(E.partition(ev, 'dark').shown), junk: ids(E.partition(ev, 'nonsense').shown)}));
+    """)
+    assert out["shown"] == ["city", "old"]
+    assert out["darker"] == ["dark"]
+    assert out["small"] == ["tiny"]
+    assert out["dark"] == ["city", "dark", "old"]
+    assert out["junk"] == ["city", "old"], "an unknown sky falls back to suburban"
+
+
+def test_the_verdict_does_not_say_nothing_is_up_when_targets_are_only_filtered():
+    """Review Focus 1."""
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const w = E.darkWindow(new Date("2026-10-03T12:00:00Z"), 56.05, 12.69);
+      const wx = {{ meanCloud: 0, maxCloud: 0, moonIllumination: 0, moonUpMinutes: 0 }};
+      console.log(JSON.stringify({{
+        hidden: E.verdict(w, wx, [], {{}}, {{hidden: 4}}).limiting,
+        none: E.verdict(w, wx, [], {{}}, {{hidden: 0}}).limiting,
+        legacy: E.verdict(w, wx, []).limiting }}));
+    """)
+    assert out["none"] == out["legacy"] == "nothing gets high enough tonight"
+    assert out["hidden"] == "nothing suits your sky and telescope tonight"
+
+
+def test_lean_names_the_kind_of_night():
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const w = E.darkWindow(new Date("2026-10-03T12:00:00Z"), 56.05, 12.69);
+      const mins = Math.round((w.end - w.start) / 60000);
+      console.log(JSON.stringify({{
+        moonlit: E.lean({{moonIllumination: 80, moonUpMinutes: mins}}, w),
+        dark: E.lean({{moonIllumination: 5, moonUpMinutes: mins}}, w),
+        moonset: E.lean({{moonIllumination: 80, moonUpMinutes: 0}}, w),
+        between: E.lean({{moonIllumination: 40, moonUpMinutes: mins}}, w),
+        none: E.lean(null, w) }}));
+    """)
+    assert out["moonlit"] == "Moonlit — favour emission nebulae and clusters"
+    assert out["dark"] == out["moonset"] == "Dark — galaxies and dust are in reach"
+    assert out["between"] is None and out["none"] is None
+
+
+def test_sizes_read_in_moons():
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      console.log(JSON.stringify([5, 15, 31, 46, 62, 178].map(E.moonsText)));
+    """)
+    assert out == ["under half a Moon wide", "½ Moon wide", "1 Moon wide",
+                   "1.5 Moons wide", "2 Moons wide", "5.5 Moons wide"]
+
+
+def test_each_target_knows_its_constellation():
+    out = _node(_evaluated("""[
+      {id:'m31', name:'M 31', ra:10.6848, dec:41.2691, size:178, type:'G', grade:'Showpiece', sky:'suburban'},
+      {id:'dc', name:'DC', ra:35.19, dec:57.13, size:45, type:'OCl', grade:'Showpiece', sky:'city'}]""") + """
+      console.log(JSON.stringify(ev.map(e => e && e.constellation)));
+    """)
+    assert out == ["Andromeda", "Perseus"]

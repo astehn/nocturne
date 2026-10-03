@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import html
 import pathlib
+import re
 import shutil
 import sys
 
@@ -121,6 +122,9 @@ def _write_preview(src: pathlib.Path, dest: pathlib.Path) -> tuple[int, int, int
 def _card(t: dict) -> str:
     e = html.escape
     name = e(t["target"])
+    # The planner links each target's opened card here (sample-data.html#s-m16);
+    # the slug comes from the designation, before any common-name dash.
+    anchor = re.sub(r"[^a-z0-9]", "", t["target"].split("—")[0].lower())
     shot = f"{t['frames']} × {t['per_sub_s']:.0f} s" if t["frames"] and t["per_sub_s"] else ""
     facts = [f for f in (
         f"<strong>{shot}</strong>" if shot else "",
@@ -139,7 +143,7 @@ def _card(t: dict) -> str:
                  width="{t['pw']}" height="{t['ph']}" loading="lazy" decoding="async">
           </figure>
           <div class="sample-body">
-            <h3>{name}</h3>
+            <h3 id="s-{anchor}">{name}</h3>
             <p class="fine">{" · ".join(facts)}</p>
             {about}
             <p>

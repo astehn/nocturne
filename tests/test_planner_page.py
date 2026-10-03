@@ -743,3 +743,227 @@ def test_a_target_row_opens_to_show_more():
     assert "t-thumb" in js, "the thumbnail slot must exist even before images do"
     for fact in ("Type", "Size", "Framing", "Highest", "Worth giving it"):
         assert f"'{fact}'" in js or f'"{fact}"' in js, fact
+
+
+def test_place_choices_render_inside_the_form_above_the_telescope():
+    """His report 2026-10-03: on a phone 'Which one?' landed below the telescope
+    and preferences, out of sight. The slot sits right after Use my location."""
+    html = _html()
+    hits, scope = html.find('id="hits"'), html.find('id="scope"')
+    locate = html.find('id="locate-row"')
+    assert -1 < locate < hits < scope, (locate, hits, scope)
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "getElementById('hits')" in js
+
+
+def test_the_sky_choice_is_offered_with_plain_descriptions():
+    html = _html()
+    assert 'id="sky"' in html
+    for value in ("city", "suburban", "rural", "dark"):
+        assert f'value="{value}"' in html, value
+    assert "Milky Way" in html, "skies are described by what you can see"
+
+
+def test_a_preference_saved_before_sky_existed_falls_back_to_suburban():
+    """Review Focus 3: a returning visitor's prefs have no `sky`."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "prefs.sky = SKIES.indexOf(savedPrefs.sky) >= 0 ? savedPrefs.sky : 'suburban'" in js
+
+
+def test_the_factor_rows_fold_behind_details():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert '<details class="conditions"' in js
+    assert "E.lean(" in js
+
+
+@needs_node
+def test_photos_promoted_to_a_merged_id_still_show_on_the_parent():
+    """Review Focus 2: live rows exist for NGC6995 and IC4703."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      global.window = {{ PLANNER_IMAGES: {{ NGC6992: [{{thumb:'a'}}], NGC6995: [{{thumb:'b'}}] }} }};
+      console.log(JSON.stringify(P.imagesFor({{id:'NGC6992', also:['NGC6995']}}).map(i => i.thumb)));
+    """)
+    assert out == ["a", "b"]
+
+
+@needs_node
+def test_filter_advice_follows_the_kind_of_light():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify(['HII','SNR','G','RfN','OCl'].map(P.filterAdvice)));
+    """)
+    assert out[0] == out[1] and "LP filter" in out[0]
+    assert "No filter" in out[2] and out[2] == out[3]
+    assert "No filter" in out[4]
+
+
+def test_every_sample_link_points_at_an_anchor_that_exists():
+    import re
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    page = (SITE / "sample-data.html").read_text(encoding="utf-8")
+    anchors = re.findall(r"'sample-data\.html#([a-z0-9-]+)'", js)
+    assert len(anchors) == 6, anchors
+    for a in anchors:
+        assert f'id="{a}"' in page, a
+
+
+def test_the_card_shows_constellation_grade_moons_and_a_bar():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    for needle in ("t-const", "t-grade", "E.moonsText(", "t-bar", "Worth it tonight",
+                   "more under darker skies", "too small for your"):
+        assert needle in js, needle
+    # ONE inline style exists already (the wind arrow's rotation, planner.js:108,
+    # pinned by its own test). No new ones: geometry goes through el.style (CSP).
+    assert js.count('style="') == 1, "geometry is set through el.style, not inline"
+
+
+@needs_node
+def test_the_pick_label_follows_the_verdict():
+    """Ruling (Task 5 review): no "Worth it tonight" under a skip verdict."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify(['worth going out', 'marginal', 'skip', "can't say"].map(P.pickLabel)));
+    """)
+    assert out == ["Worth it tonight", "Best tonight", "", ""]
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "var pick = pickLabel(v.headline);" in js
+    assert "!t.revealed && pick" in js, "a revealed card never carries the label"
+
+
+@needs_node
+def test_nothing_worth_pointing_at_only_when_nothing_is_held_back_either():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([
+        P.showNothingLine(0, 0, 'astronomical'),
+        P.showNothingLine(0, 3, 'astronomical'),
+        P.showNothingLine(2, 0, 'astronomical'),
+        P.showNothingLine(0, 0, 'none')]));
+    """)
+    assert out == [True, False, False, False]
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "if (showNothingLine(ranked.length, hidden, win.kind))" in js
+
+
+@needs_node
+def test_a_pressed_reveal_button_offers_to_hide():
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      console.log(JSON.stringify([
+        P.revealText('darker', 4, '', false), P.revealText('darker', 4, '', true),
+        P.revealText('small', 2, 'Seestar S50', false), P.revealText('small', 2, 'Seestar S50', true)]));
+    """)
+    assert out == ["4 more under darker skies &rarr;", "Hide the 4 under darker skies",
+                   "2 more are too small for your Seestar S50 &rarr;",
+                   "Hide the 2 too small for your Seestar S50"]
+
+
+def test_show_all_sits_before_the_revealed_cards():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    more, revealed = js.find("id=\"more\""), js.find("html += revealed.map(card)")
+    assert -1 < js.find("html += shown.map(card)") < more < revealed
+
+
+@needs_node
+def test_the_same_photo_under_parent_and_merged_id_shows_once():
+    """Final review B4: one photo was promoted under NGC6992 AND NGC6995."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      global.window = {{ PLANNER_IMAGES: {{
+        NGC6992: [{{full:'x.jpg', thumb:'a'}}, {{full:'y.jpg', thumb:'b'}}],
+        NGC6995: [{{full:'x.jpg', thumb:'a2'}}, {{full:'z.jpg', thumb:'c'}}] }} }};
+      console.log(JSON.stringify(P.imagesFor({{id:'NGC6992', also:['NGC6995']}}).map(i => i.thumb)));
+    """)
+    assert out == ["a", "b", "c"]
+
+
+@needs_node
+def test_the_weather_and_moon_lines_under_the_verdict():
+    """Spec D7: one weather line and one Moon line, from numbers already computed."""
+    out = _node(f"""
+      const P = {_req(PLANNER)};
+      const win = {{ start: new Date(0), end: new Date(600 * 60000) }};
+      console.log(JSON.stringify({{
+        full: P.weatherLine({{ meanCloud: 40.4, rainChance: 5, windMin: 1.2, windMax: 3.4 }}),
+        wet: P.weatherLine({{ meanCloud: 80, rainChance: 70 }}),
+        some: P.weatherLine({{ meanCloud: 10, rainChance: 30, windMin: 2, windMax: 2.2 }}),
+        partial: P.weatherLine({{ meanCloud: 12 }}),
+        missing: P.weatherLine({{ moonIllumination: 40, moonUpMinutes: 0, cloudReason: 'unreachable' }}),
+        none: P.weatherLine(null),
+        most: P.moonLine({{ moonIllumination: 46.2, moonUpMinutes: 400 }}, win),
+        all: P.moonLine({{ moonIllumination: 90, moonUpMinutes: 590 }}, win),
+        part: P.moonLine({{ moonIllumination: 20, moonUpMinutes: 60 }}, win),
+        down: P.moonLine({{ moonIllumination: 46, moonUpMinutes: 0 }}, win),
+        nomoon: P.moonLine(null, win) }}));
+    """)
+    assert out["full"] == "40% cloud · no rain · 1–3 m/s wind"
+    assert out["wet"] == "80% cloud · rain likely"
+    assert out["some"] == "10% cloud · 30% chance of rain · 2 m/s wind"
+    assert out["partial"] == "12% cloud", "unavailable parts are left out"
+    assert out["missing"] == "" and out["none"] == "", "no forecast, no weather line"
+    assert out["most"] == "Moon 46% lit, up most of the night"
+    assert out["all"] == "Moon 90% lit, up all night"
+    assert out["part"] == "Moon 20% lit, up for part of the night"
+    assert out["down"] == "Moon below the horizon"
+    assert out["nomoon"] == ""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    wx, moon = js.find("esc(wxText)"), js.find("esc(moonText)")
+    lean, dark = js.find("esc(leanText)"), js.find("'<p>Dark from '")
+    assert -1 < js.find("esc(v.headline)") < wx < moon < lean < dark, (wx, moon, lean, dark)
+
+
+def test_place_lookup_answers_land_under_the_search_box():
+    """Final review B1, m2, m3: 'Which one?' and both lookup failures render into
+    #hits and scroll into view; choosing clears the place in play so a settings
+    change cannot redraw the previous place under the choices."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    start = js.find("document.getElementById('where').addEventListener('submit'")
+    handler = js[start:js.find("document.getElementById('scope')", start)]
+    assert "if (slot.scrollIntoView) slot.scrollIntoView({ block: 'nearest' });" in handler
+    for msg in ("Could not find that", "Could not reach the place lookup", "Which one?"):
+        i = handler.find(msg)
+        assert i > -1, msg
+        assert handler.rfind("showInSlot(", 0, i) > handler.rfind("out.innerHTML", 0, i), msg
+    assert "out.innerHTML" not in handler, "lookup answers never go to #result"
+    choose = handler.find("if (hits.length > 1)")
+    assert -1 < choose < handler.find("activeLocation = null;") < handler.find("Which one?")
+
+
+def test_sky_options_are_short_and_describe_themselves_below():
+    """Final review B2: long option text truncated on a phone."""
+    html = _html()
+    sel = html[html.find('<select id="sky"'):]
+    sel = sel[:sel.find("</select>")]
+    labels = re.findall(r'<option value="(\w+)" data-desc="([^"]+)">([^<]+)</option>', sel)
+    assert [(v, l) for v, _, l in labels] == [("city", "City"), ("suburban", "Suburban"),
+                                              ("rural", "Rural"), ("dark", "Dark")]
+    assert all(d for _, d, _ in labels)
+    assert '<p class="fine" id="sky-desc"></p>' in html
+    assert html.find('id="sky"') < html.find('id="sky-desc"') < html.find('class="prefs"')
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "getAttribute('data-desc')" in js
+    assert "showSkyDesc();\n  skySel.addEventListener('change', showSkyDesc);" in js
+
+
+def test_each_reveal_button_sits_on_its_own_line():
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "revealParts.join(' &middot; ')" not in js
+    assert "revealParts.map(function (b) { return '<p class=\"reveal\">' + b + '</p>'; })" in js
+
+
+def test_card_label_bar_and_link_styles():
+    """Final review m1 and B6."""
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    pick = re.search(r"\.t-pick \{[^}]*\}", css).group(0)
+    assert "var(--verdict-go)" in pick and "verdict-warn" not in pick
+    bar = re.search(r"\.t-bar > span \{[^}]*\}", css).group(0)
+    assert "var(--ink)" in bar and "opacity: .55" in bar and "verdict-warn" not in bar
+    assert re.search(r"\.t-more a \{[^}]*text-decoration: underline", css)
+
+
+def test_render_hands_rank_the_dark_window_length():
+    """Final review B5: the short-window bar needs the night's length."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert js.count("windowMinutes: lastWindowMinutes") == 2, "both rank() calls"
+    assert "lastWindowMinutes = win.start && win.end ? (win.end - win.start) / 60000 : 0;" in js

@@ -41,6 +41,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OPENNGC = ROOT / "nocturne" / "data" / "openngc.csv"
 COMMON_NAMES = ROOT / "nocturne" / "data" / "common_names.csv"
 EXTRA = ROOT / "packaging" / "planner_extra_targets.csv"
+GRADES = ROOT / "packaging" / "planner_grades.csv"
+GRADE_VALUES = ("Showpiece", "Rewarding", "Modest", "Skip")
+SKY_VALUES = ("city", "suburban", "rural", "dark")
 OUT = ROOT / "site" / "planner-targets.json"
 # 1 arcminute, not 5. At 5 the floor removed the Ring Nebula (1.27'), the Owl,
 # M 78 and the Little Dumbbell -- and for a small scope the compact objects are
@@ -84,6 +87,96 @@ def read_extra(path: pathlib.Path = EXTRA) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as f:
         lines = [ln for ln in f if not ln.lstrip().startswith("#")]
     return list(csv.DictReader(lines))
+
+
+def read_grades(path: pathlib.Path = GRADES) -> dict[str, dict]:
+    """The editorial layer: one row per catalogue id. `#` lines are comments."""
+    with open(path, newline="", encoding="utf-8") as f:
+        lines = [ln for ln in f if not ln.lstrip().startswith("#")]
+    out: dict[str, dict] = {}
+    for row in csv.DictReader(lines):
+        rid = (row.get("id") or "").strip()
+        if rid in out:
+            raise SystemExit(f"planner_grades.csv: {rid} appears twice")
+        out[rid] = {k: (v or "").strip() for k, v in row.items() if k}
+    return out
+
+
+def _sep_deg(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
+    import math
+    p1, p2 = math.radians(dec1), math.radians(dec2)
+    a = (math.sin((p2 - p1) / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(math.radians(ra2 - ra1) / 2) ** 2)
+    return math.degrees(2 * math.asin(min(1.0, math.sqrt(a))))
+
+
+def _centre(members: list[dict]) -> tuple[float, float]:
+    """Mean of unit vectors: correct across RA 0/360, unlike averaging degrees."""
+    import math
+    x = y = z = 0.0
+    for m in members:
+        ra, dec = math.radians(m["ra"]), math.radians(m["dec"])
+        x += math.cos(dec) * math.cos(ra)
+        y += math.cos(dec) * math.sin(ra)
+        z += math.sin(dec)
+    ra = math.degrees(math.atan2(y, x)) % 360
+    dec = math.degrees(math.atan2(z, math.hypot(x, y)))
+    return round(ra, 4), round(dec, 4)
+
+
+def apply_grades(targets: list[dict], grades: dict[str, dict]) -> list[dict]:
+    """Fold the editorial grades into the selected catalogue.
+
+    EVERY catalogue id must have a row, and every row must name a catalogue id:
+    widening the catalogue later must fail here rather than ship ungraded
+    targets. A merged row disappears into its parent, whose centre moves to the
+    middle of the group and whose size grows to cover it -- otherwise the Double
+    Cluster would be evaluated at h Persei with h Persei's 14'.
+    """
+    by_id = {t["id"]: t for t in targets}
+    missing = sorted(set(by_id) - set(grades))
+    if missing:
+        raise SystemExit(f"planner_grades.csv has no row for: {', '.join(missing)}")
+    unknown = sorted(set(grades) - set(by_id))
+    if unknown:
+        raise SystemExit(f"planner_grades.csv names ids not in the catalogue: {', '.join(unknown)}")
+
+    children: dict[str, list[str]] = {}
+    for rid, g in grades.items():
+        parent = g.get("merge_into", "")
+        if parent:
+            pg = grades.get(parent)
+            if pg is None or pg.get("merge_into") or pg.get("grade") in ("", "Skip"):
+                raise SystemExit(f"planner_grades.csv: {rid} merges into {parent}, "
+                                 f"which is not a published target")
+            children.setdefault(parent, []).append(rid)
+        elif g.get("grade") not in GRADE_VALUES:
+            raise SystemExit(f"planner_grades.csv: {rid} has grade {g.get('grade')!r}")
+        elif g["grade"] != "Skip" and g.get("sky") not in SKY_VALUES:
+            raise SystemExit(f"planner_grades.csv: {rid} has sky {g.get('sky')!r}")
+
+    out: list[dict] = []
+    for rid in sorted(by_id):
+        g = grades[rid]
+        if g.get("merge_into") or g["grade"] == "Skip":
+            continue
+        t = dict(by_id[rid])
+        kids = sorted(children.get(rid, []))
+        if kids:
+            members = [by_id[rid]] + [by_id[k] for k in kids]
+            t["ra"], t["dec"] = _centre(members)
+            span = max(2 * _sep_deg(t["ra"], t["dec"], m["ra"], m["dec"]) * 60 + m["size"]
+                       for m in members)
+            t["size"] = round(max(t["size"], span), 1)
+            t["also"] = kids
+        if g.get("size"):
+            t["size"] = round(float(g["size"]), 1)
+        if g.get("name"):
+            t["name"] = g["name"]
+        t["grade"] = g["grade"]
+        t["sky"] = g["sky"]
+        out.append(t)
+    return out
 
 
 def _display_name(row: dict, overlay: dict[str, str] | None = None) -> str:
@@ -188,6 +281,7 @@ def payload(targets: list[dict], min_arcmin: float = MIN_ARCMIN) -> dict:
             "requires_name": True,
             "min_arcmin": min_arcmin,
             "max_arcmin": None,       # deliberately unbounded -- see the docstring
+            "graded": "packaging/planner_grades.csv",
             "source": "OpenNGC, as shipped in nocturne/data/openngc.csv, "
                       "named also from common_names.csv, plus "
                       "planner_extra_targets.csv for objects OpenNGC omits",
@@ -208,7 +302,8 @@ def build(min_arcmin: float = MIN_ARCMIN, out: pathlib.Path | None = None) -> di
     rebuild already containing the rebuild.
     """
     out = OUT if out is None else out
-    data = payload(select_targets(read_openngc(), min_arcmin), min_arcmin)
+    data = payload(apply_grades(select_targets(read_openngc(), min_arcmin), read_grades()),
+                   min_arcmin)
     blob = json.dumps(data, separators=(",", ":"))
     if len(blob) > BUDGET_BYTES:
         raise SystemExit(f"planner-targets.json is {len(blob)} bytes, over the "

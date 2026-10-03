@@ -119,7 +119,7 @@ def test_build_records_the_rule_it_actually_applied(tmp_path):
     """
     import sys
     sys.path.insert(0, str(ROOT / "packaging"))
-    from build_planner_targets import build, read_openngc, select_targets
+    from build_planner_targets import apply_grades, build, read_grades, read_openngc, select_targets
 
     # INTO tmp_path. Calling build() bare wrote the real site/planner-targets.json,
     # so `pytest` quietly regenerated a deployable file — see build()'s docstring.
@@ -127,7 +127,7 @@ def test_build_records_the_rule_it_actually_applied(tmp_path):
     rule, targets = data["rule"], data["targets"]
     assert targets
 
-    reselected = select_targets(read_openngc(), rule["min_arcmin"])
+    reselected = apply_grades(select_targets(read_openngc(), rule["min_arcmin"]), read_grades())
     assert [t["id"] for t in targets] == [t["id"] for t in reselected], (
         "the recorded min_arcmin does not reproduce the targets that were written")
     assert all(t["size"] >= rule["min_arcmin"] for t in targets)
@@ -137,6 +137,7 @@ def test_build_records_the_rule_it_actually_applied(tmp_path):
     assert max(t["size"] for t in targets) > 135.0, (
         "no target exceeds the frame, so an upper bound could have crept back in "
         "without this file's rule looking wrong")
+    assert rule["graded"] == "packaging/planner_grades.csv"
 
 
 def test_the_file_stays_inside_its_budget():
@@ -306,3 +307,121 @@ def test_the_supplement_names_m45_the_way_every_other_messier_is_named():
     by_id = {t["id"]: t for t in _targets()}
     assert by_id["M45"]["name"] == "M 45"
     assert by_id["M45"]["common"] == "Pleiades"
+
+
+# --- editorial grades (spec 2026-10-03, D1/D4) ------------------------------
+
+def _graded():
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import apply_grades, read_grades
+    return apply_grades(_targets(), read_grades())
+
+
+def test_every_catalogue_target_has_a_grades_row():
+    """Widening the catalogue must not ship ungraded targets silently."""
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import apply_grades, read_grades
+    grades = read_grades()
+    grades.pop("NGC7000")
+    with pytest.raises(SystemExit, match="NGC7000"):
+        apply_grades(_targets(), grades)
+
+
+def test_a_grades_row_for_an_unknown_id_fails():
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import apply_grades, read_grades
+    grades = read_grades()
+    grades["NGC9999"] = {"grade": "Modest", "sky": "dark", "merge_into": "",
+                         "name": "", "size": "", "note": ""}
+    with pytest.raises(SystemExit, match="NGC9999"):
+        apply_grades(_targets(), grades)
+
+
+def _apply_with(rid, also=None, **change):
+    """apply_grades over the real rows with ONE row mutated (`also`: a second)."""
+    import sys
+    sys.path.insert(0, str(ROOT / "packaging"))
+    from build_planner_targets import apply_grades, read_grades
+    grades = read_grades()
+    grades[rid] = dict(grades[rid], **change)
+    for oid, ochange in (also or {}).items():
+        grades[oid] = dict(grades[oid], **ochange)
+    return apply_grades(_targets(), grades)
+
+
+def test_a_merge_into_a_skip_row_fails():
+    """B86 is a Skip: nothing would carry B143's photos or name."""
+    with pytest.raises(SystemExit, match="B143 merges into B86"):
+        _apply_with("B143", merge_into="B86")
+
+
+def test_a_merge_chain_fails():
+    """IC0349 itself merges into M45, so B143 would vanish twice over. IC0349 is
+    given a grade and sky so ONLY the chain guard can catch it -- with its real
+    blank grade the Skip/blank guard fires first and this test would be hollow."""
+    with pytest.raises(SystemExit, match="B143 merges into IC0349"):
+        _apply_with("B143", merge_into="IC0349",
+                    also={"IC0349": {"grade": "Modest", "sky": "dark"}})
+
+
+def test_an_unknown_grade_fails():
+    with pytest.raises(SystemExit, match="B142 has grade 'Great'"):
+        _apply_with("B142", grade="Great")
+
+
+def test_an_unknown_sky_fails():
+    with pytest.raises(SystemExit, match="B142 has sky 'moonless'"):
+        _apply_with("B142", sky="moonless")
+
+
+def test_skips_and_absorbed_ids_are_not_published():
+    ids = {t["id"] for t in _graded()}
+    for gone in ("NGC2573", "NGC3172", "NGC1049", "NGC0884", "IC4703", "NGC6995"):
+        assert gone not in ids, gone
+    assert {"NGC0869", "NGC6611", "NGC6992", "NGC7000"} <= ids
+
+
+def test_every_published_target_carries_a_valid_grade_and_sky():
+    for t in _graded():
+        assert t["grade"] in ("Showpiece", "Rewarding", "Modest"), t
+        assert t["sky"] in ("city", "suburban", "rural", "dark"), t
+
+
+def test_the_double_cluster_is_one_target_between_its_halves():
+    """Review Focus 4: centre between the parts, size covering both."""
+    by = {t["id"]: t for t in _targets()}
+    h, chi = by["NGC0869"], by["NGC0884"]
+    dc = {t["id"]: t for t in _graded()}["NGC0869"]
+    assert dc["name"] == "Double Cluster"
+    assert dc["also"] == ["NGC0884"]
+    assert min(h["ra"], chi["ra"]) < dc["ra"] < max(h["ra"], chi["ra"])
+    # h and chi are ~30' apart; each is 10-14' across, so the pair spans > 40'.
+    assert dc["size"] > 40, dc["size"]
+
+
+def test_a_merge_never_shrinks_the_parent():
+    """M 31 absorbs M 32 and M 110, which sit inside its 178'."""
+    m31 = {t["id"]: t for t in _graded()}["NGC0224"]
+    assert m31["size"] >= 177.8
+    assert m31["also"] == ["NGC0205", "NGC0221"]
+
+
+def test_size_and_name_overrides_apply():
+    by = {t["id"]: t for t in _graded()}
+    assert by["IC2944"]["size"] == 75.0 and by["IC2944"]["name"] == "Running Chicken Nebula"
+    assert by["NGC0253"]["name"] == "Sculptor Galaxy"
+    assert by["IC0443"]["name"] == "Jellyfish Nebula"
+
+
+def test_no_two_published_targets_show_the_same_name():
+    import collections
+    names = collections.Counter(t["name"] for t in _graded())
+    assert not {n: c for n, c in names.items() if c > 1}
+
+
+def test_the_published_count():
+    """186 graded rows, 41 of them Skip (Andreas's review, 2026-10-03): 145 cards. Moves only with the CSV."""
+    assert len(_graded()) == 145

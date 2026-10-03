@@ -1,0 +1,211 @@
+# Editorial grades for the planner (design: docs/superpowers/specs/2026-10-03-planner-worth-it-design.md).
+# grade: how rewarding the object is as a smart-telescope picture, independent of telescope and night.
+#   Showpiece / Rewarding / Modest / Skip (Skip = not published).
+# sky: the brightest sky it still works from: city / suburban / rural / dark.
+# merge_into: this row is absorbed by that id (one target, centre and size recomputed).
+# name: display-name override. size: arcmin override where the catalogue size misleads.
+# Drafted 2026-10-03 by Claude; reviewed and corrected by Andreas the same day (26 changes).
+id,grade,sky,merge_into,name,size,note
+B142,Modest,dark,,Barnard's E Nebula,,dark nebula; needs a dark sky and hours
+B143,,,B142,,,second half of the E
+B33,,,IC0434,,,the Horsehead sits on IC 434; one frame
+B86,Skip,,,,,small dark patch; nothing for a beginner to see
+IC0348,Modest,dark,,,,faint dusty cluster
+IC0349,,,M45,,,part of the Pleiades nebulosity
+IC0405,Rewarding,suburban,,,,emission + reflection; LP filter helps
+IC0434,Showpiece,rural,,Horsehead and Flame Nebulae,,the icon; Horsehead + Flame in one frame
+IC0443,Rewarding,rural,,Jellyfish Nebula,,Gem A is its radio name; known as the Jellyfish
+IC1396A,Rewarding,suburban,,,,"Elephant's Trunk; emission, LP filter"
+IC2220,Skip,,,,,small reflection nebula
+IC2391,Modest,city,,IC 2391,,large loose cluster
+IC2574,Modest,dark,,,,faint dwarf galaxy
+IC2602,Rewarding,city,,Southern Pleiades,,bright southern cluster
+IC2944,Rewarding,suburban,,Running Chicken Nebula,75,catalogue size is the cluster; the nebula is ~75'
+IC4604,Showpiece,dark,,Rho Ophiuchi clouds,,colourful dust; needs dark sky
+IC4703,,,NGC6611,,,same Eagle as M 16
+IC4715,Rewarding,suburban,,,,Milky Way star cloud
+IC4725,Modest,city,,,,
+IC5070,Rewarding,suburban,,,,emission; pairs with North America
+IC5146,Rewarding,rural,,,,small but colourful
+M45,Showpiece,suburban,,,,blue reflection around bright stars
+NGC0104,Showpiece,city,,47 Tucanae,,second-best globular in the sky
+NGC0205,,,NGC0224,,,companion inside the M 31 frame
+NGC0221,,,NGC0224,,,companion inside the M 31 frame
+NGC0224,Showpiece,suburban,,,,the galaxy everyone starts with
+NGC0253,Rewarding,suburban,,Sculptor Galaxy,,"bright edge-on; ""Sculptor Filament"" was a wrong name"
+NGC0281,Rewarding,suburban,,,,emission; LP filter
+NGC0292,Showpiece,rural,,,,
+NGC0457,Modest,city,,,,
+NGC0581,Skip,,,,,small cluster
+NGC0598,Rewarding,rural,,,,large but low surface brightness
+NGC0628,Modest,dark,,,,faint face-on
+NGC0650,Skip,,,,,tiny planetary
+NGC0869,Showpiece,city,,Double Cluster,,"two clusters, one frame"
+NGC0884,,,NGC0869,,,the other half of the Double Cluster
+NGC1039,Modest,city,,,,
+NGC1049,Skip,,,,,a globular in another galaxy; a dot
+NGC1068,Modest,suburban,,,,small bright core
+NGC1275,Skip,,,,,a smudge at this scale
+NGC1316,Modest,rural,,,,
+NGC1317,Skip,,,,,tiny companion of Fornax A
+NGC1432,,,M45,,,part of the Pleiades nebulosity
+NGC1435,,,M45,,,part of the Pleiades nebulosity
+NGC1499,Rewarding,rural,,,,large faint emission; LP filter
+NGC1555,Skip,,,,,tiny variable nebula
+NGC1904,Modest,suburban,,,,
+NGC1909,Modest,dark,,,,very faint reflection
+NGC1912,Modest,city,,,,
+NGC1952,Rewarding,suburban,,,,small but famous; detail needs hours
+NGC1960,Modest,city,,,,
+NGC1976,Showpiece,city,,,,works from anywhere
+NGC1977,Rewarding,suburban,,,,just north of M 42
+NGC1980,Skip,,,,,inside the M 42 frame
+NGC1981,Skip,,,,,inside the M 42 frame
+NGC1982,,,NGC1976,,,part of the Orion Nebula
+NGC2068,Skip,,,,,
+NGC2070,Showpiece,suburban,,Tarantula Nebula,,
+NGC2099,Modest,city,,,,
+NGC2168,Modest,city,,,,
+NGC2174,Rewarding,suburban,,,,emission; LP filter
+NGC2237,,,NGC2238,,,part of the Rosette
+NGC2238,Showpiece,suburban,,Rosette Nebula,,emission; LP filter
+NGC2246,,,NGC2238,,,part of the Rosette
+NGC2261,Skip,,,,,tiny
+NGC2264,Rewarding,suburban,,Cone Nebula and Christmas Tree,,emission + cluster
+NGC2287,Modest,city,,,,
+NGC2301,Modest,city,,,,
+NGC2323,Modest,city,,,,
+NGC2360,Modest,city,,,,
+NGC2422,Modest,city,,,,
+NGC2437,Modest,city,,,,
+NGC2447,Modest,city,,,,
+NGC2537,Skip,,,,,a smudge at this scale
+NGC2548,Modest,city,,,,
+NGC2573,Skip,,,,,"named for its position, not its looks"
+NGC2632,Rewarding,city,,,,big bright cluster
+NGC2682,Modest,city,,,,
+NGC2685,Skip,,,,,tiny; name confuses with the Helix Nebula
+NGC2736,Modest,rural,,,,
+NGC3031,Rewarding,suburban,,,,with M 82 nearby
+NGC3034,Rewarding,suburban,,,,
+NGC3115,Modest,suburban,,,,
+NGC3172,Skip,,,,,"named for its position, not its looks"
+NGC3351,Modest,rural,,,,
+NGC3368,Modest,rural,,,,
+NGC3372,Showpiece,suburban,,,,
+NGC3379,Skip,,,,,
+NGC3532,Modest,city,,,,
+NGC3556,Skip,,,,,
+NGC3561,Skip,,,,,a smudge at this scale
+NGC3587,Skip,,,,,small planetary
+NGC3623,,,NGC3627,,,Leo Triplet: one frame
+NGC3627,Rewarding,rural,,Leo Triplet,,M 65 + M 66 + NGC 3628 together
+NGC3766,Modest,city,,,,
+NGC3928,Skip,,,,,a smudge at this scale
+NGC3992,Modest,rural,,,,
+NGC4038,Skip,,,Antennae Galaxies,,
+NGC4039,Skip,,,,,the other Antenna
+NGC4192,Modest,rural,,,,
+NGC4194,Skip,,,,,a smudge at this scale
+NGC4254,Skip,,,,,
+NGC4258,Rewarding,suburban,,,,
+NGC4303,Modest,rural,,,,
+NGC4321,Modest,rural,,,,
+NGC4374,,,NGC4406,,,Markarian's Chain
+NGC4382,Modest,rural,,,,
+NGC4406,Rewarding,rural,,Markarian's Chain,,a string of galaxies; M 84 + M 86 + the Eyes
+NGC4435,,,NGC4406,,,Markarian's Chain
+NGC4438,,,NGC4406,,,Markarian's Chain
+NGC4472,Modest,rural,,,,
+NGC4486,Modest,rural,,,,
+NGC4501,Modest,rural,,,,
+NGC4548,Modest,rural,,,,
+NGC4552,Modest,rural,,,,
+NGC4565,Rewarding,rural,,,,edge-on
+NGC4567,Skip,,,Butterfly Galaxies,,
+NGC4568,Skip,,,,,the other Butterfly
+NGC4569,Modest,rural,,,,
+NGC4579,Skip,,,,,
+NGC4590,Modest,suburban,,,,
+NGC4594,Rewarding,suburban,,,,
+NGC4609,Skip,,,,,small cluster; the Coalsack itself is not this
+NGC4621,Skip,,,,,
+NGC4631,Rewarding,rural,,,,
+NGC4649,Modest,rural,,,,
+NGC4651,Skip,,,,,
+NGC4676,Skip,,,,,tiny
+NGC4736,Modest,suburban,,,,
+NGC4755,Rewarding,city,,,,colourful stars
+NGC4826,Modest,suburban,,,,
+NGC5024,Modest,suburban,,,,
+NGC5055,Rewarding,suburban,,,,
+NGC5128,Rewarding,suburban,,,,
+NGC5139,Showpiece,city,,,,the best globular in the sky
+NGC5194,Rewarding,suburban,,,,
+NGC5236,Rewarding,suburban,,,,
+NGC5272,Rewarding,suburban,,,,
+NGC5457,Rewarding,rural,,,,big but faint outer arms
+NGC5904,Rewarding,suburban,,,,
+NGC6087,Modest,city,,,,
+NGC6093,Modest,suburban,,,,
+NGC6121,Modest,suburban,,,,
+NGC6171,Modest,suburban,,,,
+NGC6188,Rewarding,rural,,,,
+NGC6205,Rewarding,city,,,,the northern globular
+NGC6218,Modest,suburban,,,,
+NGC6254,Modest,suburban,,,,
+NGC6266,Modest,suburban,,,,
+NGC6273,Modest,suburban,,,,
+NGC6333,Modest,suburban,,,,
+NGC6341,Modest,suburban,,,,
+NGC6357,Rewarding,rural,,,50,catalogue size is the core; the nebula is ~50'
+NGC6402,Modest,suburban,,,,
+NGC6405,Modest,city,,,,
+NGC6475,Rewarding,city,,,,big bright cluster
+NGC6494,Modest,city,,,,
+NGC6514,Rewarding,suburban,,,,red and blue together
+NGC6523,Showpiece,city,,,,bright; works from anywhere
+NGC6531,Skip,,,,,
+NGC6611,Showpiece,suburban,,,,emission; LP filter
+NGC6613,Skip,,,,,
+NGC6618,Rewarding,suburban,,,,emission; LP filter
+NGC6626,Skip,,,,,
+NGC6637,Modest,suburban,,,,
+NGC6656,Rewarding,suburban,,,,
+NGC6681,Modest,suburban,,,,
+NGC6694,Modest,city,,,,
+NGC6705,Rewarding,city,,,,dense cluster
+NGC6715,Skip,,,,,
+NGC6720,Skip,,,,,famous but tiny
+NGC6779,Modest,suburban,,,,
+NGC6809,Modest,suburban,,,,
+NGC6819,Modest,city,,,,
+NGC6822,Modest,dark,,,,
+NGC6838,Modest,suburban,,,,
+NGC6853,Modest,city,,,8,catalogue 6.7′ sat 0.03′ under the S30 Pro too-small line; real extent ~8 × 5.6′ (Andreas 2026-10-03)
+NGC6864,Skip,,,,,
+NGC6888,Rewarding,suburban,,,,emission; LP filter
+NGC6913,Skip,,,,,
+NGC6946,Rewarding,rural,,,,
+NGC6960,Showpiece,rural,,,,the whole loop
+NGC6981,Skip,,,,,
+NGC6992,Rewarding,suburban,,Eastern Veil,,
+NGC6995,,,NGC6992,,,part of the Eastern Veil
+NGC7000,Showpiece,suburban,,,,emission; LP filter
+NGC7023,Rewarding,rural,,,,blue reflection in dust
+NGC7078,Modest,suburban,,,,
+NGC7089,Modest,suburban,,,,
+NGC7092,Modest,city,,,,
+NGC7099,Modest,suburban,,,,
+NGC7293,Rewarding,suburban,,,,large planetary
+NGC7635,Rewarding,suburban,,,,emission; LP filter
+NGC7654,Modest,city,,,,
+Sh2-101,Rewarding,suburban,,,,emission; LP filter
+Sh2-129,Modest,dark,,,,faint; the Squid needs OIII and many hours
+Sh2-132,Modest,rural,,,,faint emission
+Sh2-136,Skip,,,,,faint dust; vdB 141 on 2026-09-30 disappointed; Andreas: skip
+Sh2-142,Rewarding,suburban,,,,emission; LP filter
+Sh2-155,Modest,dark,,,,faint
+Sh2-157,Modest,rural,,,,faint emission
+Sh2-199,Rewarding,suburban,,,,emission; LP filter
+Sh2-276,Modest,dark,,,,huge and faint; a mosaic
