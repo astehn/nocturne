@@ -526,3 +526,139 @@ def test_each_target_knows_its_constellation():
       console.log(JSON.stringify(ev.map(e => e && e.constellation)));
     """)
     assert out == ["Andromeda", "Perseus"]
+
+
+# --- Direction, curve and season (2026-10-03) ---------------------------------
+
+def test_sectors_are_eight_and_north_straddles_zero():
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      console.log(JSON.stringify({{
+        names: E.SECTORS,
+        s: [0, 22.4, 22.6, 90, 180, 337.4, 337.6, 359.9, -10, 360, 382.4].map(E.sectorOf) }}));
+    """)
+    assert out["names"] == ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+    assert out["s"] == [0, 0, 1, 2, 4, 7, 0, 0, 0, 0, 0]
+
+
+# RA 10, dec +10 culminates due south at Helsingborg near 23:00 UTC on
+# 2026-10-03 (the dark window's middle), and is above 30 degrees only between
+# azimuth ~119 and ~241 -- wholly inside SE+S+SW (112.5-247.5). At dec +20 the
+# ends of the night reach 101 and 259, outside those sectors, so blocking them
+# would NOT empty the window; the fixture is chosen so that it does.
+SOUTH = "{id:'south', name:'s', ra:10, dec:10, size:60, type:'HII', grade:'Rewarding', sky:'city'}"
+
+
+def test_blocking_the_south_removes_a_target_that_culminates_there():
+    out = _node(_evaluated("[" + SOUTH + "]") + """
+      const t = """ + SOUTH + """;
+      const open = Array(8).fill(true);
+      const noSouth = open.slice(); noSouth[3] = noSouth[4] = noSouth[5] = false;
+      const noNorth = open.slice(); noNorth[0] = false;
+      const run = v => E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, v);
+      const a = run(open), b = run(noSouth), c = run(noNorth);
+      const peak = a.samples.reduce((m, s) => s.alt > m.alt ? s : m, a.samples[0]);
+      const p = E.partition([b], 'suburban');
+      console.log(JSON.stringify({
+        peakAz: peak.az, legacy: ev[0].usableMinutes,
+        open: a.usableMinutes, openOpen: a.usableMinutesOpen,
+        blocked: b.usableMinutes, blockedOpen: b.usableMinutesOpen,
+        blockedStart: b.usableStart, blockedEnd: b.usableEnd,
+        north: c.usableMinutes,
+        part: {shown: p.shown.map(e => e.id), blocked: p.blocked.map(e => e.id),
+               darker: p.darker.map(e => e.id), small: p.tooSmall.map(e => e.id)},
+        openPart: E.partition([a], 'suburban').blocked.length }));
+    """)
+    assert abs(out["peakAz"] - 180) < 10, "fixture must culminate due south"
+    assert out["open"] >= 45 and out["open"] == out["legacy"] == out["openOpen"]
+    assert out["blocked"] == 0
+    assert out["blockedStart"] is None and out["blockedEnd"] is None
+    assert out["blockedOpen"] == out["openOpen"], "usableMinutesOpen ignores the view"
+    assert out["north"] == out["open"], "blocking only N must not touch it"
+    assert out["part"] == {"shown": [], "blocked": ["south"], "darker": [], "small": []}
+    assert out["openPart"] == 0
+
+
+def test_blocking_north_cuts_both_sides_of_the_wrap():
+    """Review Focus 4. RA 190, dec +65 passes lower culmination due north near
+    23:00 UTC, its azimuth running 331 -> 359 -> 0 -> 30 over the night. With N
+    blocked, both the 337.5-360 and the 0-22.5 stretches must go; what is left
+    is two short runs, one in NW and one in NE."""
+    out = _node(_evaluated("[]") + """
+      const t = {id:'pol', name:'p', ra:190, dec:65, size:60, type:'HII', grade:'Rewarding', sky:'city'};
+      const t85 = {id:'p85', name:'q', ra:10, dec:85, size:60, type:'HII', grade:'Rewarding', sky:'city'};
+      const noNorth = Array(8).fill(true); noNorth[0] = false;
+      const r = E.evaluateTarget(t, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noNorth);
+      const r85 = E.evaluateTarget(t85, w, 56.05, 12.69, E.INSTRUMENTS.s30pro, noNorth);
+      const inRun = r.samples.filter(s => s.t >= r.usableStart && s.t <= r.usableEnd);
+      const up = r.samples.filter(s => s.alt >= E.ALT_FLOOR);
+      console.log(JSON.stringify({
+        west: up.some(s => s.az > 337.5 && s.az < 360),
+        east: up.some(s => s.az >= 0 && s.az < 22.5),
+        beyond: up.some(s => s.az < 337.5 && s.az > 300) && up.some(s => s.az > 22.5 && s.az < 60),
+        runSectors: inRun.map(s => E.sectorOf(s.az)),
+        mins: r.usableMinutes, open: r.usableMinutesOpen,
+        m85: r85.usableMinutes, o85: r85.usableMinutesOpen }));
+    """)
+    assert out["west"] and out["east"] and out["beyond"], "fixture must cross north and leave it both ways"
+    assert out["runSectors"] and 0 not in out["runSectors"], out["runSectors"]
+    assert 0 < out["mins"] <= 90 < out["open"], (out["mins"], out["open"])
+    assert out["m85"] == 0 and out["o85"] >= 45
+
+
+def test_the_moon_track_matches_the_target_samples():
+    out = _node(_evaluated("[" + SOUTH + "]") + """
+      const mt = E.moonTrack(w, 56.05, 12.69);
+      console.log(JSON.stringify({ n: mt.length, s: ev[0].samples.length,
+        first: [mt[0].t.getTime(), ev[0].samples[0].t.getTime()],
+        alt: typeof mt[0].alt, none: E.moonTrack({kind:'none', start:null, end:null}, 56, 12).length }));
+    """)
+    assert out["n"] == out["s"] > 0
+    assert out["first"][0] == out["first"][1]
+    assert out["alt"] == "number"
+    assert out["none"] == 0
+
+
+def test_season_minutes_follow_the_year():
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      const m31 = E.seasonMinutes({{ra: 10.68, dec: 41.27}}, 56.05, 12.69, 2026);
+      const ocen = E.seasonMinutes({{ra: 201.7, dec: -47.48}}, 56.05, 12.69, 2026);
+      console.log(JSON.stringify({{ m31, ocen, text: E.bestMonthsText(ocen),
+        blocked: E.seasonMinutes({{ra: 10.68, dec: 41.27}}, 56.05, 12.69, 2026, Array(8).fill(false)) }}));
+    """)
+    m31 = out["m31"]
+    assert len(m31) == 12 and all(isinstance(v, int) for v in m31)
+    assert m31.index(max(m31)) in (8, 9, 10, 11, 0), m31
+    assert m31[5] < 60, m31
+    assert out["ocen"] == [0] * 12
+    assert out["text"] == "Never gets high enough from here."
+    assert out["blocked"] == [0] * 12
+
+
+def test_best_months_wrap_the_year():
+    out = _node(f"""
+      const E = {_require(ENGINE)};
+      console.log(JSON.stringify([
+        E.bestMonthsText([300,200,10,0,0,0,0,0,50,250,300,320]),
+        E.bestMonthsText([0,0,0,0,0,0,0,0,0,400,0,0]),
+        E.bestMonthsText(Array(12).fill(200)),
+        E.bestMonthsText([0,0,0,0,0,0,0,0,0,40,0,0]) ]));
+    """)
+    assert out == ["Best Oct–Jan from here.", "Best in October from here.",
+                   "Good all year from here.", "Never gets high enough from here."]
+
+
+def test_the_old_five_argument_call_is_unchanged():
+    """M 31 tonight gave 500 usable minutes from the engine before views existed
+    (measured on the pre-change file, 2026-10-03)."""
+    out = _node(_evaluated("""[
+      {id:'m31', name:'M 31', ra:10.68, dec:41.27, size:178, type:'G'}]""") + """
+      const all = E.evaluateTarget({id:'m31', name:'M 31', ra:10.68, dec:41.27, size:178, type:'G'},
+                                   w, 56.05, 12.69, E.INSTRUMENTS.s30pro, Array(8).fill(true));
+      console.log(JSON.stringify({ old: ev[0].usableMinutes, open: ev[0].usableMinutesOpen,
+                                   all: all.usableMinutes,
+                                   start: ev[0].usableStart, sampleKeys: Object.keys(ev[0].samples[0]).sort() }));
+    """)
+    assert out["old"] == 500 == out["open"] == out["all"]
+    assert out["sampleKeys"] == ["alt", "az", "t"]
