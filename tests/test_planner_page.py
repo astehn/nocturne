@@ -1096,6 +1096,8 @@ def test_a_target_below_the_horizon_sits_on_the_ground_line():
 # ---- Direction toggles (spec C2) -------------------------------------------
 
 _SECTORS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+_SECTOR_NAMES = ["North", "North-east", "East", "South-east",
+                 "South", "South-west", "West", "North-west"]
 
 
 def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
@@ -1104,8 +1106,9 @@ def test_eight_direction_toggles_sit_in_the_form_before_the_preferences():
     view = form[form.index('<fieldset class="view">'):form.index('class="prefs"')]
     assert "<legend>Where is your view clear?</legend>" in view
     buttons = re.findall(r'<button type="button" class="dir" data-dir="(\d)" '
-                         r'aria-pressed="true">([A-Z]+)</button>', view)
-    assert buttons == [(str(i), s) for i, s in enumerate(_SECTORS)]
+                         r'aria-label="([A-Za-z-]+)" aria-pressed="true">([A-Z]+)</button>', view)
+    assert buttons == [(str(i), n, s) for i, (n, s) in enumerate(zip(_SECTOR_NAMES, _SECTORS))]
+    assert view.count("<button") == 8
     assert form.index('id="sky-desc"') < form.index('<fieldset class="view">')
 
 
@@ -1113,6 +1116,14 @@ def test_the_direction_row_is_one_row_of_eight():
     css = (SITE / "styles.css").read_text(encoding="utf-8")
     assert re.search(r"\.view \{[^}]*grid-template-columns: repeat\(8, 1fr\)", css)
     assert re.search(r"\.dir\.off\b[^{]*\{", css)
+    # `.planner-where button { justify-self: start }` (0,1,1) shrank each
+    # button to its letter -- E and S measured 11 px wide at 320 px. The
+    # stretch must out-rank it, and the height must be a real tap target.
+    rule = re.search(r"\.view \.dir \{([^}]*)\}", css)
+    assert rule, "a (0,2,0) rule beats .planner-where button"
+    assert "justify-self: stretch" in rule.group(1)
+    h = re.search(r"min-height: (\d+)px", rule.group(1))
+    assert h and int(h.group(1)) >= 32
 
 
 @needs_node
@@ -1192,6 +1203,10 @@ def test_a_revealed_blocked_card_reads_its_window_from_the_open_run():
     assert "t.usableStart" not in card and "t.usableEnd" not in card, \
         "the card reads its times and bar through cardWindow()"
     assert "cardWindow(t)" in card
+    assert "(t.revealed === 'blocked' ? ' held' : '')" in card, \
+        "a would-be window must not look like a usable one"
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-bar\.held > span \{[^}]*opacity: \.2", css)
     sugg = js[js.index("function suggestedIntegration("):js.index("function fmtMins(")]
     assert "t.revealed === 'blocked'" in sugg, "no integration advice for a target you cannot see"
 
