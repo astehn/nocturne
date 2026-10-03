@@ -1072,7 +1072,7 @@ def test_the_card_draws_the_curve_from_the_view_aware_window():
     assert "curveSvg(" in det
     assert "t.usableStart, t.usableEnd" in det
     assert "E.moonTrack(win, loc.lat, loc.lon)" in js
-    assert "imageBlock(t) + curve + '<dl class=\"t-facts\">'" in det, "after the image, before the facts"
+    assert "imageBlock(t) + curve + season + '<dl class=\"t-facts\">'" in det, "after the image, before the facts"
     assert js.count('style="') == 1, "the wind arrow stays the only inline style"
 
 
@@ -1269,3 +1269,86 @@ def test_every_direction_blocked_says_nothing_suits_not_nothing_high_enough():
     assert out["darker"] == out["small"] == 0, "blocked wins over darker and too small"
     assert out["headline"] == "skip"
     assert out["limiting"] == "nothing suits your sky and telescope tonight"
+
+
+# ---- Month strip (spec C3) -------------------------------------------------
+
+def _strip(minutes, month, text="Best Oct–Jan from here.", no_dark=None):
+    return _node("const P = %s; console.log(JSON.stringify(P.seasonStripHtml(%s, %s, %s, %s)));"
+                 % (_req(PLANNER), json.dumps(minutes), json.dumps(month),
+                    json.dumps(text), json.dumps(no_dark)))
+
+
+_LEVELS = [0, 59, 60, 179, 180, 0, 0, 0, 0, 0, 0, 0]
+
+
+@needs_node
+def test_the_strip_shades_each_month_by_the_spec_thresholds():
+    html = _strip(_LEVELS, 9)
+    cells = re.findall(r'<span class="t-month (m\d)( now)?" title="([^"]*)">([^<]*)</span>', html)
+    assert len(cells) == 12, html
+    assert [c[0] for c in cells[:5]] == ["m0", "m1", "m2", "m2", "m3"]
+    assert [c[3] for c in cells] == list("JFMAMJJASOND")
+    assert sum(1 for c in cells if c[1]) == 1 and cells[9][1] == " now"
+    assert cells[4][2] == "May: 3.0 h" and cells[0][2] == "January: none"
+    assert re.match(r'<div class="t-season" role="img" aria-label="[^"]*October[^"]*">', html), html
+    assert "May 3.0 h" in html or "May: 3.0 h" in re.search(r'aria-label="([^"]*)"', html).group(1)
+    assert "NaN" not in html and "style=" not in html
+
+
+@needs_node
+def test_the_strip_sentence_is_escaped():
+    html = _strip(_LEVELS, 0, text="<b>&")
+    assert '<p class="t-season-text">&lt;b&gt;&amp;</p>' in html
+    assert "<b>" not in html
+
+
+@needs_node
+def test_midsummer_far_north_has_no_darkness_and_the_strip_still_renders():
+    """Review Focus 3: at 69 N June has no dark window at all. The engine says
+    0 without throwing, the strip renders, and the month says why it is empty."""
+    out = _node(f"""
+      const E = {_req(ENGINE)};
+      const P = {_req(PLANNER)};
+      const m = E.seasonMinutes({{ra: 10.68, dec: 41.27}}, 69.65, 18.96, 2026,
+                                [true, true, true, true, true, true, true, true]);
+      const nd = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i =>
+        E.darkWindow(new Date(Date.UTC(2026, i, 15, 12)), 69.65, 18.96).kind === 'none');
+      console.log(JSON.stringify({{m, nd,
+        html: P.seasonStripHtml(m, 5, E.bestMonthsText(m), nd)}}));
+    """)
+    assert out["m"][5] == 0 and len(out["m"]) == 12
+    assert out["nd"][5] is True
+    html = out["html"]
+    assert 'title="June: no darkness"' in html
+    assert re.search(r'<div class="t-season"[^>]* title="[^"]*June[^"]*"', html), html
+    assert html.count('class="t-month') == 12 and "NaN" not in html
+
+
+def test_the_card_only_leaves_a_slot_for_the_strip():
+    """Lazy: twelve nights of sampling per target is too much for every card,
+    so detail() emits a slot and the strip is filled when a card opens."""
+    js = PLANNER.read_text(encoding="utf-8")
+    det = js[js.index("function detail("):js.index("function suggestedIntegration(")]
+    assert 't-season-slot' in det and 'data-id="' in det
+    assert "seasonMinutes" not in det and "seasonStripHtml" not in det
+    assert "Through the year" in det
+    assert det.index("curve") < det.index("t-season-slot") < det.index("t-facts")
+    rnd = js[js.index("function render("):]
+    assert "E.seasonMinutes(" in rnd
+    # Keyed by everything the answer depends on, so a view change is fresh
+    # and a sky or telescope re-render is not recomputed.
+    assert "prefs.view.join(',')" in rnd
+    # Filled both for a card rendered already open and for one opened later.
+    tog = rnd[rnd.index("querySelectorAll('details.target')"):]
+    tog = tog[:tog.index("});\n    });") + 12]
+    assert tog.count("if (d.open) fillSeason(d);") == 2, tog
+    assert js.count('style="') == 1
+
+
+def test_the_strip_is_styled_by_class():
+    css = (SITE / "styles.css").read_text(encoding="utf-8")
+    assert re.search(r"\.t-season \{[^}]*grid-template-columns: repeat\(12,", css)
+    for cls in ("m0", "m1", "m2", "m3", "now"):
+        assert re.search(r"\.t-month\." + cls + r"\b[^{]*\{", css), cls
+    assert re.search(r"\.t-month\.now[^{]*\{[^}]*--verdict-go", css)
