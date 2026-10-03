@@ -979,3 +979,14 @@ def test_render_hands_rank_the_dark_window_length():
     js = (SITE / "planner.js").read_text(encoding="utf-8")
     assert js.count("windowMinutes: lastWindowMinutes") == 2, "both rank() calls"
     assert "lastWindowMinutes = win.start && win.end ? (win.end - win.start) / 60000 : 0;" in js
+
+
+def test_the_data_files_are_revalidated_not_reused_stale():
+    """No cache headers on the JSON, so browsers reused the old catalogue by
+    heuristic: on 2026-10-03 the new page code ran on the previous day's
+    ungraded list. Both fetches must ask the server first."""
+    js = (SITE / "planner.js").read_text(encoding="utf-8")
+    assert "var REVALIDATE = { cache: 'no-cache' };" in js
+    assert "fetch('planner-targets.json', REVALIDATE)" in js
+    assert "fetch('planner-images.json', REVALIDATE)" in js
+    assert "fetch('planner-targets.json')" not in js
