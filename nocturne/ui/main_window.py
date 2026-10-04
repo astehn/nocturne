@@ -5085,7 +5085,7 @@ class MainWindow(QMainWindow):
             if hit:
                 self._sat_layers = (sig, hit[0], hit[1], hit[2])
             else:
-                self._panel.neb_status.setText("Separating stars…")
+                self._panel.neb_status.setText("")  # said once, in the right column beside its ring (C5)
                 self._run_busy(lambda: self._split_tagged(base),
                                lambda layers: self._on_sat_split(sig, layers),
                                "Separating stars…", "Star separation failed")
@@ -5316,7 +5316,7 @@ class MainWindow(QMainWindow):
             panel.apply_btn.setEnabled(False)
             if hasattr(panel, "fringe_slider"):
                 panel.fringe_slider.setEnabled(False)
-            panel.fringe_status.setText(busy_label)
+            panel.fringe_status.setText("")  # said once, in the right column beside its ring (C5)
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
                        busy_label,
@@ -5533,7 +5533,7 @@ class MainWindow(QMainWindow):
         if hasattr(panel, "sr_slider"):
             panel.sr_slider.setEnabled(False)
             panel.apply_btn.setEnabled(False)
-            panel.sr_status.setText("Separating stars…")
+            panel.sr_status.setText("")  # said once, in the right column beside its ring (C5)
         self._run_busy(lambda: self._split_tagged(base),
                        lambda layers: self._on_sr_split(sig, layers),
                        "Separating stars…", "Star separation failed")
