@@ -90,7 +90,10 @@ class NocturneSplash(QSplashScreen):
         font = QFont(painter.font())
         font.setPointSizeF(max(11.0, font.pointSizeF()))
         painter.setFont(font)
-        painter.setPen(QColor(168, 172, 188))
+        # The website's --muted (#8B8880), as the artwork now uses its --ink and
+        # --oxide-text. The old blue-grey belonged to the navy artwork. 5.6:1 on
+        # the splash's #0B0B0E corner, so the version stays readable.
+        painter.setPen(QColor(0x8B, 0x88, 0x80))
         painter.drawText(
             rect,
             int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom),
