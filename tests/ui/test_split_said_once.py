@@ -39,3 +39,15 @@ def test_entering_a_step_that_splits(qtbot, tmp_path, monkeypatch, stage, status
     win._go_to_id(stage)
     assert seen and seen[-1] in ("Separating stars…", "Building star mask…"), "fixture: work started"
     assert seen[-1] not in getattr(win._panel, status).text()
+
+
+def test_a_note_already_on_the_panel_survives_a_failed_split(qtbot, tmp_path, monkeypatch):
+    """The free-splitter note was blanked when the split started and only the
+    success path restored it, so a failed split left the panel empty."""
+    win = _stretched(qtbot, tmp_path)
+    monkeypatch.setattr(win, "_run_busy", lambda *a, **k: None)   # the split never lands
+    win._splits.clear()
+    win._go_to_id("star_reduction")
+    before = win._panel.sr_status.text()
+    win._go_to_id("levels"); win._go_to_id("star_reduction")
+    assert win._panel.sr_status.text() == before

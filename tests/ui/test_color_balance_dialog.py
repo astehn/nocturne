@@ -691,8 +691,18 @@ def test_closing_during_apply_commits_nothing_colour_balance(qtbot):
         return out
     d._compose_snapshot = slow
     d._apply()
+    assert d.status.text().startswith("Applying"), "fixture: the compose really started"
     d.reject()
     release.set()
     qtbot.waitUntil(finished.is_set, timeout=5000)
     qtbot.wait(100)
     assert got == [], "a cancelled Apply must not become a step"
+
+
+def test_an_apply_left_alone_still_commits_colour_balance(qtbot):
+    """The cancel guard must not swallow the normal path."""
+    got = []
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.append(result))
+    d.set_balance_for_test(blue=0.5)
+    d._apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=5000)
