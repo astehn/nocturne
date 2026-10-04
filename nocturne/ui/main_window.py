@@ -91,7 +91,6 @@ from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
 from .toolbar_overflow import ToolbarOverflow
-from .busy_bar import BusyBar
 from .worker import run_async
 from . import file_dialogs
 
@@ -481,7 +480,6 @@ class MainWindow(QMainWindow):
         self._compare_img = None  # the AstroImage shown left of the before/after divider
         self._show_clipping = False
         QApplication.instance().installEventFilter(self)
-        self._busy_bar = BusyBar()
         self._busy_shown = False        # whether the delayed visuals are currently up
         # (panel, buttons this op disabled) — see _gate_panel_buttons
         self._busy_gated = (None, [])
@@ -1534,12 +1532,27 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _open_starless_levels(self) -> None:
-        """Split first, then let the user set the endpoints on the starless layer.
+        """Open the dialog at once and let it split inside itself, with the ring.
 
         The split is the reason this is a tool rather than a one-tap enhancement,
         and the reason it is slower to open than any other: on the full frame the
         star cores clip first and always, which would pin the white point and
         defeat the whole operation.
+
+        It used to split in the right column first and open the dialog only
+        afterwards, re-splitting on every open (2.9–38 s each time). Now it
+        reads the ONE shared split store first — a split Star Reduction,
+        Saturation, Narrowband or Colour Balance already made of these pixels is
+        used as it is — and publishes the split it makes for them in turn.
+
+        Never through `_run_busy`. Opened from a `_run_busy` callback, `.exec()`
+        blocked while `_busy` was still True (it is cleared in a finally only
+        AFTER the callback returns), so `_apply_starless_levels`'s own guard
+        swallowed OK: no step, no undo, no error. The old flow survived that by
+        deferring the open with `QTimer.singleShot(0, …)`; this one keeps
+        `_busy` False for the dialog's whole life because the split is the
+        dialog's own `run_async`. Nothing modal may ever be opened from inside a
+        `_run_busy` callback.
         """
         if self.project is None or self._busy:
             return
@@ -1547,43 +1560,27 @@ class MainWindow(QMainWindow):
             self._show_warning("Stretch the image first — Starless Levels works "
                                 "on the stretched image.")
             return
-        base = self.project.current()
-
-        def work():
-            return self._split_tagged(base)
-
-        def on_result(split) -> None:
-            # Deferred to the next event-loop turn, NOT opened here. `.exec()`
-            # blocks for the dialog's whole lifetime, and _run_busy clears
-            # `_busy` in a finally only AFTER this callback returns — so opened
-            # inline, `_busy` was still True when the user pressed OK and
-            # `_apply_starless_levels`'s own guard swallowed the result. No
-            # step, no undo, no error. (main_window already carries the same
-            # lesson elsewhere: "It was a SILENT no-op.") This is the first
-            # _run_busy callback in the app that opens a modal, which is why
-            # mirroring _open_star_spikes — which never goes through _run_busy —
-            # did not carry the problem with it.
-            #
-            # Dropping the guard instead would not do: BUSY_DELAY_MS is 400 ms,
-            # so the busy bar, the elapsed timer, the Cancel button and the wait
-            # CURSOR would all appear behind and over the open dialog. Letting
-            # _release() run first takes them down before it is shown.
-            QTimer.singleShot(0, lambda: self._show_starless_levels(split))
-
-        self._run_busy(work, on_result, "Separating stars…",
-                        "Starless Levels failed")
-
-    def _show_starless_levels(self, split) -> None:
-        if self.project is None:
-            return              # workspace closed while the split was running
         from .starless_levels_dialog import StarlessLevelsDialog
-        starless, stars, path = split
-        # Stashed rather than passed in: the dialog does not split and has no
-        # business knowing about engines, but the log line this tool writes is
-        # the only place a user can learn which separation they got.
-        self._starless_levels_path = path
-        StarlessLevelsDialog(starless, stars, parent=self,
-                              on_apply=self._apply_starless_levels).exec()
+        base = self.project.current()
+        hit = self._cached_layers(base)
+        starless, stars, tag = hit if hit else (None, None, "")
+        # Stashed rather than passed in: the dialog has no business knowing
+        # about engines, but the log line this tool writes is the only place a
+        # user can learn which separation they got. A cached split carries the
+        # tag of the tool that made it, so that is still the honest answer —
+        # and an untagged one names no engine rather than guessing one.
+        self._starless_levels_path = tag
+
+        def on_split(sl, st, tag=""):
+            self._remember_split(base, sl, st, tag)
+            self._starless_levels_path = tag
+
+        dlg = StarlessLevelsDialog(starless, stars, parent=self,
+                                   on_apply=self._apply_starless_levels,
+                                   splitter=lambda: self._split_tagged(base),
+                                   on_split=on_split)
+        dlg.exec()
+        dlg.deleteLater()      # a parented dialog outlives exec(); each held two full layers
 
     def _apply_starless_levels(self, result, values) -> None:
         if self.project is None or self._busy:
@@ -1591,10 +1588,12 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
         self._mark_dirty()
         black, white = values
+        # No engine known, no engine named — the `_split_engine_for` rule.
+        path = getattr(self, "_starless_levels_path", "")
         self.log_panel.append_entry(format_log_entry(
             "Starless Levels",
-            f"black {black:.2f} / white {white:.2f} "
-            f"({getattr(self, '_starless_levels_path', 'StarX')})", None))
+            f"black {black:.2f} / white {white:.2f}"
+            + (f" ({render_engine(path)})" if path else ""), None))
         self._clear_warning()
         self._refresh()
 
@@ -4176,22 +4175,13 @@ class MainWindow(QMainWindow):
         # write a support ticket.
         sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
 
-    def _run_busy(self, work, on_result, label: str, err_prefix: str,
-                  *, over_image: bool = True) -> None:
+    def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
         """Run `work` off the UI thread with busy indication; `on_result(result)`
         on success, `f"{err_prefix}: {exc}"` in the status label on failure.
         Busy is always cleared in a finally (even if `on_result` raises).
 
-        `over_image=False` keeps the sweeping bar OFF the picture and reports in
-        the right panel alone. Andreas's rule, 2026-09-13: the bar over the
-        image belongs to work the user asked for that is about to change the
-        image. Walking into a step and finding it separating stars is neither —
-        nothing is being changed and nothing was requested — so the panel's
-        label, elapsed time, progress and Cancel carry it on their own.
-
-        The busy CURSOR stays in both cases. It is not "over the image"; it is
-        what tells you the click you just made is being ignored, and an app that
-        silently swallows input reads as broken rather than busy.
+        The right column (label, progress, elapsed, Cancel) reports, and the busy
+        CURSOR tells you the click you just made is being ignored.
 
         Publishes a `CancelToken` (`self._active_token`) so `_cancel_active()` can
         request a clean stop; the token is set as the AMBIENT token on the worker
@@ -4204,8 +4194,6 @@ class MainWindow(QMainWindow):
         # already published to the worker thread just below.
         token.on_progress = self._tool_progress.progress.emit
         self._active_token = token
-        # Read by _show_busy_visuals, which fires on a timer rather than here.
-        self._busy_over_image = over_image
         self._busy_start = _time.monotonic()
         self._set_busy(True, label)
         gen = self._project_gen        # the workspace this result will belong to
@@ -4414,8 +4402,6 @@ class MainWindow(QMainWindow):
                 pass            # widget deleted under us; nothing to restore
 
     def _show_busy_visuals(self) -> None:
-        if getattr(self, "_busy_over_image", True):
-            self._busy_bar.show_over(self.image_view)
         self._ellipsis_n = 0
         self._busy_label.setText(self._busy_label_text)
         self._ellipsis_timer.start()
@@ -4434,9 +4420,7 @@ class MainWindow(QMainWindow):
         self._ellipsis_timer.stop()
         self._elapsed_timer.stop()
         if self._busy_shown:
-            self._busy_bar.hide_bar()       # no-op when it was never shown
             self._busy_label.setText("")
-        self._busy_over_image = True        # the default for the next op
         if self._cursor_active:
             QApplication.restoreOverrideCursor()
             self._cursor_active = False
@@ -4458,7 +4442,7 @@ class MainWindow(QMainWindow):
 
     def _set_progress(self, phase: str, done: int, total: int) -> None:
         """Drive the determinate progress bar; `total == 0` falls back to the
-        indeterminate BusyBar sweep (the bar itself is simply hidden)."""
+        indeterminate state (the bar itself is simply hidden)."""
         self._progress_state = (phase, done, total)
         if self._busy_shown:
             self._apply_progress_state()
@@ -5087,11 +5071,9 @@ class MainWindow(QMainWindow):
                 self._sat_layers = (sig, hit[0], hit[1], hit[2])
             else:
                 self._panel.neb_status.setText("Separating stars…")
-                # Step-entry preparation: panel only, no bar over the picture.
                 self._run_busy(lambda: self._split_tagged(base),
                                lambda layers: self._on_sat_split(sig, layers),
-                               "Separating stars…", "Star separation failed",
-                               over_image=False)
+                               "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
         self._sync_step_controls()
 
@@ -5323,8 +5305,7 @@ class MainWindow(QMainWindow):
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
                        busy_label,
-                       "Star separation failed" if has_split else "Star mask failed",
-                       over_image=False)      # step-entry preparation
+                       "Star separation failed" if has_split else "Star mask failed")
 
     def _fringe_prepare(self, base):
         """Off-thread: build what the fringe preview de-greens. StarX gives a
@@ -5540,8 +5521,7 @@ class MainWindow(QMainWindow):
             panel.sr_status.setText("Separating stars…")
         self._run_busy(lambda: self._split_tagged(base),
                        lambda layers: self._on_sr_split(sig, layers),
-                       "Separating stars…", "Star separation failed",
-                       over_image=False)      # step-entry preparation
+                       "Separating stars…", "Star separation failed")
 
     def _on_sr_split(self, sig, layers) -> None:
         """The split finished: cache it and enable the slider — unless the

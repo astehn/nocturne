@@ -1041,3 +1041,150 @@ def test_wipe_without_clipping_also_composites_two_layers_of_the_same_size(qtbot
     assert (before.width(), before.height()) == (after.width(), after.height()), (
         f"wipe halves differ: before {before.width()}x{before.height()} "
         f"vs after {after.width()}x{after.height()}")
+
+
+# --- splitting inside the dialog (2026-10-04 progress-ring spec R4) ---------
+
+def _gated_splitter(split, tag="StarNet2", fail=None):
+    """A splitter that reports 40% through the REAL ambient-token route — the
+    one StarNet2 and RC-Astro use — then waits until the test lets it finish,
+    so the dialog can be read mid-split."""
+    import threading
+    from nocturne.core.tasks import report_progress
+    gate, state = threading.Event(), {"calls": 0, "returned": False}
+
+    def splitter():
+        state["calls"] += 1
+        report_progress(40, 100)
+        gate.wait(5)
+        state["returned"] = True
+        if fail is not None:
+            raise fail
+        return (*split, tag)
+
+    return splitter, gate, state
+
+
+def _settle():
+    """Let a finished worker's queued result reach the dialog."""
+    from PySide6.QtCore import QCoreApplication, QThreadPool
+    QThreadPool.globalInstance().waitForDone(5000)
+    for _ in range(5):
+        QCoreApplication.processEvents()
+
+
+def test_given_layers_it_opens_with_them_and_no_wait(qtbot, split):
+    dlg = StarlessLevelsDialog(*split)
+    qtbot.addWidget(dlg)
+    assert dlg.has_layers() is True
+    assert dlg.waiting.isHidden()
+    assert dlg.ok_btn.isEnabled()
+
+
+def test_without_layers_it_waits_with_a_ring_then_shows_the_split(qtbot, split):
+    from nocturne.ui.progress_ring import WaitingBlock
+    splitter, gate, state = _gated_splitter(split)
+    published = []
+    dlg = StarlessLevelsDialog(None, None, splitter=splitter,
+                               on_split=lambda *a: published.append(a))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    try:
+        assert isinstance(dlg.waiting, WaitingBlock)
+        qtbot.waitUntil(lambda: dlg.waiting.ring.fraction() == 0.4, timeout=5000)
+        assert dlg.has_layers() is False
+        assert dlg.waiting.isVisible() and dlg.waiting.parent() is dlg.preview
+        assert dlg.waiting.geometry() == dlg.preview.rect(), "the ring does not cover the preview"
+        assert dlg.preview._after_img is None, "a picture was drawn before there were layers"
+        assert "Separating stars" in dlg.waiting.text()
+        assert dlg.preview._after_pane.text() == "", "'No image' reads through the ring"
+        assert dlg.values() == (0.0, 1.0)
+        assert (dlg.black_val.value(), dlg.white_val.value()) == (0.0, 1.0)
+        assert not dlg.ok_btn.isEnabled(), "Apply must wait for the layers"
+    finally:
+        gate.set()
+    qtbot.waitUntil(dlg.has_layers, timeout=5000)
+    assert dlg.waiting.isHidden()
+    assert dlg.preview._after_img is not None, "the split landed but nothing was drawn"
+    assert dlg.ok_btn.isEnabled()
+    assert len(published) == 1
+    sl, st, tag = published[0]
+    assert sl is split[0] and st is split[1] and tag == "StarNet2"
+    assert state["calls"] == 1
+    # Initialised exactly as the given-layers path: the histogram is the starless layer's.
+    ref = StarlessLevelsDialog(*split)
+    qtbot.addWidget(ref)
+    assert dlg.values() == ref.values()
+    assert np.array_equal(to_rgb8(dlg.compose()), to_rgb8(ref.compose()))
+
+
+def test_a_dialog_closed_before_the_split_lands_ignores_it(qtbot, split):
+    splitter, gate, state = _gated_splitter(split)
+    published = []
+    dlg = StarlessLevelsDialog(None, None, splitter=splitter,
+                               on_split=lambda *a: published.append(a))
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
+    dlg.reject()
+    gate.set()
+    _settle()
+    assert state["returned"] is True, "the fake never finished, so this proved nothing"
+    assert published == []
+    assert dlg.has_layers() is False
+
+
+def test_a_failed_split_says_so_and_keeps_apply_off(qtbot, split):
+    splitter, gate, state = _gated_splitter(split, fail=RuntimeError("starnet exploded"))
+    dlg = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    gate.set()
+    qtbot.waitUntil(lambda: "starnet exploded" in dlg.waiting.text(), timeout=5000)
+    assert dlg.waiting.ring.isHidden()
+    assert not dlg.ok_btn.isEnabled()
+    assert dlg.has_layers() is False
+
+
+def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, split):
+    """Empty, RangeHandles still paints its full-range band and both handles —
+    a flat histogram with live controls. Hidden while waiting, its space kept,
+    so neither it nor the preview above it moves when the layers arrive."""
+    splitter, gate, state = _gated_splitter(split)
+    dlg = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(dlg)
+    dlg.resize(1000, 760)
+    dlg.show()
+    try:
+        qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
+        qtbot.wait(20)
+        assert dlg.handles.isHidden(), "the empty histogram is showing during the split"
+        hist_before, prev_before = dlg.handles.geometry(), dlg.preview.geometry()
+    finally:
+        gate.set()
+    qtbot.waitUntil(dlg.has_layers, timeout=5000)
+    qtbot.wait(20)
+    assert not dlg.handles.isHidden()
+    assert dlg.handles.geometry() == hist_before
+    assert dlg.preview.geometry() == prev_before
+
+
+def test_closing_cancels_only_a_split_still_running(qtbot, split):
+    splitter, gate, state = _gated_splitter(split)
+    gate.set()
+    done = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(done)
+    done.show()
+    qtbot.waitUntil(done.has_layers, timeout=5000)
+    done.reject()
+    assert done._token.cancelled is False, "a finished split's token was cancelled"
+
+    splitter, gate, state = _gated_splitter(split)
+    running = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(running)
+    running.show()
+    qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
+    running.reject()
+    gate.set()
+    assert running._token.cancelled is True, "closing mid-split left the engine running"
+    _settle()

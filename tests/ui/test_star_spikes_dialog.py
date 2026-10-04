@@ -260,3 +260,18 @@ def test_the_preview_sits_beside_the_controls_not_under_them(qtbot):
         "the control column is eating the window")
     assert d.preview.height() > d.preview.width() * 0.5, (
         "the preview is a letterbox strip again")
+
+
+def test_detection_wait_shows_an_indeterminate_ring(qtbot):
+    import time
+    import nocturne.ui.star_spikes_dialog as sd
+    real = sd.detect_stars
+    sd.detect_stars = lambda data: (time.sleep(0.3), real(data))[1]
+    try:
+        d = StarSpikesDialog(_img())
+        qtbot.addWidget(d)
+        assert d.preview.is_waiting()
+        assert d.preview.waiting_block().ring.fraction() is None
+        qtbot.waitUntil(lambda: d._stars is not None, timeout=8000)
+    finally:
+        sd.detect_stars = real

@@ -15,6 +15,7 @@ from ..core.fits_io import _parse_metadata, load_mono_master
 from ..settings import start_dir
 from . import file_dialogs
 from .frame_preview import FramePreview
+from .progress_ring import ProgressRing
 from .preview import downscale, to_qimage
 from .worker import run_async
 
@@ -155,7 +156,13 @@ class CombineDialog(QDialog):
         root.addLayout(form)
         root.addWidget(self.align_note)
         root.addWidget(self.preview, 1)
-        root.addWidget(self.status)
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        root.addLayout(status_row)
         root.addLayout(buttons)
 
     # --- helpers ---
@@ -191,6 +198,8 @@ class CombineDialog(QDialog):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self._go.setEnabled(not busy)
+        if not busy:
+            self.status_ring.hide()
 
     def _paths(self) -> tuple:
         return self.ha_edit.text().strip(), self.oiii_edit.text().strip()
@@ -219,7 +228,7 @@ class CombineDialog(QDialog):
             self._signals.loaded.emit((small, oiii_fit(ha, oiii)))
             return measure_offset(ha, oiii)
 
-        self.preview.show_message("Reading…")
+        self.preview.show_waiting("Reading…")
         run_async(self._pool, work,
                   lambda s: self._signals.checked.emit(s[0], s[1]),
                   lambda exc: self._signals.failed.emit(str(exc)))
@@ -265,6 +274,8 @@ class CombineDialog(QDialog):
         shift = self._shift
         self.status.setText("Combining…")
         self._set_busy(True)
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
 
         def work():
             ha, oiii = loader(ha_path), loader(oiii_path)

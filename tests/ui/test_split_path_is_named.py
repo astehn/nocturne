@@ -114,7 +114,8 @@ def test_starless_levels_log_line_carries_the_path(qtbot, tmp_path):
     win._apply_starless_levels(result, (0.1, 0.9))
     entries = win.log_panel.entries() if hasattr(win.log_panel, "entries") else None
     text = "\n".join(entries) if entries else win.log_panel.toPlainText()
-    assert "Starless Levels" in text and "(free)" in text, text
+    assert "Starless Levels" in text and "(built-in)" in text, text
+    assert "(free)" not in text, text
 
 
 def test_narrowband_and_colour_balance_are_NOT_silent_choosers():

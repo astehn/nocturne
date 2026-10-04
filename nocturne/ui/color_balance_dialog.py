@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -16,6 +17,7 @@ from ..steps.star_split import preferred_splitter, splitter_name
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
 from .preview import to_qimage
+from .progress_ring import ProgressRing
 from .range_handles import RangeHandles
 from .reset_slider import ResetSlider
 from .worker import run_async
@@ -126,6 +128,18 @@ class ColorBalanceDialog(QDialog):
         self.preset_box = QComboBox()
         self.preset_box.addItems(BAND_PRESETS)
         self.handles = RangeHandles()
+        # Hidden while the split runs (see showEvent), its space kept: empty, it
+        # still paints the full-range band and both handles, which reads as a
+        # flat histogram with live controls. In a box-layout slot of its own,
+        # because QFormLayout ignores retain-size and collapsed the row —
+        # measured, everything under it jumped 123 px when the split landed.
+        keep = self.handles.sizePolicy()
+        keep.setRetainSizeWhenHidden(True)
+        self.handles.setSizePolicy(keep)
+        self._handles_slot = QWidget()
+        slot = QVBoxLayout(self._handles_slot)
+        slot.setContentsMargins(0, 0, 0, 0)
+        slot.addWidget(self.handles)
         self.feather_slider = ResetSlider(8, minimum=0, maximum=30)
         self.feather_val = QLabel("0.08")
         self.invert_check = QCheckBox("Invert the range")
@@ -188,7 +202,7 @@ class ColorBalanceDialog(QDialog):
         controls.addRow("Strength", _row(self.strength_slider, self.strength_val))
         controls.addRow(QLabel("—  Limit to  —"))
         controls.addRow("Range", self.preset_box)
-        controls.addRow("", self.handles)
+        controls.addRow("", self._handles_slot)
         controls.addRow("Feather", _row(self.feather_slider, self.feather_val))
         controls.addRow("", self.invert_check)
         controls.addRow("", self.show_mask_check)
@@ -207,7 +221,13 @@ class ColorBalanceDialog(QDialog):
         side = QVBoxLayout()
         side.addLayout(controls)
         side.addStretch(1)
-        side.addWidget(self.status)
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        side.addLayout(status_row)
         side.addLayout(buttons)
         side_wrap = QWidget()
         side_wrap.setLayout(side)
@@ -249,16 +269,19 @@ class ColorBalanceDialog(QDialog):
                                 "RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
-        self.preview.show_message(_SPLIT_MSG)
+        self.preview.show_waiting(_SPLIT_MSG)
+        self.handles.hide()
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
                   on_progress=self._on_split_progress)
 
     def _on_split_progress(self, done: int, total: int) -> None:
-        """Count the star split up in place — the same wait Starless Levels
-        shows a bar for."""
-        self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
+        """Count the star split up on the ring — the same wait, and the same
+        ring, Starless Levels and Narrowband show."""
+        if not shiboken6.isValid(self.preview):
+            return
+        self.preview.set_waiting_progress(done, total)
 
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers
@@ -270,6 +293,7 @@ class ColorBalanceDialog(QDialog):
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.handles.set_histogram(self._prev_starless.data)
+        self.handles.show()
         self._on_preset(self.preset_box.currentText())   # seed the band from the image
         self.apply_btn.setEnabled(True)
         self._do_render()
@@ -514,17 +538,21 @@ class ColorBalanceDialog(QDialog):
         self.apply_btn.setEnabled(False)
         self._set_controls_enabled(False)
         self.status.setText("Applying at full resolution…")
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
         run_async(self._pool,
                   lambda: self._compose_snapshot(b, lo, hi, feather, invert),
                   lambda result: self._on_composed(result, opts),
                   self._on_compose_error)
 
     def _on_composed(self, result: AstroImage, options: dict) -> None:
+        self.status_ring.hide()
         if self._on_apply is not None:
             self._on_apply(result, options)
         self.accept()
 
     def _on_compose_error(self, exc) -> None:
+        self.status_ring.hide()
         self._set_controls_enabled(True)
         self.apply_btn.setEnabled(True)
         self.status.setText(f"Could not apply: {exc}")

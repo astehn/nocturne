@@ -309,3 +309,12 @@ def test_the_letterbox_is_not_the_same_colour_as_a_black_picture(qtbot):
     r, g, b = (int(_LETTERBOX[i:i + 2], 16) for i in (1, 3, 5))
     assert max(r, g, b) >= 0x28, "too close to black to bound the picture"
     assert max(r, g, b) <= 0x50, "bright enough to compete with the picture"
+
+
+def test_the_placeholder_is_still_no_image_by_default(qtbot):
+    """`set_placeholder` is opt-in: every other CompareView keeps saying so."""
+    from nocturne.ui.compare_view import CompareView
+    v = CompareView()
+    qtbot.addWidget(v)
+    v.set_images(None, None)
+    assert v._after_pane.text() == "No image"

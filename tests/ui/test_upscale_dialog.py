@@ -492,3 +492,42 @@ def test_the_original_is_the_same_crop_the_upscale_used(qtbot):
     c = q.pixelColor((22 - 20) * 2, (13 - 10) * 2)      # the marker, at 2x, inside the crop
     assert (c.red(), c.green(), c.blue()) == (0, 255, 0)
     assert q.pixelColor(0, 0).green() == 0
+
+
+def test_the_ring_follows_progress_keeps_the_percent_and_hides_after(qtbot, monkeypatch):
+    import threading
+    import nocturne.ui.upscale_dialog as ud
+    from nocturne.core.tasks import current
+    started = threading.Event()
+
+    def slow(*a, **k):
+        started.set()
+        while True:
+            current().check()
+    monkeypatch.setattr(ud, "prepare_upscale", slow)
+    d = _dlg(qtbot); d.show()
+    assert d.status_ring.isHidden()
+    d.upscale_btn.click()
+    assert started.wait(5)
+    assert not d.status_ring.isHidden() and d.cancel_btn.isVisible()
+    g, s = d.status_ring.geometry(), d.status.geometry()
+    assert g.right() < s.left()
+    d._on_progress(40, 100)
+    assert d.status_ring.fraction() == 0.4
+    assert "40%" in d.status.text()
+    assert d.cancel_btn.isVisible()
+    d.cancel_btn.click()
+    qtbot.waitUntil(lambda: not d._busy, timeout=5000)
+    assert d.status_ring.isHidden()
+
+
+def test_a_failed_upscale_hides_the_ring(qtbot, monkeypatch):
+    import nocturne.ui.upscale_dialog as ud
+
+    def boom(*a, **k):
+        raise RuntimeError("nope")
+    monkeypatch.setattr(ud, "prepare_upscale", boom)
+    d = _dlg(qtbot); d.show()
+    d.upscale_btn.click()
+    qtbot.waitUntil(lambda: d.status.text().startswith("Failed"), timeout=5000)
+    assert d.status_ring.isHidden()

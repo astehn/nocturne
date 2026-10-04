@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -16,6 +17,7 @@ from ..settings import resolve_binary
 from ..steps.star_split import preferred_splitter, splitter_name
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
+from .progress_ring import ProgressRing
 from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
@@ -180,7 +182,13 @@ class NarrowbandDialog(QDialog):
         side = QVBoxLayout()
         side.addLayout(controls)
         side.addStretch(1)
-        side.addWidget(self.status)
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        side.addLayout(status_row)
         side.addLayout(buttons)
         side_wrap = QWidget()
         side_wrap.setLayout(side)
@@ -220,20 +228,22 @@ class NarrowbandDialog(QDialog):
                                 "or RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
-        self.preview.show_message(_SPLIT_MSG)
+        self.preview.show_waiting(_SPLIT_MSG)
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
                   on_progress=self._on_split_progress)
 
     def _on_split_progress(self, done: int, total: int) -> None:
-        """Count the star split up in place.
+        """Count the star split up on the ring.
 
         The dialog's only sign of life was a static line of text, for the same
-        split that shows a moving bar in Starless Levels — same work, same wait,
-        one of them silent.
+        split Starless Levels and Colour Balance count up on the same ring —
+        same work, same wait.
         """
-        self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
+        if not shiboken6.isValid(self.preview):
+            return
+        self.preview.set_waiting_progress(done, total)
 
     def _on_starless(self, layers) -> None:
         # A compare set up while "Separating stars..." was on screen would be left
@@ -398,6 +408,8 @@ class NarrowbandDialog(QDialog):
         params = self._params()
         self.apply_btn.setEnabled(False)
         self.status.setText("Applying at full resolution…")
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
         run_async(self._pool, lambda: self._compose_full(params),
                   lambda result: self._on_applied(result, params),
                   self._on_apply_error)
@@ -412,11 +424,13 @@ class NarrowbandDialog(QDialog):
 
     def _on_applied(self, result: AstroImage, params: NarrowbandParams) -> None:
         self._applying = False
+        self.status_ring.hide()
         if self._on_apply is not None:
             self._on_apply(result, params)
         self.accept()
 
     def _on_apply_error(self, exc) -> None:
         self._applying = False
+        self.status_ring.hide()
         self.apply_btn.setEnabled(True)
         self.status.setText(f"Apply failed: {exc}")

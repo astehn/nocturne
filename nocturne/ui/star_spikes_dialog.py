@@ -123,7 +123,7 @@ class StarSpikesDialog(QDialog):
         # nothing on screen saying why.
         self._set_controls_enabled(False)
         self.apply_btn.setEnabled(False)
-        self.preview.show_message("Finding stars…")
+        self.preview.show_waiting("Finding stars…")
         run_async(self._pool, lambda: detect_stars(self._base.data),
                   self._on_stars, self._on_detect_error)
 

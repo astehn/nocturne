@@ -586,3 +586,90 @@ def test_compare_shows_the_image_you_started_with(qtbot):
     assert d.preview.view._split_x == moved, "and the divider must stay put"
     d.compare_check.setChecked(False)
     assert d.preview.view.compare_active() is False
+
+
+def test_the_split_shows_a_ring_with_the_number_not_the_text(qtbot):
+    from nocturne.ui import color_balance_dialog
+    d = _dlg(qtbot)
+    d.preview.show_waiting(color_balance_dialog._SPLIT_MSG)
+    d._on_split_progress(46, 100)
+    assert d.preview.waiting_block().ring.fraction() == pytest.approx(0.46)
+    assert "46%" not in d.preview.message_text(), "the number lives in the ring"
+
+
+def test_a_late_progress_after_close_is_harmless(qtbot):
+    from nocturne.ui import color_balance_dialog
+    base, starless, stars = _layers()
+    d = ColorBalanceDialog(Settings(), base, starless=starless, stars=stars)
+    d.preview.show_waiting(color_balance_dialog._SPLIT_MSG)   # not qtbot-registered: deleted below
+    d.close(); d.deleteLater(); qtbot.wait(10)
+    d._on_split_progress(50, 100)          # must not raise
+
+
+def test_apply_shows_the_small_ring_beside_the_status_and_hides_it_after(qtbot):
+    import threading
+    release = threading.Event()
+    got = []
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.append(result))
+    d.set_balance_for_test(blue=0.5)
+    real = d._compose_snapshot
+    d._compose_snapshot = lambda *a: (release.wait(5), real(*a))[1]
+    assert d.status_ring.isHidden(), "no ring before any wait"
+    d._apply()
+    try:
+        assert not d.status_ring.isHidden() and d.status_ring.fraction() is None
+        g, s = d.status_ring.geometry(), d.status.geometry()
+        assert g.right() < s.left()
+        assert abs(g.center().y() - s.center().y()) <= 4
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: bool(got), timeout=5000)
+    assert d.status_ring.isHidden()
+
+
+def test_a_failed_apply_hides_the_ring_colour_balance(qtbot):
+    d = _dlg(qtbot)
+    d.set_balance_for_test(blue=0.5)
+
+    def boom(*a):
+        raise RuntimeError("nope")
+    d._compose_snapshot = boom
+    d._apply()
+    qtbot.waitUntil(lambda: d.status.text().startswith("Could not apply"), timeout=5000)
+    assert d.status_ring.isHidden()
+
+
+def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, monkeypatch):
+    """Empty, RangeHandles still paints its full-range band and both handles —
+    a flat histogram with live controls. Hidden while waiting, its space kept,
+    so neither it nor the row under it moves when the split lands."""
+    import threading
+    monkeypatch.setattr("nocturne.ui.color_balance_dialog.preferred_splitter",
+                        lambda s: object())
+    base, starless, stars = _layers()
+    gate, calls = threading.Event(), []
+
+    def runner(img):
+        calls.append(1)
+        gate.wait(5)
+        return starless, stars
+
+    d = ColorBalanceDialog(Settings(), base)
+    d._starx_runner = runner
+    d.last_engine = "StarNet2"
+    qtbot.addWidget(d)
+    d.resize(1000, 760)
+    d.show()
+    try:
+        qtbot.waitUntil(lambda: calls == [1], timeout=5000)
+        qtbot.wait(20)
+        assert d.handles.isHidden(), "the empty histogram is showing during the split"
+        hist_before = d.handles.geometry()
+        below_before = d.feather_slider.mapTo(d, d.feather_slider.rect().topLeft())
+    finally:
+        gate.set()
+    qtbot.waitUntil(d.apply_btn.isEnabled, timeout=5000)
+    qtbot.wait(20)
+    assert not d.handles.isHidden()
+    assert d.handles.geometry() == hist_before
+    assert d.feather_slider.mapTo(d, d.feather_slider.rect().topLeft()) == below_before
