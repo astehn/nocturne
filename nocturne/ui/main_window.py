@@ -670,6 +670,7 @@ class MainWindow(QMainWindow):
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
+        self._busy_ring = right.busy_ring
         self._elapsed_label = right.elapsed_label
         self._cancel_btn = right.cancel_btn
         self._cancel_btn.clicked.connect(self._cancel_active)
@@ -1160,6 +1161,7 @@ class MainWindow(QMainWindow):
         busy = getattr(self, "_busy_shown", False)
         warn = not busy and bool(self._warning.text())
         self._busy_label.setVisible(busy)
+        self._busy_ring.setVisible(busy)
         self._warning.setVisible(warn)
         self._show_details_btn.setVisible(not busy and self._diag_pending)
         self._copy_log_btn.setVisible(not busy and self._diag_pending)
@@ -4430,19 +4432,23 @@ class MainWindow(QMainWindow):
         self._elapsed_label.hide()
         self._elapsed_label.setText("")
         self._progress_state = ("", 0, 0)
-        self._progress.reset()
+        self._progress.setText("")
         self._progress.hide()
+        self._busy_ring.set_indeterminate()
 
     def _tick_ellipsis(self) -> None:
         self._ellipsis_n = (self._ellipsis_n + 1) % 4
         self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
 
     def _tick_elapsed(self) -> None:
-        self._elapsed_label.setText(f"{self.elapsed_seconds():.0f}s")
+        # "42% · 12s" when a number exists: the two share one row since the
+        # bar went (2026-10-04), and run together they read as one figure.
+        lead = "· " if self._progress.isVisible() else ""
+        self._elapsed_label.setText(f"{lead}{self.elapsed_seconds():.0f}s")
 
     def _set_progress(self, phase: str, done: int, total: int) -> None:
-        """Drive the determinate progress bar; `total == 0` falls back to the
-        indeterminate state (the bar itself is simply hidden)."""
+        """Fill the ring and show the number; `total == 0` means no honest
+        percentage exists, so the ring spins and no number is shown."""
         self._progress_state = (phase, done, total)
         if self._busy_shown:
             self._apply_progress_state()
@@ -4450,18 +4456,18 @@ class MainWindow(QMainWindow):
     def _apply_progress_state(self) -> None:
         phase, done, total = self._progress_state
         if total > 0:
-            self._progress.setMaximum(total)
-            self._progress.setValue(done)
-            # `%v/%m` is the COUNT format — right for "frame 5 of 187", odd for
-            # a percentage, where it rendered GraXpert's 2% as "Denoising —
-            # 2/100". A total of exactly 100 is a percentage by construction:
-            # `report_progress` is the only source of one, and it always reports
-            # out of 100.
-            pct = total == 100
-            body = "%p%" if pct else "%v/%m"
-            self._progress.setFormat(f"{phase} — {body}" if phase else body)
+            self._busy_ring.set_progress(done, total)
+            # A COUNT ("frame 5 of 187") reads as 5/187; a percentage must not
+            # — it rendered GraXpert's 2% as "Denoising — 2/100". A total of
+            # exactly 100 is a percentage by construction: `report_progress`
+            # is the only source of one, and it always reports out of 100.
+            body = f"{round(100 * done / total)}%" if total == 100 else f"{done}/{total}"
+            self._progress.setText(f"{phase} — {body}" if phase else body)
             self._progress.show()
+            if self._busy_shown:
+                self._tick_elapsed()
         else:
+            self._busy_ring.set_indeterminate()
             self._progress.hide()
 
     # --- crop overlay ---

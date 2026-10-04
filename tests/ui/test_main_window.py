@@ -1005,9 +1005,11 @@ def test_set_progress_switches_to_determinate(qtbot, tmp_path):
     win.show(); qtbot.waitExposed(win)
     win._set_busy(True, "Stacking…"); win._show_busy_visuals()
     win._set_progress("integrating", 3, 10)
-    assert win._progress.isVisible() and win._progress.maximum() == 10 and win._progress.value() == 3
-    win._set_progress("", 0, 0)                   # total 0 -> indeterminate, bar hidden
+    assert win._progress.isVisible() and win._progress.text() == "integrating — 3/10"
+    assert win._busy_ring.fraction() == pytest.approx(0.3)
+    win._set_progress("", 0, 0)                   # total 0 -> indeterminate: ring spins, no number
     assert not win._progress.isVisible()
+    assert win._busy_ring.fraction() is None and win._busy_ring.is_spinning()
     win._set_busy(False)
 
 
@@ -2806,7 +2808,8 @@ def test_auto_progress_drives_determinate_bar(qtbot, tmp_path):
     win.show(); qtbot.waitExposed(win)
     win._set_busy(True, "Auto…"); win._show_busy_visuals()
     win._on_auto_progress(2, 7, "Stretch")
-    assert win._progress.isVisible() and win._progress.value() == 2 and win._progress.maximum() == 7
+    assert win._progress.isVisible() and win._progress.text() == "Stretch — 2/7"
+    assert win._busy_ring.fraction() == pytest.approx(2 / 7)
     win._set_busy(False)
 
 
