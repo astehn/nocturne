@@ -237,6 +237,9 @@ NOOP_AT_DEFAULT = frozenset({
 # sideways. Revisit when the small-screen work lands: at the 1280 floor a fixed
 # 400 is a large share of the window, and that spec already plans a drawer.
 RIGHT_PANE_W = 400
+# Room for the progress text on the elapsed/Cancel row: the row is 382 px and
+# Cancel (~80) plus "· 9999s" (~60) and spacing must still fit beside it.
+_PROGRESS_TEXT_W = 220
 
 # The left column: the step list above the activity box (spec §4.1). 240 fits
 # the longest step name at STEP_ROW_H and a format_log_entry line on one row;
@@ -4462,13 +4465,19 @@ class MainWindow(QMainWindow):
             # exactly 100 is a percentage by construction: `report_progress`
             # is the only source of one, and it always reports out of 100.
             body = f"{round(100 * done / total)}%" if total == 100 else f"{done}/{total}"
-            self._progress.setText(f"{phase} — {body}" if phase else body)
+            text = f"{phase} — {body}" if phase else body
+            # It shares a row with the seconds and Cancel: a long phase is
+            # elided from the LEFT so the number itself always shows (review
+            # 2026-10-04: clipped mid-word otherwise). Full text on hover.
+            fm = self._progress.fontMetrics()
+            self._progress.setText(fm.elidedText(text, Qt.TextElideMode.ElideLeft, _PROGRESS_TEXT_W))
+            self._progress.setToolTip(text if self._progress.text() != text else "")
             self._progress.show()
-            if self._busy_shown:
-                self._tick_elapsed()
         else:
             self._busy_ring.set_indeterminate()
             self._progress.hide()
+        if self._busy_shown:
+            self._tick_elapsed()        # the "· " lead follows the number, both ways
 
     # --- crop overlay ---
     def _setup_crop_overlay(self) -> None:

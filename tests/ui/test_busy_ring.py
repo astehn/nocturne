@@ -80,3 +80,24 @@ def test_the_busy_state_fits_the_status_slot_under_the_real_stylesheet(qtbot, tm
         win._set_busy(False)
     finally:
         app.setStyleSheet(before)
+
+
+def test_the_dot_goes_when_the_number_goes(qtbot, tmp_path):
+    win = _busy(qtbot, tmp_path)
+    win._set_progress("", 42, 100)
+    assert win._elapsed_label.text().startswith("· ")
+    win._set_progress("", 0, 0)
+    assert not win._elapsed_label.text().startswith("·"), "a lone dot with nothing before it"
+    win._set_busy(False)
+
+
+def test_a_long_phase_keeps_its_number_visible(qtbot, tmp_path):
+    win = _busy(qtbot, tmp_path)
+    win._set_progress("Denoising with GraXpert, tile by tile across the frame", 1234, 5678)
+    shown = win._progress.text()
+    assert shown.endswith("1234/5678") and shown.startswith("…")
+    fm = win._progress.fontMetrics()
+    from nocturne.ui.main_window import _PROGRESS_TEXT_W
+    assert fm.horizontalAdvance(shown) <= _PROGRESS_TEXT_W
+    assert "tile by tile" in win._progress.toolTip()
+    win._set_busy(False)
