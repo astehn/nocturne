@@ -98,6 +98,7 @@ class CompareView(QWidget):
         self._rebuilding = False
         self._before_img = None
         self._after_img = None
+        self._placeholder = "No image"
         # Sentinel, not None: None is a legitimate "before" image (clears the
         # wipe divider), so it must still be distinguishable from "never set".
         self._wipe_compare_img = object()
@@ -224,6 +225,12 @@ class CompareView(QWidget):
         self._render()
 
     # --- images ---
+    def set_placeholder(self, text: str) -> None:
+        """What an empty pane says. Opt-in: Starless Levels blanks it while its
+        ring sits over the empty preview, where "No image" read through it."""
+        self._placeholder = text
+        self._render()
+
     def set_images(self, before, after) -> None:
         self._before_img = before
         self._after_img = after
@@ -249,7 +256,7 @@ class CompareView(QWidget):
     def _apply_pane(self, pane: _ZoomPreview, qimage) -> None:
         if qimage is None:
             pane.setPixmap(QPixmap())
-            pane.setText("No image")
+            pane.setText(self._placeholder)
             return
         pane.setText("")
         pane.setPixmap(_scaled_pixmap(qimage, pane.size()))

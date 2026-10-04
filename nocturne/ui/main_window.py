@@ -1534,12 +1534,27 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _open_starless_levels(self) -> None:
-        """Split first, then let the user set the endpoints on the starless layer.
+        """Open the dialog at once and let it split inside itself, with the ring.
 
         The split is the reason this is a tool rather than a one-tap enhancement,
         and the reason it is slower to open than any other: on the full frame the
         star cores clip first and always, which would pin the white point and
         defeat the whole operation.
+
+        It used to split in the right column first and open the dialog only
+        afterwards, re-splitting on every open (2.9–38 s each time). Now it
+        reads the ONE shared split store first — a split Star Reduction,
+        Saturation, Narrowband or Colour Balance already made of these pixels is
+        used as it is — and publishes the split it makes for them in turn.
+
+        Never through `_run_busy`. Opened from a `_run_busy` callback, `.exec()`
+        blocked while `_busy` was still True (it is cleared in a finally only
+        AFTER the callback returns), so `_apply_starless_levels`'s own guard
+        swallowed OK: no step, no undo, no error. The old flow survived that by
+        deferring the open with `QTimer.singleShot(0, …)`; this one keeps
+        `_busy` False for the dialog's whole life because the split is the
+        dialog's own `run_async`. Nothing modal may ever be opened from inside a
+        `_run_busy` callback.
         """
         if self.project is None or self._busy:
             return
@@ -1547,43 +1562,24 @@ class MainWindow(QMainWindow):
             self._show_warning("Stretch the image first — Starless Levels works "
                                 "on the stretched image.")
             return
-        base = self.project.current()
-
-        def work():
-            return self._split_tagged(base)
-
-        def on_result(split) -> None:
-            # Deferred to the next event-loop turn, NOT opened here. `.exec()`
-            # blocks for the dialog's whole lifetime, and _run_busy clears
-            # `_busy` in a finally only AFTER this callback returns — so opened
-            # inline, `_busy` was still True when the user pressed OK and
-            # `_apply_starless_levels`'s own guard swallowed the result. No
-            # step, no undo, no error. (main_window already carries the same
-            # lesson elsewhere: "It was a SILENT no-op.") This is the first
-            # _run_busy callback in the app that opens a modal, which is why
-            # mirroring _open_star_spikes — which never goes through _run_busy —
-            # did not carry the problem with it.
-            #
-            # Dropping the guard instead would not do: BUSY_DELAY_MS is 400 ms,
-            # so the busy bar, the elapsed timer, the Cancel button and the wait
-            # CURSOR would all appear behind and over the open dialog. Letting
-            # _release() run first takes them down before it is shown.
-            QTimer.singleShot(0, lambda: self._show_starless_levels(split))
-
-        self._run_busy(work, on_result, "Separating stars…",
-                        "Starless Levels failed")
-
-    def _show_starless_levels(self, split) -> None:
-        if self.project is None:
-            return              # workspace closed while the split was running
         from .starless_levels_dialog import StarlessLevelsDialog
-        starless, stars, path = split
-        # Stashed rather than passed in: the dialog does not split and has no
-        # business knowing about engines, but the log line this tool writes is
-        # the only place a user can learn which separation they got.
-        self._starless_levels_path = path
+        base = self.project.current()
+        hit = self._cached_layers(base)
+        starless, stars, tag = hit if hit else (None, None, "")
+        # Stashed rather than passed in: the dialog has no business knowing
+        # about engines, but the log line this tool writes is the only place a
+        # user can learn which separation they got. A cached split carries the
+        # tag of the tool that made it, so that is still the honest answer.
+        self._starless_levels_path = tag or "StarX"
+
+        def on_split(sl, st, tag=""):
+            self._remember_split(base, sl, st, tag)
+            self._starless_levels_path = tag or "StarX"
+
         StarlessLevelsDialog(starless, stars, parent=self,
-                              on_apply=self._apply_starless_levels).exec()
+                             on_apply=self._apply_starless_levels,
+                             splitter=lambda: self._split_tagged(base),
+                             on_split=on_split).exec()
 
     def _apply_starless_levels(self, result, values) -> None:
         if self.project is None or self._busy:

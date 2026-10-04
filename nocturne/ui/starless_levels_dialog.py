@@ -1,7 +1,11 @@
 """Set black and white points on the starless layer of a star split.
 
-The split is done by the caller (it is slow and runs off the UI thread), so this
-dialog receives both layers and only chooses the two numbers. `compose()` is the
+The dialog opens first and splits inside itself, off the UI thread, showing the
+ring while it waits — as Narrowband does. It used to be handed both layers by a
+caller that split in the right column first, so the slowest tool to open was
+also the one that showed nothing of itself for up to 38 s, and paid for the
+split again on every open. A caller that already has the layers (the shared
+split cache) still passes them and the dialog opens on them at once. `compose()` is the
 ONE path used for both the preview and the committed result, so what is on
 screen is what Apply produces.
 
@@ -15,7 +19,8 @@ value rather than two that can drift apart.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QLocale, Qt, QTimer
+import shiboken6
+from PySide6.QtCore import QEvent, QLocale, Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton,
                                QVBoxLayout, QWidget)
@@ -24,10 +29,13 @@ from ..core.enhance import starless_levels_layers
 from ..core.levels import apply_levels
 from ..core.image import AstroImage
 from ..core.inspect import capture_clip_baseline, clip_masks, clip_overlay
+from ..core.tasks import CancelToken
 from .compare_view import CompareView
 from .curves_dialog import _downscale, _fit_to_screen, _fitted_size
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
+from .progress_ring import WaitingBlock
 from .range_handles import RangeHandles
+from .worker import run_async
 from .zoom_row import ZoomRow
 
 _PREFERRED = (1180, 860)
@@ -43,18 +51,32 @@ _HIST_MIN_H = 200
 # before/after sees exactly the dialog they had.
 _MODES = (("Off", "off"), ("Wipe", "wipe"), ("Side by side", "side"))
 
+# Narrowband's and Colour Balance's words for the same wait.
+_SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
+
 
 class StarlessLevelsDialog(QDialog):
-    def __init__(self, starless: AstroImage, stars: AstroImage, parent=None,
-                 on_apply=None) -> None:
+    def __init__(self, starless: AstroImage | None, stars: AstroImage | None,
+                 parent=None, on_apply=None, *, splitter=None,
+                 on_split=None) -> None:
+        """`splitter()` -> (starless, stars, tag) runs on the pool when the
+        layers are not given; it reports progress through the ambient token
+        (`report_progress`), the route StarNet2 and RC-Astro already use.
+        `on_split(starless, stars, tag)` publishes a finished split."""
         super().__init__(parent)
         self.setWindowTitle("Starless Levels")
         self.resize(*_fit_to_screen(*_PREFERRED))
-        self._starless = starless
-        self._stars = stars
-        self._small_starless = _downscale(starless)
-        self._small_stars = _downscale(stars)
+        self._starless = self._stars = None
+        self._small_starless = self._small_stars = None
         self._on_apply = on_apply
+        self._splitter = splitter
+        self._on_split = on_split
+        self._pool = QThreadPool.globalInstance()
+        self._started = False
+        # Set once the dialog is done, so a split landing afterwards is dropped
+        # rather than initialising (and publishing from) a closed window.
+        self._closed = False
+        self._token: CancelToken | None = None
         # `clip_masks` raises on a shape mismatch, so a baseline belongs to ONE
         # crop. The key is the visible rect (or "fit"), never the shape: two
         # different crops of the same size would otherwise share a baseline and
@@ -78,8 +100,8 @@ class StarlessLevelsDialog(QDialog):
         # Full resolution, not the decimated preview: block-averaging narrows
         # the noise floor by the square root of the block, and the left edge of
         # that floor IS where the black point goes. Measured 82 ms on an 8.3 MP
-        # frame, paid once against a star split that takes seconds.
-        self.handles.set_histogram(starless.data)
+        # frame, paid once against a star split that takes seconds. Set in
+        # `_init_layers`, once there IS a starless layer.
         # Spin boxes, not labels. The removed `ResetSlider` pair gave arrow-key
         # stepping at 0.001; a histogram handle is mouse-only at ~0.001 per
         # pixel, so the rework took the precision away with the sliders. These
@@ -170,7 +192,8 @@ class StarlessLevelsDialog(QDialog):
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primary")
+        self.ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self.ok_btn.setObjectName("primary")
         buttons.accepted.connect(self._apply)
         buttons.rejected.connect(self.reject)
 
@@ -208,6 +231,13 @@ class StarlessLevelsDialog(QDialog):
         self._body = QHBoxLayout()
         self._body.addWidget(self.preview, 1)
         self._body.addWidget(side_wrap)
+        # The ring sits OVER the still-empty preview while the split runs, the
+        # way FramePreview.show_waiting does, so the window keeps its shape when
+        # the picture arrives. An overlay rather than a layout cell: CompareView
+        # rebuilds its own layout on every mode switch.
+        self.waiting = WaitingBlock(self.preview)
+        self.waiting.hide()
+        self.preview.installEventFilter(self)
 
         hist_caption = QLabel("Levels — the starless layer alone. Drag the two "
                               "handles to where the data begins and ends.")
@@ -241,8 +271,86 @@ class StarlessLevelsDialog(QDialog):
         # the clipping overlay is built AT the pane size, which would then be
         # the previous mode's.
         self.preview.paneResized.connect(self._queue_preview)
+        # Everything that means nothing without a picture. Cancel stays live.
+        self._controls = (self.handles, self.black_val, self.white_val,
+                          self.reset_btn, self.mode_box, self.clip_check,
+                          self.fit_btn, self.zoom_in_btn, self.zoom_out_btn,
+                          self.ok_btn)
+        if starless is not None and stars is not None:
+            self._init_layers(starless, stars)
+        else:
+            self.preview.set_placeholder("")
+            self._sync_readouts()
+            self.waiting.set_text(_SPLIT_MSG)
+            self.waiting.set_indeterminate()
+            self.waiting.setGeometry(self.preview.rect())
+            self.waiting.show()
+            self.waiting.raise_()
+            for w in self._controls:
+                w.setEnabled(False)
+
+    def _init_layers(self, starless: AstroImage, stars: AstroImage) -> None:
+        """What the constructor did with the two layers, whenever they arrive."""
+        self._starless = starless
+        self._stars = stars
+        self._small_starless = _downscale(starless)
+        self._small_stars = _downscale(stars)
+        self.handles.set_histogram(starless.data)
+        if not self.waiting.isHidden():
+            self.waiting.hide()
+            for w in self._controls:
+                w.setEnabled(True)
         self._sync_readouts()
         self._render_preview()   # first paint, not debounced
+
+    def has_layers(self) -> bool:
+        return self._starless is not None
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.preview and event.type() == QEvent.Type.Resize:
+            self.waiting.setGeometry(self.preview.rect())
+        return super().eventFilter(obj, event)
+
+    # --- the split, when it was not handed in ---
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if self._started or self.has_layers() or self._splitter is None:
+            return
+        self._started = True
+        # Held so closing the dialog mid-split stops the engine rather than
+        # leaving StarNet2 running for a result nobody will see.
+        self._token = CancelToken()
+        run_async(self._pool, self._splitter, self._on_split_done,
+                  self._on_split_error, on_progress=self._on_split_progress,
+                  token=self._token)
+
+    def _alive(self) -> bool:
+        return not self._closed and shiboken6.isValid(self) \
+            and shiboken6.isValid(self.waiting)
+
+    def _on_split_progress(self, done: int, total: int) -> None:
+        if self._alive():
+            self.waiting.set_progress(done, total)
+
+    def _on_split_done(self, result) -> None:
+        if not self._alive():
+            return
+        starless, stars, tag = result
+        if self._on_split is not None:
+            self._on_split(starless, stars, tag)
+        self._init_layers(starless, stars)
+
+    def _on_split_error(self, exc) -> None:
+        if not self._alive():
+            return
+        self.waiting.ring.hide()
+        self.waiting.set_text(f"Star separation failed: {exc}")
+
+    def done(self, result: int) -> None:
+        self._closed = True
+        if self._token is not None:
+            self._token.cancel()
+        super().done(result)
 
     # --- the two numbers ---
     def values(self) -> tuple[float, float]:
@@ -341,6 +449,8 @@ class StarlessLevelsDialog(QDialog):
         In Off it would be a second full compose per tick for a picture nobody
         can see.
         """
+        if not self.has_layers():
+            return              # still splitting: a resize queues this too
         view = self.preview
         fit = view.zoom_level() <= 1.0
         if fit:
@@ -627,6 +737,8 @@ class StarlessLevelsDialog(QDialog):
         self._queue_preview()
 
     def _apply(self) -> None:
+        if not self.has_layers():
+            return
         if self._on_apply is not None:
             self._on_apply(self.compose(), self.values())
         self.accept()

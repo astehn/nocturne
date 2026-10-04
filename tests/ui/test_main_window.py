@@ -1685,11 +1685,15 @@ def _fake_starless_dialog(monkeypatch, values=(0.1, 0.8)):
     seen = {}
 
     class _Fake:
-        def __init__(self, starless, stars, parent=None, on_apply=None):
+        def __init__(self, starless, stars, parent=None, on_apply=None, *,
+                     splitter=None, on_split=None):
             seen["busy_at_open"] = parent._busy
             self._on_apply, self._starless, self._stars = on_apply, starless, stars
+            self._splitter = splitter
 
         def exec(self):
+            if self._starless is None:     # the real dialog splits on show
+                self._starless, self._stars, _tag = self._splitter()
             seen["busy_at_ok"] = self._on_apply.__self__._busy
             self._on_apply(self._starless, values)
             return 1
@@ -1712,8 +1716,8 @@ def test_ok_records_a_history_step_through_the_whole_open_path(qtbot, tmp_path, 
     before = len(win.project.entries())
 
     win._open_starless_levels()
-    # The dialog is opened from a singleShot(0) so that _run_busy's finally
-    # runs first; nothing has happened yet at this point.
+    # Since 2026-10-04 the dialog splits inside itself and is opened directly,
+    # never from a _run_busy callback; the wait stays harmless either way.
     qtbot.waitUntil(lambda: "busy_at_ok" in seen, timeout=2000)
 
     assert len(win.project.entries()) == before + 1, \
