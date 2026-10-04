@@ -17,8 +17,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
-                               QProgressBar, QPushButton, QScrollArea,
+                               QPushButton, QScrollArea,
                                QSizePolicy, QVBoxLayout, QWidget)
+
+from .progress_ring import ProgressRing
 
 # Measured 2026-09-25 at RIGHT_PANE_W (label width 382 px) under the app
 # theme (Fusion + build_stylesheet), offscreen and cocoa alike: text lines
@@ -208,9 +210,23 @@ class SidePanel(QWidget):
         self.peek_label.setStyleSheet("color: #9aa0a6;")
         self.busy_label = _ElidingLabel()
         self.busy_label.setStyleSheet("color: #9aa0a6;")
-        self.progress = QProgressBar()
+        # The finishing tools' ring, small, beside what is running (Andreas,
+        # 2026-10-04): ONE "working" signal across the app. It spins with no
+        # number and fills when a percentage exists; the number itself is the
+        # `progress` text on the row below. It replaced a QProgressBar that
+        # was simply hidden whenever no percentage came, leaving SPCC, plate
+        # solving and saving with nothing that moved at all.
+        self.busy_ring = ProgressRing(size="small")
+        self.busy_ring.hide()
+        busy_line = QHBoxLayout()
+        busy_line.setSpacing(6)
+        busy_line.addWidget(self.busy_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        busy_line.addWidget(self.busy_label, 1)
+        self.progress = QLabel("")
+        self.progress.setStyleSheet("color: #9aa0a6;")
         self.progress.hide()
         busy_row = QHBoxLayout()
+        busy_row.addWidget(self.progress)
         self.elapsed_label = QLabel("")
         self.elapsed_label.setStyleSheet("color: #9aa0a6;")
         self.elapsed_label.hide()
@@ -231,8 +247,8 @@ class SidePanel(QWidget):
         diag_row.addWidget(self.details_btn)
         diag_row.addWidget(self.copy_log_btn)
         diag_row.addStretch(1)
-        for w in (self.peek_label, self.busy_label, self.progress):
-            st.addWidget(w)
+        st.addWidget(self.peek_label)
+        st.addLayout(busy_line)
         st.addLayout(busy_row)
         st.addWidget(self.warning, 1)
         st.addLayout(diag_row)
