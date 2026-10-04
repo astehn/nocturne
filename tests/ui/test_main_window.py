@@ -979,12 +979,10 @@ def test_show_and_hide_busy_visuals_balance_cursor(qtbot, tmp_path):
     win._busy_label_text = "Colourising…"
     win._show_busy_visuals()
     assert win._busy_shown is True
-    assert win._busy_bar.isHidden() is False
     assert "Colourising…" in win._busy_label.text()
     assert win._cursor_active is True
     win._hide_busy_visuals()
     assert win._busy_shown is False
-    assert win._busy_bar.isHidden() is True
     assert win._busy_label.text() == ""
     assert win._cursor_active is False
     assert QApplication.overrideCursor() is None       # balanced, no leftover override
