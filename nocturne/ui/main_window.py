@@ -1575,10 +1575,12 @@ class MainWindow(QMainWindow):
             self._remember_split(base, sl, st, tag)
             self._starless_levels_path = tag
 
-        StarlessLevelsDialog(starless, stars, parent=self,
-                             on_apply=self._apply_starless_levels,
-                             splitter=lambda: self._split_tagged(base),
-                             on_split=on_split).exec()
+        dlg = StarlessLevelsDialog(starless, stars, parent=self,
+                                   on_apply=self._apply_starless_levels,
+                                   splitter=lambda: self._split_tagged(base),
+                                   on_split=on_split)
+        dlg.exec()
+        dlg.deleteLater()      # a parented dialog outlives exec(); each held two full layers
 
     def _apply_starless_levels(self, result, values) -> None:
         if self.project is None or self._busy:
@@ -1591,7 +1593,7 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(format_log_entry(
             "Starless Levels",
             f"black {black:.2f} / white {white:.2f}"
-            + (f" ({path})" if path else ""), None))
+            + (f" ({render_engine(path)})" if path else ""), None))
         self._clear_warning()
         self._refresh()
 

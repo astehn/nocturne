@@ -1696,6 +1696,9 @@ def _fake_starless_dialog(monkeypatch, values=(0.1, 0.8)):
             self._on_apply(self._starless, values)
             return 1
 
+        def deleteLater(self):
+            pass
+
     monkeypatch.setattr("nocturne.ui.starless_levels_dialog.StarlessLevelsDialog", _Fake)
     return seen
 

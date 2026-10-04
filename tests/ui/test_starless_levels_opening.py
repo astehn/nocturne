@@ -139,3 +139,38 @@ def test_an_untagged_cached_split_names_no_engine(qtbot, tmp_path, monkeypatch):
     line = [e for e in win.log_panel.entries() if "Starless Levels" in e][-1]
     assert "black 0.10 / white 0.80" in line, line
     assert "(" not in line.split("white 0.80", 1)[1], line
+
+
+def test_a_split_made_by_the_builtin_splitter_logs_built_in(qtbot, tmp_path, monkeypatch):
+    """The internal tag is "free"; `render_engine` writes it as "built-in"."""
+    win = _stretched_window(qtbot, tmp_path)
+    _fake_split(win, monkeypatch)
+    base = win.project.current()
+    sl, st, _ = win._split_tagged(base)
+    win._remember_split(base, sl, st, "free")
+    _patch_exec(qtbot, monkeypatch, win, apply=True)
+    win._open_starless_levels()
+    line = [e for e in win.log_panel.entries() if "Starless Levels" in e][-1]
+    assert "(built-in)" in line, line
+    assert "(free)" not in line, line
+
+
+def test_the_dialog_is_deleted_once_it_closes(qtbot, tmp_path, monkeypatch):
+    """A parented dialog outlives exec(); each held two full-resolution layers."""
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+    win = _stretched_window(qtbot, tmp_path)
+    _fake_split(win, monkeypatch)
+    dialogs = []
+    seen = _patch_exec(qtbot, monkeypatch, win, apply=True)
+    patched = StarlessLevelsDialog.exec
+
+    def exec_(self):
+        dialogs.append(self)
+        return patched(self)
+
+    monkeypatch.setattr(StarlessLevelsDialog, "exec", exec_)
+    win._open_starless_levels()
+    assert len(seen) == 1 and len(dialogs) == 1
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert shiboken6.isValid(dialogs[0]) is False
