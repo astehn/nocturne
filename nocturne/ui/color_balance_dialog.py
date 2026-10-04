@@ -128,6 +128,18 @@ class ColorBalanceDialog(QDialog):
         self.preset_box = QComboBox()
         self.preset_box.addItems(BAND_PRESETS)
         self.handles = RangeHandles()
+        # Hidden while the split runs (see showEvent), its space kept: empty, it
+        # still paints the full-range band and both handles, which reads as a
+        # flat histogram with live controls. In a box-layout slot of its own,
+        # because QFormLayout ignores retain-size and collapsed the row —
+        # measured, everything under it jumped 123 px when the split landed.
+        keep = self.handles.sizePolicy()
+        keep.setRetainSizeWhenHidden(True)
+        self.handles.setSizePolicy(keep)
+        self._handles_slot = QWidget()
+        slot = QVBoxLayout(self._handles_slot)
+        slot.setContentsMargins(0, 0, 0, 0)
+        slot.addWidget(self.handles)
         self.feather_slider = ResetSlider(8, minimum=0, maximum=30)
         self.feather_val = QLabel("0.08")
         self.invert_check = QCheckBox("Invert the range")
@@ -190,7 +202,7 @@ class ColorBalanceDialog(QDialog):
         controls.addRow("Strength", _row(self.strength_slider, self.strength_val))
         controls.addRow(QLabel("—  Limit to  —"))
         controls.addRow("Range", self.preset_box)
-        controls.addRow("", self.handles)
+        controls.addRow("", self._handles_slot)
         controls.addRow("Feather", _row(self.feather_slider, self.feather_val))
         controls.addRow("", self.invert_check)
         controls.addRow("", self.show_mask_check)
@@ -258,14 +270,15 @@ class ColorBalanceDialog(QDialog):
             self._on_starless((self._base, None))
             return
         self.preview.show_waiting(_SPLIT_MSG)
+        self.handles.hide()
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
                   on_progress=self._on_split_progress)
 
     def _on_split_progress(self, done: int, total: int) -> None:
-        """Count the star split up in place — the same wait Starless Levels
-        shows a bar for."""
+        """Count the star split up on the ring — the same wait, and the same
+        ring, Starless Levels and Narrowband show."""
         if not shiboken6.isValid(self.preview):
             return
         self.preview.set_waiting_progress(done, total)
@@ -280,6 +293,7 @@ class ColorBalanceDialog(QDialog):
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
         self.handles.set_histogram(self._prev_starless.data)
+        self.handles.show()
         self._on_preset(self.preset_box.currentText())   # seed the band from the image
         self.apply_btn.setEnabled(True)
         self._do_render()

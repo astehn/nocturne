@@ -127,6 +127,13 @@ class WaitingBlock(QWidget):
         self.label.setObjectName("previewOverlay")
         self.label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.label.setWordWrap(True)
+        # The global `QWidget { background: BG_1 }` rule otherwise boxes the
+        # text in a dark rectangle over the preview. Set here, not as a global
+        # QLabel#previewOverlay rule, which would change FramePreview's own
+        # placeholder too. Measured under build_stylesheet() in
+        # tests/ui/test_progress_ring.py; WA_TranslucentBackground passes the
+        # same test, this is the one that reads as what it means.
+        self.label.setStyleSheet("background: transparent;")
         lay = QVBoxLayout(self)
         lay.addStretch(1)
         lay.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignHCenter)

@@ -637,3 +637,39 @@ def test_a_failed_apply_hides_the_ring_colour_balance(qtbot):
     d._apply()
     qtbot.waitUntil(lambda: d.status.text().startswith("Could not apply"), timeout=5000)
     assert d.status_ring.isHidden()
+
+
+def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, monkeypatch):
+    """Empty, RangeHandles still paints its full-range band and both handles —
+    a flat histogram with live controls. Hidden while waiting, its space kept,
+    so neither it nor the row under it moves when the split lands."""
+    import threading
+    monkeypatch.setattr("nocturne.ui.color_balance_dialog.preferred_splitter",
+                        lambda s: object())
+    base, starless, stars = _layers()
+    gate, calls = threading.Event(), []
+
+    def runner(img):
+        calls.append(1)
+        gate.wait(5)
+        return starless, stars
+
+    d = ColorBalanceDialog(Settings(), base)
+    d._starx_runner = runner
+    d.last_engine = "StarNet2"
+    qtbot.addWidget(d)
+    d.resize(1000, 760)
+    d.show()
+    try:
+        qtbot.waitUntil(lambda: calls == [1], timeout=5000)
+        qtbot.wait(20)
+        assert d.handles.isHidden(), "the empty histogram is showing during the split"
+        hist_before = d.handles.geometry()
+        below_before = d.feather_slider.mapTo(d, d.feather_slider.rect().topLeft())
+    finally:
+        gate.set()
+    qtbot.waitUntil(d.apply_btn.isEnabled, timeout=5000)
+    qtbot.wait(20)
+    assert not d.handles.isHidden()
+    assert d.handles.geometry() == hist_before
+    assert d.feather_slider.mapTo(d, d.feather_slider.rect().topLeft()) == below_before

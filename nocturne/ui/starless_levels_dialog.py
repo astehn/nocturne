@@ -92,6 +92,13 @@ class StarlessLevelsDialog(QDialog):
 
         self.handles = RangeHandles()
         self.handles.setMinimumHeight(_HIST_MIN_H)
+        # Hidden while the split runs — an empty RangeHandles still paints its
+        # full-range band and both handles, which reads as a flat histogram
+        # with live controls — but its space is kept, so nothing moves when it
+        # appears.
+        keep = self.handles.sizePolicy()
+        keep.setRetainSizeWhenHidden(True)
+        self.handles.setSizePolicy(keep)
         # The STARLESS layer, not the composite: these are the pixels the two
         # points act on. A composite histogram would show the screened-back
         # stars as a bright tail neither handle can touch, which is precisely
@@ -286,6 +293,7 @@ class StarlessLevelsDialog(QDialog):
             self.waiting.setGeometry(self.preview.rect())
             self.waiting.show()
             self.waiting.raise_()
+            self.handles.hide()
             for w in self._controls:
                 w.setEnabled(False)
 
@@ -298,6 +306,7 @@ class StarlessLevelsDialog(QDialog):
         self.handles.set_histogram(starless.data)
         if not self.waiting.isHidden():
             self.waiting.hide()
+            self.handles.show()
             for w in self._controls:
                 w.setEnabled(True)
         self._sync_readouts()
@@ -348,7 +357,9 @@ class StarlessLevelsDialog(QDialog):
 
     def done(self, result: int) -> None:
         self._closed = True
-        if self._token is not None:
+        # Only a split still running is worth stopping; once the layers are in,
+        # the token is spent and cancelling it would say something false.
+        if self._token is not None and not self.has_layers():
             self._token.cancel()
         super().done(result)
 

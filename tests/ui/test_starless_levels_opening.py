@@ -90,8 +90,7 @@ def test_a_split_another_tool_made_is_reused(qtbot, tmp_path, monkeypatch):
     assert len(calls) == before
     assert seen[0]["layers_at_exec"] is True
     # The log names the engine that really made the split it used.
-    text = win.log_panel.toPlainText() if not hasattr(win.log_panel, "entries") \
-        else "\n".join(win.log_panel.entries())
+    text = "\n".join(win.log_panel.entries())
     assert "(StarX)" in text, text
 
 
@@ -108,8 +107,7 @@ def test_applying_still_records_the_step(qtbot, tmp_path, monkeypatch):
     assert entries_after[:len(entries_before)] == entries_before
     assert entries_after[len(entries_before):] == ["Starless Levels"]
     assert win.project.entries()[-1][1] == pytest.approx((0.1, 0.8))
-    text = win.log_panel.toPlainText() if not hasattr(win.log_panel, "entries") \
-        else "\n".join(win.log_panel.entries())
+    text = "\n".join(win.log_panel.entries())
     assert "(StarNet2)" in text, text
 
 
@@ -126,3 +124,18 @@ def test_no_right_column_busy_for_the_split(qtbot, tmp_path, monkeypatch):
     assert len(seen) == 1
     assert seen[0]["busy"] == [False, False, False]
     assert ran_busy == []
+
+
+def test_an_untagged_cached_split_names_no_engine(qtbot, tmp_path, monkeypatch):
+    """A split nobody tagged must not be logged as StarX — or as anything."""
+    win = _stretched_window(qtbot, tmp_path)
+    calls = _fake_split(win, monkeypatch)
+    base = win.project.current()
+    sl, st, _ = win._split_tagged(base)
+    win._remember_split(base, sl, st, "")
+    _patch_exec(qtbot, monkeypatch, win, apply=True)
+    win._open_starless_levels()
+    assert len(calls) == 1, "the cached split was not used"
+    line = [e for e in win.log_panel.entries() if "Starless Levels" in e][-1]
+    assert "black 0.10 / white 0.80" in line, line
+    assert "(" not in line.split("white 0.80", 1)[1], line

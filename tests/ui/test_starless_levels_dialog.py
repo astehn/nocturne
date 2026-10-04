@@ -1144,3 +1144,47 @@ def test_a_failed_split_says_so_and_keeps_apply_off(qtbot, split):
     assert dlg.waiting.ring.isHidden()
     assert not dlg.ok_btn.isEnabled()
     assert dlg.has_layers() is False
+
+
+def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, split):
+    """Empty, RangeHandles still paints its full-range band and both handles —
+    a flat histogram with live controls. Hidden while waiting, its space kept,
+    so neither it nor the preview above it moves when the layers arrive."""
+    splitter, gate, state = _gated_splitter(split)
+    dlg = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(dlg)
+    dlg.resize(1000, 760)
+    dlg.show()
+    try:
+        qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
+        qtbot.wait(20)
+        assert dlg.handles.isHidden(), "the empty histogram is showing during the split"
+        hist_before, prev_before = dlg.handles.geometry(), dlg.preview.geometry()
+    finally:
+        gate.set()
+    qtbot.waitUntil(dlg.has_layers, timeout=5000)
+    qtbot.wait(20)
+    assert not dlg.handles.isHidden()
+    assert dlg.handles.geometry() == hist_before
+    assert dlg.preview.geometry() == prev_before
+
+
+def test_closing_cancels_only_a_split_still_running(qtbot, split):
+    splitter, gate, state = _gated_splitter(split)
+    gate.set()
+    done = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(done)
+    done.show()
+    qtbot.waitUntil(done.has_layers, timeout=5000)
+    done.reject()
+    assert done._token.cancelled is False, "a finished split's token was cancelled"
+
+    splitter, gate, state = _gated_splitter(split)
+    running = StarlessLevelsDialog(None, None, splitter=splitter)
+    qtbot.addWidget(running)
+    running.show()
+    qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
+    running.reject()
+    gate.set()
+    assert running._token.cancelled is True, "closing mid-split left the engine running"
+    _settle()

@@ -1569,12 +1569,13 @@ class MainWindow(QMainWindow):
         # Stashed rather than passed in: the dialog has no business knowing
         # about engines, but the log line this tool writes is the only place a
         # user can learn which separation they got. A cached split carries the
-        # tag of the tool that made it, so that is still the honest answer.
-        self._starless_levels_path = tag or "StarX"
+        # tag of the tool that made it, so that is still the honest answer —
+        # and an untagged one names no engine rather than guessing one.
+        self._starless_levels_path = tag
 
         def on_split(sl, st, tag=""):
             self._remember_split(base, sl, st, tag)
-            self._starless_levels_path = tag or "StarX"
+            self._starless_levels_path = tag
 
         StarlessLevelsDialog(starless, stars, parent=self,
                              on_apply=self._apply_starless_levels,
@@ -1587,10 +1588,12 @@ class MainWindow(QMainWindow):
         self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
         self._mark_dirty()
         black, white = values
+        # No engine known, no engine named — the `_split_engine_for` rule.
+        path = getattr(self, "_starless_levels_path", "")
         self.log_panel.append_entry(format_log_entry(
             "Starless Levels",
-            f"black {black:.2f} / white {white:.2f} "
-            f"({getattr(self, '_starless_levels_path', 'StarX')})", None))
+            f"black {black:.2f} / white {white:.2f}"
+            + (f" ({path})" if path else ""), None))
         self._clear_warning()
         self._refresh()
 

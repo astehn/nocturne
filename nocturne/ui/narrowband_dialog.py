@@ -235,11 +235,11 @@ class NarrowbandDialog(QDialog):
                   on_progress=self._on_split_progress)
 
     def _on_split_progress(self, done: int, total: int) -> None:
-        """Count the star split up in place.
+        """Count the star split up on the ring.
 
         The dialog's only sign of life was a static line of text, for the same
-        split that shows a moving bar in Starless Levels — same work, same wait,
-        one of them silent.
+        split Starless Levels and Colour Balance count up on the same ring —
+        same work, same wait.
         """
         if not shiboken6.isValid(self.preview):
             return

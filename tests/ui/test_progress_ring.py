@@ -99,3 +99,39 @@ def test_waiting_block_puts_the_ring_above_the_text(qtbot):
     assert block.text().startswith("Separating stars")
     assert block.ring.geometry().bottom() < block.label.geometry().top()
     assert abs(block.ring.geometry().center().x() - block.label.geometry().center().x()) <= 2
+
+
+def test_the_waiting_text_has_no_box_behind_it(qtbot):
+    """Under the real stylesheet the global `QWidget { background: BG_1 }` rule
+    painted the label's rect, so the text sat in a dark box over the preview.
+    Sampled at a corner of the label away from the glyphs: it must be the
+    parent's ground, not BG_1."""
+    from PySide6.QtGui import QColor
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QWidget
+    from nocturne.ui import theme
+    from nocturne.ui.progress_ring import WaitingBlock
+
+    app = QApplication.instance()
+    old = app.styleSheet()
+    app.setStyleSheet(theme.build_stylesheet())
+    try:
+        host = QWidget()
+        host.setObjectName("host")
+        host.setStyleSheet("QWidget#host { background: #6a2fb0; }")
+        host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        qtbot.addWidget(host)
+        host.resize(500, 400)
+        block = WaitingBlock(host)
+        block.set_text("Separating stars…\n(one-time, then tweak live)")
+        block.setGeometry(host.rect())
+        host.show()
+        qtbot.waitExposed(host)
+        img = host.grab().toImage()
+        lab = block.label.geometry().translated(block.pos())
+        assert lab.width() > 20 and lab.height() > 20, lab
+        px = QColor(img.pixel(lab.left() + 2, lab.top() + 2))
+        assert px.name() == "#6a2fb0", \
+            f"label paints {px.name()} (BG_1 is {theme.BG_1}) over the parent's ground"
+    finally:
+        app.setStyleSheet(old)
