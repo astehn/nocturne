@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
@@ -97,6 +99,31 @@ STEP_DESCRIPTIONS: dict[str, str] = {
     "enhancements": "Final targeted tweaks — tap to add, Undo to peel back.",
     "export": "Save the finished picture.",
 }
+
+
+REVEAL_LABEL = "Show in Finder" if sys.platform == "darwin" else "Open folder"
+
+
+def export_description(saved: str | None) -> str:
+    """Export's description, plus where the last export went.
+
+    The 2026-10-04 app audit (F-05): after a successful export the only trace
+    was an Activity line, so a first-time user had to leave the app to find the
+    file. In the pinned description box for the same reason as Stretch's colour
+    balance line: Export scrolls by ~400 px at 1280x800 (the gallery section),
+    and a "done" line below the fold is the problem it exists to solve.
+
+    `saved` is the already-elided, already-escaped name to show.
+    """
+    base = STEP_DESCRIPTIONS["export"]
+    if not saved:
+        return base
+    # The app's ACCENT, no underline: "How this works"'s style. A raw link
+    # draws in the palette's dark default blue, underlined, and is hard to
+    # read on the panel (seen in the first render).
+    from .theme import ACCENT
+    link = f'<a href="reveal" style="color:{ACCENT}; text-decoration:none">{REVEAL_LABEL}</a>'
+    return f'{base}<br>Saved <b>{saved}</b> · {link}'
 
 
 def stretch_description(linked: bool) -> str:
