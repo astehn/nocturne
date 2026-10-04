@@ -371,6 +371,10 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        # (shown name, path to reveal) of the last export from THIS image, for
+        # the Export step's "Saved … · Show in Finder" line. Cleared with the
+        # workspace, so an old file is never announced over new work.
+        self._last_export: tuple[str, str] | None = None
         self._hint_source = "header"  # where the solver's scale hint came from
         self._solve_freshness = None  # "solved" | "cached" | None -- drives SolvePanel's
                                        # badge alongside "not_solved"/"stale", which are
@@ -3597,6 +3601,8 @@ class MainWindow(QMainWindow):
         if visual is not None:
             visual.setEnabled(
                 self.project is not None and self.project.current().is_linear)
+        if getattr(self._panel, "export_btn", None) is not None:
+            self._show_export_done()
         linkage_note = getattr(self._panel, "linkage_note", None)
         if linkage_note is not None:
             from .step_panels import stretch_description
@@ -4298,6 +4304,7 @@ class MainWindow(QMainWindow):
         # workspace would navigate somewhere the user never asked to go.
         self._deferred_nav = None
         self._apply_run = None      # the rest of an Apply plan, parked on an async press
+        self._last_export = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -6011,9 +6018,13 @@ class MainWindow(QMainWindow):
                 save_tiff(st, os.path.join(folder, "stars.tif"), icc=icc,
                           linked=self._view_linked)
 
-            self._run_busy(_split,
-                           lambda _: self.log_panel.append_entry("Exported starless.tif + stars.tif"),
-                           "Exporting…", "Export failed")
+            def _split_done(_):
+                self.log_panel.append_entry("Exported starless.tif + stars.tif")
+                # One of the pair, so Finder opens the folder with it selected.
+                self._export_done("starless.tif + stars.tif",
+                                  os.path.join(folder, "starless.tif"))
+
+            self._run_busy(_split, _split_done, "Exporting…", "Export failed")
             return
         # Open the dialog on the format the user picked in the app (respect their
         # choice) and suggest a filename from the opened file's stem.
@@ -6057,9 +6068,83 @@ class MainWindow(QMainWindow):
                 out, icc = self._prepare_for_export(i, space)
                 save_tiff(out, path, icc=icc, linked=self._view_linked)
             name = os.path.basename(path)
-        self._run_busy(lambda: save(img, path),
-                       lambda _: self.log_panel.append_entry(f"Exported {name}"),
-                       "Exporting…", "Export failed")
+        def _done(_):
+            self.log_panel.append_entry(f"Exported {name}")
+            self._export_done(name, path)
+
+        self._run_busy(lambda: save(img, path), _done, "Exporting…", "Export failed")
+
+    def _export_done(self, name: str, path: str) -> None:
+        self._last_export = (name, path)
+        self._show_export_done()
+
+    def _show_export_done(self) -> None:
+        """Put "Saved <name> · Show in Finder" on the Export step, if it is up."""
+        panel = self._panel
+        if getattr(panel, "export_btn", None) is None:
+            return
+        import html
+        from .step_panels import REVEAL_LABEL, export_description
+        d = panel.desc_box
+        if self._last_export is None:
+            d.setText(export_description(None))
+            d.setToolTip("")
+            return
+        name, path = self._last_export
+        # One line, whatever the name: the box is two lines tall and the first
+        # is the description. Middle-elided, so the extension stays readable.
+        # The name is set in BOLD, which is wider: measured with the regular
+        # metrics, a long name wrapped to a third line (caught by the test).
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QFont, QFontMetrics
+        # After a panel rebuild this runs on a box not yet laid out: 640 px
+        # wide and in the unstyled font, so the name went unelided and pushed
+        # the link out of the box (review 2026-10-04). Polish for the real
+        # font; until the box is shown, measure the pane's width and look
+        # again once it is laid out.
+        d.ensurePolished()
+        if d.isVisible():
+            width = d.contentsRect().width()
+        else:
+            width = RIGHT_PANE_W - 40
+            # ONCE per box, and only if it is still the box on screen: a window
+            # that is never shown (tests, a hidden pane) would otherwise
+            # reschedule forever, and a rebuild may have deleted it meanwhile.
+            if not getattr(d, "_export_remeasure", False):
+                d._export_remeasure = True
+
+                def _again(box=d):
+                    if (shiboken6.isValid(box) and box.isVisible()
+                            and getattr(self._panel, "desc_box", None) is box):
+                        self._show_export_done()
+                QTimer.singleShot(0, _again)
+        bold = QFont(d.font()); bold.setBold(True)
+        room = width - d.fontMetrics().horizontalAdvance(f"Saved  · {REVEAL_LABEL}") - 12
+        shown = QFontMetrics(bold).elidedText(name, Qt.TextElideMode.ElideMiddle, max(room, 60))
+        d.setText(export_description(html.escape(shown)))
+        d.setToolTip(path)
+        d.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse
+                                  | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        if not getattr(d, "_reveal_wired", False):
+            d.linkActivated.connect(lambda _href: self._reveal_last_export())
+            d._reveal_wired = True
+
+    def _reveal_last_export(self) -> None:
+        if self._last_export is not None:
+            self._reveal_in_file_manager(self._last_export[1])
+
+    def _reveal_in_file_manager(self, path: str) -> None:
+        """Finder with the file selected on macOS; elsewhere, its folder.
+        A method of its own so tests can see the call without a Finder."""
+        import subprocess
+        import sys
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+            return
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        folder = path if os.path.isdir(path) else os.path.dirname(path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _save_png_with_annotations(self, img, path, res) -> None:
         from .annotation_render import paint_annotations, scale_for
