@@ -28,5 +28,8 @@
     { "name": "RC-Astro", "what": "BlurX / NoiseX / StarX (optional)" },
     { "name": "ASTAP", "what": "plate solving & annotation (optional)" }
   ],
-  "photon_donors": []
+  "photon_donors": [
+    "Matt Boylan — Seestar S50 Pro data, to better integrate the S50 Pro",
+    "Alvaro Vaquero — QHY8 data, to test how \"big rig\" equipment works in Nocturne"
+  ]
 }

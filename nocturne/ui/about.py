@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 import json
 from pathlib import Path
 
@@ -43,7 +45,8 @@ def about_html(data: dict | None = None) -> str:
     creator = data.get("creator", _FALLBACK["creator"])
     donors = data.get("photon_donors", [])
     donors_html = (
-        "".join(f"<li>{name}</li>" for name in donors)
+        # Escaped: a donor's own words (quotes, an ampersand) are text, not markup.
+        "".join(f"<li>{html.escape(name)}</li>" for name in donors)
         if donors else
         "<li><i>Be the first to lend your light — share your subs and get "
         "immortalised here!</i></li>"

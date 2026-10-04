@@ -25,7 +25,12 @@ def test_about_html_has_all_credits():
         assert lib in html
     assert "GraXpert" in html and "RC-Astro" in html
     assert "Photon Donors" in html
-    assert "Be the first" in html                 # empty donors -> invite line
+
+
+def test_no_donors_shows_the_invitation():
+    from nocturne.ui.about import load_contributors
+    data = dict(load_contributors(), photon_donors=[])
+    assert "Be the first" in about_html(data)     # empty donors -> invite line
 
 
 def test_about_html_lists_a_donor_when_present(tmp_path):
@@ -54,3 +59,13 @@ def test_about_credits_exactly_the_fonts_that_ship():
         assert (FONT_DIR / f"OFL-{stem}.txt").is_file(), f"no licence ships for {family}"
     credited = {f["name"] for f in load_contributors()["fonts"]}
     assert credited == {fam for _l, fam in PLATE_FAMILIES}
+
+
+def test_the_shipped_donors_are_credited():
+    """The site promises an in-app credit as a Photon Donor (index 'Lend your
+    light'); the first two donations arrived 2026-10-04."""
+    from nocturne.ui.about import about_html
+    page = about_html()
+    assert "Matt Boylan" in page and "Alvaro Vaquero" in page
+    assert "Be the first to lend your light" not in page
+    assert "&quot;big rig&quot;" in page, "a donor's quotes are escaped as text"
