@@ -3597,6 +3597,11 @@ class MainWindow(QMainWindow):
         if visual is not None:
             visual.setEnabled(
                 self.project is not None and self.project.current().is_linear)
+        linkage_note = getattr(self._panel, "linkage_note", None)
+        if linkage_note is not None:
+            from .step_panels import stretch_description
+            linkage_note.setText(stretch_description(
+                bool(getattr(self._panel, "stretch_linked", True))))
         spcc_note = getattr(self._panel, "spcc_note", None)
         if spcc_note is not None:
             # Only while Unlinked is still a choice: once committed, the
@@ -4956,7 +4961,8 @@ class MainWindow(QMainWindow):
         """
         from .stretch_picker import brightness_pick, colour_pick
         base = self._preview_base("stretch")
-        colour = colour_pick(base, spcc_applied=self._spcc_was_applied())
+        colour = colour_pick(base, spcc_applied=self._spcc_was_applied(),
+                             view_linked=self._view_linked)
         return ([colour] if colour is not None else []) + [brightness_pick(base)]
 
     def _spcc_was_applied(self) -> bool:
