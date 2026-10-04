@@ -1159,13 +1159,16 @@ def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, s
         qtbot.waitUntil(lambda: state["calls"] == 1, timeout=5000)
         qtbot.wait(20)
         assert dlg.handles.isHidden(), "the empty histogram is showing during the split"
+        assert dlg.hist_caption.isHidden(), "the caption tells you to drag handles that are not there"
         hist_before, prev_before = dlg.handles.geometry(), dlg.preview.geometry()
+        cap_before = dlg.hist_caption.geometry()
     finally:
         gate.set()
     qtbot.waitUntil(dlg.has_layers, timeout=5000)
     qtbot.wait(20)
-    assert not dlg.handles.isHidden()
+    assert not dlg.handles.isHidden() and not dlg.hist_caption.isHidden()
     assert dlg.handles.geometry() == hist_before
+    assert dlg.hist_caption.geometry() == cap_before
     assert dlg.preview.geometry() == prev_before
 
 

@@ -249,6 +249,12 @@ class StarlessLevelsDialog(QDialog):
         hist_caption = QLabel("Levels — the starless layer alone. Drag the two "
                               "handles to where the data begins and ends.")
         hist_caption.setWordWrap(True)
+        # Hidden with the histogram it describes while the split runs — it
+        # told the user to drag handles that were not there (2026-10-04).
+        cap = hist_caption.sizePolicy()
+        cap.setRetainSizeWhenHidden(True)
+        hist_caption.setSizePolicy(cap)
+        self.hist_caption = hist_caption
 
         root = QVBoxLayout(self)
         root.addLayout(self._body, 1)
@@ -294,6 +300,7 @@ class StarlessLevelsDialog(QDialog):
             self.waiting.show()
             self.waiting.raise_()
             self.handles.hide()
+            self.hist_caption.hide()
             for w in self._controls:
                 w.setEnabled(False)
 
@@ -307,6 +314,7 @@ class StarlessLevelsDialog(QDialog):
         if not self.waiting.isHidden():
             self.waiting.hide()
             self.handles.show()
+            self.hist_caption.show()
             for w in self._controls:
                 w.setEnabled(True)
         self._sync_readouts()
