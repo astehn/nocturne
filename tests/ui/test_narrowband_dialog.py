@@ -425,3 +425,21 @@ def test_the_matched_point_is_labelled_on_the_slider(qtbot):
     d.reset()
     assert d._params().oxygen_strength == 0.85
     assert d.oxygen_val.text() == "×0.85"
+
+
+def test_the_split_shows_a_ring_with_the_number_not_the_text(qtbot):
+    from nocturne.ui import narrowband_dialog
+    d = _dialog(qtbot)
+    d.preview.show_waiting(narrowband_dialog._SPLIT_MSG)   # what showEvent does
+    d._on_split_progress(46, 100)
+    block = d.preview.waiting_block()
+    assert block.ring.fraction() == pytest.approx(0.46)
+    assert "46%" not in d.preview.message_text(), "the number lives in the ring"
+
+
+def test_a_late_progress_after_close_is_harmless(qtbot):
+    from nocturne.ui import narrowband_dialog
+    d = NarrowbandDialog(Settings(), _img())     # not qtbot-registered: it is deleted below
+    d.preview.show_waiting(narrowband_dialog._SPLIT_MSG)
+    d.close(); d.deleteLater(); qtbot.wait(10)
+    d._on_split_progress(50, 100)          # must not raise

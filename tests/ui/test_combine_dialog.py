@@ -343,3 +343,15 @@ def test_the_preview_takes_the_extra_room(qtbot):
     qtbot.waitUntil(lambda: d.height() > 800, timeout=2000)
     assert d.preview.height() > 0.5 * d.height(), (
         f"preview got {d.preview.height()} of {d.height()}")
+
+
+def test_reading_the_pair_shows_an_indeterminate_ring(qtbot, tmp_path):
+    d = CombineDialog(Settings())
+    qtbot.addWidget(d)
+    d.ha_edit.setText(_blob_file(tmp_path / "ha.fits", 32.0))
+    d.oiii_edit.setText(_blob_file(tmp_path / "oiii.fits", 32.0))
+    d.check_alignment()
+    assert d.preview.is_waiting()
+    assert d.preview.message_text() == "Reading…"
+    assert d.preview.waiting_block().ring.fraction() is None
+    qtbot.waitUntil(lambda: d.status.text() == "Ready.", timeout=3000)

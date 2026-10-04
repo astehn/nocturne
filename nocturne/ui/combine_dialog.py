@@ -219,7 +219,7 @@ class CombineDialog(QDialog):
             self._signals.loaded.emit((small, oiii_fit(ha, oiii)))
             return measure_offset(ha, oiii)
 
-        self.preview.show_message("Reading…")
+        self.preview.show_waiting("Reading…")
         run_async(self._pool, work,
                   lambda s: self._signals.checked.emit(s[0], s[1]),
                   lambda exc: self._signals.failed.emit(str(exc)))

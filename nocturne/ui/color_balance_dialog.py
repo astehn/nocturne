@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -249,7 +250,7 @@ class ColorBalanceDialog(QDialog):
                                 "RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
-        self.preview.show_message(_SPLIT_MSG)
+        self.preview.show_waiting(_SPLIT_MSG)
         self.apply_btn.setEnabled(False)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
@@ -258,7 +259,9 @@ class ColorBalanceDialog(QDialog):
     def _on_split_progress(self, done: int, total: int) -> None:
         """Count the star split up in place — the same wait Starless Levels
         shows a bar for."""
-        self.preview.show_message(f"{_SPLIT_MSG} — {done}%")
+        if not shiboken6.isValid(self.preview):
+            return
+        self.preview.set_waiting_progress(done, total)
 
     def _on_starless(self, layers) -> None:
         self._starless, self._stars = layers

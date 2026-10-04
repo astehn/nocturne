@@ -586,3 +586,21 @@ def test_compare_shows_the_image_you_started_with(qtbot):
     assert d.preview.view._split_x == moved, "and the divider must stay put"
     d.compare_check.setChecked(False)
     assert d.preview.view.compare_active() is False
+
+
+def test_the_split_shows_a_ring_with_the_number_not_the_text(qtbot):
+    from nocturne.ui import color_balance_dialog
+    d = _dlg(qtbot)
+    d.preview.show_waiting(color_balance_dialog._SPLIT_MSG)
+    d._on_split_progress(46, 100)
+    assert d.preview.waiting_block().ring.fraction() == pytest.approx(0.46)
+    assert "46%" not in d.preview.message_text(), "the number lives in the ring"
+
+
+def test_a_late_progress_after_close_is_harmless(qtbot):
+    from nocturne.ui import color_balance_dialog
+    base, starless, stars = _layers()
+    d = ColorBalanceDialog(Settings(), base, starless=starless, stars=stars)
+    d.preview.show_waiting(color_balance_dialog._SPLIT_MSG)   # not qtbot-registered: deleted below
+    d.close(); d.deleteLater(); qtbot.wait(10)
+    d._on_split_progress(50, 100)          # must not raise

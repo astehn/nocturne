@@ -54,9 +54,10 @@ def test_the_narrowband_dialog_shows_the_percentage(qtbot):
     # starless/stars supplied so construction does not kick off a real split.
     dlg = NarrowbandDialog(Settings(), img, starless=img, stars=None)
     qtbot.addWidget(dlg)
+    dlg.preview.show_waiting("Separating stars…")     # what showEvent does
     dlg._on_split_progress(43, 100)
-    assert "43%" in dlg.preview.message_text(), (
-        f"the dialog does not show progress: {dlg.preview.message_text()!r}")
+    assert dlg.preview.waiting_block().ring.fraction() == pytest.approx(0.43), (
+        "the dialog does not show progress")
 
 
 def test_the_colour_balance_dialog_shows_the_percentage(qtbot):
@@ -71,8 +72,9 @@ def test_the_colour_balance_dialog_shows_the_percentage(qtbot):
 
     dlg = ColorBalanceDialog(Settings(), img, starless=img, stars=None)
     qtbot.addWidget(dlg)
+    dlg.preview.show_waiting("Separating stars…")
     dlg._on_split_progress(61, 100)
-    assert "61%" in dlg.preview.message_text()
+    assert dlg.preview.waiting_block().ring.fraction() == pytest.approx(0.61)
 
 
 def test_every_dialog_that_splits_stars_reports_it():
