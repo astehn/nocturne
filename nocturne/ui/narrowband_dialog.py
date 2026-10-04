@@ -17,6 +17,7 @@ from ..settings import resolve_binary
 from ..steps.star_split import preferred_splitter, splitter_name
 from ..tools.rcastro import RCAstro
 from .frame_preview import FramePreview
+from .progress_ring import ProgressRing
 from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
@@ -181,7 +182,13 @@ class NarrowbandDialog(QDialog):
         side = QVBoxLayout()
         side.addLayout(controls)
         side.addStretch(1)
-        side.addWidget(self.status)
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        side.addLayout(status_row)
         side.addLayout(buttons)
         side_wrap = QWidget()
         side_wrap.setLayout(side)
@@ -401,6 +408,8 @@ class NarrowbandDialog(QDialog):
         params = self._params()
         self.apply_btn.setEnabled(False)
         self.status.setText("Applying at full resolution…")
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
         run_async(self._pool, lambda: self._compose_full(params),
                   lambda result: self._on_applied(result, params),
                   self._on_apply_error)
@@ -415,11 +424,13 @@ class NarrowbandDialog(QDialog):
 
     def _on_applied(self, result: AstroImage, params: NarrowbandParams) -> None:
         self._applying = False
+        self.status_ring.hide()
         if self._on_apply is not None:
             self._on_apply(result, params)
         self.accept()
 
     def _on_apply_error(self, exc) -> None:
         self._applying = False
+        self.status_ring.hide()
         self.apply_btn.setEnabled(True)
         self.status.setText(f"Apply failed: {exc}")

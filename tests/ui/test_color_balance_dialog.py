@@ -604,3 +604,36 @@ def test_a_late_progress_after_close_is_harmless(qtbot):
     d.preview.show_waiting(color_balance_dialog._SPLIT_MSG)   # not qtbot-registered: deleted below
     d.close(); d.deleteLater(); qtbot.wait(10)
     d._on_split_progress(50, 100)          # must not raise
+
+
+def test_apply_shows_the_small_ring_beside_the_status_and_hides_it_after(qtbot):
+    import threading
+    release = threading.Event()
+    got = []
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.append(result))
+    d.set_balance_for_test(blue=0.5)
+    real = d._compose_snapshot
+    d._compose_snapshot = lambda *a: (release.wait(5), real(*a))[1]
+    assert d.status_ring.isHidden(), "no ring before any wait"
+    d._apply()
+    try:
+        assert not d.status_ring.isHidden() and d.status_ring.fraction() is None
+        g, s = d.status_ring.geometry(), d.status.geometry()
+        assert g.right() < s.left()
+        assert abs(g.center().y() - s.center().y()) <= 4
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: bool(got), timeout=5000)
+    assert d.status_ring.isHidden()
+
+
+def test_a_failed_apply_hides_the_ring_colour_balance(qtbot):
+    d = _dlg(qtbot)
+    d.set_balance_for_test(blue=0.5)
+
+    def boom(*a):
+        raise RuntimeError("nope")
+    d._compose_snapshot = boom
+    d._apply()
+    qtbot.waitUntil(lambda: d.status.text().startswith("Could not apply"), timeout=5000)
+    assert d.status_ring.isHidden()

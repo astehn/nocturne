@@ -355,3 +355,39 @@ def test_reading_the_pair_shows_an_indeterminate_ring(qtbot, tmp_path):
     assert d.preview.message_text() == "Reading…"
     assert d.preview.waiting_block().ring.fraction() is None
     qtbot.waitUntil(lambda: d.status.text() == "Ready.", timeout=3000)
+
+
+def test_combine_shows_the_small_ring_beside_the_status_and_hides_it_after(qtbot, tmp_path):
+    import threading
+    release = threading.Event()
+    got = {}
+    d = CombineDialog(Settings(), on_master=lambda img: got.setdefault("img", img))
+    qtbot.addWidget(d)
+    d.show()
+    ha, oiii = _mono(tmp_path / "ha.fits", 0.8), _mono(tmp_path / "oiii.fits", 0.2)
+    d.ha_edit.setText(ha)
+    d.oiii_edit.setText(oiii)
+    real = d._loader
+    d._loader = lambda p: (release.wait(5), real(p))[1]
+    assert d.status_ring.isHidden(), "no ring before any wait"
+    d.run()
+    try:
+        assert not d.status_ring.isHidden() and d.status_ring.fraction() is None
+        g, s = d.status_ring.geometry(), d.status.geometry()
+        assert g.right() < s.left()
+        assert abs(g.center().y() - s.center().y()) <= 4
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: "img" in got, timeout=5000)
+    assert d.status_ring.isHidden()
+
+
+def test_a_failed_combine_hides_the_ring(qtbot, tmp_path):
+    d = CombineDialog(Settings())
+    qtbot.addWidget(d)
+    d.show()
+    d.ha_edit.setText(_mono(tmp_path / "ha.fits", 0.8, shape=(32, 32)))
+    d.oiii_edit.setText(_mono(tmp_path / "oiii.fits", 0.2, shape=(16, 16)))
+    d.run()
+    qtbot.waitUntil(lambda: not d._busy, timeout=5000)
+    assert d.status_ring.isHidden()

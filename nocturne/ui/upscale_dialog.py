@@ -22,6 +22,7 @@ from ..core.upscale import (
 from ..settings import start_dir
 from .image_view import ImageView
 from .linked_views import link_views
+from .progress_ring import ProgressRing
 from .upscale_navigator import UpscaleNavigator
 from .worker import run_async
 from . import file_dialogs, theme
@@ -244,7 +245,13 @@ class UpscaleDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.addWidget(self.pages, 1)
-        root.addWidget(self.status)
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        root.addLayout(status_row)
         root.addLayout(buttons)
         self._sync_size()
 
@@ -299,6 +306,8 @@ class UpscaleDialog(QDialog):
         self._token = token = CancelToken()
         self._set_busy(True)
         self.status.setText("Separating stars and enlarging…")
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
 
         def done(layers) -> None:
             if self._gone():
@@ -325,10 +334,13 @@ class UpscaleDialog(QDialog):
         if self._gone():
             return
         self.status.setText(f"Separating stars… {done}%")
+        self.status_ring.set_progress(done, total)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.cancel_btn.setVisible(busy)
+        if not busy:
+            self.status_ring.hide()
         self._sync_size()
 
     # --- state 2 ---
