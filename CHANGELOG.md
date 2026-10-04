@@ -2,6 +2,27 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.45.0] — 2026-10-04
+
+Nocturne works the same way everywhere: one progress ring, and a few places that now tell you what happened.
+
+### Added
+- A circular progress ring in Combine, Narrowband, Colour Balance, Upscale Crop, Star Spikes and Starless Levels. It fills with the percentage when one is known, and spins when it isn't.
+- The right column shows the same ring beside what's running, so colour calibration, plate solving, saving and export also show something moving. When a percentage is known, it appears next to the elapsed time.
+- Export says where the file went after saving, with Show in Finder (Open folder on Linux).
+- Stretch says which colour balance Apply will use, Linked or Unlinked. Visual stretch tells you in advance when choosing Linked switches it and brings Colour back.
+- A new splash screen.
+
+### Changed
+- Starless Levels opens immediately and separates the stars inside its window. A separation another tool has already made is reused instead of repeated.
+- The thin bar over the image during long operations is gone; the right column says it.
+- A star separation when entering Saturation, De-green Stars or Star Reduction is announced once, in the right column.
+
+### Fixed
+- Closing Narrowband or Colour Balance during Apply still recorded the step.
+- Starless Levels separated the stars again on every open (3–38 s), and kept its layers in memory after closing.
+- Starless Levels' log line called the built-in separation "(free)"; it now says "(built-in)" like the other tools.
+
 ## [0.44.0] — 2026-10-01
 
 A stray key can't end a long stack, and Nocturne tells you when Unlinked costs you your colour calibration.
