@@ -424,10 +424,20 @@ class NarrowbandDialog(QDialog):
 
     def _on_applied(self, result: AstroImage, params: NarrowbandParams) -> None:
         self._applying = False
+        if getattr(self, "_discarded", False):
+            return
         self.status_ring.hide()
         if self._on_apply is not None:
             self._on_apply(result, params)
         self.accept()
+
+    def reject(self) -> None:
+        # Close, Esc and the close box all land here. A full-resolution Apply
+        # cannot be stopped mid-render, so its result is DROPPED when it lands:
+        # it used to be committed as a step after the user had cancelled
+        # (progress-ring final review, 2026-10-04).
+        self._discarded = True
+        super().reject()
 
     def _on_apply_error(self, exc) -> None:
         self._applying = False

@@ -673,3 +673,36 @@ def test_the_histogram_is_hidden_while_the_split_runs_and_nothing_moves(qtbot, m
     assert not d.handles.isHidden()
     assert d.handles.geometry() == hist_before
     assert d.feather_slider.mapTo(d, d.feather_slider.rect().topLeft()) == below_before
+
+
+def test_closing_during_apply_commits_nothing_colour_balance(qtbot):
+    """As Narrowband: the full-resolution compose cannot be stopped, but a result
+    landing after Close/Esc must be dropped, not committed (2026-10-04)."""
+    import threading
+    got, release, finished = [], threading.Event(), threading.Event()
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.append(result))
+    d.set_balance_for_test(blue=0.5)
+    real = d._compose_snapshot
+
+    def slow(*a):
+        release.wait(5)
+        out = real(*a)
+        finished.set()
+        return out
+    d._compose_snapshot = slow
+    d._apply()
+    assert d.status.text().startswith("Applying"), "fixture: the compose really started"
+    d.reject()
+    release.set()
+    qtbot.waitUntil(finished.is_set, timeout=5000)
+    qtbot.wait(100)
+    assert got == [], "a cancelled Apply must not become a step"
+
+
+def test_an_apply_left_alone_still_commits_colour_balance(qtbot):
+    """The cancel guard must not swallow the normal path."""
+    got = []
+    d = _dlg(qtbot, on_apply=lambda result, opts: got.append(result))
+    d.set_balance_for_test(blue=0.5)
+    d._apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=5000)

@@ -481,3 +481,39 @@ def test_a_failed_apply_hides_the_ring(qtbot, monkeypatch):
     d.apply()
     qtbot.waitUntil(lambda: d.status.text().startswith("Apply failed"), timeout=5000)
     assert d.status_ring.isHidden()
+
+
+def test_closing_during_apply_commits_nothing(qtbot, monkeypatch):
+    """Close/Esc while the full-resolution render runs: the render cannot be
+    stopped, but its result must be DROPPED — it used to be committed as a step
+    after the user had cancelled (progress-ring final review, 2026-10-04)."""
+    import threading
+    import nocturne.ui.narrowband_dialog as nd
+    got, release, finished = [], threading.Event(), threading.Event()
+    d = _dialog(qtbot, starless=_img(), stars=None, on_apply=lambda r, p: got.append(r))
+    d._on_starless((d._base, None))
+    real = nd.render
+
+    def slow(img, p, **kw):
+        release.wait(5)
+        out = real(img, p, **kw)
+        finished.set()
+        return out
+    monkeypatch.setattr(nd, "render", slow)
+    d.show(); qtbot.waitExposed(d)
+    d.apply()
+    d.reject()                                   # what Close, Esc and the close box do
+    release.set()
+    qtbot.waitUntil(finished.is_set, timeout=5000)
+    qtbot.wait(100)                              # let the queued result arrive
+    assert got == [], "a cancelled Apply must not become a step"
+
+
+def test_an_apply_left_alone_still_commits(qtbot, monkeypatch):
+    """The guard must not swallow the normal path."""
+    got = []
+    d = _dialog(qtbot, starless=_img(), stars=None, on_apply=lambda r, p: got.append(r))
+    d._on_starless((d._base, None))
+    d.show(); qtbot.waitExposed(d)
+    d.apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=5000)
