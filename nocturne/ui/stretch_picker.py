@@ -88,6 +88,11 @@ COLOUR_PICKS: list[tuple[str, bool, str]] = [
 # Measured on IC 1396A at 0.0004 of an 8-bit level, at every gain tested.
 _SPCC_CAVEAT = "Photometric calibration will be discarded"
 
+# Said BEFORE the pick, not only in the log after it: under an Unlinked Import,
+# choosing Linked switches Import too and brings Colour back (Option A,
+# 2026-09-14). The 2026-10-04 app audit lost track of exactly that switch.
+_SWITCH_CAVEAT = "Switches to Linked, and Colour is offered again"
+
 # The brightness at which BOTH colour panels are rendered. Mid-ladder, so the
 # picture is representative of what follows without the pick accidentally
 # becoming a brightness decision too.
@@ -161,7 +166,8 @@ def _is_grey(data: np.ndarray) -> bool:
                 and np.array_equal(s[..., 1], s[..., 2]))
 
 
-def colour_pick(base: AstroImage, *, spcc_applied: bool = False) -> Pick | None:
+def colour_pick(base: AstroImage, *, spcc_applied: bool = False,
+                view_linked: bool = True) -> Pick | None:
     """Linked or unlinked? None when the channels are identical.
 
     Both panels are rendered at the SAME target so only colour varies — one
@@ -180,7 +186,8 @@ def colour_pick(base: AstroImage, *, spcc_applied: bool = False) -> Pick | None:
 
     return Pick(title="How should the colour be balanced?",
                 key="linked", options=options, caption=_colour_caption,
-                caveats={False: _SPCC_CAVEAT} if spcc_applied else {},
+                caveats={**({False: _SPCC_CAVEAT} if spcc_applied else {}),
+                         **({} if view_linked else {True: _SWITCH_CAVEAT})},
                 columns=2)
 
 

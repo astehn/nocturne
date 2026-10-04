@@ -99,6 +99,24 @@ STEP_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def stretch_description(linked: bool) -> str:
+    """Stretch's description, with which colour balance Apply commits.
+
+    The linkage is half of what Apply commits, and until 2026-10-04 nothing on
+    the panel showed it: Import sets a default, Visual stretch can pick the
+    other one, and the only trace of the switch was a log line. A first-time
+    user (the 2026-10-04 app audit) had to reconstruct it from the history.
+
+    In the description box's spare second line, not a label of its own: the
+    box is pinned above the scroll, and Stretch at 1280x800 had 16 px to spare
+    in it — a one-line label there still scrolled the step (measured 5 px).
+    """
+    name, what = (("Linked", "keeps the sky's own colour") if linked
+                  else ("Unlinked", "evens the channels out"))
+    return (f"{STEP_DESCRIPTIONS['stretch']}<br>"
+            f"Colour balance: <b>{name}</b>, {what}.")
+
+
 def _desc_label(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("stepDesc")
@@ -689,6 +707,10 @@ def build_panel(
         # Apply is pressed, and he never saw it (Andreas, 2026-09-29). Laid out
         # at the card's BOTTOM edge, directly above Apply (his call 2026-09-30:
         # under Visual stretch it was out of the eye's path to the button).
+        # Kept current by MainWindow._sync_step_controls, which runs after
+        # every write to w.stretch_linked (build, picker, Import change).
+        w.desc_box.setText(stretch_description(bool(stretch_linked)))
+        w.linkage_note = w.desc_box
         spcc_note = _desc_label(
             "Unlinked will discard your photometric colour calibration (SPCC). "
             "To keep it, choose Linked in Visual stretch.")
