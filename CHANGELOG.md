@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.47.0] — 2026-10-05
+
+Nocturne does one thing at a time, and shows it: every control dims while a step works. The nebula slider is up to nine times faster, and the start page offers every way in.
+
+### Added
+- The start page offers all four ways in (Stack…, Open Image, Open Project… and Ha/OIII…) and lists your recent projects, which open with one click.
+
+### Changed
+- While a step or tool works, all of its controls are dimmed and locked: sliders, checkboxes, dropdowns, the curve editor and the crop box. The step list, Back/Next, the toolbar tools and Settings wait too. Cancel, zoom, Before/After and the help stay available.
+- The tool windows (Narrowband, Colour Balance, Upscale Crop, Combine, Ha/OIII, Stack and Batch) dim their controls while they work in the same way.
+- Saturation's nebula slider responds up to nine times faster on large and drizzled images. The star separation it needs happens when you open the step, not on your first touch of the slider.
+
+### Fixed
+- Starting a second step while one was still running, by clicking the step list during a long run, could produce a picture that was missing a step listed in its history.
+- A slider moved while Apply was running was forgotten: the picture kept the applied value, the slider showed another, and leaving the step didn't ask.
+- Curves showed a straight line when you came back to it, or reopened a project. A small nudge then replaced your curve, and the R, G and B curves could be lost.
+- Opening an image or a project while on Saturation, De-green Stars or Star Reduction started a star separation of the new picture on Import.
+- Stack could save a master under the wrong folder's name when the folder was changed while it graded. Combine and Ha/OIII could ignore a file or folder changed mid-run.
+
 ## [0.46.0] — 2026-10-05
 
 Help is one click from every step and every tool, in a window of its own, and projects with Curves open again.
