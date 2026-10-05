@@ -127,3 +127,45 @@ def test_it_is_pure():
     from pathlib import Path
     src = (Path(__file__).parents[2] / "nocturne" / "core" / "receipt.py").read_text()
     assert "PySide6" not in src
+
+
+# --- Noise Reduction names the engine that ran, not a fixed product ----------
+
+def test_noise_reduction_follows_the_settings_default_engine(tmp_path):
+    s = _configured(tmp_path, rcastro_path=1, graxpert_path=1)
+    s.denoise_engine = "graxpert"
+    assert engine_for("noise_sharpen", s).engine == "GraXpert"
+    s.denoise_engine = "rcastro"
+    assert engine_for("noise_sharpen", s).engine == "NoiseXTerminator"
+
+
+def test_noise_reduction_recorded_engine_beats_the_settings(tmp_path):
+    s = _configured(tmp_path, rcastro_path=1, graxpert_path=1)
+    s.denoise_engine = "rcastro"
+    assert engine_for("noise_sharpen", s, "graxpert").engine == "GraXpert"
+
+
+def test_noise_reduction_names_the_tool_that_is_actually_there(tmp_path):
+    only_gx = _configured(tmp_path, graxpert_path=1)
+    note = engine_for("noise_sharpen", only_gx, "rcastro")
+    assert note.engine == "GraXpert" and note.is_fallback
+
+
+def test_the_report_names_the_recorded_noise_engine(tmp_path):
+    import datetime
+    from nocturne.core.provenance import build_report
+    s = _configured(tmp_path, rcastro_path=1, graxpert_path=1)
+    r = build_report([("Noise Reduction", {"engine": "graxpert", "level": "medium"})],
+                     {}, app_version="1", date=datetime.date(2026, 10, 5), settings=s)
+    engines = r.split("## Engines")[1]
+    assert "Noise Reduction: **GraXpert**" in engines
+    assert "NoiseXTerminator" not in engines
+
+
+def test_preflight_names_graxpert_when_it_is_the_default(tmp_path):
+    from nocturne.recipe import Recipe, preflight
+    s = _configured(tmp_path, graxpert_path=1)
+    s.denoise_engine = "graxpert"
+    r = Recipe(steps=[{"stage": "noise_sharpen", "option": "medium"}])
+    plan = preflight(r, s)[0]
+    assert plan.outcome == "run" and plan.engine == "GraXpert"

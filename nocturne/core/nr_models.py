@@ -103,7 +103,10 @@ def discover(dirs=None) -> list[NRModel]:
 def runtime_available() -> bool:
     try:
         import onnxruntime  # noqa: F401
-    except ImportError:
+    except Exception:
+        # Not just ImportError: a half-present native library raises OSError (or
+        # worse) on import, and that must read as "not available", not crash
+        # every panel build.
         return False
     return True
 
@@ -117,8 +120,12 @@ def find(model_id: str) -> NRModel | None:
     return next((m for m in discover() if m.id == model_id), None)
 
 
-def engine_label(model_id: str) -> str:
+def engine_label(model_id: str, *, bare: bool = False) -> str:
     """How a log line or report names the model: "Nocturne NR — Odin (v20.0)".
+
+    `bare` drops the id's own parentheses ("Nocturne NR — Odin v20.0") for the
+    log line, which already wraps the engine in the step's own — three levels
+    of brackets read as a bug.
 
     The name is looked up NOW, so a renamed model reads with its new name; a
     removed one still reads by its id, which is all the history ever stored.
@@ -126,7 +133,7 @@ def engine_label(model_id: str) -> str:
     m = find(model_id)
     if m is None or m.name == m.id:
         return f"Nocturne NR — {model_id}"
-    return f"Nocturne NR — {m.name} ({m.id})"
+    return f"Nocturne NR — {m.name} {m.id}" if bare else f"Nocturne NR — {m.name} ({m.id})"
 
 
 def not_installed(model_id: str) -> str:

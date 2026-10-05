@@ -87,7 +87,7 @@ from .solve_panel import SolvePanel, SolveWindow
 _CURVE_FULL = 320
 _CURVE_MIN = 240
 from .upscale_dialog import UpscaleDialog
-from .step_panels import BLACK_STEPS, build_panel
+from .step_panels import (BLACK_STEPS, DEFAULT_BUILTIN, DEFAULT_ENGINE, build_panel)
 from .icons import load_icon
 from .stepper import Stepper
 from .welcome import WelcomeScreen
@@ -347,7 +347,7 @@ def render_engine(tag: str) -> str:
     if tag == "free":
         return "built-in"
     if tag.startswith(nr_models.LOG_PREFIX):
-        return nr_models.engine_label(tag[len(nr_models.LOG_PREFIX):])
+        return nr_models.engine_label(tag[len(nr_models.LOG_PREFIX):], bare=True)
     # RC Astro is the SUITE; what ran is one of its products, and that is the
     # name people know and search for (Andreas, 2026-10-05). The short tags stay
     # what history and projects store; only the writing changes.
@@ -359,9 +359,23 @@ def nr_engine_choices(models) -> dict[str, str]:
     it commits. "Nocturne NR — Odin"; two models sharing a name carry their ids,
     or the two entries would be indistinguishable and one unreachable."""
     names = [m.name for m in models]
-    return {(f"Nocturne NR — {m.name}" if names.count(m.name) == 1
-             else f"Nocturne NR — {m.name} ({m.id})"): nr_models.PREFIX + m.id
-            for m in models}
+    out: dict[str, str] = {}
+    for m in models:
+        label = (f"Nocturne NR — {m.name}" if names.count(m.name) == 1
+                 else f"Nocturne NR — {m.name} ({m.id})")
+        # A model's name is its author's text. Unbounded, one long name sets the
+        # panel's minimum width; the full name is the entry's tooltip.
+        if len(label) > _NR_LABEL_MAX:
+            label = label[:_NR_LABEL_MAX - 1].rstrip() + "…"
+        while label in out:                 # elision made two entries identical
+            label = f"{label[:_NR_LABEL_MAX - len(m.id) - 3]}… {m.id}"
+        out[label] = nr_models.PREFIX + m.id
+    return out
+
+
+# Longest dropdown label for a Nocturne NR model, in characters: the side panel's
+# width cap fits about this much beside the "Engine" label at the UI font.
+_NR_LABEL_MAX = 34
 
 
 # The RC Astro products by the internal tags steps record in last_engine.
@@ -1842,7 +1856,7 @@ class MainWindow(QMainWindow):
             if not graxpert_valid(self.settings):
                 msg += ". Install GraXpert (free) for better background & noise."
             if not rcastro_valid(self.settings):
-                msg += " RC-Astro (StarX/NoiseX) gives cleaner stars & denoise, if you have it."
+                msg += " StarXTerminator and NoiseXTerminator (RC-Astro) give cleaner stars & denoise, if you have it."
             self._show_output(msg)
 
         self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
@@ -3318,6 +3332,17 @@ class MainWindow(QMainWindow):
             return committed
         return step.default_option()
 
+    def _missing_nr_choice(self, installed: dict) -> tuple[str, str] | None:
+        """(label, engine) for a committed Nocturne NR model that is no longer
+        offered, else None."""
+        committed = self._committed_option("noise_sharpen")
+        engine = committed.get("engine") if isinstance(committed, dict) else None
+        if (isinstance(engine, str) and engine.startswith(nr_models.PREFIX)
+                and engine not in installed.values()):
+            return (f"Nocturne NR — {engine[len(nr_models.PREFIX):]} (not installed)",
+                    engine)
+        return None
+
     def _denoise_engine_label(self, stage_id: str, choices, nr_engines=None) -> str | None:
         """The engine box entry that re-commits this step's committed engine,
         so a revisited Noise Reduction shows what it ran with.
@@ -3330,8 +3355,10 @@ class MainWindow(QMainWindow):
         for label, nr_engine in (nr_engines or {}).items():
             if engine == nr_engine:
                 return label
-        if engine == self.settings.denoise_engine and "Default" in choices:
-            return "Default"
+        if engine == self.settings.denoise_engine:
+            for default in (DEFAULT_ENGINE, DEFAULT_BUILTIN):
+                if default in choices:
+                    return default
         label = {"graxpert": "GraXpert", "rcastro": NOISEX_CHOICE}.get(engine)
         return label if label in choices else None
 
@@ -6239,12 +6266,25 @@ class MainWindow(QMainWindow):
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", NOISEX_CHOICE, "GraXpert"] if both_denoise else None
         nr_engines = None
+        denoise_disabled: list[str] = []
         if stage.id == "noise_sharpen":
             # Nocturne NR models make a choice of their own: the dropdown exists
             # whenever there is one, not only when both external tools do.
-            nr_engines = nr_engine_choices(nr_models.available()) or None
+            nr_engines = nr_engine_choices(nr_models.available()) or {}
+            # A committed model that has since been removed stays in the box,
+            # greyed and selected: revisiting must not show "Default" while the
+            # history says nr:<id>, and Apply must not quietly run another engine.
+            gone = self._missing_nr_choice(nr_engines)
+            if gone is not None:
+                nr_engines = {**nr_engines, gone[0]: gone[1]}
+                denoise_disabled.append(gone[0])
+            nr_engines = nr_engines or None
             if nr_engines:
-                denoise_choices = (denoise_choices or ["Default"]) + list(nr_engines)
+                # With no external tool "Default" IS the built-in denoise; say so.
+                base = ([DEFAULT_ENGINE] if (graxpert_valid(self.settings)
+                                             or rcastro_valid(self.settings))
+                        else [DEFAULT_BUILTIN])
+                denoise_choices = (denoise_choices or base) + list(nr_engines)
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
@@ -6298,6 +6338,7 @@ class MainWindow(QMainWindow):
             denoise_engine_current=self._denoise_engine_label(stage.id, denoise_choices,
                                                               nr_engines),
             denoise_nr_engines=nr_engines,
+            denoise_disabled_choices=denoise_disabled,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(

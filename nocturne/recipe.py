@@ -359,7 +359,9 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
             if nr_plan is not None:
                 plans.append(nr_plan)
                 continue
-        note = engine_for(sid, settings)
+        note = engine_for(sid, settings,
+                          opt.get("engine") if sid == "noise_sharpen"
+                          and isinstance(opt, dict) else None)
         if note is None:                       # no engine choice: it just runs
             plans.append(StepPlan(name, "run", "", ""))
         elif note.unavailable:

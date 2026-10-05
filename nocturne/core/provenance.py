@@ -188,7 +188,12 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
     # produced it cannot answer "what made this image".
     if settings is not None:
         from .receipt import notes_for, render_lines
-        engine_lines = render_lines(notes_for([n for n, _ in entries], settings))
+        rec_noise = [ser for n, ser in ser_entries if n == "Noise Reduction"]
+        rec_engine = (rec_noise[-1].get("engine")
+                      if rec_noise and isinstance(rec_noise[-1], dict) else None)
+        engine_lines = render_lines(notes_for(
+            [n for n, _ in entries], settings,
+            {"Noise Reduction": rec_engine} if rec_engine else None))
         # Colour is the one step whose history records what RAN (fell_back,
         # 2026-09-30), so its line comes from the record, not the current
         # setup: a fallback must not be reported as "ASTAP + Gaia".

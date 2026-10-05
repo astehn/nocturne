@@ -324,3 +324,19 @@ def test_a_model_whose_graph_is_not_three_by_256_is_refused(tmp_path, monkeypatc
     monkeypatch.setattr(nr_models, "_session", lambda path: _Sess())
     with pytest.raises(RuntimeError, match="1×3×256×256"):
         nr_models.denoise(_stretched(300, 300), 0.75, model)
+
+
+def test_a_half_present_runtime_is_unavailable_not_a_crash(monkeypatch):
+    """A native library that fails to load raises OSError, not ImportError."""
+    import builtins
+    real = builtins.__import__
+
+    def boom(name, *a, **k):
+        if name == "onnxruntime":
+            raise OSError("dlopen: image not found")
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", boom)
+    monkeypatch.delitem(__import__("sys").modules, "onnxruntime", raising=False)
+    assert nr_models.runtime_available() is False
+    assert nr_models.available() == []
