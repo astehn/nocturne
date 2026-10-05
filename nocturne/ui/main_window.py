@@ -3490,6 +3490,14 @@ class MainWindow(QMainWindow):
         (spec §4 — pressing Apply would undo the 0.30), while a revisited step,
         rebuilt at its defaults, nudged and put back, is still nothing.
         """
+        if step_id == "curves":
+            # The slot holds only the RGB points, but Apply commits the whole
+            # matrix: a G curve set in the large editor left the slot equal to
+            # its neutral and read as nothing, so leaving the step lost it
+            # unasked (review 2026-10-05). Compare what Apply would commit with
+            # what is committed — the panel is always built showing that.
+            return _same_option(self._curve_option(value),
+                                normalize_curves(self._committed_option("curves")))
         neutral = getattr(self._panel, "neutral_option", None)
         if neutral is not None and _same_option(neutral, value):
             return True
@@ -5284,7 +5292,6 @@ class MainWindow(QMainWindow):
             editor.blockSignals(True)        # seeding is not an edit
             editor.set_points(rgb)
             editor.blockSignals(False)
-            panel.neutral_option = list(editor.points())
 
     def _on_curves_dialog_apply(self, curves) -> None:
         """The large editor returns the whole matrix. Split it: RGB/all goes

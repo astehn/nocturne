@@ -137,3 +137,35 @@ def test_opening_a_project_does_not_carry_another_pictures_curves(qtbot, tmp_pat
     win._go_to_id("curves")
     assert win._curve_matrix == {}
     assert win._panel.curve_editor.points() == [(0.0, 0.0), (1.0, 1.0)]
+
+
+def test_a_change_to_another_slot_alone_is_unapplied_work(qtbot, tmp_path, monkeypatch):
+    """A G curve set in the large editor, RGB untouched: leaving must ask, and
+    "keep editing" must keep it (review 2026-10-05: it was lost, unasked)."""
+    win = _with_curves(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win._go_to_id("curves")
+    G = [(0.0, 0.0), (0.5, 0.45), (1.0, 1.0)]
+    win._on_curves_dialog_apply({"rgb/all": RGB, "r/all": R, "g/all": G})
+    assert win._has_pending()
+    asked = []
+    monkeypatch.setattr(win, "_ask_pending", lambda *a, **k: asked.append(1) or "cancel")
+    win._go_to_id("stretch")
+    assert asked, "leaving asked first"
+    assert win.current_stage_id() == "curves"
+    assert win._curve_matrix == {"r/all": R, "g/all": G}
+
+
+def test_a_nudge_put_back_reads_unchanged(qtbot, tmp_path):
+    win = _with_curves(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win._go_to_id("curves")
+    ed = win._panel.curve_editor
+    ed.set_points([(0.0, 0.0), (0.25, 0.3), (0.75, 0.8), (1.0, 1.0)])
+    assert win._has_pending()
+    ed.set_points(RGB)
+    assert not win._has_pending(), "back where it was found is no change"
+    win._on_curves_dialog_apply({"rgb/all": RGB, "r/all": R, "g/all": [(0.0, 0.0), (0.5, 0.45), (1.0, 1.0)]})
+    assert win._has_pending()
+    win._on_curves_dialog_apply({"rgb/all": RGB, "r/all": R})
+    assert not win._has_pending(), "and so is a slot set and removed again"
