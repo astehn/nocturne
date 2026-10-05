@@ -62,3 +62,78 @@ def test_a_recipe_with_curves_saves_and_loads(tmp_path):
     step = load_recipe(path).steps[0]
     assert step["stage"] == "curves"
     assert normalize_curves(deserialize_option("curves", step["option"])) == normalize_curves(MATRIX)
+
+
+# --- the editor shows what was applied (found 2026-10-05) ---------------------
+# The panel was built at the identity curve every time, and the per-channel
+# slots lived in a window field only Open Image cleared. So a revisit showed a
+# straight line and a nudge replaced the applied RGB curve; a reopened project
+# lost every slot on the next Apply; and opening a project kept the previous
+# picture's R/G/B curves, applied unseen on the next Apply.
+
+RGB = [(0.0, 0.0), (0.25, 0.2), (0.75, 0.8), (1.0, 1.0)]
+R = [(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)]
+
+
+def _with_curves(qtbot, tmp_path):
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current({"amount": 0.3, "linked": True})
+    win._go_to_id("curves")
+    win._on_curves_dialog_apply({"rgb/all": RGB, "r/all": R})
+    win.apply_current(win._panel.commit_option())
+    assert set(win._committed_option("curves")) == {"rgb/all", "r/all"}, "fixture"
+    return win
+
+
+def test_a_revisit_shows_the_applied_curve_and_reads_unchanged(qtbot, tmp_path):
+    win = _with_curves(qtbot, tmp_path)
+    win._go_to_id("stretch")
+    win._go_to_id("curves")
+    assert win._panel.curve_editor.points() == RGB
+    assert win._curve_matrix == {"r/all": R}
+    assert not win._has_pending(), "showing what was applied is not an edit"
+
+
+def test_a_reopened_project_keeps_every_slot_through_a_nudge(qtbot, tmp_path):
+    from nocturne.history.project_store import save_project
+    from tests.ui.test_main_window import _window
+    win = _with_curves(qtbot, tmp_path)
+    path = str(tmp_path / "p.nocturne")
+    save_project(win.project, path, source_label="stack.fits")
+    (tmp_path / "w2").mkdir()
+    win2 = _window(qtbot, tmp_path / "w2")
+    win2._open_project(path)
+    win2._go_to_id("curves")
+    assert win2._panel.curve_editor.points() == RGB
+    assert not win2._has_pending()
+    nudged = [(0.0, 0.0), (0.25, 0.22), (0.75, 0.8), (1.0, 1.0)]
+    win2._panel.curve_editor.set_points(nudged)
+    win2.apply_current(win2._panel.commit_option())
+    assert win2._committed_option("curves") == {"rgb/all": nudged, "r/all": R}
+
+
+def test_opening_a_project_does_not_carry_another_pictures_curves(qtbot, tmp_path, monkeypatch):
+    from nocturne.history.project_store import save_project
+    from tests.ui.test_main_window import _make_fits
+    win = _with_curves(qtbot, tmp_path)
+    (tmp_path / "b").mkdir()
+    win.open_fits(_make_fits(tmp_path / "b"))
+    win._go_to_id("stretch")
+    win.apply_current({"amount": 0.3, "linked": True})
+    plain = str(tmp_path / "plain.nocturne")
+    save_project(win.project, plain, source_label="b.fits")
+    (tmp_path / "c").mkdir()
+    win.open_fits(_make_fits(tmp_path / "c"))    # back to a picture...
+    win._go_to_id("stretch")
+    win.apply_current({"amount": 0.3, "linked": True})
+    win._go_to_id("curves")
+    win._on_curves_dialog_apply({"rgb/all": RGB, "r/all": R})   # ...with R set
+    monkeypatch.setattr(win, "_ask_pending", lambda *a, **k: "discard")
+    win._open_project(plain)
+    assert [n for n, _ in win.project.entries()] == ["Stretch"], "the plain project"
+    win._go_to_id("curves")
+    assert win._curve_matrix == {}
+    assert win._panel.curve_editor.points() == [(0.0, 0.0), (1.0, 1.0)]
