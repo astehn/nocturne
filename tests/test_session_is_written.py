@@ -49,7 +49,7 @@ def test_every_history_line_also_reaches_the_session_log(qtbot, tmp_path, sessio
     img = _img()
     win._log_step("deconvolution", "medium", img, img,
                   type("S", (), {"last_engine": "BlurX"})())
-    assert "Deconvolution (medium (BlurX))" in session()
+    assert "Deconvolution (medium (BlurXTerminator))" in session()
 
 
 def test_the_engine_travels_with_the_step(qtbot, tmp_path, session):
