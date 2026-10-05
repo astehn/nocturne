@@ -2741,6 +2741,16 @@ class MainWindow(QMainWindow):
             return
         self._go_to(target, user_initiated=False)
 
+    def _park_on_import(self) -> None:
+        """Stand on Import BEFORE the first panel for a new picture is built.
+        `_show_chrome` rebuilds the panel for the step the window is on, and
+        on Saturation, De-green Stars or Star Reduction that started a star
+        separation of the NEW picture — shown on Import (Andreas, 2026-10-05)."""
+        for i, s in enumerate(self._stages):
+            if s.id == "load":
+                self._stage = i
+                return
+
     def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
         for i, s in enumerate(self._stages):
             if s.id == stage_id:
@@ -3044,6 +3054,7 @@ class MainWindow(QMainWindow):
                                     # that restarts the SAME project; it puts
                                     # its path back.
         self._center_stack.setCurrentWidget(self.image_view)
+        self._park_on_import()
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
         if had_image:
@@ -3184,6 +3195,7 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._restore_solve_state(loaded.solve_state)
         self._center_stack.setCurrentWidget(self.image_view)
+        self._park_on_import()
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
         if had_image:           # as in open_image: the first open keeps the welcome log
