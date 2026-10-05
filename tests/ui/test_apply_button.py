@@ -49,7 +49,7 @@ def test_each_state_reads_and_colours_as_ruled(qtbot, state, green, enabled, wor
     assert b.label_text() == "Apply Levels"
 
 
-@pytest.mark.parametrize("label", ["Apply Deconvolution", "Apply De-green Stars", "Apply Linear Denoise"])
+@pytest.mark.parametrize("label", ["Apply Deconvolution", "Apply De-green Stars", "Apply Noise Reduction"])
 def test_long_names_fit_the_button(qtbot, label):
     """Smoke check at a fixed width, unstyled. The real-width check under the
     real stylesheet is test_stable_frame's test_every_apply_label_fits_beside_reset."""

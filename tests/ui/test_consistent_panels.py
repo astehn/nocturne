@@ -754,14 +754,13 @@ def test_a_second_press_on_an_applied_step_commits_nothing(
 # the colour never saw the engine box, a fresh crop box or the stretch linkage,
 # and using it to disable Apply blocked those edits outright.
 
-_PROCESS = ("background", "deconvolution", "noise_sharpen", "ai_denoise")
-_MODELS = [("v6", "/nonexistent/v6.onnx"), ("v7", "/nonexistent/v7.onnx")]
+_PROCESS = ("background", "deconvolution", "noise_sharpen")
 
 
-def _no_tools(win, monkeypatch, *, engines=False, models=False):
+def _no_tools(win, monkeypatch, *, engines=False):
     """Every external tool fails loudly if reached; the process steps compute
     a stub instead. `engines` configures GraXpert AND RC-Astro (the engine box
-    exists); `models` installs two Nocturne NR models (Linear Denoise exists)."""
+    exists)."""
     from dataclasses import replace
     import nocturne.steps.noise_sharpen as ns
     import nocturne.ui.main_window as mw
@@ -770,10 +769,6 @@ def _no_tools(win, monkeypatch, *, engines=False, models=False):
     if engines:
         monkeypatch.setattr(mw, "graxpert_valid", lambda s: True)
         monkeypatch.setattr(mw, "rcastro_valid", lambda s: True)
-    if models:
-        import nocturne.core.denoise_model as dm
-        monkeypatch.setattr(dm, "usable_external_models", lambda: list(_MODELS))
-        win._rebuild_stages()
     real_step_for = win._step_for
 
     def step_for(sid):
@@ -802,15 +797,14 @@ def _off(btn):
 
 
 @pytest.mark.parametrize("async_", [False, True], ids=["sync", "async"])
-@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
 def test_switching_the_engine_after_an_apply_leaves_apply_live(
-        qtbot, tmp_path, monkeypatch, sid, async_):
+        qtbot, tmp_path, monkeypatch, async_):
     """C1.1: apply, choose the other engine — Apply read "✓ applied" and was
     off, and nothing even re-read it. Pressing must commit the new engine."""
     win = _open(qtbot, tmp_path)
-    _no_tools(win, monkeypatch, engines=True, models=True)
+    _no_tools(win, monkeypatch, engines=True)
     win._async_enabled = async_
-    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
     p = win._panel
     assert getattr(p, "engine_box", None) is not None and p.engine_box.count() >= 2, \
         "fixture: no engine box"
@@ -822,8 +816,7 @@ def test_switching_the_engine_after_an_apply_leaves_apply_live(
     assert p.apply_btn.isEnabled(), "a different engine is a real edit; Apply was off"
     assert p.apply_btn.state() == "pending"         # and Next asks (see below)
     _apply_and_land(qtbot, win)
-    name = "Noise Reduction" if sid == "noise_sharpen" else "Linear Denoise"
-    assert commits == [name, name], commits
+    assert commits == ["Noise Reduction", "Noise Reduction"], commits
     second = win.project.entries()[-1][1]
     assert second["level"] == first["level"] and second["engine"] != first["engine"]
     assert _off(win._panel.apply_btn), "the new engine is now the commit"
@@ -956,9 +949,6 @@ _AUDIT = {
     "noise_sharpen": (False, lambda w: None,
                       {"strength": lambda w: _pick(w._panel.option_box),
                        "engine": _other_engine}),
-    "ai_denoise": (False, lambda w: None,
-                   {"strength": lambda w: _pick(w._panel.option_box),
-                    "engine": _other_engine}),
     "color": (False, lambda w: None,
               {"method": lambda w: _pick(w._panel.method_box),
                "tint": lambda w: w._panel.tint_slider.setValue(20),
@@ -997,8 +987,7 @@ _AUDIT = {
 
 def test_the_audit_covers_every_stage_with_an_apply():
     from nocturne.ui.pipeline import path_stages
-    import nocturne.ui.pipeline as pl
-    ids = {s.id for s in path_stages(include=frozenset(pl._OPTIONAL))}
+    ids = {s.id for s in path_stages()}
     assert ids - {"load", "enhancements", "export"} == set(_AUDIT)
 
 
@@ -1008,7 +997,7 @@ def test_every_control_that_feeds_a_commit_leaves_an_applied_apply_live(
         qtbot, tmp_path, monkeypatch, sid, control):
     needs_stretch, set_value, controls = _AUDIT[sid]
     win = _open(qtbot, tmp_path)
-    _no_tools(win, monkeypatch, engines=sid in _PROCESS, models=sid == "ai_denoise")
+    _no_tools(win, monkeypatch, engines=sid in _PROCESS)
     if needs_stretch:
         _stretch_first(win, qtbot)
     win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
@@ -1033,11 +1022,10 @@ def _asks(win):
     return asked, win.current_stage_id() == here
 
 
-@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
-def test_next_asks_about_a_switched_engine(qtbot, tmp_path, monkeypatch, sid):
+def test_next_asks_about_a_switched_engine(qtbot, tmp_path, monkeypatch):
     win = _open(qtbot, tmp_path)
-    _no_tools(win, monkeypatch, engines=True, models=True)
-    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    _no_tools(win, monkeypatch, engines=True)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
     _apply_and_land(qtbot, win)
     before = list(win.project.entries())
     _other_engine(win); qtbot.wait(20)
@@ -1046,16 +1034,15 @@ def test_next_asks_about_a_switched_engine(qtbot, tmp_path, monkeypatch, sid):
     assert win.project.entries() == before
 
 
-@pytest.mark.parametrize("sid", ["noise_sharpen", "ai_denoise"])
-def test_a_revisited_engine_is_not_work(qtbot, tmp_path, monkeypatch, sid):
+def test_a_revisited_engine_is_not_work(qtbot, tmp_path, monkeypatch):
     """The flip side: the box reopens at the committed engine — nothing to ask."""
     win = _open(qtbot, tmp_path)
-    _no_tools(win, monkeypatch, engines=True, models=True)
-    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    _no_tools(win, monkeypatch, engines=True)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
     _other_engine(win); qtbot.wait(20)
     _apply_and_land(qtbot, win)
     win._go_to_id("stretch", user_initiated=False); qtbot.wait(20)
-    win._go_to_id(sid, user_initiated=False); qtbot.wait(20)
+    win._go_to_id("noise_sharpen", user_initiated=False); qtbot.wait(20)
     asked, stayed = _asks(win)
     assert not asked and not stayed
 

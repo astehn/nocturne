@@ -788,7 +788,7 @@ def test_nothing_sits_below_the_commit_button(qtbot, stage_id):
 from nocturne.ui.apply_button import ApplyButton  # noqa: E402
 
 _EXPECTED_ACTION = {"load": None, "enhancements": None, "export": "Export"}
-_ALL_STAGES = path_stages(include=frozenset({"ai_denoise"}))
+_ALL_STAGES = path_stages()
 
 
 @pytest.mark.parametrize("stage", _ALL_STAGES, ids=lambda s: s.id)

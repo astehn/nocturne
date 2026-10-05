@@ -757,13 +757,10 @@ def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
     from nocturne.recipe import _NAME_TO_STAGE, uncaptured_step_names
     from nocturne.ui.pipeline import ENHANCE_NAMES, PROCESSING_ORDER, STEP_NAME
     b = _body("recipes")
-    # Every step the help must name. `ai_denoise` is the one exception, added to
-    # PROCESSING_ORDER on 2026-09-18 without joining the stepper: it appears only
-    # when a Nocturne NR model is installed, which no release has. Excluded by
-    # NAME rather than by filtering on path_stages(), which would also drop
-    # `tint` — a real, documented control that is part of the Colour step rather
-    # than a stage of its own.
-    for stage in [s for s in PROCESSING_ORDER if s != "ai_denoise"]:
+    # Every step the help must name — PROCESSING_ORDER rather than
+    # path_stages(), which would drop `tint`: a real, documented control that
+    # is part of the Colour step rather than a stage of its own.
+    for stage in PROCESSING_ORDER:
         assert STEP_NAME[stage] in b, \
             f"the topic never mentions the {STEP_NAME[stage]!r} step"
     for name in ("Crop", "Rotate", "Flip", "Narrowband", "Colour Balance"):
@@ -1327,9 +1324,7 @@ def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
     planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
                                                           astap_path="/bin/echo"))}
-    # Same exception as the recipes topic above: ai_denoise is in
-    # PROCESSING_ORDER but in no release's stepper, so the help cannot name it.
-    omitted = [s for s in PROCESSING_ORDER if s not in planned and s != "ai_denoise"]
+    omitted = [s for s in PROCESSING_ORDER if s not in planned]
     assert omitted == ["tint", "deconvolution", "remove_green",
                        "recover_core", "curves", "star_reduction"], \
         "the set of stages Auto Enhance skips changed"
@@ -1574,14 +1569,9 @@ def test_share_help_does_not_promise_a_free_crop_box():
 # never added to SECTIONS, so for months the help contained 406 words that no
 # user could reach. Nothing failed, because nothing checked the wiring.
 
-# Linear Denoise is deliberately held back from the shipped app (v0.18.0 kept it out
-# of the pipeline), so its topic is reachable from the step and nowhere else.
-_UNLISTED_ON_PURPOSE = {"ai_denoise"}
-
-
 def test_every_help_topic_can_actually_be_opened():
     listed = {tid for sec in h.SECTIONS for tid in sec.topic_ids}
-    orphans = sorted(set(h.TOPICS) - listed - _UNLISTED_ON_PURPOSE)
+    orphans = sorted(set(h.TOPICS) - listed)
     assert not orphans, (
         "written but unreachable — not in any section of the help browser: "
         + ", ".join(f"{tid} ({h.TOPICS[tid].title})" for tid in orphans))

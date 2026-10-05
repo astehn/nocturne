@@ -66,6 +66,8 @@ _RENAMED_STEPS = {
     # trained model either way and the help says so -- what changed is that
     # the label now names WHEN it runs (on linear data, before any stretch),
     # which is both the honest description and the term the field already uses.
+    # The step itself was retired on 2026-10-05 (pipeline.RETIRED_NAMES); the
+    # entry stays so an old bundle still shows it under its readable name.
     "AI Denoise": "Linear Denoise",
 }
 

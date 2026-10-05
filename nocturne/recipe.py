@@ -31,7 +31,6 @@ _NAME_TO_STAGE["Colour Balance"] = "color_balance"   # finishing tool, appends
 # _stage_for must still resolve the old name too — belt-and-suspenders for an
 # old-named entry that somehow reaches save_project without going through
 # load_project first (e.g. a partially-migrated in-memory project).
-_NAME_TO_STAGE["AI Denoise"] = "ai_denoise"            # now "Linear Denoise"
 _NAME_TO_STAGE["Remove Green"] = "remove_green"        # now "De-green Sky"
 _NAME_TO_STAGE["Remove Green Fringe"] = "green_fringe"  # now "De-green Stars"
 # Starless Levels is deliberately ABSENT. Its two numbers come from a person
@@ -39,6 +38,18 @@ _NAME_TO_STAGE["Remove Green Fringe"] = "green_fringe"  # now "De-green Stars"
 # them across a folder of different targets would mean something different on
 # every frame. Being absent here is what makes uncaptured_step_names report it,
 # so Save Recipe warns honestly instead of promising a step it cannot replay.
+
+
+# Stages Nocturne no longer has, by the id a recipe saved them under, with the
+# name the user knew them by. A recipe that carries one still runs: the step is
+# skipped (batch.apply_recipe) and the preflight says so — once, in plain words.
+# Deliberately absent from _NAME_TO_STAGE, so a new recipe cannot contain one
+# and Save Recipe reports a legacy entry as a step it cannot include.
+RETIRED_STAGES = {"ai_denoise": "Linear Denoise"}   # retired 2026-10-05
+
+
+def retired_reason(stage_id) -> str:
+    return f"{RETIRED_STAGES[stage_id]} is no longer part of Nocturne — skipped"
 
 
 @dataclass
@@ -233,7 +244,7 @@ class StepPlan:
     """What one step of a recipe will actually do, before anything runs."""
 
     step: str        # the name the user sees
-    outcome: str     # "run" | "substitute" | "fail"
+    outcome: str     # "run" | "substitute" | "fail" | "skip" (a retired step)
     engine: str      # what will do it ("" when it will fail)
     reason: str      # why, when it is not simply going to run
 
@@ -309,6 +320,9 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
         name = (str(step.get("option")) if sid == "enhance"
                 else _step_display_name(sid))
         opt = step.get("option")
+        if sid in RETIRED_STAGES:
+            plans.append(StepPlan(RETIRED_STAGES[sid], "skip", "", retired_reason(sid)))
+            continue
         if sid == "narrowband" and isinstance(opt, dict) and "oiii_boost" in opt:
             plans.append(StepPlan(name, "fail", "", LEGACY_OIII_REASON))
             continue
@@ -354,7 +368,19 @@ def _needs_blocked(plan: StepPlan, blocked: set) -> bool:
 
 
 def preflight_summary(plans) -> str:
-    """One line for a status bar: what a user needs to know before pressing Run."""
+    """One line for a status bar: what a user needs to know before pressing Run.
+
+    A skipped (retired) step is said first and ONCE however often the recipe
+    names it, then the rest is summarised as if it were not there — it is not
+    a step that will run, so "All 3 steps will run" would count it as one."""
+    notes = list(dict.fromkeys(p.reason for p in plans if p.outcome == "skip"))
+    rest = [p for p in plans if p.outcome != "skip"]
+    if not notes:
+        return _summary(plans)
+    return ". ".join(notes) + "." + (" " + _summary(rest) if rest else "")
+
+
+def _summary(plans) -> str:
     fails = [p for p in plans if p.outcome == "fail"]
     subs = [p for p in plans if p.outcome == "substitute"]
     if fails:

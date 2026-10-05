@@ -31,13 +31,8 @@ def test_step_name_and_order():
     assert STEP_NAME["levels"] == "Levels"
     assert STEP_NAME["star_reduction"] == "Star Reduction"
     assert "crop" not in STEP_NAME
-    # ai_denoise is LISTED here while its stage stays out of the shipped
-    # pipeline (test_ai_denoise_is_built_but_not_shipped). This list answers
-    # "what came before this step" for a history entry, and an internally
-    # tested or saved Linear Denoise entry has to place correctly — a missing id
-    # raises ValueError from .index().
     assert PROCESSING_ORDER == [
-        "ai_denoise", "background", "color", "tint", "deconvolution", "stretch",
+        "background", "color", "tint", "deconvolution", "stretch",
         "remove_green",
         "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction",
@@ -175,40 +170,24 @@ def test_green_fringe_placed_after_saturation():
     assert "green_fringe" in POST_STRETCH_IDS
 
 
-def test_ai_denoise_is_built_but_not_shipped():
-    """Deliberate absence, pinned so it cannot drift back in unnoticed.
+def test_linear_denoise_is_retired_but_still_placed():
+    """Removed 2026-10-05 with the whole pre-stretch track. Nothing offers,
+    builds or records it — but an old project's history can still hold the
+    entry, and every step must treat it as coming BEFORE it (it ran straight
+    after Crop). The behaviour is pinned end to end in
+    tests/test_linear_denoise_legacy.py; this is the pipeline half."""
+    import pytest
 
-    The step and its model exist; the only trained model (denoise_s30_v1)
-    over-corrects deep stacks and damaged the 405-frame M8 master by +19.1%,
-    and 250-450 frames is what users actually bring. It stays out of the
-    visible pipeline until a model passes the deep-end gate.
-
-    STEP_NAME and steps/factory KEEP their entries on purpose: a saved project
-    that already names ai_denoise must still resolve rather than blow up.
-    """
-    from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME, core_stages, path_stages
-    assert "ai_denoise" not in [s.id for s in core_stages()]
-    assert "ai_denoise" not in [s.id for s in path_stages()]
-    # It IS in PROCESSING_ORDER since 2026-09-18, which does not weaken this
-    # guard: that list is "what came before what", and a history entry naming
-    # Linear Denoise has to place correctly whether or not the stage is offered.
-    # The guard that matters is the two lines above — the stage is absent from
-    # the pipeline unless a caller asks for it by id, which only happens when a
-    # Nocturne NR model is sitting in ~/.nocturne/models.
-    assert "ai_denoise" in PROCESSING_ORDER
-    assert PROCESSING_ORDER.index("ai_denoise") < PROCESSING_ORDER.index("stretch"), \
-        "the model runs on linear data; after the stretch it cannot"
-    # Renamed to "Linear Denoise" on 2026-09-20 (see project_store._RENAMED_STEPS
-    # for why). The name is what a RECIPE stores — recipe.py builds its lookup
-    # from STEP_NAME — so what has to hold is not the string but that BOTH names
-    # still resolve to this stage. Asserting the display string was the old
-    # guard, and it would have passed a rename that silently orphaned every
-    # recipe carrying the step.
-    assert STEP_NAME["ai_denoise"] == "Linear Denoise"
     from nocturne.recipe import _NAME_TO_STAGE
-    assert _NAME_TO_STAGE["Linear Denoise"] == "ai_denoise"
-    assert _NAME_TO_STAGE["AI Denoise"] == "ai_denoise", \
-        "a recipe saved before the rename must still replay"
-    from nocturne.steps.factory import make_step
     from nocturne.settings import Settings
-    assert make_step("ai_denoise", Settings()) is not None, "factory must still build it"
+    from nocturne.steps.factory import make_step
+    from nocturne.ui.pipeline import (PROCESSING_ORDER, RETIRED_NAMES, STEP_NAME,
+                                      names_before, path_stages)
+    assert "ai_denoise" not in [s.id for s in path_stages()]
+    assert "ai_denoise" not in STEP_NAME and "ai_denoise" not in PROCESSING_ORDER
+    assert "Linear Denoise" not in _NAME_TO_STAGE and "AI Denoise" not in _NAME_TO_STAGE
+    with pytest.raises(ValueError):
+        make_step("ai_denoise", Settings())
+    assert RETIRED_NAMES == ("Linear Denoise",)
+    for sid in PROCESSING_ORDER:
+        assert "Linear Denoise" in names_before(sid), sid

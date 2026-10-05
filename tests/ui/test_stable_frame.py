@@ -185,23 +185,9 @@ def _states(win, qtbot):
             break
 
 
-def _with_linear_denoise(monkeypatch):
-    """Andreas' machine has the Nocturne NR model installed, which adds the
-    Linear Denoise step: 18 rows where the suite (conftest hides the model)
-    sees 17. `_included_stages` asks `usable_external_models` at call time."""
-    import nocturne.core.denoise_model as dm
-    monkeypatch.setattr(dm, "usable_external_models",
-                        lambda: [("v10", "/nonexistent/nocturne-nr-v10.onnx")])
-
-
 @pytest.mark.parametrize("size", SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
 def test_nothing_moves_across_steps_and_states(qtbot, tmp_path, monkeypatch, size):
     _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows=17)
-
-
-def test_nothing_moves_with_linear_denoise_installed(qtbot, tmp_path, monkeypatch):
-    _with_linear_denoise(monkeypatch)
-    _prove_nothing_moves(qtbot, tmp_path, monkeypatch, (1280, 800), expect_rows=18)
 
 
 def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
@@ -262,10 +248,9 @@ def _prove_nothing_moves(qtbot, tmp_path, monkeypatch, size, expect_rows):
     assert not moved, "\n".join(moved[:40])
 
 
-@pytest.mark.parametrize("size,denoise", [((1280, 800), False), ((1512, 982), False),
-                                          ((1920, 1080), False), ((1280, 800), True)],
-                         ids=["1280x800", "1512x982", "1920x1080", "1280x800-linear-denoise"])
-def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, monkeypatch, size, denoise):
+@pytest.mark.parametrize("size", [(1280, 800), (1512, 982), (1920, 1080)],
+                         ids=["1280x800", "1512x982", "1920x1080"])
+def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, size):
     """The suite runs WITHOUT the app stylesheet, whose 8 px list padding is
     exactly what a 32-px-rows-plus-1-px-frame height missed: offscreen it
     fitted, in Andreas' real window "Export" was cut off behind a scrollbar.
@@ -276,16 +261,13 @@ def test_every_step_shows_under_the_real_stylesheet(qtbot, tmp_path, monkeypatch
     before = app.styleSheet()
     app.setStyleSheet(build_stylesheet())
     try:
-        if denoise:
-            _with_linear_denoise(monkeypatch)
         win = _window(qtbot, tmp_path)
         win.open_fits(_make_fits(tmp_path))
         win.resize(*size)
         win.show()
         qtbot.waitExposed(win)
         _settle(qtbot)
-        assert win.stepper.count() == (18 if denoise else 17), "precondition"
-        assert any(s.id == "ai_denoise" for s in win._stages) == denoise
+        assert win.stepper.count() == 17, "precondition"
         _assert_every_row_shows(win, size)
     finally:
         app.setStyleSheet(before)
@@ -406,12 +388,10 @@ def test_a_tall_step_scrolls_its_controls_while_apply_stays_put(qtbot, tmp_path)
 
 # --- "one row + histogram" (Andreas, 2026-09-25) ----------------------------
 
-def _themed_window(qtbot, tmp_path, size, monkeypatch=None):
+def _themed_window(qtbot, tmp_path, size):
     from PySide6.QtWidgets import QApplication
     from nocturne.ui.theme import build_stylesheet
     QApplication.instance().setStyleSheet(build_stylesheet())
-    if monkeypatch is not None:
-        _with_linear_denoise(monkeypatch)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.resize(*size)
@@ -466,11 +446,11 @@ def test_the_histogram_yields_before_the_step_zone(qtbot, tmp_path, restore_styl
 
 
 def test_the_window_minimum_fits_a_720_screen_under_the_stylesheet(
-        qtbot, tmp_path, monkeypatch, restore_stylesheet):
+        qtbot, tmp_path, restore_stylesheet):
     """test_window_geometry measures the bare style; this is his real theme,
-    with Linear Denoise installed (the longest step list)."""
+    with the full step list."""
     from nocturne.ui.main_window import MIN_WINDOW
-    win = _themed_window(qtbot, tmp_path, (1280, 800), monkeypatch=monkeypatch)
+    win = _themed_window(qtbot, tmp_path, (1280, 800))
     assert win.minimumSizeHint().height() <= MIN_WINDOW[1] <= 690
     # Also from a big window, where the histogram sits at its natural 240:
     # the minimum must count it at its floor, or the window could never be
@@ -483,18 +463,18 @@ def test_the_window_minimum_fits_a_720_screen_under_the_stylesheet(
 
 def _apply_stage_ids():
     from nocturne.ui.pipeline import path_stages
-    return [s.id for s in path_stages(include=frozenset({"ai_denoise"}))
+    return [s.id for s in path_stages()
             if s.id not in ("load", "enhancements", "export")]
 
 
-def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, restore_stylesheet):
+def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, restore_stylesheet):
     """One row: Apply shares its width with Reset step. Every stage's
     "Apply <step>" must still fit — the bold centred label and the status
     line below it, in every state — at the real right-column width under the
     real stylesheet."""
     from nocturne.ui.apply_button import ApplyButton
     from PySide6.QtGui import QFontMetrics
-    win = _themed_window(qtbot, tmp_path, (1280, 800), monkeypatch=monkeypatch)
+    win = _themed_window(qtbot, tmp_path, (1280, 800))
     checked = []
     for sid in _apply_stage_ids():
         win._go_to_id(sid, user_initiated=False)
@@ -514,7 +494,7 @@ def test_every_apply_label_fits_beside_reset(qtbot, tmp_path, monkeypatch, resto
             assert QFontMetrics(small).horizontalAdvance(btn.status_text()) <= room, (
                 f"{btn.status_text()!r} ({state}) clips at {btn.width()} px")
         checked.append(sid)
-    assert "ai_denoise" in checked and "green_fringe" in checked and "deconvolution" in checked
+    assert "noise_sharpen" in checked and "green_fringe" in checked and "deconvolution" in checked
 
 
 def test_opening_plate_solve_changes_nothing_in_the_right_column(qtbot, tmp_path, monkeypatch):
