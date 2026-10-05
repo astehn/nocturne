@@ -54,8 +54,41 @@ def test_it_follows_the_step_while_open(qtbot, tmp_path):
     win = _at(qtbot, tmp_path)
     win._panel.help_link.linkActivated.emit("#")
     qtbot.addWidget(win._help_dlg)
+    assert hc.stage_topic_id("curves") != hc.stage_topic_id("levels"), "fixture"
+    assert _shown_topic(win._help_dlg) == hc.stage_topic_id("levels")
     win._go_to_id("curves")
     assert _shown_topic(win._help_dlg) == hc.stage_topic_id("curves")
+    win._go_to_id("levels")
+    assert _shown_topic(win._help_dlg) == hc.stage_topic_id("levels"), "and keeps following"
+
+
+def test_a_topic_you_chose_is_not_pulled_away(qtbot, tmp_path):
+    """Browsed to another topic in the window, then Next: stay on it."""
+    win = _at(qtbot, tmp_path)
+    win._panel.help_link.linkActivated.emit("#")
+    dlg = win._help_dlg
+    qtbot.addWidget(dlg)
+    dlg.show_topic("getting-started")               # the user clicked it in the list
+    win._go_to_id("curves")
+    assert _shown_topic(dlg) == "getting-started"
+
+
+def test_quitting_with_the_help_open_keeps_its_size(qtbot, tmp_path):
+    win = _at(qtbot, tmp_path)
+    win._panel.help_link.linkActivated.emit("#")
+    dlg = win._help_dlg
+    qtbot.addWidget(dlg)
+    dlg.resize(770, 570)
+    win._confirm_save_if_dirty = lambda: True       # no unsaved-project prompt in a test
+    win.close()
+    from nocturne.settings import load_settings
+    saved = load_settings(win._settings_path).help_window_geometry
+    assert saved, "geometry saved on quit"
+    from PySide6.QtCore import QByteArray
+    from nocturne.ui.help_dialog import HelpDialog
+    probe = HelpDialog(); qtbot.addWidget(probe)
+    probe.restoreGeometry(QByteArray.fromHex(saved.encode()))
+    assert (probe.width(), probe.height()) == (770, 570)
 
 
 def test_a_closed_window_does_not_reopen_on_its_own(qtbot, tmp_path):

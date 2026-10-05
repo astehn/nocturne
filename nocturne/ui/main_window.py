@@ -658,6 +658,7 @@ class MainWindow(QMainWindow):
         self._help_header.hide()
         self._current_topic_id = None
         self._help_dlg = None         # ONE help window, reused (see _open_help)
+        self._help_following = None   # the step topic it last showed for us
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
@@ -838,6 +839,10 @@ class MainWindow(QMainWindow):
             return
         if self._solve_window.isVisible():
             self._on_solve_window_closed()   # keep its place for the next launch
+        dlg = self._help_dlg
+        if dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible():
+            # Quitting hides it without finished(): save its place here too.
+            self._remember_help_geometry()
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
@@ -1065,6 +1070,7 @@ class MainWindow(QMainWindow):
             self._help_dlg = dlg
         if topic_id:
             dlg.show_topic(topic_id)
+        self._help_following = topic_id       # see _update_explainer
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
@@ -1084,9 +1090,14 @@ class MainWindow(QMainWindow):
         tid = help_content.stage_topic_id(self.current_stage_id()) if self.project else None
         self._current_topic_id = tid
         self._sync_help_link()
+        # Follow only while it still shows the step we put there: someone who
+        # browsed to another topic (or opened Help from the menu) is reading
+        # that, and Next must not pull them away from it (review 2026-10-05).
         dlg = self._help_dlg
-        if tid and dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible():
+        if (tid and dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible()
+                and dlg.current_topic() == self._help_following):
             dlg.show_topic(tid)
+            self._help_following = tid
 
     def _sync_help_link(self) -> None:
         # The app's interactive ACCENT, no underline — a raw rich-text link
