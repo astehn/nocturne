@@ -653,7 +653,7 @@ _TOPIC_LIST = (
        "you can push nebula colour hard without the background going blotchy or "
        "the bright centre turning into a flat coloured disc. It needs to know "
        "which pixels are stars, so you will see <i>Separating stars&hellip;</i> "
-       "the first time; the result is cached after that.</p>"
+       "when you open the step; it is kept for this picture after that.</p>"
        "<h4>Tips</h4>"
        "<p>Reach for <b>Nebula boost</b> before pushing overall Saturation far. "
        "Global saturation multiplies the colour noise in the background just as "
