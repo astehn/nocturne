@@ -1,0 +1,8 @@
+{
+  "id": "tile-noise",
+  "name": "Fixture",
+  "space": "stretched",
+  "inputs": 3,
+  "tile": 256,
+  "predicts": "x - mean(x over H,W) per channel; a closed form the tests compute in NumPy"
+}

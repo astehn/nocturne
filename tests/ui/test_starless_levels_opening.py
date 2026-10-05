@@ -91,7 +91,7 @@ def test_a_split_another_tool_made_is_reused(qtbot, tmp_path, monkeypatch):
     assert seen[0]["layers_at_exec"] is True
     # The log names the engine that really made the split it used.
     text = "\n".join(win.log_panel.entries())
-    assert "(StarX)" in text, text
+    assert "(StarXTerminator)" in text, text
 
 
 def test_applying_still_records_the_step(qtbot, tmp_path, monkeypatch):

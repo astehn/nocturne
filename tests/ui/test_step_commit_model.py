@@ -2502,7 +2502,7 @@ def test_the_fringe_step_says_which_of_its_two_paths_ran(qtbot, tmp_path):
     # A real split whose tool IS known — name it.
     win._fringe_layers = ("sig", "split", None, None, "StarX")
     assert win._fringe_path_label() == "StarX"
-    assert "RC-Astro (StarX)" in win._fringe_status_text()
+    assert "StarXTerminator" in win._fringe_status_text()
 
     win._fringe_layers = ("sig", "split", None, None, "StarNet2")
     assert "StarNet2" in win._fringe_status_text()

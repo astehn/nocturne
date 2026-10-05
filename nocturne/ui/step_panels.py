@@ -13,6 +13,7 @@ from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
+from ..core import nr_models
 from .apply_button import ApplyButton
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
@@ -218,6 +219,12 @@ def _wall_summary(fields: dict, handle: str) -> str:
     return "The gallery will show: " + " \u00b7 ".join(bits) if bits else ""
 
 
+# Noise Reduction's first engine entry: the settings' default engine. With no
+# external tool installed it is the built-in denoise, and says so.
+DEFAULT_ENGINE = "Default"
+DEFAULT_BUILTIN = "Default (built-in)"
+
+
 def build_panel(
     stage,
     *,
@@ -262,6 +269,8 @@ def build_panel(
     denoise_engine_choices: list | None = None,
     denoise_default_engine: str = "rcastro",
     denoise_engine_current: str | None = None,
+    denoise_nr_engines: dict | None = None,
+    denoise_disabled_choices: list | None = None,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -480,7 +489,20 @@ def build_panel(
         engine_box = None
         if stage.id == "noise_sharpen" and denoise_engine_choices:
             engine_box = QComboBox()
-            engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
+            # ["Default","NoiseXTerminator","GraXpert"], then any Nocturne NR models
+            engine_box.addItems(denoise_engine_choices)
+            for i in range(engine_box.count()):
+                text = engine_box.itemText(i)
+                nr_engine = (denoise_nr_engines or {}).get(text)
+                if nr_engine is not None:
+                    # The label may be elided; the tooltip carries the whole name.
+                    engine_box.setItemData(
+                        i, nr_models.engine_label(nr_engine[len(nr_models.PREFIX):]),
+                        Qt.ItemDataRole.ToolTipRole)
+                if text in (denoise_disabled_choices or ()):
+                    item = engine_box.model().item(i)
+                    if item is not None:
+                        item.setEnabled(False)
             if denoise_engine_current in denoise_engine_choices:
                 # A revisited step shows the engine it committed with, as the
                 # strength box shows its level (MainWindow._denoise_engine_label).
@@ -503,7 +525,11 @@ def build_panel(
                 return level                              # background / deconvolution: bare level
             if engine_box is not None:
                 sel = engine_box.currentText()
-                engine = (denoise_default_engine if sel == "Default"
+                nr = (denoise_nr_engines or {}).get(sel)
+                # A model commits its stable id ("nr:v20.0"), never its label:
+                # a renamed model must not break a saved project or recipe.
+                engine = (nr if nr is not None
+                          else denoise_default_engine if sel in (DEFAULT_ENGINE, DEFAULT_BUILTIN)
                           else "graxpert" if sel == "GraXpert" else "rcastro")
             else:
                 engine = denoise_default_engine
@@ -939,7 +965,7 @@ def build_panel(
         controls.addWidget(neb)
         notes.addWidget(neb_status)
         notes.addWidget(_desc_label(
-            "RC-Astro (StarX) gives a cleaner separation but is not required."))
+            "StarXTerminator gives a cleaner separation but is not required."))
         w.sat_slider = slider
         w.sat_val = sat_val
         w.neb_slider = neb

@@ -170,7 +170,7 @@ def test_the_rendered_lines_read_correctly(qtbot, tmp_path):
     cases = [
         ("star_reduction", "medium", "StarNet2", "Star Reduction (medium (StarNet2))"),
         ("deconvolution", "medium", "free", "Deconvolution (medium (built-in))"),
-        ("deconvolution", "medium", "BlurX", "Deconvolution (medium (BlurX))"),
+        ("deconvolution", "medium", "BlurX", "Deconvolution (medium (BlurXTerminator))"),
         ({}, None, None, None),
     ]
     for sid, opt, eng, expected in cases:
@@ -301,7 +301,7 @@ def test_an_unknown_tag_never_overwrites_a_known_one(qtbot, tmp_path):
     # A real second opinion still wins: this is "unknown must not overwrite",
     # not "the first answer is frozen".
     win._remember_split(img, img, img, "StarX")
-    assert win._split_engine_for(img) == " (StarX)"
+    assert win._split_engine_for(img) == " (StarXTerminator)"
 
 
 def test_de_green_stars_never_invents_rc_astro(qtbot, tmp_path):
@@ -324,7 +324,7 @@ def test_de_green_stars_never_invents_rc_astro(qtbot, tmp_path):
     assert "StarNet2" in win._fringe_status_text()
 
     win._fringe_layers = ("sig", "split", img, img, "StarX")
-    assert "RC-Astro (StarX)" in win._fringe_status_text()
+    assert "StarXTerminator" in win._fringe_status_text()
 
 
 # --- one word for one thing (2026-09-22) -----------------------------------

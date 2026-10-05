@@ -33,6 +33,18 @@ def _serialize(name: str, option):
     return serialize_option(_NAME_TO_STAGE.get(name, name), option)
 
 
+def _nr_engine(ser) -> str:
+    """"Nocturne NR — Odin (v20.0)" when a Noise Reduction option names a model.
+
+    The history stores the stable id ("nr:v20.0"); the name is looked up now,
+    and a model since removed still reads by its id."""
+    from . import nr_models
+    engine = ser.get("engine") if isinstance(ser, dict) else None
+    if isinstance(engine, str) and engine.startswith(nr_models.PREFIX):
+        return nr_models.engine_label(engine[len(nr_models.PREFIX):])
+    return ""
+
+
 def _headline(name: str, ser) -> str:
     if ser is _FAILED or ser is None:
         return ""
@@ -52,6 +64,8 @@ def _headline(name: str, ser) -> str:
             # Not a single field: which of the three tonal ranges were moved.
             from .color_balance import describe
             return describe(ser)
+        if name == "Noise Reduction" and (nr := _nr_engine(ser)):
+            return nr
         field = _HEADLINE_FIELD.get(name)
         if field and ser.get(field) not in (None, ""):
             return f"{ser[field]}"
@@ -174,7 +188,12 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
     # produced it cannot answer "what made this image".
     if settings is not None:
         from .receipt import notes_for, render_lines
-        engine_lines = render_lines(notes_for([n for n, _ in entries], settings))
+        rec_noise = [ser for n, ser in ser_entries if n == "Noise Reduction"]
+        rec_engine = (rec_noise[-1].get("engine")
+                      if rec_noise and isinstance(rec_noise[-1], dict) else None)
+        engine_lines = render_lines(notes_for(
+            [n for n, _ in entries], settings,
+            {"Noise Reduction": rec_engine} if rec_engine else None))
         # Colour is the one step whose history records what RAN (fell_back,
         # 2026-09-30), so its line comes from the record, not the current
         # setup: a fallback must not be reported as "ASTAP + Gaia".
@@ -189,6 +208,13 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
             sky_line = "- Color: **Nocturne (built-in sky balance)**"
         if sky_line:
             engine_lines = [sky_line if line.startswith("- Color:") else line
+                            for line in engine_lines]
+        # A Nocturne NR model is recorded in the option itself, so this line too
+        # comes from the record: the current tool setup says nothing about it.
+        noise = [ser for n, ser in ser_entries if n == "Noise Reduction"]
+        if noise and (nr := _nr_engine(noise[-1])):
+            engine_lines = [f"- Noise Reduction: **{nr}**"
+                            if line.startswith("- Noise Reduction:") else line
                             for line in engine_lines]
         if engine_lines:
             lines.append("## Engines")

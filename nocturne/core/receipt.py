@@ -39,13 +39,15 @@ BUILT_IN = "Nocturne (built-in)"
 _PREFERS: dict[str, tuple[str, str, str]] = {
     "background":     ("Background", "GraXpert", "graxpert"),
     "color":          ("Color", "ASTAP + Gaia", "astap"),
-    "deconvolution":  ("Deconvolution", "RC-Astro", "rcastro"),
-    "noise_sharpen":  ("Noise Reduction", "RC-Astro", "rcastro"),
-    "star_reduction": ("Star Reduction", "RC-Astro", "rcastro"),
-    "saturation":     ("Saturation", "RC-Astro", "rcastro"),
-    "green_fringe":   ("De-green Stars", "RC-Astro", "rcastro"),
-    "narrowband":     ("Narrowband", "RC-Astro", "rcastro"),
-    "color_balance":  ("Colour Balance", "RC-Astro", "rcastro"),
+    # The RC Astro PRODUCT each step uses, not the suite (2026-10-05). The
+    # star-split steps use StarXTerminator to separate the stars.
+    "deconvolution":  ("Deconvolution", "BlurXTerminator", "rcastro"),
+    "noise_sharpen":  ("Noise Reduction", "NoiseXTerminator", "rcastro"),
+    "star_reduction": ("Star Reduction", "StarXTerminator", "rcastro"),
+    "saturation":     ("Saturation", "StarXTerminator", "rcastro"),
+    "green_fringe":   ("De-green Stars", "StarXTerminator", "rcastro"),
+    "narrowband":     ("Narrowband", "StarXTerminator", "rcastro"),
+    "color_balance":  ("Colour Balance", "StarXTerminator", "rcastro"),
 }
 
 # What the fallback actually IS, verified against each step's apply() rather
@@ -103,7 +105,28 @@ class EngineNote:
         return self.engine == UNAVAILABLE
 
 
-def engine_for(stage_id: str, settings) -> EngineNote | None:
+def _noise_note(settings, engine) -> EngineNote:
+    """Noise Reduction has TWO external engines and an option naming the one
+    asked for (else the settings' default). The first valid one in that order
+    runs, as `NoiseSharpenStep.apply` does — the fixed "NoiseXTerminator" this
+    used to answer was wrong for every GraXpert user."""
+    products = {"graxpert": ("GraXpert", graxpert_valid),
+                "rcastro": ("NoiseXTerminator", rcastro_valid)}
+    want = engine if engine in products else getattr(settings, "denoise_engine", "rcastro")
+    if want not in products:
+        want = "rcastro"
+    order = [want] + [e for e in products if e != want]
+    name = "Noise Reduction"
+    for i, e in enumerate(order):
+        label, valid = products[e]
+        if valid(settings):
+            reason = "" if i == 0 else f"{products[want][0]} is not configured in Settings"
+            return EngineNote(name, label, reason)
+    return EngineNote(name, _FALLBACKS["noise_sharpen"],
+                      f"{products[want][0]} is not configured in Settings")
+
+
+def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote | None:
     """What `make_step` will use for this stage, or None if it has no choice.
 
     None is the honest answer for a step with one implementation — Stretch does
@@ -113,6 +136,8 @@ def engine_for(stage_id: str, settings) -> EngineNote | None:
     prefers = _PREFERS.get(stage_id)
     if prefers is None:
         return None
+    if stage_id == "noise_sharpen":
+        return _noise_note(settings, engine)
     name, engine, needs = prefers
     if _NEEDS[needs](settings):
         return EngineNote(name, engine, "")
@@ -121,11 +146,12 @@ def engine_for(stage_id: str, settings) -> EngineNote | None:
     return EngineNote(name, _FALLBACKS.get(stage_id, BUILT_IN), _NOT_CONFIGURED[needs])
 
 
-def notes_for(step_names, settings) -> list[EngineNote]:
+def notes_for(step_names, settings, engines: dict | None = None) -> list[EngineNote]:
     """Engine notes for the steps actually applied, in order, without repeats.
 
     Takes the NAMES from a history rather than stage ids, because that is what
-    a project stores and what the provenance report already walks.
+    a project stores and what the provenance report already walks. `engines`
+    maps a step name to the engine its RECORDED option asked for.
     """
     by_name = {name: sid for sid, (name, _e, _n) in _PREFERS.items()}
     out: list[EngineNote] = []
@@ -134,7 +160,7 @@ def notes_for(step_names, settings) -> list[EngineNote]:
         sid = by_name.get(name)
         if sid is None or name in seen:
             continue
-        note = engine_for(sid, settings)
+        note = engine_for(sid, settings, (engines or {}).get(name))
         if note is not None:
             seen.add(name)
             out.append(note)
