@@ -262,6 +262,7 @@ def build_panel(
     denoise_engine_choices: list | None = None,
     denoise_default_engine: str = "rcastro",
     denoise_engine_current: str | None = None,
+    denoise_nr_engines: dict | None = None,
 ) -> QWidget:
     w = QWidget()
     w.setObjectName("stepCard")
@@ -480,7 +481,8 @@ def build_panel(
         engine_box = None
         if stage.id == "noise_sharpen" and denoise_engine_choices:
             engine_box = QComboBox()
-            engine_box.addItems(denoise_engine_choices)   # ["Default","NoiseXTerminator","GraXpert"]
+            # ["Default","NoiseXTerminator","GraXpert"], then any Nocturne NR models
+            engine_box.addItems(denoise_engine_choices)
             if denoise_engine_current in denoise_engine_choices:
                 # A revisited step shows the engine it committed with, as the
                 # strength box shows its level (MainWindow._denoise_engine_label).
@@ -503,7 +505,11 @@ def build_panel(
                 return level                              # background / deconvolution: bare level
             if engine_box is not None:
                 sel = engine_box.currentText()
-                engine = (denoise_default_engine if sel == "Default"
+                nr = (denoise_nr_engines or {}).get(sel)
+                # A model commits its stable id ("nr:v20.0"), never its label:
+                # a renamed model must not break a saved project or recipe.
+                engine = (nr if nr is not None
+                          else denoise_default_engine if sel == "Default"
                           else "graxpert" if sel == "GraXpert" else "rcastro")
             else:
                 engine = denoise_default_engine

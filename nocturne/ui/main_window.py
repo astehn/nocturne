@@ -19,6 +19,7 @@ from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core import telemetry as telemetry_mod
 from ..core.provenance import build_report
+from ..core import nr_models
 from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
@@ -345,10 +346,22 @@ def render_engine(tag: str) -> str:
     """
     if tag == "free":
         return "built-in"
+    if tag.startswith(nr_models.LOG_PREFIX):
+        return nr_models.engine_label(tag[len(nr_models.LOG_PREFIX):])
     # RC Astro is the SUITE; what ran is one of its products, and that is the
     # name people know and search for (Andreas, 2026-10-05). The short tags stay
     # what history and projects store; only the writing changes.
     return RC_PRODUCT_NAMES.get(tag, tag)
+
+
+def nr_engine_choices(models) -> dict[str, str]:
+    """Noise Reduction's dropdown entry for each Nocturne NR model -> the engine
+    it commits. "Nocturne NR — Odin"; two models sharing a name carry their ids,
+    or the two entries would be indistinguishable and one unreachable."""
+    names = [m.name for m in models]
+    return {(f"Nocturne NR — {m.name}" if names.count(m.name) == 1
+             else f"Nocturne NR — {m.name} ({m.id})"): nr_models.PREFIX + m.id
+            for m in models}
 
 
 # The RC Astro products by the internal tags steps record in last_engine.
@@ -3305,7 +3318,7 @@ class MainWindow(QMainWindow):
             return committed
         return step.default_option()
 
-    def _denoise_engine_label(self, stage_id: str, choices) -> str | None:
+    def _denoise_engine_label(self, stage_id: str, choices, nr_engines=None) -> str | None:
         """The engine box entry that re-commits this step's committed engine,
         so a revisited Noise Reduction shows what it ran with.
         None when there is no such entry (the box then keeps its first entry,
@@ -3314,6 +3327,9 @@ class MainWindow(QMainWindow):
         if not choices or not isinstance(committed, dict):
             return None
         engine = committed.get("engine")
+        for label, nr_engine in (nr_engines or {}).items():
+            if engine == nr_engine:
+                return label
         if engine == self.settings.denoise_engine and "Default" in choices:
             return "Default"
         label = {"graxpert": "GraXpert", "rcastro": NOISEX_CHOICE}.get(engine)
@@ -6222,6 +6238,13 @@ class MainWindow(QMainWindow):
         split_enabled = loaded and rcastro_valid(self.settings)
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", NOISEX_CHOICE, "GraXpert"] if both_denoise else None
+        nr_engines = None
+        if stage.id == "noise_sharpen":
+            # Nocturne NR models make a choice of their own: the dropdown exists
+            # whenever there is one, not only when both external tools do.
+            nr_engines = nr_engine_choices(nr_models.available()) or None
+            if nr_engines:
+                denoise_choices = (denoise_choices or ["Default"]) + list(nr_engines)
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,
@@ -6272,7 +6295,9 @@ class MainWindow(QMainWindow):
                             if stage.kind == "process" else None),
             denoise_engine_choices=denoise_choices,
             denoise_default_engine=self.settings.denoise_engine,
-            denoise_engine_current=self._denoise_engine_label(stage.id, denoise_choices),
+            denoise_engine_current=self._denoise_engine_label(stage.id, denoise_choices,
+                                                              nr_engines),
+            denoise_nr_engines=nr_engines,
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(

@@ -81,3 +81,23 @@ def _isolated_session_log():
         yield
     finally:
         _sl._active, _sl._started_at = active, started
+
+
+# --- the developer's Nocturne NR models are off limits too -------------------
+#
+# ~/.nocturne/models is where the Nocturne NR project delivers models for
+# testing, and onnxruntime is in .venv — so without this, every Noise Reduction
+# panel built by the suite would list whatever happens to be in that folder on
+# this machine, and a test asserting the engine list would pass or fail by who
+# ran it. Both discovery folders point at an empty directory for the session;
+# tests that need a model put one in their own tmp folder and monkeypatch.
+
+import nocturne.core.nr_models as _nr_models
+
+_NR_SANDBOX = tempfile.mkdtemp(prefix="nocturne_nr_models_")
+
+
+@pytest.fixture(autouse=True)
+def _nr_models_sandbox(monkeypatch):
+    monkeypatch.setattr(_nr_models, "TRAY_DIR", _NR_SANDBOX)
+    monkeypatch.setattr(_nr_models, "SHIPPED_DIR", _NR_SANDBOX)

@@ -354,6 +354,11 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
         if not _can_build(sid, settings):
             plans.append(StepPlan(name, "fail", "", CANNOT_BUILD_REASON))
             continue
+        if sid == "noise_sharpen" and isinstance(opt, dict):
+            nr_plan = _nr_plan(name, opt.get("engine"))
+            if nr_plan is not None:
+                plans.append(nr_plan)
+                continue
         note = engine_for(sid, settings)
         if note is None:                       # no engine choice: it just runs
             plans.append(StepPlan(name, "run", "", ""))
@@ -371,6 +376,21 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
                  StepPlan(p.step, "fail", "", f"{', '.join(sorted(blocked))} is not configured")
                  for p in plans]
     return plans
+
+
+def _nr_plan(name: str, engine) -> StepPlan | None:
+    """A Nocturne NR model runs or fails — it has no substitute, so the
+    settings-based `engine_for` (which would say NoiseXTerminator) is not asked."""
+    from .core import nr_models
+    if not (isinstance(engine, str) and engine.startswith(nr_models.PREFIX)):
+        return None
+    model_id = engine[len(nr_models.PREFIX):]
+    if nr_models.find(model_id) is None:
+        return StepPlan(name, "fail", "", nr_models.not_installed(model_id))
+    if not nr_models.runtime_available():
+        return StepPlan(name, "fail", "", "Nocturne NR needs onnxruntime, which this "
+                                          "build does not include")
+    return StepPlan(name, "run", nr_models.engine_label(model_id), "")
 
 
 def _needs_blocked(plan: StepPlan, blocked: set) -> bool:

@@ -34,9 +34,8 @@ _NXT_LEVELS = {"light": 0.75, "medium": 0.90, "strong": 0.95}  # RC-Astro NoiseX
 # noise 36% on the same image, for the same runtime.
 _GX_LEVELS = {"light": 0.7, "medium": 0.9, "strong": 1.0}      # GraXpert AI denoise
 
-# Strength for a Nocturne NR model. 0.75 was measured on the retired pre-stretch
-# model: full strength over-smoothed the held-out target to 0.000004 background
-# noise against the 128-frame truth's 0.000032.
+# Strength for a Nocturne NR post-stretch model: the levels every model was
+# judged at and Andreas eye-tested (Nocturne NR model contract §c, 2026-10-05).
 _NR_LEVELS = {"light": 0.5, "medium": 0.75, "strong": 1.0}
 
 _TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallback
@@ -51,9 +50,19 @@ def parse_noise_option(option) -> tuple[str | None, str]:
     return None, (option if option in _TV_LEVELS else "medium")
 
 
+def _nr_id(engine) -> str | None:
+    """The model id in an "nr:<id>" engine — the STABLE id, never the display
+    name, so a renamed model does not break a saved project or recipe."""
+    from ..core.nr_models import PREFIX
+    if isinstance(engine, str) and engine.startswith(PREFIX):
+        return engine[len(PREFIX):]
+    return None
+
+
 class NoiseSharpenStep(Step):
     """Post-stretch denoise. Engine = chosen (RC-Astro NoiseXTerminator or
-    GraXpert AI); falls back to the other installed engine, then to free TV."""
+    GraXpert AI); falls back to the other installed engine, then to free TV.
+    A Nocturne NR model ("nr:<id>") is never substituted: it runs or fails."""
 
     name = "Noise Reduction"
 
@@ -71,8 +80,8 @@ class NoiseSharpenStep(Step):
 
     @staticmethod
     def engine_that_will_run(option, *, has_rcastro: bool, has_graxpert: bool) -> str:
-        """Which engine an apply would ACTUALLY use — "rcastro", "graxpert" or
-        "free".
+        """Which engine an apply would ACTUALLY use — "rcastro", "graxpert",
+        "free", or "nr" for a Nocturne NR model.
 
         The requested engine is only a preference: with GraXpert installed and
         RC-Astro absent, an option asking for "rcastro" runs GraXpert. A caller
@@ -81,6 +90,8 @@ class NoiseSharpenStep(Step):
         warning that a denoise takes minutes and concluded the app had hung.
         """
         engine, _level = parse_noise_option(option)
+        if _nr_id(engine) is not None:
+            return "nr"
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
         for e in order:
             if e == "rcastro" and has_rcastro:
@@ -91,6 +102,17 @@ class NoiseSharpenStep(Step):
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         engine, level = parse_noise_option(option)
+        model_id = _nr_id(engine)
+        if model_id is not None:
+            from ..core import nr_models
+            model = nr_models.find(model_id)
+            # No fallback: this engine asks about ONE model, and quietly running
+            # NoiseXTerminator instead would answer a different question.
+            if model is None:
+                raise FileNotFoundError(nr_models.not_installed(model_id))
+            result = nr_models.denoise(img, _NR_LEVELS[level], model)
+            self.last_engine = nr_models.LOG_PREFIX + model_id
+            return result
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
         # The option is a PREFERENCE and the log used to print it: with
         # GraXpert installed and RC-Astro absent it said "rcastro" while
