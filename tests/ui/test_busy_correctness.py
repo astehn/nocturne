@@ -449,3 +449,16 @@ def test_export_landing_before_the_gallery_send_keeps_send_dead_in_flight(
     qtbot.wait(20)
     assert p.wall_btn.isEnabled() is (not ok)
     assert p.wall_consent.isEnabled() is (not ok)
+
+
+@pytest.mark.parametrize("sid", ["green_fringe", "star_reduction"])
+def test_back_is_refused_while_a_split_started_on_arrival_runs(
+        qtbot, tmp_path, monkeypatch, sid):
+    """_refresh re-derived Back after the split had started, without asking
+    whether the app was busy (Next did ask): Back stayed live mid-split."""
+    win, h = _make(qtbot, tmp_path, monkeypatch)
+    win._go_to_id(sid, user_initiated=False); qtbot.wait(30)
+    assert win._busy and len(h.events) == 1, "fixture: no held split"
+    assert win._back_btn.isEnabled() is False
+    h.release(); _idle(qtbot, win)
+    assert win._back_btn.isEnabled() is True

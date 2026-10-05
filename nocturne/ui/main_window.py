@@ -6876,7 +6876,8 @@ class MainWindow(QMainWindow):
         self._sync_background_model_toggle()
         self._sync_stretch_preview()
         self._sync_step_controls()
-        self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage)
+        self._back_btn.setEnabled(prev_enabled(self._stages, self._stage) != self._stage
+                                  and not self._busy)
         # In place and disabled on the last step (spec §1.8). It used to be
         # hidden there, which let Back stretch across the whole row — the one
         # step where the navigation moved. Busy gating is _set_busy's, which
