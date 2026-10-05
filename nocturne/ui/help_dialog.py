@@ -59,6 +59,11 @@ class HelpDialog(QDialog):
         if tid:
             self._render(hc.topic(tid))
 
+    def current_topic(self) -> str | None:
+        """The topic on screen — its id, or None on a section header."""
+        item = self.nav.currentItem()
+        return item.data(_TOPIC_ROLE) if item is not None else None
+
     def show_topic(self, topic_id: str) -> None:
         """Select the topic in the sidebar and render it; no-op for unknown ids."""
         t = hc.topic(topic_id)

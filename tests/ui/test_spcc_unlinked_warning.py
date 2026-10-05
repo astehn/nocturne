@@ -146,9 +146,6 @@ def test_on_screen_the_note_is_at_the_bottom_of_the_card(qtbot, tmp_path, monkey
     side panel gave all the spare height to ITS stretch, below the panel."""
     win = _calibrated_at_stretch(qtbot, tmp_path, monkeypatch)
     win.resize(1440, 900); win.show(); qtbot.wait(50)
-    if win.settings.help_expanded:
-        win._toggle_help()   # folded, as in his window; open help sits below the card
-    assert not win._explainer_scroll.isVisible(), "fixture"
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     qtbot.wait(50)
     note = _note(win)

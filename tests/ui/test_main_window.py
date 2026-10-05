@@ -1065,7 +1065,8 @@ def test_explainer_shows_current_step_help(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
     from nocturne.ui import help_content as hc
-    assert hc.TOPICS["background"].summary in win._explainer.text()
+    assert win._current_topic_id == hc.stage_topic_id("background")
+    assert win._panel.help_link.isVisible() or not win.isVisible()
 
 
 def test_open_help_shows_requested_topic(qtbot, tmp_path):
@@ -2443,36 +2444,6 @@ def test_warning_channel_and_clear(qtbot, tmp_path):
     win._clear_warning()
     assert win._warning.text() == ""
     assert not hasattr(win, "_status")                        # old surface removed
-
-
-def test_help_collapse_is_global_sticky_and_persisted(qtbot, tmp_path):
-    from nocturne.settings import load_settings
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win.show(); qtbot.waitExposed(win)
-    win.go_next()  # a stage with a help topic (crop)
-    assert win.settings.help_expanded is True
-    assert win._explainer_scroll.isVisible()                 # body shown when expanded
-    assert win._full_help_link.isVisible()
-
-    win._toggle_help()                                       # collapse
-    assert win.settings.help_expanded is False
-    assert not win._explainer_scroll.isVisible()             # body hidden
-    assert not win._full_help_link.isVisible()               # Full help hidden when collapsed
-    assert load_settings(str(tmp_path / "settings.json")).help_expanded is False  # persisted
-
-    win.go_next()                                            # different step
-    assert not win._explainer_scroll.isVisible()             # stays collapsed everywhere
-
-
-def test_help_starts_collapsed_when_setting_off(qtbot, tmp_path):
-    import json
-    (tmp_path / "settings.json").write_text(json.dumps({"help_expanded": False}))
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win.show(); qtbot.waitExposed(win)
-    win.go_next()
-    assert not win._explainer_scroll.isVisible()             # honours persisted state on launch
 
 
 def test_peek_label_clears_when_leaving_peek(qtbot, tmp_path):
@@ -6103,9 +6074,10 @@ def test_the_help_link_lives_in_the_panel_title(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     link = win._panel.help_link
     assert "How this works" in link.text()
-    before = win.settings.help_expanded
+    opened = []
+    win._open_help = lambda tid=None: opened.append(tid)
     link.linkActivated.emit("#")
-    assert win.settings.help_expanded is (not before)
+    assert opened == [win._current_topic_id], "it opens the help window at the step"
 
 
 def test_the_panel_scrolls_and_the_window_does_not_grow(qtbot, tmp_path):

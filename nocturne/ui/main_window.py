@@ -648,28 +648,17 @@ class MainWindow(QMainWindow):
         self._solve_window = SolveWindow(self.solve_panel, self)
         self._solve_window.closed.connect(self._on_solve_window_closed)
         self._panel = right.panel
-        # The explainer lives inside the scrolling zone, below the panel.
-        # "How this works" is on each panel's title line (its help_link);
-        # this placeholder only stands in until the first panel is built.
+        # "How this works" is on each panel's title line (its help_link) and
+        # opens the help WINDOW at the step's topic. The step's long help no
+        # longer lives in the right column (Andreas, 2026-10-05): inline it was
+        # a wall of text nobody reads, and scrolling it moved Apply and Reset —
+        # the column is for controls. This placeholder only stands in until the
+        # first panel is built.
         self._help_header = QLabel("")
         self._help_header.hide()
         self._current_topic_id = None
-        self._explainer = QLabel("")
-        self._explainer.setObjectName("stepExplainer")
-        self._explainer.setWordWrap(True)
-        self._explainer.setTextFormat(Qt.TextFormat.RichText)
-        self._explainer.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._explainer_scroll = QScrollArea()
-        self._explainer_scroll.setWidgetResizable(True)
-        self._explainer_scroll.setWidget(self._explainer)
-        self._explainer_scroll.setMaximumHeight(240)
-        right.body_layout.insertWidget(right.body_layout.count() - 1, self._explainer_scroll)
-        self._full_help_link = QLabel('<a href="#">Full help →</a>')
-        self._full_help_link.setObjectName("fullHelpLink")
-        self._full_help_link.setOpenExternalLinks(False)
-        self._full_help_link.linkActivated.connect(
-            lambda _: self._open_help(self._current_topic_id))
-        right.body_layout.insertWidget(right.body_layout.count() - 1, self._full_help_link)
+        self._help_dlg = None         # ONE help window, reused (see _open_help)
+        self._help_following = None   # the step topic it last showed for us
         self._peek_label = right.peek_label
         self._busy_label = right.busy_label
         self._progress = right.progress
@@ -850,6 +839,10 @@ class MainWindow(QMainWindow):
             return
         if self._solve_window.isVisible():
             self._on_solve_window_closed()   # keep its place for the next launch
+        dlg = self._help_dlg
+        if dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible():
+            # Quitting hides it without finished(): save its place here too.
+            self._remember_help_geometry()
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._clear_cache()   # leave nothing behind on quit
@@ -1063,40 +1056,70 @@ class MainWindow(QMainWindow):
         self._open_help("getting-started")
 
     def _open_help(self, topic_id: str | None = None) -> HelpDialog:
-        dlg = HelpDialog(self)
+        """ONE help window, reused: raised if it is already open, opened at
+        `topic_id`, and it keeps the size and place it was last left at. While
+        it is open it follows the step (_update_explainer)."""
+        dlg = self._help_dlg
+        if dlg is None or not shiboken6.isValid(dlg):
+            dlg = HelpDialog(self)
+            dlg.setModal(False)
+            # A TOOL window, like Plate Solve: it stays above Nocturne (only
+            # Nocturne, never other apps), so touching a slider while reading
+            # no longer sends it behind the main window (Andreas, 2026-10-05).
+            dlg.setWindowFlag(Qt.WindowType.Tool, True)
+            if self.settings.help_window_geometry:
+                dlg.restoreGeometry(QByteArray.fromHex(
+                    self.settings.help_window_geometry.encode()))
+            dlg.finished.connect(lambda _r: self._remember_help_geometry())
+            self._help_dlg = dlg
         if topic_id:
             dlg.show_topic(topic_id)
+        self._help_following = topic_id       # see _update_explainer
         dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
         return dlg
 
-    def _update_explainer(self) -> None:
-        tid = help_content.stage_topic_id(self.current_stage_id()) if self.project else None
-        t = help_content.topic(tid) if tid else None
-        self._current_topic_id = tid
-        if t is not None:
-            self._explainer.setText(f"<b>{t.summary}</b>{t.body}")
-        self._apply_help_expanded()
+    def _toggle_help_window(self) -> None:
+        """"How this works" opens the help and, pressed again, closes it — the
+        window stays until the user chooses to close it (his ask, 2026-10-05)."""
+        dlg = self._help_dlg
+        if dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible():
+            dlg.reject()                  # finished() saves its size and place
+        else:
+            self._open_help(self._current_topic_id)
 
-    def _toggle_help(self) -> None:
-        self.settings.help_expanded = not self.settings.help_expanded
+    def _remember_help_geometry(self) -> None:
+        dlg = self._help_dlg
+        if dlg is None or not shiboken6.isValid(dlg):
+            return
+        self.settings.help_window_geometry = bytes(dlg.saveGeometry().toHex()).decode()
         save_settings(self.settings, self._settings_path)
-        self._apply_help_expanded()
 
-    def _apply_help_expanded(self) -> None:
-        """Show/hide the detailed help body per the global sticky flag. The one-line
-        step description (in the panel) is always visible regardless."""
-        expanded = self.settings.help_expanded
-        has_topic = self._current_topic_id is not None
+    def _update_explainer(self) -> None:
+        """Track the step's help topic: the title-line link, and the help window
+        if it is open — it follows the step, so it can sit beside the main window
+        (or on a second screen) and always show what you are looking at."""
+        tid = help_content.stage_topic_id(self.current_stage_id()) if self.project else None
+        self._current_topic_id = tid
+        self._sync_help_link()
+        # Follow only while it still shows the step we put there: someone who
+        # browsed to another topic (or opened Help from the menu) is reading
+        # that, and Next must not pull them away from it (review 2026-10-05).
+        dlg = self._help_dlg
+        if (tid and dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible()
+                and dlg.current_topic() == self._help_following):
+            dlg.show_topic(tid)
+            self._help_following = tid
+
+    def _sync_help_link(self) -> None:
         # The app's interactive ACCENT, no underline — a raw rich-text link
         # draws in the palette's default blue, underlined, which is what this
-        # showed until 2026-09-25.
+        # showed until 2026-09-25. ↗ says it opens a window.
         style = f'style="color:{ACCENT}; text-decoration:none"'
-        self._help_header.setText(
-            f'<a href="#" {style}>How this works ▾</a>' if expanded
-            else f'<a href="#" {style}>How this works ▸</a>')
-        self._help_header.setVisible(has_topic)
-        self._explainer_scroll.setVisible(has_topic and expanded)
-        self._full_help_link.setVisible(has_topic and expanded)
+        self._help_header.setText(f'<a href="#" {style}>How this works ↗</a>')
+        self._help_header.setToolTip("Open or close the help for this step, in its own window")
+        self._help_header.setVisible(self._current_topic_id is not None)
 
     def _show_output(self, text: str) -> None:
         """Routine results & progress → the copyable Output box."""
@@ -6282,8 +6305,12 @@ class MainWindow(QMainWindow):
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link
-        self._help_header.linkActivated.connect(lambda _: self._toggle_help())
-        self._apply_help_expanded()   # gives the new link its text
+        self._help_header.linkActivated.connect(lambda _: self._toggle_help_window())
+        self._help_header.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+        self._help_header.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        self._sync_help_link()   # gives the new link its text
         self._setup_crop_overlay()  # enable on crop stage, disable elsewhere
         if stage.id == "star_reduction":
             self._setup_star_reduction()  # kick off the cached StarX split on entry
