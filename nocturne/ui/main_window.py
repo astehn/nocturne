@@ -59,7 +59,7 @@ from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, names_before, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
-from ..core.saturation import nebula_saturate, saturate
+from ..core.saturation import nebula_mask, nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import ColorSettings, remove_green, remove_green_fringe, remove_green_fringe_masked
@@ -567,6 +567,8 @@ class MainWindow(QMainWindow):
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
         self._sat_layers = None   # the ACTIVE step's handle into _splits (see _remember_split)
+        self._sat_mask = None     # (sig, mask): Saturation's nebula mask, built once per split
+        self._sat_failed = None   # sig of a prepare that has not landed (failed/cancelled/running)
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
         self._lc_timer = QTimer(self)
@@ -2739,6 +2741,16 @@ class MainWindow(QMainWindow):
             return
         self._go_to(target, user_initiated=False)
 
+    def _park_on_import(self) -> None:
+        """Stand on Import BEFORE the first panel for a new picture is built.
+        `_show_chrome` rebuilds the panel for the step the window is on, and
+        on Saturation, De-green Stars or Star Reduction that started a star
+        separation of the NEW picture — shown on Import (Andreas, 2026-10-05)."""
+        for i, s in enumerate(self._stages):
+            if s.id == "load":
+                self._stage = i
+                return
+
     def _go_to_id(self, stage_id: str, *, user_initiated: bool = True) -> None:
         for i, s in enumerate(self._stages):
             if s.id == stage_id:
@@ -3042,6 +3054,7 @@ class MainWindow(QMainWindow):
                                     # that restarts the SAME project; it puts
                                     # its path back.
         self._center_stack.setCurrentWidget(self.image_view)
+        self._park_on_import()
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
         if had_image:
@@ -3182,6 +3195,7 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._restore_solve_state(loaded.solve_state)
         self._center_stack.setCurrentWidget(self.image_view)
+        self._park_on_import()
         self._show_chrome(True)  # reveal stepper + panel now there's an image
         self._clear_warning()
         if had_image:           # as in open_image: the first open keeps the welcome log
@@ -4476,6 +4490,11 @@ class MainWindow(QMainWindow):
         # workspace would navigate somewhere the user never asked to go.
         self._deferred_nav = None
         self._apply_run = None      # the rest of an Apply plan, parked on an async press
+        # Saturation's prepared split + mask belong to this picture: kept, they
+        # pinned full-size layers and let a mono picture's log name the old
+        # picture's star tool (review 2026-10-05).
+        self._sat_layers = self._sat_mask = None
+        self._sat_failed = None
         self._last_export = None
         self._solve = None
         self._solve_freshness = None
@@ -5222,9 +5241,13 @@ class MainWindow(QMainWindow):
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
     def _setup_saturation(self) -> None:
-        """On entering Saturation: the Nebula slider is always enabled. The global
-        slider always works; the split (StarX or the free fallback) is deferred
-        until the Nebula slider is first raised (lazy)."""
+        """On entering Saturation, prepare what the Nebula slider needs — the star
+        split and its nebula mask — as De-green Stars and Star Reduction do.
+        It used to wait for the first raise of the slider, so the first touch
+        started a separation that locked the step (Andreas, 2026-10-05: the step
+        felt "sluggish and difficult"). The mask is built once here too: rebuilt
+        on every tick it was 0.9 s of a 1.2 s tick at 8.3 MP, 7.4 of 8.3 s at
+        33 MP, on the UI thread."""
         self._sat_pending = None
         if self.project is None or not hasattr(self._panel, "neb_slider"):
             return
@@ -5232,33 +5255,67 @@ class MainWindow(QMainWindow):
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
             "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+        self._prepare_saturation(self._preview_base("saturation"))
+
+    def _sat_ready(self, base) -> bool:
+        """Are the split and its mask in hand for THIS base? A base that changed
+        under the step (Trim appends before Saturation) is not ready."""
+        sig = self._sr_sig(base)
+        return bool(self._sat_layers and self._sat_layers[0] == sig
+                    and self._sat_mask and self._sat_mask[0] == sig)
+
+    def _prepare_saturation(self, base, *, retry_failed: bool = False) -> bool:
+        """Start the split + mask job for `base` unless it is ready, pointless
+        (mono) or something is already running — a project reopened at this step
+        rebuilds the panel several times, and each rebuild used to start its own
+        split. Callers retry from the Nebula slider and Apply, so a failed,
+        cancelled or skipped run, or a base that changed, is never final.
+        Returns True when the layers are ready now."""
+        if not base.is_color:
+            return True                 # nebula_saturate leaves mono unchanged
+        if self._sat_ready(base):
+            return True
+        if self._busy:
+            return False
+        sig = self._sr_sig(base)
+        # A split that failed or was cancelled for this base is retried by a
+        # deliberate act (the Nebula slider moving, Apply), not by every touch
+        # of the step — a broken StarX would fail again on each gesture.
+        if self._sat_failed == sig and not retry_failed:
+            return False
+        self._sat_failed = sig            # cleared when the result lands
+        hit = self._cached_layers(base)           # on the UI thread (A4)
+        label = "Preparing nebula mask…" if hit else "Separating stars…"
+
+        def prepare():
+            starless, stars, tag = hit if hit else self._split_tagged(base)
+            return starless, stars, tag, nebula_mask(starless)
+
+        self._run_busy(prepare, lambda payload: self._on_sat_split(sig, payload),
+                       label, "Star separation failed")
+        return False
 
     def _on_sat_change(self, amount: float, nebula: float) -> None:
         """A Saturation slider moved: stash both values; lazily split for the
         nebula boost; (re)start the debounce."""
+        prev_neb = self._sat_pending[1] if self._sat_pending is not None else 0.0
         self._sat_pending = (amount, nebula)
-        if nebula > 0.0 and not self._busy:
-            base = self._preview_base("saturation")
-            sig = self._sr_sig(base)
-            hit = self._cached_layers(base)
-            if hit:
-                self._sat_layers = (sig, hit[0], hit[1], hit[2])
-            else:
-                # Nothing written here: the right column says "Separating
-                # stars…" beside its ring (C5), and a note already on the
-                # panel (the free-splitter one) must survive a failed split.
-                self._run_busy(lambda: self._split_tagged(base),
-                               lambda layers: self._on_sat_split(sig, layers),
-                               "Separating stars…", "Star separation failed")
+        if nebula > 0.0:
+            # Only the Nebula slider's own move retries a failed split.
+            self._prepare_saturation(self._preview_base("saturation"),
+                                     retry_failed=nebula != prev_neb)
         self._sat_timer.start(90)
         self._sync_step_controls()
 
     def _on_sat_split(self, sig, layers) -> None:
         # Before the stage check: a finished split is never thrown away.
         self._remember_split(None, layers[0], layers[1], layers[2], sig=sig)
+        if self._sat_failed == sig:
+            self._sat_failed = None
         if self.current_stage_id() != "saturation":
             return
         self._sat_layers = (sig, layers[0], layers[1], layers[2])
+        self._sat_mask = (sig, layers[3]) if len(layers) > 3 else None
         if hasattr(self._panel, "neb_status"):
             self._panel.neb_status.setText(self._split_note(layers[2]))
         self._render_saturation_preview()
@@ -5270,7 +5327,9 @@ class MainWindow(QMainWindow):
         img = base
         if nebula > 0.0 and self._sat_layers and self._sat_layers[0] == self._sr_sig(base):
             _, starless, stars, _path = self._sat_layers
-            img = nebula_saturate(starless, stars, nebula)
+            mask = (self._sat_mask[1] if self._sat_mask
+                    and self._sat_mask[0] == self._sat_layers[0] else None)
+            img = nebula_saturate(starless, stars, nebula, mask=mask)
         return saturate(img, amount)
 
     def _render_saturation_preview(self) -> None:
@@ -5288,6 +5347,14 @@ class MainWindow(QMainWindow):
     def _apply_saturation(self, amount: float, nebula: float) -> None:
         """Commit Saturation (+ Nebula boost) using the cached split — instant."""
         if self.project is None or self._busy:
+            return
+        # Readiness BEFORE truncating: a refused Apply must leave the history
+        # as it found it. The preview base is the image Apply would start from.
+        if nebula > 0.0 and not self._prepare_saturation(
+                self._preview_base("saturation"), retry_failed=True):
+            # Committing without the boost would record one that is not in the
+            # picture — and not what export or a recipe replay produce.
+            self._show_output("Preparing the nebula boost — press Apply again when it is ready.")
             return
         if not self._truncate_for("saturation", "Apply"):
             return

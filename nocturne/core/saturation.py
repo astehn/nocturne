@@ -65,17 +65,31 @@ def _nebula_mask(lum: np.ndarray) -> np.ndarray:
     return gaussian(m, sigma=sigma, preserve_range=True).astype(np.float32)
 
 
+def nebula_mask(starless: AstroImage) -> np.ndarray | None:
+    """The mask `nebula_saturate` boosts within, for this starless layer; None
+    for mono. It does not depend on the strength, and it is most of the cost
+    (0.9 s of a 1.2 s slider tick on an 8.3 MP frame, 7.4 s of 8.3 s at 33 MP,
+    measured 2026-10-05) — so the live preview builds it once and passes it in."""
+    base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
+    if base.ndim != 3:
+        return None
+    return _nebula_mask(base.mean(axis=2))
+
+
 def nebula_saturate(starless: AstroImage, stars: AstroImage,
-                    strength: float) -> AstroImage:
+                    strength: float, *, mask: np.ndarray | None = None) -> AstroImage:
     """Boost chroma on the starless layer within the nebula mask, then screen the
     untouched stars back on top — so only nebulosity gains colour (sky and stars
-    are unchanged). `strength` 0 = plain recombine."""
+    are unchanged). `strength` 0 = plain recombine. `mask` is `nebula_mask` of
+    this same starless layer, when the caller already has it."""
     strength = float(np.clip(strength, 0.0, 1.0))
     base = np.clip(starless.data.astype(np.float32), 0.0, 1.0)
     st = np.clip(stars.data.astype(np.float32), 0.0, 1.0)
     if base.ndim == 3 and strength > 0.0:
         lum = base.mean(axis=2, keepdims=True)
-        m = _nebula_mask(base.mean(axis=2))[:, :, None]
+        if mask is None:
+            mask = _nebula_mask(base.mean(axis=2))
+        m = mask[:, :, None]
         base = np.clip(lum + (base - lum) * (1.0 + _GAIN * strength * m), 0.0, 1.0)
     out = 1.0 - (1.0 - base) * (1.0 - st)
     return AstroImage(np.clip(out, 0.0, 1.0).astype(np.float32),
