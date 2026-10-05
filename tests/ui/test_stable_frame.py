@@ -140,10 +140,11 @@ def _states(win, qtbot):
     _settle(qtbot)
     yield "busy", _geometry(win)
     win._set_busy(False)
-    win._toggle_help()
+    # Opening the help is a WINDOW now (2026-10-05): it must move nothing here.
+    win._open_help(win._current_topic_id)
     _settle(qtbot)
-    yield "help toggled", _geometry(win)
-    win._toggle_help()
+    yield "help opened", _geometry(win)
+    win._help_dlg.reject()
     _settle(qtbot)
 
     # A real job through the real queue (its process faked by the test):

@@ -47,7 +47,10 @@ class Settings:
     # core/starless.py, which calls itself "an availability fallback, not a
     # quality match". See docs/superpowers/specs/2026-09-18-starnet2-integration.md.
     starnet_path: str = ""
-    help_expanded: bool = True     # detailed step-help section shown by default (novice-first)
+    # No longer read by the main window: the step help moved to its own window
+    # (2026-10-05). Kept so settings files and Stack's own flag (below) are
+    # untouched — Stack's tests pin that toggling it leaves this alone.
+    help_expanded: bool = True
     # Stack's own "How this works", apart from the main window's step help
     # and folded by default (spec 2026-09-28 §6a): Andreas found the dialog
     # "way too busy" for a new user. help_expanded keeps its novice-first
@@ -70,6 +73,7 @@ class Settings:
     # people a fix exists is worse for them than the request is.
     check_updates: bool = True
     solve_window_geometry: str = ""  # Plate Solve tool window, Qt saveGeometry() hex (its SIZE)
+    help_window_geometry: str = ""   # the help window, Qt saveGeometry() hex (size AND place)
     # Where it sits RELATIVE to the main window, [dx, dy]; [] = default corner.
     # Relative, so it opens on top of Nocturne on whichever screen Nocturne is
     # now (Andreas, 2026-10-01: several monitors; an absolute place left it on
@@ -142,6 +146,7 @@ def load_settings(path: str) -> Settings:
         update_notified_version=data.get("update_notified_version", ""),
         toolbar_style=data.get("toolbar_style", "text"),
         solve_window_geometry=data.get("solve_window_geometry", ""),
+        help_window_geometry=data.get("help_window_geometry", ""),
         solve_window_offset=list(data.get("solve_window_offset", []) or []),
         telemetry=data.get("telemetry", "unset"),
         telemetry_id=data.get("telemetry_id", ""),
