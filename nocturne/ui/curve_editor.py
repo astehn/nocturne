@@ -6,7 +6,7 @@ from PySide6.QtGui import (QColor, QLinearGradient, QPainter, QPen, QPolygonF)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ..core.curves import _MIN_GAP, build_lut, sanitize_points
-from .theme import BG_0, BORDER
+from .theme import BG_0, BORDER, DISABLED_OPACITY
 
 _HIT = 0.035          # handle hit radius in normalized coords
 _MARGIN = 8           # px inset so handles at the edges stay visible
@@ -227,6 +227,10 @@ class CurveEditor(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.fillRect(self.rect(), QColor(BG_0))
+        if not self.isEnabled():
+            # Locked while a step works: everything over the ground fades,
+            # as a disabled slider does, so the lock is visible.
+            p.setOpacity(DISABLED_OPACITY)
         ox, oy, w, h = self._plot_rect()
 
         # The plot needs a VISIBLE EDGE. Everything here is dark, so with the

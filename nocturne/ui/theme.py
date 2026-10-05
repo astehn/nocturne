@@ -36,6 +36,10 @@ DANGER_DIM = "#c47a72"
 TEXT = "#e6e6e6"
 TEXT_DIM = "#8a9099"
 TEXT_FAINT = "#5e636b"
+# Opacity for a hand-painted control (curve editor, range handles, stepper)
+# while it is disabled. 0.4 lands the brightest strokes (TEXT, the curve) near
+# TEXT_FAINT on the dark grounds, matching the stylesheet's :disabled rules.
+DISABLED_OPACITY = 0.4
 
 
 def build_stylesheet() -> str:
@@ -71,6 +75,13 @@ QListWidget::item:selected {{ background: transparent; }}
 QComboBox, QLineEdit {{ background: {BG_3}; border: 1px solid {BORDER};
     border-radius: 8px; padding: 6px 10px; }}
 QComboBox:focus, QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+/* Locked while a step works (busy_gate.py): every input dims the way a
+   disabled button does — the same fill and faint text — so "wait" reads as one
+   thing across the panel. Without these the `*` colour above kept disabled
+   text at full TEXT and a locked control looked live (measured 2026-10-05:
+   0 changed pixels for slider, checkbox and dropdown). */
+QComboBox:disabled, QLineEdit:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
+QAbstractSpinBox:disabled {{ color: {TEXT_FAINT}; background: #2a2c30; }}
 
 QPushButton {{ background: {BG_3}; border: 1px solid {BORDER}; border-radius: 8px;
     padding: 8px 14px; }}
@@ -115,6 +126,10 @@ QSlider::add-page:horizontal {{ background: {BG_3}; border-radius: 3px; }}
 QSlider::handle:horizontal {{ background: {TEXT}; width: 16px; height: 16px;
     margin: -6px 0; border-radius: 8px; }}
 QSlider::handle:horizontal:hover {{ background: {ACCENT_HI}; }}
+QSlider::groove:horizontal:disabled {{ background: #2a2c30; }}
+QSlider::add-page:horizontal:disabled {{ background: #2a2c30; }}
+QSlider::sub-page:horizontal:disabled {{ background: {BORDER}; }}
+QSlider::handle:horizontal:disabled {{ background: {TEXT_FAINT}; }}
 
 QCheckBox::indicator, QRadioButton::indicator {{ width: 16px; height: 16px;
     border: 1px solid {BORDER}; background: {BG_3}; }}
@@ -122,6 +137,11 @@ QCheckBox::indicator {{ border-radius: 4px; }}
 QRadioButton::indicator {{ border-radius: 8px; }}
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
     background: {ACCENT}; border: 1px solid {ACCENT}; }}
+QCheckBox:disabled, QRadioButton:disabled {{ color: {TEXT_FAINT}; }}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    background: #2a2c30; border: 1px solid {BORDER}; }}
+QCheckBox::indicator:checked:disabled, QRadioButton::indicator:checked:disabled {{
+    background: {TEXT_FAINT}; border: 1px solid {TEXT_FAINT}; }}
 
 QProgressBar {{ background: {BG_3}; border: none; border-radius: 6px; height: 10px;
     text-align: center; }}

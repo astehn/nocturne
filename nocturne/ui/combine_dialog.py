@@ -14,6 +14,7 @@ from ..core.combine import (OFFSET_TOLERANCE_PX, align_to, combine_gases,
 from ..core.fits_io import _parse_metadata, load_mono_master
 from ..settings import start_dir
 from . import file_dialogs
+from .busy_gate import BusyGate, keep_live
 from .frame_preview import FramePreview
 from .progress_ring import ProgressRing
 from .preview import downscale, to_qimage
@@ -65,6 +66,10 @@ class CombineDialog(QDialog):
         self._settings = settings
         self._on_master = on_master
         self._busy = False
+        # Every input off while a pair is read or combined: an OIII swapped
+        # during the alignment check left the OLD pair's shift trusted for the
+        # new one (audit 2026-10-05: (0, 0) used, the real offset (-6, 0)).
+        self._gate = BusyGate()
         self._shift = (0.0, 0.0)
         self._pool = QThreadPool.globalInstance()
         self._loader = load_mono_master          # injectable for tests
@@ -130,10 +135,10 @@ class CombineDialog(QDialog):
         self._signals.failed.connect(self._on_failed)
 
         form = QFormLayout()
-        form.addRow("Ha", _picker_row(self.ha_edit,
-                                      lambda: self._browse(self.ha_edit, "Ha")))
-        form.addRow("OIII", _picker_row(self.oiii_edit,
-                                        lambda: self._browse(self.oiii_edit, "OIII")))
+        ha_row = _picker_row(self.ha_edit, lambda: self._browse(self.ha_edit, "Ha"))
+        oiii_row = _picker_row(self.oiii_edit, lambda: self._browse(self.oiii_edit, "OIII"))
+        form.addRow("Ha", ha_row)
+        form.addRow("OIII", oiii_row)
         bal = QHBoxLayout()
         bal.addWidget(self.balance_slider)
         bal.addWidget(self.balance_label)
@@ -141,11 +146,12 @@ class CombineDialog(QDialog):
         bal_wrap.setLayout(bal)
         form.addRow("Balance", bal_wrap)
         form.addRow("", self.align_row)
+        self._inputs = (ha_row, oiii_row, bal_wrap, self.align_row)
 
         self._go = QPushButton("Combine")
         self._go.setObjectName("primary")
         self._go.clicked.connect(self.run)
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self._go)
@@ -197,6 +203,10 @@ class CombineDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
+        if busy:
+            self._gate.close(*self._inputs)
+        else:
+            self._gate.open()
         self._go.setEnabled(not busy)
         if not busy:
             self.status_ring.hide()

@@ -28,6 +28,7 @@ from ..stacking.verdict import (LABEL_NOT_COUNTED, NO_NIGHT_HEADLINE, Verdict,
                                 _minutes, build_session_verdict, build_verdict,
                                 night_chip_text, night_classes, read_pixel_scale)
 from . import file_dialogs, theme
+from .busy_gate import BusyGate, keep_live
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .quality_chart import CHART_ROOM_MIN
@@ -192,6 +193,11 @@ class StackDialog(QDialog):
         # plain_advice's yes, for the folded summary (_options_summary).
         self._drizzle_suits = False
         self._busy = False
+        # Every input off while frames grade, a folder is added or the stack
+        # runs: folder B picked while A graded wrote A's frames as B's master,
+        # and frames re-ticked mid-stack named the file for the wrong count
+        # (audit 2026-10-05). Close (which asks first) and Cancel stay live.
+        self._gate = BusyGate()
         self._active_token: CancelToken | None = None
         # The output is a folder and a name (spec 2026-09-27 §4). Both follow
         # the dialog until the user sets them, and then they are the user's.
@@ -371,6 +377,9 @@ class StackDialog(QDialog):
             sig.connect(lambda *_: self.options_band.refresh_summary())
         self.drizzle_check.toggled.connect(lambda *_: self._sync_folded_note())
         self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
+        # Folding is layout: the options stay readable during a run.
+        keep_live(self.options_band.fold_btn)
+        keep_live(self.options_band.change_btn)
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         # The Save panel used to say "already exists — replace?"; choosing a
@@ -408,11 +417,11 @@ class StackDialog(QDialog):
         self.background_note = _Hint("")
         self.mosaic_check.toggled.connect(lambda *_: self._sync_background_availability())
         self._sync_background_availability()
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = keep_live(QPushButton("Cancel"))
         self._cancel_btn.clicked.connect(self._cancel_active)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.hide()
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         buttons_row = QHBoxLayout()
         buttons_row.addWidget(self._stack_btn)
@@ -457,14 +466,17 @@ class StackDialog(QDialog):
             "own rejected/.")
         self.add_folder_btn.clicked.connect(self._browse_add_folder)
         self.add_folder_btn.setEnabled(False)
-        form.addRow("Folder of subs", _picker_row(self.folder_edit, self._browse_folder,
-                                                  self.add_folder_btn))
+        folder_row = _picker_row(self.folder_edit, self._browse_folder, self.add_folder_btn)
+        form.addRow("Folder of subs", folder_row)
         form.addRow(self.options_band)
         form.addRow(self._help_link)
         self._save_to_row = _picker_row(self.save_to_edit, self._browse_save_to)
         self._name_field = name_field
         form.addRow("Save to", self._save_to_row)
         form.addRow("Name", name_field)
+        self._gated = (folder_row, self.options_band, self._save_to_row, name_field,
+                       self.verdict_strip, self.background_btn,
+                       *self.browser.tick_buttons())
 
         root = QVBoxLayout(self)
         root.addLayout(form)
@@ -810,6 +822,13 @@ class StackDialog(QDialog):
         composed with the mosaic gate in _sync_background_availability, so
         re-enabling on finish does not light it up while mosaic is checked."""
         self._busy = busy
+        # Open BEFORE the lines below: they, and the callers' _show_panels /
+        # _sync_reject_buttons after this, re-derive what the gate gives back.
+        if busy:
+            self._gate.close(*self._gated)
+        else:
+            self._gate.open()
+        self.browser.set_ticks_locked(busy)
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)
@@ -1340,6 +1359,9 @@ class StackDialog(QDialog):
         def done(result):
             stats, panels = result
             self._end_progress_in_preview()      # the first kept frame loads next
+            # The gate opens first: it gives Stack as mosaic back as it was
+            # before the grade, and _show_panels decides it for THESE frames.
+            self._set_busy(False)
             self._show_panels(panels)
             self._on_graded(stats)
 

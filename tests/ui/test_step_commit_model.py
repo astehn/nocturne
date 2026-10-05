@@ -606,9 +606,11 @@ def test_async_apply_writes_the_baseline_on_the_panel_it_was_pressed_from(
 
 def test_deferred_nav_does_not_fire_after_the_user_moved_on(
         qtbot, tmp_path, monkeypatch):
-    """IMPORTANT 1. The stepper isn't busy-gated the way Next/Back are, so
-    the user can click a different row while a deferred "Apply and
-    continue" is still in flight. Reproduced: on Noise Reduction with a
+    """IMPORTANT 1. The stepper was not busy-gated the way Next/Back are, so
+    the user could click a different row while a deferred "Apply and
+    continue" is still in flight. Since 2026-10-05 that click is refused
+    (asserted first below); the `_nav_seq` bail stays as defence in depth
+    and is exercised with a programmatic move, which still completes. Reproduced: on Noise Reduction with a
     pending dropdown, Next -> apply (deferred, target Local Contrast);
     while the worker is still running, click Curves -> a second prompt
     (Cancel default, IMPORTANT 2 keeps Apply off it since noise_sharpen's
@@ -622,14 +624,16 @@ def test_deferred_nav_does_not_fire_after_the_user_moved_on(
     win._panel.option_box.setCurrentText("strong")
     assert win._has_pending() is True
     captured = _deferred_run_busy(monkeypatch, win)
-    answers = iter(["apply", "discard"])
+    answers = iter(["apply"])               # a second prompt would raise here
     monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: next(answers))
 
     win.go_next()                               # -> deferred, target local_contrast
     assert win._deferred_nav is not None
     assert win.current_stage_id() == "noise_sharpen"
 
-    win._go_to_id("curves")                      # second prompt: discard -> real nav
+    win._go_to_id("curves")                      # a click mid-run: refused
+    assert win.current_stage_id() == "noise_sharpen"
+    win._go_to_id("curves", user_initiated=False)    # a move that completes
     assert win.current_stage_id() == "curves"
 
     _land(win, captured)
@@ -653,6 +657,9 @@ def test_deferred_nav_does_not_fire_after_a_round_trip_back_to_the_origin(
     Contrast) -> Curves -> discard -> back to Noise Reduction (no prompt:
     the rebuilt panel isn't pending) -> worker lands -> must stay on Noise
     Reduction, not get yanked to Local Contrast.
+
+    The clicks are refused while busy since 2026-10-05; the moves here are
+    programmatic, keeping the `_nav_seq` defence in depth tested.
     """
     from nocturne.ui import main_window as mw
     win = _win(qtbot, tmp_path)
@@ -660,16 +667,16 @@ def test_deferred_nav_does_not_fire_after_a_round_trip_back_to_the_origin(
     win._panel.option_box.setCurrentText("strong")
     assert win._has_pending() is True
     captured = _deferred_run_busy(monkeypatch, win)
-    answers = iter(["apply", "discard"])
+    answers = iter(["apply"])
     monkeypatch.setattr(mw.MainWindow, "_ask_pending", lambda self, step: next(answers))
 
     win.go_next()                                 # -> deferred, target local_contrast
     assert win._deferred_nav is not None
 
-    win._go_to_id("curves")                       # second prompt: discard -> real nav
+    win._go_to_id("curves", user_initiated=False)
     assert win.current_stage_id() == "curves"
 
-    win._go_to_id("noise_sharpen")                # round trip: fresh panel, not pending
+    win._go_to_id("noise_sharpen", user_initiated=False)   # round trip: fresh panel
     assert win._has_pending() is False
     assert win.current_stage_id() == "noise_sharpen"
 
