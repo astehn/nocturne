@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .core.curves import normalize_curves
+
 import json
 from dataclasses import dataclass, field
 
@@ -89,8 +91,12 @@ def serialize_option(stage_id, option):
         except (TypeError, ValueError):
             return option   # legacy string ("" from the old parameterless De-green Sky)
     if stage_id == "curves":
-        pts = option if option else [(0.0, 0.0), (1.0, 1.0)]
-        return [[float(x), float(y)] for x, y in pts]
+        # The option is a MATRIX (channel/target -> points) since the large
+        # editor arrived on 2026-09-05; this still read it as one list of
+        # points, so Save Recipe raised and a project bundle kept the dict
+        # unconverted. normalize_curves accepts every shape it has ever had.
+        return {k: [[float(x), float(y)] for x, y in pts]
+                for k, pts in normalize_curves(option).items()}
     if stage_id == "saturation":
         amount, nebula = option if isinstance(option, (tuple, list)) else (option, 0.0)
         return [float(amount), float(nebula)]
@@ -146,7 +152,11 @@ def deserialize_option(stage_id, value):
     if stage_id == "flip_v":
         return CropParams(flip_v=True)
     if stage_id == "curves":
-        return [tuple(p) for p in value]
+        # A dict (the matrix) or, from before 2026-09-05, a bare list meaning
+        # the RGB curve. Reading the matrix as a list turned its keys into
+        # tuples of characters, and every project with Curves failed to reopen
+        # ("too many values to unpack") — found 2026-10-05.
+        return normalize_curves(value)
     if stage_id == "saturation":
         if isinstance(value, (tuple, list)):
             return (float(value[0]), float(value[1]))
