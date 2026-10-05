@@ -2,6 +2,22 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.46.0] — 2026-10-05
+
+Help is one click from every step and every tool, in a window of its own, and projects with Curves open again.
+
+### Added
+- "How this works ↗" in Narrowband, Colour Balance, Star Spikes, Starless Levels, Trim, Upscale Crop and Share. It opens that tool's help, and you can scroll and click in it while the tool is open.
+- The About window thanks the first two Photon Donors.
+
+### Changed
+- A step's help now opens only in its own window, never in the right column, so the controls stay where they are. "How this works" opens and closes the window. It stays above Nocturne until you close it, follows the step you're on, and remembers its size and place.
+- Noise Reduction and the log name the tool that ran, such as NoiseXTerminator, BlurXTerminator or StarXTerminator, instead of "RC Astro".
+- Linear Denoise, an unreleased experiment, is removed. Older projects that contain it still open, and older recipes skip it with a note.
+
+### Fixed
+- A saved project that included a Curves step could not be opened again.
+
 ## [0.45.0] — 2026-10-04
 
 Nocturne works the same way everywhere: one progress ring, and a few places that now tell you what happened.
