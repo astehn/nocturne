@@ -670,7 +670,8 @@ class MainWindow(QMainWindow):
             on_open_project=lambda: self._open_project(),
             on_haoiii=self._open_haoiii,
             on_recent=lambda p: self._open_project(p),
-            recent=lambda: list(self.settings.recent_projects))
+            recent=lambda: list(self.settings.recent_projects),
+            locked=lambda: self._busy)
         self._center_stack.addWidget(self._welcome)   # page 0
         self._center_stack.addWidget(self.image_view)  # page 1
         root.addWidget(self._center_stack, 1)
@@ -4589,6 +4590,9 @@ class MainWindow(QMainWindow):
                 w.setEnabled(True)
             except RuntimeError:
                 pass            # deleted under us; nothing to restore
+        # The start page's recent list is rebuilt whenever it is shown; a list
+        # built during the run started locked and is not in the record above.
+        self._welcome.refresh_recent()
 
     def _sync_history_actions(self) -> None:
         """Undo, Redo and Reset rewrite the history, so they are off while a

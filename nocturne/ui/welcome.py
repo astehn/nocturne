@@ -20,11 +20,14 @@ class WelcomeScreen(QWidget):
     2026-10-05: it offered two ways in where there are four)."""
 
     def __init__(self, on_open, on_stack, on_open_project=None, on_haoiii=None,
-                 on_recent=None, recent=None, parent=None) -> None:
+                 on_recent=None, recent=None, locked=None, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("welcome")
         self._on_recent = on_recent
         self._recent = recent or (lambda: [])
+        # Is the app busy? A button made while work runs must start locked,
+        # like the ones the main window locked when the work began.
+        self._locked = locked or (lambda: False)
         root = QVBoxLayout(self)
         root.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -112,6 +115,7 @@ class WelcomeScreen(QWidget):
             b.setToolTip(path)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFlat(True)
+            b.setEnabled(not self._locked())
             b.clicked.connect(lambda _=False, p=path: self._on_recent and self._on_recent(p))
             self._recent_box.addWidget(b, 0, Qt.AlignmentFlag.AlignHCenter)
             self.recent_buttons.append(b)

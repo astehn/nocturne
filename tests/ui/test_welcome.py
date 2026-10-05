@@ -83,3 +83,29 @@ def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
     w.refresh_recent()
     qtbot.wait(20)
     assert w.stack_btn.mapTo(w, w.stack_btn.rect().topLeft()) == empty
+
+
+def test_a_list_rebuilt_while_work_runs_starts_locked(qtbot, tmp_path):
+    p = tmp_path / "a.nocturne"
+    p.write_text("x")
+    state = {"busy": False}
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [str(p)],
+                      locked=lambda: state["busy"])
+    qtbot.addWidget(w)
+    assert w.recent_buttons[0].isEnabled()
+    state["busy"] = True
+    w.refresh_recent()
+    assert not w.recent_buttons[0].isEnabled()
+
+
+def test_the_recent_list_unlocks_when_work_ends(qtbot, tmp_path):
+    from tests.ui.test_main_window import _window
+    p = tmp_path / "a.nocturne"
+    p.write_text("x")
+    win = _window(qtbot, tmp_path)
+    win.settings.recent_projects = [str(p)]
+    win._set_busy(True)
+    win._welcome.refresh_recent()               # rebuilt mid-run (e.g. the page re-shown)
+    assert not win._welcome.recent_buttons[0].isEnabled()
+    win._set_busy(False)
+    assert win._welcome.recent_buttons[0].isEnabled()
