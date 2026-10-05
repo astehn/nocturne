@@ -4,7 +4,7 @@ again closing, a help window that belongs to the tool window, so the tool's
 modality cannot block it."""
 import numpy as np
 import pytest
-from PySide6.QtCore import QByteArray, QPoint, QRect
+from PySide6.QtCore import QByteArray, QPoint, QRect, Qt
 from PySide6.QtWidgets import QPushButton, QWidget
 
 from nocturne.core.image import AstroImage
@@ -111,6 +111,7 @@ def test_link_opens_this_tools_help_and_closes_it_again(qtbot, build, topic, las
     # Owned by the TOOL window, so the tool's modality does not block it.
     assert help_dlg.parentWidget() is d
     assert not help_dlg.isModal()
+    assert help_dlg.windowType() == Qt.WindowType.Tool, "stays above Nocturne"
 
     link.linkActivated.emit("#")
     assert not help_dlg.isVisible()
@@ -172,3 +173,38 @@ def test_main_window_shares_the_help_geometry(qtbot, tmp_path):
     probe.setGeometry(60, 70, 760, 560)
     win.remember_help_geometry(probe)
     assert win.help_geometry() == bytes(probe.saveGeometry().toHex()).decode()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space])
+def test_the_keyboard_opens_it_and_does_not_reach_the_default_button(qtbot, key):
+    """Starless Levels' default button is OK: Return on the link applied the
+    step and closed the window."""
+    owner = _Owner(); qtbot.addWidget(owner)
+    from nocturne.ui.starless_levels_dialog import StarlessLevelsDialog
+    stars = AstroImage(np.zeros((96, 128, 3), np.float32), is_linear=False, metadata={})
+    d = StarlessLevelsDialog(_img(), stars, parent=owner)
+    d._test_owner = owner
+    # Modal, as exec() makes it: the main window's app-wide Space peek stands
+    # aside only while a modal window is up, which is the real situation.
+    d.setModal(True); d.show(); qtbot.waitExposed(d)
+    link = d.findChild(HelpLink)
+    link.setFocus()
+    qtbot.keyClick(link, key)
+    assert d.isVisible() and d.result() == 0, "the dialog was not accepted"
+    assert link.help_window() is not None and link.help_window().isVisible()
+    qtbot.keyClick(link, key)
+    assert not link.help_window().isVisible(), "and the key closes it again"
+    d.reject()
+
+
+def test_an_open_main_help_window_is_covered_not_doubled(qtbot, tmp_path):
+    """A tool window's modality freezes the main help window; the tool's own
+    opens exactly over it, from where it IS, not where it was last closed."""
+    from nocturne.ui.main_window import MainWindow
+    win = MainWindow(settings_path=str(tmp_path / "s.json"))
+    qtbot.addWidget(win)
+    main_help = win._open_help("getting-started")
+    main_help.setGeometry(90, 80, 780, 580)
+    assert win.help_geometry() == bytes(main_help.saveGeometry().toHex()).decode()
+    main_help.reject()
+    assert win.help_geometry() == win.settings.help_window_geometry, "closed: the saved place"

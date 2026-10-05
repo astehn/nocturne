@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import shiboken6
 from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QDialog, QLabel
 
 from .help_dialog import HelpDialog
@@ -45,6 +46,15 @@ class HelpLink(QLabel):
         self.linkActivated.connect(lambda _: self.toggle())
         # A Tool child of the dialog is not hidden with it; close it ourselves.
         dialog.finished.connect(lambda _r: self._close_help())
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        # A label link reached by Tab ignores Return, which then fell through to
+        # the dialog's default button — in Starless Levels, OK (review 2026-10-05).
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.toggle()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def help_window(self) -> HelpDialog | None:
         h = self._help
