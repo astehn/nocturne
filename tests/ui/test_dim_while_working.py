@@ -189,7 +189,13 @@ def test_every_control_of_a_working_step_is_off_and_comes_back_as_it_was(
     decoy_on, decoy_off = _decoys(win)
     widgets = _controls(win)
     before = [w.isEnabled() for w in widgets]
-    assert sum(before) >= 2, f"fixture: too few controls on to prove anything ({sid})"
+    real_on = sum(b for w, b in zip(widgets, before)
+                  if w is not decoy_on and w is not decoy_off)
+    # Star Reduction at rest has ONE real input on — its slider; Apply and
+    # Reset step wait for an edit, and an edit made here is undone when _start
+    # re-enters the step to begin the split, so it cannot be staged.
+    floor = 1 if sid == "star_reduction" else 2
+    assert real_on >= floor, f"fixture: too few controls on to prove anything ({sid})"
     panel = win._panel
     held = len(h.events)
 

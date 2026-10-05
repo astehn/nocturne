@@ -1061,13 +1061,17 @@ class MainWindow(QMainWindow):
         panel this puts on screen needs an event loop to paint or it is frozen,
         not visible.
         """
+        others = set(self._running)
         self._save_project()          # may go to Save As, which the user can cancel
-        if self._async_enabled and self._running:
+        # Wait for the SAVE, not for every job: a star split still running
+        # would otherwise hold quit -> Save for the length of the split.
+        mine = self._running - others
+        if self._async_enabled and mine:
             loop = QEventLoop()
             poll = QTimer(self)
             poll.setInterval(50)
             poll.timeout.connect(
-                lambda: loop.quit() if not self._running else None)
+                lambda: loop.quit() if not (mine & self._running) else None)
             poll.start()
             loop.exec()
             poll.stop()
@@ -3772,6 +3776,9 @@ class MainWindow(QMainWindow):
                 and not (isinstance(committed, dict)
                          and committed.get("linked") is False))
         self._sync_split_readiness(sid)
+        wall_sync = getattr(self._panel, "wall_sync", None)
+        if wall_sync is not None:
+            wall_sync()          # re-derived, then swept below if busy
         apply_btn = getattr(self._panel, "apply_btn", None)
         if isinstance(apply_btn, ApplyButton):
             state = self._step_state(sid)
@@ -6146,6 +6153,8 @@ class MainWindow(QMainWindow):
             ok, message = result
             if hasattr(panel, "wall_finished"):
                 panel.wall_finished(bool(ok), str(message))
+                if panel is self._panel:
+                    self._sync_step_controls()   # re-gates it if another job runs
 
         def _failed(exc) -> None:
             # submit() is documented never to raise, so this is belt and braces
@@ -6153,6 +6162,8 @@ class MainWindow(QMainWindow):
             # worse than a refusal.
             if hasattr(panel, "wall_finished"):
                 panel.wall_finished(False, f"Could not send: {exc}")
+                if panel is self._panel:
+                    self._sync_step_controls()   # re-gates it if another job runs
 
         run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
 

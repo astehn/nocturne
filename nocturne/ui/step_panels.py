@@ -1231,7 +1231,17 @@ def build_panel(
             w.wall_note.setObjectName("stepDesc")
 
             def _wall_state() -> None:
+                # Derived from state, never set ad hoc: MainWindow re-runs this
+                # from _sync_step_controls, so a send that lands while another
+                # job holds the panel cannot switch Send or the box back on.
                 if getattr(w, "_wall_sent", False):
+                    w.wall_btn.setEnabled(False)     # spent; the same picture goes once
+                    w.wall_consent.setEnabled(False)
+                    return
+                if getattr(w, "_wall_sending", False):
+                    # Dead for the whole flight: two presses would queue the
+                    # same picture twice.
+                    w.wall_btn.setEnabled(False)
                     return
                 if not (wall_handle or "").strip():
                     w.wall_btn.setEnabled(False)
@@ -1240,30 +1250,33 @@ def build_panel(
                         "shown beside your picture in the gallery.")
                     return
                 w.wall_btn.setEnabled(w.wall_consent.isChecked())
-                w.wall_note.setText("")
+
+            def _wall_toggled() -> None:
+                _wall_state()
+                if (wall_handle or "").strip():
+                    w.wall_note.setText("")
 
             def _wall_click() -> None:
-                # Dead for the whole flight: two presses would queue the same
-                # picture twice.
-                w.wall_btn.setEnabled(False)
+                w._wall_sending = True
+                _wall_state()
                 w.wall_note.setText("Sending…")
                 target = w.wall_target.text().strip() if w.wall_target else ""
                 if on_wall_submit is not None:
                     on_wall_submit(target)
 
             def _wall_finished(ok: bool, message: str) -> None:
+                w._wall_sending = False
                 w.wall_note.setText(message)
                 if ok:
-                    w._wall_sent = True          # spent; the same picture goes once
-                    w.wall_btn.setEnabled(False)
-                    w.wall_consent.setEnabled(False)
-                else:
-                    # A network blip must not cost someone their submission.
-                    w.wall_btn.setEnabled(w.wall_consent.isChecked())
+                    w._wall_sent = True
+                # On failure Send comes back (a network blip must not cost
+                # someone their submission) — through the derivation.
+                _wall_state()
 
-            w.wall_consent.toggled.connect(_wall_state)
+            w.wall_consent.toggled.connect(_wall_toggled)
             w.wall_btn.clicked.connect(_wall_click)
             w.wall_finished = _wall_finished
+            w.wall_sync = _wall_state
             notes.addWidget(w.wall_consent)
             notes.addWidget(w.wall_btn)
             notes.addWidget(w.wall_note)

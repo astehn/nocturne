@@ -342,7 +342,10 @@ def test_a_split_landing_after_the_user_left_is_still_remembered(
         qtbot, tmp_path, monkeypatch, callback):
     win, _h = _make(qtbot, tmp_path, monkeypatch, hold=False)
     win._go_to_id("curves", user_initiated=False); qtbot.wait(20)
-    base = win._sr_base()
+    # Each callback keyed by the base ITS step splits: Saturation splits its
+    # own pre-Saturation image, not Star Reduction's.
+    base = (win._preview_base("saturation") if callback == "_on_sat_split"
+            else win._sr_base())
     sig = win._sr_sig(base)
     assert sig not in win._splits
     layers = (AstroImage(base.data * 0.9, is_linear=False, metadata={}),
@@ -370,3 +373,79 @@ def test_dragged_back_to_where_found_during_apply_stays_pending(
     assert s.value() == found
     assert win._has_pending() is True
     assert win._panel.apply_btn.state() == "pending"
+
+
+# ---------------------------------------------------------------- quit -> Save
+def test_save_and_wait_waits_for_the_save_not_for_a_running_split(
+        qtbot, tmp_path, monkeypatch):
+    """Quit -> Save during a star split waited for the split too: the wait
+    polled "is anything running", and the split was."""
+    from PySide6.QtCore import QTimer
+    win, h = _make(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("green_fringe", user_initiated=False); qtbot.wait(30)
+    assert win._busy and len(h.events) == 1, "fixture: no held split"
+    split = set(win._running)
+    win._project_path = str(tmp_path / "p.nocturne")
+    win._dirty = True
+    QTimer.singleShot(150, lambda: h.release(1))     # the save, once queued
+    QTimer.singleShot(4000, h.release)               # backstop: never hang
+    assert win._save_and_wait() is True
+    assert split <= win._running, "the wait outlived the split"
+    assert len(h.events) == 2 and not h.events[0].is_set()
+    h.release(); _idle(qtbot, win)
+
+
+# ---------------------------------------------------------------- gallery send vs Export
+def _send_then_export(qtbot, win, monkeypatch, tmp_path, h, ok):
+    """Send to the gallery (held as run 0), then Export (held as run 1)."""
+    monkeypatch.setattr("nocturne.core.submit.submit",
+                        lambda *a, **k: (ok, "Sent." if ok else "Could not reach it."))
+    win._go_to_id("export", user_initiated=False); qtbot.wait(20)
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "fixture: Send is not available"
+    p.wall_btn.click(); qtbot.wait(20)
+    out = str(tmp_path / "out.tiff")
+    monkeypatch.setattr(mw.file_dialogs, "save_file", lambda *a, **k: (out, ""))
+    win.export_final("TIFF"); qtbot.wait(30)
+    assert win._busy and len(h.events) == 2, "fixture: send + export not both held"
+    return p
+
+
+def _wall_make(qtbot, tmp_path, monkeypatch):
+    win, h = _make(qtbot, tmp_path, monkeypatch)
+    win.settings.handle = "@tester"
+    return win, h
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_a_gallery_send_landing_during_export_stays_gated(
+        qtbot, tmp_path, monkeypatch, ok):
+    win, h = _wall_make(qtbot, tmp_path, monkeypatch)
+    p = _send_then_export(qtbot, win, monkeypatch, tmp_path, h, ok)
+    h.release(0)
+    qtbot.waitUntil(lambda: "Sending" not in p.wall_note.text(), timeout=4000)
+    qtbot.wait(20)
+    assert win._busy
+    assert not p.wall_btn.isEnabled() and not p.wall_consent.isEnabled(), \
+        "the send's answer switched a control on mid-Export"
+    h.release(); _idle(qtbot, win)
+    assert win._panel is p
+    # Spent after a success; back for a retry after a failure.
+    assert p.wall_btn.isEnabled() is (not ok)
+    assert p.wall_consent.isEnabled() is (not ok)
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_export_landing_before_the_gallery_send_keeps_send_dead_in_flight(
+        qtbot, tmp_path, monkeypatch, ok):
+    win, h = _wall_make(qtbot, tmp_path, monkeypatch)
+    p = _send_then_export(qtbot, win, monkeypatch, tmp_path, h, ok)
+    h.release(1); _idle(qtbot, win)
+    assert "Sending" in p.wall_note.text()
+    assert not p.wall_btn.isEnabled(), "Send came back while the send was in flight"
+    h.release(0)
+    qtbot.waitUntil(lambda: "Sending" not in p.wall_note.text(), timeout=4000)
+    qtbot.wait(20)
+    assert p.wall_btn.isEnabled() is (not ok)
+    assert p.wall_consent.isEnabled() is (not ok)
