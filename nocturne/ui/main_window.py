@@ -53,7 +53,7 @@ from .job_queue import JobQueue, StackJob
 from .jobs_indicator import JobsBar, JobsIndicator
 from .activity_panel import ActivityChannel, ActivityPanel
 from .log_panel import format_log_entry
-from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, next_enabled, path_stages, prev_enabled
+from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, names_before, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
 from ..core.saturation import nebula_saturate, saturate
@@ -399,7 +399,7 @@ class MainWindow(QMainWindow):
         # Reset on a new image and on Close Project, or the previous image's
         # walk would mark steps as skipped in a session that never touched them.
         self._high_water = 0
-        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
+        self._stages = path_stages(disable=self._disabled_stages())
         self._stage = 0
         self._bg_runner = run_cli
         self._rc_runner = run_cli
@@ -2496,10 +2496,7 @@ class MainWindow(QMainWindow):
             self._show_warning(f"Wait for the current step to finish before "
                                f"moving on to {dest_label}.")
             return False
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
-        }
+        preceding = names_before("stretch")
         target = self._leading_kept(self.project.entries(), preceding)
         casualties: list[str] = []
         for name, _ in self.project.entries()[target:]:
@@ -3260,7 +3257,7 @@ class MainWindow(QMainWindow):
         choice keeps a stale reading; the other process stages, after every
         commit, no longer do.
 
-        Noise Reduction and Linear Denoise commit `{"engine", "level"}`; the
+        Noise Reduction commits `{"engine", "level"}`; the
         box shows the level (the engine box is seeded by
         `_denoise_engine_label`). Reading only a bare string left a revisited
         "strong" showing "medium" (final review I1).
@@ -3275,7 +3272,7 @@ class MainWindow(QMainWindow):
 
     def _denoise_engine_label(self, stage_id: str, choices) -> str | None:
         """The engine box entry that re-commits this step's committed engine,
-        so a revisited Noise Reduction / Linear Denoise shows what it ran with.
+        so a revisited Noise Reduction shows what it ran with.
         None when there is no such entry (the box then keeps its first entry,
         and Apply stays live because the two no longer match)."""
         committed = self._committed_option(stage_id)
@@ -3285,8 +3282,6 @@ class MainWindow(QMainWindow):
         if engine == self.settings.denoise_engine and "Default" in choices:
             return "Default"
         label = {"graxpert": "GraXpert", "rcastro": "RC-Astro"}.get(engine)
-        if label is None and isinstance(engine, str) and engine.startswith("nr:"):
-            label = f"Nocturne NR ({engine[3:]})"
         return label if label in choices else None
 
     def _committed_option(self, stage_id: str) -> object | None:
@@ -3683,10 +3678,7 @@ class MainWindow(QMainWindow):
     def _stretch_preceding(self) -> set:
         """Names of the steps that precede the reveal (stretch) position — the
         predecessors an Apply-Stretch preserves."""
-        return set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("stretch")]
-        }
+        return names_before("stretch")
 
     def _step_has_commit(self, step_id: str) -> bool:
         """Is one of this STAGE's own entries actually in history?
@@ -3737,10 +3729,7 @@ class MainWindow(QMainWindow):
             # cost you the trim.
             return self._trailing_kept(
                 self.project.entries(), set(ENHANCE_NAMES) | {"Trim"})
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]
-        }
+        preceding = names_before(step_id)
         return self._leading_kept(self.project.entries(), preceding)
 
     def _stage_own_names(self, step_id: str) -> set:
@@ -4153,10 +4142,6 @@ class MainWindow(QMainWindow):
             # an unlinked stretch is the one that can move colour.
             amount = float(option.get("amount", 0.0))
             label = f"{amount:.2f} {'linked' if option.get('linked', True) else 'unlinked'}"
-        elif stage_id == "ai_denoise" and isinstance(option, dict):
-            engine = str(option.get("engine") or "")
-            model = engine[3:] if engine.startswith("nr:") else engine
-            label = str(option.get("level", "medium")) + (f" ({model})" if model else "")
         elif isinstance(option, float):
             label = f"{option:.2f}"
         elif isinstance(option, (dict, list, tuple)):
@@ -4769,10 +4754,7 @@ class MainWindow(QMainWindow):
     def _preview_base(self, stage_id: str):
         """The pre-<stage> image the commit also operates on, so a live preview
         equals what Apply will produce (WYSIWYG)."""
-        preceding = set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(stage_id)]
-        }
+        preceding = names_before(stage_id)
         return self.project.state_at(
             self._leading_kept(self.project.entries(), preceding))
 
@@ -4855,29 +4837,14 @@ class MainWindow(QMainWindow):
             "color": "Needs a linked stretch — Colour's corrections are per-channel, "
                      "and an unlinked stretch removes them."}
 
-    def _included_stages(self) -> frozenset[str]:
-        """Stages that are not part of the shipped pipeline and must be asked for.
-
-        Linear Denoise appears only when a model from the separate Nocturne NR
-        project is sitting in ~/.nocturne/models AND this build can load it.
-
-        BOTH, since 2026-09-22. The folder is outside the bundle so a user never
-        has one — but Andreas does, on the machine he tests releases on, and the
-        packaged app excludes onnxruntime. Checking the model alone offered him
-        the step in every build and then raised at Apply. `usable_external_models`
-        is the one answer to "what can this build actually run".
-        """
-        from ..core.denoise_model import usable_external_models
-        return frozenset({"ai_denoise"}) if usable_external_models() else frozenset()
-
     def _rebuild_stages(self) -> None:
         """Re-derive the visible pipeline, keeping the user where they are.
 
-        Tracked by stage ID, not by index: the list changes length, so a
-        preserved index would silently teleport the user to a different step.
+        Tracked by stage ID, not by index: should the list ever change length,
+        a preserved index would silently teleport the user to a different step.
         """
         here = self._stages[self._stage].id if self._stages else None
-        self._stages = path_stages(frozenset(), self._included_stages(), self._disabled_stages())
+        self._stages = path_stages(disable=self._disabled_stages())
         ids = [s.id for s in self._stages]
         self._stage = ids.index(here) if here in ids else 0
         if self._stages and not self._stages[self._stage].enabled:
@@ -5275,10 +5242,7 @@ class MainWindow(QMainWindow):
     def _fringe_preceding(self) -> set:
         """Names of the steps that precede De-green Stars — the predecessors
         a commit preserves (and whose state the split runs on)."""
-        return set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("green_fringe")]
-        }
+        return names_before("green_fringe")
 
     def _fringe_base(self):
         """The pre-Remove-Green-Fringe image the split + commit both operate on."""
@@ -5456,10 +5420,7 @@ class MainWindow(QMainWindow):
     def _sr_preceding(self) -> set:
         """Names of the steps that precede Star Reduction — the predecessors an
         Apply-Star-Reduction preserves (and whose state the split runs on)."""
-        return set(GEOMETRY_NAMES) | {
-            STEP_NAME[sid]
-            for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index("star_reduction")]
-        }
+        return names_before("star_reduction")
 
     def _sr_base(self):
         """The pre-Star-Reduction image the split + commit both operate on."""
@@ -5790,7 +5751,7 @@ class MainWindow(QMainWindow):
         # upscale then handed to resolve_star_split as though it were real.
         rc = preferred_splitter(self.settings)
         names = {n for n, _o in self.project.entries()}
-        denoised = bool(names & {STEP_NAME["noise_sharpen"], STEP_NAME["ai_denoise"]})
+        denoised = STEP_NAME["noise_sharpen"] in names
         dlg = UpscaleDialog(img, meta, self.settings, rc=rc,
                             on_open_copy=self._open_upscaled, parent=self,
                             denoised=denoised)
@@ -6226,17 +6187,6 @@ class MainWindow(QMainWindow):
         split_enabled = loaded and rcastro_valid(self.settings)
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", "RC-Astro", "GraXpert"] if both_denoise else None
-        # Models from the separate Nocturne NR project, if any are sitting in
-        # ~/.nocturne/models. A release build has that folder empty or absent,
-        # so this list is empty and the dropdown is exactly what it was. The
-        # engine list appears even without both external tools, because trying
-        # the model is the point and GraXpert's presence is beside it.
-        from ..core.denoise_model import usable_external_models
-        nr = [f"Nocturne NR ({label})" for label, _ in usable_external_models()]
-        if stage.id == "ai_denoise":
-            # This stage exists only because a model is installed, so the model
-            # list IS its engine list — there is no "Default" to fall back to.
-            denoise_choices = nr
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,

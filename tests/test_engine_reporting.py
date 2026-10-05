@@ -230,12 +230,10 @@ def test_no_step_prints_a_raw_python_dict_in_the_history(qtbot, tmp_path):
     """Seen in Andreas's own 16-line session log:
 
         Stretch ({'amount': 0.12, 'linked': False})
-        Linear Denoise ({'engine': 'nr:v10', 'level': 'medium'})
 
     `_log_step` has a branch per option shape and falls through to `label =
-    option`, so any step whose option is a dict prints its repr. Linear Denoise
-    is gated out of releases; STRETCH SHIPS, so every user has been reading
-    that line. The log is the first thing a support report carries — it has to
+    option`, so any step whose option is a dict prints its repr. STRETCH
+    SHIPS, so every user has been reading that line. The log is the first thing a support report carries — it has to
     be readable by the person who did not write it.
     """
     from nocturne.ui.main_window import MainWindow
@@ -254,12 +252,6 @@ def test_no_step_prints_a_raw_python_dict_in_the_history(qtbot, tmp_path):
     line = win.log_panel.toPlainText().splitlines()[-1]
     assert "0.30" in line and "linked" in line and "unlinked" not in line, line
 
-    win._log_step("ai_denoise", {"engine": "nr:v10", "level": "medium"},
-                  img, img, none_step)
-    line = win.log_panel.toPlainText().splitlines()[-1]
-    assert "{" not in line and "'" not in line, line
-    assert "medium" in line and "v10" in line, line
-
 
 def test_no_option_shape_in_the_pipeline_falls_through_to_a_repr(qtbot, tmp_path):
     """Structural: every stage whose option is a dict or an object must have a
@@ -273,7 +265,7 @@ def test_no_option_shape_in_the_pipeline_falls_through_to_a_repr(qtbot, tmp_path
     img = _img()
     none_step = type("S", (), {"last_engine": None})()
     offenders = []
-    for stage in path_stages(include=frozenset({"ai_denoise"})):
+    for stage in path_stages():
         try:
             step = win._step_for(stage.id)
         except (ValueError, KeyError):

@@ -19,13 +19,6 @@ _CORE = [
     Stage("background", "Background", "process"),
     Stage("color", "Color", "auto"),
     Stage("deconvolution", "Deconvolution", "process"),
-    # Linear Denoise is BUILT but deliberately NOT SHIPPED. The only trained model,
-    # denoise_s30_v1, over-corrects deep stacks — it damaged the 405-frame M8
-    # master by +19.1%, and 250-450 frames is precisely what users bring. The
-    # step stays in STEP_NAME and steps/factory so a saved project that already
-    # names it still resolves; only its place in the visible pipeline is gone.
-    # Restore this Stage and its PROCESSING_ORDER entry when a model passes the
-    # deep-end gate. See docs/superpowers/specs/2026-08-24-n2n-v2-postmortem.md.
     Stage("stretch", "Stretch", "stretch"),
     # Was a button on the Color panel, five steps before its own cause: the
     # green cast this fixes is CREATED by the stretch (Bayer gives green
@@ -55,7 +48,6 @@ STEP_NAME = {
     "tint": "Colour Tint",
     "remove_green": "De-green Sky",
     "deconvolution": "Deconvolution",
-    "ai_denoise": "Linear Denoise",
     "stretch": "Stretch",
     "recover_core": "Recover Core",
     "levels": "Levels",
@@ -67,13 +59,7 @@ STEP_NAME = {
     "star_reduction": "Star Reduction",
 }
 PROCESSING_ORDER = [
-    # `ai_denoise` comes FIRST, before Background, because that is where its
-    # stage appears when one is offered (see _OPTIONAL). It is listed even
-    # though the stage is normally absent: this order answers "what came before
-    # this step", and a saved project or an internal test run that contains an
-    # Linear Denoise entry has to place it correctly. A missing id raises ValueError
-    # from .index() — which is exactly how it announced itself.
-    "ai_denoise", "background", "color", "tint", "deconvolution", "stretch", "remove_green",
+    "background", "color", "tint", "deconvolution", "stretch", "remove_green",
     "recover_core", "levels", "curves", "saturation", "green_fringe",
     "noise_sharpen", "local_contrast", "star_reduction",
 ]
@@ -83,6 +69,14 @@ PROCESSING_ORDER = [
 # NOT named "Crop" so the provenance report can tell the two apart, and so
 # _has_crop keeps meaning "the user cropped before processing".
 GEOMETRY_NAMES = ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
+# Steps Nocturne no longer has, which an OLD project's history can still hold —
+# restored from their cached pixels like any cached step. Linear Denoise ran on
+# the linear stack straight after Crop, ahead of everything in PROCESSING_ORDER,
+# and was retired on 2026-10-05 with the whole pre-stretch track. It must still
+# count as preceding every step: `_leading_kept` stops at the first name it does
+# not recognise, so without this, re-applying Stretch on such a project would
+# silently discard the entry and every step after it.
+RETIRED_NAMES = ("Linear Denoise",)
 # Every enhancement the Enhancements panel offers. This tuple decides what a
 # recipe can serialise (recipe.py) and what counts as an enhancement in the
 # history (main_window.py), so a tap missing from it is dropped from recipes AND
@@ -109,55 +103,25 @@ def core_stages() -> list[Stage]:
     return list(_CORE)
 
 
-# Stages that are NOT part of the pipeline and must be asked for by id.
-#
-# `ai_denoise` is out of _CORE deliberately and stays out — the only trained
-# model over-corrected deep stacks and damaged a 405-frame M 8 by 19%, which is
-# pinned by test_ai_denoise_is_built_but_not_shipped. It is offered ONLY when a
-# model from the separate Nocturne NR project is sitting in ~/.nocturne/models,
-# which no release build can contain.
-#
-# Opt-IN rather than default-plus-omit, so the guard above keeps its meaning:
-# `path_stages()` with no arguments is still the shipped pipeline, and anything
-# extra has to be named by a caller that knows why.
-_OPTIONAL = {
-    # id -> (stage, the id it is inserted BEFORE)
-    #
-    # Linear Denoise goes before Background — straight after Crop, on the stack as
-    # the stacker left it. The Nocturne NR model is trained on raw stacker
-    # output; placed after Background, Color and Deconvolution it met a sky at
-    # 0.04 instead of 0.29 in model space and star profiles it had never seen,
-    # and on a real M 16 it greyed the nebula and ringed every star
-    # (2026-09-19). Crop before it is fine: cropping does not change the noise.
-    "ai_denoise": (Stage("ai_denoise", "Linear Denoise", "process"), "background"),
-}
+def names_before(step_id: str) -> set[str]:
+    """History names that precede `step_id`: what an Apply of it keeps, and the
+    state its preview is drawn from. One answer for every caller."""
+    return set(GEOMETRY_NAMES) | set(RETIRED_NAMES) | {
+        STEP_NAME[sid] for sid in PROCESSING_ORDER[: PROCESSING_ORDER.index(step_id)]}
 
 
 def path_stages(omit: frozenset[str] = frozenset(),
-                include: frozenset[str] = frozenset(),
                 disable: dict[str, str] | None = None) -> list[Stage]:
-    """The visible pipeline, minus any ids in `omit`, plus any in `include`.
+    """The visible pipeline, minus any ids in `omit`.
 
     Filtered rather than flag-mutated because `Stage` is frozen and `_CORE` is
     module level: every caller is handed the SAME objects, so mutating one would
     poison every later project in the session.
 
-    An included stage lands at a FIXED position — Linear Denoise before Stretch,
-    because that is where the model was trained and the only place it can work.
-    A stretch derives its curve from the image's own statistics, so afterwards
-    the noise has been shaped by a transfer function the model never saw, and
-    the single sigma value it is conditioned on no longer describes the frame.
-
     `disable` keeps a stage LISTED but not enterable, with a reason. Omitting a
     stage the user can make available mid-session moved every row below it.
     """
     stages = [s for s in list(_CORE) + list(_IN_APP_TAIL) if s.id not in omit]
-    for sid in include:
-        stage, before = _OPTIONAL[sid]
-        if stage.id in {s.id for s in stages}:
-            continue
-        at = next((i for i, s in enumerate(stages) if s.id == before), len(stages))
-        stages.insert(at, stage)
     if disable:
         stages = [replace(s, enabled=False, reason=disable[s.id]) if s.id in disable else s
                   for s in stages]

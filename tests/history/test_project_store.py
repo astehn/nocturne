@@ -335,14 +335,16 @@ def test_every_renamed_step_still_resolves_under_its_OLD_name():
     covered the moment it is added rather than the next time someone remembers.
     """
     from nocturne.history.project_store import _RENAMED_STEPS, _migrate_step_name
-    from nocturne.ui.pipeline import STEP_NAME
+    from nocturne.ui.pipeline import RETIRED_NAMES, STEP_NAME
 
     current = set(STEP_NAME.values())
     for old, new in _RENAMED_STEPS.items():
         assert _migrate_step_name(old) == new, f"{old!r} no longer migrates"
         assert old not in current, \
             f"{old!r} is both a live step name and a retired one — the map would rewrite it"
-        assert new in current, \
+        # A RETIRED step (Linear Denoise, 2026-10-05) is a valid target too: an
+        # old bundle still restores it from its pixels, under its readable name.
+        assert new in current or new in RETIRED_NAMES, \
             f"{old!r} migrates to {new!r}, which is not a step name any more"
 
     # The rename this test was written for, pinned by name: the astro audience

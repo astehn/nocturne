@@ -26,7 +26,6 @@ _STAGE_TO_TOPIC = {
     "background": "background",
     "color": "color",
     "deconvolution": "deconvolution",
-    "ai_denoise": "ai_denoise",
     "stretch": "stretch",
     "remove_green": "remove_green",
     "recover_core": "recover_core",
@@ -394,33 +393,6 @@ _TOPIC_LIST = (
        "suits star-rich fields.</p>"
        "<p>If a green cast survives all the way through the <b>Stretch</b>, that's what "
        "<b>De-green Sky</b> — its own step, right after Stretch — is for.</p>"),
-
-    _t("ai_denoise", "Linear Denoise",
-       "Nocturne's own denoiser, trained on Seestar stacks. Runs on the linear "
-       "image, first of all.",
-       "<h4>What it does</h4>"
-       "<p>Removes noise using a model trained here on Seestar data — no external "
-       "tool needed, and a few seconds rather than minutes. It predicts the "
-       "<b>noise</b> and subtracts it, so <i>light</i> is a genuinely gentler "
-       "version of <i>strong</i> rather than a different operation.</p>"
-       "<h4>How to use it</h4>"
-       "<p>Pick <b>light</b>, <b>medium</b> or <b>strong</b> and Apply. Medium is "
-       "the default because it removes noise down to the level a very deep stack "
-       "would have; strong goes further than that, which looks cleaner but is "
-       "smoother than the sky really is.</p>"
-       "<h4>Why it sits here</h4>"
-       "<p>It runs <i>first</i> — on the stack as stacking left it, before "
-       "Background, Colour and Deconvolution — because that is exactly what it "
-       "was trained on. Every one of those steps reshapes the image into "
-       "something no training pair contained: Background extraction drops the "
-       "sky brightness by most of an order of magnitude, Deconvolution changes "
-       "the shape of every star, and the Stretch derives its curve from each "
-       "image's own statistics. Run afterwards, the model meets a picture it "
-       "has never seen and can grey the nebula or ring the stars.</p>"
-       "<h4>Tips</h4>"
-       "<p>It is trained on the <b>S30 Pro</b>, and runs the same model on any "
-       "camera — on another Seestar, look at the before/after with extra care. "
-       "It is also new: trust your eyes over the default.</p>"),
 
     _t("deconvolution", "Deconvolution",
        "Sharpen stars and recover fine detail on the linear image, before stretch.",
@@ -1352,8 +1324,8 @@ _t("upscale", "Upscale Crop",
        "asks for a smaller crop — for example, a shape other than Original, or a smaller box. "
        "It is a guard, not a judgement: on a machine with less memory, the same crop would "
        "slow everything down or run out of room.</p>"
-       "<p>If <b>Noise Reduction</b> or <b>Linear Denoise</b> has not been applied, an amber "
-       "note says so: enlarging makes noise twice as visible, so it is worth running one "
+       "<p>If <b>Noise Reduction</b> has not been applied, an amber "
+       "note says so: enlarging makes noise twice as visible, so it is worth running it "
        "first. It is advice, not a block.</p>"
        "<p>While the split and enlargement run you see progress and a <b>Cancel</b> button; "
        "cancelling leaves everything as it was.</p>"

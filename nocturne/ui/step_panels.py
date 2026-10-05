@@ -25,7 +25,6 @@ BLACK_STEPS = 1000
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
-    "ai_denoise": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
 }
 EXPORT_FORMATS = ["TIFF (16-bit)", "PNG", "FITS", "Starless + Stars (two TIFFs)"]
@@ -79,7 +78,6 @@ _GATE_NOTE = {
 STEP_DESCRIPTIONS: dict[str, str] = {
     "load": "Your stack as loaded: its facts, and how the unstretched data is shown.",
     "crop": "Click the image to place the crop box, adjust it, then apply.",
-    "ai_denoise": "Remove noise while the data is still linear, before anything is stretched.",
     "background": "Remove uneven sky-glow — a gradient brighter toward one edge or corner.",
     "color": "Neutralise the sky background without touching your nebula's real colour.",
     "deconvolution": "Sharpen stars and fine detail by undoing some of the blur.",
@@ -480,7 +478,7 @@ def build_panel(
                 show_model.toggled.connect(on_show_model)
 
         engine_box = None
-        if stage.id in ("noise_sharpen", "ai_denoise") and denoise_engine_choices:
+        if stage.id == "noise_sharpen" and denoise_engine_choices:
             engine_box = QComboBox()
             engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
             if denoise_engine_current in denoise_engine_choices:
@@ -501,17 +499,12 @@ def build_panel(
 
         def _noise_apply_option():
             level = box.currentText()
-            if stage.id not in ("noise_sharpen", "ai_denoise"):
+            if stage.id != "noise_sharpen":
                 return level                              # background / deconvolution: bare level
             if engine_box is not None:
                 sel = engine_box.currentText()
-                if sel.startswith("Nocturne NR ("):   # ai_denoise, and nothing else
-                    # "Nocturne NR (v6)" -> "nr:v6". The label carries the file
-                    # name so two runs can sit side by side in the dropdown.
-                    engine = "nr:" + sel[len("Nocturne NR ("):-1]
-                else:
-                    engine = (denoise_default_engine if sel == "Default"
-                              else "graxpert" if sel == "GraXpert" else "rcastro")
+                engine = (denoise_default_engine if sel == "Default"
+                          else "graxpert" if sel == "GraXpert" else "rcastro")
             else:
                 engine = denoise_default_engine
             return {"engine": engine, "level": level}

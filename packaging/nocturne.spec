@@ -108,11 +108,10 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     # onnxruntime is 64 MB and is NOT a runtime dependency — pyproject lists it
-    # only under the `train` extra. PyInstaller bundles it because it statically
-    # sees `import onnxruntime` inside a function in core/denoise_model.py, and
-    # Linear Denoise is deliberately not shipped (see ui/pipeline.py). Every user
-    # was downloading, and every launch loading, an inference runtime for a step
-    # they cannot open. REMOVE THIS EXCLUDE the day Linear Denoise ships.
+    # only under the `train` extra, and nothing in the app imports it. It is
+    # excluded anyway, so that a stray import can never quietly put 64 MB back
+    # into every download (as one inside a function once did, before the
+    # unshipped pre-stretch denoiser that held it was removed on 2026-10-05).
     excludes=["tkinter", "PyQt5", "PyQt6", "onnxruntime",
               "onnx", "torch"],   # matplotlib intentionally NOT excluded (see top-of-file note)
     noarchive=False,

@@ -51,11 +51,10 @@ def test_the_things_the_app_actually_needs_still_ship():
     entries = _spec_ns()["_assets"]()
     names = [os.path.basename(a) for a, _ in entries]
     # A denoise model was asserted here until 2026-09-18, when the one that
-    # existed was removed from the repo. It was never required: `ai_denoise` is
-    # not in path_stages() and the spec excludes onnxruntime, so the bundle
-    # could not have run it. Requiring it again would ask the packaging to carry
-    # something the app cannot use — see tests/test_no_model_ships.py, which now
-    # asserts the opposite and is the one to change if a model is ever shipped.
+    # existed was removed from the repo. It was never required: its step was
+    # never in the pipeline (and was removed outright on 2026-10-05) and the
+    # spec excludes onnxruntime, so the bundle could not have run it. See
+    # tests/test_no_model_ships.py, which asserts the opposite.
     assert not any(n.endswith(".onnx") for n in names), \
         "a model is being packaged; the app has no onnxruntime to run it"
     assert sum(1 for n in names if n.endswith(".ttf")) == 5, "the bundled fonts went"
@@ -77,3 +76,13 @@ def test_collected_packages_are_pruned_too():
     src = SPEC.read_text()
     assert re.search(r"datas \+= _prune\(d\)", src), \
         "collect_all output is unpruned; colour/htmlcov ships again"
+
+
+def test_onnxruntime_stays_excluded():
+    """Nothing in the app imports it since the pre-stretch denoiser went
+    (2026-10-05). The exclude stays so a stray import cannot put 64 MB back
+    into every download without anyone choosing to."""
+    src = SPEC.read_text()
+    excludes = src[src.index("excludes=["):]
+    excludes = excludes[:excludes.index("]")]
+    assert '"onnxruntime"' in excludes
