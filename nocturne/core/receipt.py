@@ -39,13 +39,15 @@ BUILT_IN = "Nocturne (built-in)"
 _PREFERS: dict[str, tuple[str, str, str]] = {
     "background":     ("Background", "GraXpert", "graxpert"),
     "color":          ("Color", "ASTAP + Gaia", "astap"),
-    "deconvolution":  ("Deconvolution", "RC-Astro", "rcastro"),
-    "noise_sharpen":  ("Noise Reduction", "RC-Astro", "rcastro"),
-    "star_reduction": ("Star Reduction", "RC-Astro", "rcastro"),
-    "saturation":     ("Saturation", "RC-Astro", "rcastro"),
-    "green_fringe":   ("De-green Stars", "RC-Astro", "rcastro"),
-    "narrowband":     ("Narrowband", "RC-Astro", "rcastro"),
-    "color_balance":  ("Colour Balance", "RC-Astro", "rcastro"),
+    # The RC Astro PRODUCT each step uses, not the suite (2026-10-05). The
+    # star-split steps use StarXTerminator to separate the stars.
+    "deconvolution":  ("Deconvolution", "BlurXTerminator", "rcastro"),
+    "noise_sharpen":  ("Noise Reduction", "NoiseXTerminator", "rcastro"),
+    "star_reduction": ("Star Reduction", "StarXTerminator", "rcastro"),
+    "saturation":     ("Saturation", "StarXTerminator", "rcastro"),
+    "green_fringe":   ("De-green Stars", "StarXTerminator", "rcastro"),
+    "narrowband":     ("Narrowband", "StarXTerminator", "rcastro"),
+    "color_balance":  ("Colour Balance", "StarXTerminator", "rcastro"),
 }
 
 # What the fallback actually IS, verified against each step's apply() rather

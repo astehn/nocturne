@@ -20,7 +20,11 @@ def _configured(tmp_path, **tools):
 def test_a_configured_tool_is_named(tmp_path):
     s = _configured(tmp_path, rcastro_path=1)
     note = engine_for("star_reduction", s)
-    assert note.engine == "RC-Astro"
+    # The PRODUCT that runs, not the suite (2026-10-05): RC Astro is the
+    # company; StarXTerminator is what separates the stars here.
+    assert note.engine == "StarXTerminator"
+    assert engine_for("noise_sharpen", s).engine == "NoiseXTerminator"
+    assert engine_for("deconvolution", s).engine == "BlurXTerminator"
     assert note.reason == ""
     assert note.is_fallback is False
 

@@ -192,7 +192,7 @@ def _listed(names: list[str]) -> str:
 
 
 _FREE_STAR_NOTE = (
-    "Using free star detection — set RC-Astro (StarX) in Settings for cleaner separation."
+    "Using free star detection — set up RC-Astro in Settings for StarXTerminator's cleaner separation."
 )
 
 # The step panel is capped so the RIGHT PANE cannot change width from step to
@@ -343,7 +343,19 @@ def render_engine(tag: str) -> str:
     `(free)`, which is the exact fault `splitter_name`'s docstring says it
     exists to prevent.
     """
-    return "built-in" if tag == "free" else tag
+    if tag == "free":
+        return "built-in"
+    # RC Astro is the SUITE; what ran is one of its products, and that is the
+    # name people know and search for (Andreas, 2026-10-05). The short tags stay
+    # what history and projects store; only the writing changes.
+    return RC_PRODUCT_NAMES.get(tag, tag)
+
+
+# The RC Astro products by the internal tags steps record in last_engine.
+RC_PRODUCT_NAMES = {"NoiseX": "NoiseXTerminator", "BlurX": "BlurXTerminator",
+                    "StarX": "StarXTerminator"}
+# Noise Reduction's engine choice: the product, not the suite (it said "RC-Astro").
+NOISEX_CHOICE = RC_PRODUCT_NAMES["NoiseX"]
 
 
 # The layout's own minimum, rounded up — below it Qt squeezes widgets past
@@ -2263,7 +2275,7 @@ class MainWindow(QMainWindow):
         different enough that which one ran is part of reading the result.
         """
         if path == "StarX":
-            return "Separated with RC-Astro (StarX)."
+            return f"Separated with {RC_PRODUCT_NAMES['StarX']}."
         return _FREE_STAR_NOTE
 
     def _build_toolbar(self) -> None:
@@ -3304,7 +3316,7 @@ class MainWindow(QMainWindow):
         engine = committed.get("engine")
         if engine == self.settings.denoise_engine and "Default" in choices:
             return "Default"
-        label = {"graxpert": "GraXpert", "rcastro": "RC-Astro"}.get(engine)
+        label = {"graxpert": "GraXpert", "rcastro": NOISEX_CHOICE}.get(engine)
         return label if label in choices else None
 
     def _committed_option(self, stage_id: str) -> object | None:
@@ -5348,7 +5360,7 @@ class MainWindow(QMainWindow):
             # case: only pixels that read green move, and a clean stack often
             # has none. Without this the honest result is indistinguishable
             # from a broken step — which is exactly how it read.
-            tool = {"StarX": "RC-Astro (StarX)", "StarNet2": "StarNet2"}.get(label)
+            tool = {"StarX": RC_PRODUCT_NAMES["StarX"], "StarNet2": "StarNet2"}.get(label)
             lead = f"Using {tool}: only" if tool else "Only"
             return (f"{lead} the stars layer is touched, "
                     "and only where it is actually green. No visible change "
@@ -6209,7 +6221,7 @@ class MainWindow(QMainWindow):
             apply_enabled = loaded and graxpert_valid(self.settings)
         split_enabled = loaded and rcastro_valid(self.settings)
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
-        denoise_choices = ["Default", "RC-Astro", "GraXpert"] if both_denoise else None
+        denoise_choices = ["Default", NOISEX_CHOICE, "GraXpert"] if both_denoise else None
         new_panel = build_panel(
             stage,
             on_open=self._choose_fits,

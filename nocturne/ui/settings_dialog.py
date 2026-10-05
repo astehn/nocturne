@@ -141,9 +141,9 @@ class SettingsDialog(QDialog):
         self._gx_result.setWordWrap(True)
         self._rc_result.setWordWrap(True)
         self.denoise_box = QComboBox()
-        self.denoise_box.addItems(["RC-Astro", "GraXpert"])
+        self.denoise_box.addItems(["NoiseXTerminator", "GraXpert"])   # the product, not the suite
         self.denoise_box.setCurrentText(
-            "GraXpert" if settings.denoise_engine == "graxpert" else "RC-Astro")
+            "GraXpert" if settings.denoise_engine == "graxpert" else "NoiseXTerminator")
 
         self.check_updates = QCheckBox("Check for a new version at startup")
         self.check_updates.setChecked(settings.check_updates)

@@ -480,7 +480,7 @@ def build_panel(
         engine_box = None
         if stage.id == "noise_sharpen" and denoise_engine_choices:
             engine_box = QComboBox()
-            engine_box.addItems(denoise_engine_choices)   # ["Default","RC-Astro","GraXpert"]
+            engine_box.addItems(denoise_engine_choices)   # ["Default","NoiseXTerminator","GraXpert"]
             if denoise_engine_current in denoise_engine_choices:
                 # A revisited step shows the engine it committed with, as the
                 # strength box shows its level (MainWindow._denoise_engine_label).
