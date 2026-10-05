@@ -204,3 +204,28 @@ def test_native_saturation_is_an_exact_identity():
     assert np.array_equal(saturate(img, 0.5).data, data)
     assert not np.array_equal(saturate(img, 0.49).data, data)
     assert not np.array_equal(saturate(img, 0.51).data, data)
+
+
+def test_a_mask_built_once_gives_the_identical_picture():
+    """The live preview passes a cached mask; export and batch build it inside.
+    The two must be the same picture to the bit (preview == export)."""
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.saturation import nebula_mask, nebula_saturate
+    rng = np.random.default_rng(3)
+    starless = AstroImage((rng.random((96, 128, 3)) * 1.1 - 0.05).astype(np.float32),
+                          is_linear=False, metadata={})       # outside [0,1] on purpose
+    stars = AstroImage((rng.random((96, 128, 3)) * 0.2).astype(np.float32),
+                       is_linear=False, metadata={})
+    mask = nebula_mask(starless)
+    for strength in (0.0, 0.3, 1.0):
+        a = nebula_saturate(starless, stars, strength).data
+        b = nebula_saturate(starless, stars, strength, mask=mask).data
+        assert np.array_equal(a, b), strength
+
+
+def test_mono_has_no_mask():
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.core.saturation import nebula_mask
+    assert nebula_mask(AstroImage(np.zeros((8, 8), np.float32), is_linear=False, metadata={})) is None

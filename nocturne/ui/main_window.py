@@ -59,7 +59,7 @@ from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, names_before, next_enabled, path_stages, prev_enabled
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
-from ..core.saturation import nebula_saturate, saturate
+from ..core.saturation import nebula_mask, nebula_saturate, saturate
 from ..core.local_contrast import enhance
 from ..core.hdr import recover_core
 from ..core.color import ColorSettings, remove_green, remove_green_fringe, remove_green_fringe_masked
@@ -567,6 +567,7 @@ class MainWindow(QMainWindow):
         self._sat_timer.setSingleShot(True)
         self._sat_timer.timeout.connect(self._render_saturation_preview)
         self._sat_layers = None   # the ACTIVE step's handle into _splits (see _remember_split)
+        self._sat_mask = None     # (sig, mask): Saturation's nebula mask, built once per split
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
         self._lc_timer = QTimer(self)
@@ -5222,9 +5223,13 @@ class MainWindow(QMainWindow):
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
     def _setup_saturation(self) -> None:
-        """On entering Saturation: the Nebula slider is always enabled. The global
-        slider always works; the split (StarX or the free fallback) is deferred
-        until the Nebula slider is first raised (lazy)."""
+        """On entering Saturation, prepare what the Nebula slider needs — the star
+        split and its nebula mask — as De-green Stars and Star Reduction do.
+        It used to wait for the first raise of the slider, so the first touch
+        started a separation that locked the step (Andreas, 2026-10-05: the step
+        felt "sluggish and difficult"). The mask is built once here too: rebuilt
+        on every tick it was 0.9 s of a 1.2 s tick at 8.3 MP, 7.4 of 8.3 s at
+        33 MP, on the UI thread."""
         self._sat_pending = None
         if self.project is None or not hasattr(self._panel, "neb_slider"):
             return
@@ -5232,24 +5237,27 @@ class MainWindow(QMainWindow):
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
             "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+        base = self._preview_base("saturation")
+        if not base.is_color:
+            return                      # nebula_saturate leaves mono unchanged
+        sig = self._sr_sig(base)
+        if (self._sat_layers and self._sat_layers[0] == sig
+                and self._sat_mask and self._sat_mask[0] == sig):
+            return                      # ready from an earlier visit
+        hit = self._cached_layers(base)           # on the UI thread (A4)
+        label = "Preparing nebula mask…" if hit else "Separating stars…"
+
+        def prepare():
+            starless, stars, tag = hit if hit else self._split_tagged(base)
+            return starless, stars, tag, nebula_mask(starless)
+
+        self._run_busy(prepare, lambda payload: self._on_sat_split(sig, payload),
+                       label, "Star separation failed")
 
     def _on_sat_change(self, amount: float, nebula: float) -> None:
         """A Saturation slider moved: stash both values; lazily split for the
         nebula boost; (re)start the debounce."""
         self._sat_pending = (amount, nebula)
-        if nebula > 0.0 and not self._busy:
-            base = self._preview_base("saturation")
-            sig = self._sr_sig(base)
-            hit = self._cached_layers(base)
-            if hit:
-                self._sat_layers = (sig, hit[0], hit[1], hit[2])
-            else:
-                # Nothing written here: the right column says "Separating
-                # stars…" beside its ring (C5), and a note already on the
-                # panel (the free-splitter one) must survive a failed split.
-                self._run_busy(lambda: self._split_tagged(base),
-                               lambda layers: self._on_sat_split(sig, layers),
-                               "Separating stars…", "Star separation failed")
         self._sat_timer.start(90)
         self._sync_step_controls()
 
@@ -5259,6 +5267,7 @@ class MainWindow(QMainWindow):
         if self.current_stage_id() != "saturation":
             return
         self._sat_layers = (sig, layers[0], layers[1], layers[2])
+        self._sat_mask = (sig, layers[3]) if len(layers) > 3 else None
         if hasattr(self._panel, "neb_status"):
             self._panel.neb_status.setText(self._split_note(layers[2]))
         self._render_saturation_preview()
@@ -5270,7 +5279,9 @@ class MainWindow(QMainWindow):
         img = base
         if nebula > 0.0 and self._sat_layers and self._sat_layers[0] == self._sr_sig(base):
             _, starless, stars, _path = self._sat_layers
-            img = nebula_saturate(starless, stars, nebula)
+            mask = (self._sat_mask[1] if self._sat_mask
+                    and self._sat_mask[0] == self._sat_layers[0] else None)
+            img = nebula_saturate(starless, stars, nebula, mask=mask)
         return saturate(img, amount)
 
     def _render_saturation_preview(self) -> None:

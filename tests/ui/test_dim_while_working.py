@@ -162,7 +162,8 @@ def _start(qtbot, win, monkeypatch, tmp_path, sid, mode):
     elif sid == "saturation":
         _patch_split(win, monkeypatch, mode)
         win._splits.clear()
-        win._panel.neb_slider.setValue(30)
+        win._sat_layers = win._sat_mask = None
+        win._setup_saturation()
     elif sid == "enhancements":
         monkeypatch.setattr(win, "_remove_stars",
                             lambda base: _work(mode, _fake_layers(base)[:2]))
@@ -214,9 +215,7 @@ def test_every_control_of_a_working_step_is_off_and_comes_back_as_it_was(
     derived = _derived(win)
     readiness = {id(getattr(panel, n, None)) for n in ("fringe_slider", "sr_slider")}
     for w, b, a in zip(widgets, before, after):
-        if (mode == "ok" or sid == "saturation") and id(w) in derived:
-            # (Saturation: the nebula move that starts its split is itself an
-            # edit, so Apply and Reset step read pending however it ends.)
+        if mode == "ok" and id(w) in derived:
             continue
         if mode != "ok" and sid in ("green_fringe", "star_reduction") and (
                 id(w) in readiness or w is panel.apply_btn):
@@ -259,11 +258,11 @@ def test_a_panel_rebuilt_mid_split_stays_off_until_the_last_split_lands(
 
 
 def test_saturation_sliders_dim_during_its_star_separation(qtbot, tmp_path, monkeypatch):
-    """His call (2026-10-05): one rule, no exceptions."""
+    """His call (2026-10-05): one rule, no exceptions. The separation runs on
+    ENTERING the step (2026-10-05, it used to wait for the first nudge)."""
     win, h = _make(qtbot, tmp_path, monkeypatch)
+    win._splits.clear()
     win._go_to_id("saturation", user_initiated=False); qtbot.wait(30)
-    assert not win._busy
-    win._panel.neb_slider.setValue(30); qtbot.wait(30)
     assert win._busy
     assert win._panel.sat_slider.isEnabled() is False
     assert win._panel.neb_slider.isEnabled() is False

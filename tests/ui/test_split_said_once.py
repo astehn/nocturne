@@ -21,12 +21,11 @@ def _stretched(qtbot, tmp_path):
 
 
 def test_saturation(qtbot, tmp_path, monkeypatch):
-    win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
-    win._go_to_id("saturation")
+    win = _stretched(qtbot, tmp_path)
     seen = _capture_busy(win, monkeypatch)
-    win._on_sat_change(0.5, 0.6)
-    assert seen == ["Separating stars…"], "fixture: a split was started"
+    win._splits.clear()
+    win._go_to_id("saturation")
+    assert seen == ["Separating stars…"], "fixture: entering started a split"
     assert "Separating stars" not in win._panel.neb_status.text()
 
 
