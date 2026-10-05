@@ -197,3 +197,49 @@ def test_a_rebuild_while_preparing_starts_no_second_split(qtbot, tmp_path, monke
     gate.set()
     qtbot.waitUntil(lambda: not win._running, timeout=5000)
     assert win._sat_ready(win._preview_base("saturation"))
+
+
+def test_a_refused_apply_leaves_the_history_as_it_found_it(qtbot, tmp_path, monkeypatch):
+    """Readiness was checked AFTER truncating: an existing Saturation commit
+    vanished without a prompt and nothing replaced it (re-review 2026-10-05)."""
+    win, calls = _counting(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("saturation")
+    win._apply_saturation(0.7, 0.0)
+    before = [(n, o) for n, o in win.project.entries()]
+    assert before[-1][0] == "Saturation", "fixture"
+    win._sat_layers = win._sat_mask = None            # the split is not ready now
+    monkeypatch.setattr(win, "_prepare_saturation", lambda *a, **k: False)
+    win._apply_saturation(0.5, 0.6)
+    assert [(n, o) for n, o in win.project.entries()] == before
+
+
+def test_a_mono_picture_never_names_the_last_pictures_star_tool(qtbot, tmp_path, monkeypatch):
+    win, calls = _counting(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("saturation")
+    assert win._sat_layers is not None, "fixture: the colour picture was prepared"
+    win.open_image(AstroImage(np.full((32, 32), 0.3, np.float32), is_linear=False, metadata={}), "m")
+    assert win._sat_layers is None and win._sat_mask is None
+    assert "StarNet2" not in win._sat_log_option(0.5, 0.6)
+
+
+def test_a_failed_split_is_retried_by_the_nebula_slider_only(qtbot, tmp_path, monkeypatch):
+    """A broken StarX failed again on every touch of the step."""
+    monkeypatch.setattr(mw, "preferred_splitter", lambda s: "starx")
+    calls = {"split": 0}
+
+    def broken(self, base):
+        calls["split"] += 1
+        raise RuntimeError("StarXTerminator failed")
+    monkeypatch.setattr(mw.MainWindow, "_split_tagged", broken)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current({"amount": 0.3, "linked": True})
+    win._splits.clear()
+    win._go_to_id("saturation")
+    assert calls["split"] == 1
+    win._panel.neb_slider.setValue(40)
+    assert calls["split"] == 2, "moving Nebula is a deliberate retry"
+    for v in (55, 60, 65):
+        win._panel.sat_slider.setValue(v)
+    assert calls["split"] == 2, "the Saturation slider does not retry the split"
