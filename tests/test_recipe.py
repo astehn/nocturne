@@ -103,10 +103,14 @@ def test_uncaptured_step_names():
 
 def test_curves_option_round_trip():
     from nocturne.recipe import serialize_option, deserialize_option
+    # A bare list (the pre-2026-09-05 shape) still means the RGB curve, and
+    # now comes back as the MATRIX every caller works in. Pinning only the
+    # bare list is how a matrix that could not be reopened went unnoticed
+    # (tests/ui/test_curves_roundtrip.py, 2026-10-05).
     pts = [(0.0, 0.0), (0.5, 0.7), (1.0, 1.0)]
     ser = serialize_option("curves", pts)
-    assert ser == [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]   # JSON-friendly
-    assert deserialize_option("curves", ser) == pts
+    assert ser == {"rgb/all": [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]}   # JSON-friendly
+    assert deserialize_option("curves", ser) == {"rgb/all": pts}
 
 
 def test_green_fringe_option_round_trip():
