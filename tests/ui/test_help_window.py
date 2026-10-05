@@ -45,8 +45,32 @@ def test_one_window_reused(qtbot, tmp_path):
     win._panel.help_link.linkActivated.emit("#")
     first = win._help_dlg
     qtbot.addWidget(first)
+    win._panel.help_link.linkActivated.emit("#")      # closes
+    win._panel.help_link.linkActivated.emit("#")      # opens again
+    assert win._help_dlg is first and first.isVisible()
+
+
+def test_how_this_works_toggles_the_window(qtbot, tmp_path):
+    """His ask (2026-10-05): it stays until HE closes it, with the same link."""
+    win = _at(qtbot, tmp_path)
+    link = win._panel.help_link
+    link.linkActivated.emit("#")
+    dlg = win._help_dlg
+    qtbot.addWidget(dlg)
+    assert dlg.isVisible()
+    link.linkActivated.emit("#")
+    assert not dlg.isVisible(), "pressed again, it closes"
+    assert win.settings.help_window_geometry, "and keeps its place when it does"
+
+
+def test_it_floats_above_nocturne_like_plate_solve(qtbot, tmp_path):
+    """A Qt.Tool window stays above its parent, so clicking a slider in the
+    main window does not send it behind (and it never floats above OTHER apps)."""
+    from PySide6.QtCore import Qt
+    win = _at(qtbot, tmp_path)
     win._panel.help_link.linkActivated.emit("#")
-    assert win._help_dlg is first
+    qtbot.addWidget(win._help_dlg)
+    assert win._help_dlg.windowFlags() & Qt.WindowType.Tool == Qt.WindowType.Tool
 
 
 def test_it_follows_the_step_while_open(qtbot, tmp_path):

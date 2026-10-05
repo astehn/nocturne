@@ -1063,6 +1063,10 @@ class MainWindow(QMainWindow):
         if dlg is None or not shiboken6.isValid(dlg):
             dlg = HelpDialog(self)
             dlg.setModal(False)
+            # A TOOL window, like Plate Solve: it stays above Nocturne (only
+            # Nocturne, never other apps), so touching a slider while reading
+            # no longer sends it behind the main window (Andreas, 2026-10-05).
+            dlg.setWindowFlag(Qt.WindowType.Tool, True)
             if self.settings.help_window_geometry:
                 dlg.restoreGeometry(QByteArray.fromHex(
                     self.settings.help_window_geometry.encode()))
@@ -1075,6 +1079,15 @@ class MainWindow(QMainWindow):
         dlg.raise_()
         dlg.activateWindow()
         return dlg
+
+    def _toggle_help_window(self) -> None:
+        """"How this works" opens the help and, pressed again, closes it — the
+        window stays until the user chooses to close it (his ask, 2026-10-05)."""
+        dlg = self._help_dlg
+        if dlg is not None and shiboken6.isValid(dlg) and dlg.isVisible():
+            dlg.reject()                  # finished() saves its size and place
+        else:
+            self._open_help(self._current_topic_id)
 
     def _remember_help_geometry(self) -> None:
         dlg = self._help_dlg
@@ -1105,7 +1118,7 @@ class MainWindow(QMainWindow):
         # showed until 2026-09-25. ↗ says it opens a window.
         style = f'style="color:{ACCENT}; text-decoration:none"'
         self._help_header.setText(f'<a href="#" {style}>How this works ↗</a>')
-        self._help_header.setToolTip("Open the help for this step in its own window")
+        self._help_header.setToolTip("Open or close the help for this step, in its own window")
         self._help_header.setVisible(self._current_topic_id is not None)
 
     def _show_output(self, text: str) -> None:
@@ -6342,8 +6355,7 @@ class MainWindow(QMainWindow):
         self._side.set_action_height(self._action_area_height())
         self._panel = new_panel
         self._help_header = new_panel.help_link
-        self._help_header.linkActivated.connect(
-            lambda _: self._open_help(self._current_topic_id))
+        self._help_header.linkActivated.connect(lambda _: self._toggle_help_window())
         self._help_header.setTextInteractionFlags(
             Qt.TextInteractionFlag.LinksAccessibleByMouse
             | Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
