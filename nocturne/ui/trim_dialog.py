@@ -33,6 +33,7 @@ from ..core.crop import ASPECT_RATIOS, ASPECTS, GUIDE_KINDS, GUIDES
 
 from .image_view import ImageView
 from .preview import to_qimage
+from .help_link import HelpLink
 
 
 class TrimDialog(QDialog):
@@ -104,6 +105,8 @@ class TrimDialog(QDialog):
         root.addWidget(self.hint)
         root.addLayout(controls)
         root.addWidget(self.view, 1)
+        self.help_link = HelpLink("trim", self)
+        root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
         self._refresh()
 

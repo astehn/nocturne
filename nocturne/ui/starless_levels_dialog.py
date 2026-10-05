@@ -37,6 +37,7 @@ from .progress_ring import WaitingBlock
 from .range_handles import RangeHandles
 from .worker import run_async
 from .zoom_row import ZoomRow
+from .help_link import HelpLink
 
 _PREFERRED = (1180, 860)
 
@@ -223,6 +224,8 @@ class StarlessLevelsDialog(QDialog):
         side.addLayout(zoom_row)
         side.addWidget(QLabel("Scroll to zoom · drag to pan"))
         side.addStretch(1)
+        self.help_link = HelpLink("starless_levels", self)
+        side.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         side.addWidget(buttons)
 
         side_wrap = QWidget()

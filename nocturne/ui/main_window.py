@@ -1132,6 +1132,14 @@ class MainWindow(QMainWindow):
         dlg = self._help_dlg
         if dlg is None or not shiboken6.isValid(dlg):
             return
+        self.remember_help_geometry(dlg)
+
+    def help_geometry(self) -> str:
+        """Where the help window was last left — shared with the tool windows'
+        own help windows (help_link.HelpLink), so every one opens there."""
+        return self.settings.help_window_geometry
+
+    def remember_help_geometry(self, dlg) -> None:
         self.settings.help_window_geometry = bytes(dlg.saveGeometry().toHex()).decode()
         save_settings(self.settings, self._settings_path)
 

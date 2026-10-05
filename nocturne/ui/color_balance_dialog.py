@@ -21,6 +21,7 @@ from .progress_ring import ProgressRing
 from .range_handles import RangeHandles
 from .reset_slider import ResetSlider
 from .worker import run_async
+from .help_link import HelpLink
 
 _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
@@ -228,6 +229,8 @@ class ColorBalanceDialog(QDialog):
         status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
         status_row.addWidget(self.status, 1)
         side.addLayout(status_row)
+        self.help_link = HelpLink("color_balance", self)
+        side.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         side.addLayout(buttons)
         side_wrap = QWidget()
         side_wrap.setLayout(side)

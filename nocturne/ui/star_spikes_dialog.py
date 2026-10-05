@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QThreadPool, QTimer
+from PySide6.QtCore import QThreadPool, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
@@ -12,6 +12,7 @@ from .frame_preview import FramePreview
 from .preview import rgb_to_qimage, to_qimage
 from .reset_slider import ResetSlider
 from .worker import run_async
+from .help_link import HelpLink
 
 
 class StarSpikesDialog(QDialog):
@@ -102,6 +103,8 @@ class StarSpikesDialog(QDialog):
                             self.colour_slider, self.colour_val))
         side.addWidget(self.compare_check)
         side.addStretch(1)
+        self.help_link = HelpLink("star_spikes", self)
+        side.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         buttons = QHBoxLayout()
         buttons.addWidget(self.reset_btn)
         buttons.addWidget(self.apply_btn)
