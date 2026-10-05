@@ -4,7 +4,8 @@ from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
 
-from .theme import ACCENT, BG_3, SUCCESS, TEXT, TEXT_DIM, TEXT_FAINT
+from .theme import (ACCENT, BG_3, DISABLED_OPACITY, SUCCESS, TEXT, TEXT_DIM,
+                    TEXT_FAINT)
 
 # 32, not 40: 17 steps at 40 px filled the whole left column at 1280x800,
 # leaving no room for the activity box (spec §4.1).
@@ -64,6 +65,11 @@ class StepDelegate(QStyledItemDelegate):
         reason = getattr(stepper.stage_at(index.row()), "reason", "")
         r = option.rect
         cx, cy = r.left() + 18, r.center().y()
+        if not stepper.isEnabled():
+            # Locked while a step works (A1: "greyed exactly as Next is").
+            # The list itself, not option.state: a locked ROW also lacks
+            # State_Enabled and already has its own faint look.
+            painter.setOpacity(DISABLED_OPACITY)
 
         # current: subtle background + accent left bar
         if state == "current":

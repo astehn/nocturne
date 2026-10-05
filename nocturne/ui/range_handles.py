@@ -5,7 +5,7 @@ from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from .theme import BG_0, BORDER
+from .theme import BG_0, BORDER, DISABLED_OPACITY
 
 _MARGIN = 8
 _MIN_SPAN = 0.02      # a band narrower than this selects essentially nothing
@@ -169,6 +169,10 @@ class RangeHandles(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.fillRect(self.rect(), QColor(BG_0))
+        if not self.isEnabled():
+            # Locked while a step works: everything over the ground fades,
+            # as a disabled slider does, so the lock is visible.
+            p.setOpacity(DISABLED_OPACITY)
         ox, oy, w, h = self._plot()
 
         # Outside the selected band there is no amber wash to silhouette the
