@@ -3490,6 +3490,14 @@ class MainWindow(QMainWindow):
         (spec §4 — pressing Apply would undo the 0.30), while a revisited step,
         rebuilt at its defaults, nudged and put back, is still nothing.
         """
+        if step_id == "curves":
+            # The slot holds only the RGB points, but Apply commits the whole
+            # matrix: a G curve set in the large editor left the slot equal to
+            # its neutral and read as nothing, so leaving the step lost it
+            # unasked (review 2026-10-05). Compare what Apply would commit with
+            # what is committed — the panel is always built showing that.
+            return _same_option(self._curve_option(value),
+                                normalize_curves(self._committed_option("curves")))
         neutral = getattr(self._panel, "neutral_option", None)
         if neutral is not None and _same_option(neutral, value):
             return True
@@ -5269,6 +5277,22 @@ class MainWindow(QMainWindow):
             editor.setMinimumHeight(min(_CURVE_FULL, _CURVE_MIN + spare))
         p.expand_btn.setText("Open large editor…" if inline else "Open curve editor…")
 
+    def _seed_curves(self, panel) -> None:
+        """Build Curves showing what it last applied to THIS picture: the RGB
+        curve in the editor, every other slot in the matrix. Built at identity,
+        a revisit showed a straight line and a nudge replaced the applied curve;
+        a reopened project lost every slot on the next Apply; and opening a
+        project kept the previous picture's R/G/B slots, applied unseen
+        (2026-10-05). Unapplied edits go with the panel, as on every step."""
+        committed = normalize_curves(self._committed_option("curves"))
+        rgb = committed.pop(curve_key("rgb", "all"), None)
+        self._curve_matrix = committed
+        if rgb:
+            editor = panel.curve_editor
+            editor.blockSignals(True)        # seeding is not an edit
+            editor.set_points(rgb)
+            editor.blockSignals(False)
+
     def _on_curves_dialog_apply(self, curves) -> None:
         """The large editor returns the whole matrix. Split it: RGB/all goes
         back to the inline editor (which is the only slot it can show), the rest
@@ -6369,6 +6393,8 @@ class MainWindow(QMainWindow):
                 + ("<p style='color:#8a9099'>A TIFF carries no capture details, "
                    "so this is what could be read from the file and its name.</p>"
                    if self._opened_as_tiff else ""))
+        if stage.id == "curves":
+            self._seed_curves(new_panel)
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
