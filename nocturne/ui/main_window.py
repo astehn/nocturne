@@ -43,6 +43,7 @@ from ..tools.base import run_cli, ToolError
 from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
+from .busy_gate import BusyGate, keep_live
 from .histogram_view import HistogramView
 from . import help_content
 from .about_dialog import AboutDialog
@@ -531,8 +532,8 @@ class MainWindow(QMainWindow):
         self._show_clipping = False
         QApplication.instance().installEventFilter(self)
         self._busy_shown = False        # whether the delayed visuals are currently up
-        # (panel, buttons this op disabled) — see _gate_panel_buttons
-        self._busy_gated = (None, [])
+        # The step panel's inputs while busy — see _gate_panel
+        self._panel_gate = BusyGate()
         self._cursor_active = False     # whether an override cursor is currently set
         self._busy_label_text = ""      # base label text (ellipsis animation appends)
         self._ellipsis_n = 0
@@ -711,7 +712,7 @@ class MainWindow(QMainWindow):
         self._progress = right.progress
         self._busy_ring = right.busy_ring
         self._elapsed_label = right.elapsed_label
-        self._cancel_btn = right.cancel_btn
+        self._cancel_btn = keep_live(right.cancel_btn)
         self._cancel_btn.clicked.connect(self._cancel_active)
         self._warning = right.warning
         self._show_details_btn = right.details_btn
@@ -3770,6 +3771,7 @@ class MainWindow(QMainWindow):
                 and self._spcc_was_applied()
                 and not (isinstance(committed, dict)
                          and committed.get("linked") is False))
+        self._sync_split_readiness(sid)
         apply_btn = getattr(self._panel, "apply_btn", None)
         if isinstance(apply_btn, ApplyButton):
             state = self._step_state(sid)
@@ -3794,6 +3796,31 @@ class MainWindow(QMainWindow):
             # contain one of THIS step's own names.
             reset_btn.setEnabled(pending or self._step_has_commit(sid))
         self._sync_next_light()
+        if self._busy:
+            # Anything above may have switched a control on, and a panel built
+            # while busy ends here: sweep again. close() only adds.
+            self._panel_gate.close(self._panel, self._side.action_slot)
+
+    def _sync_split_readiness(self, sid: str) -> None:
+        """The star steps' slider and Apply are live only when their split is
+        ready AND nothing is running. Split callbacks used to switch them on
+        themselves, and the FIRST of two splits landing lit them while the
+        second still ran — an Apply that then silently did nothing (audit C/E).
+        Before Apply's set_state, which narrows whatever this allows."""
+        idle = not self._busy and self.project is not None
+        panel = self._panel
+        if sid == "green_fringe" and hasattr(panel, "fringe_status"):
+            on = idle and self._fringe_ready and bool(self._fringe_layers)
+            panel.apply_btn.setEnabled(on)
+            if hasattr(panel, "fringe_slider"):
+                panel.fringe_slider.setEnabled(on)
+        elif sid == "star_reduction" and hasattr(panel, "sr_slider"):
+            on = idle and self._sr_ready
+            panel.sr_slider.setEnabled(on)
+            panel.apply_btn.setEnabled(on)
+        elif sid == "saturation" and hasattr(panel, "neb_slider"):
+            # Lazy: no split is needed to move it, only to preview it.
+            panel.neb_slider.setEnabled(idle)
 
     def _next_is_lit(self) -> bool:
         """Is Next the one lit button — the next thing to press? (Andreas,
@@ -4480,7 +4507,7 @@ class MainWindow(QMainWindow):
         # at the last step (Export runs busy), where it stays in place, off.
         self._next_btn.setEnabled(not busy and self._has_next())
         self._sync_next_light()     # off while busy; restored by the sync below
-        self._gate_panel_buttons(busy)
+        self._gate_panel(busy)
         self._sync_history_actions()
         # Solve lives in its own window now, outside the panel sweep. Pressing
         # it while a step ran did nothing, silently; say so by greying it.
@@ -4514,7 +4541,7 @@ class MainWindow(QMainWindow):
     def _lock_tools(self, busy: bool) -> None:
         """Actions go through the `_busy_lock` group, which keeps each action's
         own enablement underneath. Widgets have no such layer, so only those
-        that were ENABLED are turned off and back on, like _gate_panel_buttons;
+        that were ENABLED are turned off and back on, like the panel's BusyGate;
         the record is added to, never replaced, so a nested run cannot lose it."""
         self._busy_lock.setEnabled(not busy)
         if busy:
@@ -4538,60 +4565,17 @@ class MainWindow(QMainWindow):
         self._redo_act.setEnabled(idle and bool(self.project and self.project.can_redo()))
         self._reset_act.setEnabled(idle and self.project is not None)
 
-    def _gate_panel_buttons(self, busy: bool) -> None:
-        """Disable every button on the step panel while an operation runs.
-
-        INVERTED on purpose. This used to name the buttons it knew about —
-        apply_btn, then reset_step_btn — so each new control was a fresh chance
-        to forget one, and four separate findings on the step-commit branch
-        were exactly that omission (the background-stack button, Colour's tint
-        and remove-green buttons, Reset step, and Apply/Reset after a stepper
-        navigation rebuilt the panel). Enumerating the exceptions is a list that
-        goes stale; sweeping the panel is a rule that cannot.
-
-        Only buttons that were ENABLED get disabled, and only those get turned
-        back on — a button that was legitimately off (Apply with GraXpert
-        unconfigured) must not come back on just because an unrelated operation
-        finished. `_sync_step_controls` re-derives real enablement afterwards
-        either way.
-
-        The panel can be rebuilt mid-operation, which deletes the C++ objects
-        behind these wrappers, so restoring tolerates a dead widget rather than
-        assuming the panel it captured is still the panel on screen.
-
-        The step's Apply is not restored to a guess: `_set_busy` re-derives it
-        from `_step_state` right after, so a button that is `no_change` by then
-        stays off whatever this sweep saw.
-
-        Nesting-safe. A second sweep before the first one's end (a run started
-        while one is in flight) ADDS to the record rather than replacing it —
-        replacing lost the first sweep's buttons, which then stayed off for
-        good. Only the LAST running op's end reaches here (`_run_busy._release`),
-        and it restores the whole record.
-        """
+    def _gate_panel(self, busy: bool) -> None:
+        """Every input of the step — panel and its pinned action slot — is off
+        for the whole time the app is busy (spec B2; the crop box too). A panel
+        built while busy is swept again by `_sync_step_controls`, which every
+        build ends with. Opening only gives back what was taken; `_set_busy`
+        then re-derives real enablement through `_sync_step_controls`."""
+        self.image_view.set_crop_locked(busy)
         if busy:
-            panel = self._panel
-            # The step's main action and Reset step live in the side panel's
-            # pinned action slot, not in the card (consistent panels,
-            # 2026-09-25) — sweep both, or Apply/Reset stay live while busy.
-            swept = (panel.findChildren(QPushButton)
-                     + self._side.action_slot.findChildren(QPushButton))
-            now = [b for b in swept if b.isEnabled()]
-            prev_panel, prev = getattr(self, "_busy_gated", (None, []))
-            kept = prev if prev_panel is panel else []
-            self._busy_gated = (panel, kept + [b for b in now if b not in kept])
-            for btn in now:
-                btn.setDisabled(True)
-            return
-        panel, buttons = getattr(self, "_busy_gated", (None, []))
-        self._busy_gated = (None, [])
-        if panel is not self._panel:
-            return              # rebuilt while we were away; its own state stands
-        for btn in buttons:
-            try:
-                btn.setEnabled(True)
-            except RuntimeError:
-                pass            # widget deleted under us; nothing to restore
+            self._panel_gate.close(self._panel, self._side.action_slot)
+        else:
+            self._panel_gate.open()
 
     def _show_busy_visuals(self) -> None:
         self._ellipsis_n = 0
@@ -5237,7 +5221,6 @@ class MainWindow(QMainWindow):
         self._sat_pending = None
         if self.project is None or not hasattr(self._panel, "neb_slider"):
             return
-        self._panel.neb_slider.setEnabled(True)
         # Before the split has run there is no path to name yet, so this is the
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
@@ -5490,11 +5473,9 @@ class MainWindow(QMainWindow):
         if self._fringe_layers and self._fringe_layers[0] == sig:
             self._fringe_ready = True
             if hasattr(panel, "fringe_status"):
-                panel.apply_btn.setEnabled(True)
-                if hasattr(panel, "fringe_slider"):
-                    panel.fringe_slider.setEnabled(True)
                 panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
+            self._sync_step_controls()      # enables slider + Apply (readiness)
             return
         if has_split:
             # The shared store, 5th client — looked up HERE, on the UI thread
@@ -5504,11 +5485,8 @@ class MainWindow(QMainWindow):
                 self._on_fringe_split(sig, ("split", hit[0], hit[1], hit[2]))
                 return
         self._fringe_ready = False
-        if hasattr(panel, "fringe_status"):
-            panel.apply_btn.setEnabled(False)
-            if hasattr(panel, "fringe_slider"):
-                panel.fringe_slider.setEnabled(False)
-            # (status left as is: see the Saturation note on C5)
+        # (status left as is: see the Saturation note on C5)
+        self._sync_step_controls()
         self._run_busy(lambda: self._fringe_prepare(base),
                        lambda payload: self._on_fringe_split(sig, payload),
                        busy_label,
@@ -5599,15 +5577,14 @@ class MainWindow(QMainWindow):
         self._fringe_layers = (sig,) + tuple(payload)
         self._fringe_ready = True
         if hasattr(self._panel, "fringe_status"):
-            self._panel.apply_btn.setEnabled(True)
-            if hasattr(self._panel, "fringe_slider"):
-                self._panel.fringe_slider.setEnabled(True)
             # _fringe_status_text(), same as the cached-split branch in
             # _setup_green_fringe. This used to set "" (StarX) or the generic
             # free-star note, so the text that actually names which of the two
             # implementations ran only ever appeared on a SECOND visit.
             self._panel.fringe_status.setText(self._fringe_status_text())
         self._render_fringe_preview()
+        # Readiness, not setEnabled: on only if nothing else is still running.
+        self._sync_step_controls()
 
     def _render_fringe_preview(self) -> None:
         if (self.project is None or self.current_stage_id() != "green_fringe"
@@ -5715,22 +5692,19 @@ class MainWindow(QMainWindow):
             self._sr_layers = (sig, hit[0], hit[1], hit[2])
             self._sr_ready = True
             if hasattr(panel, "sr_slider"):
-                panel.sr_slider.setEnabled(True)
-                panel.apply_btn.setEnabled(True)
                 panel.sr_status.setText(self._split_note(self._sr_layers[3]))
             self._render_sr_preview()
+            self._sync_step_controls()      # enables slider + Apply (readiness)
             return
         self._sr_ready = False
-        if hasattr(panel, "sr_slider"):
-            panel.sr_slider.setEnabled(False)
-            panel.apply_btn.setEnabled(False)
-            # (status left as is: see the Saturation note on C5)
+        # (status left as is: see the Saturation note on C5)
+        self._sync_step_controls()
         self._run_busy(lambda: self._split_tagged(base),
                        lambda layers: self._on_sr_split(sig, layers),
                        "Separating stars…", "Star separation failed")
 
     def _on_sr_split(self, sig, layers) -> None:
-        """The split finished: cache it, and enable the slider unless the
+        """The split finished: cache it, and mark the step ready unless the
         user has already left Star Reduction."""
         # Before the stage check: a finished split is never thrown away.
         self._remember_split(None, layers[0], layers[1], layers[2], sig=sig)
@@ -5739,10 +5713,10 @@ class MainWindow(QMainWindow):
         self._sr_layers = (sig, layers[0], layers[1], layers[2])
         self._sr_ready = True
         if hasattr(self._panel, "sr_slider"):
-            self._panel.sr_slider.setEnabled(True)
-            self._panel.apply_btn.setEnabled(True)
             self._panel.sr_status.setText(self._split_note(layers[2]))
         self._render_sr_preview()
+        # Readiness, not setEnabled: on only if nothing else is still running.
+        self._sync_step_controls()
 
     def _on_fringe_change(self, amount: float) -> None:
         """The De-green Stars Amount slider moved: stash it and restart debounce."""

@@ -218,6 +218,7 @@ class ImageView(QGraphicsView):
         self.horizontalScrollBar().valueChanged.connect(lambda _v: self.viewChanged.emit())
         self.verticalScrollBar().valueChanged.connect(lambda _v: self.viewChanged.emit())
         self._crop_mode = False               # crop stage active (box may still be hidden)
+        self._crop_locked = False             # owner is working: box visible, not editable
         self._pixel_cursor = False            # crosshair over image pixels (opt-in)
         self._content_bounds = None           # detected content edges for the next show
         self._guides = "none"                 # composition guides: none | thirds | center
@@ -771,6 +772,13 @@ class ImageView(QGraphicsView):
         self._teardown_overlay()
         self.viewport().update()
 
+    def set_crop_locked(self, locked: bool) -> None:
+        """The crop box's share of a busy gate (busy_gate.py sweeps widgets;
+        the box is scene items). Locked, it stays on screen but cannot be
+        dragged, resized, shown or dismissed: every one of those starts with a
+        press, which is swallowed. Zoom (the wheel, the pill) is untouched."""
+        self._crop_locked = bool(locked)
+
     def crop_box_visible(self) -> bool:
         return self._body is not None
 
@@ -785,6 +793,9 @@ class ImageView(QGraphicsView):
 
     def mousePressEvent(self, event) -> None:
         pos = event.position().toPoint()
+        if self._crop_mode and self._crop_locked:
+            event.accept()
+            return
         # First click while in crop mode reveals the box at the detected edges.
         if self._crop_mode and not self.crop_box_visible():
             scene_pos = self.mapToScene(pos)
@@ -802,7 +813,7 @@ class ImageView(QGraphicsView):
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        if (event.key() == Qt.Key.Key_Escape
+        if (event.key() == Qt.Key.Key_Escape and not self._crop_locked
                 and self._crop_mode and self.crop_box_visible()):
             self.cropDismissRequested.emit()
             event.accept()
