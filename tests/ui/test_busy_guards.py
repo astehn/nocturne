@@ -53,12 +53,15 @@ def test_history_actions_are_off_while_busy_and_back_after(qtbot, tmp_path):
 
 
 def test_leaving_colour_while_it_calibrates_lands_cleanly(qtbot, tmp_path, monkeypatch):
-    """The stepper stays usable during a run, so the user can leave Colour while
-    its calibration is on the worker. When it landed, the result handler
-    re-baselined the dropdown of the panel it captured at the press — already
-    deleted — and raised "QComboBox already deleted", skipping the refresh and
-    the activity line. The commit itself must land, and quietly."""
+    """The panel captured at the press can be gone when the calibration lands.
+    It was found by leaving Colour through the stepper mid-run; the stepper is
+    locked while busy since 2026-10-05, so a panel rebuild (what a plate solve
+    landing or Settings does) stands in for the leave. When it landed, the
+    result handler re-baselined the dropdown of the deleted panel and raised
+    "QComboBox already deleted", skipping the refresh and the activity line.
+    The commit itself must land, and quietly."""
     import threading
+    import shiboken6
     from nocturne.steps.color import ColorStep
     from tests.ui.test_step_commit_async import _async_win, _idle, _names
 
@@ -73,14 +76,16 @@ def test_leaving_colour_while_it_calibrates_lands_cleanly(qtbot, tmp_path, monke
     win = _async_win(qtbot, tmp_path)
     win._panel.apply_btn.click()
     qtbot.waitUntil(lambda: win._busy, timeout=2000)
-    win._go_to_id("stretch", user_initiated=True)      # leave while it runs
+    pressed_panel = win._panel
+    win._rebuild_panel()                                # the pressed panel dies mid-run
     qtbot.wait(50)
+    assert not shiboken6.isValid(pressed_panel), "fixture: the pressed panel survived"
     lines_before = len(win.activity.entries("step"))
     release.set()
     _idle(qtbot, win)
     assert _names(win) == ["Color"]
     assert len(win.activity.entries("step")) == lines_before + 1
-    assert win.current_stage_id() == "stretch"
+    assert win.current_stage_id() == "color"
     # The refresh after the commit ran: the step list marks Colour done. (The
     # activity line alone cannot tell — it is logged BEFORE the re-baseline
     # that raised, so it appeared even when the refresh was skipped.)

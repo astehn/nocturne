@@ -154,7 +154,10 @@ def test_async_declined_second_press_does_not_navigate(qtbot, tmp_path, monkeypa
 
 
 def test_async_second_navigation_drops_the_stale_resume(qtbot, tmp_path, monkeypatch):
-    """User clicks a different stepper row while the apply is in flight."""
+    """A navigation completes while the apply is in flight. The stepper is
+    locked while busy since 2026-10-05, so a click is refused first; the
+    deferral's `_nav_seq` check stays as defence in depth against any route
+    that does complete a move mid-run (a programmatic one here)."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     w = Worker(win, monkeypatch)
@@ -166,9 +169,13 @@ def test_async_second_navigation_drops_the_stale_resume(qtbot, tmp_path, monkeyp
     assert win._deferred_nav is not None
     deferred_target = win._deferred_nav[1]
 
-    # a second, completed navigation while still busy
-    _answer(monkeypatch, "discard")
+    # the click is refused: no move, the deferral stands
     win._go_to_id("curves")
+    assert win.current_stage_id() == "color"
+    assert win._deferred_nav is not None and win._deferred_nav[1] == deferred_target
+
+    # a second, completed navigation while still busy
+    win._go_to_id("curves", user_initiated=False)
     landed_on = win.current_stage_id()
     assert landed_on == "curves"
 
@@ -184,7 +191,8 @@ def test_async_second_navigation_drops_the_stale_resume(qtbot, tmp_path, monkeyp
 def test_async_round_trip_back_to_colour_still_drops_the_deferral(
         qtbot, tmp_path, monkeypatch):
     """_nav_seq's job: two navigations that end back on Colour must NOT let the
-    deferral land by index coincidence."""
+    deferral land by index coincidence. Programmatic moves: a stepper click is
+    refused while busy (2026-10-05); this is the defence in depth behind it."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     w = Worker(win, monkeypatch)
@@ -194,9 +202,8 @@ def test_async_round_trip_back_to_colour_still_drops_the_deferral(
     stage_index = win._stage
 
     win.go_next()
-    _answer(monkeypatch, "discard")
-    win._go_to_id("curves")
-    win._go_to_id("color")
+    win._go_to_id("curves", user_initiated=False)
+    win._go_to_id("color", user_initiated=False)
     assert win._stage == stage_index
 
     w.land()

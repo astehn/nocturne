@@ -9,6 +9,7 @@ import shiboken6
 from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, QPoint, QRect, Qt,
                             QThreadPool, QTimer,
                             QUrl, Signal)
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout,
@@ -462,7 +463,14 @@ class MainWindow(QMainWindow):
         # monotonic counter cannot recur, so it catches that round trip and
         # any other intervening navigation, not just "currently elsewhere".
         self._nav_seq = 0
-        self._active_token = None       # CancelToken for the running op, if any
+        self._active_token = None       # the NEWEST running op's CancelToken, for progress/cancel display
+        # Every running op's token. Busy means this is non-empty — not "the
+        # newest op is running": when a second job ended first, that reading
+        # released busy for the first, and a step applied in the idle-looking
+        # window was erased from the pixels when the first landed (audit
+        # 2026-10-05, finding 2).
+        self._running: set = set()
+        self._run_seq = 0
         self._busy_start = 0.0          # time.monotonic() when the current op started
         # Bumped every time the workspace is replaced (new image, opened bundle,
         # Close Project). A background op captures it at launch and its callbacks
@@ -729,6 +737,15 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._apply_toolbar_style()
         self._build_menu()
+        # A group, not a loop of setEnabled: a disabled group holds each
+        # action's OWN value (what _refresh decides mid-run) and hands it back
+        # when re-enabled, so the lock never fights the code that gates a tool.
+        self._busy_lock = QActionGroup(self)
+        self._busy_lock.setExclusionPolicy(QActionGroup.ExclusionPolicy.None_)
+        for act in self._busy_locked_actions():
+            if isinstance(act, QAction):
+                self._busy_lock.addAction(act)
+        self._busy_locked_widgets: list = []
         self._show_chrome(False)  # full-bleed welcome until an image is loaded
 
         # BOTH gates. The argument is how the test suite keeps itself off the
@@ -1044,12 +1061,12 @@ class MainWindow(QMainWindow):
         not visible.
         """
         self._save_project()          # may go to Save As, which the user can cancel
-        if self._async_enabled and self._active_token is not None:
+        if self._async_enabled and self._running:
             loop = QEventLoop()
             poll = QTimer(self)
             poll.setInterval(50)
             poll.timeout.connect(
-                lambda: loop.quit() if self._active_token is None else None)
+                lambda: loop.quit() if not self._running else None)
             poll.start()
             loop.exec()
             poll.stop()
@@ -1057,10 +1074,12 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         project_menu = self.menuBar().addMenu("Project")
-        project_menu.addAction("Open Project…", lambda: self._open_project())
+        self._open_project_menu_act = project_menu.addAction(
+            "Open Project…", lambda: self._open_project())
         self._save_project_menu_act = project_menu.addAction(
             "Save Project", self._save_project)
-        project_menu.addAction("Save Project As…", self._save_project_as)
+        self._save_project_as_act = project_menu.addAction(
+            "Save Project As…", self._save_project_as)
         self._recent_menu = project_menu.addMenu("Recent Projects")
         self._recent_menu.aboutToShow.connect(self._populate_recent_menu)
         project_menu.addSeparator()
@@ -1769,15 +1788,21 @@ class MainWindow(QMainWindow):
         tag = hit[2] if hit and len(hit) > 2 else ""
         return f" ({render_engine(tag)})" if tag else ""
 
-    def _remember_split(self, img, starless, stars, tag: str = "") -> None:
-        """Publish a split so every other surface can use it.
+    def _remember_split(self, img, starless, stars, tag: str = "", *, sig=None) -> None:
+        """Publish a split so every other surface can use it. UI thread only:
+        `_splits` is shared, unlocked state.
 
         Bounded, because these are big: starless + stars for a 33 Mpx frame is
         about 800 MB. Two entries is still LESS than the three independent
         caches this replaces, and one entry would evict the step the user is
         standing in as soon as another surface split something else.
+
+        `sig` instead of `img` for a callback that already holds the signature
+        of the image it split, so it files the layers under THAT image, not
+        whatever the base reads by the time it lands.
         """
-        sig = self._sr_sig(img)
+        if sig is None:
+            sig = self._sr_sig(img)
         # "" means "I do not know which tool made this", and not-knowing must
         # never overwrite knowing. Colour Balance and Narrowband republish a
         # split they were HANDED, with no tag of their own — which erased what
@@ -2327,7 +2352,7 @@ class MainWindow(QMainWindow):
         tb.setFloatable(False)
         tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         # File
-        tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
+        self._open_image_act = tb.addAction(load_icon("open"), "Open Image", self._choose_fits)
         # Projects (a saved bundle: image + full edit history + solve state) — a
         # distinct concept from Open Image (a source) and Save Recipe (steps only),
         # tinted with the accent so the two project actions read as a pair.
@@ -2338,7 +2363,7 @@ class MainWindow(QMainWindow):
             load_icon("save-recipe", ACCENT), "Save Project", self._save_project)
         self._save_project_act.setToolTip("Save the current project (image + full edit history)")
         self._save_project_act.setEnabled(False)  # enabled by _refresh once an image is loaded
-        tb.addAction(load_icon("settings"), "Settings", self._open_settings)
+        self._settings_act = tb.addAction(load_icon("settings"), "Settings", self._open_settings)
         tb.addSeparator()
         # Tools (primary features tinted with the accent)
         # Ordered by when a session reaches them, not by when they were written.
@@ -2402,9 +2427,12 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
         tb.addSeparator()
         # --- make an image ---
-        stack_act = tb.addAction(load_icon("stack", tint["stack"]), "Stack…", self._open_stack)
-        haoiii_act = tb.addAction(load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
-        combine_act = tb.addAction(load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
+        self._stack_act = stack_act = tb.addAction(
+            load_icon("stack", tint["stack"]), "Stack…", self._open_stack)
+        self._haoiii_act = haoiii_act = tb.addAction(
+            load_icon("haoiii", tint["haoiii"]), "Ha/OIII…", self._open_haoiii)
+        self._combine_act = combine_act = tb.addAction(
+            load_icon("combine", tint["combine"]), "Combine…", self._open_combine)
         tb.addSeparator()
         # --- identify it ---
         self._solve_act = tb.addAction(load_icon("plate-solve", tint["plate-solve"]), "Plate Solve",
@@ -2414,13 +2442,15 @@ class MainWindow(QMainWindow):
         self._sync_solve_action_enabled()    # gated on ASTAP being installed
         tb.addSeparator()
         # --- colour it ---
-        narrowband_act = tb.addAction(load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
+        self._narrowband_act = narrowband_act = tb.addAction(
+            load_icon("narrowband", tint["narrowband"]), "Narrowband…", self._open_narrowband)
         self._cb_act = tb.addAction(load_icon("color-balance", tint["color-balance"]),
                                     "Colour Balance", self._open_color_balance)
         self._cb_act.setEnabled(False)     # a finishing tool needs a picture
         tb.addSeparator()
         # --- finish it ---
-        spikes_act = tb.addAction(load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
+        self._spikes_act = spikes_act = tb.addAction(
+            load_icon("star-spikes", tint["star-spikes"]), "Star Spikes…", self._open_star_spikes)
         self._starless_levels_act = tb.addAction(
             load_icon("starless-levels", tint["starless-levels"]),
             "Starless Levels…", self._open_starless_levels)
@@ -2435,7 +2465,8 @@ class MainWindow(QMainWindow):
         # --- repeat it on other data ---
         self._save_recipe_act = tb.addAction(load_icon("save-recipe", tint["save-recipe"]),
                                      "Save Recipe", self._save_recipe)
-        batch_act = tb.addAction(load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
+        self._batch_act = batch_act = tb.addAction(
+            load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
         tb.addSeparator()
         # Edit / compare
         self._undo_act = tb.addAction(load_icon("undo"), "Undo", self._undo)
@@ -2603,6 +2634,10 @@ class MainWindow(QMainWindow):
         abandoning work the user just did."""
         if not (0 <= index < len(self._stages)) or not self._stages[index].enabled:
             return
+        if user_initiated and self._busy:
+            # The stepper is greyed while busy; this catches a keyboard or
+            # programmatic emit. Navigating mid-run started a second job.
+            return
         if user_initiated and self._has_pending():
             answer = self._ask_pending(self._stages[self._stage].label)
             if answer == "cancel":
@@ -2621,8 +2656,9 @@ class MainWindow(QMainWindow):
                     # called from _set_busy(False).
                     #
                     # Paired with self._nav_seq, not self._stage: the
-                    # stepper isn't busy-gated the way Next/Back are, so the
-                    # user can click a different row while this apply is
+                    # stepper was not busy-gated when this was written (it is
+                    # since 2026-10-05; kept as defence in depth), so the
+                    # user could click a different row while this apply is
                     # still in flight, answer that SECOND prompt, and even
                     # navigate BACK to this exact stage before the worker
                     # lands — a bare index comparison would then match by
@@ -2673,8 +2709,9 @@ class MainWindow(QMainWindow):
         appeared mid-flight: it was never authorised, so it is neither pressed
         nor dropped by a move.
 
-        Also checked against _nav_seq, not self._stage: the stepper isn't
-        busy-gated, so the user can click a different row while this apply
+        Also checked against _nav_seq, not self._stage: the stepper was not
+        busy-gated until 2026-10-05 (kept as defence in depth), so the user
+        could click a different row while this apply
         is still running, answer a second prompt, and even navigate BACK to
         the stage this deferral started from before the worker lands —
         GraXpert applies are documented elsewhere in this file as taking
@@ -3263,8 +3300,8 @@ class MainWindow(QMainWindow):
         `panel` defaults to whatever is current, but apply_current's async
         path passes the panel it captured when Apply was pressed: its
         on_result can land after the user has navigated on (this task's own
-        "Apply and continue" defers the move until it does, but a direct
-        stepper click during a busy op is not gated the same way), and the
+        "Apply and continue" defers the move until it does, and a Cancel or a
+        workspace swap can change the panel too), and the
         baseline belongs to the panel that showed the option, not whichever
         one happens to be on screen when the worker returns.
 
@@ -3282,11 +3319,17 @@ class MainWindow(QMainWindow):
             # die with it (a revisit builds a fresh panel); the slot still clears.
             target = None
         if slot is not None:
+            current = getattr(self, slot, None)
             if preview is _UNSET:
-                preview = getattr(self, slot, None)
-            if preview is not None and target is not None and hasattr(target, "neutral_option"):
-                target.neutral_option = preview
-            setattr(self, slot, None)
+                preview = current
+            # Only if the slot still holds what was pressed. A slider moved
+            # while the run was on the worker is new work: clearing it showed
+            # the step as applied with the slider at a value never committed
+            # (audit 2026-10-05, finding 4).
+            if _same_option(current, preview):
+                if preview is not None and target is not None and hasattr(target, "neutral_option"):
+                    target.neutral_option = preview
+                setattr(self, slot, None)
         if applied_option is not None and getattr(target, "option_box", None) is not None:
             target.option_baseline = applied_option
         if getattr(target, "engine_box", None) is not None:
@@ -4134,8 +4177,8 @@ class MainWindow(QMainWindow):
         box = getattr(self._panel, "option_box", None)
         applied_text = box.currentText() if box is not None else None
         # Same reasoning, for the PANEL itself: on_result can land after the
-        # user has moved on (a stepper click isn't busy-gated the way Next
-        # is), and the baseline belongs on the panel that showed this option,
+        # panel has been rebuilt meanwhile, and the baseline belongs on the
+        # panel that showed this option,
         # not whichever one happens to be current when the worker returns.
         applied_panel = self._panel
         slot = self._PENDING_SLOTS.get(stage_id)
@@ -4282,8 +4325,11 @@ class MainWindow(QMainWindow):
         # no step or tool signature has to grow a callback — and the token is
         # already published to the worker thread just below.
         token.on_progress = self._tool_progress.progress.emit
+        self._run_seq += 1
+        token.busy_seq, token.busy_label = self._run_seq, label
+        token.busy_start = self._busy_start = _time.monotonic()
+        self._running.add(token)
         self._active_token = token
-        self._busy_start = _time.monotonic()
         self._set_busy(True, label)
         gen = self._project_gen        # the workspace this result will belong to
 
@@ -4295,12 +4341,15 @@ class MainWindow(QMainWindow):
                 clear_ambient()
 
         def _release():
-            # Only if THIS op is still the active one. A stale callback landing
-            # after a newer op has started must not clear the newer op's busy
-            # state -- that would leave the UI idle-looking while work runs.
-            if self._active_token is token:
-                self._active_token = None
-                self._set_busy(False)
+            # Removes only THIS op. Idle only when no op is left: any other
+            # reading lets one job's end release another's busy.
+            self._running.discard(token)
+            if self._running:
+                if self._active_token is token:
+                    self._show_running(max(self._running, key=lambda t: t.busy_seq))
+                return
+            self._active_token = None
+            self._set_busy(False)
 
         def _superseded() -> bool:
             return self._project_gen != gen
@@ -4336,10 +4385,19 @@ class MainWindow(QMainWindow):
             else:
                 done(result)          # an on_result throw propagates after the finally
 
+    def _show_running(self, token) -> None:
+        """Report `token` as the op on screen: the one left once a newer one
+        ended."""
+        self._active_token = token
+        self._busy_start = token.busy_start
+        self._busy_label_text = token.busy_label
+        if self._busy_shown:
+            self._busy_label.setText(token.busy_label)
+
     def _cancel_active(self) -> None:
-        """Request a clean stop of the currently-running busy op, if any."""
-        tok = self._active_token
-        if tok is not None:
+        """Request a clean stop of every running busy op. Cancel says "stop",
+        not "stop the newest and leave the rest holding the app busy"."""
+        for tok in list(self._running):
             tok.cancel()
 
     def _swap_workspace(self) -> None:
@@ -4411,6 +4469,10 @@ class MainWindow(QMainWindow):
             self._hide_busy_visuals()               # no-op if visuals never showed
             self._sync_solve_panel()   # catches an aborted/failed solve stuck at "solving"
         self._back_btn.setDisabled(busy)            # gating stays immediate
+        # Locked, not merely refused: the owner's call (2026-10-05). A stepper
+        # click started a second job, and a tool's OK was dropped silently.
+        self.stepper.setEnabled(not busy)
+        self._lock_tools(busy)
         # Not setDisabled(busy): ending an operation must not switch Next on
         # at the last step (Export runs busy), where it stays in place, off.
         self._next_btn.setEnabled(not busy and self._has_next())
@@ -4426,6 +4488,44 @@ class MainWindow(QMainWindow):
         if not busy:
             self._sync_step_controls()   # restore real enablement, not just "on"
             self._land_deferred_nav(self._resume_apply_run())
+
+    def _busy_locked_actions(self) -> list:
+        """What can START work or replace the workspace: locked while busy.
+
+        Not the view (Before/After, Fit, 100%), help, About, Activity or Report
+        a problem — looking and asking stay possible. Plate Solve only opens its
+        window, whose own Solve button is gated (`_set_busy`)."""
+        return [
+            self._open_image_act, self._open_project_act, self._save_project_act,
+            self._settings_act, self._tools_act,       # the latter also opens Settings
+            self._auto_enhance_act, self._stack_act, self._haoiii_act,
+            self._combine_act, self._narrowband_act, self._cb_act, self._spikes_act,
+            self._starless_levels_act, self._trim_act, self._upscale_act,
+            self._share_act, self._save_recipe_act, self._batch_act,
+            self._open_project_menu_act, self._save_project_menu_act,
+            self._save_project_as_act, self._recent_menu.menuAction(),
+            self._close_project_act,
+            self._welcome.open_btn, self._welcome.stack_btn,
+        ]
+
+    def _lock_tools(self, busy: bool) -> None:
+        """Actions go through the `_busy_lock` group, which keeps each action's
+        own enablement underneath. Widgets have no such layer, so only those
+        that were ENABLED are turned off and back on, like _gate_panel_buttons;
+        the record is added to, never replaced, so a nested run cannot lose it."""
+        self._busy_lock.setEnabled(not busy)
+        if busy:
+            for w in self._busy_locked_actions():
+                if not isinstance(w, QAction) and w.isEnabled():
+                    w.setEnabled(False)
+                    self._busy_locked_widgets.append(w)
+            return
+        widgets, self._busy_locked_widgets = self._busy_locked_widgets, []
+        for w in widgets:
+            try:
+                w.setEnabled(True)
+            except RuntimeError:
+                pass            # deleted under us; nothing to restore
 
     def _sync_history_actions(self) -> None:
         """Undo, Redo and Reset rewrite the history, so they are off while a
@@ -4463,8 +4563,8 @@ class MainWindow(QMainWindow):
         Nesting-safe. A second sweep before the first one's end (a run started
         while one is in flight) ADDS to the record rather than replacing it —
         replacing lost the first sweep's buttons, which then stayed off for
-        good. Only the latest run's end reaches here (`_run_busy._release`), and
-        it restores the whole record.
+        good. Only the LAST running op's end reaches here (`_run_busy._release`),
+        and it restores the whole record.
         """
         if busy:
             panel = self._panel
@@ -5161,10 +5261,11 @@ class MainWindow(QMainWindow):
         self._sync_step_controls()
 
     def _on_sat_split(self, sig, layers) -> None:
+        # Before the stage check: a finished split is never thrown away.
+        self._remember_split(None, layers[0], layers[1], layers[2], sig=sig)
         if self.current_stage_id() != "saturation":
             return
         self._sat_layers = (sig, layers[0], layers[1], layers[2])
-        self._remember_split(self._sr_base(), layers[0], layers[1], layers[2])
         if hasattr(self._panel, "neb_status"):
             self._panel.neb_status.setText(self._split_note(layers[2]))
         self._render_saturation_preview()
@@ -5421,7 +5522,8 @@ class MainWindow(QMainWindow):
             if hit:
                 return ("split", hit[0], hit[1], hit[2])
             starless, stars, tag = self._split_tagged(base)
-            self._remember_split(base, starless, stars, tag)
+            # Not remembered here: this is the worker thread. _on_fringe_split
+            # does it on the UI thread.
             return ("split", starless, stars, tag)
         # The mask is built HERE, off-thread and once, not in _fringe_result:
         # star_mask on a 4331x3464 frame is not a per-toggle cost.
@@ -5481,6 +5583,9 @@ class MainWindow(QMainWindow):
         return remove_green_fringe_masked(a, b, float(strength))
 
     def _on_fringe_split(self, sig, payload) -> None:
+        if payload[0] == "split":
+            # Here, on the UI thread, and before the stage check.
+            self._remember_split(None, payload[1], payload[2], payload[3], sig=sig)
         if self.current_stage_id() != "green_fringe":
             return
         self._fringe_layers = (sig,) + tuple(payload)
@@ -5617,12 +5722,13 @@ class MainWindow(QMainWindow):
                        "Separating stars…", "Star separation failed")
 
     def _on_sr_split(self, sig, layers) -> None:
-        """The split finished: cache it and enable the slider — unless the
-        user has already navigated away from Star Reduction."""
+        """The split finished: cache it, and enable the slider unless the
+        user has already left Star Reduction."""
+        # Before the stage check: a finished split is never thrown away.
+        self._remember_split(None, layers[0], layers[1], layers[2], sig=sig)
         if self.current_stage_id() != "star_reduction":
             return
         self._sr_layers = (sig, layers[0], layers[1], layers[2])
-        self._remember_split(self._sr_base(), layers[0], layers[1], layers[2])
         self._sr_ready = True
         if hasattr(self._panel, "sr_slider"):
             self._panel.sr_slider.setEnabled(True)
