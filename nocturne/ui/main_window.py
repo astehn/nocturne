@@ -665,7 +665,13 @@ class MainWindow(QMainWindow):
         self.image_view.hoverLeft.connect(self._on_hover_left)
         self.image_view.set_pixel_cursor(True)   # crosshair where the readout reads
         self._center_stack = QStackedWidget()
-        self._welcome = WelcomeScreen(self._choose_fits, self._open_stack)
+        self._welcome = WelcomeScreen(
+            self._choose_fits, self._open_stack,
+            on_open_project=lambda: self._open_project(),
+            on_haoiii=self._open_haoiii,
+            on_recent=lambda p: self._open_project(p),
+            recent=lambda: list(self.settings.recent_projects),
+            locked=lambda: self._busy)
         self._center_stack.addWidget(self._welcome)   # page 0
         self._center_stack.addWidget(self.image_view)  # page 1
         root.addWidget(self._center_stack, 1)
@@ -4562,6 +4568,8 @@ class MainWindow(QMainWindow):
             self._save_project_as_act, self._recent_menu.menuAction(),
             self._close_project_act,
             self._welcome.open_btn, self._welcome.stack_btn,
+            self._welcome.open_project_btn, self._welcome.haoiii_btn,
+            *self._welcome.recent_buttons,
         ]
 
     def _lock_tools(self, busy: bool) -> None:
@@ -4582,6 +4590,9 @@ class MainWindow(QMainWindow):
                 w.setEnabled(True)
             except RuntimeError:
                 pass            # deleted under us; nothing to restore
+        # The start page's recent list is rebuilt whenever it is shown; a list
+        # built during the run started locked and is not in the record above.
+        self._welcome.refresh_recent()
 
     def _sync_history_actions(self) -> None:
         """Undo, Redo and Reset rewrite the history, so they are off while a

@@ -142,6 +142,8 @@ def _locked_controls(win):
             out[f"more:{t}"] = win._overflow.proxy_for(act)
     out["welcome:open"] = win._welcome.open_btn
     out["welcome:stack"] = win._welcome.stack_btn
+    out["welcome:open project"] = win._welcome.open_project_btn
+    out["welcome:haoiii"] = win._welcome.haoiii_btn
     return out
 
 
