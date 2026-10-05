@@ -26,6 +26,7 @@ from .progress_ring import ProgressRing
 from .upscale_navigator import UpscaleNavigator
 from .worker import run_async
 from . import file_dialogs, theme
+from .help_link import HelpLink
 
 # finish_upscale (reduce_stars + recombine) measured 2026-09-29 on his M31 mosaic
 # crops: 0.22 s at 20 MP, 0.46 s at 42 MP — the limit on the 16 GB laptops most
@@ -252,6 +253,8 @@ class UpscaleDialog(QDialog):
         status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
         status_row.addWidget(self.status, 1)
         root.addLayout(status_row)
+        self.help_link = HelpLink("upscale", self)
+        root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
         self._sync_size()
 

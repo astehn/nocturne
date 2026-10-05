@@ -40,6 +40,7 @@ from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, plate_overflows
 from .theme import TEXT_DIM
 from . import file_dialogs
+from .help_link import HelpLink
 
 
 def _set_box(box: QComboBox, value) -> None:
@@ -431,6 +432,8 @@ class ShareDialog(QDialog):
         root.addLayout(body, 1)
         root.addWidget(self._colour_note)
         root.addWidget(self.status)
+        self.help_link = HelpLink("share", self)
+        root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
 
         self._refresh_preview()
