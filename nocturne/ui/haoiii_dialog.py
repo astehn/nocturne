@@ -13,6 +13,7 @@ from ..core.tasks import CancelToken, Cancelled, clear_ambient, set_ambient
 from ..settings import start_dir
 from ..stacking.grade import ONLY_MASTERS, grade_frames, is_left_out, judge, order_best_first
 from ..stacking.haoiii import HaOIIIOptions, run_haoiii_extract
+from .busy_gate import BusyGate, keep_live
 from .frame_browser import FrameBrowser
 from .option_band import PICKY_NOTE, TRIM_NOTE, OptionBand, WrappedNote
 from .quality_chart import CHART_ROOM_MIN
@@ -72,6 +73,9 @@ class HaOIIIDialog(QDialog):
         self._extract_runner = run_haoiii_extract  # injectable for tests
         self._stats = []
         self._busy = False
+        # Every input off while a folder grades or extracts: a folder switched
+        # mid-grade was dropped (audit 2026-10-05). Close and Cancel stay live.
+        self._gate = BusyGate()
         self._active_token = None
         self._pool = QThreadPool.globalInstance()
         self._signals = _Signals()
@@ -172,24 +176,31 @@ class HaOIIIDialog(QDialog):
                     self.crop_check.toggled, self.channels_check.toggled):
             sig.connect(lambda *_: self.options_band.refresh_summary())
         self.options_band.set_folded(bool(getattr(settings, "frame_options_folded", True)))
+        # Folding is layout: the options stay readable during a run.
+        keep_live(self.options_band.fold_btn)
+        keep_live(self.options_band.change_btn)
         self.options_band.folded_changed.connect(self._on_options_folded)
 
         form = QFormLayout()
         # As in Stack: the macOS style keeps fields at their size hint, which
         # cut the Output path short at every width. Fill the row.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Folder of raw subs", _picker_row(self.folder_edit, self._browse_folder))
+        folder_row = _picker_row(self.folder_edit, self._browse_folder)
+        output_row = _picker_row(self.output_edit, self._browse_output)
+        form.addRow("Folder of raw subs", folder_row)
         form.addRow(self.options_band)
-        form.addRow("Output", _picker_row(self.output_edit, self._browse_output))
+        form.addRow("Output", output_row)
+        self._gated = (folder_row, self.options_band, output_row,
+                       *self.browser.tick_buttons())
 
         self._stack_btn = QPushButton("Extract")
         self._stack_btn.setObjectName("primary")
         self._stack_btn.clicked.connect(self.run)
-        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn = keep_live(QPushButton("Cancel"))
         self._cancel_btn.clicked.connect(self._cancel_active)
         self._cancel_btn.setEnabled(False)
         self._cancel_btn.hide()
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self._stack_btn)
@@ -280,6 +291,11 @@ class HaOIIIDialog(QDialog):
     # --- busy ---
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
+        if busy:
+            self._gate.close(*self._gated)
+        else:
+            self._gate.open()
+        self.browser.set_ticks_locked(busy)
         self._stack_btn.setEnabled(not busy)
         self._cancel_btn.setEnabled(busy)
         self._cancel_btn.setVisible(busy)

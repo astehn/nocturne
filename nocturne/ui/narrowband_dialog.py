@@ -20,6 +20,7 @@ from .frame_preview import FramePreview
 from .progress_ring import ProgressRing
 from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
+from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from .help_link import HelpLink
 
@@ -93,6 +94,10 @@ class NarrowbandDialog(QDialog):
         self._fitted = False
         self._started = False
         self._applying = False
+        # Every control is off while the split or Apply runs: moved during
+        # Apply, the committed picture was not the one on screen (audit
+        # 2026-10-05). Close stays live; it drops a result still in flight.
+        self._gate = BusyGate()
 
         self.preview = FramePreview()
         self.preview.setMinimumSize(460, 460)
@@ -171,7 +176,7 @@ class NarrowbandDialog(QDialog):
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
         self.apply_btn.clicked.connect(self.apply)
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         # Reset sits in the pinned row, as in Star Spikes: the three actions on
         # the dialog as a whole live together, not one of them mid-form.
@@ -196,6 +201,7 @@ class NarrowbandDialog(QDialog):
         side_wrap = QWidget()
         side_wrap.setLayout(side)
         side_wrap.setMaximumWidth(340)
+        self._side = side_wrap
 
         body = QHBoxLayout(self)
         body.addWidget(self.preview, 1)
@@ -232,7 +238,7 @@ class NarrowbandDialog(QDialog):
             self._on_starless((self._base, None))
             return
         self.preview.show_waiting(_SPLIT_MSG)
-        self.apply_btn.setEnabled(False)
+        self._gate.close(self._side)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
                   on_progress=self._on_split_progress)
@@ -249,6 +255,7 @@ class NarrowbandDialog(QDialog):
         self.preview.set_waiting_progress(done, total)
 
     def _on_starless(self, layers) -> None:
+        self._release_controls()
         # A compare set up while "Separating stars..." was on screen would be left
         # pointing at an image the dialog is about to replace.
         self.compare_check.setChecked(False)
@@ -265,8 +272,15 @@ class NarrowbandDialog(QDialog):
             self._on_split(self._starless, self._stars, self.last_engine)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
-        self.apply_btn.setEnabled(True)
         self._do_render()
+
+    def _release_controls(self) -> None:
+        """Open the gate, THEN re-derive: Green blend is off for every
+        palette but HOO whatever the gate gave back, and Apply is on now
+        there is a split."""
+        self._gate.open()
+        self._restrict_blend(self.palette_box.currentText())
+        self.apply_btn.setEnabled(True)
 
     def _on_error(self, exc) -> None:
         self.status.setText(f"Star removal failed: {exc} — using the whole image.")
@@ -409,7 +423,7 @@ class NarrowbandDialog(QDialog):
             return
         self._applying = True
         params = self._params()
-        self.apply_btn.setEnabled(False)
+        self._gate.close(self._side)
         self.status.setText("Applying at full resolution…")
         self.status_ring.set_indeterminate()
         self.status_ring.show()
@@ -445,5 +459,5 @@ class NarrowbandDialog(QDialog):
     def _on_apply_error(self, exc) -> None:
         self._applying = False
         self.status_ring.hide()
-        self.apply_btn.setEnabled(True)
+        self._release_controls()
         self.status.setText(f"Apply failed: {exc}")

@@ -19,10 +19,13 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QAbstractSpinBo
                                QComboBox, QLineEdit, QWidget)
 
 from .curve_editor import CurveEditor
+from .range_handles import RangeHandles
 
 KEEP_LIVE = "busyGateKeepLive"          # dynamic property name; True → never disabled
+# The two custom-painted inputs are named: neither is a Qt input class, and a
+# band's handles left live let Colour Balance's range be dragged mid-Apply.
 INPUT_TYPES = (QAbstractSlider, QAbstractButton, QComboBox, QAbstractSpinBox, QLineEdit,
-               CurveEditor)
+               CurveEditor, RangeHandles)
 
 
 def keep_live(widget: QWidget) -> QWidget:

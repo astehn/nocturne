@@ -15,6 +15,7 @@ from ..recipe import (
     RecipeVersionError, load_recipe, missing_tools, preflight, preflight_summary,
 )
 from ..settings import start_dir
+from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from . import file_dialogs
 
@@ -52,6 +53,10 @@ class BatchDialog(QDialog):
                                  # Set before any widget exists: _recheck_recipe
                                  # can fire from a textChanged during setup.
         self._pool = QThreadPool.globalInstance()
+        # Every input off while the batch runs. Live, an edited recipe path
+        # re-ran the pre-check mid-run, and the status line then described a
+        # recipe that was not the one running.
+        self._gate = BusyGate()
         self._signals = _ProgressSignals()
         self._signals.progress.connect(self._on_progress)
 
@@ -65,10 +70,14 @@ class BatchDialog(QDialog):
         self.status.setWordWrap(True)
 
         form = QFormLayout()
-        form.addRow("Recipe", _picker_row(self.recipe_edit, self._browse_recipe))
-        form.addRow("Input folder", _picker_row(self.input_edit, self._browse_input))
-        form.addRow("Output folder", _picker_row(self.output_edit, self._browse_output))
+        rows = (_picker_row(self.recipe_edit, self._browse_recipe),
+                _picker_row(self.input_edit, self._browse_input),
+                _picker_row(self.output_edit, self._browse_output))
+        form.addRow("Recipe", rows[0])
+        form.addRow("Input folder", rows[1])
+        form.addRow("Output folder", rows[2])
         form.addRow("Format", self.format_box)
+        self._gated = (*rows, self.format_box)
 
         self.run_btn = QPushButton("Run")
         self.run_btn.setObjectName("primary")
@@ -79,11 +88,11 @@ class BatchDialog(QDialog):
         # most recipes need no external tool at all and greying the whole
         # feature out would punish them for a step they never used.
         self.recipe_edit.textChanged.connect(self._recheck_recipe)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = keep_live(QPushButton("Cancel"))
         self.cancel_btn.clicked.connect(self._cancel_active)
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.hide()
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self.run_btn)
@@ -237,6 +246,10 @@ class BatchDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         """Block re-entrant runs so two workers can't write the same output file."""
+        if busy:
+            self._gate.close(*self._gated)
+        else:
+            self._gate.open()
         self.run_btn.setEnabled(not busy and not self._blocked)
         self.cancel_btn.setEnabled(busy)
         self.cancel_btn.setVisible(busy)

@@ -24,6 +24,7 @@ from .image_view import ImageView
 from .linked_views import link_views
 from .progress_ring import ProgressRing
 from .upscale_navigator import UpscaleNavigator
+from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from . import file_dialogs, theme
 from .help_link import HelpLink
@@ -100,6 +101,11 @@ class UpscaleDialog(QDialog):
         self._tighten = TIGHTEN_DEFAULT
         self._token = None
         self._busy = False
+        # Inputs off while prepare or a re-render runs: a crop drawn mid-run
+        # was silently ignored (audit 2026-10-05). The crop box is scene items,
+        # so it locks separately (ImageView.set_crop_locked).
+        self._gate = BusyGate()
+        self._rerenders = 0          # in flight; the gate opens when the last lands
         self._closed = False
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
@@ -162,6 +168,7 @@ class UpscaleDialog(QDialog):
         side = QWidget()
         side.setLayout(panel)
         side.setFixedWidth(240)
+        self._pick_side = side
 
         pick = QHBoxLayout()
         pick.addWidget(self.picker, 1)
@@ -184,6 +191,7 @@ class UpscaleDialog(QDialog):
         mg = QButtonGroup(self)
         for b in (self.mode_side, self.mode_wipe):
             b.setCheckable(True); mg.addButton(b)
+            keep_live(b)            # how the result is viewed, not what it is
         self.mode_side.setChecked(True)
         self.mode_side.clicked.connect(lambda: self._set_mode(False))
         self.mode_wipe.clicked.connect(lambda: self._set_mode(True))
@@ -208,6 +216,9 @@ class UpscaleDialog(QDialog):
         self.tighten_slider.setToolTip("How much smaller and dimmer the stars are drawn in the "
                                        "enlargement. 0 leaves them as they are.")
         self.tighten_slider.valueChanged.connect(self._on_tighten)
+        # Live through its own re-render: off at the debounce it would end the
+        # drag mid-gesture, and the latest value wins anyway (_rerender).
+        keep_live(self.tighten_slider)
         self._tighten_timer = QTimer(self); self._tighten_timer.setSingleShot(True)
         self._tighten_timer.setInterval(TIGHTEN_DEBOUNCE_MS)
         self._tighten_timer.timeout.connect(self._rerender)
@@ -215,6 +226,7 @@ class UpscaleDialog(QDialog):
                   QLabel("none ··· strong")):
             self._compare_panel.insertWidget(self._compare_panel.count() - 2, w)
         cside = QWidget(); cside.setLayout(self._compare_panel); cside.setFixedWidth(COMPARE_PANEL_W)
+        self._compare_side = cside
         modes = QHBoxLayout(); modes.addStretch(1); modes.addWidget(self.mode_side); modes.addWidget(self.mode_wipe)
         cmp_col = QVBoxLayout(); cmp_col.addLayout(modes); cmp_col.addWidget(self.views, 1)
         cmp = QHBoxLayout(); cmp.addLayout(cmp_col, 1); cmp.addWidget(cside)
@@ -236,11 +248,11 @@ class UpscaleDialog(QDialog):
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._open_copy_btn)
         buttons.addStretch(1)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = keep_live(QPushButton("Cancel"))
         self.cancel_btn.hide()
         self.cancel_btn.clicked.connect(lambda: self._token and self._token.cancel())
         buttons.addWidget(self.cancel_btn)
-        self._close_btn = QPushButton("Close")
+        self._close_btn = keep_live(QPushButton("Close"))
         self._close_btn.clicked.connect(self.reject)
         buttons.addWidget(self._close_btn)
 
@@ -342,9 +354,23 @@ class UpscaleDialog(QDialog):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         self.cancel_btn.setVisible(busy)
-        if not busy:
+        if busy:
+            self._close_gate()
+        else:
             self.status_ring.hide()
+            self._open_gate()
         self._sync_size()
+
+    def _close_gate(self) -> None:
+        self._gate.close(self._pick_side, self._compare_side,
+                         self._export_btn, self._open_copy_btn)
+        self.picker.set_crop_locked(True)
+
+    def _open_gate(self) -> None:
+        """Callers re-derive after this: _sync_size for Upscale (over the
+        memory limit it stays off), _show_result for Export."""
+        self._gate.open()
+        self.picker.set_crop_locked(False)
 
     # --- state 2 ---
     def _show_result(self) -> None:
@@ -391,10 +417,19 @@ class UpscaleDialog(QDialog):
         if self._layers is None:
             return
         layers, t = self._layers, self._tighten
+        self._rerenders += 1
+        self._close_gate()
+
+        def landed() -> None:
+            self._rerenders -= 1
+            if self._rerenders == 0 and not self._busy:
+                self._open_gate()
+                self._sync_size()
 
         def done(result) -> None:
             if self._gone():
                 return
+            landed()
             if layers is self._layers and t == self._tighten:     # latest wins
                 self._result = result
                 q = _qimage_from_float(result.data)
@@ -407,7 +442,10 @@ class UpscaleDialog(QDialog):
         def failed(exc) -> None:
             # Near the ceiling this is usually memory. Say so, and leave the
             # previous picture up rather than a view that silently went stale.
-            if self._gone() or layers is not self._layers:
+            if self._gone():
+                return
+            landed()
+            if layers is not self._layers:
                 return
             self.status.setText(f"Couldn't update the preview: {exc}")
         run_async(self._pool, lambda: finish_upscale(layers, t), done, failed)

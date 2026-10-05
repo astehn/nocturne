@@ -20,6 +20,7 @@ from .preview import to_qimage
 from .progress_ring import ProgressRing
 from .range_handles import RangeHandles
 from .reset_slider import ResetSlider
+from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from .help_link import HelpLink
 
@@ -98,6 +99,10 @@ class ColorBalanceDialog(QDialog):
         self._prev_stars = None
         self._fitted = False
         self._started = False
+        # Every control is off while the split or Apply runs. During the split
+        # they were live (audit 2026-10-05), and a move made then was a move
+        # against no picture.
+        self._gate = BusyGate()
 
         self.preview = FramePreview()
         self.preview.setMinimumSize(460, 460)
@@ -212,7 +217,7 @@ class ColorBalanceDialog(QDialog):
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
         self.apply_btn.clicked.connect(self._apply)
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
         buttons = QHBoxLayout()
         buttons.addWidget(self.reset_btn)   # with Apply and Close, as in Star Spikes
@@ -235,6 +240,7 @@ class ColorBalanceDialog(QDialog):
         side_wrap = QWidget()
         side_wrap.setLayout(side)
         side_wrap.setMaximumWidth(380)
+        self._side = side_wrap
 
         body = QHBoxLayout(self)
         body.addWidget(self.preview, 1)
@@ -274,7 +280,7 @@ class ColorBalanceDialog(QDialog):
             return
         self.preview.show_waiting(_SPLIT_MSG)
         self.handles.hide()
-        self.apply_btn.setEnabled(False)
+        self._gate.close(self._side)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
                   on_progress=self._on_split_progress)
@@ -287,6 +293,7 @@ class ColorBalanceDialog(QDialog):
         self.preview.set_waiting_progress(done, total)
 
     def _on_starless(self, layers) -> None:
+        self._gate.open()
         self._starless, self._stars = layers
         if self._on_split is not None and self._stars is not None:
             # WITH the tag. Publishing untagged left the history line for this
@@ -508,13 +515,6 @@ class ColorBalanceDialog(QDialog):
         out = screen(adjusted.data, np.clip(st.data, 0.0, 1.0))
         return AstroImage(out, is_linear=base.is_linear, metadata=dict(base.metadata))
 
-    def _set_controls_enabled(self, on: bool) -> None:
-        for w in (*self.sliders.values(), self.strength_slider, self.feather_slider,
-                  self.handles, self.tone_box, self.preset_box, self.preserve_check,
-                  self.invert_check, self.show_mask_check, self.compare_check,
-                  self.reset_btn):
-            w.setEnabled(on)
-
     def _apply(self) -> None:
         """Compose at full resolution OFF the UI thread.
 
@@ -538,8 +538,7 @@ class ColorBalanceDialog(QDialog):
         # recorded whatever the controls said seconds later — a record of
         # settings that produced no image.
         opts = self.options()
-        self.apply_btn.setEnabled(False)
-        self._set_controls_enabled(False)
+        self._gate.close(self._side)
         self.status.setText("Applying at full resolution…")
         self.status_ring.set_indeterminate()
         self.status_ring.show()
@@ -566,6 +565,6 @@ class ColorBalanceDialog(QDialog):
 
     def _on_compose_error(self, exc) -> None:
         self.status_ring.hide()
-        self._set_controls_enabled(True)
+        self._gate.open()
         self.apply_btn.setEnabled(True)
         self.status.setText(f"Could not apply: {exc}")

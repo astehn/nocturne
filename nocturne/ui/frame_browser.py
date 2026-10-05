@@ -27,6 +27,7 @@ from ..stacking.grade import (REASON_CLOUDS, REASON_SOFT, REASON_TRAILED,
 from ..stacking.nights import night_key
 from ..stacking.reject_move import home_folder
 from . import theme
+from .busy_gate import keep_live
 from .frame_preview import FramePreview
 from .frame_preview_controller import FramePreviewController
 from .quality_chart import ChartPanel, QualityChart
@@ -223,6 +224,15 @@ class FrameTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._stats: list = []
         self._overrides: dict[int, bool] = {}
+        self._ticks_locked = False
+
+    def set_ticks_locked(self, locked: bool) -> None:
+        """No tick changes while the host's job runs: frames re-ticked
+        mid-stack named the file for 6 and recorded 4 (audit 2026-10-05).
+        The rows stay selectable, so frames can still be looked at."""
+        self._ticks_locked = bool(locked)
+        if self._stats:
+            self._emit_rows(0, len(self._stats) - 1)
 
     # --- the host's list ---
     def set_frames(self, stats: list) -> None:
@@ -351,7 +361,8 @@ class FrameTableModel(QAbstractTableModel):
         # is never checkable: nothing downstream filters it back out, so a
         # tick reaching one would hand a non-raw or unreadable file straight
         # to the stack.
-        if index.column() == COL_USE and not _locked(self._stats[index.row()]):
+        if (index.column() == COL_USE and not self._ticks_locked
+                and not _locked(self._stats[index.row()])):
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         return flags
 
@@ -374,6 +385,8 @@ class FrameTableModel(QAbstractTableModel):
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole) -> bool:
         if role != Qt.ItemDataRole.CheckStateRole or index.column() != COL_USE:
+            return False
+        if self._ticks_locked:
             return False
         self.set_ticked([index.row()], _is_checked(value))
         return True
@@ -578,6 +591,10 @@ class FrameBrowser(QWidget):
             b.clicked.connect(lambda _c=False, m=mode: self.set_show(m))
             show_row.addWidget(b)
         self._show_buttons[SHOW_ALL].setChecked(True)
+        # Show, the bigger preview and the chart's fold change what is LOOKED
+        # at, never what runs: a host's BusyGate leaves them live.
+        for b in self._show_buttons.values():
+            keep_live(b)
         show_row.addSpacing(12)
         show_row.addWidget(QLabel("Select:"))
         self.select_all_btn = self._link("All", self.select_all)
@@ -600,6 +617,7 @@ class FrameBrowser(QWidget):
         self.bigger_btn.setToolTip("Narrow the list to Time and Verdict; click "
                                    "again to bring the columns back")
         self.bigger_btn.toggled.connect(self.set_bigger_preview)
+        keep_live(self.bigger_btn)
         head = QHBoxLayout()
         head.setContentsMargins(4, 0, 4, 0)
         head.addWidget(self.preview_name, 1)
@@ -620,6 +638,7 @@ class FrameBrowser(QWidget):
                                   is_moved=is_moved)
         self.chart.point_clicked.connect(self.select_from_chart)
         self.chart_panel = ChartPanel(self.chart)
+        keep_live(self.chart_panel.fold_btn)
         preview_side = QWidget()
         pv = QVBoxLayout(preview_side)
         pv.setContentsMargins(0, 0, 0, 0)
@@ -643,6 +662,16 @@ class FrameBrowser(QWidget):
         root.addWidget(self.splitter, 1)
         self._sizes_before_bigger: list[int] | None = None
         self._update_show_counts()
+
+    def set_ticks_locked(self, locked: bool) -> None:
+        """The box and Space, for the host's job (see the model's)."""
+        self.model.set_ticks_locked(locked)
+
+    def tick_buttons(self) -> list:
+        """What a host's BusyGate sweeps here — Select All/None/Reset, not the
+        whole browser: its list, preview and chart scroll and zoom while the
+        job runs, and a gate over them would turn that off."""
+        return [self.select_all_btn, self.select_none_btn, self.reset_btn]
 
     def _link(self, text, slot) -> QPushButton:
         b = QPushButton(text)
