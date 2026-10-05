@@ -94,3 +94,106 @@ def test_mono_prepares_nothing(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr(win, "_run_busy", lambda *a, **k: started.append(a[2]))
     win._go_to_id("saturation")
     assert started == []
+
+
+# --- review 2026-10-05: nothing prepared only on entry may be final ------------
+
+def _replay(monkeypatch, base, option):
+    """What export, batch and a recipe produce for this option."""
+    monkeypatch.setattr("nocturne.steps.star_split.resolve_star_split",
+                        lambda img, rc, runner=None: _layers(img)[:2])
+    return SaturationStep().apply(base, option).data
+
+
+def _counting(qtbot, tmp_path, monkeypatch, fail_first=False):
+    monkeypatch.setattr(mw, "preferred_splitter", lambda s: "starnet")
+    calls = {"split": 0}
+
+    def split(self, base):
+        calls["split"] += 1
+        if fail_first and calls["split"] == 1:
+            raise RuntimeError("boom")
+        return _layers(base)
+    monkeypatch.setattr(mw.MainWindow, "_split_tagged", split)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current({"amount": 0.3, "linked": True})
+    win._splits.clear()
+    monkeypatch.setattr(win, "_ask_pending", lambda *a, **k: "discard")
+    return win, calls
+
+
+def test_a_trim_under_the_step_prepares_again_and_apply_matches_export(qtbot, tmp_path, monkeypatch):
+    win, calls = _counting(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("saturation")
+    assert calls["split"] == 1
+
+    class Trim:
+        def __init__(self, *a, **k): pass
+        def exec(self): return True
+        def bounds(self): return (2, 20, 2, 20)
+    monkeypatch.setattr(mw, "TrimDialog", Trim)
+    win._trim()
+    base = win._preview_base("saturation")
+    assert not win._sat_ready(base), "fixture: the base changed under the step"
+    win._panel.neb_slider.setValue(60)
+    assert calls["split"] == 2, "the Nebula slider prepares the new base"
+    assert win._sat_ready(base)
+    win._apply_saturation(0.5, 0.6)
+    assert np.array_equal(win.project.current().data, _replay(monkeypatch, base, (0.5, 0.6)))
+
+
+def test_a_failed_entry_split_is_retried_and_apply_never_records_a_missing_boost(qtbot, tmp_path, monkeypatch):
+    win, calls = _counting(qtbot, tmp_path, monkeypatch, fail_first=True)
+    win._go_to_id("saturation")
+    assert calls["split"] == 1 and win._sat_layers is None, "fixture: the entry split failed"
+    base = win._preview_base("saturation")
+    n = len(win.project.entries())
+    # Apply straight away: refused (it would record a boost not in the picture),
+    # and the split is started again.
+    win._apply_saturation(0.5, 0.6)
+    assert len(win.project.entries()) == n, "nothing committed without the boost"
+    assert calls["split"] == 2 and win._sat_ready(base)
+    win._apply_saturation(0.5, 0.6)
+    assert np.array_equal(win.project.current().data, _replay(monkeypatch, base, (0.5, 0.6)))
+
+
+def test_a_failed_entry_split_is_retried_by_the_nebula_slider(qtbot, tmp_path, monkeypatch):
+    win, calls = _counting(qtbot, tmp_path, monkeypatch, fail_first=True)
+    win._go_to_id("saturation")
+    win._panel.neb_slider.setValue(60)
+    assert calls["split"] == 2 and win._sat_ready(win._preview_base("saturation"))
+
+
+def test_global_saturation_alone_needs_no_split(qtbot, tmp_path, monkeypatch):
+    win, calls = _counting(qtbot, tmp_path, monkeypatch, fail_first=True)
+    win._go_to_id("saturation")
+    base = win._preview_base("saturation")
+    win._apply_saturation(0.7, 0.0)
+    assert calls["split"] == 1, "no retry for a step that does not boost"
+    assert np.array_equal(win.project.current().data, _replay(monkeypatch, base, (0.7, 0.0)))
+
+
+def test_a_rebuild_while_preparing_starts_no_second_split(qtbot, tmp_path, monkeypatch):
+    """A project reopened at Saturation rebuilds the panel several times in a
+    row; each rebuild started its own split (two StarNet2 runs at once)."""
+    import threading
+    win, calls = _counting(qtbot, tmp_path, monkeypatch)
+    gate = threading.Event()
+
+    def slow(self, base):
+        calls["split"] += 1
+        gate.wait(5)
+        return _layers(base)
+    monkeypatch.setattr(mw.MainWindow, "_split_tagged", slow)
+    win._async_enabled = True
+    win._go_to_id("saturation")
+    qtbot.wait(30)
+    win._rebuild_panel()
+    win._rebuild_panel()
+    qtbot.wait(30)
+    assert calls["split"] == 1 and len(win._running) == 1
+    gate.set()
+    qtbot.waitUntil(lambda: not win._running, timeout=5000)
+    assert win._sat_ready(win._preview_base("saturation"))

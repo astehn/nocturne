@@ -5237,13 +5237,29 @@ class MainWindow(QMainWindow):
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
             "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
-        base = self._preview_base("saturation")
-        if not base.is_color:
-            return                      # nebula_saturate leaves mono unchanged
+        self._prepare_saturation(self._preview_base("saturation"))
+
+    def _sat_ready(self, base) -> bool:
+        """Are the split and its mask in hand for THIS base? A base that changed
+        under the step (Trim appends before Saturation) is not ready."""
         sig = self._sr_sig(base)
-        if (self._sat_layers and self._sat_layers[0] == sig
-                and self._sat_mask and self._sat_mask[0] == sig):
-            return                      # ready from an earlier visit
+        return bool(self._sat_layers and self._sat_layers[0] == sig
+                    and self._sat_mask and self._sat_mask[0] == sig)
+
+    def _prepare_saturation(self, base) -> bool:
+        """Start the split + mask job for `base` unless it is ready, pointless
+        (mono) or something is already running — a project reopened at this step
+        rebuilds the panel several times, and each rebuild used to start its own
+        split. Callers retry from the Nebula slider and Apply, so a failed,
+        cancelled or skipped run, or a base that changed, is never final.
+        Returns True when the layers are ready now."""
+        if not base.is_color:
+            return True                 # nebula_saturate leaves mono unchanged
+        if self._sat_ready(base):
+            return True
+        if self._busy:
+            return False
+        sig = self._sr_sig(base)
         hit = self._cached_layers(base)           # on the UI thread (A4)
         label = "Preparing nebula mask…" if hit else "Separating stars…"
 
@@ -5253,11 +5269,14 @@ class MainWindow(QMainWindow):
 
         self._run_busy(prepare, lambda payload: self._on_sat_split(sig, payload),
                        label, "Star separation failed")
+        return False
 
     def _on_sat_change(self, amount: float, nebula: float) -> None:
         """A Saturation slider moved: stash both values; lazily split for the
         nebula boost; (re)start the debounce."""
         self._sat_pending = (amount, nebula)
+        if nebula > 0.0:
+            self._prepare_saturation(self._preview_base("saturation"))
         self._sat_timer.start(90)
         self._sync_step_controls()
 
@@ -5303,6 +5322,11 @@ class MainWindow(QMainWindow):
         if not self._truncate_for("saturation", "Apply"):
             return
         base = self.project.current()
+        if nebula > 0.0 and not self._prepare_saturation(base):
+            # Committing without the boost would record one that is not in the
+            # picture — and not what export or a recipe replay produce.
+            self._show_output("Preparing the nebula boost — press Apply again when it is ready.")
+            return
         result = self._sat_result(base, amount, nebula)
         self.project.run_step(_PrecomputedStep("Saturation", result), (amount, nebula))
         self._mark_dirty()
