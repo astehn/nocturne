@@ -45,7 +45,11 @@ class Worker:
         self.queue = []
 
         def fake_run_busy(s, work, on_result, label, err_prefix):
-            token = object()
+            from nocturne.core.tasks import CancelToken
+            token = CancelToken()
+            s._run_seq += 1
+            token.busy_seq, token.busy_label, token.busy_start = s._run_seq, label, 0.0
+            s._running.add(token)
             s._active_token = token
             s._busy_start = 0.0
             s._set_busy(True, label)
@@ -64,7 +68,12 @@ class Worker:
             else:
                 on_result(work())
         finally:
-            if s._active_token is token:
+            # _run_busy's release, step for step: idle only when no op is left.
+            s._running.discard(token)
+            if s._running:
+                if s._active_token is token:
+                    s._show_running(max(s._running, key=lambda t: t.busy_seq))
+            else:
                 s._active_token = None
                 s._set_busy(False)
 

@@ -3322,13 +3322,16 @@ class MainWindow(QMainWindow):
             current = getattr(self, slot, None)
             if preview is _UNSET:
                 preview = current
-            # Only if the slot still holds what was pressed. A slider moved
-            # while the run was on the worker is new work: clearing it showed
-            # the step as applied with the slider at a value never committed
-            # (audit 2026-10-05, finding 4).
+            # What was pressed is now the commit, so it is "where you found
+            # it" whatever the slider did meanwhile — left at the build value,
+            # a slider dragged back there mid-run would read as not pending.
+            if preview is not None and target is not None and hasattr(target, "neutral_option"):
+                target.neutral_option = preview
+            # The slot clears only if it still holds what was pressed. A
+            # slider moved while the run was on the worker is new work:
+            # clearing it showed the step as applied with the slider at a
+            # value never committed (audit 2026-10-05, finding 4).
             if _same_option(current, preview):
-                if preview is not None and target is not None and hasattr(target, "neutral_option"):
-                    target.neutral_option = preview
                 setattr(self, slot, None)
         if applied_option is not None and getattr(target, "option_box", None) is not None:
             target.option_baseline = applied_option
@@ -5493,6 +5496,13 @@ class MainWindow(QMainWindow):
                 panel.fringe_status.setText(self._fringe_status_text())
             self._render_fringe_preview()
             return
+        if has_split:
+            # The shared store, 5th client — looked up HERE, on the UI thread
+            # that writes it, not inside the worker.
+            hit = self._cached_layers(base)
+            if hit:
+                self._on_fringe_split(sig, ("split", hit[0], hit[1], hit[2]))
+                return
         self._fringe_ready = False
         if hasattr(panel, "fringe_status"):
             panel.apply_btn.setEnabled(False)
@@ -5518,12 +5528,10 @@ class MainWindow(QMainWindow):
         # 0.000145 through the mask — which is why the step read as "does not
         # really do anything".
         if preferred_splitter(self.settings) is not None:
-            hit = self._cached_layers(base)          # the shared store, 5th client
-            if hit:
-                return ("split", hit[0], hit[1], hit[2])
+            # No cache lookup or write here: this is the worker thread and
+            # `_splits` is UI-thread state. _setup_green_fringe looked it up
+            # before dispatch; _on_fringe_split remembers the result.
             starless, stars, tag = self._split_tagged(base)
-            # Not remembered here: this is the worker thread. _on_fringe_split
-            # does it on the UI thread.
             return ("split", starless, stars, tag)
         # The mask is built HERE, off-thread and once, not in _fringe_result:
         # star_mask on a 4331x3464 frame is not a per-toggle cost.

@@ -307,17 +307,34 @@ def test_untouched_during_apply_is_not_pending(qtbot, tmp_path, monkeypatch):
 # ---------------------------------------------------------------- A4: splits
 def test_fringe_split_is_remembered_on_the_ui_thread(qtbot, tmp_path, monkeypatch):
     win, h = _make(qtbot, tmp_path, monkeypatch, hold=False)
-    on_main = []
-    real = mw.MainWindow._remember_split
+    on_main = {"_remember_split": [], "_cached_layers": []}
+    for name in on_main:
+        real = getattr(mw.MainWindow, name)
 
-    def spy(self, *a, **k):
-        on_main.append(threading.current_thread() is threading.main_thread())
-        return real(self, *a, **k)
-    monkeypatch.setattr(mw.MainWindow, "_remember_split", spy)
+        def spy(self, *a, _real=real, _log=on_main[name], **k):
+            _log.append(threading.current_thread() is threading.main_thread())
+            return _real(self, *a, **k)
+        monkeypatch.setattr(mw.MainWindow, name, spy)
     win._go_to_id("green_fringe", user_initiated=False)
     _idle(qtbot, win)
-    assert on_main and all(on_main), on_main
+    for name, seen in on_main.items():       # reads AND writes of the shared store
+        assert seen and all(seen), (name, seen)
     assert win._fringe_ready
+
+
+def test_a_cached_split_enters_de_green_without_a_run(qtbot, tmp_path, monkeypatch):
+    win, h = _make(qtbot, tmp_path, monkeypatch)
+    base = win._fringe_base()
+    starless = AstroImage(base.data * 0.9, is_linear=False, metadata={})
+    stars = AstroImage(base.data * 0.1, is_linear=False, metadata={})
+    win._remember_split(base, starless, stars, "StarNet2")
+    monkeypatch.setattr(mw.MainWindow, "_split_tagged",
+                        lambda self, b: pytest.fail("split ran despite a cached one"))
+    win._go_to_id("green_fringe", user_initiated=False); qtbot.wait(20)
+    assert h.events == [] and not win._busy
+    assert win._fringe_ready
+    assert win._fringe_layers[2] is starless and win._fringe_layers[3] is stars
+    assert win._panel.apply_btn.isEnabled() and win._panel.fringe_slider.isEnabled()
 
 
 @pytest.mark.parametrize("callback", ["_on_sr_split", "_on_sat_split"])
@@ -334,3 +351,22 @@ def test_a_split_landing_after_the_user_left_is_still_remembered(
     assert sig in win._splits
     starless, stars, tag = win._splits[sig]
     assert starless is layers[0] and stars is layers[1] and tag == "StarNet2"
+
+
+@pytest.mark.parametrize("stage, slider", [("local_contrast", "lc_slider"),
+                                           ("levels", "white_slider")])
+def test_dragged_back_to_where_found_during_apply_stays_pending(
+        qtbot, tmp_path, monkeypatch, stage, slider):
+    """The value the panel was built at is not "the commit" once a different
+    value lands: dragging back to it mid-run is still unapplied work."""
+    win, h = _make(qtbot, tmp_path, monkeypatch)
+    win._go_to_id(stage, user_initiated=False); qtbot.wait(20)
+    s = getattr(win._panel, slider)
+    found = s.value()
+    moved = found - 20 if found - 20 >= s.minimum() else found + 20
+    _held_apply_then(qtbot, win, h,
+                     lambda: s.setValue(moved),
+                     lambda: s.setValue(found))
+    assert s.value() == found
+    assert win._has_pending() is True
+    assert win._panel.apply_btn.state() == "pending"
