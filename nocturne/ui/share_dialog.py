@@ -756,6 +756,8 @@ class ShareDialog(QDialog):
         exports, and the reason it wrapped disappears. The warning outlives the
         message that shares its line.
         """
+        if not message and getattr(self, "_working", False):
+            message = self._work_message    # "Saving…" stays until the job lands
         warning = ("Long text has wrapped to a second line — shorten it or "
                    "choose a smaller size if you would rather it did not."
                    if getattr(self, "_wrapped", False) else "")
@@ -852,6 +854,7 @@ class ShareDialog(QDialog):
         """Run `job` on the pool with the window dimmed (Close live) and the
         ring turning; `landed`/`failed` back here, unless the window closed."""
         self._working = True
+        self._work_message = message
         self._gate.close(self._side, self._export_btn, self._copy_btn)
         self._image_view.set_crop_locked(True)
         self._show_status(message)

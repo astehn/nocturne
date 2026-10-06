@@ -1754,9 +1754,11 @@ class MainWindow(QMainWindow):
                                  "stretched image.")
             return
         from .star_spikes_dialog import StarSpikesDialog
-        StarSpikesDialog(self.project.current(), parent=self,
-                         on_apply=self._apply_star_spikes,
-                         is_async=lambda: self._async_enabled).exec()
+        dlg = StarSpikesDialog(self.project.current(), parent=self,
+                               on_apply=self._apply_star_spikes,
+                               is_async=lambda: self._async_enabled)
+        dlg.exec()
+        dlg.deleteLater()      # parented, it outlived exec() holding the frame and its render
 
     def _apply_star_spikes(self, result, params=None) -> None:
         if self.project is None or self._busy:
@@ -6443,7 +6445,7 @@ class MainWindow(QMainWindow):
             self._share_pending = False
             # Deferred, never exec()'d inside a worker's slot: the job's
             # cleanup would wait the dialog's whole life behind it.
-            QTimer.singleShot(0, lambda: self._open_share(rgb8, meta, gen))
+            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen))
 
         def failed(exc) -> None:
             self._share_pending = False
@@ -6452,16 +6454,20 @@ class MainWindow(QMainWindow):
         run_async(self._pool, lambda: _share_rgb8(data), landed, failed)
 
     def _open_share(self, rgb8, meta, gen=None) -> None:
-        """Opens on the picture as it was when Share was pressed — unless the
-        workspace was replaced, or a step started, while the copy was made."""
-        if gen is not None and (gen != self._project_gen or self.project is None
-                                or self._busy):
+        """Opens on the picture as it was when Share was pressed. Only a
+        replaced workspace drops it: a step started meanwhile lands behind the
+        modal dialog harmlessly, and a Share press that silently does nothing
+        is the thing ruled out (2026-10-05)."""
+        if gen is not None and (gen != self._project_gen or self.project is None):
             return
-        ShareDialog(rgb8, meta, self.settings, parent=self,
-                    annotated_rgb8=self._annotated_rgb8(rgb8),
-                    annotations_on=self.image_view._annotations is not None,
-                    settings_saver=lambda s: save_settings(s, self._settings_path),
-                    is_async=lambda: self._async_enabled).exec()
+        dlg = ShareDialog(rgb8, meta, self.settings, parent=self,
+                          annotated_rgb8=self._annotated_rgb8(rgb8),
+                          annotations_on=self.image_view._annotations is not None,
+                          settings_saver=lambda s: save_settings(s, self._settings_path),
+                          is_async=lambda: self._async_enabled)
+        dlg.exec()
+        if isinstance(dlg, QObject):    # a test's stand-in is not one
+            dlg.deleteLater()           # parented, it outlived exec() with two full frames
 
     def _annotated_rgb8(self, rgb8):
         """`rgb8` with the plate-solve overlay burned in, or None when there is no

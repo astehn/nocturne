@@ -216,7 +216,8 @@ def test_a_spikes_apply_landing_after_close_applies_nothing(qtbot, hold):
     held.release()
     _drain(qtbot)
     assert got == [] and painted == []
-    assert d.result() != QDialog.DialogCode.Accepted
+    # QDialog.result: StarSpikesDialog.result() returns the picture instead.
+    assert QDialog.result(d) == QDialog.DialogCode.Rejected
 
 
 # =============================================================================
@@ -278,6 +279,8 @@ def test_share_export_writes_the_same_bytes_as_the_inline_export(qtbot, hold, tm
     _responsive(qtbot)
     assert not out.exists()
     _assert_share_gated(d)
+    d._note_wrap()                           # the wrap check re-writes the status line
+    assert "Saving" in d.status.text(), "the working message was wiped mid-export"
     before = d._designation_edit.text()
     qtbot.keyClicks(d._designation_edit, "zz")
     assert d._designation_edit.text() == before, "the plate text changed mid-export"
@@ -358,6 +361,42 @@ def test_mainwindow_makes_shares_8bit_copy_on_the_pool(qtbot, tmp_path, monkeypa
     rgb8, meta, k = opened[0]
     assert np.array_equal(rgb8, held.real(data))
     assert k["is_async"]() is True
+
+
+def test_share_opens_on_the_pressed_picture_even_if_a_step_started(qtbot, tmp_path,
+                                                                    monkeypatch, hold):
+    """A step started while the 8-bit copy was made must not swallow the
+    press: the dialog opens anyway, on the picture as it was at the press, and
+    the step lands behind it (ruled 2026-10-05: no silent drops)."""
+    import nocturne.ui.main_window as mw
+    from tests.ui.test_main_window import _stretched_window
+    win = _stretched_window(qtbot, tmp_path)
+    win._async_enabled = True
+    opened = []
+
+    class _Fake:
+        def __init__(self, rgb8, meta, *a, **k):
+            opened.append((rgb8, win._busy))
+
+        def exec(self):
+            return 0
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    held = hold(mw, "_share_rgb8")
+    pressed = win.project.current().data.copy()
+    win._share()
+    held.wait(qtbot)
+    step = threading.Event()
+    win._run_busy(lambda: step.wait(20), lambda _r: None, "Holding", "Held step")
+    try:
+        assert win._busy, "precondition: a step is running"
+        held.release()
+        qtbot.waitUntil(lambda: bool(opened), timeout=5000)
+    finally:
+        step.set()
+    held_rgb, busy_at_open = opened[0]
+    assert busy_at_open is True, "the dialog must open while the step still runs"
+    assert np.array_equal(held_rgb, held.real(pressed))
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
 
 
 def test_a_share_copy_landing_on_a_replaced_workspace_opens_nothing(qtbot, tmp_path, monkeypatch, hold):
@@ -450,6 +489,28 @@ def test_upscale_export_writes_the_value_at_the_press(qtbot, hold, tmp_path, mon
     assert d._export_btn.isEnabled() and d.status_ring.isHidden()
 
 
+def test_an_upscale_export_runs_no_second_finish_and_the_view_catches_up(
+        qtbot, hold, tmp_path, monkeypatch, request):
+    """One finish at a time (memory), and a slider moved mid-save is drawn
+    once the save lands — not left stale."""
+    import nocturne.ui.upscale_dialog as ud
+    d = _upscale(qtbot, is_async=ON)
+    d._run_upscale()
+    d.tighten_slider.setValue(90)
+    held = _HoldJobs(monkeypatch, ud)
+    request.addfinalizer(held.release)
+    d._do_export(str(tmp_path / "x.tiff"))
+    held.wait(qtbot)
+    assert not d._tighten_timer.isActive(), "a pending re-render would run beside the export"
+    d.tighten_slider.setValue(30)            # moved mid-save; the debounce fires mid-save
+    qtbot.wait(ud.TIGHTEN_DEBOUNCE_MS + 100)
+    assert len(held.started) == 1, "a second finish was started during the export"
+    held.release()
+    qtbot.waitUntil(lambda: d._result.metadata["upscale"]["tighten"] == 0.30
+                    and not d._busy and d._rerenders == 0, timeout=5000)
+    assert np.array_equal(d._result.data, _up_inline(0.30).data)
+
+
 def test_upscale_open_as_copy_hands_over_the_value_at_the_press(qtbot, hold):
     import nocturne.ui.upscale_dialog as ud
     got = []
@@ -527,6 +588,25 @@ def test_starless_levels_apply_composes_on_the_pool(qtbot, hold):
     expected = starless_levels_layers(*_split(), 0.1, 0.8)
     assert np.array_equal(img.data, expected.data)
     assert d.result() == QDialog.DialogCode.Accepted
+
+
+def test_a_failed_starless_apply_message_goes_with_the_next_render(qtbot, monkeypatch):
+    import nocturne.ui.starless_levels_dialog as sl
+    real = sl.starless_levels_layers
+
+    def boom(*a, **k):
+        if threading.current_thread() is threading.main_thread():
+            return real(*a, **k)
+        raise RuntimeError("no memory")
+    got = []
+    d = _levels(qtbot, got)
+    monkeypatch.setattr(sl, "starless_levels_layers", boom)
+    d.ok_btn.click()
+    qtbot.waitUntil(lambda: not d._applying, timeout=5000)
+    assert not d.waiting.isHidden() and "Could not apply" in d.waiting.text()
+    d.handles.set_range(0.15, 0.8)
+    d._render_preview()                      # the next render, as a handle drag queues
+    assert d.waiting.isHidden(), "the failure message covers the preview for good"
 
 
 def test_a_starless_levels_apply_landing_after_cancel_applies_nothing(qtbot, hold):

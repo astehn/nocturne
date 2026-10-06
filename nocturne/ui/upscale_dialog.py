@@ -130,6 +130,7 @@ class UpscaleDialog(QDialog):
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
         self._is_async = is_async if is_async is not None else (lambda: False)
+        self._exporting = False      # an Export / Open as copy job is running
 
         frame = _qimage_from_float(self._img.data)     # once: it is the slow part of opening
         self.picker = ImageView()
@@ -443,6 +444,10 @@ class UpscaleDialog(QDialog):
     def _rerender(self) -> None:
         if self._layers is None:
             return
+        if self._exporting:
+            # One finish at a time: two at 36 MP is the memory peak. The
+            # export's landing re-arms the debounce if the slider moved.
+            return
         layers, t = self._layers, self._tighten
         self._rerenders += 1
         self._close_gate()
@@ -458,13 +463,7 @@ class UpscaleDialog(QDialog):
                 return
             landed()
             if layers is self._layers and t == self._tighten:     # latest wins
-                self._result = result
-                q = _qimage_from_float(result.data)
-                self.result_view.set_image(q)      # same size: zoom/pan stay, linked views stay put
-                self.wipe_view.set_image(q)
-                if self.status.text().startswith("Couldn't update"):
-                    h, w = result.data.shape[:2]
-                    self.status.setText(f"Upscaled to {w}×{h}.")
+                self._show_rerendered(result)
 
         def failed(exc) -> None:
             # Near the ceiling this is usually memory. Say so, and leave the
@@ -476,6 +475,15 @@ class UpscaleDialog(QDialog):
                 return
             self.status.setText(f"Couldn't update the preview: {exc}")
         run_async(self._pool, lambda: finish_upscale(layers, t), done, failed)
+
+    def _show_rerendered(self, result) -> None:
+        self._result = result
+        q = _qimage_from_float(result.data)
+        self.result_view.set_image(q)      # same size: zoom/pan stay, linked views stay put
+        self.wipe_view.set_image(q)
+        if self.status.text().startswith("Couldn't update"):
+            h, w = result.data.shape[:2]
+            self.status.setText(f"Upscaled to {w}×{h}.")
 
     def _current_result(self):
         """The result at the slider's value NOW — an export never waits on, or
@@ -583,8 +591,11 @@ class UpscaleDialog(QDialog):
         if not self._is_async() or self._result_is_current():
             self._open_copy(self._current_result())
             return
+        # Deferred: `on_open_copy` may ask a modal question, and a modal
+        # opened inside the job's landing holds the job's cleanup behind it.
         self._off_thread("Preparing the copy…", lambda r: None,
-                         self._open_copy,
+                         lambda r: QTimer.singleShot(
+                             0, self, lambda: None if self._gone() else self._open_copy(r)),
                          lambda exc: self.status.setText(f"Could not open the copy: {exc}"))
 
     def _open_copy(self, result) -> None:
@@ -606,7 +617,8 @@ class UpscaleDialog(QDialog):
         a landing after Close does nothing."""
         layers, t = self._layers, self._tighten
         shown = self._result if self._result_is_current() else None
-        self._busy = True
+        self._busy = self._exporting = True
+        self._tighten_timer.stop()          # re-armed at the landing if still needed
         self._close_gate()
         self.status.setText(message)
         self.status_ring.set_indeterminate()
@@ -620,7 +632,7 @@ class UpscaleDialog(QDialog):
         def finish() -> bool:
             if self._gone():
                 return False
-            self._busy = False
+            self._busy = self._exporting = False
             self.status_ring.hide()
             if self._rerenders == 0:
                 self._open_gate()
@@ -631,11 +643,16 @@ class UpscaleDialog(QDialog):
             if not finish():
                 return
             if layers is self._layers and t == self._tighten:
-                self._result = result       # already made: a later export need not redo it
+                if shown is None:
+                    self._show_rerendered(result)   # made already: the view need not redo it
+            elif layers is self._layers:
+                self._tighten_timer.start()         # moved mid-save: the view catches up now
             landed(result)
 
         def error(exc) -> None:
             if finish():
+                if layers is self._layers and not self._result_is_current():
+                    self._tighten_timer.start()
                 failed(exc)
 
         run_async(self._pool, work, done, error)

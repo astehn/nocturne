@@ -477,6 +477,9 @@ class StarlessLevelsDialog(QDialog):
         at a size fine enough to be useful while zoomed would make dragging
         stutter, so only the on-screen region is ever composed at full detail.
 
+        A failed Apply's message over the preview goes with the next render:
+        the user has moved on, and it would otherwise cover the picture for good.
+
         "Before" is the untouched composite — black 0.0, white 1.0, the tool
         doing nothing — and is composed ONLY when a compare mode is showing it.
         In Off it would be a second full compose per tick for a picture nobody
@@ -484,6 +487,8 @@ class StarlessLevelsDialog(QDialog):
         """
         if not self.has_layers():
             return              # still splitting: a resize queues this too
+        if not self._applying and not self.waiting.isHidden():
+            self.waiting.hide()     # a failed Apply's message
         view = self.preview
         fit = view.zoom_level() <= 1.0
         if fit:
