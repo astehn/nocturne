@@ -153,3 +153,67 @@ def test_worker_signals_die_on_the_ui_thread(qtbot, monkeypatch):
     # The Worker (a QRunnable, not a QObject) may still end on a pool thread
     # through the pool's own reference; what matters is that by then it holds
     # nothing — no signals, no closure, no token — which _cleanup sees to.
+
+
+def test_a_failed_jobs_traceback_dies_on_the_ui_thread(qtbot, monkeypatch):
+    """The error path: the exception's traceback holds the job's frames, and
+    their closure cells can hold a dialog's self (color_balance_dialog,
+    narrowband_dialog). The UI side keeps the exception until run() has
+    returned, so the pool thread never drops the last reference. Made
+    deterministic by holding run() just after the emit, until the UI thread
+    has handled the error and let go of its own copy."""
+    import threading
+    import time
+
+    from nocturne.ui import worker as W
+    where = []
+
+    class Sentinel:
+        def __del__(self):
+            where.append(threading.current_thread() is threading.main_thread())
+
+    real_send = W.Worker._send
+
+    def slow_send(signals, name, value):
+        real_send(signals, name, value)
+        time.sleep(0.3)                    # the UI thread handles it meanwhile
+    monkeypatch.setattr(W.Worker, "_send", staticmethod(slow_send))
+
+    def job():
+        held = Sentinel()                  # only the traceback's frame keeps it
+        raise RuntimeError(f"boom {id(held)}")
+    pool = QThreadPool()
+    errors = []
+    run_async(pool, job, lambda r: None, lambda e: errors.append(type(e)))
+    qtbot.waitUntil(lambda: errors == [RuntimeError], timeout=5000)
+    pool.waitForDone(5000)
+    qtbot.waitUntil(lambda: where != [], timeout=5000)
+    gc.collect()
+    assert where == [True], "the traceback was released on the pool thread"
+
+
+def test_a_jobs_result_dies_on_the_ui_thread(qtbot, monkeypatch):
+    """The done path: run()'s own `result` must not outlive the UI side's copy."""
+    import threading
+    import time
+
+    from nocturne.ui import worker as W
+    where = []
+
+    class Sentinel:
+        def __del__(self):
+            where.append(threading.current_thread() is threading.main_thread())
+
+    real_send = W.Worker._send
+
+    def slow_send(signals, name, value):
+        real_send(signals, name, value)
+        time.sleep(0.3)
+    monkeypatch.setattr(W.Worker, "_send", staticmethod(slow_send))
+    pool = QThreadPool()
+    done = []
+    run_async(pool, Sentinel, lambda r: done.append(1))
+    qtbot.waitUntil(lambda: done == [1], timeout=5000)
+    pool.waitForDone(5000)
+    qtbot.waitUntil(lambda: where != [], timeout=5000)
+    assert where == [True], "the result was released on the pool thread"

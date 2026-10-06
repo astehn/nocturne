@@ -66,10 +66,18 @@ def test_ticks_prepare_once_per_base(qtbot, tmp_path, monkeypatch, spec):
     for amount in (0.2, 0.5, 0.8, 1.0):
         _tick(win, spec, amount)
     assert len(calls) == 1, "four ticks on one base prepare once"
+    slot = win._prep_slots[_ATTR[spec[0]]]
+    assert slot.held is not None
     win._go_to_id("curves")
+    # Left behind, it held ~266 MB at 33 MP for nobody (review 2026-10-06).
+    assert slot.held is None and slot.token is None, "leaving the step drops it"
     win._go_to_id(spec[0])
     _tick(win, spec, 0.4)
-    assert len(calls) == 1, "a revisit to the same base reuses it"
+    assert len(calls) == 2, "a revisit prepares again"
+    assert slot.held is not None
+
+
+_ATTR = {"recover_core": "_recover_prep", "local_contrast": "_lc_prep"}
 
 
 @pytest.mark.parametrize("spec", _STEPS, ids=[s[0] for s in _STEPS])

@@ -15,16 +15,21 @@ def _gc_on_the_gui_thread(qapp):
 
 @pytest.fixture(autouse=True)
 def _no_worker_outlives_its_test():
-    """A pool job still running when its test ends lands in the next one, on a
-    window pytest-qt has already deleted — the class of crash behind the one
-    full-suite segfault on the no-freezes branch (2026-10-06). Live previews
-    made pool jobs routine. Wait them out here."""
+    """Waits for every global-pool job to finish, then delivers what they
+    posted — their done/error signals and any deferred deletes — before the
+    next test starts. A job's done left queued landed in the NEXT test's event
+    loop, on a window pytest-qt had already deleted: the class of crash behind
+    the one full-suite segfault on the no-freezes branch (2026-10-06). Live
+    previews made pool jobs routine."""
     yield
     try:
-        from PySide6.QtCore import QThreadPool
+        from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
     except ImportError:
         return
     QThreadPool.globalInstance().waitForDone(30000)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(scope="session", autouse=True)

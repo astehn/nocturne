@@ -281,7 +281,40 @@ def test_every_door_opens_in_the_background(qtbot, tmp_path, loads, monkeypatch,
         qtbot.waitUntil(lambda: loads.calls == [path], timeout=3000)
         assert win._busy and win._busy_label_text == "Opening stack.fits…"
         assert win.project is None, "the start page stays until the read is done"
+        # Visible, not merely set: the panel's row is hidden with the right
+        # column, so the start page has to say it itself.
+        qtbot.waitUntil(lambda: win._busy_shown, timeout=3000)
+        page = win._welcome
+        assert page.isVisible()
+        assert page.busy_ring.isVisible() and page.busy_cancel.isVisible()
+        assert page.busy_label.isVisible()
+        assert page.busy_label.text().startswith("Opening stack.fits…")
     assert win.project is not None and win.current_stage_id() == "load"
+    assert not win._welcome.busy_label.isVisible()
+
+
+def test_the_start_page_says_it_is_opening_and_its_cancel_stops_it(qtbot, tmp_path, loads,
+                                                                   monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.show()
+    win._async_enabled = True
+    path = _fits(tmp_path, "pic")
+    loads.hold(path)
+    title = win.windowTitle()
+    page = win._welcome
+    with _drained(qtbot, win, loads):
+        _door_start_page(win, path, monkeypatch)
+        qtbot.waitUntil(lambda: win._busy_shown, timeout=3000)
+        assert page.busy_ring.isVisible() and page.busy_label.isVisible()
+        assert page.busy_cancel.isVisible() and page.busy_cancel.isEnabled()
+        page.busy_cancel.click()
+    assert win.project is None
+    assert win._center_stack.currentWidget() is page and page.isVisible()
+    assert win.windowTitle() == title
+    assert "Cancelled" in win.output_panel.toPlainText()
+    assert not (page.busy_ring.isVisible() or page.busy_label.isVisible()
+                or page.busy_cancel.isVisible())
+    assert _incoming(win) == []
 
 
 def test_auto_enhance_from_the_start_page_carries_on_after_the_open(qtbot, tmp_path, loads,

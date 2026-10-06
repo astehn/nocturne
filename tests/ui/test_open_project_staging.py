@@ -249,3 +249,96 @@ def test_a_staged_snapshot_gone_before_it_lands_is_written_again(qtbot, tmp_path
     assert win._source_label == "stack.fits"
     assert np.array_equal(np.load(win.project._paths[0]), mw.load_fits(second).data)
     assert not win._warning.text()
+
+
+# --- final review: adoption, close, and the files-present guard -------------------
+def _cache_states(win):
+    d = win._cache_dir
+    return sorted(n for n in os.listdir(d) if n.startswith("state_")) if os.path.isdir(d) else []
+
+
+def test_a_project_load_landing_after_close_adopts_nothing(qtbot, setup):
+    win, bundle = setup
+    held = _Held()
+    win._load_project_fn = held
+    adopted = []
+    real = win._apply_loaded_project
+    win._apply_loaded_project = lambda *a, **k: (adopted.append(a), real(*a, **k))
+    win._open_project(bundle)
+    assert held.loaded.wait(10)
+    assert _staged(win), "precondition: the load has staged its states"
+    win.close()
+    held.gate.set()
+    QThreadPool.globalInstance().waitForDone(10000)
+    qtbot.wait(50)
+    assert adopted == [], "a load landing after close adopted nothing"
+    assert _staged(win) == []
+    assert _cache_states(win) == []
+
+
+def test_working_files_gone_before_adoption_change_nothing(qtbot, setup):
+    """The files_present() guard: a staged state removed before the result
+    lands (pruned, tidied away) must not be adopted as a broken history."""
+    win, bundle = setup
+    held = _Held()
+    win._load_project_fn = held
+    before = _live(win)
+    win._open_project(bundle)
+    assert held.loaded.wait(10)
+    for root, _dirs, files in os.walk(held.dirs[0]):
+        for n in files:
+            if n.startswith("state_"):
+                os.remove(os.path.join(root, n))
+    held.gate.set()
+    _idle(qtbot, win)
+    _unchanged(before, win)
+    assert "disappeared while it loaded" in win._warning.text()
+    assert _staged(win) == []
+
+
+def test_adoption_that_fails_mid_move_lands_on_the_start_page(qtbot, setup, monkeypatch):
+    from nocturne.history.project import Project
+    win, bundle = setup
+    real = Project.relocate
+    moved = []
+
+    def half_then_fail(self, cache_dir):
+        src = self._paths[0]
+        os.replace(src, os.path.join(cache_dir, "state_0.npy"))   # one file moved
+        moved.append(src)
+        raise OSError("disk went away")
+    monkeypatch.setattr(Project, "relocate", half_then_fail)
+    warned = []
+    real_warn = win._show_warning
+    monkeypatch.setattr(win, "_show_warning", lambda m: (warned.append(m), real_warn(m)))
+    win._open_project(bundle)
+    _idle(qtbot, win)
+    assert moved, "precondition: the move started"
+    assert win.project is None
+    assert win._center_stack.currentWidget() is win._welcome
+    assert not win.stepper.isVisible()
+    assert warned == ["Could not open project: disk went away"]
+    assert _staged(win) == [] and _cache_states(win) == []
+    assert win._project_path is None and not win._dirty
+    monkeypatch.setattr(Project, "relocate", real)
+
+
+def test_adoption_prunes_what_superseded_opens_staged(qtbot, setup):
+    win, bundle = setup
+    stray = os.path.join(win._staging_dir(), "p999")
+    os.makedirs(stray)
+    open(os.path.join(stray, "state_0.npy"), "wb").close()
+    win._open_project(bundle)
+    _idle(qtbot, win)
+    assert win._project_path == bundle
+    assert _staged(win) == []
+
+
+def test_startup_prunes_what_a_crash_staged(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    stray = os.path.join(win._staging_dir(), "i7")
+    os.makedirs(stray)
+    open(os.path.join(stray, "staged.npy"), "wb").close()
+    again = _window(qtbot, tmp_path)
+    assert again._staging_dir() == win._staging_dir()
+    assert _staged(again) == []

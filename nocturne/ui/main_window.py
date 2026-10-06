@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
+        self._prune_staged()    # what a crash or kill mid-open left behind
         # How LINEAR data is DRAWN. A view preference, never image state: it is
         # a property of how you are looking, not of what you captured, so it
         # lives here rather than on AstroImage.metadata. Measurements keep the
@@ -663,6 +664,7 @@ class MainWindow(QMainWindow):
         # change, computed once per base by the live preview (_request_prepared)
         # and reused by Apply. In slots, so a preview job reads the slot, not self.
         self._prep_slots = {"_recover_prep": _PrepSlot(), "_lc_prep": _PrepSlot()}
+        self._base_cache = None   # (base token, image): see _preview_base
         self._sat_failed = None   # sig of a prepare that has not landed (failed/cancelled/running)
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
@@ -766,7 +768,8 @@ class MainWindow(QMainWindow):
             on_haoiii=self._open_haoiii,
             on_recent=lambda p: self._open_project(p),
             recent=lambda: list(self.settings.recent_projects),
-            locked=lambda: self._busy)
+            locked=lambda: self._busy,
+            on_cancel=lambda: self._cancel_active())
         self._center_stack.addWidget(self._welcome)   # page 0
         self._center_stack.addWidget(self.image_view)  # page 1
         # Drag a project or an image onto the window to open it (2026-10-06).
@@ -1026,10 +1029,12 @@ class MainWindow(QMainWindow):
         # An open still reading must not land on a closed window either: the
         # generation bump drops its result, and the cancel makes its worker
         # remove what it staged once it next checks (after the prune below).
-        self._cancel_active()
-        self._project_gen += 1
+        self._swap_workspace()   # cancels, and bumps the generation
         self._clear_cache()   # leave nothing behind on quit
         self._prune_staged()
+        # Its files are gone now: a cancelled op ending after this re-synced
+        # the controls from project.current() and raised FileNotFoundError.
+        self.project = None
         if not self.isFullScreen():
             self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
             save_settings(self.settings, self._settings_path)
@@ -2833,6 +2838,8 @@ class MainWindow(QMainWindow):
                 and self.project.current().is_linear):
             if not self._ensure_stretched(self._stages[index].label):
                 return          # cancelled: stay where we are, change nothing
+        if index != self._stage:
+            self._leave_step(self._stages[self._stage].id)
         self._stage = index
         self._high_water = max(self._high_water, index)
         self.stepper.set_high_water(self._high_water)
@@ -2844,6 +2851,17 @@ class MainWindow(QMainWindow):
             self.image_view.set_compare(None)
         self._rebuild_panel()
         self._refresh()
+
+    def _leave_step(self, stage_id: str) -> None:
+        """What a step held only for its own previews goes when it is left: the
+        shared base, and Recover Core's or Local Contrast's prepared array
+        (~266 MB at 33 MP, review 2026-10-06). Coming back recomputes."""
+        self._base_cache = None
+        attr = self._PREPARED.get(stage_id)
+        if attr is not None:
+            slot = self._prep_slots[attr]
+            slot.held = None
+            slot.token = None
 
     def _land_deferred_nav(self, run: str | None = None) -> None:
         """Finish a navigation "Apply and continue" deferred while its apply
@@ -3485,8 +3503,20 @@ class MainWindow(QMainWindow):
         # Only now is the live cache free: the old picture's states go (all of
         # them — a shorter history would leave its higher indices behind) and
         # the loaded ones move in from staging.
-        self._clear_cache()
-        loaded.project.relocate(self._cache_dir)
+        try:
+            self._clear_cache()
+            loaded.project.relocate(self._cache_dir)
+        except OSError as exc:
+            # Mid-move, the old picture is gone and the new one half here: no
+            # workspace can be built on that. Land where Close Project does.
+            if staging is not None:
+                _remove_quietly(staging)
+            self.project = None
+            self._land_on_start_page()
+            self._clear_cache()
+            self._prune_staged()
+            self._show_warning(f"Could not open project: {exc}")
+            return
         if staging is not None:
             _remove_quietly(staging)    # what is left: states past a jump_back
         self.project = loaded.project
@@ -3521,6 +3551,7 @@ class MainWindow(QMainWindow):
         self.settings.last_project_dir = os.path.dirname(path)
         add_recent_project(self.settings, path)
         save_settings(self.settings, self._settings_path)
+        self._prune_staged()      # what a superseded open left; ours has just moved
 
     def _solve_state_dict(self) -> dict | None:
         """Serialize the current plate-solve (if any) to JSON-safe data: the WCS
@@ -4820,6 +4851,7 @@ class MainWindow(QMainWindow):
         # The debounce timers too, not only the runner: one armed on the old
         # picture would otherwise ask for a preview of the new one.
         self._quiet_previews()
+        self._base_cache = None
         self._project_gen += 1
         # A deferred "Apply and continue" nav (see _go_to) points at a stage
         # index in THIS workspace's stepper state; the in-flight apply it was
@@ -4964,8 +4996,13 @@ class MainWindow(QMainWindow):
         self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
         self._elapsed_timer.start()
         self._apply_progress_state()    # reflect any progress reported before visuals appeared
+        # The start page hides the right column, and with it the row above:
+        # an open begun there gets the page's own ring, label and Cancel.
+        if self._welcome.isVisible():
+            self._welcome.show_busy(self._busy_label_text)
 
     def _hide_busy_visuals(self) -> None:
+        self._welcome.hide_busy()
         self._ellipsis_timer.stop()
         self._elapsed_timer.stop()
         if self._busy_shown:
@@ -4986,6 +5023,8 @@ class MainWindow(QMainWindow):
     def _tick_ellipsis(self) -> None:
         self._ellipsis_n = (self._ellipsis_n + 1) % 4
         self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
+        if self._welcome.busy_label.isVisible():
+            self._welcome.set_busy_text(self._busy_label.text())
 
     def _tick_elapsed(self) -> None:
         # "42% · 12s" when a number exists: the two share one row since the
@@ -5319,10 +5358,22 @@ class MainWindow(QMainWindow):
 
     def _preview_base(self, stage_id: str):
         """The pre-<stage> image the commit also operates on, so a live preview
-        equals what Apply will produce (WYSIWYG)."""
-        preceding = names_before(stage_id)
-        return self.project.state_at(
-            self._leading_kept(self.project.entries(), preceding))
+        equals what Apply will produce (WYSIWYG).
+
+        One per base, shared: every debounced tick re-read it, so a request
+        waiting behind a running job held a second full-size copy (review
+        2026-10-06). Read-only, because the running job and the waiting one
+        now hold the same array."""
+        token = self._base_token(stage_id)
+        cached = self._base_cache
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        self._base_cache = None         # the old one goes before the new is read
+        img = self.project.state_at(
+            self._leading_kept(self.project.entries(), names_before(stage_id)))
+        img.data.flags.writeable = False
+        self._base_cache = (token, img)
+        return img
 
     def _stretch_linked_for_panel(self) -> bool:
         """What a rebuilt Stretch panel holds. The committed linkage, unless
@@ -5501,19 +5552,24 @@ class MainWindow(QMainWindow):
             return
         slot = self._prep_slots[attr]
         sig = self._sr_sig(img)
-        if slot.held is not None and slot.held[0] != sig:
-            slot.held = None            # never hold two full-size arrays
         token = self._base_token(step_id)
+        if slot.held is not None and (slot.held[0] != sig or slot.token != token):
+            slot.held = None            # never hold two full-size arrays
+            slot.token = None
 
         def compute():
+            # (sig, token), Apply's own rule: the preview never uses a
+            # prepare Apply would refuse. Written only between jobs (_PrepSlot).
             held = slot.held
-            prep = held[1] if held is not None and held[0] == sig else prepare(img)
+            fits = held is not None and held[0] == sig and slot.token == token
+            prep = held[1] if fits else prepare(img)
             return prep, _display(apply(img, prep, amount).data)
 
         def keep(result):
-            if self.project is None or self._base_token(step_id) != token:
-                return
-            if slot.held is None or slot.held[0] != sig:
+            if (self.project is None or self._base_token(step_id) != token
+                    or self.current_stage_id() != step_id):
+                return              # left meanwhile: _leave_step dropped the slot
+            if slot.held is None or slot.held[0] != sig or slot.token != token:
                 slot.held = (sig, result[0])
                 slot.token = token
         self._request_preview(step_id, amount, compute, keep=keep,
@@ -6442,6 +6498,10 @@ class MainWindow(QMainWindow):
         self._share_pending = True
 
         def landed(rgb8) -> None:
+            # A window closed meanwhile: singleShot with a deleted context
+            # object raises out of the slot.
+            if not shiboken6.isValid(self):
+                return
             self._share_pending = False
             # Deferred, never exec()'d inside a worker's slot: the job's
             # cleanup would wait the dialog's whole life behind it.
@@ -7378,9 +7438,16 @@ class MainWindow(QMainWindow):
         image."""
         if not self._confirm_save_if_dirty():
             return
-        self._reset_high_water()
         self._swap_workspace()
         self.project = None
+        self._land_on_start_page()
+        self._clear_cache()   # the undo history is gone — reclaim the disk
+
+    def _land_on_start_page(self) -> None:
+        """The first-launch state, after `_swap_workspace` has retired the
+        workspace and dropped the project: Close Project, and a project
+        adoption that failed mid-move."""
+        self._reset_high_water()
         self.activity.clear()      # the old image's history goes with it; the
                                    # next open then keeps the welcome log
         self._clip_baseline = None
@@ -7393,7 +7460,6 @@ class MainWindow(QMainWindow):
         self._show_chrome(False)
         self._update_title()
         self._update_info_strip()
-        self._clear_cache()   # the undo history is gone — reclaim the disk
 
     def _clear_cache(self) -> None:
         """Delete this session's transient undo snapshots (state_*.npy) from the
@@ -7441,6 +7507,7 @@ class MainWindow(QMainWindow):
         # was must not land on top of it (F2). A step whose preview should
         # follow asks again below (_sync_stretch_preview).
         self._previews.cancel()
+        self._base_cache = None
         self._set_peek(False)   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())

@@ -382,9 +382,13 @@ def test_apply_after_the_base_changed_does_not_use_the_old_prepared_array(
     win._render_recover_preview()
     held = win._recover_prep
     assert held is not None
+    slot = win._prep_slots["_recover_prep"]
+    kept_token = slot.token
     win._go_to_id("stretch")
     win.apply_current({"amount": 0.3, "linked": True})
     win._go_to_id("recover_core")
+    # Leaving drops the slot now; put the stale array back to test Apply's guard.
+    slot.held, slot.token = held, kept_token
     base = win._preview_base("recover_core")
     assert win._sr_sig(base) != held[0] and win._recover_prep is held, \
         "fixture: a stale array is held when Apply is pressed"
@@ -530,3 +534,56 @@ def test_a_failing_cached_apply_commits_nothing(qtbot, tmp_path, monkeypatch, mo
     assert win._panel.recover_slider.isEnabled() and win._panel.apply_btn.isEnabled()
     if mode == "fail":
         assert "boom" in win._warning.text()
+
+
+# --- final review: one preview base per base, shared by every job ---
+
+def test_a_waiting_tick_shares_the_running_jobs_base(qtbot, tmp_path, monkeypatch, hold):
+    """Each tick re-read the base from disk, so a request waiting behind a
+    running job held a second full-size copy. Now both hold the one array."""
+    win, h = _at_levels(qtbot, tmp_path, monkeypatch, hold)
+    _gamma(win, 120)
+    qtbot.waitUntil(lambda: len(h.calls) == 1)
+    _gamma(win, 150)                          # waits behind the held job
+    h.release()
+    qtbot.waitUntil(lambda: len(h.calls) == 2)
+    h.release()
+    _settle(qtbot, win)
+    first, second = h.calls[0][0], h.calls[1][0]
+    assert second is first, "the waiting job read its own copy"
+    assert not first.data.flags.writeable, "shared, so nobody may write it"
+
+
+def test_a_new_base_is_a_new_array(qtbot, tmp_path, monkeypatch):
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("levels")
+    a = win._preview_base("levels")
+    assert win._preview_base("levels") is a
+    win._go_to_id("stretch")
+    assert win._base_cache is None, "leaving the step drops it"
+    win.apply_current({"amount": 0.3, "linked": True})   # a new base for Levels
+    win._go_to_id("levels")
+    b = win._preview_base("levels")
+    assert b is not a and not np.array_equal(b.data, a.data)
+    # The token alone decides, even without a navigation in between.
+    win._base_cache = (("stale",), a)
+    assert win._preview_base("levels") is not a
+
+
+def test_the_preview_needs_the_exact_base_the_array_was_kept_for(qtbot, tmp_path, monkeypatch):
+    """Apply's rule, for the preview too: a prepare Apply would refuse is not
+    used to paint (a matching signature on another base)."""
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("recover_core")
+    calls = []
+    real = mw.recover_prepare
+    monkeypatch.setattr(mw, "recover_prepare", lambda img: (calls.append(1), real(img))[1])
+    win._panel.recover_slider.setValue(40)
+    win._render_recover_preview()
+    assert calls == [1]
+    slot = win._prep_slots["_recover_prep"]
+    slot.token = ("not", "this", "base")
+    win._panel.recover_slider.setValue(50)
+    win._render_recover_preview()
+    assert calls == [1, 1], "the preview trusted an array kept for another base"
+    assert slot.token == win._base_token("recover_core")

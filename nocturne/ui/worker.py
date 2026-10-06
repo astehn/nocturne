@@ -45,11 +45,17 @@ class Worker(QRunnable):
             if self._wants_progress:
                 token.on_progress = signals.progress.emit
             set_ambient(token)
+        # What the job handed back — a result, or an exception whose traceback
+        # holds the job's frames and, through their closure cells, maybe a
+        # dialog's self. The UI side keeps its copy in `_landed` until this
+        # returns, so dropping these here is never the last reference.
+        result = None
         try:
             result = self._fn()
         except (Exception, Cancelled) as exc:  # surfaced to on_error on the main thread
             # Cancelled is a BaseException, so `except Exception` would miss it —
             # catch it here so a user cancel routes to the clean-stop handler.
+            result = exc
             self._send(signals, "error", exc)
         else:
             self._send(signals, "done", result)
@@ -61,14 +67,14 @@ class Worker(QRunnable):
             # Nothing here may outlive this line holding the signals: the UI
             # thread releases them once it sees the flag (`_sweep`), so the
             # last reference to this GUI-thread QObject goes there.
-            del signals, token
+            del signals, token, result
             self._returned = True
 
 
 # Keep workers referenced until they finish; otherwise PySide may garbage-
 # collect the QRunnable (and its signals) before QThreadPool runs it.
 _pending: set = set()
-# (worker, signals) landed on the UI side while run() may still be returning
+# (worker, signals, args) landed on the UI side while run() may still be returning
 # on the pool thread. The signals are a GUI-thread QObject; they are held here
 # until run() has dropped its own reference, then released by the UI thread, so
 # they are never finalised on a pool thread (review 2026-10-06: 7 of 200 were).
@@ -98,7 +104,7 @@ def run_async(pool, fn, on_done, on_error=None, on_progress=None, token=None) ->
     worker = Worker(fn, wants_progress=on_progress is not None, token=token)
     _pending.add(worker)
 
-    def _cleanup(*_):
+    def _cleanup(*args):
         # Disconnected, not just discarded: this closure holds `worker` and is
         # connected to worker.signals, a cycle through the C++ connection that
         # gc cannot see, so every Worker lived for the session (review
@@ -122,8 +128,9 @@ def run_async(pool, fn, on_done, on_error=None, on_progress=None, token=None) ->
         # this list hold them, and _sweep drops this list's after run()'s.
         worker.signals = None
         worker._token = None
-        _landed.append((worker, signals))
-        del signals, connected
+        # `args` too: the result or exception, which run() may still hold.
+        _landed.append((worker, signals, args))
+        del signals, connected, args
         _sweep()
 
     worker.signals.done.connect(on_done)

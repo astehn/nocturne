@@ -766,3 +766,32 @@ def test_no_job_holds_a_window(qtbot, tmp_path, monkeypatch):
     assert len(jobs) >= 9, f"the exercise did not reach the pool ({len(jobs)} jobs)"
     holding = [(getattr(j, "__qualname__", j), _qt_held(j)) for j in jobs if _qt_held(j)]
     assert holding == []
+
+
+def test_a_share_copy_landing_after_the_window_is_gone_does_nothing(qtbot, tmp_path,
+                                                                     monkeypatch, hold, request):
+    """`QTimer.singleShot(0, self, ...)` with a deleted window as context
+    raised out of the slot."""
+    import shiboken6
+
+    import nocturne.ui.main_window as mw
+    from tests.ui.test_main_window import _stretched_window
+    win = _stretched_window(qtbot, tmp_path)
+    win._async_enabled = True
+    opened = []
+    monkeypatch.setattr(mw.MainWindow, "_open_share",
+                        lambda self, *a: opened.append(a))
+    pool = win._pool
+    held = hold(mw, "_share_rgb8")
+    win._share()
+    held.wait(qtbot)
+    win._quiet_previews()
+    # Gone from qtbot's list too: its teardown would close a deleted window.
+    request.node.qt_widgets = [(r, f) for r, f in request.node.qt_widgets if r() is not win]
+    shiboken6.delete(win)
+    errors = []
+    monkeypatch.setattr("sys.excepthook", lambda *a: errors.append(a[1]))
+    held.release()
+    pool.waitForDone(5000)
+    qtbot.wait(50)
+    assert errors == [] and opened == []
