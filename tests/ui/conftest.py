@@ -3,6 +3,16 @@ import inspect
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _gc_on_the_gui_thread(qapp):
+    """As the app does (nocturne/__main__.py): cyclic garbage is collected on
+    the GUI thread only, never inside a pool job (ui/gc_guard.py)."""
+    from nocturne.ui import gc_guard
+    gc_guard.install(qapp)
+    yield
+    gc_guard.uninstall(qapp)
+
+
 @pytest.fixture(autouse=True)
 def _no_worker_outlives_its_test():
     """A pool job still running when its test ends lands in the next one, on a
@@ -15,13 +25,6 @@ def _no_worker_outlives_its_test():
     except ImportError:
         return
     QThreadPool.globalInstance().waitForDone(30000)
-    # And collect the test's cyclic garbage HERE, on the GUI thread. Left for
-    # later, a collection can be triggered inside any thread running Python —
-    # a pool job — and a QDialog in a cycle is then destroyed on that thread
-    # (shown 2026-10-06: gc.collect() in a run_async job freed a dialog on the
-    # pool thread).
-    import gc
-    gc.collect(1)        # the young generations: a full collect per test cost ~15% of the run
 
 
 @pytest.fixture(scope="session", autouse=True)
