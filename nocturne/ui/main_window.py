@@ -24,7 +24,10 @@ from ..core import nr_models
 from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
-from ..core.export import camera_cards, save_fits, save_png, save_tiff, _to_uint
+from ..core.export import camera_cards, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
+# The start page thumbnail saved inside a project: twice the card it is
+# drawn in (welcome.py), so it stays sharp on a Retina screen.
+PREVIEW_EDGE = 480
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
 from ..history.project import Project
@@ -3205,10 +3208,17 @@ class MainWindow(QMainWindow):
                                     # to the OLD path
 
         clip_baseline = self._clip_baseline
+        linked = self._view_linked
 
         def work():
+            # The start page's thumbnail, drawn as the canvas draws it. Never
+            # worth failing a save over.
+            try:
+                preview = jpeg_bytes(project.current(), PREVIEW_EDGE, linked=linked, quality=85)
+            except Exception:
+                preview = None
             save_project(project, path, solve_state=solve_state, source_label=source_label,
-                         clip_baseline=clip_baseline,
+                         clip_baseline=clip_baseline, preview_jpeg=preview,
                          on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
 
         def on_result(_result) -> None:
@@ -6301,7 +6311,6 @@ class MainWindow(QMainWindow):
         handle = (getattr(self.settings, "handle", "") or "").strip()
 
         img = self.project.current()
-        from ..core.export import jpeg_bytes
         data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
 
         # run_async, NOT a hand-rolled QRunnable.

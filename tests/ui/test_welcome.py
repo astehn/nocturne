@@ -63,12 +63,12 @@ def test_at_most_five_are_shown_and_the_list_follows_the_settings(qtbot, tmp_pat
     assert len(w.recent_buttons) == 2
     source["list"] = files
     w.refresh_recent()
-    assert len(w.recent_buttons) == RECENT_SHOWN == 5
+    assert len(w.recent_buttons) == RECENT_SHOWN == 4
 
 
 def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
     files = []
-    for i in range(5):
+    for i in range(4):
         p = tmp_path / f"p{i}.nocturne"
         p.write_text("x")
         files.append(str(p))

@@ -212,9 +212,11 @@ QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
 QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
 QLabel#welcomeHint {{ font-size: 13px; color: {TEXT_FAINT}; }}
-QLabel#welcomeRecentTitle {{ font-size: 12px; color: {TEXT_FAINT}; }}
-QPushButton#welcomeRecent {{ background: transparent; border: none; color: {ACCENT}; padding: 2px 8px; }}
-QPushButton#welcomeRecent:hover {{ color: {ACCENT_HI}; }}
+QLabel#welcomeRecentTitle {{ font-size: 17px; font-weight: 600; color: {TEXT_DIM}; }}
+QToolButton#welcomeRecent {{ background: transparent; border: 1px solid transparent;
+    border-radius: 8px; color: {TEXT_DIM}; font-size: 12px; padding: 6px; }}
+QToolButton#welcomeRecent:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+QToolButton#welcomeRecent:disabled {{ color: {TEXT_FAINT}; }}
 QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
 QLabel#dropOverlay {{ background: rgba(20, 22, 26, 215); border: 2px dashed {ACCENT};
