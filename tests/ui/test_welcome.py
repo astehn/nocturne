@@ -104,8 +104,25 @@ def test_the_recent_list_unlocks_when_work_ends(qtbot, tmp_path):
     p.write_text("x")
     win = _window(qtbot, tmp_path)
     win.settings.recent_projects = [str(p)]
+    win.show()                                  # the start page on screen
+    qtbot.waitExposed(win)
     win._set_busy(True)
     win._welcome.refresh_recent()               # rebuilt mid-run (e.g. the page re-shown)
     assert not win._welcome.recent_buttons[0].isEnabled()
     win._set_busy(False)
+    assert win._welcome.recent_buttons[0].isEnabled()
+
+
+def test_a_list_built_locked_while_hidden_is_live_when_shown(qtbot, tmp_path):
+    """Hidden, it is not rebuilt when work ends — showing it rebuilds it."""
+    from tests.ui.test_main_window import _window
+    p = tmp_path / "a.nocturne"
+    p.write_text("x")
+    win = _window(qtbot, tmp_path)
+    win.settings.recent_projects = [str(p)]
+    win._set_busy(True)
+    win._welcome.refresh_recent()
+    win._set_busy(False)
+    win.show()
+    qtbot.waitExposed(win)
     assert win._welcome.recent_buttons[0].isEnabled()

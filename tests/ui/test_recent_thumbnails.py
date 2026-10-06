@@ -56,10 +56,13 @@ def test_a_broken_file_does_not_break_the_start_page(tmp_path):
 
 def test_the_card_shows_the_preview_and_old_projects_the_crescent(qtbot, tmp_path, monkeypatch):
     win, path = _saved_by_the_app(qtbot, tmp_path, monkeypatch)
+    from nocturne.ui.welcome import CARD_W, CARD_H, _CARD_BG
     with_preview = _card_pixmap(read_preview(path), 1.0).toImage()
     placeholder = _card_pixmap(None, 1.0).toImage()
     assert with_preview.size() == placeholder.size()
-    assert with_preview != placeholder, "a saved picture is not the placeholder"
+    # The picture fills the middle of the card; the ground shows only around it.
+    centre = with_preview.pixelColor(CARD_W // 2, CARD_H // 2)
+    assert centre != _CARD_BG and centre != placeholder.pixelColor(CARD_W // 2, CARD_H // 2)
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [path])
     qtbot.addWidget(w)
     assert len(w.recent_buttons) == 1 and w.recent_buttons[0].text() == "M 31"
@@ -98,3 +101,36 @@ def test_nothing_but_the_cards_is_drawn_in_the_row(qtbot, tmp_path):
     qtbot.waitExposed(w)
     shown = [b for b in w._recent_area.findChildren(QToolButton) if b.isVisible()]
     assert shown == w.recent_buttons
+
+
+def test_a_preview_that_fails_never_fails_the_save(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.main_window as mw
+
+    def boom(*a, **k):
+        raise RuntimeError("no preview today")
+    monkeypatch.setattr(mw, "jpeg_bytes", boom)
+    win, path = _saved_by_the_app(qtbot, tmp_path, monkeypatch)
+    assert read_preview(path) is None
+    assert [n for n, _ in load_project(path, str(tmp_path / "c")).project.entries()] == ["Stretch"]
+
+
+def test_the_preview_is_drawn_from_a_small_copy(qtbot, tmp_path):
+    """Stretching the whole frame first cost ~2.9 GB extra on a 33 MP save."""
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.main_window import PREVIEW_EDGE, _preview_source
+    big = AstroImage(np.zeros((4320, 7680, 3), np.float32), is_linear=True, metadata={})
+    src = _preview_source(big)
+    assert max(src.data.shape[:2]) <= 4 * PREVIEW_EDGE and src.is_linear
+    small = AstroImage(np.zeros((300, 400, 3), np.float32), is_linear=False, metadata={})
+    assert _preview_source(small) is small
+
+
+def test_a_hidden_start_page_is_not_rebuilt_after_every_step(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    assert not win._welcome.isVisible()
+    calls = []
+    win._welcome.refresh_recent = lambda: calls.append(1)
+    win._set_busy(True)
+    win._set_busy(False)
+    assert calls == []
