@@ -88,6 +88,7 @@ def _state(win):
         project=win.project,
         names=[n for n, _ in win.project.entries()],
         data=win.project.current().data.copy(),
+        state0=win.project.state_at(0).data.copy(),
         canvas=win.image_view._item.pixmap().toImage().copy(),
         title=win.windowTitle(),
         label=win._source_label,
@@ -105,6 +106,7 @@ def _same(a, b):
     assert a["project"] is b["project"]
     assert a["names"] == b["names"]
     assert np.array_equal(a["data"], b["data"])
+    assert np.array_equal(a["state0"], b["state0"])
     assert a["canvas"] == b["canvas"]
     for k in ("title", "label", "stage", "log", "dirty", "gen", "tiff"):
         assert a[k] == b[k], k
@@ -255,6 +257,8 @@ def _door_start_page(win, path, monkeypatch):
 
 
 def _door_drop(win, path, monkeypatch):
+    # sendEvent is safe here: the enter is ACCEPTED first. A drop sent after a
+    # REFUSED enter to a shown window segfaults inside Qt (see the refusal test).
     mime = _mime(path)
     _enter(win, mime)
     _drop(win, mime)

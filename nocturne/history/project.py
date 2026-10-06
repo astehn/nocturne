@@ -24,6 +24,22 @@ class Project:
         self._position = 0
         self._save(0, base, written=written)
 
+    def relocate(self, cache_dir: str) -> None:
+        """Move every state file into `cache_dir`, keeping its index. A project
+        is loaded into a staging folder off the UI thread, because the live
+        cache holds the CURRENT picture's states until the swap; this adopts it
+        afterwards. One os.replace per file: each file is either here or there."""
+        os.makedirs(cache_dir, exist_ok=True)
+        for i, src in enumerate(self._paths):
+            dest = os.path.join(cache_dir, f"state_{i}.npy")
+            if os.path.abspath(src) != os.path.abspath(dest):
+                os.replace(src, dest)
+            self._paths[i] = dest
+        self._dir = cache_dir
+
+    def files_present(self) -> bool:
+        return all(os.path.isfile(p) for p in self._paths)
+
     @property
     def position(self) -> int:
         return self._position

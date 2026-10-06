@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import shutil
 
 import numpy as np
 import shiboken6
@@ -464,9 +465,12 @@ MIN_WINDOW = (1120, 650)
 
 
 def _remove_quietly(path: str) -> None:
-    """A staged file nobody will use; already gone is fine."""
+    """A staged file or folder nobody will use; already gone is fine."""
     try:
-        os.remove(path)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
     except OSError:
         pass
 
@@ -1010,6 +1014,11 @@ class MainWindow(QMainWindow):
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._previews.cancel()     # and one computing: nothing lands on a closed window
+        # An open still reading must not land on a closed window either: the
+        # generation bump drops its result, and the cancel makes its worker
+        # remove what it staged once it next checks (after the prune below).
+        self._cancel_active()
+        self._project_gen += 1
         self._clear_cache()   # leave nothing behind on quit
         self._prune_staged()
         if not self.isFullScreen():
@@ -3266,7 +3275,9 @@ class MainWindow(QMainWindow):
             # the Import panel offers its verdict switch only for a file that
             # could plausibly be either, and a FITS never is.
             self._opened_as_tiff = tiff
-            self.open_image(base, name, staged=staged)   # clears _project_path itself
+            # Gone from under us (a prune, the user's disk tidy-up): write it
+            # again here rather than fail half-way through the swap.
+            self.open_image(base, name, staged=staged if os.path.isfile(staged) else None)
             if then is not None:
                 then()
 
@@ -3405,17 +3416,29 @@ class MainWindow(QMainWindow):
         # window is indistinguishable from a crash — the same symptom as the
         # dialog bug that once cost a session. Saving already worked this way;
         # loading, the slower half, did not.
-        cache_dir = self._cache_dir          # captured HERE, on the UI thread: the
-        load = self._load_project_fn or load_project   # worker reads self at an
-        self._open_seq += 1                  # moment, by which time it may have moved
-        seq = self._open_seq
+        load = self._load_project_fn or load_project   # captured HERE, on the UI
+        self._open_seq += 1                  # thread: the worker reads at an unknown
+        seq = self._open_seq                 # moment, by which time self may have moved
+        # Loaded into a folder of its own, NOT the live cache: the live cache
+        # holds the current picture's states until the swap, and loading into
+        # it overwrote them — a failed or slow load left peek, undo and Cmd-S
+        # reading the OTHER bundle's pixels (review 2026-10-06).
+        staging = os.path.join(self._staging_dir(), f"p{seq}")
+        progress = self._load_signals.progress
 
         def work():
+            token = current_token()
             try:
-                return load(path, cache_dir,
-                            on_progress=lambda d, t: self._load_signals.progress.emit(d, t))
+                loaded = load(path, staging, on_progress=lambda d, t: progress.emit(d, t))
+                if token is not None:
+                    token.check()
             except NewerVersionError:
+                _remove_quietly(staging)
                 return _NEWER_VERSION    # not an error path: it has its own message
+            except BaseException:
+                _remove_quietly(staging)
+                raise
+            return loaded
 
         def on_result(loaded) -> None:
             if seq != self._open_seq:
@@ -3423,21 +3446,34 @@ class MainWindow(QMainWindow):
                 # cannot catch this: it only bumps when a load COMMITS, so two
                 # in-flight loads both look current and the first to finish would
                 # win — the opposite of what the user last asked for.
+                _remove_quietly(staging)
                 return
             if loaded is _NEWER_VERSION:
                 self._show_warning("This project was made by a newer version of "
                                    "Nocturne — update the app to open it.")
                 return
-            self._apply_loaded_project(path, loaded)
+            if not loaded.project.files_present():
+                _remove_quietly(staging)
+                self._show_warning("Could not open project: its working files "
+                                   "disappeared while it loaded. Try again.")
+                return
+            self._apply_loaded_project(path, loaded, staging)
 
         self._run_busy(work, on_result, "Opening project…", "Could not open project")
 
-    def _apply_loaded_project(self, path: str, loaded) -> None:
+    def _apply_loaded_project(self, path: str, loaded, staging: str | None = None) -> None:
         """Commit a loaded bundle. Reached only on success, so every failure —
         cancelled dialog, newer version, unreadable file — still leaves the
         current workspace and any in-flight op untouched."""
         had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
+        # Only now is the live cache free: the old picture's states go (all of
+        # them — a shorter history would leave its higher indices behind) and
+        # the loaded ones move in from staging.
+        self._clear_cache()
+        loaded.project.relocate(self._cache_dir)
+        if staging is not None:
+            _remove_quietly(staging)    # what is left: states past a jump_back
         self.project = loaded.project
         self._source_label = loaded.source_label
         # Restored, not recomputed: the current state is mid-edit, so measuring
@@ -3450,18 +3486,22 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._restore_solve_state(loaded.solve_state)
         self._center_stack.setCurrentWidget(self.image_view)
-        self._park_on_import()
-        self._show_chrome(True)  # reveal stepper + panel now there's an image
-        self._clear_warning()
-        if had_image:           # as in open_image: the first open keeps the welcome log
-            self.activity.clear()
-        h, w = self.project.current().data.shape[:2]
-        self.log_panel.append_entry(
-            format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
-        )
-        entries = self.project.entries()
-        self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
-        self._rebuild_panel()
+        self._hold_paint = True     # one paint, at the end — see open_image
+        try:
+            self._park_on_import()
+            self._show_chrome(True)  # reveal stepper + panel now there's an image
+            self._clear_warning()
+            if had_image:           # as in open_image: the first open keeps the welcome log
+                self.activity.clear()
+            h, w = self.project.current().data.shape[:2]
+            self.log_panel.append_entry(
+                format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
+            )
+            entries = self.project.entries()
+            self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
+            self._rebuild_panel()
+        finally:
+            self._hold_paint = False
         self._refresh()
         self.settings.last_project_dir = os.path.dirname(path)
         add_recent_project(self.settings, path)
@@ -7326,16 +7366,16 @@ class MainWindow(QMainWindow):
         return os.path.join(self._cache_dir, "incoming")
 
     def _prune_staged(self) -> None:
-        """Remove image-open snapshots that never landed: a superseded open
-        drops its result without a word. Best-effort, like _clear_cache."""
+        """Remove what image and project opens staged and never landed: a
+        superseded open drops its result without a word. Best-effort, like
+        _clear_cache."""
         d = self._staging_dir()
         try:
             names = os.listdir(d)
         except OSError:
             return
         for name in names:
-            if name.endswith(".npy"):
-                _remove_quietly(os.path.join(d, name))
+            _remove_quietly(os.path.join(d, name))
 
     def _show_provenance(self) -> None:
         if self.project is None:
