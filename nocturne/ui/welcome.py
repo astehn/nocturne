@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, APP_TAGLINE
 from ..history.project_store import read_preview
+from .progress_ring import ProgressRing
+from .side_panel import _ElidingLabel
 
 # The last few projects, as thumbnail cards in ONE row (Andreas, 2026-10-06:
 # "4 larger ones"). The menu keeps up to eight; the start page is a quick way
@@ -71,7 +73,8 @@ class WelcomeScreen(QWidget):
     2026-10-05: it offered two ways in where there are four)."""
 
     def __init__(self, on_open, on_stack, on_open_project=None, on_haoiii=None,
-                 on_recent=None, recent=None, locked=None, parent=None) -> None:
+                 on_recent=None, recent=None, locked=None, on_cancel=None,
+                 parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("welcome")
         self._on_recent = on_recent
@@ -108,6 +111,36 @@ class WelcomeScreen(QWidget):
         buttons.setAlignment(Qt.AlignmentFlag.AlignCenter)
         for b in (self.open_btn, self.open_project_btn, self.haoiii_btn, self.stack_btn):
             buttons.addWidget(b)
+
+        # The open's sign of life. The panel's busy row lives in the right
+        # column, which the start page hides, so an image or project opened
+        # from here showed nothing for seconds (review 2026-10-06). Its room
+        # is reserved like the update note's: a row appearing would move the
+        # centred buttons under the cursor.
+        self.busy_row = QWidget()
+        self.busy_ring = ProgressRing(size="small")
+        self.busy_label = QLabel("")
+        self.busy_label.setObjectName("welcomeBusy")
+        self.busy_cancel = QPushButton("Cancel")
+        self.busy_cancel.clicked.connect(lambda: on_cancel and on_cancel())
+        busy = QHBoxLayout(self.busy_row)
+        busy.setContentsMargins(0, 0, 0, 0)
+        busy.setSpacing(8)
+        busy.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        busy.addWidget(self.busy_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        busy.addWidget(self.busy_label)
+        busy.addWidget(self.busy_cancel)
+        self.busy_row.setFixedHeight(self.busy_cancel.sizeHint().height())
+        for w in (self.busy_ring, self.busy_label, self.busy_cancel):
+            w.hide()
+        # The warnings the right column shows, here while it is hidden: a failed
+        # open from the start page reported into a hidden label, which is the
+        # silent drop ruled out on 2026-10-05. Reserved room, like the rows
+        # above; elided, never widening the page.
+        self.warning_label = _ElidingLabel("welcomeWarning")
+        self.warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warning_label.setFixedHeight(self.warning_label.fontMetrics().lineSpacing() * 2 + 4)
+        self.warning_label.hide()
 
         # A new release, announced once (Andreas, 2026-09-26: no pop-up). Its
         # room is reserved from the start: the check lands seconds after launch,
@@ -152,11 +185,41 @@ class WelcomeScreen(QWidget):
         root.addWidget(hint)
         root.addSpacing(20)
         root.addLayout(buttons)
-        root.addSpacing(16)
+        root.addSpacing(12)
+        root.addWidget(self.busy_row)
+        root.addWidget(self.warning_label)
+        self._warning_room = QWidget()      # holds the room while no warning shows
+        self._warning_room.setFixedHeight(self.warning_label.height())
+        root.addWidget(self._warning_room)
+        root.addSpacing(4)
         root.addWidget(self.update_note)
         root.addSpacing(12)
         root.addWidget(self._recent_area, 0, Qt.AlignmentFlag.AlignHCenter)
         self.refresh_recent()
+
+    def show_busy(self, text: str) -> None:
+        self.busy_label.setText(text)
+        for w in (self.busy_ring, self.busy_label, self.busy_cancel):
+            w.show()
+
+    def set_busy_text(self, text: str) -> None:
+        self.busy_label.setText(text)
+
+    def hide_busy(self) -> None:
+        for w in (self.busy_ring, self.busy_label, self.busy_cancel):
+            w.hide()
+        self.busy_label.setText("")
+        self.busy_ring.set_indeterminate()
+
+    def show_warning(self, text: str) -> None:
+        self.warning_label.setText(text)
+        self._warning_room.hide()
+        self.warning_label.show()
+
+    def clear_warning(self) -> None:
+        self.warning_label.setText("")
+        self.warning_label.hide()
+        self._warning_room.show()
 
     def set_update_note(self, html: str) -> None:
         self.update_note.setText(html)

@@ -68,3 +68,63 @@ def test_greyscale_path():
     out = recover_core(AstroImage(lum), 0.7)
     assert out.data.ndim == 2
     assert out.data.min() >= 0.0 and out.data.max() <= 1.0
+
+
+# --- F3: the slider's preview reuses the blur; the picture must not move ----
+
+def _today_recover_core(img, amount):
+    """recover_core as it stood before the split (2026-10-06), frozen here so
+    the prepared path is held to the old function bit for bit."""
+    from skimage.filters import gaussian
+    amount = float(np.clip(amount, 0.0, 1.0))
+    data = np.clip(img.data, 0.0, 1.0).astype(np.float32)
+    if amount == 0.0:
+        return data
+    mono = data.ndim == 2
+    lum = data if mono else data.mean(axis=2)
+    h, w = lum.shape
+    sigma = max(1.0, 0.015 * min(h, w))
+    t = np.clip((lum - 0.55) / (0.92 - 0.55), 0.0, 1.0)
+    mask = t * t * (3.0 - 2.0 * t)
+    blur = gaussian(lum, sigma=sigma, preserve_range=True).astype(np.float32)
+    detail = lum - blur
+    compressed = blur ** (1.0 + amount)
+    boosted = compressed + (1.0 + amount) * detail
+    weight = amount * mask
+    new_lum = np.clip(lum * (1.0 - weight) + boosted * weight, 0.0, 1.0)
+    if mono:
+        out = new_lum
+    else:
+        ratio = new_lum / np.maximum(lum, 1e-6)
+        out = np.clip(data * ratio[..., None], 0.0, 1.0)
+    return out.astype(np.float32)
+
+
+def _bases():
+    """Non-square, out-of-range values, bright structured cores: colour and mono."""
+    rng = np.random.default_rng(7)
+    col = rng.random((90, 130, 3)).astype(np.float32) * 0.6
+    col[20:60, 30:90] += 0.5 + 0.1 * np.sin(np.arange(60) / 1.5)[None, :, None]
+    col[0, 0] = (-0.2, 1.4, 0.5)
+    mono = col.mean(axis=2) * 1.05
+    return [AstroImage(col, is_linear=False, metadata={"k": 1}),
+            AstroImage(mono.astype(np.float32), is_linear=False)]
+
+
+def test_prepared_path_equals_todays_function_bit_for_bit():
+    from nocturne.core.hdr import apply_prepared, prepare
+    for img in _bases():
+        before = img.data.copy()
+        prepared = prepare(img)
+        for amount in (0.0, 0.2, 0.5, 1.0, 1.3):
+            want = _today_recover_core(img, amount)
+            assert np.array_equal(apply_prepared(img, prepared, amount).data, want), amount
+            assert np.array_equal(recover_core(img, amount).data, want), amount
+        assert np.array_equal(img.data, before), "the base is not written to"
+
+
+def test_apply_prepared_keeps_flags_and_metadata():
+    from nocturne.core.hdr import apply_prepared, prepare
+    img = _bases()[0]
+    out = apply_prepared(img, prepare(img), 0.5)
+    assert out.is_linear is False and out.metadata == {"k": 1}

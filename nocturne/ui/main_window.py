@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import shutil
 
 import numpy as np
 import shiboken6
@@ -63,6 +64,8 @@ from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
 from .busy_gate import BusyGate, keep_live
 from .histogram_view import HistogramView
+from .preview_runner import PreviewRunner
+from .progress_ring import ProgressRing
 from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
@@ -78,8 +81,8 @@ from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSIN
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
 from ..core.saturation import nebula_mask, nebula_saturate, saturate
-from ..core.local_contrast import enhance
-from ..core.hdr import recover_core
+from ..core.local_contrast import apply_prepared as lc_apply, prepare as lc_prepare
+from ..core.hdr import apply_prepared as recover_apply, prepare as recover_prepare
 from ..core.color import ColorSettings, remove_green, remove_green_fringe, remove_green_fringe_masked
 from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
@@ -90,6 +93,7 @@ from ..core.stretch import apply_stretch
 from ..core import sessionlog
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+from ..core.tasks import current as current_token
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
@@ -285,6 +289,55 @@ class _PrecomputedStep(Step):
         return self._image
 
 
+def _sat_compute(base, amount, nebula, layers):
+    """Saturation's effect from what `_sat_inputs` read: pure, so it can run on
+    the pool and is the same function Apply runs."""
+    img = base
+    if layers is not None:
+        starless, stars, mask = layers
+        img = nebula_saturate(starless, stars, nebula, mask=mask)
+    return saturate(img, amount)
+
+
+def _fringe_compute(layers, strength):
+    """De-green Stars from its prepared layers (split or mask): pure, see above."""
+    _, kind, a, b, _c = layers
+    if kind == "split":
+        return remove_green_fringe(a, b, float(strength))
+    return remove_green_fringe_masked(a, b, float(strength))
+
+
+class _PrepSlot:
+    """(sig, array) a live preview prepared for one step. Read by that step's
+    preview job on the pool, written only on the UI thread — and only between
+    jobs, since the runner runs one at a time — and used only when `sig` is the
+    job's own base's, so a write landing mid-job can never pair a base with
+    another base's array."""
+    __slots__ = ("held", "token")
+
+    def __init__(self) -> None:
+        self.held = None
+        self.token = None       # the base_token it was kept for: Apply checks both
+
+
+def _display(data):
+    """What `_show_preview` paints, made on the pool: clipping 33 MP is not free."""
+    return np.clip(data, 0.0, 1.0).astype(np.float32)
+
+
+def _share_rgb8(data):
+    """The 8-bit RGB frame Share works from; pure, so the pool can make it."""
+    rgb8 = _to_uint(data, 8)
+    if rgb8.ndim == 2:
+        rgb8 = np.stack([rgb8] * 3, axis=2)
+    return rgb8
+
+
+def _slot_property(name):
+    return property(lambda self: self._prep_slots[name].held,
+                    lambda self, value: setattr(self._prep_slots[name], "held", value))
+
+
 class _ToolProgressSignals(QObject):
     """Marshals a long tool's progress from the worker thread onto the GUI one.
 
@@ -419,8 +472,21 @@ NOISEX_CHOICE = RC_PRODUCT_NAMES["NoiseX"]
 MIN_WINDOW = (1120, 650)
 
 
+def _remove_quietly(path: str) -> None:
+    """A staged file or folder nobody will use; already gone is fine."""
+    try:
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    except OSError:
+        pass
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
+    _recover_prep = _slot_property("_recover_prep")
+    _lc_prep = _slot_property("_lc_prep")
 
     def __init__(self, settings_path: str, check_updates: bool = True,
                  telemetry: bool = True) -> None:
@@ -444,6 +510,7 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
+        self._prune_staged()    # what a crash or kill mid-open left behind
         # How LINEAR data is DRAWN. A view preference, never image state: it is
         # a property of how you are looking, not of what you captured, so it
         # lives here rather than on AstroImage.metadata. Measurements keep the
@@ -464,6 +531,7 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        self._share_pending = False  # Share's 8-bit copy is being made (_share)
         # (nav counter at defer time, target stage index) to land once the
         # in-flight apply's worker actually completes ("Apply and continue"
         # on an async step) — see _go_to and _land_deferred_nav. Navigating
@@ -512,6 +580,10 @@ class MainWindow(QMainWindow):
         # or a fresh solve lands. See _sync_object_list_visibility.
         self._object_list_dismissed = False
         self._pool = QThreadPool.globalInstance()
+        # Live previews off the UI thread, newest slider position wins (F1).
+        # Not _run_busy: a preview locks and dims nothing (F2).
+        self._previews = PreviewRunner(self, pool=self._pool,
+                                       is_async=lambda: self._async_enabled)
         self._job_queue = JobQueue(self)
         self._job_queue.progress.connect(self._on_job_progress)
         self._job_queue.finished.connect(self._on_job_finished)
@@ -540,6 +612,8 @@ class MainWindow(QMainWindow):
                                         # resolved at CALL time so monkeypatching
                                         # the module still works
         self._open_seq = 0                     # see _open_project's supersede guard
+        self._after_open = None    # what to do once a picked image has opened (Auto Enhance)
+        self._hold_paint = False   # open_image draws its picture once, at the end
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -586,6 +660,11 @@ class MainWindow(QMainWindow):
         self._sat_timer.timeout.connect(self._render_saturation_preview)
         self._sat_layers = None   # the ACTIVE step's handle into _splits (see _remember_split)
         self._sat_mask = None     # (sig, mask): Saturation's nebula mask, built once per split
+        # (sig, array): what the Recover Core / Local Contrast slider does not
+        # change, computed once per base by the live preview (_request_prepared)
+        # and reused by Apply. In slots, so a preview job reads the slot, not self.
+        self._prep_slots = {"_recover_prep": _PrepSlot(), "_lc_prep": _PrepSlot()}
+        self._base_cache = None   # (base token, image): see _preview_base
         self._sat_failed = None   # sig of a prepare that has not landed (failed/cancelled/running)
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
@@ -689,7 +768,8 @@ class MainWindow(QMainWindow):
             on_haoiii=self._open_haoiii,
             on_recent=lambda p: self._open_project(p),
             recent=lambda: list(self.settings.recent_projects),
-            locked=lambda: self._busy)
+            locked=lambda: self._busy,
+            on_cancel=lambda: self._cancel_active())
         self._center_stack.addWidget(self._welcome)   # page 0
         self._center_stack.addWidget(self.image_view)  # page 1
         # Drag a project or an image onto the window to open it (2026-10-06).
@@ -713,6 +793,12 @@ class MainWindow(QMainWindow):
         self._right_layout = right.layout_
         self.histogram_view = HistogramView()
         right.set_histogram(self.histogram_view)   # yields first on short windows
+        # The preview's sign of life: small, no text, no Cancel — a preview is
+        # not the step working, and the next tick replaces it anyway. On the
+        # histogram's corner, because the histogram is what it is about to move.
+        self._preview_ring = ProgressRing(self.histogram_view, size="small")
+        self._preview_ring.hide()
+        self._previews.busyChanged.connect(self._sync_preview_ring)
         self._info_strip = QLabel("")               # resolution · integration · object, under the histogram
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
@@ -939,7 +1025,16 @@ class MainWindow(QMainWindow):
             self._remember_help_geometry()
         for t in self.findChildren(QTimer):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
+        self._previews.cancel()     # and one computing: nothing lands on a closed window
+        # An open still reading must not land on a closed window either: the
+        # generation bump drops its result, and the cancel makes its worker
+        # remove what it staged once it next checks (after the prune below).
+        self._swap_workspace()   # cancels, and bumps the generation
         self._clear_cache()   # leave nothing behind on quit
+        self._prune_staged()
+        # Its files are gone now: a cancelled op ending after this re-synced
+        # the controls from project.current() and raised FileNotFoundError.
+        self.project = None
         if not self.isFullScreen():
             self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
             save_settings(self.settings, self._settings_path)
@@ -1267,6 +1362,8 @@ class MainWindow(QMainWindow):
         self._warning.setStyleSheet("color: #ff6b6b;")
         self._warning.setText(text)
         self.activity.add("warn", text)
+        if self._center_stack.currentWidget() is self._welcome:
+            self._welcome.show_warning(text)    # the right column is hidden there
         self._diag_pending = False
         self._sync_status_slot()
 
@@ -1288,6 +1385,7 @@ class MainWindow(QMainWindow):
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
+        self._welcome.clear_warning()
         self._diag_pending = False
         self._sync_status_slot()
 
@@ -1617,6 +1715,12 @@ class MainWindow(QMainWindow):
         if not path or not os.path.isfile(path):
             self._show_warning(f"That stack is no longer at {path or 'its saved location'}.")
             return
+        if self._busy:
+            # The one open door the busy lock does not cover: refused like a
+            # Finder open, not started alongside the work already running.
+            self._show_warning(f"Finish or cancel what Nocturne is doing, then open "
+                               f"{os.path.basename(path)} again.")
+            return
         self.open_any(path)          # runs _confirm_save_if_dirty
 
     def _on_foreground_master(self, img, label: str, path: str) -> None:
@@ -1658,8 +1762,11 @@ class MainWindow(QMainWindow):
                                  "stretched image.")
             return
         from .star_spikes_dialog import StarSpikesDialog
-        StarSpikesDialog(self.project.current(), parent=self,
-                         on_apply=self._apply_star_spikes).exec()
+        dlg = StarSpikesDialog(self.project.current(), parent=self,
+                               on_apply=self._apply_star_spikes,
+                               is_async=lambda: self._async_enabled)
+        dlg.exec()
+        dlg.deleteLater()      # parented, it outlived exec() holding the frame and its render
 
     def _apply_star_spikes(self, result, params=None) -> None:
         if self.project is None or self._busy:
@@ -1720,6 +1827,9 @@ class MainWindow(QMainWindow):
                                    on_apply=self._apply_starless_levels,
                                    splitter=lambda: self._split_tagged(base),
                                    on_split=on_split)
+        # Apply follows this window's switch. Set, not passed: read only when
+        # OK is pressed, and a stand-in dialog need not know it.
+        dlg._is_async = lambda: self._async_enabled
         dlg.exec()
         dlg.deleteLater()      # a parented dialog outlives exec(); each held two full layers
 
@@ -1894,13 +2004,20 @@ class MainWindow(QMainWindow):
 
     def _auto_enhance(self) -> None:
         if self.project is None:
-            self._choose_fits()      # open the file dialog; loads synchronously if a file is picked
-            if self.project is None:  # cancelled, or load failed (warning already shown)
-                return
-        if self._busy:
+            # The image opens in the background, so carry on from its arrival:
+            # a fresh image has no crop, and that is what Auto Enhance says next.
+            self._after_open = self._auto_enhance
+            try:
+                self._choose_fits()
+            finally:
+                self._after_open = None     # cancelled dialog: nothing to carry on from
             return
+        # Crop before busy: the carry-on above arrives while the open is still
+        # busy, and a freshly opened image's answer is always "crop first".
         if not self._has_crop():
             self._show_warning("Crop your image first — Auto Enhance works from your cropped frame.")
+            return
+        if self._busy:
             return
         entries = self.project.entries()
         kept = self._leading_kept(entries, set(GEOMETRY_NAMES))   # keep the crop (+ any rotate/flip)
@@ -2724,6 +2841,8 @@ class MainWindow(QMainWindow):
                 and self.project.current().is_linear):
             if not self._ensure_stretched(self._stages[index].label):
                 return          # cancelled: stay where we are, change nothing
+        if index != self._stage:
+            self._leave_step(self._stages[self._stage].id)
         self._stage = index
         self._high_water = max(self._high_water, index)
         self.stepper.set_high_water(self._high_water)
@@ -2735,6 +2854,17 @@ class MainWindow(QMainWindow):
             self.image_view.set_compare(None)
         self._rebuild_panel()
         self._refresh()
+
+    def _leave_step(self, stage_id: str) -> None:
+        """What a step held only for its own previews goes when it is left: the
+        shared base, and Recover Core's or Local Contrast's prepared array
+        (~266 MB at 33 MP, review 2026-10-06). Coming back recomputes."""
+        self._base_cache = None
+        attr = self._PREPARED.get(stage_id)
+        if attr is not None:
+            slot = self._prep_slots[attr]
+            slot.held = None
+            slot.token = None
 
     def _land_deferred_nav(self, run: str | None = None) -> None:
         """Finish a navigation "Apply and continue" deferred while its apply
@@ -3128,24 +3258,69 @@ class MainWindow(QMainWindow):
         stretched one arrives False, and `_ensure_stretched` already gates the
         finishing steps on that, so the whole post-stretch tail is reachable
         with nothing committed on the way in.
+
+        The read and the first snapshot's write run OFF the UI thread, as
+        opening a project does: the M 8 drizzle froze the window for 4.1 s
+        (2026-10-06), 2.1 s of it that write. Nothing about the current picture
+        changes until both have succeeded, so a failed or cancelled open leaves
+        it exactly as it was.
         """
         if not self._confirm_save_if_dirty():
             return
+        # Taken now, before the read: a later open must not inherit it.
+        then, self._after_open = self._after_open, None
         # Lowered: macOS hands back whatever the file is actually called, and a
         # case-sensitive test would send a .TIF down the FITS reader.
         tiff = path.lower().endswith((".tif", ".tiff"))
-        try:
-            base = load_tiff(path) if tiff else load_fits(path)
-        except Exception as exc:
-            self._show_warning(f"Could not open file: {exc}")
-            return
-        # Whether the SOURCE was a TIFF, not whether the pixels are linear: the
-        # Import panel offers its verdict switch only for a file that could
-        # plausibly be either, and a FITS never is.
-        self._opened_as_tiff = tiff
-        self.open_image(base, os.path.basename(path))   # clears _project_path itself
+        read = load_tiff if tiff else load_fits
+        name = os.path.basename(path)
+        # Shared with _open_project: whichever open was asked for LAST wins,
+        # image or project. The generation guard alone cannot tell two
+        # in-flight opens apart (it bumps only when one commits).
+        self._open_seq += 1
+        seq = self._open_seq
 
-    def open_image(self, base, label: str) -> None:
+        staging = self._staging_dir()
+        staged = os.path.join(staging, f"{seq}.npy")
+
+        def work():
+            # Only plain values: nothing here may touch the window.
+            token = current_token()
+            base = read(path)
+            if token is not None:
+                token.check()     # Cancel pressed during the read: keep the old picture
+            # The first undo snapshot, written here rather than by Project on
+            # the UI thread; open_image moves it into place. Not as state_0:
+            # that file is the CURRENT picture's until the swap. In a folder of
+            # its own, where _clear_cache (run by that swap) does not look.
+            os.makedirs(staging, exist_ok=True)
+            try:
+                np.save(staged, base.data)
+                if token is not None:
+                    token.check()
+            except BaseException:
+                _remove_quietly(staged)
+                raise
+            return base
+
+        def on_result(base) -> None:
+            if seq != self._open_seq:
+                _remove_quietly(staged)
+                return
+            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
+            # the Import panel offers its verdict switch only for a file that
+            # could plausibly be either, and a FITS never is.
+            self._opened_as_tiff = tiff
+            # Gone from under us (a prune, the user's disk tidy-up): write it
+            # again here rather than fail half-way through the swap.
+            self.open_image(base, name, staged=staged if os.path.isfile(staged) else None)
+            if then is not None:
+                then()
+
+        self._run_busy(work, on_result, f"Opening {name}…", "Could not open file")
+
+    def open_image(self, base, label: str, *, staged: str | None = None) -> None:
+        """`staged`: an .npy already holding `base.data` (see open_any)."""
         # Retire the outgoing workspace FIRST: _clear_cache below deletes the
         # snapshots an in-flight step may be about to write into, and the new
         # Project must not receive a callback belonging to the old one.
@@ -3157,7 +3332,8 @@ class MainWindow(QMainWindow):
         self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
-        self.project = Project(base, self._cache_dir)
+        self.project = Project(base, self._cache_dir, written=staged)
+        self._prune_staged()      # what a superseded open left; ours has just moved
         self._project_path = None   # a new Project is not the bundle we came from:
                                     # leaving the old path here meant the next
                                     # Cmd-S wrote this image over that bundle,
@@ -3165,25 +3341,32 @@ class MainWindow(QMainWindow):
                                     # that restarts the SAME project; it puts
                                     # its path back.
         self._center_stack.setCurrentWidget(self.image_view)
-        self._park_on_import()
-        self._show_chrome(True)  # reveal stepper + panel now there's an image
-        self._clear_warning()
-        if had_image:
-            # Switching images: every kind starts fresh. The FIRST open keeps
-            # what the welcome screen logged, where the column was hidden —
-            # the usage-counting answer was otherwise never seen at all.
-            self.activity.clear()
-        h, w = base.data.shape[:2]
-        self.log_panel.append_entry(
-            format_log_entry(f"Opened {label}", "", None, dims=(w, h))
-        )
-        # Before the navigation, or max() would carry the previous image's mark
-        # over and show steps as skipped in a session that never touched them.
-        self._reset_high_water()
-        self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
-        self._rebuild_panel()
-        self._dirty = False
-        self._update_title()
+        # _show_chrome and the navigation each refresh, and each refresh drew
+        # the same picture: three canvas paints, 1.3 s of the M 8 drizzle's
+        # open (2026-10-06). The last refresh below draws it once.
+        self._hold_paint = True
+        try:
+            self._park_on_import()
+            self._show_chrome(True)  # reveal stepper + panel now there's an image
+            self._clear_warning()
+            if had_image:
+                # Switching images: every kind starts fresh. The FIRST open keeps
+                # what the welcome screen logged, where the column was hidden —
+                # the usage-counting answer was otherwise never seen at all.
+                self.activity.clear()
+            h, w = base.data.shape[:2]
+            self.log_panel.append_entry(
+                format_log_entry(f"Opened {label}", "", None, dims=(w, h))
+            )
+            # Before the navigation, or max() would carry the previous image's mark
+            # over and show steps as skipped in a session that never touched them.
+            self._reset_high_water()
+            self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
+            self._rebuild_panel()
+            self._dirty = False
+            self._update_title()
+        finally:
+            self._hold_paint = False
         self._refresh()
 
     # --- saved projects (.nocturne bundles: image + full edit history + solve state) ---
@@ -3269,17 +3452,29 @@ class MainWindow(QMainWindow):
         # window is indistinguishable from a crash — the same symptom as the
         # dialog bug that once cost a session. Saving already worked this way;
         # loading, the slower half, did not.
-        cache_dir = self._cache_dir          # captured HERE, on the UI thread: the
-        load = self._load_project_fn or load_project   # worker reads self at an
-        self._open_seq += 1                  # moment, by which time it may have moved
-        seq = self._open_seq
+        load = self._load_project_fn or load_project   # captured HERE, on the UI
+        self._open_seq += 1                  # thread: the worker reads at an unknown
+        seq = self._open_seq                 # moment, by which time self may have moved
+        # Loaded into a folder of its own, NOT the live cache: the live cache
+        # holds the current picture's states until the swap, and loading into
+        # it overwrote them — a failed or slow load left peek, undo and Cmd-S
+        # reading the OTHER bundle's pixels (review 2026-10-06).
+        staging = os.path.join(self._staging_dir(), f"p{seq}")
+        progress = self._load_signals.progress
 
         def work():
+            token = current_token()
             try:
-                return load(path, cache_dir,
-                            on_progress=lambda d, t: self._load_signals.progress.emit(d, t))
+                loaded = load(path, staging, on_progress=lambda d, t: progress.emit(d, t))
+                if token is not None:
+                    token.check()
             except NewerVersionError:
+                _remove_quietly(staging)
                 return _NEWER_VERSION    # not an error path: it has its own message
+            except BaseException:
+                _remove_quietly(staging)
+                raise
+            return loaded
 
         def on_result(loaded) -> None:
             if seq != self._open_seq:
@@ -3287,21 +3482,46 @@ class MainWindow(QMainWindow):
                 # cannot catch this: it only bumps when a load COMMITS, so two
                 # in-flight loads both look current and the first to finish would
                 # win — the opposite of what the user last asked for.
+                _remove_quietly(staging)
                 return
             if loaded is _NEWER_VERSION:
                 self._show_warning("This project was made by a newer version of "
                                    "Nocturne — update the app to open it.")
                 return
-            self._apply_loaded_project(path, loaded)
+            if not loaded.project.files_present():
+                _remove_quietly(staging)
+                self._show_warning("Could not open project: its working files "
+                                   "disappeared while it loaded. Try again.")
+                return
+            self._apply_loaded_project(path, loaded, staging)
 
         self._run_busy(work, on_result, "Opening project…", "Could not open project")
 
-    def _apply_loaded_project(self, path: str, loaded) -> None:
+    def _apply_loaded_project(self, path: str, loaded, staging: str | None = None) -> None:
         """Commit a loaded bundle. Reached only on success, so every failure —
         cancelled dialog, newer version, unreadable file — still leaves the
         current workspace and any in-flight op untouched."""
         had_image = self.project is not None     # read before it is replaced
         self._swap_workspace()
+        # Only now is the live cache free: the old picture's states go (all of
+        # them — a shorter history would leave its higher indices behind) and
+        # the loaded ones move in from staging.
+        try:
+            self._clear_cache()
+            loaded.project.relocate(self._cache_dir)
+        except OSError as exc:
+            # Mid-move, the old picture is gone and the new one half here: no
+            # workspace can be built on that. Land where Close Project does.
+            if staging is not None:
+                _remove_quietly(staging)
+            self.project = None
+            self._land_on_start_page()
+            self._clear_cache()
+            self._prune_staged()
+            self._show_warning(f"Could not open project: {exc}")
+            return
+        if staging is not None:
+            _remove_quietly(staging)    # what is left: states past a jump_back
         self.project = loaded.project
         self._source_label = loaded.source_label
         # Restored, not recomputed: the current state is mid-edit, so measuring
@@ -3314,22 +3534,27 @@ class MainWindow(QMainWindow):
         self._update_title()
         self._restore_solve_state(loaded.solve_state)
         self._center_stack.setCurrentWidget(self.image_view)
-        self._park_on_import()
-        self._show_chrome(True)  # reveal stepper + panel now there's an image
-        self._clear_warning()
-        if had_image:           # as in open_image: the first open keeps the welcome log
-            self.activity.clear()
-        h, w = self.project.current().data.shape[:2]
-        self.log_panel.append_entry(
-            format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
-        )
-        entries = self.project.entries()
-        self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
-        self._rebuild_panel()
+        self._hold_paint = True     # one paint, at the end — see open_image
+        try:
+            self._park_on_import()
+            self._show_chrome(True)  # reveal stepper + panel now there's an image
+            self._clear_warning()
+            if had_image:           # as in open_image: the first open keeps the welcome log
+                self.activity.clear()
+            h, w = self.project.current().data.shape[:2]
+            self.log_panel.append_entry(
+                format_log_entry(f"Opened project {os.path.basename(path)}", "", None, dims=(w, h))
+            )
+            entries = self.project.entries()
+            self._navigate_to_step(entries[-1][0] if entries else None)   # land on the restored step
+            self._rebuild_panel()
+        finally:
+            self._hold_paint = False
         self._refresh()
         self.settings.last_project_dir = os.path.dirname(path)
         add_recent_project(self.settings, path)
         save_settings(self.settings, self._settings_path)
+        self._prune_staged()      # what a superseded open left; ours has just moved
 
     def _solve_state_dict(self) -> dict | None:
         """Serialize the current plate-solve (if any) to JSON-safe data: the WCS
@@ -4385,8 +4610,33 @@ class MainWindow(QMainWindow):
                 # consequence of a choice, not an error, and must be noticed.
                 self._show_notice(spcc_lost)
 
-        self._run_busy(lambda: step.apply(base, option), on_result,
+        # Apply commits the controls, so a preview still computing — or about to
+        # start from a debounce timer, a second 6 s prepare beside the commit —
+        # is nobody's picture any more (F2).
+        self._quiet_previews()
+        self._run_busy(self._commit_work(stage_id, step, base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
+
+    # Steps whose live preview prepares what the slider does not change, and
+    # the function that finishes the effect from it.
+    _PREPARED = {"recover_core": "_recover_prep", "local_contrast": "_lc_prep"}
+
+    def _commit_work(self, stage_id: str, step, base, option):
+        """What Apply runs. Recover Core and Local Contrast reuse the array the
+        preview prepared — when it was prepared from these exact pixels — rather
+        than spend another 6.2 s on the same blur; `apply_prepared` is bit-
+        identical to the plain function (tests/core/test_hdr.py). The recorded
+        option is unchanged, and replay and export still call the plain step."""
+        attr = self._PREPARED.get(stage_id)
+        if attr is not None:
+            slot = self._prep_slots[attr]
+            held = slot.held
+            if (held is not None and slot.token == self._base_token(stage_id)
+                    and held[0] == self._sr_sig(base)):
+                finish = recover_apply if stage_id == "recover_core" else lc_apply
+                prep, amount = held[1], step.amount(option)
+                return lambda: finish(base, prep, amount)
+        return lambda: step.apply(base, option)
 
     def _save_settings(self) -> None:
         """Persist settings through the path this window was GIVEN.
@@ -4601,6 +4851,10 @@ class MainWindow(QMainWindow):
         establishes its own via _restore_solve_state after this runs.
         """
         self._cancel_active()
+        # The debounce timers too, not only the runner: one armed on the old
+        # picture would otherwise ask for a preview of the new one.
+        self._quiet_previews()
+        self._base_cache = None
         self._project_gen += 1
         # A deferred "Apply and continue" nav (see _go_to) points at a stage
         # index in THIS workspace's stepper state; the in-flight apply it was
@@ -4614,6 +4868,7 @@ class MainWindow(QMainWindow):
         # picture's star tool (review 2026-10-05).
         self._sat_layers = self._sat_mask = None
         self._sat_failed = None
+        self._recover_prep = self._lc_prep = None
         self._last_export = None
         self._solve = None
         self._solve_freshness = None
@@ -4639,6 +4894,7 @@ class MainWindow(QMainWindow):
         if busy:
             self._busy_label_text = label
             self._busy_timer.start(BUSY_DELAY_MS)   # visuals only if op outlasts it
+            self._welcome.clear_warning()           # a new action: the old failure is history
         else:
             self._busy_timer.stop()
             self._hide_busy_visuals()               # no-op if visuals never showed
@@ -4744,8 +5000,13 @@ class MainWindow(QMainWindow):
         self._tick_elapsed()            # paint "0s" immediately, don't wait for the first tick
         self._elapsed_timer.start()
         self._apply_progress_state()    # reflect any progress reported before visuals appeared
+        # The start page hides the right column, and with it the row above:
+        # an open begun there gets the page's own ring, label and Cancel.
+        if self._welcome.isVisible():
+            self._welcome.show_busy(self._busy_label_text)
 
     def _hide_busy_visuals(self) -> None:
+        self._welcome.hide_busy()
         self._ellipsis_timer.stop()
         self._elapsed_timer.stop()
         if self._busy_shown:
@@ -4766,6 +5027,8 @@ class MainWindow(QMainWindow):
     def _tick_ellipsis(self) -> None:
         self._ellipsis_n = (self._ellipsis_n + 1) % 4
         self._busy_label.setText(self._busy_label_text + "." * self._ellipsis_n)
+        if self._welcome.busy_label.isVisible():
+            self._welcome.set_busy_text(self._busy_label.text())
 
     def _tick_elapsed(self) -> None:
         # "42% · 12s" when a number exists: the two share one row since the
@@ -4994,8 +5257,14 @@ class MainWindow(QMainWindow):
         if self._tint_pending is None:
             return
         tint, temperature = self._tint_pending
-        result = self._step_for("tint").apply(self._preview_base("tint"),
-                                              (tint, temperature))
+        step, base = self._step_for("tint"), self._preview_base("tint")
+        self._request_preview("tint", (tint, temperature),
+                              lambda: step.apply(base, (tint, temperature)),
+                              show=self._show_tint_preview)
+
+    def _show_tint_preview(self, result) -> None:
+        """The raw path: the base may still be linear, which _show_preview's
+        display-space clip would get wrong."""
         self._set_peek(False)
         self._displayed = result
         self._set_canvas(result)
@@ -5018,8 +5287,9 @@ class MainWindow(QMainWindow):
         # display-space — same shape as every other post-stretch preview
         # (levels, saturation, fringe, …): _show_preview, not the raw
         # _set_canvas path Color's tint preview needs for its still-linear base.
-        result = remove_green(self._preview_base("remove_green"), self._rg_pending)
-        self._show_preview(result.data)
+        base, strength = self._preview_base("remove_green"), self._rg_pending
+        self._request_preview("remove_green", strength,
+                              lambda: _display(remove_green(base, strength).data))
 
     def _apply_crop(self) -> None:
         if self.project is None or self._busy:
@@ -5092,10 +5362,22 @@ class MainWindow(QMainWindow):
 
     def _preview_base(self, stage_id: str):
         """The pre-<stage> image the commit also operates on, so a live preview
-        equals what Apply will produce (WYSIWYG)."""
-        preceding = names_before(stage_id)
-        return self.project.state_at(
-            self._leading_kept(self.project.entries(), preceding))
+        equals what Apply will produce (WYSIWYG).
+
+        One per base, shared: every debounced tick re-read it, so a request
+        waiting behind a running job held a second full-size copy (review
+        2026-10-06). Read-only, because the running job and the waiting one
+        now hold the same array."""
+        token = self._base_token(stage_id)
+        cached = self._base_cache
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        self._base_cache = None         # the old one goes before the new is read
+        img = self.project.state_at(
+            self._leading_kept(self.project.entries(), names_before(stage_id)))
+        img.data.flags.writeable = False
+        self._base_cache = (token, img)
+        return img
 
     def _stretch_linked_for_panel(self) -> bool:
         """What a rebuilt Stretch panel holds. The committed linkage, unless
@@ -5209,6 +5491,10 @@ class MainWindow(QMainWindow):
         the Starless Levels clipping view. Two implementations meant two
         legends, and they said opposite things: white was "all three crushed"
         here and "all three blown" there."""
+        # Whatever is painted now replaces what a preview showed, so the runner
+        # may no longer skip a request as "already on screen" (Space, review
+        # 2026-10-06). A preview's own paint is marked on screen after this.
+        self._previews.forget()
         rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
@@ -5218,15 +5504,101 @@ class MainWindow(QMainWindow):
         self._canvas_img = img
         self.image_view.set_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
 
-    def _show_preview(self, out) -> None:
+    def _show_preview(self, out, *, clipped: bool = False) -> None:
         """Push a previewed float array to BOTH the canvas and the histogram, so
-        the histogram tracks the slider live."""
-        out = np.clip(out, 0.0, 1.0).astype(np.float32)
+        the histogram tracks the slider live. `clipped`: already `_display`ed on
+        the pool."""
+        if not clipped:
+            out = _display(out)
         self._set_peek(False)   # a fresh preview repaint always shows the 'after'
         self._displayed = AstroImage(out, is_linear=False)
         self._set_canvas(self._displayed)
         self.histogram_view.set_image(self._displayed)
         self._update_clipping_line()
+
+    def _base_token(self, step_id: str) -> tuple:
+        """Which picture `step_id`'s preview and commit start from, without
+        reading it: the workspace and the exact snapshot write."""
+        n = self._leading_kept(self.project.entries(), names_before(step_id))
+        return (self._project_gen, self.project.state_token(n))
+
+    def _request_preview(self, step_id: str, value, compute, *, show=None, keep=None) -> None:
+        """Hand a live preview's effect to the pool (F1). `compute` takes nothing
+        from `self`: the base, the value and any layers were read here, on the
+        UI thread. The result paints only if it is still the newest request for
+        this step, this picture and this base — and, belt and braces, only if
+        the user is still on the step it was asked for."""
+        stage, gen = self.current_stage_id(), self._project_gen
+        key = (step_id, self._base_token(step_id), value)
+        paint = show if show is not None else (
+            lambda out: self._show_preview(out, clipped=True))
+
+        def land(result):
+            if (self.project is not None and self._project_gen == gen
+                    and self.current_stage_id() == stage):
+                paint(result)
+        self._previews.request(key, compute, land, keep)
+
+    def _request_prepared(self, step_id: str, attr: str, prepare, apply, img, amount) -> None:
+        """Recover Core / Local Contrast: `prepare(img)` (the 6.2 s blur, the
+        CLAHE) is made once per base and kept in `attr`, on the pool with the
+        first tick — so the first touch on a new base no longer freezes the
+        window either. A drag during that first prepare reuses it: the slot is
+        read when the job STARTS, after the one before it has been kept.
+
+        Kept only for the workspace and base it was made for (a Trim or an
+        earlier step re-applied mid-prepare gives a stale array nobody asked to
+        hold). Recomputing it every tick was 6.2 s of Recover Core's 6.7 s and
+        0.78 s of Local Contrast's 0.90 s on a 33 MP master (2026-10-06)."""
+        if amount <= 0:
+            self._request_preview(step_id, amount,
+                                  lambda: _display(apply(img, None, amount).data))
+            return
+        slot = self._prep_slots[attr]
+        sig = self._sr_sig(img)
+        token = self._base_token(step_id)
+        if slot.held is not None and (slot.held[0] != sig or slot.token != token):
+            slot.held = None            # never hold two full-size arrays
+            slot.token = None
+
+        def compute():
+            # (sig, token), Apply's own rule: the preview never uses a
+            # prepare Apply would refuse. Written only between jobs (_PrepSlot).
+            held = slot.held
+            fits = held is not None and held[0] == sig and slot.token == token
+            prep = held[1] if fits else prepare(img)
+            return prep, _display(apply(img, prep, amount).data)
+
+        def keep(result):
+            if (self.project is None or self._base_token(step_id) != token
+                    or self.current_stage_id() != step_id):
+                return              # left meanwhile: _leave_step dropped the slot
+            if slot.held is None or slot.held[0] != sig or slot.token != token:
+                slot.held = (sig, result[0])
+                slot.token = token
+        self._request_preview(step_id, amount, compute, keep=keep,
+                              show=lambda result: self._show_preview(result[1], clipped=True))
+
+    def _quiet_previews(self) -> None:
+        """Stop every live preview: the one computing, the one waiting, and any
+        debounce timer that would ask for another."""
+        for t in (self._levels_timer, self._stretch_timer, self._sat_timer,
+                  self._lc_timer, self._recover_timer, self._curve_timer,
+                  self._tint_timer, self._rg_timer, self._sr_timer, self._fringe_timer):
+            t.stop()
+        self._previews.cancel()
+
+    def _place_preview_ring(self) -> None:
+        ring = self._preview_ring
+        ring.move(self.histogram_view.width() - ring.width() - 4, 4)
+
+    def _sync_preview_ring(self, busy: bool) -> None:
+        ring = self._preview_ring
+        if busy:
+            self._place_preview_ring()
+            ring.raise_()
+            ring.set_indeterminate()
+        ring.setVisible(busy)
 
     def _render_levels_preview(self) -> None:
         """Non-committing live preview of the current Levels settings."""
@@ -5239,7 +5611,8 @@ class MainWindow(QMainWindow):
             g = self._panel.gamma_slider.value() / 100.0
             w = self._panel.white_slider.value() / 100.0
         img = self._preview_base("levels")
-        self._show_preview(np.clip(apply_levels(img, b, g, w).data, 0, 1))
+        self._request_preview("levels", (b, g, w),
+                              lambda: _display(apply_levels(img, b, g, w).data))
 
     # --- stretch live preview ---
     def _on_stretch_change(self, amount: float) -> None:
@@ -5363,8 +5736,9 @@ class MainWindow(QMainWindow):
                   else self._panel.stretch_slider.value() / 100.0)
         # linked from the panel, so the live preview equals what Apply commits.
         # "Probably the same" is a bug (CLAUDE.md).
-        self._show_preview(apply_stretch(
-            img, amount, linked=bool(getattr(self._panel, "stretch_linked", True))).data)
+        linked = bool(getattr(self._panel, "stretch_linked", True))
+        self._request_preview("stretch", (amount, linked), lambda: _display(
+            apply_stretch(img, amount, linked=linked).data))
 
     # --- saturation live preview (global + lazy cached-split nebula boost) ---
     def _setup_saturation(self) -> None:
@@ -5451,13 +5825,17 @@ class MainWindow(QMainWindow):
         """The Saturation output for the given base: nebula boost (from the cached
         split, when available) then the global saturate. Falls back to global-only
         when the split isn't ready."""
-        img = base
+        return _sat_compute(base, amount, nebula, self._sat_inputs(base, nebula))
+
+    def _sat_inputs(self, base, nebula):
+        """(starless, stars, mask) for the nebula boost on `base`, or None. Read
+        on the UI thread, which owns the split cache."""
         if nebula > 0.0 and self._sat_layers and self._sat_layers[0] == self._sr_sig(base):
             _, starless, stars, _path = self._sat_layers
             mask = (self._sat_mask[1] if self._sat_mask
                     and self._sat_mask[0] == self._sat_layers[0] else None)
-            img = nebula_saturate(starless, stars, nebula, mask=mask)
-        return saturate(img, amount)
+            return starless, stars, mask
+        return None
 
     def _render_saturation_preview(self) -> None:
         """Non-committing live preview of Saturation + Nebula boost."""
@@ -5469,7 +5847,11 @@ class MainWindow(QMainWindow):
             amount = self._panel.sat_slider.value() / 100.0
             nebula = self._panel.neb_slider.value() / 100.0
         base = self._preview_base("saturation")
-        self._show_preview(self._sat_result(base, amount, nebula).data)
+        layers = self._sat_inputs(base, nebula)
+        self._request_preview(
+            "saturation", (amount, nebula, layers is not None,
+                           layers is not None and layers[2] is not None),
+            lambda: _display(_sat_compute(base, amount, nebula, layers).data))
 
     def _apply_saturation(self, amount: float, nebula: float) -> None:
         """Commit Saturation (+ Nebula boost) using the cached split — instant."""
@@ -5509,7 +5891,7 @@ class MainWindow(QMainWindow):
         img = self._preview_base("local_contrast")
         amount = (self._lc_pending if self._lc_pending is not None
                   else self._panel.lc_slider.value() / 100.0)
-        self._show_preview(enhance(img, amount).data)
+        self._request_prepared("local_contrast", "_lc_prep", lc_prepare, lc_apply, img, amount)
 
     # --- recover core live preview ---
     def _on_recover_change(self, amount: float) -> None:
@@ -5525,7 +5907,8 @@ class MainWindow(QMainWindow):
         img = self._preview_base("recover_core")
         amount = (self._recover_pending if self._recover_pending is not None
                   else self._panel.recover_slider.value() / 100.0)
-        self._show_preview(recover_core(img, amount).data)
+        self._request_prepared("recover_core", "_recover_prep", recover_prepare,
+                               recover_apply, img, amount)
 
     # --- curves live preview ---
     def _curve_option(self, points):
@@ -5606,7 +5989,9 @@ class MainWindow(QMainWindow):
         img = self._preview_base("curves")
         points = (self._curve_pending if self._curve_pending is not None
                   else self._panel.curve_editor.points())
-        self._show_preview(apply_curves(img, self._curve_option(points)).data)
+        option = self._curve_option(points)
+        self._request_preview("curves", option,
+                              lambda: _display(apply_curves(img, option).data))
 
     def _on_curve_preset(self, kind: str) -> None:
         """Reset or Add-contrast preset button: seed the editor's points."""
@@ -5764,10 +6149,7 @@ class MainWindow(QMainWindow):
         return self._fringe_layers[4] or "split"
 
     def _fringe_result(self, strength) -> AstroImage:
-        _, kind, a, b, _c = self._fringe_layers
-        if kind == "split":
-            return remove_green_fringe(a, b, float(strength))
-        return remove_green_fringe_masked(a, b, float(strength))
+        return _fringe_compute(self._fringe_layers, strength)
 
     def _on_fringe_split(self, sig, payload) -> None:
         if payload[0] == "split":
@@ -5799,7 +6181,9 @@ class MainWindow(QMainWindow):
         strength = (self._fringe_pending if self._fringe_pending is not None
                     else (self._panel.fringe_slider.value() / 100.0
                           if hasattr(self._panel, "fringe_slider") else 0.0))
-        self._show_preview(self._fringe_result(strength).data)
+        layers = self._fringe_layers
+        self._request_preview("green_fringe", (strength, layers[0], layers[1]),
+                              lambda: _display(_fringe_compute(layers, strength).data))
 
     def _apply_green_fringe(self, strength) -> None:
         if self.project is None or not self._fringe_ready or self._busy or not self._fringe_layers:
@@ -5943,11 +6327,14 @@ class MainWindow(QMainWindow):
                   else self._panel.sr_slider.value() / 100.0)
         if amount == 0.0:
             # What Apply commits at 0 (_apply_star_reduction): the image itself,
-            # not the recombined split.
-            self._show_preview(self._sr_base().data)
+            # not the recombined split. Through the runner all the same, so an
+            # older value still computing cannot land on top of it.
+            base = self._sr_base()
+            self._request_preview("star_reduction", amount, lambda: _display(base.data))
             return
-        _, starless, stars, _path = self._sr_layers
-        self._show_preview(reduce_stars(starless, stars, amount).data)
+        sig, starless, stars, _path = self._sr_layers
+        self._request_preview("star_reduction", (amount, sig), lambda: _display(
+            reduce_stars(starless, stars, amount).data))
 
     def _apply_star_reduction(self, amount) -> None:
         """Commit the reduction at the current amount using the cached split — no
@@ -6099,17 +6486,52 @@ class MainWindow(QMainWindow):
             self._show_warning("Stretch the image first — Share exports what you "
                                "see, and a linear image would come out black.")
             return
+        if self._share_pending:
+            return
         self._clear_warning()
-        data = self.project.current().data
-        rgb8 = _to_uint(data, 8)
-        if rgb8.ndim == 2:
-            rgb8 = np.stack([rgb8] * 3, axis=2)
-        meta = dict(self.project.current().metadata)
+        snap = self.project.current()
+        data = snap.data
+        meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
-        ShareDialog(rgb8, meta, self.settings, parent=self,
-                    annotated_rgb8=self._annotated_rgb8(rgb8),
-                    annotations_on=self.image_view._annotations is not None,
-                    settings_saver=lambda s: save_settings(s, self._settings_path)).exec()
+        if not self._async_enabled:
+            self._open_share(_share_rgb8(data), meta)
+            return
+        # The 8-bit copy is made on the pool: 0.11 s of the 0.33 s the window
+        # froze opening Share on the 33 MP M 8 drizzle (2026-10-06).
+        gen = self._project_gen
+        self._share_pending = True
+
+        def landed(rgb8) -> None:
+            # A window closed meanwhile: singleShot with a deleted context
+            # object raises out of the slot.
+            if not shiboken6.isValid(self):
+                return
+            self._share_pending = False
+            # Deferred, never exec()'d inside a worker's slot: the job's
+            # cleanup would wait the dialog's whole life behind it.
+            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen))
+
+        def failed(exc) -> None:
+            self._share_pending = False
+            self._show_warning(f"Share could not prepare the image: {exc}")
+
+        run_async(self._pool, lambda: _share_rgb8(data), landed, failed)
+
+    def _open_share(self, rgb8, meta, gen=None) -> None:
+        """Opens on the picture as it was when Share was pressed. Only a
+        replaced workspace drops it: a step started meanwhile lands behind the
+        modal dialog harmlessly, and a Share press that silently does nothing
+        is the thing ruled out (2026-10-05)."""
+        if gen is not None and (gen != self._project_gen or self.project is None):
+            return
+        dlg = ShareDialog(rgb8, meta, self.settings, parent=self,
+                          annotated_rgb8=self._annotated_rgb8(rgb8),
+                          annotations_on=self.image_view._annotations is not None,
+                          settings_saver=lambda s: save_settings(s, self._settings_path),
+                          is_async=lambda: self._async_enabled)
+        dlg.exec()
+        if isinstance(dlg, QObject):    # a test's stand-in is not one
+            dlg.deleteLater()           # parented, it outlived exec() with two full frames
 
     def _annotated_rgb8(self, rgb8):
         """`rgb8` with the plate-solve overlay burned in, or None when there is no
@@ -6159,6 +6581,9 @@ class MainWindow(QMainWindow):
         dlg = UpscaleDialog(img, meta, self.settings, rc=rc,
                             on_open_copy=self._open_upscaled, parent=self,
                             denoised=denoised)
+        # Export and Open as copy follow this window's switch. Set, not passed:
+        # read only when one is pressed, and a stand-in dialog need not know it.
+        dlg._is_async = lambda: self._async_enabled
         dlg.exec()
         dlg.deleteLater()      # a parented dialog outlives exec(); each held its pictures
 
@@ -6182,6 +6607,10 @@ class MainWindow(QMainWindow):
         if (event.type() == QEvent.Type.Resize and hasattr(self, "_side")
                 and obj is self._side.scroll.viewport()):
             self._fit_curves_panel()        # Curves on small screens
+            return False
+        if (event.type() == QEvent.Type.Resize and hasattr(self, "_preview_ring")
+                and obj is self.histogram_view):
+            self._place_preview_ring()      # the ring keeps the histogram's corner
             return False
         if (event.type() == QEvent.Type.KeyPress
                 and event.key() == Qt.Key.Key_Space
@@ -7013,9 +7442,16 @@ class MainWindow(QMainWindow):
         image."""
         if not self._confirm_save_if_dirty():
             return
-        self._reset_high_water()
         self._swap_workspace()
         self.project = None
+        self._land_on_start_page()
+        self._clear_cache()   # the undo history is gone — reclaim the disk
+
+    def _land_on_start_page(self) -> None:
+        """The first-launch state, after `_swap_workspace` has retired the
+        workspace and dropped the project: Close Project, and a project
+        adoption that failed mid-move."""
+        self._reset_high_water()
         self.activity.clear()      # the old image's history goes with it; the
                                    # next open then keeps the welcome log
         self._clip_baseline = None
@@ -7028,7 +7464,6 @@ class MainWindow(QMainWindow):
         self._show_chrome(False)
         self._update_title()
         self._update_info_strip()
-        self._clear_cache()   # the undo history is gone — reclaim the disk
 
     def _clear_cache(self) -> None:
         """Delete this session's transient undo snapshots (state_*.npy) from the
@@ -7046,6 +7481,21 @@ class MainWindow(QMainWindow):
                 except OSError:
                     pass
 
+    def _staging_dir(self) -> str:
+        return os.path.join(self._cache_dir, "incoming")
+
+    def _prune_staged(self) -> None:
+        """Remove what image and project opens staged and never landed: a
+        superseded open drops its result without a word. Best-effort, like
+        _clear_cache."""
+        d = self._staging_dir()
+        try:
+            names = os.listdir(d)
+        except OSError:
+            return
+        for name in names:
+            _remove_quietly(os.path.join(d, name))
+
     def _show_provenance(self) -> None:
         if self.project is None:
             return
@@ -7056,10 +7506,16 @@ class MainWindow(QMainWindow):
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:
+        # Where Apply, navigation, Undo/Redo and a Trim all converge, and it
+        # repaints the commit: a preview still computing for the picture as it
+        # was must not land on top of it (F2). A step whose preview should
+        # follow asks again below (_sync_stretch_preview).
+        self._previews.cancel()
+        self._base_cache = None
         self._set_peek(False)   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
-        if self.project is not None:
+        if self.project is not None and not self._hold_paint:
             img = self.project.current()
             self._set_canvas(img)
             self.histogram_view.set_image(img)

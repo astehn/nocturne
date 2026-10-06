@@ -243,6 +243,12 @@ def main() -> None:
         raise SystemExit(job_main(sys.argv))
 
     app = QApplication(sys.argv)
+    # Cyclic garbage is collected on THIS thread only, before any pool work
+    # starts: collected inside a pool job, a dialog in a cycle is destroyed off
+    # the GUI thread (ui/gc_guard.py). Below the --stack-job and --check-*
+    # dispatches above, so those processes keep Python's own collector.
+    from .ui import gc_guard
+    gc_guard.install(app)
     app.setApplicationName(APP_NAME)
     # Straight after the QApplication: macOS sends a double-clicked document
     # as an event as soon as the app can take one, before any window exists.

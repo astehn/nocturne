@@ -4,8 +4,9 @@ import os
 from dataclasses import replace
 
 import numpy as np
+import shiboken6
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QThreadPool, QTimer, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
@@ -36,9 +37,13 @@ _TEXT_DEBOUNCE_MS = 90
 # the master per typing pause. Export and Copy are unaffected: this is a preview
 # economy, not a size limit.
 PREVIEW_CAP = 1600
+from .busy_gate import BusyGate, keep_live
 from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, plate_overflows
+from .preview_runner import PreviewRunner
+from .progress_ring import ProgressRing
 from .theme import TEXT_DIM
+from .worker import run_async
 from . import file_dialogs
 from .help_link import HelpLink
 
@@ -70,12 +75,16 @@ def _dim(text: str) -> QLabel:
 class ShareDialog(QDialog):
     def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
                  annotated_rgb8: np.ndarray | None = None,
-                 annotations_on: bool = True, settings_saver=None) -> None:
+                 annotations_on: bool = True, settings_saver=None,
+                 *, is_async=None) -> None:
         """`annotated_rgb8` is the same frame with the plate-solve overlay burned
         in, supplied only when a valid solution exists. Sharing an annotated
         image was previously impossible — Share received raw pixels, so the one
         way to publish labels was a PNG export, which skips the reframing and
-        caption this dialog exists for."""
+        caption this dialog exists for.
+
+        `is_async()` False composes, exports and copies inline — the tests'
+        setting, and MainWindow's when its own `_async_enabled` is off."""
         super().__init__(parent)
         self.setWindowTitle("Share")
         self.setMinimumSize(800, 500)
@@ -98,6 +107,20 @@ class ShareDialog(QDialog):
         # being assembled.
         self.status = QLabel("")
         self.status.setWordWrap(True)
+        # Composing runs on the pool: the preview (latest wins, as every live
+        # preview) and Export/Copy (the window dimmed, Close live). Measured on
+        # the 33 MP M 8 drizzle, 2026-10-06: a Full-size export held the window
+        # 0.31 s, opening it 0.33 s.
+        self._is_async = is_async if is_async is not None else (lambda: False)
+        self._pool = QThreadPool.globalInstance()
+        self._runner = PreviewRunner(self, pool=self._pool, is_async=self._is_async)
+        self._preview_seq = 0
+        self._gate = BusyGate()
+        self._working = False
+        self._closed = False
+        self.status_ring = ProgressRing(size="small")
+        self.status_ring.hide()
+        self._runner.busyChanged.connect(lambda _b: self._sync_ring())
 
         # Type size stays in share_caption_size: it is the same quantity that
         # field always held — caption size as a fraction of the composited
@@ -379,7 +402,7 @@ class ShareDialog(QDialog):
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._copy_btn)
         buttons.addStretch(1)
-        self._close_btn = QPushButton("Close")
+        self._close_btn = keep_live(QPushButton("Close"))
         self._close_btn.clicked.connect(self.reject)
         buttons.addWidget(self._close_btn)
 
@@ -431,7 +454,11 @@ class ShareDialog(QDialog):
         root = QVBoxLayout(self)
         root.addLayout(body, 1)
         root.addWidget(self._colour_note)
-        root.addWidget(self.status)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.addWidget(self.status_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 1)
+        root.addLayout(status_row)
         self.help_link = HelpLink("share", self)
         root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
@@ -678,12 +705,33 @@ class ShareDialog(QDialog):
         """Longest edge to compose the PREVIEW at: the chosen size, capped."""
         return min(self._size, PREVIEW_CAP) if self._size else PREVIEW_CAP
 
+    def _snapshot(self, *, for_preview: bool = False) -> tuple:
+        """Everything `_compose` reads, read now, on the UI thread."""
+        return (self._source(), self._current_crop(), self._plate(),
+                self._preview_edge() if for_preview else self._size, self._style())
+
+    @staticmethod
+    def _compose(snap) -> QImage:
+        """THE compose — preview, export and clipboard all come through here,
+        on whichever thread. `snap` is everything it reads, taken on the UI
+        thread, so a control moved while it runs changes nothing about the
+        image it makes. Static: a pool job must not hold the dialog."""
+        source, crop, plate, edge, style = snap
+        return compose_share(source, crop, plate, longest_edge=edge, style=style)
+
+    @staticmethod
+    def _compose_and_save(snap, path: str, save) -> tuple[int, int]:
+        image = ShareDialog._compose(snap)
+        save(image, path)
+        return image.width(), image.height()
+
     def _compose_current(self, *, for_preview: bool = False) -> QImage:
+        image = self._compose(self._snapshot(for_preview=for_preview))
+        self._note_wrap()
+        return image
+
+    def _note_wrap(self) -> None:
         plate = self._plate()
-        image = compose_share(
-            self._source(), self._current_crop(), plate,
-            longest_edge=self._preview_edge() if for_preview else self._size,
-            style=self._style())
         # The flag means "this wrapped", not "this was lost" — it is set on ANY
         # second line, and a two-line nebula name fits perfectly well. Saying
         # "will not fit" claimed text had been dropped when nothing had, and
@@ -699,7 +747,6 @@ class ShareDialog(QDialog):
         self._wrapped = bool(drawn and plate_overflows(
             plate, self._style(), *self._export_pixel_size()))
         self._show_status()
-        return image
 
     def _show_status(self, message: str = "") -> None:
         """One label, two channels: a transient result and a standing warning.
@@ -709,13 +756,28 @@ class ShareDialog(QDialog):
         exports, and the reason it wrapped disappears. The warning outlives the
         message that shares its line.
         """
+        if not message and getattr(self, "_working", False):
+            message = self._work_message    # "Saving…" stays until the job lands
         warning = ("Long text has wrapped to a second line — shorten it or "
                    "choose a smaller size if you would rather it did not."
                    if getattr(self, "_wrapped", False) else "")
         self.status.setText(" · ".join(x for x in (message, warning) if x))
 
     def _refresh_preview(self) -> None:
-        self._preview_image = self._compose_current(for_preview=True)
+        if not self._is_async():
+            self._preview_image = self._compose_current(for_preview=True)
+            self._paint_preview()
+            return
+        snap = self._snapshot(for_preview=True)
+        self._note_wrap()               # a measurement, not a compose: it stays here
+        # A counter, not the snapshot: the key is compared, and the snapshot
+        # holds arrays. Every request is new, and only the newest is painted.
+        self._preview_seq += 1
+        compose = ShareDialog._compose
+        self._runner.request(self._preview_seq, lambda: compose(snap), self._show_preview)
+
+    def _show_preview(self, image: QImage) -> None:
+        self._preview_image = image
         self._paint_preview()
 
     def _paint_preview(self) -> None:
@@ -749,13 +811,80 @@ class ShareDialog(QDialog):
             self._do_export(path)
 
     def _do_export(self, path: str) -> None:
-        image = self._compose_current()
-        self._save_runner(image, path)
+        if self._working:
+            return
+        name = os.path.basename(path)
+        if not self._is_async():
+            image = self._compose_current()
+            self._save_runner(image, path)
+            self._saved(name, (image.width(), image.height()))
+            return
+        snap, save = self._snapshot(), self._save_runner
+        self._note_wrap()
+        work = ShareDialog._compose_and_save
+        self._work(f"Saving {name}…", lambda: work(snap, path, save),
+                   lambda size: self._saved(name, size),
+                   lambda exc: self._show_status(f"Could not save {name}: {exc}"))
+
+    def _saved(self, name: str, size) -> None:
         # Report the pixel size: it is the thing you check before posting, and
         # "Saved name.jpg" alone never answered it.
-        self._show_status(
-            f"Saved {os.path.basename(path)} — {image.width()} × {image.height()}")
+        self._show_status(f"Saved {name} — {size[0]} × {size[1]}")
 
     def _do_copy(self) -> None:
-        self._clipboard_runner(self._compose_current())
-        self._show_status("Copied to clipboard.")
+        if self._working:
+            return
+        if not self._is_async():
+            self._clipboard_runner(self._compose_current())
+            self._show_status("Copied to clipboard.")
+            return
+        snap = self._snapshot()
+        self._note_wrap()
+
+        def landed(image) -> None:
+            # The clipboard is GUI-only: composed on the pool, set here.
+            self._clipboard_runner(image)
+            self._show_status("Copied to clipboard.")
+
+        compose = ShareDialog._compose
+        self._work("Copying…", lambda: compose(snap), landed,
+                   lambda exc: self._show_status(f"Could not copy: {exc}"))
+
+    def _work(self, message: str, job, landed, failed) -> None:
+        """Run `job` on the pool with the window dimmed (Close live) and the
+        ring turning; `landed`/`failed` back here, unless the window closed."""
+        self._working = True
+        self._work_message = message
+        self._gate.close(self._side, self._export_btn, self._copy_btn)
+        self._image_view.set_crop_locked(True)
+        self._show_status(message)
+        self._sync_ring()
+
+        def finish() -> bool:
+            if self._closed or not shiboken6.isValid(self):
+                return False
+            self._working = False
+            self._gate.open()
+            self._image_view.set_crop_locked(False)
+            self._sync_ring()
+            return True
+
+        run_async(self._pool, job,
+                  lambda result: finish() and landed(result),
+                  lambda exc: finish() and failed(exc))
+
+    def _sync_ring(self) -> None:
+        if self._closed or not shiboken6.isValid(self.status_ring):
+            return
+        on = self._working or self._runner.busy
+        if on and self.status_ring.isHidden():
+            self.status_ring.set_indeterminate()
+        self.status_ring.setVisible(on)
+
+    def done(self, r: int) -> None:
+        """Every way out. A compose still running lands on nothing: no paint,
+        no file reported, no clipboard set."""
+        self._closed = True
+        self._text_timer.stop()
+        self._runner.cancel()
+        super().done(r)

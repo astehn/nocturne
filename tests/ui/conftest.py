@@ -4,6 +4,35 @@ import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _gc_on_the_gui_thread(qapp):
+    """As the app does (nocturne/__main__.py): cyclic garbage is collected on
+    the GUI thread only, never inside a pool job (ui/gc_guard.py)."""
+    from nocturne.ui import gc_guard
+    gc_guard.install(qapp)
+    yield
+    gc_guard.uninstall(qapp)
+
+
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """Waits for every global-pool job to finish, then delivers what they
+    posted — their done/error signals and any deferred deletes — before the
+    next test starts. A job's done left queued landed in the NEXT test's event
+    loop, on a window pytest-qt had already deleted: the class of crash behind
+    the one full-suite segfault on the no-freezes branch (2026-10-06). Live
+    previews made pool jobs routine."""
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
+    except ImportError:
+        return
+    QThreadPool.globalInstance().waitForDone(30000)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _auto_answer_dialogs():
     """MainWindow.closeEvent prompts a modal QMessageBox.question when the project
     has edits; at qtbot teardown (which closes tracked widgets) that would block

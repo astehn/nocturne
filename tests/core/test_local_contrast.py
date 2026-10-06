@@ -36,3 +36,43 @@ def test_zero_amount_is_an_exact_identity():
     img = AstroImage(data.copy(), is_linear=False)
     assert np.array_equal(enhance(img, 0.0).data, data)
     assert not np.array_equal(enhance(img, 0.3).data, data)
+
+
+# --- F3: the slider's preview reuses the CLAHE; the picture must not move ---
+
+def _today_enhance(img, amount):
+    """enhance as it stood before the split (2026-10-06), frozen as the reference."""
+    from skimage.exposure import equalize_adapthist
+    amount = float(np.clip(amount, 0.0, 1.0))
+    if amount == 0.0:
+        return img.data.copy()
+    data = np.clip(img.data, 0.0, 1.0).astype(np.float32)
+    if data.ndim == 2:
+        clahe = equalize_adapthist(data, clip_limit=0.01).astype(np.float32)
+        return np.clip(data * (1 - amount) + clahe * amount, 0.0, 1.0).astype(np.float32)
+    lum = data.mean(axis=2)
+    clahe = equalize_adapthist(lum, clip_limit=0.01).astype(np.float32)
+    new_lum = lum * (1 - amount) + clahe * amount
+    ratio = new_lum / np.maximum(lum, 1e-6)
+    return np.clip(data * ratio[..., None], 0.0, 1.0).astype(np.float32)
+
+
+def _bases():
+    rng = np.random.default_rng(9)
+    col = (rng.random((70, 110, 3)) ** 2).astype(np.float32)
+    col[10:40, 20:70] *= 0.3
+    col[0, 0] = (-0.1, 1.3, 2e-7)
+    return [AstroImage(col, is_linear=False, metadata={"k": 1}),
+            AstroImage((col.mean(axis=2) * 1.1).astype(np.float32), is_linear=False)]
+
+
+def test_prepared_path_equals_todays_function_bit_for_bit():
+    from nocturne.core.local_contrast import apply_prepared, prepare
+    for img in _bases():
+        before = img.data.copy()
+        prepared = prepare(img)
+        for amount in (0.0, 0.2, 0.5, 1.0, 1.3):
+            want = _today_enhance(img, amount)
+            assert np.array_equal(apply_prepared(img, prepared, amount).data, want), amount
+            assert np.array_equal(enhance(img, amount).data, want), amount
+        assert np.array_equal(img.data, before), "the base is not written to"

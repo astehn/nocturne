@@ -148,6 +148,9 @@ def _arrive(qtbot, win, h, monkeypatch, sid):
 def _start(qtbot, win, monkeypatch, tmp_path, sid, mode):
     if sid in _APPLY_STAGES:
         _patch_step(win, monkeypatch, mode)
+        # Recover Core and Local Contrast commit from the array their preview
+        # prepared, without step.apply; dropped, the held fake step runs.
+        win._recover_prep = win._lc_prep = None
         _press_apply(win)
     elif sid == "green_fringe":
         _patch_split(win, monkeypatch, mode)

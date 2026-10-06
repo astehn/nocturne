@@ -9,15 +9,36 @@ from .step import Step
 
 
 class Project:
-    def __init__(self, base: AstroImage, cache_dir: str) -> None:
+    def __init__(self, base: AstroImage, cache_dir: str, *, written: str | None = None) -> None:
+        """`written`: an .npy in `cache_dir` already holding `base.data`, moved
+        into place instead of saved again. Opening an image writes it off the
+        UI thread — the save was 2.1 s of the M 8 drizzle's 3.9 s freeze."""
         os.makedirs(cache_dir, exist_ok=True)
         self._dir = cache_dir
         self._paths: list[str] = []
         self._records: list[tuple[str, str]] = []
         self._meta: list[dict] = []
         self._linear: list[bool] = []
+        self._writes: list[int] = []     # per state: which write put its pixels there
+        self._write_seq = 0
         self._position = 0
-        self._save(0, base)
+        self._save(0, base, written=written)
+
+    def relocate(self, cache_dir: str) -> None:
+        """Move every state file into `cache_dir`, keeping its index. A project
+        is loaded into a staging folder off the UI thread, because the live
+        cache holds the CURRENT picture's states until the swap; this adopts it
+        afterwards. One os.replace per file: each file is either here or there."""
+        os.makedirs(cache_dir, exist_ok=True)
+        for i, src in enumerate(self._paths):
+            dest = os.path.join(cache_dir, f"state_{i}.npy")
+            if os.path.abspath(src) != os.path.abspath(dest):
+                os.replace(src, dest)
+            self._paths[i] = dest
+        self._dir = cache_dir
+
+    def files_present(self) -> bool:
+        return all(os.path.isfile(p) for p in self._paths)
 
     @property
     def position(self) -> int:
@@ -26,17 +47,23 @@ class Project:
     def _path(self, index: int) -> str:
         return os.path.join(self._dir, f"state_{index}.npy")
 
-    def _save(self, index: int, img: AstroImage) -> None:
+    def _save(self, index: int, img: AstroImage, *, written: str | None = None) -> None:
         path = self._path(index)
-        np.save(path, img.data)
+        if written is None:
+            np.save(path, img.data)
+        else:
+            os.replace(written, path)
+        self._write_seq += 1
         if index < len(self._paths):
             self._paths[index] = path
             self._meta[index] = dict(img.metadata)
             self._linear[index] = img.is_linear
+            self._writes[index] = self._write_seq
         else:
             self._paths.append(path)
             self._meta.append(dict(img.metadata))
             self._linear.append(img.is_linear)
+            self._writes.append(self._write_seq)
 
     def _load(self, index: int) -> AstroImage:
         data = np.load(self._paths[index])
@@ -54,12 +81,20 @@ class Project:
         """Non-destructive read of the cached state at `index` (no truncation)."""
         return self._load(index)
 
+    def state_token(self, index: int) -> tuple:
+        """Which pixels state `index` holds, without reading them: a re-apply
+        rewrites the same index, so the index alone cannot tell (a live preview
+        keys its result on this). A write count, not the file's mtime, whose
+        granularity is the file system's."""
+        return (id(self), index, self._writes[index])
+
     def run_step(self, step: Step, option: str) -> AstroImage:
         # Truncate any forward (redo) history.
         del self._paths[self._position + 1:]
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._writes[self._position + 1:]
         result = step.apply(self.current(), option)
         index = self._position + 1
         self._save(index, result)
@@ -78,6 +113,7 @@ class Project:
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._writes[self._position + 1:]
         index = self._position + 1
         self._save(index, img)
         self._records.append((name, option))
@@ -109,6 +145,7 @@ class Project:
         del self._records[index:]
         del self._meta[index + 1:]
         del self._linear[index + 1:]
+        del self._writes[index + 1:]
 
     def entries(self) -> list[tuple[str, str]]:
         return list(self._records[: self._position])
