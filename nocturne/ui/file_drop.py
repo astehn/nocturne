@@ -13,6 +13,18 @@ IMAGE_EXTS = (".fit", ".fits", ".fts", ".tif", ".tiff")   # as Open Image's pick
 PROJECT_EXT = ".nocturne"
 
 
+def file_kind(path: str) -> str | None:
+    """"project" or "image" for a file Nocturne opens, else None."""
+    if not os.path.isfile(path):
+        return None                     # a folder, or a file that has gone
+    low = path.lower()
+    if low.endswith(PROJECT_EXT):
+        return "project"
+    if low.endswith(IMAGE_EXTS):
+        return "image"
+    return None
+
+
 def dropped_file(mime) -> tuple[str, str] | None:
     """("project" | "image", path) for exactly one local file Nocturne opens,
     else None. Several files are refused rather than guessed between."""
@@ -22,11 +34,5 @@ def dropped_file(mime) -> tuple[str, str] | None:
     if len(urls) != 1 or not urls[0].isLocalFile():
         return None
     path = urls[0].toLocalFile()
-    if not os.path.isfile(path):
-        return None                     # a folder, or a file that has gone
-    low = path.lower()
-    if low.endswith(PROJECT_EXT):
-        return ("project", path)
-    if low.endswith(IMAGE_EXTS):
-        return ("image", path)
-    return None
+    kind = file_kind(path)
+    return (kind, path) if kind else None

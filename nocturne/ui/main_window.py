@@ -3069,8 +3069,33 @@ class MainWindow(QMainWindow):
         # error message for an unreadable file come with them. After the drop
         # has finished, not inside it: a question asked mid-drop keeps the
         # Finder's drag animation hanging until it is answered.
-        opener = self._open_project if kind == "project" else self.open_any
-        QTimer.singleShot(0, self, lambda: opener(path))
+        QTimer.singleShot(0, self, lambda: self._open_by_kind(kind, path))
+
+    def _open_by_kind(self, kind: str, path: str) -> None:
+        if kind == "project":
+            self._open_project(path)
+        else:
+            self.open_any(path)
+
+    def open_requested(self, path: str) -> None:
+        """A file the system asked us to open: a Finder double-click, "Open
+        With", the Dock icon, or the command line (open_requests.py). The same
+        doors as the menus and a drop."""
+        kind = file_drop.file_kind(path)
+        if kind is None:
+            self._show_warning(f"Nocturne cannot open {os.path.basename(path)}.")
+            return
+        if self.isMinimized():
+            self.showNormal()        # a Dock drop must not open out of sight
+        self.raise_()
+        self.activateWindow()
+        if self._busy or QApplication.activeModalWidget() is not None:
+            # Not queued: by the time the work ends the user may have moved on,
+            # and a picture replacing theirs unasked is worse than asking again.
+            self._show_warning(f"Finish or cancel what Nocturne is doing, then open "
+                               f"{os.path.basename(path)} again.")
+            return
+        self._open_by_kind(kind, path)
 
     def open_fits(self, path: str) -> None:
         """Kept as a name: many callers and tests say open_fits, and a FITS is
