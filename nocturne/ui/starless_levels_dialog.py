@@ -30,6 +30,7 @@ from ..core.levels import apply_levels
 from ..core.image import AstroImage
 from ..core.inspect import capture_clip_baseline, clip_masks, clip_overlay
 from ..core.tasks import CancelToken
+from .busy_gate import BusyGate, keep_live
 from .compare_view import CompareView
 from .curves_dialog import _downscale, _fit_to_screen, _fitted_size
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
@@ -59,11 +60,13 @@ _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 class StarlessLevelsDialog(QDialog):
     def __init__(self, starless: AstroImage | None, stars: AstroImage | None,
                  parent=None, on_apply=None, *, splitter=None,
-                 on_split=None) -> None:
+                 on_split=None, is_async=None) -> None:
         """`splitter()` -> (starless, stars, tag) runs on the pool when the
         layers are not given; it reports progress through the ambient token
         (`report_progress`), the route StarNet2 and RC-Astro already use.
-        `on_split(starless, stars, tag)` publishes a finished split."""
+        `on_split(starless, stars, tag)` publishes a finished split.
+        `is_async()` False composes Apply inline — the tests' setting, and
+        MainWindow's when its own `_async_enabled` is off."""
         super().__init__(parent)
         self.setWindowTitle("Starless Levels")
         self.resize(*_fit_to_screen(*_PREFERRED))
@@ -78,6 +81,11 @@ class StarlessLevelsDialog(QDialog):
         # rather than initialising (and publishing from) a closed window.
         self._closed = False
         self._token: CancelToken | None = None
+        self._is_async = is_async if is_async is not None else (lambda: False)
+        # Apply composes the full-resolution image (0.16 s on the 33 MP M 8
+        # drizzle) on the pool; the window is dimmed meanwhile, Cancel live.
+        self._gate = BusyGate()
+        self._applying = False
         # `clip_masks` raises on a shape mismatch, so a baseline belongs to ONE
         # crop. The key is the visible rect (or "fit"), never the shape: two
         # different crops of the same size would otherwise share a baseline and
@@ -204,6 +212,8 @@ class StarlessLevelsDialog(QDialog):
         self.ok_btn.setObjectName("primary")
         buttons.accepted.connect(self._apply)
         buttons.rejected.connect(self.reject)
+        keep_live(buttons.button(QDialogButtonBox.StandardButton.Cancel))
+        self._buttons = buttons
 
         side = QVBoxLayout()
         side.addWidget(note)
@@ -230,6 +240,7 @@ class StarlessLevelsDialog(QDialog):
 
         side_wrap = QWidget()
         side_wrap.setLayout(side)
+        self._side = side_wrap
         # The house pattern — preview left at stretch 1, a vertical control
         # column right, capped at the same 340 star_spikes and narrowband use:
         # "Without it the column takes half the window and the preview is no
@@ -759,8 +770,39 @@ class StarlessLevelsDialog(QDialog):
         self._queue_preview()
 
     def _apply(self) -> None:
-        if not self.has_layers():
+        """The handles' values at the press are what is applied; the compose
+        runs on the pool and is handed over only if the window is still open."""
+        if not self.has_layers() or self._applying:
             return
+        values = self.values()
+        if not self._is_async():
+            self._deliver(self.compose(), values)
+            return
+        self._applying = True
+        self._timer.stop()
+        self._gate.close(self._side, self.handles)
+        self.waiting.set_text("Applying…")
+        self.waiting.ring.show()            # a failed Apply hid it
+        self.waiting.set_indeterminate()
+        self.waiting.setGeometry(self.preview.rect())
+        self.waiting.show()
+        self.waiting.raise_()
+        starless, stars = self._starless, self._stars
+        black, white = values
+
+        def failed(exc) -> None:
+            if not self._alive():
+                return
+            self._applying = False
+            self._gate.open()
+            self.waiting.ring.hide()
+            self.waiting.set_text(f"Could not apply: {exc}")
+
+        run_async(self._pool, lambda: starless_levels_layers(starless, stars, black, white),
+                  lambda result: self._alive() and self._deliver(result, values),
+                  failed)
+
+    def _deliver(self, result: AstroImage, values) -> None:
         if self._on_apply is not None:
-            self._on_apply(self.compose(), self.values())
+            self._on_apply(result, values)
         self.accept()

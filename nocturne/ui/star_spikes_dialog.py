@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import shiboken6
 from PySide6.QtCore import QThreadPool, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
@@ -8,11 +9,27 @@ from PySide6.QtWidgets import (
 
 from ..core.image import AstroImage
 from ..core.star_spikes import _COLOUR_MAX_BOOST, _MAX_STARS, add_spikes, detect_stars
+from .busy_gate import BusyGate, keep_live
 from .frame_preview import FramePreview
 from .preview import rgb_to_qimage, to_qimage
+from .preview_runner import PreviewRunner
 from .reset_slider import ResetSlider
 from .worker import run_async
 from .help_link import HelpLink
+
+
+def _render(base: AstroImage, stars, params) -> tuple:
+    """The spikes and their 8-bit picture, for one slider position. A pure
+    function of its arguments, so the pool can run it: drawing 50 spikes on
+    the 33 MP M 8 drizzle held the window 0.28 s per tick (2026-10-06)."""
+    length, count, angle, intensity, variation, colour = params
+    result = add_spikes(base, stars, length, count, angle, intensity, variation, colour)
+    data = np.clip(result.data, 0.0, 1.0)
+    if data.ndim == 2:
+        rgb = np.repeat((data * 255 + 0.5).astype(np.uint8)[:, :, None], 3, axis=2)
+    else:
+        rgb = (data * 255 + 0.5).astype(np.uint8)
+    return result, np.ascontiguousarray(rgb)
 
 
 class StarSpikesDialog(QDialog):
@@ -21,7 +38,10 @@ class StarSpikesDialog(QDialog):
     open; the three sliders then re-render instantly. Apply hands the rendered
     AstroImage back via `on_apply`."""
 
-    def __init__(self, base: AstroImage, parent=None, on_apply=None) -> None:
+    def __init__(self, base: AstroImage, parent=None, on_apply=None, *,
+                 is_async=None) -> None:
+        """`is_async()` False renders and applies inline — the tests' setting,
+        and MainWindow's when its own `_async_enabled` is off."""
         super().__init__(parent)
         self.setWindowTitle("Star Spikes")
         # Side-by-side like every other preview dialog, so these are the
@@ -33,6 +53,12 @@ class StarSpikesDialog(QDialog):
         self._result = base
         self._pool = QThreadPool.globalInstance()
         self._stars = None                 # None = still looking; [] = none found
+        self._is_async = is_async if is_async is not None else (lambda: False)
+        self._runner = PreviewRunner(self, pool=self._pool, is_async=self._is_async)
+        self._shown_params = None          # the slider values self._result was drawn at
+        self._gate = BusyGate()
+        self._applying = False
+        self._closed = False
 
         self.preview = FramePreview()
         self.length_slider = ResetSlider(0)
@@ -60,7 +86,7 @@ class StarSpikesDialog(QDialog):
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self._render_preview)
+        self._timer.timeout.connect(self._queue_render)
         for s in (self.length_slider, self.intensity_slider,
                   self.stars_slider, self.angle_slider,
                   self.variation_slider, self.colour_slider):
@@ -69,7 +95,7 @@ class StarSpikesDialog(QDialog):
         self.apply_btn = QPushButton("Apply")
         self.apply_btn.setObjectName("primary")
         self.apply_btn.clicked.connect(self._apply)
-        close_btn = QPushButton("Close")
+        close_btn = keep_live(QPushButton("Close"))
         close_btn.clicked.connect(self.reject)
 
         def _row(label, widget, val):
@@ -113,6 +139,7 @@ class StarSpikesDialog(QDialog):
 
         side_wrap = QWidget()
         side_wrap.setLayout(side)
+        self._side = side_wrap
         # The same cap narrowband_dialog uses. Without it the column takes half
         # the window and the preview is no better off than it was stacked.
         side_wrap.setMaximumWidth(340)
@@ -127,8 +154,10 @@ class StarSpikesDialog(QDialog):
         self._set_controls_enabled(False)
         self.apply_btn.setEnabled(False)
         self.preview.show_waiting("Finding stars…")
-        run_async(self._pool, lambda: detect_stars(self._base.data),
-                  self._on_stars, self._on_detect_error)
+        data = base.data            # the job holds the pixels, never the dialog
+        run_async(self._pool, lambda: detect_stars(data),
+                  lambda stars: self._alive() and self._on_stars(stars),
+                  lambda exc: self._alive() and self._on_detect_error(exc))
 
     _SLIDER_DEFAULTS = {"length": 0, "intensity": 100, "angle": 0,
                         "variation": 35, "colour": 50}
@@ -143,6 +172,17 @@ class StarSpikesDialog(QDialog):
         self.reset_btn.setEnabled(on)
         self.compare_check.setEnabled(on)
 
+    def _alive(self) -> bool:
+        """A job's landing outlives the dialog: closed, nothing it brings
+        may paint, enable or apply."""
+        return not self._closed and shiboken6.isValid(self)
+
+    def done(self, r: int) -> None:
+        self._closed = True
+        self._timer.stop()
+        self._runner.cancel()
+        super().done(r)
+
     def _on_stars(self, stars) -> None:
         self._stars = stars
         if not stars:
@@ -154,7 +194,7 @@ class StarSpikesDialog(QDialog):
         self._set_controls_enabled(True)
         self.apply_btn.setEnabled(True)
         self.preview.overlay.hide()
-        self._render_preview()
+        self._queue_render()        # the first picture, off the UI thread like every tick
 
     def _on_detect_error(self, exc) -> None:
         self._stars = []
@@ -217,37 +257,86 @@ class StarSpikesDialog(QDialog):
             f"×{self.colour_slider.value() / 100.0 * _COLOUR_MAX_BOOST:.2f}")
         self._timer.start(90)
 
+    def _queue_render(self) -> None:
+        """The debounce timer's target: the render goes to the pool, and only
+        the newest slider position is ever painted (PreviewRunner)."""
+        if not self._stars or self._applying:
+            return
+        params, base, stars = self._params(), self._base, self._stars
+        self._runner.request(params, lambda: _render(base, stars, params),
+                             lambda out: self._show(params, out))
+
+    def _show(self, params, out) -> None:
+        result, rgb = out
+        self._result, self._shown_params = result, params
+        self.preview.show_image(rgb_to_qimage(rgb))
+
     def _render_preview(self) -> None:
+        """Render NOW, inline — what a caller that reads `result()` on the next
+        line needs. The sliders' own route is `_queue_render`."""
         if not self._stars:
             return
-        length, count, angle, intensity, variation, colour = self._params()
-        self._result = add_spikes(self._base, self._stars, length, count, angle,
-                                  intensity, variation, colour)
-        data = np.clip(self._result.data, 0.0, 1.0)
-        if data.ndim == 2:
-            rgb = np.repeat((data * 255 + 0.5).astype(np.uint8)[:, :, None], 3, axis=2)
-        else:
-            rgb = (data * 255 + 0.5).astype(np.uint8)
-        self.preview.show_image(rgb_to_qimage(np.ascontiguousarray(rgb)))
+        self._runner.cancel()           # nothing older may land over this one
+        params = self._params()
+        self._show(params, _render(self._base, self._stars, params))
 
     def result(self) -> AstroImage:
         return self._result
 
     def _apply(self) -> None:
-        self._render_preview()                 # ensure result matches the sliders
+        """The sliders' values at the press are what is applied — never a
+        preview still being drawn for an older position. When the picture on
+        screen already is that position it is handed over as it is; otherwise
+        it is drawn on the pool while the window waits, dimmed, with Close
+        live."""
+        if self._applying or not self._stars:
+            return
+        params = self._params()
+        self._timer.stop()
+        self._runner.cancel()
+        if self._shown_params == params:
+            self._deliver(self._result, params)
+            return
+        if not self._is_async():
+            self._render_preview()
+            self._deliver(self._result, params)
+            return
+        self._applying = True
+        self._gate.close(self._side)
+        self.preview.show_waiting("Applying…")
+        base, stars = self._base, self._stars
+
+        def failed(exc) -> None:
+            if not self._alive():
+                return
+            self._applying = False
+            self._gate.open()
+            self.preview._end_wait()
+            self.preview.show_message(f"Could not apply: {exc}")
+
+        run_async(self._pool, lambda: _render(base, stars, params)[0],
+                  lambda result: self._alive() and self._deliver(result, params),
+                  failed)
+
+    def _deliver(self, result: AstroImage, params) -> None:
+        self._result = result
         if self._on_apply is not None:
             # The params go with the picture. Star Spikes recorded `""` until
             # 2026-09-17, so its six sliders left no trace anywhere — the
-            # provenance report said "Star Spikes" and stopped. Taken from
-            # _params(), the same tuple the render just used, so the record
-            # cannot describe a different image than the one applied.
-            self._on_apply(self._result, self.params_dict())
+            # provenance report said "Star Spikes" and stopped. The same tuple
+            # the picture was drawn at, so the record cannot describe a
+            # different image than the one applied.
+            self._on_apply(result, self._named(params))
         self.accept()
 
     def params_dict(self) -> dict:
         """_params() by name, for the history entry. Named rather than the bare
         tuple because a reader of the report has to know which 0.35 is which."""
-        length, count, angle, intensity, variation, colour = self._params()
+        return self._named(self._params())
+
+    @staticmethod
+    def _named(params) -> dict:
+        length, count, angle, intensity, variation, colour = params
         return {"length": round(length, 3), "count": int(count),
                 "angle": angle, "intensity": round(intensity, 3),
                 "variation": round(variation, 3), "colour": round(colour, 3)}

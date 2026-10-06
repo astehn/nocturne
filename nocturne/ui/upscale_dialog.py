@@ -64,6 +64,23 @@ def _labelled(text: str, view) -> QWidget:
     return w
 
 
+def _prepare_and_finish(img, crop, engine, scale, rc, tighten):
+    """Both halves of the first render, on the pool: the finish (reduce stars,
+    recombine) held the window 0.8 s on a 6000 × 6000 result from the M 8
+    drizzle (2026-10-06) when it ran after the prepare landed."""
+    layers = prepare_upscale(img, crop, engine, scale=scale, rc=rc)
+    return layers, finish_upscale(layers, tighten)
+
+
+def _write(result, path: str, save) -> None:
+    """The file and its provenance note — one place, for the inline and the
+    pooled export alike."""
+    save(result, path)
+    stem = os.path.splitext(path)[0]
+    with open(stem + ".txt", "w") as f:
+        f.write(upscale_provenance_text(result.metadata))
+
+
 def _dispatch_save(img, path: str) -> None:
     """Default `_save_runner`: pick the writer by the export extension."""
     ext = os.path.splitext(path)[1].lower()
@@ -84,7 +101,10 @@ COMPARE_PANEL_W = 300
 
 class UpscaleDialog(QDialog):
     def __init__(self, img, metadata: dict, settings, rc=None, on_open_copy=None, parent=None,
-                 *, denoised: bool = True) -> None:
+                 *, denoised: bool = True, is_async=None) -> None:
+        """`is_async()` False exports and opens the copy inline — the tests'
+        setting, and MainWindow's when its own `_async_enabled` is off. The
+        upscale itself always runs on the pool."""
         super().__init__(parent)
         self.setWindowTitle("Upscale Crop")
         self.setMinimumSize(800, 500)
@@ -109,6 +129,7 @@ class UpscaleDialog(QDialog):
         self._closed = False
         self._save_runner = _dispatch_save   # injectable for tests
         self._pool = QThreadPool.globalInstance()
+        self._is_async = is_async if is_async is not None else (lambda: False)
 
         frame = _qimage_from_float(self._img.data)     # once: it is the slow part of opening
         self.picker = ImageView()
@@ -318,13 +339,14 @@ class UpscaleDialog(QDialog):
         if self._busy:
             return
         crop, engine, scale, rc = self._current_crop(), self._engine, self._scale, self._rc
+        img, tighten = self._img, self._tighten
         self._token = token = CancelToken()
         self._set_busy(True)
         self.status.setText("Separating stars and enlarging…")
         self.status_ring.set_indeterminate()
         self.status_ring.show()
 
-        def done(layers) -> None:
+        def done(out) -> None:
             if self._gone():
                 return
             self._token = None
@@ -332,8 +354,11 @@ class UpscaleDialog(QDialog):
             if token.cancelled:        # work that never checks finishes anyway — drop it
                 self.status.setText("Cancelled.")
                 return
-            self._layers = layers
-            self._show_result()
+            self._layers, result = out
+            # The slider is on the next page, so it cannot have moved; checked
+            # anyway, the way every later render is.
+            self._show_result(result if result.metadata["upscale"]["tighten"] == self._tighten
+                              else None)
 
         def failed(exc) -> None:
             if self._gone():
@@ -342,7 +367,7 @@ class UpscaleDialog(QDialog):
             self._set_busy(False)
             self.status.setText("Cancelled." if isinstance(exc, Cancelled) else f"Failed: {exc}")
 
-        run_async(self._pool, lambda: prepare_upscale(self._img, crop, engine, scale=scale, rc=rc),
+        run_async(self._pool, lambda: _prepare_and_finish(img, crop, engine, scale, rc, tighten),
                   done, failed, on_progress=self._on_progress, token=self._token)
 
     def _on_progress(self, done: int, total: int) -> None:
@@ -373,8 +398,10 @@ class UpscaleDialog(QDialog):
         self.picker.set_crop_locked(False)
 
     # --- state 2 ---
-    def _show_result(self) -> None:
-        self._result = finish_upscale(self._layers, self._tighten)
+    def _show_result(self, result=None) -> None:
+        """`result` is the finish already made on the pool; None makes it here
+        (the inline `_run_upscale`)."""
+        self._result = result if result is not None else finish_upscale(self._layers, self._tighten)
         h, w = self._result.data.shape[:2]
         original = self._original_enlarged(w, h)
         nocturne = _qimage_from_float(self._result.data)
@@ -534,21 +561,81 @@ class UpscaleDialog(QDialog):
             self._do_export(path)
 
     def _do_export(self, path: str) -> None:
-        if self._result is None:
+        if self._result is None or self._busy:
             return
-        result = self._current_result()
-        self._save_runner(result, path)
-        stem = os.path.splitext(path)[0]
-        with open(stem + ".txt", "w") as f:
-            f.write(upscale_provenance_text(result.metadata))
-        self.status.setText(f"Saved {os.path.basename(path)}")
+        if not self._is_async():
+            result = self._current_result()
+            _write(result, path, self._save_runner)
+            self.status.setText(f"Saved {os.path.basename(path)}")
+            return
+        name = os.path.basename(path)
+        save = self._save_runner
+        self._off_thread(f"Saving {name}…", lambda r: _write(r, path, save),
+                         lambda _r: self.status.setText(f"Saved {name}"),
+                         lambda exc: self.status.setText(f"Could not save {name}: {exc}"))
 
     def _do_open_copy(self) -> None:
         """`on_open_copy` returns False if it declined to swap — it asks first
         when the open project has unsaved edits. Anything else (including the
         None a caller that never declines returns) counts as opened."""
-        if self._result is not None and self._on_open_copy is not None:
-            if self._on_open_copy(self._current_result()) is False:
-                return         # they kept their project; leave the dialog up
-            self.accept()      # close so the user lands on the main window showing the copy
-                               # (the swap was invisible behind the modal dialog, esp. full screen)
+        if self._result is None or self._on_open_copy is None or self._busy:
+            return
+        if not self._is_async() or self._result_is_current():
+            self._open_copy(self._current_result())
+            return
+        self._off_thread("Preparing the copy…", lambda r: None,
+                         self._open_copy,
+                         lambda exc: self.status.setText(f"Could not open the copy: {exc}"))
+
+    def _open_copy(self, result) -> None:
+        if self._on_open_copy(result) is False:
+            return         # they kept their project; leave the dialog up
+        self.accept()      # close so the user lands on the main window showing the copy
+                           # (the swap was invisible behind the modal dialog, esp. full screen)
+
+    def _result_is_current(self) -> bool:
+        r = self._result
+        return r is not None and r.metadata["upscale"]["tighten"] == self._tighten
+
+    def _off_thread(self, message: str, use, landed, failed) -> None:
+        """Make the result at the slider's value AT THE PRESS — the shown one
+        when it is that value, else a fresh finish (0.5 s at 36 MP) — and
+        `use(result)` it, on the pool; then `landed(result)` back here. The
+        slider stays live, so the value is snapshotted: moving it mid-save
+        cannot change what the file holds. The window is dimmed meanwhile;
+        a landing after Close does nothing."""
+        layers, t = self._layers, self._tighten
+        shown = self._result if self._result_is_current() else None
+        self._busy = True
+        self._close_gate()
+        self.status.setText(message)
+        self.status_ring.set_indeterminate()
+        self.status_ring.show()
+
+        def work():
+            result = shown if shown is not None else finish_upscale(layers, t)
+            use(result)
+            return result
+
+        def finish() -> bool:
+            if self._gone():
+                return False
+            self._busy = False
+            self.status_ring.hide()
+            if self._rerenders == 0:
+                self._open_gate()
+            self._sync_size()
+            return True
+
+        def done(result) -> None:
+            if not finish():
+                return
+            if layers is self._layers and t == self._tighten:
+                self._result = result       # already made: a later export need not redo it
+            landed(result)
+
+        def error(exc) -> None:
+            if finish():
+                failed(exc)
+
+        run_async(self._pool, work, done, error)

@@ -325,6 +325,14 @@ def _display(data):
     return np.clip(data, 0.0, 1.0).astype(np.float32)
 
 
+def _share_rgb8(data):
+    """The 8-bit RGB frame Share works from; pure, so the pool can make it."""
+    rgb8 = _to_uint(data, 8)
+    if rgb8.ndim == 2:
+        rgb8 = np.stack([rgb8] * 3, axis=2)
+    return rgb8
+
+
 def _slot_property(name):
     return property(lambda self: self._prep_slots[name].held,
                     lambda self, value: setattr(self._prep_slots[name], "held", value))
@@ -522,6 +530,7 @@ class MainWindow(QMainWindow):
         self._rc_runner = run_cli
         self._busy = False
         self._async_enabled = True  # tests set False for deterministic apply
+        self._share_pending = False  # Share's 8-bit copy is being made (_share)
         # (nav counter at defer time, target stage index) to land once the
         # in-flight apply's worker actually completes ("Apply and continue"
         # on an async step) — see _go_to and _land_deferred_nav. Navigating
@@ -1746,7 +1755,8 @@ class MainWindow(QMainWindow):
             return
         from .star_spikes_dialog import StarSpikesDialog
         StarSpikesDialog(self.project.current(), parent=self,
-                         on_apply=self._apply_star_spikes).exec()
+                         on_apply=self._apply_star_spikes,
+                         is_async=lambda: self._async_enabled).exec()
 
     def _apply_star_spikes(self, result, params=None) -> None:
         if self.project is None or self._busy:
@@ -1807,6 +1817,9 @@ class MainWindow(QMainWindow):
                                    on_apply=self._apply_starless_levels,
                                    splitter=lambda: self._split_tagged(base),
                                    on_split=on_split)
+        # Apply follows this window's switch. Set, not passed: read only when
+        # OK is pressed, and a stand-in dialog need not know it.
+        dlg._is_async = lambda: self._async_enabled
         dlg.exec()
         dlg.deleteLater()      # a parented dialog outlives exec(); each held two full layers
 
@@ -6411,17 +6424,44 @@ class MainWindow(QMainWindow):
             self._show_warning("Stretch the image first — Share exports what you "
                                "see, and a linear image would come out black.")
             return
+        if self._share_pending:
+            return
         self._clear_warning()
-        data = self.project.current().data
-        rgb8 = _to_uint(data, 8)
-        if rgb8.ndim == 2:
-            rgb8 = np.stack([rgb8] * 3, axis=2)
-        meta = dict(self.project.current().metadata)
+        snap = self.project.current()
+        data = snap.data
+        meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
+        if not self._async_enabled:
+            self._open_share(_share_rgb8(data), meta)
+            return
+        # The 8-bit copy is made on the pool: 0.11 s of the 0.33 s the window
+        # froze opening Share on the 33 MP M 8 drizzle (2026-10-06).
+        gen = self._project_gen
+        self._share_pending = True
+
+        def landed(rgb8) -> None:
+            self._share_pending = False
+            # Deferred, never exec()'d inside a worker's slot: the job's
+            # cleanup would wait the dialog's whole life behind it.
+            QTimer.singleShot(0, lambda: self._open_share(rgb8, meta, gen))
+
+        def failed(exc) -> None:
+            self._share_pending = False
+            self._show_warning(f"Share could not prepare the image: {exc}")
+
+        run_async(self._pool, lambda: _share_rgb8(data), landed, failed)
+
+    def _open_share(self, rgb8, meta, gen=None) -> None:
+        """Opens on the picture as it was when Share was pressed — unless the
+        workspace was replaced, or a step started, while the copy was made."""
+        if gen is not None and (gen != self._project_gen or self.project is None
+                                or self._busy):
+            return
         ShareDialog(rgb8, meta, self.settings, parent=self,
                     annotated_rgb8=self._annotated_rgb8(rgb8),
                     annotations_on=self.image_view._annotations is not None,
-                    settings_saver=lambda s: save_settings(s, self._settings_path)).exec()
+                    settings_saver=lambda s: save_settings(s, self._settings_path),
+                    is_async=lambda: self._async_enabled).exec()
 
     def _annotated_rgb8(self, rgb8):
         """`rgb8` with the plate-solve overlay burned in, or None when there is no
@@ -6471,6 +6511,9 @@ class MainWindow(QMainWindow):
         dlg = UpscaleDialog(img, meta, self.settings, rc=rc,
                             on_open_copy=self._open_upscaled, parent=self,
                             denoised=denoised)
+        # Export and Open as copy follow this window's switch. Set, not passed:
+        # read only when one is pressed, and a stand-in dialog need not know it.
+        dlg._is_async = lambda: self._async_enabled
         dlg.exec()
         dlg.deleteLater()      # a parented dialog outlives exec(); each held its pictures
 
