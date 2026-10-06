@@ -2,6 +2,29 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.48.0] — 2026-10-07
+
+Nocturne no longer freezes while it works: sliders, tool windows and opening a file all stay responsive. Drag a file onto the window to open it, and Nocturne has a new icon.
+
+### Added
+- Drag a project, a FITS file or a TIFF onto the window to open it.
+- On macOS, .nocturne projects and FITS files open from the Finder, from "Open With" and by dropping them on the Dock icon.
+- The start page shows your four most recent projects as pictures, under a clearer heading.
+
+### Changed
+- Nocturne has a new icon: the crescent.
+- Live previews are computed in the background, so sliders and the window never freeze, even on large and drizzled images. A small ring next to the histogram shows when a preview is being worked on. If you drag quickly, only the last position is computed.
+- Recover Core and Local Contrast respond much faster after the first touch on a picture. On a drizzled image Recover Core went from about 7 seconds per change to under a second.
+- Opening an image or a project runs in the background, with progress and a Cancel button on the start page. Opening a large image now freezes the window for under a second instead of about 4.
+- Star Spikes, Share, Upscale Crop and Starless Levels do their heavy work in the background. The window dims while it works, and Close always stays available.
+
+### Fixed
+- Every finished step kept a full copy of the picture in memory for the rest of the session, so memory use kept climbing on long sessions with large images.
+- If a project failed to open, the picture you already had open could take on that project's pixels. Undo, Before/After and saving were then wrong too, and saving could write those pixels into your own project file.
+- A rare crash when a window was tidied away in the background.
+- If an image or project could not be opened from the start page, the message was not visible.
+- Share sometimes didn't open if you clicked it just as a step started.
+
 ## [0.47.0] — 2026-10-05
 
 Nocturne does one thing at a time, and shows it: every control dims while a step works. The nebula slider is up to nine times faster, and the start page offers every way in.
