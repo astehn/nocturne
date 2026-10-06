@@ -92,6 +92,7 @@ from ..core.stretch import apply_stretch
 from ..core import sessionlog
 from ..core.image import AstroImage
 from ..core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient
+from ..core.tasks import current as current_token
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
@@ -462,6 +463,14 @@ NOISEX_CHOICE = RC_PRODUCT_NAMES["NoiseX"]
 MIN_WINDOW = (1120, 650)
 
 
+def _remove_quietly(path: str) -> None:
+    """A staged file nobody will use; already gone is fine."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
     _recover_prep = _slot_property("_recover_prep")
@@ -589,6 +598,8 @@ class MainWindow(QMainWindow):
                                         # resolved at CALL time so monkeypatching
                                         # the module still works
         self._open_seq = 0                     # see _open_project's supersede guard
+        self._after_open = None    # what to do once a picked image has opened (Auto Enhance)
+        self._hold_paint = False   # open_image draws its picture once, at the end
         # Spacebar before/after peek: toggles the main image between the current
         # state and the previous one (the last applied step). App-wide event
         # filter so Space works regardless of focus (except in text inputs).
@@ -1000,6 +1011,7 @@ class MainWindow(QMainWindow):
             t.stop()   # cancel any pending debounced preview before deleting its snapshots
         self._previews.cancel()     # and one computing: nothing lands on a closed window
         self._clear_cache()   # leave nothing behind on quit
+        self._prune_staged()
         if not self.isFullScreen():
             self.settings.window_geometry = bytes(self.saveGeometry().toHex()).decode()
             save_settings(self.settings, self._settings_path)
@@ -1677,6 +1689,12 @@ class MainWindow(QMainWindow):
         if not path or not os.path.isfile(path):
             self._show_warning(f"That stack is no longer at {path or 'its saved location'}.")
             return
+        if self._busy:
+            # The one open door the busy lock does not cover: refused like a
+            # Finder open, not started alongside the work already running.
+            self._show_warning(f"Finish or cancel what Nocturne is doing, then open "
+                               f"{os.path.basename(path)} again.")
+            return
         self.open_any(path)          # runs _confirm_save_if_dirty
 
     def _on_foreground_master(self, img, label: str, path: str) -> None:
@@ -1954,13 +1972,20 @@ class MainWindow(QMainWindow):
 
     def _auto_enhance(self) -> None:
         if self.project is None:
-            self._choose_fits()      # open the file dialog; loads synchronously if a file is picked
-            if self.project is None:  # cancelled, or load failed (warning already shown)
-                return
-        if self._busy:
+            # The image opens in the background, so carry on from its arrival:
+            # a fresh image has no crop, and that is what Auto Enhance says next.
+            self._after_open = self._auto_enhance
+            try:
+                self._choose_fits()
+            finally:
+                self._after_open = None     # cancelled dialog: nothing to carry on from
             return
+        # Crop before busy: the carry-on above arrives while the open is still
+        # busy, and a freshly opened image's answer is always "crop first".
         if not self._has_crop():
             self._show_warning("Crop your image first — Auto Enhance works from your cropped frame.")
+            return
+        if self._busy:
             return
         entries = self.project.entries()
         kept = self._leading_kept(entries, set(GEOMETRY_NAMES))   # keep the crop (+ any rotate/flip)
@@ -3188,24 +3213,67 @@ class MainWindow(QMainWindow):
         stretched one arrives False, and `_ensure_stretched` already gates the
         finishing steps on that, so the whole post-stretch tail is reachable
         with nothing committed on the way in.
+
+        The read and the first snapshot's write run OFF the UI thread, as
+        opening a project does: the M 8 drizzle froze the window for 4.1 s
+        (2026-10-06), 2.1 s of it that write. Nothing about the current picture
+        changes until both have succeeded, so a failed or cancelled open leaves
+        it exactly as it was.
         """
         if not self._confirm_save_if_dirty():
             return
+        # Taken now, before the read: a later open must not inherit it.
+        then, self._after_open = self._after_open, None
         # Lowered: macOS hands back whatever the file is actually called, and a
         # case-sensitive test would send a .TIF down the FITS reader.
         tiff = path.lower().endswith((".tif", ".tiff"))
-        try:
-            base = load_tiff(path) if tiff else load_fits(path)
-        except Exception as exc:
-            self._show_warning(f"Could not open file: {exc}")
-            return
-        # Whether the SOURCE was a TIFF, not whether the pixels are linear: the
-        # Import panel offers its verdict switch only for a file that could
-        # plausibly be either, and a FITS never is.
-        self._opened_as_tiff = tiff
-        self.open_image(base, os.path.basename(path))   # clears _project_path itself
+        read = load_tiff if tiff else load_fits
+        name = os.path.basename(path)
+        # Shared with _open_project: whichever open was asked for LAST wins,
+        # image or project. The generation guard alone cannot tell two
+        # in-flight opens apart (it bumps only when one commits).
+        self._open_seq += 1
+        seq = self._open_seq
 
-    def open_image(self, base, label: str) -> None:
+        staging = self._staging_dir()
+        staged = os.path.join(staging, f"{seq}.npy")
+
+        def work():
+            # Only plain values: nothing here may touch the window.
+            token = current_token()
+            base = read(path)
+            if token is not None:
+                token.check()     # Cancel pressed during the read: keep the old picture
+            # The first undo snapshot, written here rather than by Project on
+            # the UI thread; open_image moves it into place. Not as state_0:
+            # that file is the CURRENT picture's until the swap. In a folder of
+            # its own, where _clear_cache (run by that swap) does not look.
+            os.makedirs(staging, exist_ok=True)
+            try:
+                np.save(staged, base.data)
+                if token is not None:
+                    token.check()
+            except BaseException:
+                _remove_quietly(staged)
+                raise
+            return base
+
+        def on_result(base) -> None:
+            if seq != self._open_seq:
+                _remove_quietly(staged)
+                return
+            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
+            # the Import panel offers its verdict switch only for a file that
+            # could plausibly be either, and a FITS never is.
+            self._opened_as_tiff = tiff
+            self.open_image(base, name, staged=staged)   # clears _project_path itself
+            if then is not None:
+                then()
+
+        self._run_busy(work, on_result, f"Opening {name}…", "Could not open file")
+
+    def open_image(self, base, label: str, *, staged: str | None = None) -> None:
+        """`staged`: an .npy already holding `base.data` (see open_any)."""
         # Retire the outgoing workspace FIRST: _clear_cache below deletes the
         # snapshots an in-flight step may be about to write into, and the new
         # Project must not receive a callback belonging to the old one.
@@ -3217,7 +3285,8 @@ class MainWindow(QMainWindow):
         self._capture_clip_baseline(base)
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
-        self.project = Project(base, self._cache_dir)
+        self.project = Project(base, self._cache_dir, written=staged)
+        self._prune_staged()      # what a superseded open left; ours has just moved
         self._project_path = None   # a new Project is not the bundle we came from:
                                     # leaving the old path here meant the next
                                     # Cmd-S wrote this image over that bundle,
@@ -3225,25 +3294,32 @@ class MainWindow(QMainWindow):
                                     # that restarts the SAME project; it puts
                                     # its path back.
         self._center_stack.setCurrentWidget(self.image_view)
-        self._park_on_import()
-        self._show_chrome(True)  # reveal stepper + panel now there's an image
-        self._clear_warning()
-        if had_image:
-            # Switching images: every kind starts fresh. The FIRST open keeps
-            # what the welcome screen logged, where the column was hidden —
-            # the usage-counting answer was otherwise never seen at all.
-            self.activity.clear()
-        h, w = base.data.shape[:2]
-        self.log_panel.append_entry(
-            format_log_entry(f"Opened {label}", "", None, dims=(w, h))
-        )
-        # Before the navigation, or max() would carry the previous image's mark
-        # over and show steps as skipped in a session that never touched them.
-        self._reset_high_water()
-        self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
-        self._rebuild_panel()
-        self._dirty = False
-        self._update_title()
+        # _show_chrome and the navigation each refresh, and each refresh drew
+        # the same picture: three canvas paints, 1.3 s of the M 8 drizzle's
+        # open (2026-10-06). The last refresh below draws it once.
+        self._hold_paint = True
+        try:
+            self._park_on_import()
+            self._show_chrome(True)  # reveal stepper + panel now there's an image
+            self._clear_warning()
+            if had_image:
+                # Switching images: every kind starts fresh. The FIRST open keeps
+                # what the welcome screen logged, where the column was hidden —
+                # the usage-counting answer was otherwise never seen at all.
+                self.activity.clear()
+            h, w = base.data.shape[:2]
+            self.log_panel.append_entry(
+                format_log_entry(f"Opened {label}", "", None, dims=(w, h))
+            )
+            # Before the navigation, or max() would carry the previous image's mark
+            # over and show steps as skipped in a session that never touched them.
+            self._reset_high_water()
+            self._go_to_id("load", user_initiated=False)  # stay on Import & assess so the user sees metadata
+            self._rebuild_panel()
+            self._dirty = False
+            self._update_title()
+        finally:
+            self._hold_paint = False
         self._refresh()
 
     # --- saved projects (.nocturne bundles: image + full edit history + solve state) ---
@@ -4686,7 +4762,9 @@ class MainWindow(QMainWindow):
         establishes its own via _restore_solve_state after this runs.
         """
         self._cancel_active()
-        self._previews.cancel()
+        # The debounce timers too, not only the runner: one armed on the old
+        # picture would otherwise ask for a preview of the new one.
+        self._quiet_previews()
         self._project_gen += 1
         # A deferred "Apply and continue" nav (see _go_to) points at a stage
         # index in THIS workspace's stepper state; the in-flight apply it was
@@ -7244,6 +7322,21 @@ class MainWindow(QMainWindow):
                 except OSError:
                     pass
 
+    def _staging_dir(self) -> str:
+        return os.path.join(self._cache_dir, "incoming")
+
+    def _prune_staged(self) -> None:
+        """Remove image-open snapshots that never landed: a superseded open
+        drops its result without a word. Best-effort, like _clear_cache."""
+        d = self._staging_dir()
+        try:
+            names = os.listdir(d)
+        except OSError:
+            return
+        for name in names:
+            if name.endswith(".npy"):
+                _remove_quietly(os.path.join(d, name))
+
     def _show_provenance(self) -> None:
         if self.project is None:
             return
@@ -7262,7 +7355,7 @@ class MainWindow(QMainWindow):
         self._set_peek(False)   # a rebuilt view always shows the current image
         self.stepper.set_current(self._stage)
         self.stepper.mark_done(self._done_ids())
-        if self.project is not None:
+        if self.project is not None and not self._hold_paint:
             img = self.project.current()
             self._set_canvas(img)
             self.histogram_view.set_image(img)

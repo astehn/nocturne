@@ -9,7 +9,10 @@ from .step import Step
 
 
 class Project:
-    def __init__(self, base: AstroImage, cache_dir: str) -> None:
+    def __init__(self, base: AstroImage, cache_dir: str, *, written: str | None = None) -> None:
+        """`written`: an .npy in `cache_dir` already holding `base.data`, moved
+        into place instead of saved again. Opening an image writes it off the
+        UI thread — the save was 2.1 s of the M 8 drizzle's 3.9 s freeze."""
         os.makedirs(cache_dir, exist_ok=True)
         self._dir = cache_dir
         self._paths: list[str] = []
@@ -19,7 +22,7 @@ class Project:
         self._writes: list[int] = []     # per state: which write put its pixels there
         self._write_seq = 0
         self._position = 0
-        self._save(0, base)
+        self._save(0, base, written=written)
 
     @property
     def position(self) -> int:
@@ -28,9 +31,12 @@ class Project:
     def _path(self, index: int) -> str:
         return os.path.join(self._dir, f"state_{index}.npy")
 
-    def _save(self, index: int, img: AstroImage) -> None:
+    def _save(self, index: int, img: AstroImage, *, written: str | None = None) -> None:
         path = self._path(index)
-        np.save(path, img.data)
+        if written is None:
+            np.save(path, img.data)
+        else:
+            os.replace(written, path)
         self._write_seq += 1
         if index < len(self._paths):
             self._paths[index] = path

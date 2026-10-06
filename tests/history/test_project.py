@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 from nocturne.core.image import AstroImage
 from nocturne.history.project import Project
@@ -100,3 +101,15 @@ def test_state_at_is_non_destructive(tmp_path):
     assert float(s0.data.mean()) == 0.0
     assert len(p.entries()) == 1                     # unchanged — no truncation
     assert p.can_undo() is True
+
+
+def test_a_base_already_written_is_moved_into_place_not_saved_again(tmp_path, monkeypatch):
+    import nocturne.history.project as pm
+    base = AstroImage(np.arange(24, dtype=np.float32).reshape(2, 4, 3), is_linear=True)
+    staged = tmp_path / "incoming_1.npy"
+    np.save(staged, base.data)
+    monkeypatch.setattr(pm.np, "save", lambda *a, **k: pytest.fail("saved again"))
+    p = pm.Project(base, str(tmp_path), written=str(staged))
+    assert not staged.exists()
+    assert np.array_equal(p.current().data, base.data)
+    assert p.current().is_linear
