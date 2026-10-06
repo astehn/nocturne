@@ -217,6 +217,8 @@ QPushButton#welcomeRecent {{ background: transparent; border: none; color: {ACCE
 QPushButton#welcomeRecent:hover {{ color: {ACCENT_HI}; }}
 QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
+QLabel#dropOverlay {{ background: rgba(20, 22, 26, 215); border: 2px dashed {ACCENT};
+    color: {TEXT}; font-size: 18px; }}
 QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 14px; }}
 QWidget#zoomPill QPushButton {{ background: transparent; border: none; color: {TEXT};
     font-size: 15px; padding: 0; }}
