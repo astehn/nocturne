@@ -16,9 +16,13 @@ class LocalContrastStep(Step):
     def default_option(self) -> str:
         return ""
 
-    def apply(self, img: AstroImage, option) -> AstroImage:
+    @staticmethod
+    def amount(option) -> float:
+        """The option as the effect reads it — one parse, shared with the
+        window's Apply, which reuses the preview's prepared CLAHE."""
         if isinstance(option, str) and option in _AMOUNT:
-            amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
-        else:
-            amount = float(option) if option not in (None, "") else 0.0
-        return enhance(img, amount)
+            return _AMOUNT[option]             # legacy recipe (light/medium/strong)
+        return float(option) if option not in (None, "") else 0.0
+
+    def apply(self, img: AstroImage, option) -> AstroImage:
+        return enhance(img, self.amount(option))

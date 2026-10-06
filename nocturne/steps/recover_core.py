@@ -14,6 +14,11 @@ class RecoverCoreStep(Step):
     def default_option(self) -> str:
         return ""
 
+    @staticmethod
+    def amount(option) -> float:
+        """The option as the effect reads it — one parse, shared with the
+        window's Apply, which reuses the preview's prepared blur."""
+        return float(option) if option not in (None, "") else 0.0
+
     def apply(self, img: AstroImage, option) -> AstroImage:
-        amount = float(option) if option not in (None, "") else 0.0
-        return recover_core(img, amount)
+        return recover_core(img, self.amount(option))

@@ -16,6 +16,8 @@ class Project:
         self._records: list[tuple[str, str]] = []
         self._meta: list[dict] = []
         self._linear: list[bool] = []
+        self._writes: list[int] = []     # per state: which write put its pixels there
+        self._write_seq = 0
         self._position = 0
         self._save(0, base)
 
@@ -29,14 +31,17 @@ class Project:
     def _save(self, index: int, img: AstroImage) -> None:
         path = self._path(index)
         np.save(path, img.data)
+        self._write_seq += 1
         if index < len(self._paths):
             self._paths[index] = path
             self._meta[index] = dict(img.metadata)
             self._linear[index] = img.is_linear
+            self._writes[index] = self._write_seq
         else:
             self._paths.append(path)
             self._meta.append(dict(img.metadata))
             self._linear.append(img.is_linear)
+            self._writes.append(self._write_seq)
 
     def _load(self, index: int) -> AstroImage:
         data = np.load(self._paths[index])
@@ -54,12 +59,20 @@ class Project:
         """Non-destructive read of the cached state at `index` (no truncation)."""
         return self._load(index)
 
+    def state_token(self, index: int) -> tuple:
+        """Which pixels state `index` holds, without reading them: a re-apply
+        rewrites the same index, so the index alone cannot tell (a live preview
+        keys its result on this). A write count, not the file's mtime, whose
+        granularity is the file system's."""
+        return (id(self), index, self._writes[index])
+
     def run_step(self, step: Step, option: str) -> AstroImage:
         # Truncate any forward (redo) history.
         del self._paths[self._position + 1:]
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._writes[self._position + 1:]
         result = step.apply(self.current(), option)
         index = self._position + 1
         self._save(index, result)
@@ -78,6 +91,7 @@ class Project:
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._writes[self._position + 1:]
         index = self._position + 1
         self._save(index, img)
         self._records.append((name, option))
@@ -109,6 +123,7 @@ class Project:
         del self._records[index:]
         del self._meta[index + 1:]
         del self._linear[index + 1:]
+        del self._writes[index + 1:]
 
     def entries(self) -> list[tuple[str, str]]:
         return list(self._records[: self._position])
