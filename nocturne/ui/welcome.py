@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, APP_TAGLINE
 from ..history.project_store import read_preview
 from .progress_ring import ProgressRing
+from .side_panel import _ElidingLabel
 
 # The last few projects, as thumbnail cards in ONE row (Andreas, 2026-10-06:
 # "4 larger ones"). The menu keeps up to eight; the start page is a quick way
@@ -132,6 +133,14 @@ class WelcomeScreen(QWidget):
         self.busy_row.setFixedHeight(self.busy_cancel.sizeHint().height())
         for w in (self.busy_ring, self.busy_label, self.busy_cancel):
             w.hide()
+        # The warnings the right column shows, here while it is hidden: a failed
+        # open from the start page reported into a hidden label, which is the
+        # silent drop ruled out on 2026-10-05. Reserved room, like the rows
+        # above; elided, never widening the page.
+        self.warning_label = _ElidingLabel("welcomeWarning")
+        self.warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warning_label.setFixedHeight(self.warning_label.fontMetrics().lineSpacing() * 2 + 4)
+        self.warning_label.hide()
 
         # A new release, announced once (Andreas, 2026-09-26: no pop-up). Its
         # room is reserved from the start: the check lands seconds after launch,
@@ -178,6 +187,10 @@ class WelcomeScreen(QWidget):
         root.addLayout(buttons)
         root.addSpacing(12)
         root.addWidget(self.busy_row)
+        root.addWidget(self.warning_label)
+        self._warning_room = QWidget()      # holds the room while no warning shows
+        self._warning_room.setFixedHeight(self.warning_label.height())
+        root.addWidget(self._warning_room)
         root.addSpacing(4)
         root.addWidget(self.update_note)
         root.addSpacing(12)
@@ -197,6 +210,16 @@ class WelcomeScreen(QWidget):
             w.hide()
         self.busy_label.setText("")
         self.busy_ring.set_indeterminate()
+
+    def show_warning(self, text: str) -> None:
+        self.warning_label.setText(text)
+        self._warning_room.hide()
+        self.warning_label.show()
+
+    def clear_warning(self) -> None:
+        self.warning_label.setText("")
+        self.warning_label.hide()
+        self._warning_room.show()
 
     def set_update_note(self, html: str) -> None:
         self.update_note.setText(html)

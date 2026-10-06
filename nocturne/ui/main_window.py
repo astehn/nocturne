@@ -1362,6 +1362,8 @@ class MainWindow(QMainWindow):
         self._warning.setStyleSheet("color: #ff6b6b;")
         self._warning.setText(text)
         self.activity.add("warn", text)
+        if self._center_stack.currentWidget() is self._welcome:
+            self._welcome.show_warning(text)    # the right column is hidden there
         self._diag_pending = False
         self._sync_status_slot()
 
@@ -1383,6 +1385,7 @@ class MainWindow(QMainWindow):
 
     def _clear_warning(self) -> None:
         self._warning.setText("")
+        self._welcome.clear_warning()
         self._diag_pending = False
         self._sync_status_slot()
 
@@ -4891,6 +4894,7 @@ class MainWindow(QMainWindow):
         if busy:
             self._busy_label_text = label
             self._busy_timer.start(BUSY_DELAY_MS)   # visuals only if op outlasts it
+            self._welcome.clear_warning()           # a new action: the old failure is history
         else:
             self._busy_timer.stop()
             self._hide_busy_visuals()               # no-op if visuals never showed

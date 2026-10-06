@@ -331,6 +331,37 @@ def test_auto_enhance_from_the_start_page_carries_on_after_the_open(qtbot, tmp_p
     assert win._after_open is None
 
 
+def test_a_failure_on_the_start_page_is_shown_on_the_start_page(qtbot, tmp_path, loads,
+                                                                monkeypatch):
+    """The right column is hidden there: its warning label alone was a
+    failure nobody could see (controller ruling, 2026-10-06)."""
+    win = _window(qtbot, tmp_path)
+    win.show()
+    win._async_enabled = True
+    page = win._welcome
+    bad = tmp_path / "bad.fits"
+    bad.write_text("not a fits file")
+    _door_start_page(win, str(bad), monkeypatch)
+    _idle(qtbot, win)
+    assert win.project is None and page.isVisible()
+    assert win._warning.text().startswith("Could not open file: ")
+    assert page.warning_label.isVisible()
+    assert page.warning_label.text() == win._warning.text(), "the same words as the panel"
+    assert page.warning_label.width() > 0
+    # The busy refusal, while an open runs from the start page.
+    path = _fits(tmp_path, "pic")
+    loads.hold(path)
+    with _drained(qtbot, win, loads):
+        _door_start_page(win, path, monkeypatch)
+        qtbot.waitUntil(lambda: path in loads.calls, timeout=3000)
+        assert not page.warning_label.isVisible(), "a new open clears the old failure"
+        win.open_requested(str(bad))
+        assert page.warning_label.isVisible()
+        assert page.warning_label.text().startswith("Finish or cancel")
+    assert win.project is not None
+    assert not page.warning_label.isVisible() and page.warning_label.text() == ""
+
+
 # --- what stays on the UI thread -------------------------------------------------
 def _incoming(win):
     import os

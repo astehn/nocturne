@@ -219,6 +219,7 @@ QToolButton#welcomeRecent:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
 QToolButton#welcomeRecent:disabled {{ color: {TEXT_FAINT}; }}
 QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
+QLabel#welcomeWarning {{ font-size: 13px; color: {DANGER}; }}
 QLabel#dropOverlay {{ background: rgba(20, 22, 26, 215); border: 2px dashed {ACCENT};
     color: {TEXT}; font-size: 18px; }}
 QWidget#zoomPill {{ background: {BG_2}; border: 1px solid {BORDER}; border-radius: 14px; }}

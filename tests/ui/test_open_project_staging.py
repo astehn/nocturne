@@ -320,7 +320,14 @@ def test_adoption_that_fails_mid_move_lands_on_the_start_page(qtbot, setup, monk
     assert warned == ["Could not open project: disk went away"]
     assert _staged(win) == [] and _cache_states(win) == []
     assert win._project_path is None and not win._dirty
+    page = win._welcome
+    assert page.isVisible() and page.warning_label.isVisible()
+    assert page.warning_label.text() == "Could not open project: disk went away"
     monkeypatch.setattr(Project, "relocate", real)
+    win._open_project(bundle)                 # the next open succeeds: the message goes
+    _idle(qtbot, win)
+    assert win.project is not None
+    assert page.warning_label.text() == "" and not page.warning_label.isVisible()
 
 
 def test_adoption_prunes_what_superseded_opens_staged(qtbot, setup):
