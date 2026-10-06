@@ -244,6 +244,10 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    # Straight after the QApplication: macOS sends a double-clicked document
+    # as an event as soon as the app can take one, before any window exists.
+    from .ui.open_requests import OpenRequests, path_from_argv
+    open_requests = OpenRequests(app)
 
     # After the QApplication (addApplicationFont needs one) and before any
     # window: a plate drawn before these families register silently substitutes
@@ -321,6 +325,13 @@ def main() -> None:
     # Reddit reported sizing problems saying only "a MacBook Pro", which is four
     # panel sizes across several scaling settings.
     write_environment(win.settings, f"{win.width()} x {win.height()}")
+
+    # `Nocturne image.fits` opens it, on both platforms; then any file macOS
+    # sent while the window was being built.
+    argv_path = path_from_argv(sys.argv)
+    if argv_path:
+        open_requests.request(argv_path)
+    open_requests.attach(win)
 
     if "--size" in sys.argv:
         # AFTER show, from a timer, so it reports the window that EXISTS. The

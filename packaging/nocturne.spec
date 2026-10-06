@@ -126,10 +126,11 @@ _MAC = sys.platform == "darwin"
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Nocturne",
           console=False,
-          # macOS only: it makes a double-clicked .app receive dropped files as
-          # argv. PyInstaller warns and ignores it elsewhere, and a warning that
-          # is always printed is a warning nobody reads.
-          argv_emulation=_MAC)
+          # OFF since 2026-10-06. It turned a document macOS asked us to open
+          # into argv at launch — which nothing ever read — and by consuming
+          # that Apple event it kept Qt from delivering the QFileOpenEvent that
+          # nocturne/ui/open_requests.py now handles, at launch AND while running.
+          argv_emulation=False)
 coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne")
 app = _MAC and BUNDLE(
     coll,
@@ -142,5 +143,31 @@ app = _MAC and BUNDLE(
         "CFBundleShortVersionString": APP_VERSION,
         "CFBundleVersion": APP_VERSION,
         "NSHighResolutionCapable": True,
+        # What Nocturne opens (2026-10-06: he could not pick it in "Open With").
+        # A .nocturne project is OURS: an exported type, Nocturne its owner and
+        # default. FITS has no system type, so it is imported; TIFF is a system
+        # type and Nocturne only an Alternate for it — claiming every TIFF on
+        # the Mac would be rude.
+        "CFBundleDocumentTypes": [
+            {"CFBundleTypeName": "Nocturne Project", "CFBundleTypeRole": "Editor",
+             "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.nocturne.project"]},
+            {"CFBundleTypeName": "FITS Image", "CFBundleTypeRole": "Editor",
+             "LSHandlerRank": "Default", "LSItemContentTypes": ["gov.nasa.fits"]},
+            {"CFBundleTypeName": "TIFF Image", "CFBundleTypeRole": "Viewer",
+             "LSHandlerRank": "Alternate", "LSItemContentTypes": ["public.tiff"]},
+        ],
+        "UTExportedTypeDeclarations": [
+            {"UTTypeIdentifier": "com.nocturne.project",
+             "UTTypeDescription": "Nocturne Project",
+             "UTTypeConformsTo": ["public.data"],
+             "UTTypeTagSpecification": {"public.filename-extension": ["nocturne"]}},
+        ],
+        "UTImportedTypeDeclarations": [
+            {"UTTypeIdentifier": "gov.nasa.fits",
+             "UTTypeDescription": "FITS Image",
+             "UTTypeConformsTo": ["public.data", "public.image"],
+             "UTTypeTagSpecification": {"public.filename-extension": ["fit", "fits", "fts"],
+                                        "public.mime-type": ["image/fits", "application/fits"]}},
+        ],
     },
 )
