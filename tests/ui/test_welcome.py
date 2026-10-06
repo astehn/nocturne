@@ -63,12 +63,12 @@ def test_at_most_five_are_shown_and_the_list_follows_the_settings(qtbot, tmp_pat
     assert len(w.recent_buttons) == 2
     source["list"] = files
     w.refresh_recent()
-    assert len(w.recent_buttons) == RECENT_SHOWN == 5
+    assert len(w.recent_buttons) == RECENT_SHOWN == 4
 
 
 def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
     files = []
-    for i in range(5):
+    for i in range(4):
         p = tmp_path / f"p{i}.nocturne"
         p.write_text("x")
         files.append(str(p))
@@ -104,8 +104,25 @@ def test_the_recent_list_unlocks_when_work_ends(qtbot, tmp_path):
     p.write_text("x")
     win = _window(qtbot, tmp_path)
     win.settings.recent_projects = [str(p)]
+    win.show()                                  # the start page on screen
+    qtbot.waitExposed(win)
     win._set_busy(True)
     win._welcome.refresh_recent()               # rebuilt mid-run (e.g. the page re-shown)
     assert not win._welcome.recent_buttons[0].isEnabled()
     win._set_busy(False)
+    assert win._welcome.recent_buttons[0].isEnabled()
+
+
+def test_a_list_built_locked_while_hidden_is_live_when_shown(qtbot, tmp_path):
+    """Hidden, it is not rebuilt when work ends — showing it rebuilds it."""
+    from tests.ui.test_main_window import _window
+    p = tmp_path / "a.nocturne"
+    p.write_text("x")
+    win = _window(qtbot, tmp_path)
+    win.settings.recent_projects = [str(p)]
+    win._set_busy(True)
+    win._welcome.refresh_recent()
+    win._set_busy(False)
+    win.show()
+    qtbot.waitExposed(win)
     assert win._welcome.recent_buttons[0].isEnabled()

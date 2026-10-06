@@ -131,8 +131,11 @@ def _array_to_bytes(arr: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+PREVIEW_NAME = "preview.jpg"
+
+
 def save_project(project, path, *, solve_state=None, source_label: str = "",
-                  clip_baseline=None, on_progress=None) -> None:
+                  clip_baseline=None, on_progress=None, preview_jpeg: bytes | None = None) -> None:
     """Write `project`'s full undo history (up to its current position) as a
     `.nocturne` zip bundle: the base image, a manifest describing every
     recorded step, and cached npy snapshots for the steps that aren't
@@ -203,6 +206,13 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
                 "steps": steps,
             }
             zf.writestr("manifest.json", json.dumps(manifest, default=str))
+            # The start page's thumbnail (2026-10-06): a small JPEG of the
+            # picture as saved, so six projects show without reading 600 MB.
+            # Stored, not deflated — JPEG does not compress further. Older
+            # builds ignore a member they do not know.
+            if preview_jpeg:
+                zf.writestr(zipfile.ZipInfo(PREVIEW_NAME), preview_jpeg,
+                            compress_type=zipfile.ZIP_STORED)
             _tick()
         os.replace(tmp_path, path)
     except BaseException:
@@ -215,6 +225,17 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
 
 def _bytes_to_array(data: bytes) -> np.ndarray:
     return np.load(io.BytesIO(data))
+
+
+def read_preview(path: str) -> bytes | None:
+    """The thumbnail a project was saved with, or None — a project saved
+    before 2026-10-06, or a file that is not a readable bundle. Reads the zip
+    directory and one small member, never the images."""
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return zf.read(PREVIEW_NAME) if PREVIEW_NAME in zf.namelist() else None
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return None
 
 
 def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProject:

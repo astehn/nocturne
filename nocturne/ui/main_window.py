@@ -24,7 +24,25 @@ from ..core import nr_models
 from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
-from ..core.export import camera_cards, save_fits, save_png, save_tiff, _to_uint
+from ..core.export import camera_cards, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
+# The start page thumbnail saved inside a project: twice the card it is
+# drawn in (welcome.py), so it stays sharp on a Retina screen.
+PREVIEW_EDGE = 480
+
+
+def _preview_source(img):
+    """Every n-th pixel, down to about twice the preview's edge, BEFORE the
+    display stretch: stretching the whole frame first cost ~2.9 GB extra on a
+    33 MP drizzled save (review 2026-10-06), enough to swap an 8 GB Air.
+    Strided, not averaged — averaging would lower the noise the autostretch
+    measures, and a thumbnail should look like the canvas."""
+    from ..core.image import AstroImage
+    h, w = img.data.shape[:2]
+    k = max(1, max(h, w) // (2 * PREVIEW_EDGE))
+    if k == 1:
+        return img
+    return AstroImage(np.ascontiguousarray(img.data[::k, ::k]), is_linear=img.is_linear,
+                      metadata=img.metadata)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
 from ..history.project import Project
@@ -3205,10 +3223,18 @@ class MainWindow(QMainWindow):
                                     # to the OLD path
 
         clip_baseline = self._clip_baseline
+        linked = self._view_linked
 
         def work():
+            # The start page's thumbnail, drawn as the canvas draws it. Never
+            # worth failing a save over.
+            try:
+                preview = jpeg_bytes(_preview_source(project.current()), PREVIEW_EDGE,
+                                     linked=linked, quality=85)
+            except Exception:
+                preview = None
             save_project(project, path, solve_state=solve_state, source_label=source_label,
-                         clip_baseline=clip_baseline,
+                         clip_baseline=clip_baseline, preview_jpeg=preview,
                          on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
 
         def on_result(_result) -> None:
@@ -4679,7 +4705,10 @@ class MainWindow(QMainWindow):
                 pass            # deleted under us; nothing to restore
         # The start page's recent list is rebuilt whenever it is shown; a list
         # built during the run started locked and is not in the record above.
-        self._welcome.refresh_recent()
+        # Only while it is on screen: hidden behind an image, every finished
+        # step rebuilt four cards for nothing (its showEvent refreshes anyway).
+        if self._welcome.isVisible():
+            self._welcome.refresh_recent()
 
     def _sync_history_actions(self) -> None:
         """Undo, Redo and Reset rewrite the history, so they are off while a
@@ -6301,7 +6330,6 @@ class MainWindow(QMainWindow):
         handle = (getattr(self.settings, "handle", "") or "").strip()
 
         img = self.project.current()
-        from ..core.export import jpeg_bytes
         data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
 
         # run_async, NOT a hand-rolled QRunnable.
