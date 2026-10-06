@@ -35,9 +35,8 @@ class OpenRequests(QObject):
         # The latest wins, now as at launch: three files opened together from
         # the Finder are three events, and loading each in turn only for the
         # last to replace them helps nobody.
-        first = self._pending is None
         self._pending = path
-        if self._window is not None and first:
+        if self._window is not None:
             # After the event that carried it has returned: opening asks
             # questions (unsaved changes) and runs a nested loop of its own.
             QTimer.singleShot(0, self._window, self._deliver)
