@@ -95,7 +95,7 @@ from .stepper import Stepper
 from .welcome import WelcomeScreen
 from .toolbar_overflow import ToolbarOverflow
 from .worker import run_async
-from . import file_dialogs
+from . import file_dialogs, file_drop
 
 _ASPECT_RATIO = ASPECT_RATIOS    # one definition, in core.crop
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
@@ -674,6 +674,17 @@ class MainWindow(QMainWindow):
             locked=lambda: self._busy)
         self._center_stack.addWidget(self._welcome)   # page 0
         self._center_stack.addWidget(self.image_view)  # page 1
+        # Drag a project or an image onto the window to open it (2026-10-06).
+        # A QGraphicsView accepts drops by default and would swallow a file
+        # dragged over the picture before the window saw it; nothing in the
+        # view uses drops, so it hands them on.
+        self.setAcceptDrops(True)
+        self.image_view.setAcceptDrops(False)       # its viewport too
+        self._drop_overlay = QLabel(self._center_stack)
+        self._drop_overlay.setObjectName("dropOverlay")
+        self._drop_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._drop_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drop_overlay.hide()
         root.addWidget(self._center_stack, 1)
 
         # The right column is fixed zones around one scrolling middle (spec
@@ -3008,6 +3019,52 @@ class MainWindow(QMainWindow):
             # Found 2026-09-17 while checking whether the FAQ was still true.
             "Images (*.fit *.fits *.fts *.tif *.tiff)")
         if path:
+            self.open_any(path)
+
+    # --- drag and drop: a project or an image opens as from the menus ---
+    def _drop_target(self, event):
+        """What this drag would open, or None. Refused while work runs, like
+        the Open buttons it stands in for."""
+        if self._busy:
+            return None
+        return file_drop.dropped_file(event.mimeData())
+
+    def dragEnterEvent(self, event) -> None:
+        target = self._drop_target(event)
+        if target is None:
+            event.ignore()
+            return
+        kind, path = target
+        what = "project" if kind == "project" else "image"
+        self._drop_overlay.setText(f"Drop to open this {what}\n{os.path.basename(path)}")
+        self._drop_overlay.setGeometry(self._center_stack.rect())
+        self._drop_overlay.raise_()
+        self._drop_overlay.show()
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        if self._drop_target(event) is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event) -> None:
+        self._drop_overlay.hide()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        self._drop_overlay.hide()
+        target = self._drop_target(event)
+        if target is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        kind, path = target
+        # The same doors as the menus: the unsaved-changes question and the
+        # error message for an unreadable file come with them.
+        if kind == "project":
+            self._open_project(path)
+        else:
             self.open_any(path)
 
     def open_fits(self, path: str) -> None:
