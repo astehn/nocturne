@@ -3024,13 +3024,17 @@ class MainWindow(QMainWindow):
     # --- drag and drop: a project or an image opens as from the menus ---
     def _drop_target(self, event):
         """What this drag would open, or None. Refused while work runs, like
-        the Open buttons it stands in for."""
-        if self._busy:
+        the Open buttons it stands in for, and while a tool window is open —
+        a picture must not open underneath it."""
+        if self._busy or QApplication.activeModalWidget() is not None:
             return None
         return file_drop.dropped_file(event.mimeData())
 
     def dragEnterEvent(self, event) -> None:
+        # Decided once per drag: a move event arrives for every pixel, and the
+        # file check is a stat — on a stalled network volume, a frozen window.
         target = self._drop_target(event)
+        self._drag_target = target
         if target is None:
             event.ignore()
             return
@@ -3043,12 +3047,13 @@ class MainWindow(QMainWindow):
         event.acceptProposedAction()
 
     def dragMoveEvent(self, event) -> None:
-        if self._drop_target(event) is None:
+        if getattr(self, "_drag_target", None) is None or self._busy:
             event.ignore()
             return
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event) -> None:
+        self._drag_target = None
         self._drop_overlay.hide()
         super().dragLeaveEvent(event)
 
@@ -3061,11 +3066,11 @@ class MainWindow(QMainWindow):
         event.acceptProposedAction()
         kind, path = target
         # The same doors as the menus: the unsaved-changes question and the
-        # error message for an unreadable file come with them.
-        if kind == "project":
-            self._open_project(path)
-        else:
-            self.open_any(path)
+        # error message for an unreadable file come with them. After the drop
+        # has finished, not inside it: a question asked mid-drop keeps the
+        # Finder's drag animation hanging until it is answered.
+        opener = self._open_project if kind == "project" else self.open_any
+        QTimer.singleShot(0, self, lambda: opener(path))
 
     def open_fits(self, path: str) -> None:
         """Kept as a name: many callers and tests say open_fits, and a FITS is

@@ -62,7 +62,8 @@ def test_an_image_dropped_on_the_start_page_opens(qtbot, tmp_path):
     assert "Drop to open this image" in win._drop_overlay.text()
     _drop(win, _mime(fits))
     assert not win._drop_overlay.isVisibleTo(win)
-    assert win.project is not None and win.current_stage_id() == "load"
+    qtbot.waitUntil(lambda: win.project is not None, timeout=3000)
+    assert win.current_stage_id() == "load"
 
 
 def test_a_project_dropped_opens_through_the_project_door(qtbot, tmp_path, monkeypatch):
@@ -74,7 +75,7 @@ def test_a_project_dropped_opens_through_the_project_door(qtbot, tmp_path, monke
     _enter(win, _mime(p))
     assert "Drop to open this project" in win._drop_overlay.text()
     _drop(win, _mime(p))
-    assert opened == [str(p)]
+    qtbot.waitUntil(lambda: opened == [str(p)], timeout=3000)
 
 
 def test_an_image_dropped_mid_edit_asks_first(qtbot, tmp_path, monkeypatch):
@@ -90,7 +91,8 @@ def test_an_image_dropped_mid_edit_asks_first(qtbot, tmp_path, monkeypatch):
     other = _mime(_make_fits(tmp_path / "b"))
     _enter(win, other)
     _drop(win, other)
-    assert asked and win.project is before, "cancelled: the picture stays"
+    qtbot.waitUntil(lambda: bool(asked), timeout=3000)
+    assert win.project is before, "cancelled: the picture stays"
 
 
 def test_refused_drops_do_nothing(qtbot, tmp_path, monkeypatch):
@@ -102,6 +104,7 @@ def test_refused_drops_do_nothing(qtbot, tmp_path, monkeypatch):
     ev = _enter(win, _mime(jpg))
     assert not ev.isAccepted() and not win._drop_overlay.isVisibleTo(win)
     _drop(win, _mime(jpg))
+    qtbot.wait(50)
     assert calls == []
 
 
@@ -114,6 +117,7 @@ def test_nothing_is_dropped_while_work_runs(qtbot, tmp_path, monkeypatch):
     ev = _enter(win, _mime(fits))
     assert not ev.isAccepted()
     _drop(win, _mime(fits))
+    qtbot.wait(50)
     win._set_busy(False)
     assert calls == []
 
@@ -133,3 +137,43 @@ def test_the_picture_hands_drops_on_to_the_window(qtbot, tmp_path):
     assert win.acceptDrops()
     assert not win.image_view.acceptDrops()
     assert not win.image_view.viewport().acceptDrops()
+
+
+def test_nothing_opens_underneath_a_tool_window(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    win = _window(qtbot, tmp_path)
+    calls = []
+    monkeypatch.setattr(win, "open_any", lambda p: calls.append(p))
+    dlg = QDialog(win)
+    dlg.setModal(True)
+    dlg.show()
+    qtbot.waitUntil(lambda: QApplication.activeModalWidget() is dlg, timeout=2000)
+    fits = _mime(_make_fits(tmp_path))
+    ev = _enter(win, fits)
+    assert not ev.isAccepted()
+    _drop(win, fits)
+    qtbot.wait(50)
+    dlg.close()
+    assert calls == []
+
+
+def test_the_file_is_checked_once_per_drag_not_per_move(qtbot, tmp_path, monkeypatch):
+    """A move event arrives for every pixel; the check is a stat, which on a
+    stalled network volume would freeze the window."""
+    import nocturne.ui.file_drop as fd
+    win = _window(qtbot, tmp_path)
+    real = fd.dropped_file
+    n = {"calls": 0}
+
+    def counted(mime):
+        n["calls"] += 1
+        return real(mime)
+    monkeypatch.setattr(fd, "dropped_file", counted)
+    m = _mime(_make_fits(tmp_path))
+    _enter(win, m)
+    for x in range(10):
+        ev = QDragMoveEvent(QPoint(200 + x, 200), Qt.DropAction.CopyAction, m,
+                            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(win, ev)
+        assert ev.isAccepted()
+    assert n["calls"] == 1
