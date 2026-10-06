@@ -3,6 +3,27 @@ import inspect
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """A pool job still running when its test ends lands in the next one, on a
+    window pytest-qt has already deleted — the class of crash behind the one
+    full-suite segfault on the no-freezes branch (2026-10-06). Live previews
+    made pool jobs routine. Wait them out here."""
+    yield
+    try:
+        from PySide6.QtCore import QThreadPool
+    except ImportError:
+        return
+    QThreadPool.globalInstance().waitForDone(30000)
+    # And collect the test's cyclic garbage HERE, on the GUI thread. Left for
+    # later, a collection can be triggered inside any thread running Python —
+    # a pool job — and a QDialog in a cycle is then destroyed on that thread
+    # (shown 2026-10-06: gc.collect() in a run_async job freed a dialog on the
+    # pool thread).
+    import gc
+    gc.collect(1)        # the young generations: a full collect per test cost ~15% of the run
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _auto_answer_dialogs():
     """MainWindow.closeEvent prompts a modal QMessageBox.question when the project

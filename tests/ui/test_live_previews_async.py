@@ -393,3 +393,140 @@ def test_apply_after_the_base_changed_does_not_use_the_old_prepared_array(
     assert win.project.entries()[-1][0] == "Recover Core"
     assert np.array_equal(win.project.current().data,
                           RecoverCoreStep().apply(base, 0.4).data)
+
+
+# --- review fix round 1 ---
+
+def test_an_async_apply_quiets_the_previews(qtbot, tmp_path, monkeypatch, hold):
+    """Apply while a preview prepares, with a debounce timer still pending: the
+    old preview never paints under the commit and no second prepare starts."""
+    win, h = _at_recover(qtbot, tmp_path, monkeypatch, hold)
+    base = win._preview_base("recover_core")
+    _recover(win, 30)                          # preparing, held
+    qtbot.waitUntil(lambda: len(h.calls) == 1)
+    win._panel.recover_slider.setValue(60)     # debounce timer now pending
+    gate = threading.Event()
+    real = win._step_for
+
+    class HeldStep:
+        def __init__(self, step):
+            self._step = step
+
+        def apply(self, b, option):
+            assert gate.wait(10)
+            return self._step.apply(b, option)
+
+        def __getattr__(self, name):
+            return getattr(self._step, name)
+    monkeypatch.setattr(win, "_step_for", lambda sid: HeldStep(real(sid)))
+    win._apply_current_step()                  # async, held
+    assert win._busy
+    canvas = win._canvas_rgb8().copy()
+    qtbot.wait(200)                            # past the debounce
+    h.release()                                # the old preview lands now
+    qtbot.waitUntil(lambda: win._previews._running is None)
+    qtbot.wait(150)
+    assert len(h.calls) == 1, "a second prepare started beside the Apply"
+    assert np.array_equal(win._canvas_rgb8(), canvas), "a preview painted under the commit"
+    gate.set()
+    qtbot.waitUntil(lambda: not win._busy)
+    assert win.project.entries()[-1] == ("Recover Core", pytest.approx(0.6))
+    assert np.array_equal(win.project.current().data, RecoverCoreStep().apply(base, 0.6).data)
+    assert np.array_equal(win._displayed.data, win.project.current().data)
+
+
+def test_a_preview_asked_again_while_peeking_shows_the_after(qtbot, tmp_path, monkeypatch):
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("levels")
+    win._async_enabled = True
+    _gamma(win, 150)
+    _settle(qtbot, win)
+    after = win._canvas_rgb8().copy()
+    win._toggle_peek()
+    assert win._peek_active and not np.array_equal(win._canvas_rgb8(), after)
+    win._render_levels_preview()               # same value, asked again
+    _settle(qtbot, win)
+    assert not win._peek_active
+    assert np.array_equal(win._canvas_rgb8(), after)
+
+
+def test_apply_needs_the_exact_base_the_array_was_kept_for(qtbot, tmp_path, monkeypatch):
+    """Same signature is not enough: the slot also carries the base token."""
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("recover_core")
+    win._panel.recover_slider.setValue(40)
+    win._render_recover_preview()
+    slot = win._prep_slots["_recover_prep"]
+    assert slot.token == win._base_token("recover_core")
+    slot.token = ("not", "this", "base")
+    calls = []
+    import nocturne.core.hdr as hdr
+    real = hdr.prepare
+    monkeypatch.setattr(hdr, "prepare", lambda img: (calls.append(1), real(img))[1])
+    win._apply_current_step()
+    assert calls == [1], "Apply trusted an array kept for another base"
+
+
+def test_the_saturation_key_changes_when_the_mask_arrives(qtbot, tmp_path, monkeypatch):
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("saturation")
+    keys = []
+    real = win._previews.request
+    monkeypatch.setattr(win._previews, "request",
+                        lambda key, *a, **k: (keys.append(key), real(key, *a, **k)))
+    win._panel.neb_slider.setValue(50)
+    win._render_saturation_preview()
+    sig, mask = win._sat_mask
+    win._sat_mask = None
+    win._render_saturation_preview()
+    assert keys[-1] != keys[-2], "with and without the mask are different pictures"
+
+
+def test_the_ring_follows_the_histogram_corner(qtbot, tmp_path, monkeypatch, hold):
+    """Placed when a preview starts, and again whenever the histogram is
+    resized (a Resize event reaching it re-places the ring)."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QResizeEvent
+    from PySide6.QtWidgets import QApplication
+    win, h = _at_levels(qtbot, tmp_path, monkeypatch, hold)
+    ring, hist = win._preview_ring, win.histogram_view
+    _gamma(win, 140)
+    qtbot.waitUntil(lambda: len(h.calls) == 1)
+    assert ring.x() + ring.width() + 4 == hist.width()
+    ring.move(0, 0)                          # stand-in for a stale placement
+    QApplication.sendEvent(hist, QResizeEvent(hist.size(), QSize(10, 10)))
+    assert ring.x() + ring.width() + 4 == hist.width()
+    h.release()
+    _settle(qtbot, win)
+
+
+@pytest.mark.parametrize("mode", ["fail", "cancel"])
+def test_a_failing_cached_apply_commits_nothing(qtbot, tmp_path, monkeypatch, mode):
+    """The prepared path through _run_busy: an error or a cancel reports,
+    commits nothing, and gives the controls back."""
+    from nocturne.core import tasks
+    win = _open(qtbot, tmp_path, monkeypatch)
+    win._go_to_id("recover_core")
+    win._panel.recover_slider.setValue(40)
+    win._render_recover_preview()
+    assert win._recover_prep is not None
+    gate = threading.Event()
+
+    def broken(img, blur, amount):
+        assert gate.wait(10)
+        if mode == "cancel":
+            tasks.current().check()
+        raise RuntimeError("boom")
+    monkeypatch.setattr(mw, "recover_apply", broken)
+    entries = list(win.project.entries())
+    win._async_enabled = True
+    win._apply_current_step()
+    assert win._busy
+    if mode == "cancel":
+        win._cancel_active()
+    gate.set()
+    qtbot.waitUntil(lambda: not win._busy)
+    assert win.project.entries() == entries
+    assert win._panel.recover_slider.isEnabled() and win._panel.apply_btn.isEnabled()
+    if mode == "fail":
+        assert "boom" in win._warning.text()

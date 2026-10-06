@@ -86,6 +86,11 @@ class PreviewRunner(QObject):
         self._newest = self._shown = _NOTHING
         self._sync_busy()
 
+    def forget(self) -> None:
+        """The canvas was painted by someone else (Space, a repaint): a request
+        for the key last shown must compute again, not be skipped."""
+        self._shown = _NOTHING
+
     def _start(self, key, compute, show, keep) -> None:
         epoch = self._epoch
         self._running = (epoch, key)

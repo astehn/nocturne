@@ -73,7 +73,25 @@ def run_async(pool, fn, on_done, on_error=None, on_progress=None, token=None) ->
     _pending.add(worker)
 
     def _cleanup(*_):
+        # Disconnected, not just discarded: this closure holds `worker` and is
+        # connected to worker.signals, a cycle through the C++ connection that
+        # gc cannot see, so every Worker lived for the session (review
+        # 2026-10-06: 20 preview ticks of a 46 MB base, RSS 60 MB -> 1 GB).
         _pending.discard(worker)
+        # The closure holds what the job was given — a preview's full-size
+        # base. Released here, on the UI thread, not at the end of run(): it
+        # can hold the last reference to a Qt object, which must not be
+        # destroyed on a pool thread.
+        worker._fn = None
+        signals = worker.signals
+        connected = [signals.done, signals.error]
+        if on_progress is not None:
+            connected.append(signals.progress)
+        for sig in connected:          # only these: disconnecting a bare signal warns
+            try:
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass                   # the window went first
 
     worker.signals.done.connect(on_done)
     worker.signals.done.connect(_cleanup)

@@ -311,10 +311,11 @@ class _PrepSlot:
     jobs, since the runner runs one at a time — and used only when `sig` is the
     job's own base's, so a write landing mid-job can never pair a base with
     another base's array."""
-    __slots__ = ("held",)
+    __slots__ = ("held", "token")
 
     def __init__(self) -> None:
         self.held = None
+        self.token = None       # the base_token it was kept for: Apply checks both
 
 
 def _display(data):
@@ -4444,13 +4445,16 @@ class MainWindow(QMainWindow):
                 # consequence of a choice, not an error, and must be noticed.
                 self._show_notice(spcc_lost)
 
+        # Apply commits the controls, so a preview still computing — or about to
+        # start from a debounce timer, a second 6 s prepare beside the commit —
+        # is nobody's picture any more (F2).
+        self._quiet_previews()
         self._run_busy(self._commit_work(stage_id, step, base, option), on_result,
                        self._busy_label_for(stage_id, option), "Failed")
 
     # Steps whose live preview prepares what the slider does not change, and
     # the function that finishes the effect from it.
-    _PREPARED = {"recover_core": ("_recover_prep", recover_apply),
-                 "local_contrast": ("_lc_prep", lc_apply)}
+    _PREPARED = {"recover_core": "_recover_prep", "local_contrast": "_lc_prep"}
 
     def _commit_work(self, stage_id: str, step, base, option):
         """What Apply runs. Recover Core and Local Contrast reuse the array the
@@ -4458,11 +4462,14 @@ class MainWindow(QMainWindow):
         than spend another 6.2 s on the same blur; `apply_prepared` is bit-
         identical to the plain function (tests/core/test_hdr.py). The recorded
         option is unchanged, and replay and export still call the plain step."""
-        spec = self._PREPARED.get(stage_id)
-        if spec is not None:
-            held = getattr(self, spec[0])
-            if held is not None and held[0] == self._sr_sig(base):
-                finish, prep, amount = spec[1], held[1], step.amount(option)
+        attr = self._PREPARED.get(stage_id)
+        if attr is not None:
+            slot = self._prep_slots[attr]
+            held = slot.held
+            if (held is not None and slot.token == self._base_token(stage_id)
+                    and held[0] == self._sr_sig(base)):
+                finish = recover_apply if stage_id == "recover_core" else lc_apply
+                prep, amount = held[1], step.amount(option)
                 return lambda: finish(base, prep, amount)
         return lambda: step.apply(base, option)
 
@@ -5296,6 +5303,10 @@ class MainWindow(QMainWindow):
         the Starless Levels clipping view. Two implementations meant two
         legends, and they said opposite things: white was "all three crushed"
         here and "all three blown" there."""
+        # Whatever is painted now replaces what a preview showed, so the runner
+        # may no longer skip a request as "already on screen" (Space, review
+        # 2026-10-06). A preview's own paint is marked on screen after this.
+        self._previews.forget()
         rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
@@ -5371,13 +5382,27 @@ class MainWindow(QMainWindow):
                 return
             if slot.held is None or slot.held[0] != sig:
                 slot.held = (sig, result[0])
+                slot.token = token
         self._request_preview(step_id, amount, compute, keep=keep,
                               show=lambda result: self._show_preview(result[1], clipped=True))
+
+    def _quiet_previews(self) -> None:
+        """Stop every live preview: the one computing, the one waiting, and any
+        debounce timer that would ask for another."""
+        for t in (self._levels_timer, self._stretch_timer, self._sat_timer,
+                  self._lc_timer, self._recover_timer, self._curve_timer,
+                  self._tint_timer, self._rg_timer, self._sr_timer, self._fringe_timer):
+            t.stop()
+        self._previews.cancel()
+
+    def _place_preview_ring(self) -> None:
+        ring = self._preview_ring
+        ring.move(self.histogram_view.width() - ring.width() - 4, 4)
 
     def _sync_preview_ring(self, busy: bool) -> None:
         ring = self._preview_ring
         if busy:
-            ring.move(self.histogram_view.width() - ring.width() - 4, 4)
+            self._place_preview_ring()
             ring.raise_()
             ring.set_indeterminate()
         ring.setVisible(busy)
@@ -5631,7 +5656,8 @@ class MainWindow(QMainWindow):
         base = self._preview_base("saturation")
         layers = self._sat_inputs(base, nebula)
         self._request_preview(
-            "saturation", (amount, nebula, layers is not None),
+            "saturation", (amount, nebula, layers is not None,
+                           layers is not None and layers[2] is not None),
             lambda: _display(_sat_compute(base, amount, nebula, layers).data))
 
     def _apply_saturation(self, amount: float, nebula: float) -> None:
@@ -6350,6 +6376,10 @@ class MainWindow(QMainWindow):
         if (event.type() == QEvent.Type.Resize and hasattr(self, "_side")
                 and obj is self._side.scroll.viewport()):
             self._fit_curves_panel()        # Curves on small screens
+            return False
+        if (event.type() == QEvent.Type.Resize and hasattr(self, "_preview_ring")
+                and obj is self.histogram_view):
+            self._place_preview_ring()      # the ring keeps the histogram's corner
             return False
         if (event.type() == QEvent.Type.KeyPress
                 and event.key() == Qt.Key.Key_Space
