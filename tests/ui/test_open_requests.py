@@ -115,8 +115,10 @@ def test_the_app_package_says_what_it_opens():
     """Without document types macOS greys Nocturne out in "Open With"."""
     s = _spec()
     assert '"CFBundleDocumentTypes"' in s
-    assert '"com.nocturne.project"' in s and '["nocturne"]' in s
-    assert '["fit", "fits", "fts"]' in s and '"gov.nasa.fits"' in s
+    assert '"com.nocturneastro.project"' in s and '["nocturne"]' in s
+    assert '["fit", "fits", "fts"]' in s
+    # The identifier the astronomy apps share; a private one loses .fits to them.
+    assert '"gov.nasa.gsfc.fits"' in s and '"gov.nasa.fits"' not in s
     assert '"public.tiff"' in s
     tiff = re.search(r'\{[^{}]*"public\.tiff"[^{}]*\}', s).group(0)
     assert '"Alternate"' in tiff, "Nocturne must not claim every TIFF on the Mac"
@@ -125,3 +127,36 @@ def test_the_app_package_says_what_it_opens():
 def test_argv_emulation_is_off():
     """It consumed the open-document event at launch, so Qt never delivered it."""
     assert re.search(r"argv_emulation\s*=\s*False", _spec())
+
+
+def test_several_files_at_once_open_only_the_last(qtbot):
+    """Three files opened together from the Finder are three events; loading
+    each only for the last to replace it helps nobody."""
+    req = OpenRequests(QApplication.instance())
+    try:
+        win = _Win()
+        req.attach(win)
+        for n in ("a", "b", "c"):
+            _send_open(f"/tmp/{n}.fits")
+        qtbot.wait(50)
+        assert win.opened == ["/tmp/c.fits"]
+    finally:
+        QApplication.instance().removeEventFilter(req)
+
+
+def test_the_file_open_event_is_taken(qtbot):
+    req = OpenRequests(QApplication.instance())
+    try:
+        assert req.eventFilter(None, QFileOpenEvent("/tmp/x.fits")) is True
+    finally:
+        QApplication.instance().removeEventFilter(req)
+
+
+def test_a_minimised_window_comes_back_for_the_file(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.show()
+    qtbot.waitExposed(win)
+    win.showMinimized()
+    qtbot.waitUntil(win.isMinimized, timeout=2000)
+    win.open_requested(_make_fits(tmp_path))
+    assert not win.isMinimized()

@@ -144,26 +144,31 @@ app = _MAC and BUNDLE(
         "CFBundleVersion": APP_VERSION,
         "NSHighResolutionCapable": True,
         # What Nocturne opens (2026-10-06: he could not pick it in "Open With").
-        # A .nocturne project is OURS: an exported type, Nocturne its owner and
+        # A .nocturne project is OURS — under nocturneastro.com, his domain, and
+        # never to be renamed once files carry it: an exported type, Nocturne its owner and
         # default. FITS has no system type, so it is imported; TIFF is a system
         # type and Nocturne only an Alternate for it — claiming every TIFF on
         # the Mac would be rude.
         "CFBundleDocumentTypes": [
             {"CFBundleTypeName": "Nocturne Project", "CFBundleTypeRole": "Editor",
-             "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.nocturne.project"]},
+             "LSHandlerRank": "Owner", "LSItemContentTypes": ["com.nocturneastro.project"]},
+            # gov.nasa.gsfc.fits: the identifier the astronomy apps share
+            # (QuickFits, DS9…). Another app may own the type on a given Mac, so
+            # the extensions are named too, as a fallback.
             {"CFBundleTypeName": "FITS Image", "CFBundleTypeRole": "Editor",
-             "LSHandlerRank": "Default", "LSItemContentTypes": ["gov.nasa.fits"]},
+             "LSHandlerRank": "Default", "LSItemContentTypes": ["gov.nasa.gsfc.fits"],
+             "CFBundleTypeExtensions": ["fit", "fits", "fts"]},
             {"CFBundleTypeName": "TIFF Image", "CFBundleTypeRole": "Viewer",
              "LSHandlerRank": "Alternate", "LSItemContentTypes": ["public.tiff"]},
         ],
         "UTExportedTypeDeclarations": [
-            {"UTTypeIdentifier": "com.nocturne.project",
+            {"UTTypeIdentifier": "com.nocturneastro.project",
              "UTTypeDescription": "Nocturne Project",
              "UTTypeConformsTo": ["public.data"],
              "UTTypeTagSpecification": {"public.filename-extension": ["nocturne"]}},
         ],
         "UTImportedTypeDeclarations": [
-            {"UTTypeIdentifier": "gov.nasa.fits",
+            {"UTTypeIdentifier": "gov.nasa.gsfc.fits",
              "UTTypeDescription": "FITS Image",
              "UTTypeConformsTo": ["public.data", "public.image"],
              "UTTypeTagSpecification": {"public.filename-extension": ["fit", "fits", "fts"],

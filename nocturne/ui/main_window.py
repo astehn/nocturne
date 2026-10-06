@@ -3085,6 +3085,8 @@ class MainWindow(QMainWindow):
         if kind is None:
             self._show_warning(f"Nocturne cannot open {os.path.basename(path)}.")
             return
+        if self.isMinimized():
+            self.showNormal()        # a Dock drop must not open out of sight
         self.raise_()
         self.activateWindow()
         if self._busy or QApplication.activeModalWidget() is not None:

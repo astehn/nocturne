@@ -32,19 +32,25 @@ class OpenRequests(QObject):
         return False
 
     def request(self, path: str) -> None:
-        if self._window is None:
-            self._pending = path
-            return
-        # After the event that carried it has returned: opening asks questions
-        # (unsaved changes) and runs a nested loop of its own.
-        win = self._window
-        QTimer.singleShot(0, win, lambda: win.open_requested(path))
+        # The latest wins, now as at launch: three files opened together from
+        # the Finder are three events, and loading each in turn only for the
+        # last to replace them helps nobody.
+        first = self._pending is None
+        self._pending = path
+        if self._window is not None and first:
+            # After the event that carried it has returned: opening asks
+            # questions (unsaved changes) and runs a nested loop of its own.
+            QTimer.singleShot(0, self._window, self._deliver)
+
+    def _deliver(self) -> None:
+        path, self._pending = self._pending, None
+        if path is not None and self._window is not None:
+            self._window.open_requested(path)
 
     def attach(self, window) -> None:
         self._window = window
         if self._pending is not None:
-            path, self._pending = self._pending, None
-            self.request(path)
+            QTimer.singleShot(0, window, self._deliver)
 
 
 def path_from_argv(argv: list[str]) -> str | None:
