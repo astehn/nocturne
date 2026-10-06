@@ -48,6 +48,23 @@ def _card_pixmap(jpeg: bytes | None, dpr: float) -> QPixmap:
     return pm
 
 
+class _RecentArea(QWidget):
+    """Asks for the full row's width but demands none of it. A fixed width
+    kept the centred buttons still, and also became the minimum of the stack
+    the start page shares with the image view — 1568 px, against a window
+    floor of 1120 (test_window_geometry caught it)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hint = QSize(0, 0)
+
+    def sizeHint(self) -> QSize:
+        return self.hint
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self.hint.height())
+
+
 class WelcomeScreen(QWidget):
     """The start page: every way in — a stack, an image, a saved project, a
     Ha/OIII stack — and the projects you were last working on (Andreas,
@@ -107,7 +124,7 @@ class WelcomeScreen(QWidget):
         self.recent_title = QLabel("Recent projects")
         self.recent_title.setObjectName("welcomeRecentTitle")
         self.recent_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._recent_area = QWidget()
+        self._recent_area = _RecentArea()
         box = QVBoxLayout(self._recent_area)
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(12)
@@ -118,12 +135,14 @@ class WelcomeScreen(QWidget):
         self._cards.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         box.addLayout(self._cards)
         probe = self._make_card("probe", "", parent=None)   # measured, never shown
-        # Fixed in BOTH directions: the page is centred, so a list that grows
-        # or empties must not change its height — nor its width, which moved
-        # the buttons a pixel sideways.
-        self._recent_area.setFixedSize(
-            RECENT_SHOWN * probe.sizeHint().width() + (RECENT_SHOWN - 1) * 16,
-            self.recent_title.sizeHint().height() + 12 + probe.sizeHint().height() + 4)
+        # Constant in BOTH directions: the page is centred, so a list that
+        # grows or empties must not change its height — nor its width, which
+        # moved the buttons a pixel sideways. A hint, not a fixed size (see
+        # _RecentArea); the height IS fixed.
+        h = self.recent_title.sizeHint().height() + 12 + probe.sizeHint().height() + 4
+        self._recent_area.hint = QSize(
+            RECENT_SHOWN * probe.sizeHint().width() + (RECENT_SHOWN - 1) * 16, h)
+        self._recent_area.setFixedHeight(h)
         probe.deleteLater()
         self.recent_buttons: list[QToolButton] = []
 
