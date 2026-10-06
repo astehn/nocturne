@@ -185,3 +185,45 @@ def test_the_bundles_entry_point_calls_freeze_support():
     fz = next(i for i, n in enumerate(names) if n.endswith("freeze_support"))
     mn = next((i for i, n in enumerate(names) if n == "main"), len(names))
     assert fz < mn, "freeze_support() must be called before main()"
+
+
+def test_a_pool_worker_collects_cycles_again(monkeypatch):
+    """The GUI process turns automatic gc off (ui/gc_guard.py); a forked worker
+    (Linux, Python 3.13's default start method) inherits that, and with no GUI
+    timer to collect for it, would run with cyclic gc off for good."""
+    import gc
+
+    from nocturne.stacking import register_pool
+    monkeypatch.setattr(register_pool, "_init", lambda *a, **k: None)
+    was = gc.isenabled()
+    gc.disable()
+    try:
+        register_pool._pool_init("ref.fits", False)
+        assert gc.isenabled()
+    finally:
+        gc.enable() if was else gc.disable()
+
+
+def test_the_serial_fallback_leaves_the_gui_processs_gc_alone(monkeypatch, tmp_path):
+    """The serial path runs inside the GUI process: it must not switch automatic
+    collection back on there."""
+    import gc
+
+    from nocturne.stacking import register_pool
+    monkeypatch.setattr(register_pool, "_init", lambda *a, **k: None)
+    was = gc.isenabled()
+    gc.disable()
+    try:
+        register_pool._serial([], "ref.fits", None, None)
+        assert not gc.isenabled()
+    finally:
+        gc.enable() if was else gc.disable()
+
+
+def test_the_pool_uses_the_gc_initializer():
+    from nocturne.stacking import register_pool
+    pool = register_pool._make_pool(1, "ref.fits")
+    try:
+        assert pool._initializer is register_pool._pool_init
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)

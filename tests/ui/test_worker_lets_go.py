@@ -116,3 +116,40 @@ def test_what_a_job_held_is_released_on_the_ui_thread(qtbot):
     qtbot.wait(20)
     gc.collect()
     assert where == [True], "the job's closure was released off the UI thread"
+
+
+def test_worker_signals_die_on_the_ui_thread(qtbot, monkeypatch):
+    """`_cleanup` runs on the UI thread as soon as `done` is delivered, which
+    can be before run() has returned on the pool thread; the pool's last
+    reference then took the Worker — and its parentless GUI-thread
+    WorkerSignals, a QObject — down on the pool thread (review probe: 7 of 200).
+    Over many jobs, some quick and some not, every WorkerSignals must die on
+    the UI thread."""
+    import threading
+    import time
+
+    from nocturne.ui import worker as W
+    where = {"signals": []}
+    on_main = lambda: threading.current_thread() is threading.main_thread()  # noqa: E731
+    monkeypatch.setattr(W.WorkerSignals, "__del__",
+                        lambda self: where["signals"].append(on_main()), raising=False)
+    pool = QThreadPool()
+    pool.setMaxThreadCount(4)
+    done = []
+
+    def job(i):
+        def f():
+            time.sleep(0.002 if i % 2 else 0.0)
+            return i
+        return f
+    n = 200
+    for i in range(n):
+        run_async(pool, job(i), done.append)
+    qtbot.waitUntil(lambda: len(done) == n, timeout=10000)
+    pool.waitForDone(5000)
+    qtbot.waitUntil(lambda: len(where["signals"]) == n, timeout=5000)
+    assert all(where["signals"]), \
+        f"{where['signals'].count(False)} WorkerSignals died on a pool thread"
+    # The Worker (a QRunnable, not a QObject) may still end on a pool thread
+    # through the pool's own reference; what matters is that by then it holds
+    # nothing — no signals, no closure, no token — which _cleanup sees to.

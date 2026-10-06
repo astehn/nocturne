@@ -129,8 +129,19 @@ def _make_pool(workers: int, ref_path: str, gas: bool = False):
     fallback is unconditional.
     """
     from concurrent.futures import ProcessPoolExecutor
-    return ProcessPoolExecutor(max_workers=workers, initializer=_init,
+    return ProcessPoolExecutor(max_workers=workers, initializer=_pool_init,
                                initargs=(ref_path, gas))
+
+
+def _pool_init(ref_path: str, gas: bool = False) -> None:
+    """A worker process's initializer. The GUI process collects cycles from a
+    timer with automatic gc off (ui/gc_guard.py); a FORKED worker (Linux, the
+    3.13 default) inherits the off and has no such timer, so it turns
+    collection back on. Not in _init: the serial fallback runs _init inside the
+    GUI process."""
+    import gc
+    gc.enable()
+    _init(ref_path, gas)
 
 
 def _serial(paths, ref_path, on_progress, check_cancel, gas=False) -> list:
