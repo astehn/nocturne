@@ -78,8 +78,8 @@ from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSIN
 from ..core.levels import apply_levels, auto_levels
 from ..recipe import LEVELS_AUTO
 from ..core.saturation import nebula_mask, nebula_saturate, saturate
-from ..core.local_contrast import enhance
-from ..core.hdr import recover_core
+from ..core.local_contrast import apply_prepared as lc_apply, prepare as lc_prepare
+from ..core.hdr import apply_prepared as recover_apply, prepare as recover_prepare
 from ..core.color import ColorSettings, remove_green, remove_green_fringe, remove_green_fringe_masked
 from ..core.color_balance import describe as cb_describe
 from ..core.curves import apply_curves, curve_key, gentle_s_points, normalize_curves
@@ -586,6 +586,10 @@ class MainWindow(QMainWindow):
         self._sat_timer.timeout.connect(self._render_saturation_preview)
         self._sat_layers = None   # the ACTIVE step's handle into _splits (see _remember_split)
         self._sat_mask = None     # (sig, mask): Saturation's nebula mask, built once per split
+        # (sig, array): what the Recover Core / Local Contrast slider does not
+        # change, computed once per base for the live preview (_prepared).
+        self._recover_prep = None
+        self._lc_prep = None
         self._sat_failed = None   # sig of a prepare that has not landed (failed/cancelled/running)
         # Local-contrast live-preview: a debounced (90 ms) non-committing render.
         self._lc_pending = None
@@ -4614,6 +4618,7 @@ class MainWindow(QMainWindow):
         # picture's star tool (review 2026-10-05).
         self._sat_layers = self._sat_mask = None
         self._sat_failed = None
+        self._recover_prep = self._lc_prep = None
         self._last_export = None
         self._solve = None
         self._solve_freshness = None
@@ -5509,7 +5514,8 @@ class MainWindow(QMainWindow):
         img = self._preview_base("local_contrast")
         amount = (self._lc_pending if self._lc_pending is not None
                   else self._panel.lc_slider.value() / 100.0)
-        self._show_preview(enhance(img, amount).data)
+        clahe = self._prepared("_lc_prep", lc_prepare, img) if amount > 0 else None
+        self._show_preview(lc_apply(img, clahe, amount).data)
 
     # --- recover core live preview ---
     def _on_recover_change(self, amount: float) -> None:
@@ -5525,7 +5531,22 @@ class MainWindow(QMainWindow):
         img = self._preview_base("recover_core")
         amount = (self._recover_pending if self._recover_pending is not None
                   else self._panel.recover_slider.value() / 100.0)
-        self._show_preview(recover_core(img, amount).data)
+        blur = self._prepared("_recover_prep", recover_prepare, img) if amount > 0 else None
+        self._show_preview(recover_apply(img, blur, amount).data)
+
+    def _prepared(self, attr: str, prepare, base):
+        """`prepare(base)`, kept in `attr` as (sig, array) until the base changes.
+        Recomputing it on every tick was 6.2 s of Recover Core's 6.7 s and 0.78 s
+        of Local Contrast's 0.90 s on a 33 MP master (2026-10-06). Keyed like the
+        split cache: a Trim, an earlier step re-applied or an Undo gives a new
+        signature and so a fresh array; Apply and export use the plain function."""
+        sig = self._sr_sig(base)
+        held = getattr(self, attr)
+        if held is None or held[0] != sig:
+            setattr(self, attr, None)       # never hold two full-size arrays
+            held = (sig, prepare(base))
+            setattr(self, attr, held)
+        return held[1]
 
     # --- curves live preview ---
     def _curve_option(self, points):
