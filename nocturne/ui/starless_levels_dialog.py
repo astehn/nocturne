@@ -31,7 +31,7 @@ from ..core.image import AstroImage
 from ..core.inspect import capture_clip_baseline, clip_masks, clip_overlay
 from ..core.tasks import CancelToken
 from .busy_gate import BusyGate, keep_live
-from .compare_view import CompareView
+from .compare_view import MODE_CHOICES, CompareView
 from .curves_dialog import _downscale, _fit_to_screen, _fitted_size
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from .progress_ring import WaitingBlock
@@ -51,7 +51,7 @@ _HIST_MIN_H = 200
 
 # Label -> CompareView mode. Off is the default: someone who does not want a
 # before/after sees exactly the dialog they had.
-_MODES = (("Off", "off"), ("Wipe", "wipe"), ("Side by side", "side"))
+_MODES = MODE_CHOICES
 
 # Narrowband's and Colour Balance's words for the same wait.
 _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"

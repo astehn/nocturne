@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import shiboken6
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import QEvent, Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QVBoxLayout, QWidget,
@@ -16,13 +16,14 @@ from ..core.narrowband import (
 from ..settings import resolve_binary
 from ..steps.star_split import preferred_splitter, splitter_name
 from ..tools.rcastro import RCAstro
-from .frame_preview import FramePreview
-from .progress_ring import ProgressRing
+from .compare_view import MODE_CHOICES, CompareView
+from .progress_ring import ProgressRing, WaitingBlock
 from .preview import downscale as _downscale, to_qimage
 from .reset_slider import ResetSlider
 from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from .help_link import HelpLink
+from .zoom_row import ZoomRow
 
 _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
@@ -91,7 +92,6 @@ class NarrowbandDialog(QDialog):
         self._prev_starless = None
         self._prev_stars = None
         self._last = None                 # last COMPOSED AstroImage (what the preview shows)
-        self._fitted = False
         self._started = False
         self._applying = False
         # Every control is off while the split or Apply runs: moved during
@@ -99,8 +99,17 @@ class NarrowbandDialog(QDialog):
         # 2026-10-05). Close stays live; it drops a result still in flight.
         self._gate = BusyGate()
 
-        self.preview = FramePreview()
+        # The same Off / Wipe / Side by side compare as Starless Levels, with
+        # one pan/zoom for both panes (Andreas, 2026-10-07: "I want the side
+        # by side in Narrowband as well").
+        self.preview = CompareView()
         self.preview.setMinimumSize(460, 460)
+        self.preview.set_placeholder("")
+        self.waiting = WaitingBlock(self.preview)
+        self.waiting.hide()
+        self.preview.installEventFilter(self)
+        self._before_q = None             # the opened image, at preview size
+        self._after_q = None              # what the preview shows, at preview size
 
         pos = _slider_positions(_ENGINE_DEFAULTS)
         self.palette_box = QComboBox()
@@ -127,7 +136,12 @@ class NarrowbandDialog(QDialog):
                                         QSizePolicy.Policy.MinimumExpanding)
         self.palette_desc.setMinimumHeight(self.palette_desc.fontMetrics().height() * 3)
         self.palette_desc.setObjectName("hint")
-        self.compare_check = QCheckBox("Compare with original")
+        self.mode_box = QComboBox()
+        self.mode_box.addItems([label for label, _ in MODE_CHOICES])
+        self.mode_box.setToolTip(
+            "Compare with the image as you opened it. Wipe splits one picture "
+            "with a divider you drag; Side by side shows both at once, and pan "
+            "and zoom move them together")
         self.lightness_check = QCheckBox("Preserve lightness (keep tonal structure)")
         self.lightness_check.setChecked(pos["lightness"])
         self.reset_btn = QPushButton("Reset")
@@ -144,7 +158,9 @@ class NarrowbandDialog(QDialog):
                   self.bright_slider, self.protect_slider, self.tame_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
-        self.compare_check.toggled.connect(self._on_compare_toggled)
+        self.mode_box.currentIndexChanged.connect(self._on_mode_changed)
+        self.preview.viewChanged.connect(self._push_images)
+        self.preview.paneResized.connect(self._push_images)
 
         def _row(slider, value_label):
             value_label.setMinimumWidth(48)
@@ -167,7 +183,7 @@ class NarrowbandDialog(QDialog):
         controls.addRow("Tame core", _row(self.tame_slider, self.tame_val))
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow(self.lightness_check)
-        controls.addRow(self.compare_check)
+        controls.addRow("Compare", self.mode_box)
         self._controls = controls   # walked by the help-accuracy guard
         self._update_value_labels()
         self._describe_palette(self.palette_box.currentText())
@@ -185,8 +201,14 @@ class NarrowbandDialog(QDialog):
         buttons.addWidget(self.apply_btn)
         buttons.addWidget(close_btn)
 
+        zoom_row = ZoomRow(self.preview)
+        self.zoom_label = zoom_row.label
+        self.fit_btn = zoom_row.fit_btn
+        self.zoom_in_btn, self.zoom_out_btn = zoom_row.in_btn, zoom_row.out_btn
+
         side = QVBoxLayout()
         side.addLayout(controls)
+        side.addLayout(zoom_row)
         side.addStretch(1)
         self.status_ring = ProgressRing(size="small")
         self.status_ring.hide()
@@ -237,7 +259,11 @@ class NarrowbandDialog(QDialog):
                                 "or RC-Astro and point at it in Settings.")
             self._on_starless((self._base, None))
             return
-        self.preview.show_waiting(_SPLIT_MSG)
+        self.waiting.set_text(_SPLIT_MSG)
+        self.waiting.set_indeterminate()
+        self.waiting.setGeometry(self.preview.rect())
+        self.waiting.show()
+        self.waiting.raise_()
         self._gate.close(self._side)
         run_async(self._pool, lambda: self._starx_runner(self._base),
                   self._on_starless, self._on_error,
@@ -250,16 +276,13 @@ class NarrowbandDialog(QDialog):
         split Starless Levels and Colour Balance count up on the same ring —
         same work, same wait.
         """
-        if not shiboken6.isValid(self.preview):
+        if not shiboken6.isValid(self.waiting):
             return
-        self.preview.set_waiting_progress(done, total)
+        self.waiting.set_progress(done, total)
 
     def _on_starless(self, layers) -> None:
         self._release_controls()
-        # A compare set up while "Separating stars..." was on screen would be left
-        # pointing at an image the dialog is about to replace.
-        self.compare_check.setChecked(False)
-        self.preview.view.set_compare(None)
+        self.waiting.hide()
         self._starless, self._stars = layers
         # Only a REAL split is worth sharing. The no-splitter and error paths
         # both call this with (base, None), and publishing that would poison the
@@ -272,6 +295,7 @@ class NarrowbandDialog(QDialog):
             self._on_split(self._starless, self._stars, self.last_engine)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
+        self._before_q = to_qimage(_downscale(self._base))
         self._do_render()
 
     def _release_controls(self) -> None:
@@ -324,21 +348,14 @@ class NarrowbandDialog(QDialog):
             f"{palette} builds its green directly from one channel, so the blend "
             f"has no effect here. Switch to HOO to use it."))
 
-    def _on_compare_toggled(self, on: bool) -> None:
-        """Split-divider compare against the image as it arrived.
+    def _on_mode_changed(self, index: int) -> None:
+        self.preview.set_mode(MODE_CHOICES[index][1])
+        self._push_images()
 
-        The SAME mechanism the main window's Before/After drives, so the handle
-        behaves the way it does everywhere else rather than being a second
-        comparison UI with its own habits.
-
-        Set ONCE here, never in _do_render: set_compare() re-centres the divider,
-        so calling it per render would yank the handle back to the middle every
-        time a slider moved — useless exactly while you are using it.
-        """
-        if not on or self._prev_starless is None:
-            self.preview.view.set_compare(None)
-            return
-        self.preview.view.set_compare(to_qimage(_downscale(self._base)))
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self.preview and event.type() == QEvent.Type.Resize:
+            self.waiting.setGeometry(self.preview.rect())
+        return super().eventFilter(obj, event)
 
     def _on_slider_change(self) -> None:
         self._update_value_labels()
@@ -400,10 +417,24 @@ class NarrowbandDialog(QDialog):
             self._last = AstroImage(
                 screen(nebula.data, np.clip(self._prev_stars.data, 0.0, 1.0)),
                 is_linear=nebula.is_linear, metadata=dict(nebula.metadata))
-        self.preview.show_image(to_qimage(self._last))
-        if not self._fitted:
-            self._fitted = True
-            self.preview.view.fit()
+        self._after_q = to_qimage(self._last)
+        self._push_images()
+
+    def _push_images(self) -> None:
+        """Hand the compare widget what is on screen. Zoomed in, both panes get
+        the same crop of the preview-sized pictures: the render reads whole-image
+        statistics, so re-rendering a crop would show colours Apply never makes.
+        Wipe magnifies the whole frame itself, so it always gets the whole frame."""
+        if self._after_q is None:
+            return
+        before, after = self._before_q, self._after_q
+        if self.preview.mode() != "wipe" and self.preview.zoom_level() > 1.0:
+            x0, y0, x1, y1 = self.preview.visible_rect((after.height(), after.width()))
+            after = after.copy(x0, y0, x1 - x0, y1 - y0)
+            if before is not None:
+                before = before.copy(x0, y0, x1 - x0, y1 - y0)
+        self.preview.set_images(before, after)
+        self.zoom_label.setText(f"{self.preview.display_zoom():.1f}x")
 
     def preview_result(self) -> AstroImage:
         return self._last

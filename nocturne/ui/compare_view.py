@@ -53,6 +53,10 @@ _LETTERBOX = "#2a2d31"
 
 MODES = ("off", "wipe", "side")
 
+# The Compare dropdown's labels, shared by every tool that offers the three
+# modes so they read the same everywhere.
+MODE_CHOICES = (("Off", "off"), ("Wipe", "wipe"), ("Side by side", "side"))
+
 # Slack left inside the wipe pane, in pixels — see `CompareView.pane_size`.
 #
 # Measured against a real ImageView at a 698 x 498 viewport: a pixmap that

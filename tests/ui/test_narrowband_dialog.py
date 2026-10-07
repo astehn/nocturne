@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+from nocturne.ui.compare_view import MODE_CHOICES
+
 pytest.importorskip("PySide6")
 from nocturne.core.image import AstroImage           # noqa: E402
 from nocturne.settings import Settings               # noqa: E402
@@ -29,7 +31,7 @@ def test_dialog_builds_with_seeded_layers(qtbot):
     d = _dialog(qtbot, starless=_img(), stars=None)
     d._on_starless((d._base, None))          # simulate showEvent seeding
     d._do_render()
-    assert d.preview.has_image()
+    assert d.preview._after_img is not None
 
 
 def _img_varied_ha():
@@ -163,7 +165,7 @@ def test_a_missing_stars_layer_still_renders(qtbot):
     qtbot.addWidget(d)
     d._on_starless((img, None))
     d._do_render()
-    assert d.preview.has_image()
+    assert d.preview._after_img is not None
 
 
 def test_apply_does_not_block_the_ui_thread(qtbot, monkeypatch):
@@ -323,17 +325,57 @@ def test_tame_core_resets_and_stays_inside_the_defaults_guard(qtbot):
     assert d._params() == NarrowbandParams(), "the new field must round-trip too"
 
 
-def test_compare_shows_the_original_alongside_the_recolour(qtbot):
-    """Judging a recolour against nothing is guesswork. Uses the same split
-    divider the main window's Before/After drives, rather than a second
-    comparison UI that behaves differently."""
+def _mode(d, label):
+    d.mode_box.setCurrentText(label)
+    assert d.preview.mode() == dict(MODE_CHOICES)[label]
+
+
+def test_compare_offers_the_same_three_modes_as_starless_levels(qtbot):
+    """Judging a recolour against nothing is guesswork. Narrowband now offers
+    the Starless Levels compare, side by side included (Andreas, 2026-10-07)."""
     d = _dialog(qtbot, starless=_img(), stars=None)
     d._on_starless((d._base, None))
-    assert d.preview.view.compare_active() is False
-    d.compare_check.setChecked(True)
-    assert d.preview.view.compare_active() is True
-    d.compare_check.setChecked(False)
-    assert d.preview.view.compare_active() is False
+    assert [d.mode_box.itemText(i) for i in range(d.mode_box.count())] == \
+        [label for label, _ in MODE_CHOICES]
+    assert d.preview.mode() == "off"
+    _mode(d, "Side by side")
+    assert d.preview._before_img is d._before_q, "the left pane shows the image as opened"
+    assert d.preview._after_img is d._after_q
+    _mode(d, "Wipe")
+    assert d.preview._wipe_view.compare_active()
+    _mode(d, "Off")
+
+
+def test_side_by_side_zoom_shows_the_same_patch_in_both_panes(qtbot):
+    """One pan/zoom for both panes: zoomed in, both get the same crop of the
+    preview-sized pictures, never a re-render of the crop (the recolour reads
+    whole-image statistics, so a rendered crop would not be what Apply makes)."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.resize(1100, 720)
+    d.show()
+    qtbot.waitExposed(d)
+    d._on_starless((d._base, None))
+    _mode(d, "Side by side")
+    full = d._after_q.size()
+    d.preview.set_zoom(3.0)
+    d.preview.viewChanged.emit()
+    before, after = d.preview._before_img, d.preview._after_img
+    assert after.size() == before.size()
+    assert after.width() < full.width() and after.height() < full.height()
+    x0, y0, x1, y1 = d.preview.visible_rect((full.height(), full.width()))
+    assert after == d._after_q.copy(x0, y0, x1 - x0, y1 - y0)
+    assert before == d._before_q.copy(x0, y0, x1 - x0, y1 - y0)
+
+
+def test_wipe_always_gets_the_whole_frame(qtbot):
+    """Wipe magnifies the whole picture itself; a crop handed to it would be
+    magnified a second time."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    _mode(d, "Side by side")
+    d.preview.set_zoom(3.0)
+    _mode(d, "Wipe")
+    assert d.preview._after_img.size() == d._after_q.size()
 
 
 def test_moving_a_slider_does_not_reset_the_compare_divider(qtbot):
@@ -342,25 +384,23 @@ def test_moving_a_slider_does_not_reset_the_compare_divider(qtbot):
     would make the comparison useless exactly while you are using it."""
     d = _dialog(qtbot, starless=_img(), stars=None)
     d._on_starless((d._base, None))
-    d.compare_check.setChecked(True)
-    d.preview.view._on_divider(3.0)             # drag the handle off centre
-    moved = d.preview.view._split_x
+    _mode(d, "Wipe")
+    view = d.preview._wipe_view
+    view._on_divider(3.0)                       # drag the handle off centre
+    moved = view._split_x
     d.oxygen_slider.setValue(80)
     d._do_render()
-    assert d.preview.view.compare_active(), "compare must survive a re-render"
-    assert d.preview.view._split_x == moved, "the divider must stay where it was put"
+    assert view.compare_active(), "compare must survive a re-render"
+    assert view._split_x == moved, "the divider must stay where it was put"
 
 
-def test_compare_clears_when_the_star_layers_arrive(qtbot):
-    """A compare set up while "Removing stars..." was on screen would otherwise
-    be left pointing at an image the dialog has since replaced."""
-    d = _dialog(qtbot, starless=_img(), stars=None)
+def test_the_ring_leaves_when_the_star_layers_arrive(qtbot):
+    from nocturne.ui import narrowband_dialog
+    d = _dialog(qtbot)
+    d.waiting.set_text(narrowband_dialog._SPLIT_MSG)
+    d.waiting.show()
     d._on_starless((d._base, None))
-    d.compare_check.setChecked(True)
-    assert d.preview.view.compare_active()
-    d._on_starless((d._base, None))             # layers arrive/replace
-    assert d.preview.view.compare_active() is False
-    assert d.compare_check.isChecked() is False, "and the box must agree with reality"
+    assert d.waiting.isHidden()
 
 
 def test_the_dialog_explains_the_selected_palette(qtbot):
@@ -385,8 +425,7 @@ def test_wrapping_text_gets_the_whole_panel_width(qtbot):
         if item is not None and item.widget() is not None:
             spanning.append(item.widget())
     for w, name in ((d.palette_desc, "palette description"),
-                    (d.lightness_check, "Preserve lightness"),
-                    (d.compare_check, "Compare with original")):
+                    (d.lightness_check, "Preserve lightness")):
         assert w in spanning, f"{name} must span both columns or its text is cut off"
 
 
@@ -430,17 +469,16 @@ def test_the_matched_point_is_labelled_on_the_slider(qtbot):
 def test_the_split_shows_a_ring_with_the_number_not_the_text(qtbot):
     from nocturne.ui import narrowband_dialog
     d = _dialog(qtbot)
-    d.preview.show_waiting(narrowband_dialog._SPLIT_MSG)   # what showEvent does
+    d.waiting.set_text(narrowband_dialog._SPLIT_MSG)       # what showEvent does
     d._on_split_progress(46, 100)
-    block = d.preview.waiting_block()
-    assert block.ring.fraction() == pytest.approx(0.46)
-    assert "46%" not in d.preview.message_text(), "the number lives in the ring"
+    assert d.waiting.ring.fraction() == pytest.approx(0.46)
+    assert "46%" not in d.waiting.text(), "the number lives in the ring"
 
 
 def test_a_late_progress_after_close_is_harmless(qtbot):
     from nocturne.ui import narrowband_dialog
     d = NarrowbandDialog(Settings(), _img())     # not qtbot-registered: it is deleted below
-    d.preview.show_waiting(narrowband_dialog._SPLIT_MSG)
+    d.waiting.set_text(narrowband_dialog._SPLIT_MSG)
     d.close(); d.deleteLater(); qtbot.wait(10)
     d._on_split_progress(50, 100)          # must not raise
 
