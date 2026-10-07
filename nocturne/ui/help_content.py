@@ -970,12 +970,14 @@ _TOPIC_LIST = (
        "afterwards and only the colour changes. Turn it on when the recolour has moved the "
        "brightness of your object in a way you did not want, and use Brightness to compensate "
        "if it lands dark.</p>"
-       "<h4>Compare with original</h4>"
-       "<p>Splits the preview against the image as it arrived, with a divider you drag "
-       "across to sweep between the two — the same handle the main window's "
-       "<b>Before/After</b> uses. A palette is hard to judge against nothing, and easy to "
-       "judge against what you started with. Drag the divider where you want it and it "
-       "stays there while you work the sliders.</p>"
+       "<h4>Compare</h4>"
+       "<p>A palette is hard to judge against nothing, and easy to judge against what you "
+       "started with. <b>Compare</b> shows the image as it arrived next to the recolour. "
+       "<b>Wipe</b> lays the two on top of one another with a divider you drag across, the "
+       "same handle the main window's <b>Before/After</b> uses; the divider stays where you "
+       "put it while you work the sliders. <b>Side by side</b> shows both at once, and "
+       "zooming or panning one moves the other with it. <b>Off</b> shows the recolour "
+       "alone.</p>"
        "<h4>Stars</h4>"
        "<p>With <b>StarNet2</b> (free) or <b>StarXTerminator</b> configured in Settings, the stars are lifted "
        "off once when the dialog opens, only the starless nebula is recoloured, and the original "
@@ -1063,25 +1065,31 @@ _TOPIC_LIST = (
        "program had to guess, and guessed its own. That cannot happen now.</p>"),
 
     # ---- Tools ----
-    _t("tools", "External tools: GraXpert, RC-Astro & ASTAP",
-       "GraXpert is free and required; RC-Astro and ASTAP are optional and add extra power.",
-       "<h4>GraXpert (free, required)</h4>"
-       "<p>Powers <b>Background extraction</b> (and, optionally, Noise Reduction). It's free — "
-       "download it, then set its path in <b>Settings</b> and press <b>Test</b>.</p>"
+    _t("tools", "External tools: GraXpert, StarNet2, RC-Astro & ASTAP",
+       "GraXpert is free and needed for Background; StarNet2, RC-Astro and ASTAP are optional.",
+       "<h4>GraXpert (free, needed for Background)</h4>"
+       "<p>Powers <b>Background extraction</b>, which cannot run without it, and is one of the "
+       "engines for Noise Reduction. Download it, then set its path in <b>Settings</b> and "
+       "press <b>Test</b>.</p>"
+       "<h4>StarNet2 (free, optional)</h4>"
+       "<p>Separates stars from the rest of the picture: the split behind Star Reduction, "
+       "De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen "
+       "Nebulosity, Upscale Crop, Colour Balance and Auto Enhance. Without it those use Nocturne's own "
+       "separator, which leaves more starlight behind. Take the CLI package, set its path in "
+       "Settings and Test it.</p>"
        "<h4>RC-Astro (paid, optional)</h4>"
-       "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise), and "
-       "<b>StarNet2</b> or <b>StarXTerminator</b> (the star/starless split behind Star Reduction, Star Colour, the "
-       "nebula saturation boost, De-green Stars, and the starless+stars export). "
-       "Set its path in Settings and Test it.</p>"
+       "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise) and "
+       "<b>StarXTerminator</b> (the star split, preferred over StarNet2 when both are set, and "
+       "the only way to get the starless+stars export). Set its path in Settings and Test it.</p>"
        "<h4>ASTAP (free, optional)</h4>"
        "<p>A free plate-solver that powers <b>Plate Solve</b> — identifying the field and "
        "annotating it with catalogue objects, named stars, a compass, and a scale bar. It also "
        "helps the Photometric (SPCC) colour method. Download ASTAP and its star database, then "
        "set its path in Settings and Test it.</p>"
        "<h4>Do I need the optional tools?</h4>"
-       "<p>No — every RC-Astro step has a built-in free fallback, so the whole app works without "
-       "it; RC-Astro simply makes those steps noticeably better. ASTAP is only needed for plate "
-       "solving/annotation. Nocturne isn't affiliated with any of these tools.</p>"),
+       "<p>No — every RC-Astro step except the starless+stars export has a free fallback, so "
+       "the app works without it. StarNet2 is free and splits stars more cleanly than the built-in separator. ASTAP "
+       "is only needed for plate solving/annotation, mosaics and photometric colour. Nocturne isn't affiliated with any of these tools.</p>"),
 
     _t("auto-enhance", "Auto Enhance",
        "One tap runs a fixed, conservative plan on your cropped frame — as ordinary, editable "

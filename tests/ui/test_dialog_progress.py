@@ -54,9 +54,10 @@ def test_the_narrowband_dialog_shows_the_percentage(qtbot):
     # starless/stars supplied so construction does not kick off a real split.
     dlg = NarrowbandDialog(Settings(), img, starless=img, stars=None)
     qtbot.addWidget(dlg)
-    dlg.preview.show_waiting("Separating stars…")     # what showEvent does
+    dlg.waiting.set_text("Separating stars…")         # what showEvent does
+    dlg.waiting.show()
     dlg._on_split_progress(43, 100)
-    assert dlg.preview.waiting_block().ring.fraction() == pytest.approx(0.43), (
+    assert dlg.waiting.ring.fraction() == pytest.approx(0.43), (
         "the dialog does not show progress")
 
 

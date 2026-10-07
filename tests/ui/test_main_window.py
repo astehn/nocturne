@@ -1472,7 +1472,7 @@ def test_setup_star_reduction_ungated_without_rcastro(qtbot, tmp_path):
     assert win._sr_layers is not None
     assert win._panel.sr_slider.isEnabled() is True
     _assert_sr_apply_ungated(win)
-    assert "RC-Astro" in win._panel.sr_status.text()            # free-detection note
+    assert "StarNet2" in win._panel.sr_status.text()            # free-detection note
     assert "Needs RC-Astro" not in win._panel.sr_status.text()  # not the old gate text
 
 
@@ -1485,7 +1485,7 @@ def test_star_reduction_ungated_without_rcastro(qtbot, tmp_path, monkeypatch):
     win._go_to_id("star_reduction")
     # panel slider is ENABLED (not gated) and shows a free-detection note, not "Needs RC-Astro"
     assert win._panel.sr_slider.isEnabled() is True
-    assert "RC-Astro" in win._panel.sr_status.text()            # note mentions RC-Astro
+    assert "StarXTerminator" in win._panel.sr_status.text()     # note names the better tools
     assert "Needs RC-Astro" not in win._panel.sr_status.text()  # but not the old gate text
 
 
@@ -1554,7 +1554,7 @@ def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
     win._go_to_id("green_fringe")               # no RC-Astro configured -> free split used
     assert win._fringe_ready is True
     assert win._panel.apply_btn.isEnabled() is True
-    assert "RC-Astro" in win._panel.fringe_status.text()            # free-detection note
+    assert "StarNet2" in win._panel.fringe_status.text()            # free-detection note
     assert "Needs RC-Astro" not in win._panel.fringe_status.text()  # not the old gate text
 
 
@@ -1808,7 +1808,7 @@ def test_saturation_nebula_ungated_without_rcastro(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("saturation")
     assert win._panel.neb_slider.isEnabled() is True            # ungated -> free split
-    assert "RC-Astro" in win._panel.neb_status.text()           # free-detection note
+    assert "StarNet2" in win._panel.neb_status.text()           # free-detection note
     assert "Needs RC-Astro" not in win._panel.neb_status.text()  # not the old gate text
     assert win._panel.sat_slider.isEnabled() is True      # global still works
 
@@ -1844,7 +1844,7 @@ def test_saturation_nebula_split_keeps_free_note_without_rcastro(qtbot, tmp_path
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("saturation")
     win._on_sat_change(0.5, 0.6)                       # sync free split -> _on_sat_split
-    assert "RC-Astro" in win._panel.neb_status.text()  # free note preserved, not ""
+    assert "StarNet2" in win._panel.neb_status.text()  # free note preserved, not ""
 
 
 def test_saturation_nebula_caches_split_and_previews(qtbot, tmp_path, monkeypatch):

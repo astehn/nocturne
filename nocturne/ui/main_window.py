@@ -217,7 +217,8 @@ def _listed(names: list[str]) -> str:
 
 
 _FREE_STAR_NOTE = (
-    "Using free star detection — set up RC-Astro in Settings for StarXTerminator's cleaner separation."
+    "Using free star detection — set up StarNet2 (free) or StarXTerminator in Settings for a "
+    "cleaner separation."
 )
 
 # The step panel is capped so the RIGHT PANE cannot change width from step to
@@ -2052,8 +2053,8 @@ class MainWindow(QMainWindow):
             msg = f"Auto-enhanced — {len(results)} steps"
             if not graxpert_valid(self.settings):
                 msg += ". Install GraXpert (free) for better background & noise."
-            if not rcastro_valid(self.settings):
-                msg += " StarXTerminator and NoiseXTerminator (RC-Astro) give cleaner stars & denoise, if you have it."
+            if preferred_splitter(self.settings) is None:
+                msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
             self._show_output(msg)
 
         self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
@@ -2500,6 +2501,8 @@ class MainWindow(QMainWindow):
         """
         if path == "StarX":
             return f"Separated with {RC_PRODUCT_NAMES['StarX']}."
+        if path == "StarNet2":
+            return "Separated with StarNet2."
         return _FREE_STAR_NOTE
 
     def _build_toolbar(self) -> None:
@@ -2690,8 +2693,8 @@ class MainWindow(QMainWindow):
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.
 
-        NOT the same as "not installed". GraXpert is free, RC-Astro is paid and
-        ASTAP optional, so most people legitimately have blanks here — warning
+        NOT the same as "not installed". GraXpert and StarNet2 are free, RC-Astro
+        is paid and ASTAP optional, so most people legitimately have blanks here — warning
         about those would be permanent, and a permanent warning is one nobody
         reads. A path that is SET and does not work is different: it worked when
         it was set, so something moved, failed to update or was renamed, and the
@@ -2699,6 +2702,7 @@ class MainWindow(QMainWindow):
         """
         return [name for name, path in (("GraXpert", self.settings.graxpert_path),
                                         ("RC-Astro", self.settings.rcastro_path),
+                                        ("StarNet2", self.settings.starnet_path),
                                         ("ASTAP", self.settings.astap_path))
                 if str(path).strip() and not is_tool(str(path))]
 
@@ -5755,7 +5759,7 @@ class MainWindow(QMainWindow):
         # Before the split has run there is no path to name yet, so this is the
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
-            "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+            "" if preferred_splitter(self.settings) is not None else _FREE_STAR_NOTE)
         self._prepare_saturation(self._preview_base("saturation"))
 
     def _sat_ready(self, base) -> bool:
@@ -6266,7 +6270,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         panel = self._panel
-        if not rcastro_valid(self.settings) and hasattr(panel, "sr_status"):
+        if preferred_splitter(self.settings) is None and hasattr(panel, "sr_status"):
             panel.sr_status.setText(_FREE_STAR_NOTE)
         base = self._sr_base()
         sig = self._sr_sig(base)
