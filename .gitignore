@@ -14,6 +14,7 @@ site/config.php
 /site/
 /tests/test_site_links.py
 /tests/test_contribute_page.py
+/tests/test_nr_page.py
 
 # Website-only tooling and tests (Andreas, 2026-10-03: "If files are specifically
 # for the website then yes they should not be on github at all"). They stay on
