@@ -216,19 +216,19 @@ class SettingsDialog(QDialog):
 
         tools = QWidget()
         t = QFormLayout(tools)
-        t.addRow("GraXpert (required)",
+        t.addRow("GraXpert (free, needed for Background)",
                  _path_row(self._gx, self._test_graxpert, self._gx_result,
                            DOWNLOAD_URLS["graxpert"],
                            "Select GraXpert.app (or its executable)"))
-        t.addRow("RC-Astro (optional)",
+        t.addRow("RC-Astro (paid, optional)",
                  _path_row(self._rc, self._test_rcastro, self._rc_result,
                            DOWNLOAD_URLS["rcastro"],
                            "Select the rc-astro command (RC-Astro/CLI/rc-astro)"))
-        t.addRow("StarNet2 (optional)",
+        t.addRow("StarNet2 (free, optional)",
                  _path_row(self._starnet, self._test_starnet, self._starnet_result,
                            DOWNLOAD_URLS["starnet"],
                            "Select the starnet2 executable"))
-        t.addRow("ASTAP (optional)",
+        t.addRow("ASTAP (free, optional)",
                  _path_row(self._astap, self._test_astap, self._astap_result,
                            DOWNLOAD_URLS["astap"],
                            "Select ASTAP.app (or its executable)"))

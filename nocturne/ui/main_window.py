@@ -217,7 +217,8 @@ def _listed(names: list[str]) -> str:
 
 
 _FREE_STAR_NOTE = (
-    "Using free star detection — set up RC-Astro in Settings for StarXTerminator's cleaner separation."
+    "Using free star detection — set up StarNet2 (free) or StarXTerminator in Settings for a "
+    "cleaner separation."
 )
 
 # The step panel is capped so the RIGHT PANE cannot change width from step to
@@ -2500,6 +2501,8 @@ class MainWindow(QMainWindow):
         """
         if path == "StarX":
             return f"Separated with {RC_PRODUCT_NAMES['StarX']}."
+        if path == "StarNet2":
+            return "Separated with StarNet2."
         return _FREE_STAR_NOTE
 
     def _build_toolbar(self) -> None:
@@ -2699,6 +2702,7 @@ class MainWindow(QMainWindow):
         """
         return [name for name, path in (("GraXpert", self.settings.graxpert_path),
                                         ("RC-Astro", self.settings.rcastro_path),
+                                        ("StarNet2", self.settings.starnet_path),
                                         ("ASTAP", self.settings.astap_path))
                 if str(path).strip() and not is_tool(str(path))]
 
@@ -5755,7 +5759,7 @@ class MainWindow(QMainWindow):
         # Before the split has run there is no path to name yet, so this is the
         # only place that still previews the choice from the settings.
         self._panel.neb_status.setText(
-            "" if rcastro_valid(self.settings) else _FREE_STAR_NOTE)
+            "" if preferred_splitter(self.settings) is not None else _FREE_STAR_NOTE)
         self._prepare_saturation(self._preview_base("saturation"))
 
     def _sat_ready(self, base) -> bool:
@@ -6266,7 +6270,7 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         panel = self._panel
-        if not rcastro_valid(self.settings) and hasattr(panel, "sr_status"):
+        if preferred_splitter(self.settings) is None and hasattr(panel, "sr_status"):
             panel.sr_status.setText(_FREE_STAR_NOTE)
         base = self._sr_base()
         sig = self._sr_sig(base)

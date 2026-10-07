@@ -1,10 +1,10 @@
 """StarNet2: a free star/starless split.
 
 The same job StarXTerminator does, from a tool that costs nothing. It matters
-because NINE surfaces and twelve call sites depend on a split — Star Reduction,
-De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour,
-Sharpen Nebulosity, Upscale Crop, Auto Enhance, Colour Balance, Batch and the
-starless+stars export — and without RC-Astro they all fall back to
+because many surfaces depend on a split — Star Reduction, De-green Stars,
+Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen
+Nebulosity, Upscale Crop, Auto Enhance and Colour Balance (the starless+stars
+export is StarXTerminator only) — and without a splitter they fall back to
 `core/starless.py`, which says of itself "an availability fallback, not a
 quality match". Measured on a real NGC 7635 master, 2026-09-18: the free path
 leaves 40.3% of star flux where StarNet2 leaves 20.9%, and the 1:1 crops are not
