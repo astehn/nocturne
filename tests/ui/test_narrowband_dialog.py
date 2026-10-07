@@ -339,6 +339,7 @@ def test_compare_offers_the_same_three_modes_as_starless_levels(qtbot):
         [label for label, _ in MODE_CHOICES]
     assert d.preview.mode() == "off"
     _mode(d, "Side by side")
+    assert d._before_q is not None
     assert d.preview._before_img is d._before_q, "the left pane shows the image as opened"
     assert d.preview._after_img is d._after_q
     _mode(d, "Wipe")
@@ -555,3 +556,18 @@ def test_an_apply_left_alone_still_commits(qtbot, monkeypatch):
     d.show(); qtbot.waitExposed(d)
     d.apply()
     qtbot.waitUntil(lambda: bool(got), timeout=5000)
+
+
+def test_the_ring_covers_the_preview_while_the_stars_are_separated(qtbot, monkeypatch):
+    """The real showEvent path, not the ring shown by hand: a split that is
+    running shows the ring over the preview and gates the compare controls."""
+    import nocturne.ui.narrowband_dialog as nd
+    monkeypatch.setattr(nd, "preferred_splitter", lambda s: object())
+    monkeypatch.setattr(nd, "run_async", lambda *a, **k: None)   # the split never lands
+    d = NarrowbandDialog(Settings(), _img())
+    qtbot.addWidget(d)
+    d.show()
+    qtbot.waitExposed(d)
+    assert d.waiting.isVisible()
+    assert d.waiting.geometry() == d.preview.rect()
+    assert not d.mode_box.isEnabled() and not d.fit_btn.isEnabled()

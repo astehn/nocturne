@@ -2053,8 +2053,8 @@ class MainWindow(QMainWindow):
             msg = f"Auto-enhanced — {len(results)} steps"
             if not graxpert_valid(self.settings):
                 msg += ". Install GraXpert (free) for better background & noise."
-            if not rcastro_valid(self.settings):
-                msg += " StarXTerminator and NoiseXTerminator (RC-Astro) give cleaner stars & denoise, if you have it."
+            if preferred_splitter(self.settings) is None:
+                msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
             self._show_output(msg)
 
         self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
@@ -2693,8 +2693,8 @@ class MainWindow(QMainWindow):
     def _broken_tools(self) -> list:
         """Tools that are configured but cannot be run.
 
-        NOT the same as "not installed". GraXpert is free, RC-Astro is paid and
-        ASTAP optional, so most people legitimately have blanks here — warning
+        NOT the same as "not installed". GraXpert and StarNet2 are free, RC-Astro
+        is paid and ASTAP optional, so most people legitimately have blanks here — warning
         about those would be permanent, and a permanent warning is one nobody
         reads. A path that is SET and does not work is different: it worked when
         it was set, so something moved, failed to update or was renamed, and the

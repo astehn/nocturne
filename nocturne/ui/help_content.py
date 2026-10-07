@@ -1074,7 +1074,7 @@ _TOPIC_LIST = (
        "<h4>StarNet2 (free, optional)</h4>"
        "<p>Separates stars from the rest of the picture: the split behind Star Reduction, "
        "De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen "
-       "Nebulosity, Upscale Crop and Colour Balance. Without it those use Nocturne's own "
+       "Nebulosity, Upscale Crop, Colour Balance and Auto Enhance. Without it those use Nocturne's own "
        "separator, which leaves more starlight behind. Take the CLI package, set its path in "
        "Settings and Test it.</p>"
        "<h4>RC-Astro (paid, optional)</h4>"
@@ -1088,7 +1088,7 @@ _TOPIC_LIST = (
        "set its path in Settings and Test it.</p>"
        "<h4>Do I need the optional tools?</h4>"
        "<p>No — every RC-Astro step except the starless+stars export has a free fallback, so "
-       "the app works without it. StarNet2 is free and makes every star split cleaner. ASTAP "
+       "the app works without it. StarNet2 is free and splits stars more cleanly than the built-in separator. ASTAP "
        "is only needed for plate solving/annotation, mosaics and photometric colour. Nocturne isn't affiliated with any of these tools.</p>"),
 
     _t("auto-enhance", "Auto Enhance",
