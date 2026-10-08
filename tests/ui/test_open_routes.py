@@ -479,3 +479,187 @@ def test_load_project_polls_the_ambient_token(tmp_path):
     finally:
         tasks.clear_ambient()
     assert seen == [1, 2]
+
+
+# --- review round 1 ------------------------------------------------------------
+def _linear_tiff_window(qtbot, tmp_path):
+    from tests.ui.test_open_tiff import _write_linear_tiff
+    win = _window(qtbot, tmp_path)
+    win.show()
+    win.open_any(_write_linear_tiff(tmp_path))
+    win._dirty = False
+    assert win.project.current().is_linear and win._panel.opened_as_linear.isChecked()
+    return win
+
+
+def _stretched_radio(win):
+    return next(b for b in win._panel._opened_group.buttons()
+                if b is not win._panel.opened_as_linear)
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "failed-write"])
+def test_the_reading_switch_snaps_back_when_the_reread_does_not_land(qtbot, tmp_path, saves,
+                                                                     outcome):
+    win = _linear_tiff_window(qtbot, tmp_path)
+    win._async_enabled = True
+    saves.armed = True
+    saves.fail = outcome == "failed-write"
+    try:
+        _stretched_radio(win).click()
+        assert saves.reached.wait(5)
+        if outcome == "cancel":
+            win._cancel_btn.click()
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert win.project.current().is_linear is True
+    assert win._panel.opened_as_linear.isChecked() == win.project.current().is_linear
+    # And the switch still works: the click starts a re-read again.
+    saves.fail = False
+    saves.reached.clear()
+    _stretched_radio(win).click()
+    assert saves.reached.wait(5)
+    _idle(qtbot, win)
+    assert win.project.current().is_linear is False
+    assert win._panel.opened_as_linear.isChecked() is False
+
+
+def test_quit_with_an_open_in_flight_does_not_lose_a_requested_save(qtbot, tmp_path,
+                                                                    monkeypatch, saves):
+    """The open lands inside the save's wait, replaces the workspace and drops
+    the save. Quit must not go ahead as though it had saved."""
+    win, go, _expected, _a = _combine(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    bundle = str(tmp_path / "mine.nocturne")
+    win._project_path = bundle
+    win._dirty = True
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+    save_gate = threading.Event()
+    real_save_project = mw.save_project
+
+    def held_save(*a, **k):
+        save_gate.wait(10)
+        return real_save_project(*a, **k)
+
+    monkeypatch.setattr(mw, "save_project", held_save)
+    saves.armed = True
+    try:
+        go()
+        assert saves.reached.wait(5)
+        QTimer.singleShot(100, saves.release)       # the open lands mid-wait
+        QTimer.singleShot(400, save_gate.set)        # then the save runs on
+        win.close()
+    finally:
+        saves.release()
+        save_gate.set()
+        _idle(qtbot, win)
+    assert win.isVisible(), "quit went ahead without the save it was asked for"
+    assert not os.path.exists(bundle)
+    assert "was not saved" in win._warning.text()
+    assert _incoming(win) == []
+
+
+def test_a_write_dropped_by_a_replaced_workspace_removes_its_file(qtbot, tmp_path,
+                                                                  monkeypatch, saves):
+    """Its result reaches only _run_busy's generation check, which used to drop
+    it without a word — leaving 400 MB at 33 MP in cache/incoming."""
+    win, go, _expected, _a = _combine(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    monkeypatch.setattr(mw, "current_token", lambda: None)   # only the landing can clean up
+    saves.armed = True
+    try:
+        go()
+        assert saves.reached.wait(5)
+        win._swap_workspace()                  # what quit and every other open do
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert _incoming(win) == []
+
+
+def test_quit_during_a_write_that_cannot_be_cancelled_leaves_nothing(qtbot, tmp_path,
+                                                                     monkeypatch, saves):
+    win, go, _expected, _a = _upscale(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    saves.armed = True
+    staging = win._staging_dir()
+    try:
+        go()
+        assert saves.reached.wait(5)
+        win.close()
+        assert not win.isVisible()
+    finally:
+        saves.release()
+        qtbot.waitUntil(lambda: not win._running, timeout=5000)
+        qtbot.wait(20)
+    assert not os.path.isdir(staging) or os.listdir(staging) == []
+
+
+@pytest.mark.parametrize("route", [_combine, _master, _upscale],
+                         ids=["combine", "foreground-master", "upscale-copy"])
+def test_cancel_is_not_offered_for_a_write_it_would_not_stop(qtbot, tmp_path, monkeypatch,
+                                                             saves, route):
+    win, go, _expected, _a = route(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    saves.armed = True
+    step_gate = threading.Event()
+    try:
+        go()
+        assert saves.reached.wait(5)
+        qtbot.waitUntil(lambda: win._busy_shown, timeout=3000)
+        for btn in (win._cancel_btn, win._welcome.busy_cancel):
+            assert not btn.isEnabled() and btn.text() == "Finishing…"
+        # A step running beside it: Cancel is for the step again.
+        win._run_busy(lambda: step_gate.wait(10), lambda r: None, "Running a step…", "Step")
+        for btn in (win._cancel_btn, win._welcome.busy_cancel):
+            assert btn.isEnabled() and btn.text() == "Cancel"
+        step_gate.set()
+        qtbot.waitUntil(lambda: len(win._running) == 1, timeout=5000)
+        assert not win._cancel_btn.isEnabled()
+    finally:
+        step_gate.set()
+        saves.release()
+        _idle(qtbot, win)
+    # The next op offers Cancel as usual.
+    held = threading.Event()
+    win._run_busy(lambda: held.wait(10), lambda r: None, "Another step…", "Step")
+    try:
+        assert win._cancel_btn.isEnabled() and win._cancel_btn.text() == "Cancel"
+    finally:
+        held.set()
+        _idle(qtbot, win)
+
+
+def _ui_loads(monkeypatch):
+    seen = []
+    real = Project._load
+
+    def spy(self, i):
+        if threading.current_thread() is threading.main_thread():
+            seen.append(i)
+        return real(self, i)
+
+    monkeypatch.setattr(Project, "_load", spy)
+    return seen
+
+
+@pytest.mark.parametrize("route", [_reset, _tiff_switch], ids=["reset", "tiff-switch"])
+def test_a_route_reads_the_pixels_once_on_the_ui_thread_to_paint_them(qtbot, tmp_path,
+                                                                      monkeypatch, route):
+    """Reset of the M 8 drizzle reloaded the whole state ten times on the UI
+    thread (TIFF switch: twelve) for booleans, metadata and a shape."""
+    win, go, _expected, _a = route(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    seen = _ui_loads(monkeypatch)
+    go()
+    _idle(qtbot, win)
+    assert seen == [0], seen
+
+
+def test_a_step_click_reads_the_pixels_once(qtbot, tmp_path, monkeypatch):
+    win = _picture(qtbot, tmp_path)
+    win._go_to_id("load")
+    seen = _ui_loads(monkeypatch)
+    win._go_to_id("background")
+    assert len(seen) == 1, seen
