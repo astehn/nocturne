@@ -1661,8 +1661,11 @@ class MainWindow(QMainWindow):
         # was scope creep to extend it to a dialog with nothing to point at.
         from .combine_dialog import CombineDialog
         CombineDialog(self.settings, self,
-                      on_master=lambda img: self.open_image(
-                          img, "combined narrowband")).exec()
+                      on_master=lambda img: self._open_in_background(
+                          img, "combined narrowband",
+                          busy_label="Opening the combined image…",
+                          fail_label="Could not open the combined image",
+                          cancellable=False)).exec()
 
     def _open_haoiii(self) -> None:
         from .haoiii_dialog import HaOIIIDialog
@@ -1750,7 +1753,12 @@ class MainWindow(QMainWindow):
                 "exists only in memory must not be routed through here — "
                 "call open_image directly instead (see _open_combine).")
         if self.project is None:
-            self.open_image(img, label)
+            # The path in the failure: the master is safe on disk, and a
+            # message without it would leave the user hunting for it.
+            self._open_in_background(img, label, busy_label=f"Opening the {label}…",
+                                     fail_label=f"Could not open the {label} (saved at "
+                                                f"{path})",
+                                     cancellable=False)
             return
         self.log_panel.append_info(
             f"Stacked {label} — not opened, you have an image open → {path}")
@@ -3278,19 +3286,56 @@ class MainWindow(QMainWindow):
         tiff = path.lower().endswith((".tif", ".tiff"))
         read = load_tiff if tiff else load_fits
         name = os.path.basename(path)
+        self._open_in_background(
+            lambda: read(path), name,
+            busy_label=f"Opening {name}…", fail_label="Could not open file",
+            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
+            # the Import panel offers its verdict switch only for a file that
+            # could plausibly be either, and a FITS never is.
+            before=lambda: setattr(self, "_opened_as_tiff", tiff),
+            after=then)
+
+    def _open_in_background(self, image, label: str, *, busy_label: str, fail_label: str,
+                            before=None, after=None, cancellable: bool = True) -> None:
+        """Replace the workspace with `image`, its first undo snapshot written
+        OFF the UI thread. On the M 8 drizzle that write is 2.1 s for the array
+        as read from the FITS (a strided view) and 0.14 s for a contiguous one
+        (2026-10-08) — either way the window's, and every route that hands over
+        a new picture paid it. Nothing about the current picture changes until
+        the write has succeeded, so a failed or cancelled open leaves it
+        exactly as it was.
+
+        `image` is the AstroImage or a callable the worker makes it with (a file
+        read, a state read back from the cache): run at an unknown moment on
+        another thread, it must not touch the window. `before`/`after` run on
+        the UI thread either side of open_image, once, and only if it lands.
+
+        `cancellable=False` for a result that exists nowhere else, or only on
+        disk where nobody asked to put it away (Combine, a stack master, an
+        upscaled copy): Cancel stops EVERY running op, and pressed for one
+        running alongside it must not throw the result away. The write it
+        then refuses to stop is a few seconds at most.
+
+        Never refused for being busy: `_run_busy` runs it alongside whatever is
+        running, and when it lands open_image retires that work exactly as the
+        synchronous open did the moment the result arrived. Refusing, or
+        queueing behind the busy op, would drop or delay a finished master the
+        user is waiting to see.
+        """
         # Shared with _open_project: whichever open was asked for LAST wins,
         # image or project. The generation guard alone cannot tell two
         # in-flight opens apart (it bumps only when one commits).
         self._open_seq += 1
         seq = self._open_seq
+        make = image if callable(image) else (lambda: image)   # an AstroImage is not
 
         staging = self._staging_dir()
         staged = os.path.join(staging, f"{seq}.npy")
 
         def work():
             # Only plain values: nothing here may touch the window.
-            token = current_token()
-            base = read(path)
+            token = current_token() if cancellable else None
+            base = make()
             if token is not None:
                 token.check()     # Cancel pressed during the read: keep the old picture
             # The first undo snapshot, written here rather than by Project on
@@ -3311,17 +3356,15 @@ class MainWindow(QMainWindow):
             if seq != self._open_seq:
                 _remove_quietly(staged)
                 return
-            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
-            # the Import panel offers its verdict switch only for a file that
-            # could plausibly be either, and a FITS never is.
-            self._opened_as_tiff = tiff
+            if before is not None:
+                before()
             # Gone from under us (a prune, the user's disk tidy-up): write it
             # again here rather than fail half-way through the swap.
-            self.open_image(base, name, staged=staged if os.path.isfile(staged) else None)
-            if then is not None:
-                then()
+            self.open_image(base, label, staged=staged if os.path.isfile(staged) else None)
+            if after is not None:
+                after()
 
-        self._run_busy(work, on_result, f"Opening {name}…", "Could not open file")
+        self._run_busy(work, on_result, busy_label, fail_label)
 
     def open_image(self, base, label: str, *, staged: str | None = None) -> None:
         """`staged`: an .npy already holding `base.data` (see open_any)."""
@@ -5432,14 +5475,22 @@ class MainWindow(QMainWindow):
         would leave the snapshots disagreeing with it.
         """
         linear = bool(linear)
-        if self.project is None or self.project.current().is_linear == linear:
+        if self.project is None or self.project.is_linear_at(self.project.position) == linear:
             return
-        base = self.project.current()
-        self.open_image(AstroImage(base.data, is_linear=linear,
-                                   metadata=dict(base.metadata)),
-                        self._source_label or "")
-        self._opened_as_tiff = True          # open_image cannot know; it is a re-read
-        self._rebuild_panel()
+        project = self.project      # the worker reads it: never `self` there
+
+        def reread():
+            base = project.current()
+            return AstroImage(base.data, is_linear=linear, metadata=dict(base.metadata))
+
+        def after() -> None:
+            self._opened_as_tiff = True          # open_image cannot know; it is a re-read
+            self._rebuild_panel()
+
+        self._open_in_background(reread, self._source_label or "",
+                                 busy_label="Changing how the picture is read…",
+                                 fail_label="Could not change how the picture is read",
+                                 after=after)
 
     def _reset_high_water(self) -> None:
         """Forget how far this session walked. A new image (or Close Project)
@@ -6386,14 +6437,21 @@ class MainWindow(QMainWindow):
         # _source_label without it — so Reset raised AttributeError on every
         # loaded bundle while working fine on a freshly-opened FITS.
         bundle = self._project_path
-        self.open_image(self.project.state_at(0), self._source_label)
-        if bundle:
-            self._project_path = bundle   # same project, still its own file
-            # The bundle on disk still holds the edits we just discarded, so the
-            # session no longer matches it. open_image clears _dirty for the
-            # freshly-opened case, which is not this one.
-            self._dirty = True
-            self._update_title()
+        project = self.project      # the worker reads state 0: never `self` there
+
+        def after() -> None:
+            if bundle:
+                self._project_path = bundle   # same project, still its own file
+                # The bundle on disk still holds the edits we just discarded, so the
+                # session no longer matches it. open_image clears _dirty for the
+                # freshly-opened case, which is not this one.
+                self._dirty = True
+                self._update_title()
+
+        # Cancellable: the edits are only discarded once the reset lands.
+        self._open_in_background(lambda: project.state_at(0), self._source_label,
+                                 busy_label="Resetting…", fail_label="Could not reset",
+                                 after=after)
 
     def _stage_for_step_name(self, name):
         """Map a history step name to the stepper stage that produced it, for
@@ -6602,7 +6660,11 @@ class MainWindow(QMainWindow):
         """
         if not self._confirm_save_if_dirty():
             return False
-        self.open_image(result, f"{os.path.splitext(self._source_label or 'image')[0]}_2x")
+        self._open_in_background(result,
+                                 f"{os.path.splitext(self._source_label or 'image')[0]}_2x",
+                                 busy_label="Opening the upscaled copy…",
+                                 fail_label="Could not open the upscaled copy",
+                                 cancellable=False)
         return True
 
     def eventFilter(self, obj, event) -> bool:

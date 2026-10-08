@@ -81,6 +81,11 @@ class Project:
         """Non-destructive read of the cached state at `index` (no truncation)."""
         return self._load(index)
 
+    def is_linear_at(self, index: int) -> bool:
+        """Without reading the pixels: state_at loads the whole array, a third
+        of a second of UI thread on a 33 MP drizzle for one boolean."""
+        return self._linear[index]
+
     def state_token(self, index: int) -> tuple:
         """Which pixels state `index` holds, without reading them: a re-apply
         rewrites the same index, so the index alone cannot tell (a live preview
