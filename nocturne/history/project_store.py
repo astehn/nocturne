@@ -249,8 +249,17 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
     `on_progress(done, total)`, if given, is called after each step is replayed
     or restored — the same shape `save_project` uses. Loading is the slow half
     of the pair and reported nothing, so a large project looked like a hang.
+
+    The ambient cancel token is polled after every state written: Cancel, and
+    the one at quit, waited for the whole replay before it did anything.
     """
     from .project import Project  # local import: avoids a history/project_store <-> project cycle
+
+    token = _current_token()
+
+    def check() -> None:
+        if token is not None:
+            token.check()
 
     with zipfile.ZipFile(path) as zf:
         manifest = json.loads(zf.read("manifest.json"))
@@ -266,6 +275,7 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         base_info = manifest["base"]
         base = AstroImage(base_data, is_linear=base_info["is_linear"], metadata=base_info["metadata"])
         project = Project(base, cache_dir)
+        check()
 
         settings = Settings()
         total = len(manifest["steps"])
@@ -278,6 +288,7 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
                 native = deserialize_option(step["stage"], step["option"])
                 step_obj = make_step(step["stage"], settings)
                 project.run_step(step_obj, native)
+            check()
             if on_progress is not None:
                 on_progress(done, total)
 

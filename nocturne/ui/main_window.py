@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import os
 import shutil
+import threading
 
 import numpy as np
 import shiboken6
@@ -613,6 +614,7 @@ class MainWindow(QMainWindow):
                                         # resolved at CALL time so monkeypatching
                                         # the module still works
         self._open_seq = 0                     # see _open_project's supersede guard
+        self._saves_done = 0                   # see _save_and_wait
         self._after_open = None    # what to do once a picked image has opened (Auto Enhance)
         self._hold_paint = False   # open_image draws its picture once, at the end
         # Spacebar before/after peek: toggles the main image between the current
@@ -1012,6 +1014,13 @@ class MainWindow(QMainWindow):
         cancels the unsaved-project prompt has not quit, so nothing running
         in the background should have been touched by then.
         """
+        if any(not getattr(t, "user_cancellable", True) for t in self._running):
+            # A result that exists nowhere else is seconds from opening; quitting
+            # under it would drop it, and asking about saving now would ask
+            # about a picture it is about to replace.
+            self._show_warning("Finishing opening a result — quit again in a moment.")
+            event.ignore()
+            return
         if not self._confirm_save_if_dirty():
             event.ignore()
             return
@@ -1145,8 +1154,14 @@ class MainWindow(QMainWindow):
         contain the preview, so asking "save?" before "what about the change you
         have not applied?" invites someone to save and still lose it.
         """
+        # A prompt is a nested event loop: an open already in flight can land
+        # inside it, and the answer then belongs to a picture that is gone —
+        # "Save" wrote the NEW one and quit went ahead (review 2026-10-08).
+        gen = self._project_gen
         if self.project is not None and self._has_pending():
             answer = self._ask_pending(self._stages[self._stage].label)
+            if self._replaced_while_asking(gen):
+                return False
             if answer == "cancel":
                 return False
             if answer == "apply":
@@ -1161,6 +1176,10 @@ class MainWindow(QMainWindow):
                     self._show_output(
                         "Applying — try again once it finishes.")
                     return False
+        # Apply above can raise a question of its own (the truncation confirm):
+        # an open landing inside it is caught here, not waved through.
+        if self._replaced_while_asking(gen):
+            return False
         if not self._dirty or self.project is None:
             return True
         resp = QMessageBox.question(
@@ -1170,9 +1189,21 @@ class MainWindow(QMainWindow):
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
+        if self._replaced_while_asking(gen):
+            return False
         if resp == QMessageBox.StandardButton.Save:
+            # Not re-checked after: a replacement during the save itself is
+            # _save_and_wait's to report (it counts only a save that finished).
             return self._save_and_wait()
         return resp == QMessageBox.StandardButton.Discard
+
+    def _replaced_while_asking(self, gen: int) -> bool:
+        """True, and said, when the workspace changed under a question about it."""
+        if self._project_gen == gen:
+            return False
+        self._show_warning("Not saved, and nothing was closed: another picture opened "
+                           "while you were deciding.")
+        return True
 
     def _save_and_wait(self) -> bool:
         """Save, and do not return until the write has actually finished.
@@ -1193,7 +1224,13 @@ class MainWindow(QMainWindow):
         Waiting in a nested event loop rather than blocking, because the busy
         panel this puts on screen needs an event loop to paint or it is frozen,
         not visible.
+
+        Answers whether THIS save finished, not `not self._dirty`: an open
+        landing inside the loop replaces the workspace, drops the save and
+        clears `_dirty` — and quit then went ahead with no bundle written
+        (review 2026-10-08).
         """
+        done_before = self._saves_done
         others = set(self._running)
         self._save_project()          # may go to Save As, which the user can cancel
         # Wait for the SAVE, not for every job: a star split still running
@@ -1208,7 +1245,7 @@ class MainWindow(QMainWindow):
             poll.start()
             loop.exec()
             poll.stop()
-        return not self._dirty        # False if the save was cancelled or failed
+        return self._saves_done > done_before   # False if cancelled, failed or dropped
 
     def _build_menu(self) -> None:
         project_menu = self.menuBar().addMenu("Project")
@@ -1660,9 +1697,19 @@ class MainWindow(QMainWindow):
         # foreground STACKS, which always write a master to disk first; it
         # was scope creep to extend it to a dialog with nothing to point at.
         from .combine_dialog import CombineDialog
-        CombineDialog(self.settings, self,
-                      on_master=lambda img: self.open_image(
-                          img, "combined narrowband")).exec()
+        CombineDialog(self.settings, self, on_master=self._open_combined).exec()
+
+    def _open_combined(self, img) -> bool:
+        """False when the user kept their unsaved picture: the dialog then stays
+        open and says so, and one press of Combine makes the result again —
+        it held nowhere else, so closing on a "Cancel" would destroy it."""
+        if not self._confirm_save_if_dirty():
+            return False
+        self._open_in_background(img, "combined narrowband",
+                                 busy_label="Opening the combined image…",
+                                 fail_label="Could not open the combined image",
+                                 cancellable=False)
+        return True
 
     def _open_haoiii(self) -> None:
         from .haoiii_dialog import HaOIIIDialog
@@ -1750,7 +1797,12 @@ class MainWindow(QMainWindow):
                 "exists only in memory must not be routed through here — "
                 "call open_image directly instead (see _open_combine).")
         if self.project is None:
-            self.open_image(img, label)
+            # The path in the failure: the master is safe on disk, and a
+            # message without it would leave the user hunting for it.
+            self._open_in_background(img, label, busy_label=f"Opening the {label}…",
+                                     fail_label=f"Could not open the {label} (saved at "
+                                                f"{path})",
+                                     cancellable=False)
             return
         self.log_panel.append_info(
             f"Stacked {label} — not opened, you have an image open → {path}")
@@ -3278,19 +3330,64 @@ class MainWindow(QMainWindow):
         tiff = path.lower().endswith((".tif", ".tiff"))
         read = load_tiff if tiff else load_fits
         name = os.path.basename(path)
+        self._open_in_background(
+            lambda: read(path), name,
+            busy_label=f"Opening {name}…", fail_label="Could not open file",
+            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
+            # the Import panel offers its verdict switch only for a file that
+            # could plausibly be either, and a FITS never is.
+            before=lambda: setattr(self, "_opened_as_tiff", tiff),
+            after=then)
+
+    def _open_in_background(self, image, label: str, *, busy_label: str, fail_label: str,
+                            before=None, after=None, on_fail=None,
+                            cancellable: bool = True) -> None:
+        """Replace the workspace with `image`, its first undo snapshot written
+        OFF the UI thread. On the M 8 drizzle that write is 2.1 s for the array
+        as read from the FITS (a strided view) and 0.14 s for a contiguous one
+        (2026-10-08) — either way the window's, and every route that hands over
+        a new picture paid it. Nothing about the current picture changes until
+        the write has succeeded, so a failed or cancelled open leaves it
+        exactly as it was.
+
+        `image` is the AstroImage or a callable the worker makes it with (a file
+        read, a state read back from the cache): run at an unknown moment on
+        another thread, it must not touch the window. `before`/`after` run on
+        the UI thread either side of open_image, once, and only if it lands.
+        `on_fail()` runs instead when it does not land in this workspace — failed,
+        cancelled, or superseded by a later open — for a caller whose controls
+        already show the change it asked for.
+
+        `cancellable=False` for a result that exists nowhere else, or only on
+        disk where nobody asked to put it away (Combine, a stack master, an
+        upscaled copy): Cancel stops EVERY running op, and pressed for one
+        running alongside it must not throw the result away. The write it
+        then refuses to stop is a few seconds at most; Cancel says "Finishing…"
+        meanwhile. Replacing the workspace (another open, quit) still stops
+        it, and its staged file goes with it.
+
+        Never refused for being busy: `_run_busy` runs it alongside whatever is
+        running, and when it lands open_image retires that work exactly as the
+        synchronous open did the moment the result arrived. Refusing, or
+        queueing behind the busy op, would drop or delay a finished master the
+        user is waiting to see.
+        """
         # Shared with _open_project: whichever open was asked for LAST wins,
         # image or project. The generation guard alone cannot tell two
         # in-flight opens apart (it bumps only when one commits).
         self._open_seq += 1
         seq = self._open_seq
+        make = image if callable(image) else (lambda: image)   # an AstroImage is not
 
         staging = self._staging_dir()
         staged = os.path.join(staging, f"{seq}.npy")
 
         def work():
             # Only plain values: nothing here may touch the window.
+            # Polled even when not cancellable: _swap_workspace still cancels
+            # it, and a write finishing after quit must remove its own file.
             token = current_token()
-            base = read(path)
+            base = make()
             if token is not None:
                 token.check()     # Cancel pressed during the read: keep the old picture
             # The first undo snapshot, written here rather than by Project on
@@ -3310,18 +3407,23 @@ class MainWindow(QMainWindow):
         def on_result(base) -> None:
             if seq != self._open_seq:
                 _remove_quietly(staged)
+                if on_fail is not None:
+                    on_fail()
                 return
-            # Whether the SOURCE was a TIFF, not whether the pixels are linear:
-            # the Import panel offers its verdict switch only for a file that
-            # could plausibly be either, and a FITS never is.
-            self._opened_as_tiff = tiff
+            if before is not None:
+                before()
             # Gone from under us (a prune, the user's disk tidy-up): write it
             # again here rather than fail half-way through the swap.
-            self.open_image(base, name, staged=staged if os.path.isfile(staged) else None)
-            if then is not None:
-                then()
+            self.open_image(base, label, staged=staged if os.path.isfile(staged) else None)
+            if after is not None:
+                after()
 
-        self._run_busy(work, on_result, f"Opening {name}…", "Could not open file")
+        self._run_busy(work, on_result, busy_label, fail_label,
+                       on_error=(lambda _exc: on_fail()) if on_fail is not None else None,
+                       # Dropped after the write finished: nothing else would
+                       # remove it before the next launch (~400 MB at 33 MP).
+                       on_dropped=lambda: _remove_quietly(staged),
+                       cancellable=cancellable)
 
     def open_image(self, base, label: str, *, staged: str | None = None) -> None:
         """`staged`: an .npy already holding `base.data` (see open_any)."""
@@ -3386,9 +3488,17 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+        gen = self._project_gen
         path, _ = file_dialogs.save_file(
             self, "Save project", start, "Nocturne project (*.nocturne)")
         if not path:
+            return
+        if gen != self._project_gen:
+            # The dialog is a nested event loop; the picture it was opened for
+            # was replaced inside it. Saving now would write the new one under
+            # a name chosen for the old.
+            self._show_warning("Not saved: another picture opened while you chose "
+                               "where to save.")
             return
         if not path.lower().endswith(".nocturne"):
             path += ".nocturne"
@@ -3411,6 +3521,11 @@ class MainWindow(QMainWindow):
 
         clip_baseline = self._clip_baseline
         linked = self._view_linked
+        # Set once save_project has RETURNED. Its last _tick() polls the token
+        # after every state has been read, and _swap_workspace cancels before
+        # _clear_cache deletes them, so a save that returns read them all
+        # intact and has run its os.replace — a drop after that loses nothing.
+        written = threading.Event()
 
         def work():
             # The start page's thumbnail, drawn as the canvas draws it. Never
@@ -3423,8 +3538,10 @@ class MainWindow(QMainWindow):
             save_project(project, path, solve_state=solve_state, source_label=source_label,
                          clip_baseline=clip_baseline, preview_jpeg=preview,
                          on_progress=lambda d, t: self._save_signals.progress.emit(d, t))
+            written.set()
 
         def on_result(_result) -> None:
+            self._saves_done += 1
             self._project_path = path
             self._dirty = False
             self._update_title()
@@ -3432,7 +3549,17 @@ class MainWindow(QMainWindow):
             save_settings(self.settings, self._settings_path)
             self._show_output(f"Saved project: {os.path.basename(path)}")
 
-        self._run_busy(work, on_result, "Saving project…", "Save failed")
+        def dropped() -> None:
+            if written.is_set():
+                self._saves_done += 1   # finished; only its landing was superseded
+                return
+            # Silent otherwise: _run_busy says nothing for a replaced workspace,
+            # and whoever asked for this save is waiting on it.
+            self._show_warning(f"{os.path.basename(path)} was not saved: another picture "
+                               f"replaced this one while it was being written.")
+
+        self._run_busy(work, on_result, "Saving project…", "Save failed",
+                       on_dropped=dropped)
 
     def _open_project(self, path: str | None = None) -> None:
         # No `if self._busy: return` here any more. It was a SILENT no-op — the
@@ -4731,7 +4858,8 @@ class MainWindow(QMainWindow):
         # write a support ticket.
         sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
 
-    def _run_busy(self, work, on_result, label: str, err_prefix: str) -> None:
+    def _run_busy(self, work, on_result, label: str, err_prefix: str, *,
+                  on_error=None, on_dropped=None, cancellable: bool = True) -> None:
         """Run `work` off the UI thread with busy indication; `on_result(result)`
         on success, `f"{err_prefix}: {exc}"` in the status label on failure.
         Busy is always cleared in a finally (even if `on_result` raises).
@@ -4743,8 +4871,15 @@ class MainWindow(QMainWindow):
         request a clean stop; the token is set as the AMBIENT token on the worker
         thread itself (inside `wrapped`, not here on the UI thread) so `run_cli`
         and friends can see it via `nocturne.core.tasks.current()`. A `Cancelled`
-        raised by `work` is treated as a clean stop, not an error."""
+        raised by `work` is treated as a clean stop, not an error.
+
+        `on_error(exc)` runs after the message, for a failure or Cancel that
+        still belongs to this workspace; `on_dropped()` when the result, or
+        failure, is thrown away because the workspace was replaced. With
+        `cancellable=False` the Cancel button leaves this op alone (it still
+        stops when the workspace is replaced)."""
         token = CancelToken()
+        token.user_cancellable = cancellable
         # Where a long tool reports how far it has got. Riding on the token means
         # no step or tool signature has to grow a callback — and the token is
         # already published to the worker thread just below.
@@ -4755,6 +4890,7 @@ class MainWindow(QMainWindow):
         self._running.add(token)
         self._active_token = token
         self._set_busy(True, label)
+        self._sync_cancel()
         gen = self._project_gen        # the workspace this result will belong to
 
         def wrapped():
@@ -4771,6 +4907,7 @@ class MainWindow(QMainWindow):
             if self._running:
                 if self._active_token is token:
                     self._show_running(max(self._running, key=lambda t: t.busy_seq))
+                self._sync_cancel()
                 return
             self._active_token = None
             self._set_busy(False)
@@ -4781,6 +4918,8 @@ class MainWindow(QMainWindow):
         def done(result):
             try:
                 if _superseded():
+                    if on_dropped is not None:
+                        on_dropped()
                     return      # the workspace this belonged to is gone; drop it
                 on_result(result)
             finally:
@@ -4789,6 +4928,8 @@ class MainWindow(QMainWindow):
         def err(exc):
             try:
                 if _superseded():
+                    if on_dropped is not None:
+                        on_dropped()
                     return      # no warning either: the user replaced the workspace
                 if isinstance(exc, Cancelled):
                     self._show_output("Cancelled.")     # neutral channel, not a warning
@@ -4796,6 +4937,8 @@ class MainWindow(QMainWindow):
                     self._report_tool_error(err_prefix, exc)
                 else:
                     self._show_warning(f"{err_prefix}: {exc}")
+                if on_error is not None:
+                    on_error(exc)
             finally:
                 _release()
 
@@ -4820,9 +4963,20 @@ class MainWindow(QMainWindow):
 
     def _cancel_active(self) -> None:
         """Request a clean stop of every running busy op. Cancel says "stop",
-        not "stop the newest and leave the rest holding the app busy"."""
+        not "stop the newest and leave the rest holding the app busy" — except
+        an op that carries a result existing nowhere else (`cancellable=False`
+        in _run_busy): a Cancel meant for the step beside it must not take it."""
         for tok in list(self._running):
-            tok.cancel()
+            if getattr(tok, "user_cancellable", True):
+                tok.cancel()
+
+    def _sync_cancel(self) -> None:
+        """Cancel is offered only while something would listen. With nothing
+        but a non-cancellable op running it said "Cancel" and did nothing."""
+        can = any(getattr(t, "user_cancellable", True) for t in self._running)
+        for btn in (self._cancel_btn, self._welcome.busy_cancel):
+            btn.setEnabled(can)
+            btn.setText("Cancel" if can else "Finishing…")
 
     def _swap_workspace(self) -> None:
         """Call BEFORE replacing self.project — from open_image, _open_project
@@ -4854,7 +5008,9 @@ class MainWindow(QMainWindow):
         nothing survives that framing being replaced. _open_project re-
         establishes its own via _restore_solve_state after this runs.
         """
-        self._cancel_active()
+        # Every op, the non-cancellable ones too: their workspace is going.
+        for tok in list(self._running):
+            tok.cancel()
         # The debounce timers too, not only the runner: one armed on the old
         # picture would otherwise ask for a preview of the new one.
         self._quiet_previews()
@@ -5432,14 +5588,25 @@ class MainWindow(QMainWindow):
         would leave the snapshots disagreeing with it.
         """
         linear = bool(linear)
-        if self.project is None or self.project.current().is_linear == linear:
+        if self.project is None or self.project.is_linear_at(self.project.position) == linear:
             return
-        base = self.project.current()
-        self.open_image(AstroImage(base.data, is_linear=linear,
-                                   metadata=dict(base.metadata)),
-                        self._source_label or "")
-        self._opened_as_tiff = True          # open_image cannot know; it is a re-read
-        self._rebuild_panel()
+        project = self.project      # the worker reads it: never `self` there
+
+        def reread():
+            base = project.current()
+            return AstroImage(base.data, is_linear=linear, metadata=dict(base.metadata))
+
+        def after() -> None:
+            self._opened_as_tiff = True          # open_image cannot know; it is a re-read
+            self._rebuild_panel()
+
+        # The radio already shows the new reading: an open that does not land
+        # must put it back, or it disagrees with the picture and re-clicking
+        # it does nothing.
+        self._open_in_background(reread, self._source_label or "",
+                                 busy_label="Changing how the picture is read…",
+                                 fail_label="Could not change how the picture is read",
+                                 after=after, on_fail=self._rebuild_panel)
 
     def _reset_high_water(self) -> None:
         """Forget how far this session walked. A new image (or Close Project)
@@ -6386,14 +6553,21 @@ class MainWindow(QMainWindow):
         # _source_label without it — so Reset raised AttributeError on every
         # loaded bundle while working fine on a freshly-opened FITS.
         bundle = self._project_path
-        self.open_image(self.project.state_at(0), self._source_label)
-        if bundle:
-            self._project_path = bundle   # same project, still its own file
-            # The bundle on disk still holds the edits we just discarded, so the
-            # session no longer matches it. open_image clears _dirty for the
-            # freshly-opened case, which is not this one.
-            self._dirty = True
-            self._update_title()
+        project = self.project      # the worker reads state 0: never `self` there
+
+        def after() -> None:
+            if bundle:
+                self._project_path = bundle   # same project, still its own file
+                # The bundle on disk still holds the edits we just discarded, so the
+                # session no longer matches it. open_image clears _dirty for the
+                # freshly-opened case, which is not this one.
+                self._dirty = True
+                self._update_title()
+
+        # Cancellable: the edits are only discarded once the reset lands.
+        self._open_in_background(lambda: project.state_at(0), self._source_label,
+                                 busy_label="Resetting…", fail_label="Could not reset",
+                                 after=after)
 
     def _stage_for_step_name(self, name):
         """Map a history step name to the stepper stage that produced it, for
@@ -6602,7 +6776,11 @@ class MainWindow(QMainWindow):
         """
         if not self._confirm_save_if_dirty():
             return False
-        self.open_image(result, f"{os.path.splitext(self._source_label or 'image')[0]}_2x")
+        self._open_in_background(result,
+                                 f"{os.path.splitext(self._source_label or 'image')[0]}_2x",
+                                 busy_label="Opening the upscaled copy…",
+                                 fail_label="Could not open the upscaled copy",
+                                 cancellable=False)
         return True
 
     def eventFilter(self, obj, event) -> bool:
@@ -7072,7 +7250,7 @@ class MainWindow(QMainWindow):
             view_linked=self._view_linked,
             stretch_linked=self._stretch_linked_for_panel(),
             on_opened_as_linear=self._set_opened_as_linear,
-            opened_as_linear=(self.project.current().is_linear
+            opened_as_linear=(self.project.is_linear_at(self.project.position)
                               if (self._opened_as_tiff and self.project is not None)
                               else None),
             on_levels_change=self._on_levels_change,
@@ -7104,7 +7282,7 @@ class MainWindow(QMainWindow):
         )
         if stage.kind == "import" and loaded and hasattr(new_panel, "meta_label"):
             new_panel.meta_label.setText(
-                import_summary(self.project.current().metadata,
+                import_summary(self.project.meta_at(self.project.position),
                                filename=self._source_label,
                                # A TIFF names no camera, and the default would
                                # print the S30 Pro's sensor, pixel size, focal
@@ -7426,10 +7604,11 @@ class MainWindow(QMainWindow):
         if self.project is None:
             self._info_strip.setText("")
             return
-        img = self.project.current()
-        meta = img.metadata
+        # From memory, not current(): this runs on every repaint, and each
+        # current() read the whole state back from disk.
+        meta = self.project.meta_at(self.project.position)
         parts: list[str] = []
-        h, w = img.data.shape[:2]
+        h, w = self.project.shape_at(self.project.position)[:2]
         parts.append(f"{w} × {h}")
         integ = resolve_integration(meta)
         if integ is not None and integ.total_s is not None:
@@ -7547,7 +7726,7 @@ class MainWindow(QMainWindow):
         # and the pipeline's own Crop is the better tool anyway. Share uses the
         # same rule, so it is one users meet once.
         stretched = (self.project is not None
-                     and not self.project.current().is_linear)
+                     and not self.project.is_linear_at(self.project.position))
         self._trim_act.setEnabled(stretched)
         self._trim_act.setToolTip(
             "Trim the edges of the finished image" if stretched else

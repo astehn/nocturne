@@ -19,6 +19,7 @@ class Project:
         self._records: list[tuple[str, str]] = []
         self._meta: list[dict] = []
         self._linear: list[bool] = []
+        self._shapes: list[tuple] = []   # kept so a readout never reloads the pixels
         self._writes: list[int] = []     # per state: which write put its pixels there
         self._write_seq = 0
         self._position = 0
@@ -58,11 +59,13 @@ class Project:
             self._paths[index] = path
             self._meta[index] = dict(img.metadata)
             self._linear[index] = img.is_linear
+            self._shapes[index] = tuple(img.data.shape)
             self._writes[index] = self._write_seq
         else:
             self._paths.append(path)
             self._meta.append(dict(img.metadata))
             self._linear.append(img.is_linear)
+            self._shapes.append(tuple(img.data.shape))
             self._writes.append(self._write_seq)
 
     def _load(self, index: int) -> AstroImage:
@@ -81,6 +84,20 @@ class Project:
         """Non-destructive read of the cached state at `index` (no truncation)."""
         return self._load(index)
 
+    def is_linear_at(self, index: int) -> bool:
+        """Without reading the pixels: state_at loads the whole array, a third
+        of a second of UI thread on a 33 MP drizzle for one boolean."""
+        return self._linear[index]
+
+    def meta_at(self, index: int) -> dict:
+        """A copy of state `index`'s metadata, from memory — as is_linear_at.
+        The panel and info strip read it on every repaint; through current()
+        a Reset of the M 8 drizzle reloaded 400 MB ten times (2026-10-08)."""
+        return dict(self._meta[index])
+
+    def shape_at(self, index: int) -> tuple:
+        return self._shapes[index]
+
     def state_token(self, index: int) -> tuple:
         """Which pixels state `index` holds, without reading them: a re-apply
         rewrites the same index, so the index alone cannot tell (a live preview
@@ -94,6 +111,7 @@ class Project:
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._shapes[self._position + 1:]
         del self._writes[self._position + 1:]
         result = step.apply(self.current(), option)
         index = self._position + 1
@@ -113,6 +131,7 @@ class Project:
         del self._records[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
+        del self._shapes[self._position + 1:]
         del self._writes[self._position + 1:]
         index = self._position + 1
         self._save(index, img)
@@ -145,6 +164,7 @@ class Project:
         del self._records[index:]
         del self._meta[index + 1:]
         del self._linear[index + 1:]
+        del self._shapes[index + 1:]
         del self._writes[index + 1:]
 
     def entries(self) -> list[tuple[str, str]]:

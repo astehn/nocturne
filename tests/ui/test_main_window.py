@@ -5464,6 +5464,7 @@ def test_choosing_save_at_the_prompt_saves_and_then_proceeds(qtbot, tmp_path, mo
 
     assert win._open_upscaled(_upscaled()) is not False    # it proceeded
     assert os.path.exists(bundle), "the edits were not actually written"
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)      # the copy opens off-thread
     assert win.project.current().data.shape[:2] == (48, 48)   # and the copy is open
     assert win._project_path is None                          # not tied to that bundle
 
@@ -5482,11 +5483,15 @@ def test_the_save_is_finished_before_the_workspace_is_replaced(qtbot, tmp_path, 
     cleared = []
     real_clear = win._clear_cache
     def spy():
-        cleared.append(win._active_token)    # None once the save has released
+        # What is running as the cache goes: only the copy's own open, which
+        # writes its snapshot off the UI thread — never the save.
+        cleared.append(sorted(t.busy_label for t in win._running))
         real_clear()
     win._clear_cache = spy
     win._open_upscaled(_upscaled())
-    assert cleared == [None], f"cache cleared with a save still in flight: {cleared}"
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+    assert cleared == [["Opening the upscaled copy…"]], \
+        f"cache cleared with a save still in flight: {cleared}"
 
 
 def test_opening_a_fits_over_a_bundle_forgets_the_bundle(qtbot, tmp_path):
