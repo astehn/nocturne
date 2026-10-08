@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.49.0] — 2026-10-08
+
+Narrowband compares side by side, strengths are chosen with one click instead of a dropdown, and the last freezes when a picture is replaced are gone.
+
+### Added
+- Narrowband's Compare offers Off, Wipe and Side by side, as Starless Levels does. Side by side shows the image as you opened it next to the recolour, and zooming or panning one moves the other with it.
+
+### Changed
+- Background, Deconvolution and Noise Reduction choose their strength with a row of buttons instead of a dropdown. Every level is visible, and one click picks it.
+- Reset, the TIFF linear/stretched switch, Combine, a finished stack and Upscale's "Open as copy" no longer freeze the window while the picture is replaced. Moving between steps is a little quicker too.
+- Combine asks before replacing a picture with unsaved changes, as opening a file already does.
+- Settings shows whether each external tool is free or paid, and that GraXpert is needed only for Background. The help gives StarNet2 its own section.
+
+### Fixed
+- Cancel while a project opens now takes effect within a step, not only once the whole project has loaded.
+- A save requested while quitting could be lost, with no warning, if another picture opened at the same moment. Nocturne now keeps the window open and says the save didn't happen.
+- After a cancelled TIFF switch, the Import panel could show the wrong choice.
+- A StarNet2 star separation was described as "free star detection", and a broken StarNet2 path was never reported.
+
 ## [0.48.0] — 2026-10-07
 
 Nocturne no longer freezes while it works: sliders, tool windows and opening a file all stay responsive. Drag a file onto the window to open it, and Nocturne has a new icon.
