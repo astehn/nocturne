@@ -3657,7 +3657,7 @@ class MainWindow(QMainWindow):
     def _clear_pending(self, step_id: str, applied_option: str | None = None,
                        *, panel=None, preview=_UNSET, engine=_UNSET) -> None:
         """Forget what a step's controls were holding, because it just became the
-        commit: the preview slot, and the dropdown's baseline when one applies.
+        commit: the preview slot, and the level buttons' baseline when one applies.
 
         One helper rather than a copy per commit path. There are six of them —
         apply_current plus the five steps that commit their own cached result —
@@ -3721,7 +3721,7 @@ class MainWindow(QMainWindow):
             target.method_baseline = target.method_box.currentText()
 
     def _process_option_default(self, stage_id: str) -> str:
-        """What a process stage's dropdown should READ on arrival.
+        """What a process stage's level buttons should READ on arrival.
 
         The committed option when there is one, so a revisited step reports the
         image it is actually looking at. It used to be `default_option()`
@@ -3939,7 +3939,7 @@ class MainWindow(QMainWindow):
         return method_box.currentText() != baseline
 
     def _option_box_pending(self, sid: str) -> bool:
-        """The dropdown-vs-baseline comparison the compute stages use."""
+        """The level-vs-baseline comparison the compute stages use."""
         box = getattr(self._panel, "option_box", None)
         baseline = getattr(self._panel, "option_baseline", None)
         if box is None or not isinstance(baseline, str):
