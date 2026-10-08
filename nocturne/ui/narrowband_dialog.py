@@ -510,7 +510,7 @@ class NarrowbandDialog(QDialog):
         if params.palette != GOLD_BLUE:
             return None
         if self._gb_stats is None:
-            self._gb_stats = gold_blue_stats(self._prev_starless, params.blackpoint)
+            self._gb_stats = gold_blue_stats(self._prev_starless)
         return self._gb_stats
 
     def _push_images(self) -> None:

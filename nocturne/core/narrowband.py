@@ -304,18 +304,21 @@ def preserve_lightness(recolored: np.ndarray, original: np.ndarray) -> np.ndarra
 
 
 def nebula_mask(rgb: np.ndarray, protect: float,
-                caps: tuple[float, float] | None = None) -> np.ndarray:
+                caps: tuple[float, float] | None = None,
+                data: np.ndarray | None = None) -> np.ndarray:
     """Soft 0..1 mask isolating bright nebula from dark sky (luminance
     percentiles). protect in [0,1]: higher protects more background.
 
     `caps` puts a ceiling on the (25th, 99.5th) luminance percentiles. They
     move with the framing: a tight crop has no sky, so its own 25th percentile
     is faint NEBULA, and its 99.5th is the core, so the whole nebula reads as
-    background. Only the gold-and-blue palette passes them; the old palettes'
-    mask is unchanged."""
+    background. `data` (bool, True where the frame carries signal) keeps a
+    black border out of the percentiles and out of the feather. Only the
+    gold-and-blue palette passes either; the old palettes' mask is unchanged."""
     lum = np.clip(rgb, 0.0, 1.0).mean(axis=2).astype(np.float32)
-    lo = float(np.percentile(lum, 25))
-    hi = float(np.percentile(lum, 99.5))
+    ref = lum if data is None or not data.any() else lum[data]
+    lo = float(np.percentile(ref, 25))
+    hi = float(np.percentile(ref, 99.5))
     if caps is not None:
         lo, hi = min(lo, float(caps[0])), min(hi, float(caps[1]))
     if hi - lo < 1e-4:
@@ -339,11 +342,32 @@ def nebula_mask(rgb: np.ndarray, protect: float,
         # direct blur, mean difference 0.003 — invisible in a blend, and it keeps
         # this off the critical path of an Apply that had just been unfrozen.
         from skimage.transform import resize
-        small = gaussian_filter(m[::4, ::4], sigma=sigma / 4.0)
+        if data is None:
+            small = gaussian_filter(m[::4, ::4], sigma=sigma / 4.0)
+        else:
+            small = _masked_blur(m[::4, ::4], data[::4, ::4], sigma / 4.0)
         m = resize(small, lum.shape, order=1, preserve_range=True)
-    else:
+    elif data is None:
         m = gaussian_filter(m, sigma=sigma)      # small frame: blur it directly
+    else:
+        m = _masked_blur(m, data, sigma)
     return np.clip(m, 0.0, 1.0).astype(np.float32)
+
+
+def _masked_blur(x: np.ndarray, data: np.ndarray, sigma: float) -> np.ndarray:
+    """Gaussian blur of `x` over the data pixels only (normalised convolution),
+    so a black border does not bleed into the edge of the picture."""
+    from scipy.ndimage import gaussian_filter
+    w = data.astype(np.float32)
+    num = gaussian_filter(np.where(data, x, 0.0).astype(np.float32), sigma)
+    den = gaussian_filter(w, sigma)
+    return np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0).astype(np.float32)
+
+
+def _has_data(rgb: np.ndarray) -> np.ndarray:
+    """Pixels that carry signal. Untrimmed stack edges, rotation corners and
+    mosaic gaps are exact black in every channel; a real sky never is."""
+    return np.asarray(rgb).max(axis=2) > _GB_DATA_EPS
 
 
 # --- "SHO-style (gold and blue)" -------------------------------------------
@@ -488,6 +512,9 @@ _GB_NOISE_FLOOR = 5e-4
 _GB_MASK_CAPS = (0.11, 0.30)
 _GB_PEDESTAL_PCT = 1.0
 _GB_PEDESTAL_CAP = 0.09
+# Below this in EVERY channel a pixel is non-data (black border, rotation
+# corner, mosaic gap): every gold-and-blue statistic skips it.
+_GB_DATA_EPS = 1e-4
 # The gold's chroma relative to the blue's. Task 1 measured x0.85 (warm sat
 # 0.51 / 0.54 / 0.51 / 0.65 / 0.44 for IC 1396A / IC 1805 / M 16 / NGC 6992 /
 # NGC 7000). With Task 3's mask caps x0.75 gave 0.51 / 0.50 / 0.58 / 0.62 /
@@ -530,10 +557,12 @@ def _oxygen_share(ha: np.ndarray, o: np.ndarray) -> np.ndarray:
     return o / np.maximum(ha + o, 1e-6)
 
 
-def _sky_pedestal(ha: np.ndarray, oiii: np.ndarray) -> tuple[float, float]:
-    """Each channel's sky level, to take off before the oxygen share."""
-    return (min(float(np.percentile(ha, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP),
-            min(float(np.percentile(oiii, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP))
+def _sky_pedestal(ha: np.ndarray, oiii: np.ndarray, data: np.ndarray) -> tuple[float, float]:
+    """Each channel's sky level, to take off before the oxygen share — read
+    over the data pixels only: 1% of black border would make it 0."""
+    h, o = (ha[data], oiii[data]) if data.any() else (ha, oiii)
+    return (min(float(np.percentile(h, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP),
+            min(float(np.percentile(o, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP))
 
 
 def _gb_share(ha: np.ndarray, oiii: np.ndarray, pedestal: tuple[float, float]) -> np.ndarray:
@@ -579,56 +608,59 @@ def _monotone_fit(x: np.ndarray, y: np.ndarray, bins: int):
     return f
 
 
-def _oxygen_evidence(ha: np.ndarray, oiii: np.ndarray, sel: np.ndarray, sigma: float) -> float:
+def _oxygen_evidence(ha: np.ndarray, oiii: np.ndarray, sel: np.ndarray, sigma: float,
+                     data: np.ndarray) -> float:
     """How much the oxygen varies INDEPENDENTLY of the hydrogen, in units of
     the picture's own pixel noise. Everything pure hydrogen can do to the OIII
     plane — the sensor's leak, the background, the stretch's curve — makes it a
     rising function of Ha, so OIII is fitted as one (_monotone_fit); oxygen is
     what that cannot explain: the blurred residual's p10-p90 width over the
     nebula, over the noise of the unblurred residual."""
-    from scipy.ndimage import gaussian_filter
-    hb = gaussian_filter(ha, sigma)
-    ob = gaussian_filter(oiii, sigma)
-    if float(hb.max() - hb.min()) < 1e-6:
+    if not data.any():
         return 0.0
-    f = _monotone_fit(hb.ravel(), ob.ravel(), _GB_EVIDENCE_BINS)
+    hb = _masked_blur(ha, data, sigma)
+    ob = _masked_blur(oiii, data, sigma)
+    # Flat hydrogen makes the fit a constant, so any oxygen variation is
+    # residual — evidence, as it should be.
+    f = _monotone_fit(hb[data], ob[data], _GB_EVIDENCE_BINS)
     res_b = ob - f(hb)
     res = oiii - f(ha)
-    hp = res - gaussian_filter(res, 1.5)
+    hp = (res - _masked_blur(res, data, 1.5))[data]
     noise = 1.4826 * float(np.median(np.abs(hp - np.median(hp))))
-    vals = res_b[sel] if sel.any() else res_b.ravel()
+    sel = sel & data
+    vals = res_b[sel] if sel.any() else res_b[data]
     p10, p90 = np.percentile(vals, [10, 90])
     return float(p90 - p10) / max(noise, _GB_NOISE_FLOOR)
 
 
-def gold_blue_stats(img: AstroImage, blackpoint: float = 1.0) -> GoldBlueStats:
+def gold_blue_stats(img: AstroImage) -> GoldBlueStats:
     """Measure the gold-and-blue statistics from the preview-sized copy of
-    `img` (the image itself when it is already that small). `blackpoint` is
-    accepted for the old palettes' signature and not used: this palette does
-    not median-match the OIII (see _GB_MASK_CAPS for why)."""
+    `img` (the image itself when it is already that small), over the pixels
+    that carry data. No black point: this palette does not median-match the
+    OIII (see _GB_MASK_CAPS for why)."""
     if not img.is_color:
         raise ValueError("Narrowband needs a colour image")
     small = np.clip(_stats_copy(np.asarray(img.data, dtype=np.float32)), 0.0, 1.0)
     ha = small[..., 0].astype(np.float32)
     oiii = ((small[..., 1] + small[..., 2]) / 2.0).astype(np.float32)
-    pedestal = _sky_pedestal(ha, oiii)
+    data = _has_data(small)
+    pedestal = _sky_pedestal(ha, oiii, data)
     t = _gb_share(ha, oiii, pedestal)
-    from scipy.ndimage import gaussian_filter
     sigma = max(1e-3, _GB_T_SIGMA_FRAC * min(t.shape))
-    t = gaussian_filter(t, sigma=sigma)
-    sel = nebula_mask(small, _GB_MASK_PROTECT, _GB_MASK_CAPS) > 0.5
-    vals = t[sel] if sel.any() else t.ravel()
+    t = _masked_blur(t, data, sigma)
+    sel = (nebula_mask(small, _GB_MASK_PROTECT, _GB_MASK_CAPS, data) > 0.5) & data
+    vals = t[sel] if sel.any() else (t[data] if data.any() else t.ravel())
     centre = float(np.median(vals))
     p10, p90 = np.percentile(vals, [10, 90])
     spread = max(float(p90 - p10), 1e-4)
-    evidence = _oxygen_evidence(ha, oiii, sel, sigma)
+    evidence = _oxygen_evidence(ha, oiii, sel, sigma, data)
     return GoldBlueStats(pedestal=pedestal, centre=centre, spread=spread, evidence=evidence,
                          blue_floor=_blue_floor(evidence))
 
 
 def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool,
                       stats: GoldBlueStats | None) -> AstroImage:
-    st = stats if stats is not None else gold_blue_stats(img, params.blackpoint)
+    st = stats if stats is not None else gold_blue_stats(img)
     data = np.clip(np.asarray(img.data, dtype=np.float32), 0.0, 1.0)
     ha, oiii = extract_ha_oiii(img)
     t = _gb_share(ha, oiii, st.pedestal)
@@ -692,8 +724,11 @@ def render(img: AstroImage, params: NarrowbandParams, *,
     out = AstroImage(brightness(out.data, params.brightness),
                      is_linear=False, metadata=dict(img.metadata))
     if params.protect_background > 0:
-        levels = _GB_MASK_CAPS if params.palette == GOLD_BLUE else None
-        m = nebula_mask(original, params.protect_background, levels)[..., None]
+        if params.palette == GOLD_BLUE:
+            m = nebula_mask(original, params.protect_background, _GB_MASK_CAPS,
+                            _has_data(original))[..., None]
+        else:
+            m = nebula_mask(original, params.protect_background)[..., None]
         blended = m * out.data + (1.0 - m) * original
         out = AstroImage(np.clip(blended, 0.0, 1.0).astype(np.float32),
                          is_linear=False, metadata=dict(img.metadata))

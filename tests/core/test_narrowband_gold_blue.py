@@ -2,6 +2,7 @@
 guard that adding it left the three old palettes' pixels exactly where they were."""
 import dataclasses
 import hashlib
+import os
 import itertools
 
 import numpy as np
@@ -303,7 +304,7 @@ def test_degenerate_inputs_stay_finite_and_in_range(data, has_stars):
 
 def test_an_empty_nebula_mask_falls_back_to_the_whole_picture(monkeypatch):
     data = _with_oxygen_core(_pure_ha(120, 160), amp=0.3)[0]
-    monkeypatch.setattr(nb, "nebula_mask", lambda rgb, protect, caps=None: np.zeros(rgb.shape[:2], np.float32))
+    monkeypatch.setattr(nb, "nebula_mask", lambda rgb, protect, caps=None, data=None: np.zeros(rgb.shape[:2], np.float32))
     st = gold_blue_stats(AstroImage(data, is_linear=False))
     assert np.isfinite([st.centre, st.spread, st.blue_floor]).all() and st.spread > 0
 
@@ -457,8 +458,21 @@ def test_the_floor_reads_oxygen_evidence_on_a_crop():
     assert st.evidence > 3 * nb.GB_FLOOR_EVIDENCE_HI and st.blue_floor == 1.0
 
 
-_CACHE = ("/private/tmp/claude-501/-Volumes-Work-Code-Editor/"
-          "3c08bfe1-d115-45f9-abe8-0ea76caccfea/scratchpad/nbcache/")
+# His five StarX-split exports, cached by the bench (never re-split). They live
+# outside the repo; point NOCTURNE_NB_BENCH at the folder to run these. The
+# synthetic stand-ins below cover the same behaviour everywhere.
+_BENCH = os.environ.get(
+    "NOCTURNE_NB_BENCH",
+    "/private/tmp/claude-501/-Volumes-Work-Code-Editor/"
+    "3c08bfe1-d115-45f9-abe8-0ea76caccfea/scratchpad/nbcache/")
+
+
+def _bench_layer(name):
+    path = os.path.join(_BENCH, name + ".starless.npy")
+    if not os.path.exists(path):
+        pytest.skip(f"bench-only: {path} not found — set NOCTURNE_NB_BENCH to the folder "
+                    f"of his cached StarX layers (<NAME>.starless.npy) to run this")
+    return np.load(path)
 
 
 @pytest.mark.parametrize("name,box,minimum", [
@@ -467,16 +481,126 @@ _CACHE = ("/private/tmp/claude-501/-Volumes-Work-Code-Editor/"
     ("IC1805", (0.45, 0.80, 0.25, 0.60), 0.45),        # heart core: 57% now, 14% before
 ])
 def test_his_tight_crops_keep_their_blue(name, box, minimum):
-    import os
-    path = _CACHE + name + ".starless.npy"
-    if not os.path.exists(path):
-        pytest.skip("his cached StarX splits live only on the bench machine")
-    a = np.load(path)
+    a = _bench_layer(name)
     h, w = a.shape[:2]
     x0, x1, y0, y1 = box
     kept, st = _still_blue(a, np.s_[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)])
     assert st.blue_floor == 1.0
     assert kept >= minimum
+
+
+@pytest.mark.parametrize("crop,minimum", [
+    (np.s_[230:470, 470:800], 0.40),     # inside the nebula, no sky: 49% measured
+    (np.s_[100:620, 300:900], 0.75),     # wider, reaching the sky edge: 89%
+])
+def test_stand_in_crops_keep_their_blue(crop, minimum):
+    """Runs everywhere: the synthetic counterpart of his tight crops."""
+    data, _, _ = _nebula_frame()
+    kept, st = _still_blue(data, crop)
+    assert st.blue_floor == 1.0
+    assert kept >= minimum
+
+
+# --- review: black borders (he stacks UNTRIMMED) -----------------------------
+
+def _black_border(a, frac):
+    b = a.copy()
+    k = max(1, int(round(frac * min(a.shape[:2]))))
+    b[:k] = 0
+    b[-k:] = 0
+    b[:, :k] = 0
+    b[:, -k:] = 0
+    return b
+
+
+def _black_corners(a, deg=6.0):
+    """What a rotated crop leaves: black triangles in the corners."""
+    h, w = a.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    t = np.deg2rad(deg)
+    xr = (xx - w / 2) * np.cos(t) + (yy - h / 2) * np.sin(t)
+    yr = -(xx - w / 2) * np.sin(t) + (yy - h / 2) * np.cos(t)
+    b = a.copy()
+    b[~((np.abs(xr) <= w / 2 * 0.93) & (np.abs(yr) <= h / 2 * 0.93))] = 0
+    return b
+
+
+def _border_change(a, bordered):
+    """OKLab colour difference over the data area between the frame with a
+    black border and the same frame without one, and the border's brightest."""
+    p = palette_defaults(GOLD_BLUE)
+    ref = render(AstroImage(a, is_linear=False), p, has_stars=False).data
+    out = render(AstroImage(bordered, is_linear=False), p, has_stars=False).data
+    data = bordered.max(2) > nb._GB_DATA_EPS
+    dE = np.sqrt(((nb._srgb_to_oklab(out) - nb._srgb_to_oklab(ref)) ** 2).sum(2))[data]
+    return float(dE.mean()), float(np.percentile(dE, 99)), float(out[~data].max())
+
+
+# Tolerance: on his five real layers (1/3/10% borders and 6 deg corners) the data
+# area moved by mean dE <= 0.0013 and p99 <= 0.0095 after the fix, against mean
+# up to 0.020 and p99 up to 0.099 before (1% of black made the sky level 0).
+_BORDER_TOL = (0.002, 0.012)
+
+
+@pytest.mark.parametrize("make", [lambda a: _black_border(a, 0.01), lambda a: _black_border(a, 0.03),
+                                  lambda a: _black_border(a, 0.10), _black_corners],
+                         ids=["border 1%", "border 3%", "border 10%", "rotated corners"])
+def test_a_black_border_leaves_the_picture_as_it_was(make):
+    data, neb, far = _nebula_frame()
+    bordered = make(data)
+    mean, p99, border_max = _border_change(data, bordered)
+    assert mean < _BORDER_TOL[0] and p99 < _BORDER_TOL[1], (mean, p99)
+    assert border_max == 0.0                                   # the border stays black
+    # ...and the faint hydrogen, the first thing a lost sky level turns blue, stays gold
+    rim = (neb > 0.15) & (neb < 0.6) & far & (bordered.max(2) > nb._GB_DATA_EPS)
+    assert _cool(_engine(bordered))[rim].mean() < 0.05
+
+
+@pytest.mark.parametrize("size,box", [((1080, 1920), np.s_[150:930, 300:1500]),
+                                      ((540, 960), np.s_[75:465, 150:750])],
+                         ids=["full size", "preview size"])
+def test_a_border_around_nebula_that_fills_the_frame_does_not_bleed_in(size, box):
+    """No sky at all, nebula to every edge, 10% black border: the blurs that
+    feed the statistics and the protect mask are taken over the data only, so
+    the border's zeros do not leak into the picture's edge. Measured p99 dE
+    0.0084 at both sizes with data-only blurs, 0.0112 with plain ones (the
+    preview size takes nebula_mask's direct-blur branch, full size the
+    quarter-resolution one)."""
+    d, _, _ = _nebula_frame(*size)
+    fill = np.ascontiguousarray(d[box])
+    mean, p99, border_max = _border_change(fill, _black_border(fill, 0.10))
+    assert mean < 0.004 and p99 < 0.010, (mean, p99)
+    assert border_max == 0.0
+
+
+def test_the_sky_level_is_read_over_the_data_only():
+    data, _, _ = _nebula_frame()
+    plain = gold_blue_stats(AstroImage(data, is_linear=False))
+    bordered = gold_blue_stats(AstroImage(_black_border(data, 0.03), is_linear=False))
+    assert bordered.pedestal[0] > 0.05 and bordered.pedestal[1] > 0.05
+    assert bordered.pedestal == pytest.approx(plain.pedestal, abs=0.005)
+
+
+@pytest.mark.parametrize("name", ["IC1396A", "IC1805", "M16", "NGC6992", "NGC7000"])
+def test_his_layers_ignore_a_black_border(name):
+    a = _bench_layer(name)
+    for bordered in (_black_border(a, 0.03), _black_border(a, 0.10), _black_corners(a)):
+        mean, p99, border_max = _border_change(a, bordered)
+        assert mean < _BORDER_TOL[0] and p99 < _BORDER_TOL[1], (name, mean, p99)
+        assert border_max == 0.0
+
+
+def test_flat_hydrogen_with_varying_oxygen_is_evidence():
+    """A flat Ha plane used to short-circuit the evidence to 0, however much
+    the oxygen varied."""
+    rng = np.random.default_rng(1)
+    h, w = 360, 640
+    yy, xx = np.mgrid[0:h, 0:w] / h
+    ha = np.full((h, w), 0.4, np.float32)
+    o = 0.15 + 0.15 * np.exp(-((xx - 1) ** 2 + (yy - 0.5) ** 2) / 0.05)
+    data = np.clip(np.stack([ha, o, o], 2) + 0.003 * rng.standard_normal((h, w, 3)), 0, 1)
+    st = gold_blue_stats(AstroImage(data.astype(np.float32), is_linear=False))
+    assert st.evidence > nb.GB_FLOOR_EVIDENCE_HI and st.blue_floor == 1.0
 
 
 def test_noise_free_hydrogen_does_not_read_as_oxygen():
