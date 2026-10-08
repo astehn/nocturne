@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
 )
 
+from .option_buttons import OptionButtons
 from ..core.autostretch import _TARGET_BG
 from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
 from ..core.color import ColorSettings
@@ -446,7 +447,9 @@ def build_panel(
         w.crop_size_label = size
 
     elif stage.kind == "process":
-        box = QComboBox()
+        # Joined buttons, not a dropdown: every level visible, one click
+        # (option_buttons.py). Same option strings as before.
+        box = OptionButtons()
         box.addItems(_PROCESS_OPTIONS[stage.id])
         if option_default:
             box.setCurrentText(option_default)

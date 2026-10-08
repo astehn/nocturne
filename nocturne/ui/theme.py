@@ -167,6 +167,17 @@ QCheckBox#nightChip:checked {{ border-color: {ACCENT}; }}
    carry their own look, and a default would restyle all of them. */
 QPushButton#choice:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
     border: 1px solid {ACCENT}; }}
+/* A level chosen from joined buttons (option_buttons.py: Off | Light | Strong).
+   The chosen one is a quiet light fill, not the accent: blue is Next and
+   "interactive", and a selected level must not compete with Next. */
+QPushButton#level {{ border-radius: 0; padding: 7px 6px; border-left-width: 0; }}
+QPushButton#level[seg="first"] {{ border-top-left-radius: 8px; border-bottom-left-radius: 8px;
+    border-left-width: 1px; }}
+QPushButton#level[seg="last"] {{ border-top-right-radius: 8px; border-bottom-right-radius: 8px; }}
+QPushButton#level[seg="only"] {{ border-radius: 8px; border-left-width: 1px; }}
+QPushButton#level:checked {{ background: #565b64; color: #ffffff; font-weight: 600;
+    border-color: #6a707a; }}
+QPushButton#level:checked:disabled {{ background: #34373c; color: {TEXT_DIM}; }}
 /* A one-glyph button in a narrow fixed width (Share's ↺). */
 QPushButton#glyph {{ padding: 8px 0; }}
 QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT};
