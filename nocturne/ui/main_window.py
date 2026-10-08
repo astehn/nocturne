@@ -1014,6 +1014,13 @@ class MainWindow(QMainWindow):
         cancels the unsaved-project prompt has not quit, so nothing running
         in the background should have been touched by then.
         """
+        if any(not getattr(t, "user_cancellable", True) for t in self._running):
+            # A result that exists nowhere else is seconds from opening; quitting
+            # under it would drop it, and asking about saving now would ask
+            # about a picture it is about to replace.
+            self._show_warning("Finishing opening a result — quit again in a moment.")
+            event.ignore()
+            return
         if not self._confirm_save_if_dirty():
             event.ignore()
             return
@@ -1147,8 +1154,14 @@ class MainWindow(QMainWindow):
         contain the preview, so asking "save?" before "what about the change you
         have not applied?" invites someone to save and still lose it.
         """
+        # A prompt is a nested event loop: an open already in flight can land
+        # inside it, and the answer then belongs to a picture that is gone —
+        # "Save" wrote the NEW one and quit went ahead (review 2026-10-08).
+        gen = self._project_gen
         if self.project is not None and self._has_pending():
             answer = self._ask_pending(self._stages[self._stage].label)
+            if self._replaced_while_asking(gen):
+                return False
             if answer == "cancel":
                 return False
             if answer == "apply":
@@ -1172,9 +1185,21 @@ class MainWindow(QMainWindow):
             | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
+        if self._replaced_while_asking(gen):
+            return False
         if resp == QMessageBox.StandardButton.Save:
+            # Not re-checked after: a replacement during the save itself is
+            # _save_and_wait's to report (it counts only a save that finished).
             return self._save_and_wait()
         return resp == QMessageBox.StandardButton.Discard
+
+    def _replaced_while_asking(self, gen: int) -> bool:
+        """True, and said, when the workspace changed under a question about it."""
+        if self._project_gen == gen:
+            return False
+        self._show_warning("Not saved, and nothing was closed: another picture opened "
+                           "while you were deciding.")
+        return True
 
     def _save_and_wait(self) -> bool:
         """Save, and do not return until the write has actually finished.
@@ -1668,12 +1693,19 @@ class MainWindow(QMainWindow):
         # foreground STACKS, which always write a master to disk first; it
         # was scope creep to extend it to a dialog with nothing to point at.
         from .combine_dialog import CombineDialog
-        CombineDialog(self.settings, self,
-                      on_master=lambda img: self._open_in_background(
-                          img, "combined narrowband",
-                          busy_label="Opening the combined image…",
-                          fail_label="Could not open the combined image",
-                          cancellable=False)).exec()
+        CombineDialog(self.settings, self, on_master=self._open_combined).exec()
+
+    def _open_combined(self, img) -> bool:
+        """False when the user kept their unsaved picture: the dialog then stays
+        open and says so, and one press of Combine makes the result again —
+        it held nowhere else, so closing on a "Cancel" would destroy it."""
+        if not self._confirm_save_if_dirty():
+            return False
+        self._open_in_background(img, "combined narrowband",
+                                 busy_label="Opening the combined image…",
+                                 fail_label="Could not open the combined image",
+                                 cancellable=False)
+        return True
 
     def _open_haoiii(self) -> None:
         from .haoiii_dialog import HaOIIIDialog
@@ -3452,9 +3484,17 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return
         start = start_dir(self.settings.last_project_dir) or start_dir(self.settings.base_dir)
+        gen = self._project_gen
         path, _ = file_dialogs.save_file(
             self, "Save project", start, "Nocturne project (*.nocturne)")
         if not path:
+            return
+        if gen != self._project_gen:
+            # The dialog is a nested event loop; the picture it was opened for
+            # was replaced inside it. Saving now would write the new one under
+            # a name chosen for the old.
+            self._show_warning("Not saved: another picture opened while you chose "
+                               "where to save.")
             return
         if not path.lower().endswith(".nocturne"):
             path += ".nocturne"
@@ -3477,7 +3517,11 @@ class MainWindow(QMainWindow):
 
         clip_baseline = self._clip_baseline
         linked = self._view_linked
-        written = threading.Event()     # the bundle is complete on disk
+        # Set once save_project has RETURNED. Its last _tick() polls the token
+        # after every state has been read, and _swap_workspace cancels before
+        # _clear_cache deletes them, so a save that returns read them all
+        # intact and has run its os.replace — a drop after that loses nothing.
+        written = threading.Event()
 
         def work():
             # The start page's thumbnail, drawn as the canvas draws it. Never

@@ -524,15 +524,32 @@ def test_the_reading_switch_snaps_back_when_the_reread_does_not_land(qtbot, tmp_
     assert win._panel.opened_as_linear.isChecked() is False
 
 
+def _held_open_any(qtbot, tmp_path, monkeypatch, saves, *, bundle):
+    """A dirty picture with a cancellable open (File > Open) held mid-write."""
+    win = _picture(qtbot, tmp_path)
+    win._async_enabled = True
+    if bundle:
+        save_project(win.project, bundle, source_label=win._source_label)
+        win._project_path = bundle
+    saves.armed = True
+    win.open_any(_fits(tmp_path, "second"))
+    assert saves.reached.wait(5)
+    win._dirty = True                  # edits made since; the open asked before them
+    return win
+
+
+def _bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def test_quit_with_an_open_in_flight_does_not_lose_a_requested_save(qtbot, tmp_path,
                                                                     monkeypatch, saves):
     """The open lands inside the save's wait, replaces the workspace and drops
     the save. Quit must not go ahead as though it had saved."""
-    win, go, _expected, _a = _combine(qtbot, tmp_path, monkeypatch)
-    win._async_enabled = True
     bundle = str(tmp_path / "mine.nocturne")
-    win._project_path = bundle
-    win._dirty = True
+    win = _held_open_any(qtbot, tmp_path, monkeypatch, saves, bundle=bundle)
+    before = _bytes(bundle)
     monkeypatch.setattr(QMessageBox, "question",
                         lambda *a, **k: QMessageBox.StandardButton.Save)
     save_gate = threading.Event()
@@ -543,10 +560,7 @@ def test_quit_with_an_open_in_flight_does_not_lose_a_requested_save(qtbot, tmp_p
         return real_save_project(*a, **k)
 
     monkeypatch.setattr(mw, "save_project", held_save)
-    saves.armed = True
     try:
-        go()
-        assert saves.reached.wait(5)
         QTimer.singleShot(100, saves.release)       # the open lands mid-wait
         QTimer.singleShot(400, save_gate.set)        # then the save runs on
         win.close()
@@ -555,9 +569,114 @@ def test_quit_with_an_open_in_flight_does_not_lose_a_requested_save(qtbot, tmp_p
         save_gate.set()
         _idle(qtbot, win)
     assert win.isVisible(), "quit went ahead without the save it was asked for"
-    assert not os.path.exists(bundle)
+    assert _bytes(bundle) == before
     assert "was not saved" in win._warning.text()
     assert _incoming(win) == []
+
+
+def test_an_open_landing_inside_the_quit_question_does_not_take_the_answer(
+        qtbot, tmp_path, monkeypatch, saves):
+    """The question is a nested event loop. "Save" answered about the picture
+    the user was looking at must not save the one that replaced it."""
+    bundle = str(tmp_path / "mine.nocturne")
+    win = _held_open_any(qtbot, tmp_path, monkeypatch, saves, bundle=bundle)
+    before = _bytes(bundle)
+    old = win.project
+    dialogs = []
+    monkeypatch.setattr(mw.file_dialogs, "save_file",
+                        lambda *a, **k: (dialogs.append(a), ("", ""))[1])
+
+    def answer(*a, **k):
+        saves.release()
+        qtbot.waitUntil(lambda: win.project is not old, timeout=5000)   # it lands here
+        return QMessageBox.StandardButton.Save
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    try:
+        win.close()
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert win.project is not old, "precondition: the open landed inside the question"
+    assert win.isVisible()
+    assert "another picture opened" in win._warning.text()
+    assert _bytes(bundle) == before
+    assert dialogs == [], "no Save As for the picture nobody was asked about"
+    assert [n for n in os.listdir(tmp_path) if n.endswith(".nocturne")] == ["mine.nocturne"]
+
+
+def test_an_open_landing_inside_save_as_writes_nothing(qtbot, tmp_path, monkeypatch, saves):
+    win = _held_open_any(qtbot, tmp_path, monkeypatch, saves, bundle=None)
+    old = win.project
+    target = str(tmp_path / "chosen.nocturne")
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Save)
+
+    def choose(*a, **k):
+        saves.release()
+        qtbot.waitUntil(lambda: win.project is not old, timeout=5000)
+        return target, ""
+
+    monkeypatch.setattr(mw.file_dialogs, "save_file", choose)
+    try:
+        win.close()
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert win.project is not old
+    assert win.isVisible()
+    assert not os.path.exists(target), "the new picture was saved under the old intent"
+    assert "Not saved" in win._warning.text()
+
+
+def test_quit_waits_for_a_result_that_cannot_be_cancelled(qtbot, tmp_path, monkeypatch, saves):
+    win, go, expected, _a = _combine(qtbot, tmp_path, monkeypatch)
+    win._async_enabled = True
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: (asked.append(1), QMessageBox.StandardButton.Discard)[1])
+    saves.armed = True
+    try:
+        go()
+        assert saves.reached.wait(5)
+        win._dirty = True                  # so a question WOULD be asked
+        win.close()
+        assert win.isVisible() and asked == [], "refused before any question"
+        assert "Finishing" in win._warning.text()
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert np.array_equal(win.project.current().data, expected)
+    win._dirty = False
+    win.close()
+    assert not win.isVisible()
+    assert _incoming(win) == []
+
+
+def test_combine_asks_before_replacing_unsaved_edits(qtbot, tmp_path, monkeypatch):
+    win, go, expected, _a = _combine(qtbot, tmp_path, monkeypatch)
+    win._dirty = True
+    old = win.project
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Cancel)
+    go()
+    assert win.project is old and win._dirty
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Discard)
+    go()
+    assert np.array_equal(win.project.current().data, expected)
+
+
+def test_a_declined_combine_keeps_the_dialog_open_and_says_why(qtbot):
+    from nocturne.settings import Settings
+    from nocturne.ui.combine_dialog import CombineDialog
+    d = CombineDialog(Settings(), on_master=lambda img: False)
+    qtbot.addWidget(d)
+    accepted = []
+    d.accepted.connect(lambda: accepted.append(1))
+    d._on_done(_image())
+    assert accepted == []
+    assert "Not opened" in d.status.text() and "Combine again" in d.status.text()
 
 
 def test_a_write_dropped_by_a_replaced_workspace_removes_its_file(qtbot, tmp_path,
@@ -576,24 +695,6 @@ def test_a_write_dropped_by_a_replaced_workspace_removes_its_file(qtbot, tmp_pat
         saves.release()
         _idle(qtbot, win)
     assert _incoming(win) == []
-
-
-def test_quit_during_a_write_that_cannot_be_cancelled_leaves_nothing(qtbot, tmp_path,
-                                                                     monkeypatch, saves):
-    win, go, _expected, _a = _upscale(qtbot, tmp_path, monkeypatch)
-    win._async_enabled = True
-    saves.armed = True
-    staging = win._staging_dir()
-    try:
-        go()
-        assert saves.reached.wait(5)
-        win.close()
-        assert not win.isVisible()
-    finally:
-        saves.release()
-        qtbot.waitUntil(lambda: not win._running, timeout=5000)
-        qtbot.wait(20)
-    assert not os.path.isdir(staging) or os.listdir(staging) == []
 
 
 @pytest.mark.parametrize("route", [_combine, _master, _upscale],

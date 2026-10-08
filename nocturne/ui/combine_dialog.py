@@ -307,6 +307,10 @@ class CombineDialog(QDialog):
     def _on_done(self, image) -> None:
         self._set_busy(False)
         self.status.setText("Done.")
-        if self._on_master is not None:
-            self._on_master(image)
+        if self._on_master is not None and self._on_master(image) is False:
+            # Declined at the unsaved-edits question: stay, and say how to get
+            # it back rather than close on a result that exists nowhere else.
+            self.status.setText("Not opened — your open picture has unsaved edits. "
+                                "Press Combine again when you are ready.")
+            return
         self.accept()
